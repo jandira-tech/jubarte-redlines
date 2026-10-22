@@ -825,6 +825,113 @@ mod tests {
         (top, bot)
     }
 
+    const X: &str = r#"<m:e><m:r><m:t>x</m:t></m:r></m:e>"#;
+    const SUB: &str = r#"<m:sub><m:r><m:t>i</m:t></m:r></m:sub>"#;
+    const SUP: &str = r#"<m:sup><m:r><m:t>n</m:t></m:r></m:sup>"#;
+
+    #[test]
+    fn math_layout_sub_and_superscripts_sit_right_of_the_base() {
+        let font = stix();
+        let b = lay(
+            &font,
+            false,
+            &format!("<m:sSubSup>{X}{SUB}{SUP}</m:sSubSup>"),
+        );
+        let (x, i, n) = (glyph(&b, 'x'), glyph(&b, 'i'), glyph(&b, 'n'));
+        assert!(i.x > x.x && n.x > x.x, "{b:?}");
+        assert!(i.y < x.y && n.y > x.y, "{b:?}");
+        assert!(i.size < x.size, "{b:?}");
+        let sup_only = lay(&font, false, &format!("<m:sSup>{X}{SUP}</m:sSup>"));
+        assert!(glyph(&sup_only, 'n').y > 0.0, "{sup_only:?}");
+        let sub_only = lay(&font, false, &format!("<m:sSub>{X}{SUB}</m:sSub>"));
+        assert!(glyph(&sub_only, 'i').y < 0.0, "{sub_only:?}");
+    }
+
+    #[test]
+    fn math_layout_prescripts_sit_left_of_the_base() {
+        let font = stix();
+        let b = lay(&font, false, &format!("<m:sPre>{SUB}{SUP}{X}</m:sPre>"));
+        let (x, i, n) = (glyph(&b, 'x'), glyph(&b, 'i'), glyph(&b, 'n'));
+        assert!(i.x < x.x && n.x < x.x, "{b:?}");
+        assert!(b.width > 0.0);
+        // A script with no base still has a width.
+        let bare = lay(&font, false, &format!("<m:sSup>{SUP}</m:sSup>"));
+        assert!(bare.width > 0.0, "{bare:?}");
+    }
+
+    #[test]
+    fn math_layout_nary_puts_its_operator_first_and_limits_around_it() {
+        let font = stix();
+        let b = lay(
+            &font,
+            true,
+            &format!(r#"<m:nary><m:naryPr><m:chr m:val="∑"/></m:naryPr>{SUB}{SUP}{X}</m:nary>"#),
+        );
+        let op = b
+            .glyphs
+            .iter()
+            .find(|g| g.text.contains('∑'))
+            .expect("operator");
+        let (x, i, n) = (glyph(&b, 'x'), glyph(&b, 'i'), glyph(&b, 'n'));
+        assert!(op.x < i.x && i.x < x.x, "{b:?}");
+        assert!(i.y < 0.0 && n.y > 0.0 && x.y == 0.0, "{b:?}");
+        // No `m:chr`: no operator glyph, the parts alone.
+        let plain = lay(&font, false, &format!("<m:nary>{X}</m:nary>"));
+        assert_eq!(plain.glyphs.len(), 1, "{plain:?}");
+    }
+
+    #[test]
+    fn math_layout_linear_and_skewed_fractions_lay_out_in_a_row() {
+        let font = stix();
+        for kind in ["lin", "skw"] {
+            let b = lay(
+                &font,
+                false,
+                &format!(
+                    r#"<m:f><m:fPr><m:type m:val="{kind}"/></m:fPr><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>"#
+                ),
+            );
+            let (a, bb) = (glyph(&b, 'a'), glyph(&b, 'b'));
+            assert_eq!(a.y, bb.y, "{kind}: {b:?}");
+            assert!(bb.x > a.x, "{kind}: {b:?}");
+            assert!(b.rules.is_empty(), "{kind}: {b:?}");
+        }
+    }
+
+    #[test]
+    fn math_layout_stops_at_its_depth_limit() {
+        let font = stix();
+        let deep = format!(
+            "{}<m:r><m:t>x</m:t></m:r>{}",
+            "<m:d><m:e>".repeat(80),
+            "</m:e></m:d>".repeat(80)
+        );
+        let b = lay(&font, false, &deep);
+        assert!(
+            !b.glyphs.iter().any(|g| g.text.contains(italic('x'))),
+            "{b:?}"
+        );
+        let shallow = format!(
+            "{}<m:r><m:t>x</m:t></m:r>{}",
+            "<m:d><m:e>".repeat(3),
+            "</m:e></m:d>".repeat(3)
+        );
+        glyph(&lay(&font, false, &shallow), 'x');
+    }
+
+    #[test]
+    fn math_layout_empty_delimiter_characters_draw_nothing() {
+        let font = stix();
+        let b = lay(
+            &font,
+            false,
+            &format!(r#"<m:d><m:dPr><m:begChr m:val=""/><m:endChr m:val="]"/></m:dPr>{X}</m:d>"#),
+        );
+        assert!(!b.glyphs.iter().any(|g| g.text.contains('(')), "{b:?}");
+        assert!(b.glyphs.iter().any(|g| g.text.contains(']')), "{b:?}");
+        assert!(!b.glyphs.iter().any(|g| g.text.contains(')')), "{b:?}");
+    }
+
     #[test]
     fn math_layout_bar_fraction_puts_the_rule_on_the_axis() {
         let font = stix();

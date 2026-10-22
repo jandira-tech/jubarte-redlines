@@ -853,6 +853,55 @@ mod tests {
     use super::*;
     use crate::xmllinq::{Dom, XNamespace};
 
+    /// SHA-1 hex of `xml` with its first WML default xmlns removed: what
+    /// the streaming hash must equal.
+    fn materialized_sha1(xml: &str) -> String {
+        use sha1::Digest;
+        let stripped = xml.replacen(WML_DEFAULT_XMLNS, "", 1);
+        crate::util::sha1::hex_string_from_bytes(&sha1::Sha1::digest(stripped.as_bytes()))
+    }
+
+    const RICH: &[&str] = &[
+        r#"<w:document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14 x9"><w:body><w:p w14:paraId="1" xml:space="preserve"><!--note--><?pi data?><?bare?><w:r><w:t>a &amp; "b" &lt;c&gt;</w:t></w:r></w:p><inner xmlns="" plain="1&amp;2">t</inner><w:sectPr/></w:body></w:document>"#,
+        r#"<root xmlns="urn:default" xmlns:a="urn:a" xmlns:b="urn:a"><a:x b:y="1"><b:z/></a:x>text</root>"#,
+        r#"<lone/>"#,
+    ];
+
+    #[test]
+    fn the_streamed_hash_equals_the_hash_of_the_serialized_text() {
+        for xml in RICH {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            let root = dom.root(doc).unwrap();
+            let text = serialize_element(&dom, root);
+            assert_eq!(
+                serialize_element_sha1_hex(&dom, root),
+                materialized_sha1(&text),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_structure_hash_ignores_text_comments_and_instructions() {
+        let hash = |xml: &str| {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            let root = dom.root(doc).unwrap();
+            serialize_element_structure_sha1_hex(&dom, root)
+        };
+        let base = hash(RICH[0]);
+        let retexted = RICH[0]
+            .replace("a &amp; \"b\" &lt;c&gt;", "other")
+            .replace("<!--note-->", "")
+            .replace("<?pi data?>", "")
+            .replace(">t</inner>", ">u</inner>");
+        assert_eq!(hash(&retexted), base);
+        let restructured = RICH[0].replace("<w:sectPr/>", "<w:sectPr><w:pgSz/></w:sectPr>");
+        assert_ne!(hash(&restructured), base);
+        assert_ne!(hash(RICH[1]), hash(RICH[2]));
+    }
+
     /// Word binds `w16` to the 2018 wordml namespace (and writes `w16sdtfl`,
     /// `w16du` for its 2024/2023 ones); an unbound use gets Word's prefix.
     #[test]

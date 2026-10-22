@@ -2131,6 +2131,174 @@ mod tests {
         assert!(!edited.contains("<w:sdt>"), "{edited}");
     }
 
+    /// A one-pixel-high, two-pixel-wide PNG, base64.
+    fn png_b64() -> String {
+        let mut bytes = Vec::new();
+        image::RgbImage::new(2, 1)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        base64_encode(&bytes)
+    }
+
+    /// The drawing the picture writer makes for that PNG, captured.
+    fn written_picture() -> Drawing {
+        let b64 = png_b64();
+        let picture =
+            crate::markdown::write::read_picture(base64_decode(&b64).unwrap(), "").unwrap();
+        let mut xml = String::new();
+        crate::markdown::drawing_xml(&picture, "r1", 0, &mut xml);
+        let xml = xml.replacen(
+            "<w:drawing>",
+            "<w:drawing xmlns:w=\"W\" xmlns:wp=\"WP\" xmlns:r=\"R\">",
+            1,
+        );
+        Drawing {
+            xml,
+            wrap: true,
+            rels: vec![PayRel {
+                sym: "r1".into(),
+                part: Some(0),
+                ..PayRel::default()
+            }],
+            deps: vec![Dep {
+                name: "word/media/image1.png".into(),
+                kind: "image/png".into(),
+                b64,
+                ..Dep::default()
+            }],
+            slot: Some(0),
+            ..Drawing::default()
+        }
+    }
+
+    #[test]
+    fn only_the_writers_own_picture_shape_is_regenerable() {
+        let base = written_picture();
+        assert!(regenerable(&base), "{}", base.xml);
+        let (cx, cy) = (2 * 9525, 9525);
+        let edits: &[(&str, String)] = &[
+            ("<w:drawing ", "<w:drawing".into()),
+            ("<w:drawing ", "<w:pict ".into()),
+            ("<wp:inline ", "<wp:anchor ".into()),
+            ("distT=\"0\"", "distT=\"5\"".into()),
+            (
+                "<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>",
+                String::new(),
+            ),
+            ("<wp:extent ", "<wp:extent2 ".into()),
+            ("<wp:extent ", "<wp:extent flip=\"1\" ".into()),
+            (
+                &format!("<wp:extent cx=\"{cx}\" cy=\"{cy}\"/>"),
+                format!("<wp:extent cx=\"{cx}\"/>"),
+            ),
+            ("l=\"0\"", "l=\"7\"".into()),
+            ("<wp:effectExtent ", "<wp:effect ".into()),
+            ("<wp:docPr id=\"0\"", "<wp:docPr id=\"3\"".into()),
+            ("<wp:docPr ", "<wp:doc ".into()),
+            (
+                "descr=\"\"/><wp:cNvGraphicFramePr>",
+                "descr=\"\"><a:hlinkClick/></wp:docPr><wp:cNvGraphicFramePr>".into(),
+            ),
+            ("<wp:cNvGraphicFramePr>", "<wp:cNvFramePr>".into()),
+            ("noChangeAspect=\"1\"", "noChangeAspect=\"0\"".into()),
+            ("<a:graphicFrameLocks ", "<a:locks ".into()),
+            (
+                "</wp:cNvGraphicFramePr>",
+                "<a:extLst/></wp:cNvGraphicFramePr>".into(),
+            ),
+            (
+                "drawingml/2006/picture\">",
+                "drawingml/2006/chart\">".into(),
+            ),
+            ("<a:graphicData ", "<a:graphicData x=\"1\" ".into()),
+            ("<a:graphicData ", "<a:graphicData2 ".into()),
+            ("<pic:pic ", "<pic:pix ".into()),
+            ("<pic:nvPicPr>", "<pic:nvPr>".into()),
+            ("<pic:cNvPr id=\"0\"", "<pic:cNvPr id=\"9\"".into()),
+            ("<pic:cNvPr ", "<pic:cNv ".into()),
+            ("<pic:cNvPicPr/>", "<pic:cNvPicPr/><pic:nvPr/>".into()),
+            (
+                "<pic:cNvPicPr/>",
+                "<pic:cNvPicPr preferRelativeResize=\"0\"/>".into(),
+            ),
+            ("<pic:cNvPicPr/>", String::new()),
+            (
+                "<a:blip r:embed=\"r1\"/>",
+                "<a:blip r:embed=\"r1\"><a:lum/></a:blip>".into(),
+            ),
+            (
+                "<a:blip r:embed=\"r1\"/>",
+                "<a:blip r:embed=\"r1\" cstate=\"print\"/>".into(),
+            ),
+            ("<a:blip r:embed=\"r1\"/>", "<a:blip/>".into()),
+            ("<a:blip ", "<a:blob ".into()),
+            ("<a:stretch>", "<a:stretch x=\"1\">".into()),
+            ("<a:fillRect/>", "<a:srcRect/>".into()),
+            ("<a:fillRect/>", String::new()),
+            ("<pic:spPr>", "<pic:spPr bwMode=\"auto\">".into()),
+            ("<a:xfrm>", "<a:xfrm2>".into()),
+            ("<a:off x=\"0\"", "<a:off x=\"4\"".into()),
+            ("<a:off ", "<a:offset ".into()),
+            ("<a:ext ", "<a:ext flip=\"1\" ".into()),
+            ("prst=\"rect\"", "prst=\"ellipse\"".into()),
+            ("<a:prstGeom ", "<a:prstGeom x=\"1\" ".into()),
+            ("<a:avLst/>", "<a:avLst><a:gd/></a:avLst>".into()),
+            ("<a:avLst/>", "<a:avLst x=\"1\"/>".into()),
+            ("<a:avLst/>", "<a:avLst/><a:x/>".into()),
+            ("<a:avLst/>", String::new()),
+            (
+                &format!("<wp:extent cx=\"{cx}\""),
+                format!("<wp:extent cx=\"{}\"", cx + 1),
+            ),
+            (
+                &format!("<a:ext cx=\"{cx}\" cy=\"{cy}\""),
+                format!("<a:ext cx=\"{cx}\" cy=\"{}\"", cy + 1),
+            ),
+        ];
+        for (from, to) in edits {
+            assert!(base.xml.contains(from), "{from} not in {}", base.xml);
+            let drawing = Drawing {
+                xml: base.xml.replacen(from, to, 1),
+                ..base.clone()
+            };
+            assert!(!regenerable(&drawing), "{from} -> {to} stayed regenerable");
+        }
+        let variants = [
+            Drawing {
+                slot: None,
+                ..base.clone()
+            },
+            Drawing {
+                wrap: false,
+                ..base.clone()
+            },
+            Drawing {
+                rels: Vec::new(),
+                ..base.clone()
+            },
+            Drawing {
+                deps: vec![Dep {
+                    b64: "!".into(),
+                    ..base.deps[0].clone()
+                }],
+                ..base.clone()
+            },
+            Drawing {
+                deps: vec![Dep {
+                    b64: base64_encode(b"not a picture"),
+                    ..base.deps[0].clone()
+                }],
+                ..base.clone()
+            },
+        ];
+        for drawing in variants {
+            assert!(!regenerable(&drawing), "{drawing:?}");
+        }
+    }
+
     #[test]
     fn doc_pr_ids_normalize_and_renumber() {
         let mut e = element(r#"<w:drawing><wp:inline><wp:docPr id="7"/></wp:inline></w:drawing>"#);

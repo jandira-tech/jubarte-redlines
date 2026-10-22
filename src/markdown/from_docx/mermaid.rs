@@ -412,3 +412,218 @@ pub(crate) fn patch(xml: &str, text: &str) -> Option<String> {
     }
     Some(super::drawing::serialize(&root))
 }
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod tests {
+    use super::*;
+
+    const NS: &str = r#"xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#;
+
+    /// A `c:ser` with a string category cache and a number value cache.
+    fn ser(name: &str, cats: &[&str], vals: &[&str]) -> String {
+        let pts = |items: &[&str]| {
+            items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#))
+                .collect::<String>()
+        };
+        format!(
+            r#"<c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>{name}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:strCache><c:ptCount val="{}"/>{}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{}</c:numCache></c:numRef></c:val></c:ser>"#,
+            cats.len(),
+            pts(cats),
+            vals.len(),
+            pts(vals)
+        )
+    }
+
+    fn space(title: &str, body: &str) -> String {
+        let title = if title.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<c:title><c:tx><c:rich><a:p><a:r><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx></c:title>"#
+            )
+        };
+        format!(
+            r#"<c:chartSpace {NS}><c:chart>{title}<c:plotArea>{body}</c:plotArea></c:chart></c:chartSpace>"#
+        )
+    }
+
+    #[test]
+    fn a_pie_chart_reads_as_a_pie_with_its_title() {
+        let xml = space(
+            "Share \"now\"",
+            &format!(
+                "<c:pieChart>{}</c:pieChart>",
+                ser("S", &["A", "B"], &["1", "2"])
+            ),
+        );
+        assert_eq!(
+            chart(&xml).unwrap(),
+            "pie title Share 'now'\n    \"A\" : 1\n    \"B\" : 2"
+        );
+        let untitled = space(
+            "",
+            &format!("<c:pieChart>{}</c:pieChart>", ser("S", &["A"], &["1"])),
+        );
+        assert_eq!(chart(&untitled).unwrap(), "pie\n    \"A\" : 1");
+    }
+
+    #[test]
+    fn bar_and_line_charts_read_as_one_xychart() {
+        let xml = space(
+            "Sales",
+            &format!(
+                "<c:barChart>{}</c:barChart><c:lineChart>{}</c:lineChart>",
+                ser("B", &["Q1", "Q2"], &["3", "4"]),
+                ser("L", &["Q1", "Q2"], &["5", "6"])
+            ),
+        );
+        assert_eq!(
+            chart(&xml).unwrap(),
+            "xychart-beta\n    title \"Sales\"\n    x-axis [\"Q1\", \"Q2\"]\n    bar [3, 4]\n    line [5, 6]"
+        );
+    }
+
+    #[test]
+    fn charts_mermaid_cannot_say_read_as_none() {
+        for xml in [
+            "not xml <".to_string(),
+            r#"<c:other xmlns:c="c"/>"#.to_string(),
+            format!(r#"<c:chartSpace {NS}/>"#),
+            space("", "<c:areaChart/>"),
+            space(
+                "",
+                &format!("<c:pieChart>{}</c:pieChart>", ser("S", &["A", "B"], &["1"])),
+            ),
+            space(
+                "",
+                &format!("<c:pieChart>{}</c:pieChart>", ser("S", &[], &[])),
+            ),
+            space(
+                "",
+                &format!("<c:barChart>{}</c:barChart>", ser("S", &[], &[])),
+            ),
+            space(
+                "",
+                &format!(
+                    "<c:barChart>{}{}</c:barChart>",
+                    ser("S", &["A"], &["1"]),
+                    ser("T", &["B"], &["1"])
+                ),
+            ),
+            space(
+                "",
+                &format!("<c:barChart>{}</c:barChart>", ser("S", &["A", "B"], &["1"])),
+            ),
+        ] {
+            assert_eq!(chart(&xml), None, "{xml}");
+        }
+    }
+
+    #[test]
+    fn points_read_in_index_order_and_skip_bad_indices() {
+        let xml = space(
+            "",
+            r#"<c:barChart><c:ser><c:cat><c:strLit><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="x"><c:v>Z</c:v></c:pt><c:pt><c:v>Y</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:pt idx="1"><c:v>2</c:v></c:pt><c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="q"><c:v>9</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart>"#,
+        );
+        assert_eq!(
+            chart(&xml).unwrap(),
+            "xychart-beta\n    x-axis [\"A\", \"B\"]\n    bar [1, 2]"
+        );
+    }
+
+    #[test]
+    fn fences_parse_or_refuse() {
+        let pie = parse("pie title T\n\n  \"a 'x'\" : 1\n  b : 2").unwrap();
+        assert_eq!(pie.title.as_deref(), Some("T"));
+        assert_eq!(pie.cats, ["a \"x\"", "b"]);
+        assert_eq!(
+            pie.sers,
+            [("pieChart".to_string(), vec!["1".to_string(), "2".into()])]
+        );
+        assert_eq!(parse("pie\n a : 1").unwrap().title, None);
+        assert!(parse("pie").is_none());
+        assert!(parse("pie\n no colon").is_none());
+        let xy = parse(
+            "xychart-beta\n\n  title \"T 'q'\"\n  x-axis [\"a, b\", c]\n  y-axis \"v\"\n  bar [1, 2]\n  line [3, 4]",
+        )
+        .unwrap();
+        assert_eq!(xy.title.as_deref(), Some("T \"q\""));
+        assert_eq!(xy.cats, ["a, b", "c"]);
+        assert_eq!(xy.sers.len(), 2);
+        for refused in [
+            "",
+            "flowchart LR",
+            "xychart-beta\n  x-axis [a]\n  scatter [1]",
+            "xychart-beta\n  x-axis a",
+            "xychart-beta\n  x-axis [a]\n  bar 1",
+            "xychart-beta\n  x-axis [a]\n  line [1",
+            "xychart-beta\n  x-axis []\n  bar [1]",
+            "xychart-beta\n  x-axis [a]",
+            "xychart-beta\n  bar [1]",
+            "xychart-beta\n  x-axis [a, b]\n  bar [1]",
+        ] {
+            assert!(parse(refused).is_none(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn an_edited_fence_rewrites_points_and_title_in_place() {
+        let xml = space(
+            "Old",
+            &format!(
+                "<c:barChart>{}</c:barChart><c:lineChart>{}</c:lineChart>",
+                ser("B", &["Q1"], &["3"]),
+                ser("L", &["Q1"], &["5"])
+            ),
+        );
+        let patched = patch(
+            &xml,
+            "xychart-beta\n  title \"New\"\n  x-axis [Q1, Q2]\n  bar [7, 8]\n  line [9, 10]",
+        )
+        .unwrap();
+        assert_eq!(
+            chart(&patched).unwrap(),
+            "xychart-beta\n    title \"New\"\n    x-axis [\"Q1\", \"Q2\"]\n    bar [7, 8]\n    line [9, 10]"
+        );
+        assert!(
+            patched.contains("<c:formatCode>General</c:formatCode>"),
+            "{patched}"
+        );
+        assert!(patched.contains(r#"<c:ptCount val="2"/>"#), "{patched}");
+
+        let pie = space(
+            "",
+            &format!("<c:pieChart>{}</c:pieChart>", ser("S", &["A"], &["1"])),
+        );
+        let patched = patch(&pie, "pie title Ignored\n  A : 4\n  B : 5").unwrap();
+        assert_eq!(
+            chart(&patched).unwrap(),
+            "pie\n    \"A\" : 4\n    \"B\" : 5"
+        );
+    }
+
+    #[test]
+    fn a_fence_of_another_shape_does_not_patch() {
+        let bar = space(
+            "",
+            &format!("<c:barChart>{}</c:barChart>", ser("B", &["Q1"], &["3"])),
+        );
+        assert_eq!(patch(&bar, "pie\n  A : 1"), None);
+        assert_eq!(patch(&bar, "not mermaid"), None);
+        assert_eq!(patch("<x", "pie\n  A : 1"), None);
+        assert_eq!(patch(r#"<c:other xmlns:c="c"/>"#, "pie\n  A : 1"), None);
+        assert_eq!(
+            patch(&format!(r#"<c:chartSpace {NS}/>"#), "pie\n  A : 1"),
+            None
+        );
+        let cacheless = space(
+            "",
+            "<c:pieChart><c:ser><c:cat/><c:val/></c:ser></c:pieChart>",
+        );
+        assert_eq!(patch(&cacheless, "pie\n  A : 1"), None);
+    }
+}
