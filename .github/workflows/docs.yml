@@ -49,6 +49,7 @@ on:
       - tests/adoption.rs
       - tests/common/**
       - tests/legacy_doc_convert.rs
+      - tests/legacy_doc.rs
       - examples/adoption/**
       - docs/adoption/**
   workflow_dispatch:
