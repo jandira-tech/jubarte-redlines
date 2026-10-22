@@ -490,6 +490,15 @@ fn run_resolution(
                 comment.id, comment.author,
             );
         }
+        for note in settlement_notes(
+            &[],
+            &resolved.kept_comments,
+            &resolved.document,
+            &bytes,
+            what,
+        ) {
+            eprintln!("note: {note}");
+        }
         // #1223: --id cannot name a comment-body change, so a selection can
         // leave some; say how many (an empty selection resolves them all).
         if resolved.comment_changes_left > 0 {
@@ -1633,7 +1642,7 @@ fn publish_edit(
         Mode::Editing => &result.clean,
     };
     written_status(&result, failed);
-    for note in edit_notes(notes, &result, primary) {
+    for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
     }
     for (name, bytes) in &outputs {
@@ -2117,10 +2126,13 @@ fn publish_dir(
 }
 
 /// One receipt line per thread, shared by legacy and typed edit publication.
+/// `source_for_paragraph` carries the original doc's comments: paragraph
+/// lookups read source ids when settlement renumbered the kept threads.
 fn settlement_notes(
     removed: &[jubarte::edit::RemovedComment],
     kept: &[jubarte::edit::KeptComment],
     document: &[u8],
+    source_for_paragraph: &[u8],
     decision: &str,
 ) -> Vec<String> {
     let reply_text = |replies: &[String]| match replies {
@@ -2144,16 +2156,31 @@ fn settlement_notes(
             reply_text(&c.replies)
         ));
     }
-    let comments = if kept.is_empty() {
-        Vec::new()
-    } else {
-        jubarte::comments::list_comments(document).unwrap_or_default()
-    };
+    let source_comments =
+        jubarte::comments::list_comments(source_for_paragraph).unwrap_or_default();
+    let document_comments = jubarte::comments::list_comments(document).unwrap_or_default();
     for c in kept {
-        let paragraph = comments
-            .iter()
-            .find(|r| format!("c{}", r.id) == c.id)
-            .and_then(|r| r.paragraph.as_deref())
+        let source_int = c.id.strip_prefix('c').and_then(|s| s.parse::<u32>().ok());
+        // Prefer the published doc: an edit plan can move the kept anchor
+        // to a different paragraph (a deleted container, a plan delete),
+        // and `list_comments` on the published bytes tracks that. CLI
+        // `--keep-nested-comment` resolves through a path that renumbers
+        // the doc, so the published lookup misses; the source has the
+        // anchor's original paragraph.
+        let paragraph = source_int
+            .and_then(|id| {
+                document_comments
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.paragraph.as_deref())
+            })
+            .or_else(|| {
+                let id = source_int?;
+                source_comments
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.paragraph.as_deref())
+            })
             .unwrap_or("the document");
         lines.push(format!(
             "kept {}{} on an empty anchor in {paragraph}",
@@ -2172,6 +2199,7 @@ fn edit_notes(
     notes: &[String],
     result: &jubarte::edit::EditResult,
     published: &[u8],
+    source: &[u8],
 ) -> Vec<String> {
     let mut lines: Vec<String> = notes
         .iter()
@@ -2187,6 +2215,7 @@ fn edit_notes(
         &result.report.removed_comments,
         &result.report.kept_comments,
         published,
+        source,
         decision,
     ));
     for outcome in &result.report.operations {
@@ -2327,7 +2356,7 @@ fn write_edited(
         ));
     }
     written_status(result, failed);
-    for note in edit_notes(notes, result, document) {
+    for note in edit_notes(notes, result, document, source) {
         edit_status(format_args!("{note}"));
     }
     print_edit_success(
@@ -3515,6 +3544,37 @@ fn run_convert_any(
     if from == Format::Docx && to == Format::Md {
         warn_nested_text_boxes(&bytes);
     }
+
+    // Pre-settle the .docx when keep_nested_comment is on (a wholly removed
+    // thread becomes an empty anchor the convert pipeline then renders).
+    // The receipt is printed after a successful output publication; the
+    // helper only resolves. Every input that yields a writable docx goes
+    // through the keeper: the .doc and Markdown paths build one first.
+    let needs_keep = markdown.keep_nested_comment
+        && matches!(from, Format::Docx | Format::Md)
+        && matches!(
+            markdown.track_changes,
+            TrackChanges::Accept | TrackChanges::Reject
+        );
+    type KeepResolver = fn(&[u8]) -> Result<jubarte::changes::ResolvedChanges, String>;
+    let keep_resolver: Option<KeepResolver> = if needs_keep {
+        Some(match markdown.track_changes {
+            TrackChanges::Accept => |b: &[u8]| {
+                jubarte::document_comparer::accept_revisions_keeping_comments(b)
+                    .map_err(|e| format!("convert failed: {e}"))
+            },
+            TrackChanges::Reject => |b: &[u8]| {
+                jubarte::document_comparer::reject_revisions_keeping_comments(b)
+                    .map_err(|e| format!("convert failed: {e}"))
+            },
+            _ => unreachable!("needs_keep gates this"),
+        })
+    } else {
+        None
+    };
+    // Held across every match arm; printed only after a successful run.
+    let mut keep_receipts: Vec<String> = Vec::new();
+
     let render = RenderArgs::default();
     // Where a Word, Markdown or JSON output goes: -o, else FILE.<ext>.
     let output_at = |kind: Format| {
@@ -3536,43 +3596,85 @@ fn run_convert_any(
             ..*job
         })
     };
-    match (from, to) {
+    let result: Result<(), ConvertFailure> = match (from, to) {
         (Format::Docx, Format::Json) => {
             let path = output_at(Format::Json);
             at(Format::Json, &path, None)?;
-            let resolved = match markdown.track_changes {
-                TrackChanges::All => bytes,
-                TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
-                    .map_err(|e| {
-                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                    })?,
-                TrackChanges::Reject => jubarte::document_comparer::reject_revisions(&bytes)
-                    .map_err(|e| {
-                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                    })?,
+            let resolved = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::All => bytes,
+                    TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
+                        .map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?,
+                    TrackChanges::Reject => jubarte::document_comparer::reject_revisions(&bytes)
+                        .map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?,
+                }
             };
             at(Format::Json, &path, Some(Produced::Docx(&resolved)))
         }
-        (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
-            TrackChanges::All => pdf_job(converted, to),
-            // The pages of the document with every change accepted or rejected.
-            choice => {
-                let resolve = if choice == TrackChanges::Accept {
-                    jubarte::document_comparer::accept_revisions
-                } else {
-                    jubarte::document_comparer::reject_revisions
-                };
-                let resolved = resolve(&bytes).map_err(|e| {
-                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                })?;
-                pdf_job(Some(&resolved), to)
+        (Format::Docx, Format::Pdf | Format::Png) => {
+            if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                pdf_job(Some(&r.document), to)
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::All => pdf_job(converted, to),
+                    // The pages of the document with every change accepted or rejected.
+                    choice => {
+                        let resolve = if choice == TrackChanges::Accept {
+                            jubarte::document_comparer::accept_revisions
+                        } else {
+                            jubarte::document_comparer::reject_revisions
+                        };
+                        let resolved = resolve(&bytes).map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?;
+                        pdf_job(Some(&resolved), to)
+                    }
+                }
             }
-        },
+        }
         (Format::Docx, Format::Md) if !markdown.commonmark => {
+            let source = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                bytes
+            };
             // The agent view, as `jubarte read` prints it: the dialect that
             // comes back whole through `convert` to Word.
             let view = jubarte::markdown::read(
-                &bytes,
+                &source,
                 &jubarte::markdown::ReadOptions {
                     track_changes: markdown.track_changes.into(),
                     comments: true,
@@ -3597,8 +3699,21 @@ fn run_convert_any(
             }
         }
         (Format::Docx, Format::Md) => {
+            let source = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                bytes
+            };
             let read = jubarte::markdown::docx_to_markdown(
-                &bytes,
+                &source,
                 &jubarte::markdown::MarkdownOptions {
                     track_changes: markdown.track_changes.into(),
                     extract_media: None,
@@ -3610,7 +3725,7 @@ fn run_convert_any(
                 read.markdown
             } else {
                 paginated(
-                    &bytes,
+                    &source,
                     &read.markdown,
                     markdown.track_changes,
                     job.options.revisions,
@@ -3622,21 +3737,25 @@ fn run_convert_any(
             }
         }
         (Format::Docx, Format::Docx) => {
-            let resolve = match markdown.track_changes {
-                TrackChanges::Accept => {
-                    Some(jubarte::document_comparer::accept_revisions as Resolve)
-                }
-                TrackChanges::Reject => {
-                    Some(jubarte::document_comparer::reject_revisions as Resolve)
-                }
-                // The `.doc` read as it is, or the fields refreshed.
-                TrackChanges::All if legacy || update_fields => None,
-                TrackChanges::All => {
-                    return Err(format!(
-                        "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
-                        job.file.display()
-                    )
-                    .into());
+            let resolve: Option<Resolve> = if keep_resolver.is_some() {
+                None
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::Accept => {
+                        Some(jubarte::document_comparer::accept_revisions as Resolve)
+                    }
+                    TrackChanges::Reject => {
+                        Some(jubarte::document_comparer::reject_revisions as Resolve)
+                    }
+                    // The `.doc` read as it is, or the fields refreshed.
+                    TrackChanges::All if legacy || update_fields => None,
+                    TrackChanges::All => {
+                        return Err(format!(
+                            "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
+                            job.file.display()
+                        )
+                        .into());
+                    }
                 }
             };
             let path = match job.output {
@@ -3650,11 +3769,23 @@ fn run_convert_any(
             }
             ensure_writable(&path, job.force)?;
             let before = (!job.quiet).then(|| confirmation_view(job.file, &bytes));
-            let out = match resolve {
-                Some(resolve) => resolve(&bytes).map_err(|e| {
-                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                })?,
-                None => bytes,
+            let out = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                match resolve {
+                    Some(resolve) => resolve(&bytes).map_err(|e| {
+                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                    })?,
+                    None => bytes,
+                }
             };
             if update_fields {
                 let (updated, report_json) = refresh_fields(&out)?;
@@ -3684,11 +3815,12 @@ fn run_convert_any(
                 if let Some(before) = before {
                     print_success(job.file, before, &path, docx)?;
                 }
-                return Ok(());
+                Ok(())
+            } else {
+                at(Format::Docx, &path, Some(Produced::Docx(&out)))
             }
-            at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
-        (Format::Md, Format::Md) => {
+        (Format::Md, Format::Md) if keep_resolver.is_none() => {
             let text = markdown_text(job.file, bytes)?;
             let out = if markdown.no_critic {
                 text
@@ -3700,7 +3832,7 @@ fn run_convert_any(
                 None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
-        (Format::Md, Format::Docx | Format::Pdf | Format::Png | Format::Json) => {
+        (Format::Md, _) => {
             let text = markdown_text(job.file, bytes)?;
             let reference = markdown
                 .reference_doc
@@ -3722,7 +3854,15 @@ fn run_convert_any(
             let options = jubarte::markdown::DocxOptions {
                 reference: reference.as_deref(),
                 critic: !markdown.no_critic,
-                track_changes: markdown.track_changes.into(),
+                // --keep-nested-comment: write tracked changes first, then
+                // resolve through the keeper so the rescue sees the
+                // rejected ranges; without the flag, resolve at write
+                // time the way the markdown engine usually does.
+                track_changes: if keep_resolver.is_some() {
+                    jubarte::markdown::TrackChanges::All
+                } else {
+                    markdown.track_changes.into()
+                },
                 author: markdown
                     .author
                     .clone()
@@ -3747,16 +3887,54 @@ fn run_convert_any(
             for warning in &written.warnings {
                 eprintln!("warning: {}", image_warning_reason(warning, &refusals));
             }
-            if matches!(to, Format::Pdf | Format::Png) {
-                return pdf_job(Some(&written.docx), to);
+            // --keep-nested-comment: resolve the freshly built DOCX
+            // through the keeper; rerender to text only when the output is
+            // .md (a path), so the .md file does not contain DOCX bytes.
+            let docx = if let Some(resolve) = keep_resolver {
+                let r = resolve(&written.docx)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &written.docx,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                written.docx
+            };
+            // --keep-nested-comment on Markdown output: the .md file holds
+            // the agent view of the settled document, not the DOCX package.
+            if to == Format::Md {
+                let view = jubarte::markdown::read(
+                    &docx,
+                    &jubarte::markdown::ReadOptions {
+                        page_markers: !markdown.no_page_markers,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| format!("convert failed: {e}"))?;
+                match job.output {
+                    Some(path) => at(Format::Md, path, Some(Produced::Text(&view.markdown))),
+                    None => write_stdout(&view.markdown).map_err(ConvertFailure::from),
+                }
+            } else if matches!(to, Format::Pdf | Format::Png) {
+                pdf_job(Some(&docx), to)
+            } else {
+                let path = output_at(to);
+                at(to, &path, Some(Produced::Docx(&docx)))
             }
-            let path = output_at(to);
-            at(to, &path, Some(Produced::Docx(&written.docx)))
         }
         (Format::Pdf | Format::Png | Format::Json, _) => {
             Err(format!("{}: PDF, PNG and JSON are not inputs", job.file.display()).into())
         }
+    };
+    if result.is_ok() {
+        for note in &keep_receipts {
+            eprintln!("note: {note}");
+        }
     }
+    result
 }
 
 /// `jubarte debug`'s report options: the checks asked for, else the
@@ -4022,6 +4200,7 @@ fn cli_main() -> ExitCode {
             file,
             output,
             force,
+            keep_nested_comment,
             selection,
             render,
         }) => {
@@ -4029,18 +4208,18 @@ fn cli_main() -> ExitCode {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
-            return run_resolution(
-                &file,
-                &out,
-                &selection.filter(),
-                jubarte::changes::accept_changes_with_report,
-                "accept",
-            );
+            let apply = if keep_nested_comment {
+                jubarte::changes::accept_changes_keeping_comments
+            } else {
+                jubarte::changes::accept_changes_with_report
+            };
+            return run_resolution(&file, &out, &selection.filter(), apply, "accept");
         }
         Some(Command::Reject {
             file,
             output,
             force,
+            keep_nested_comment,
             selection,
             render,
         }) => {
@@ -4048,13 +4227,12 @@ fn cli_main() -> ExitCode {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
-            return run_resolution(
-                &file,
-                &out,
-                &selection.filter(),
-                jubarte::changes::reject_changes_with_report,
-                "reject",
-            );
+            let apply = if keep_nested_comment {
+                jubarte::changes::reject_changes_keeping_comments
+            } else {
+                jubarte::changes::reject_changes_with_report
+            };
+            return run_resolution(&file, &out, &selection.filter(), apply, "reject");
         }
         Some(Command::Convert {
             file,
@@ -4985,6 +5163,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
@@ -5048,6 +5227,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
