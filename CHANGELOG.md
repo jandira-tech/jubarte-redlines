@@ -117,6 +117,29 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Resolved Markdown verifies against the md→docx reader** (#1240).
+  Resolving CriticMarkup splices the kept side of every mark back into
+  the source and lets Markdown re-read it, and the splice is not
+  compositional under CommonMark's delimiter rules: a kept `_b_`
+  inside `*a…c*` read as literal underscores, `*a{++*b*++}c*` read as
+  a bare `b`, `***a*b*c***` read as italic plus a stray `**`, so the
+  md→md route and the docx route (`convert --to md --track-changes
+  accept|reject`) disagreed for a seam inside a formatted span.
+  Resolve now verifies every inline block holding a mark against the
+  md→docx reader's own run model. A candidate that already reads like
+  the model stays byte-identical; one that does not has the smallest
+  inline span holding the mark re-emitted from the model as a
+  common-format interval tree (`**a*b*c**`), the user's delimiter
+  flavour first and the writer's second, every try verified before the
+  next, and the block's whole inline content is the last resort with
+  its block syntax kept. Where the reader's model is not a truth —
+  a comment or a highlight inside a change, a mark holding a line
+  break, a change named as nested inside another
+  (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`), an anchor the model cannot
+  tie to its change, or a malformed delimiter — the splice is kept, as
+  before. A partial overlap between two seam joins no longer splices
+  both, which used to panic on a byte index past the text.
+
 - **Text goes into an empty paragraph (#1263).** `edit FILE -p p9
   --content "text"`, an `insert` at `position` `start` or `end`, and a
   `rewrite` (in a first-version `--plan` and in `edit apply`) were refused
