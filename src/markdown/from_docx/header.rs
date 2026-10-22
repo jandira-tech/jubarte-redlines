@@ -1721,7 +1721,7 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
     super::agent::paragraphs(root)
 }
 
-/// How [`story_text`] reads a header or footer's tracked changes.
+/// How `story_text` reads a header or footer's tracked changes.
 #[derive(Clone, Copy)]
 pub(crate) enum StoryView<'a> {
     /// The agent's tracked view, with the handles and the part's stem:
@@ -1749,7 +1749,7 @@ fn story_text(p: &Element, view: StoryView) -> String {
     story_text_with(p, view, &mut |_, _| None)
 }
 
-/// [`story_text`], calling `draw` for each `w:drawing`, `w:pict`, `w:object`
+/// `story_text`, calling `draw` for each `w:drawing`, `w:pict`, `w:object`
 /// and drawing-holding `mc:AlternateContent` element: its Markdown (`None`
 /// prints nothing). The `bool` says the element is run content, spliced
 /// inside a `w:r` (`true`) or where a `w:r` may sit (`false`, a

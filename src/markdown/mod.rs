@@ -31,7 +31,7 @@
 //!
 //! Backs `jubarte convert FILE.md`, `jubarte convert FILE.docx -t md`,
 //! `jubarte read`, the redline task's Markdown side
-//! ([`crate::markdown::RedlineOptions`], [`crate::markdown::redline`]) and
+//! ([`crate::markdown::RedlineOptions`], [`crate::markdown::redline()`]) and
 //! the patch task ([`crate::markdown::Patch`]), plus the Python and WASM
 //! bindings over them.
 

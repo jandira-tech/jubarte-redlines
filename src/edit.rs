@@ -67,7 +67,6 @@ pub(crate) mod comment_settlement;
 #[cfg(feature = "cli")]
 /// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
 pub mod inline;
-/// Source-bound PlanV2 text-and-review requests and exact logical text codec.
 pub mod v2;
 use comment_settlement::AnchorChanges;
 pub use comment_settlement::{KeptComment, RemovedComment};

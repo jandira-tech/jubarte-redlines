@@ -43,7 +43,7 @@ pub(crate) fn open_archive<R: Read + Seek + Clone>(reader: R) -> ZipResult<ZipAr
     open_archive_within(reader, true)
 }
 
-/// [`open_archive`] without the duplicate-part refusal: [`PartFs`] refuses
+/// [`open_archive`] without the duplicate-part refusal: [`crate::opc::PartFs`] refuses
 /// the same identity itself, with the typed `OpcError::DuplicatePartName`
 /// its callers match on (ZIP-15/#600); every other defect still refuses
 /// here.

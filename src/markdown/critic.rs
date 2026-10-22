@@ -5,7 +5,7 @@
 //! CriticMarkup delimiters in Markdown source.
 //!
 //! CriticMarkup (<https://criticmarkup.com>) is read before the Markdown, as
-//! its specification asks: [`encode`] swaps the delimiters of every complete
+//! its specification asks: `encode` swaps the delimiters of every complete
 //! span for single stand-in characters, the Markdown parser runs on the
 //! result, and [`Pieces`] splits the parser's text back into text and
 //! delimiters. A change can therefore cross emphasis, links and paragraph
@@ -338,7 +338,7 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
     None
 }
 
-/// [`encode`], plus a warning for every malformed delimiter that comes
+/// `encode`, plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
 pub(crate) fn encode_checked(source: &str) -> (String, Vec<String>) {
@@ -1105,7 +1105,7 @@ struct Check {
     consumed: Vec<usize>,
 }
 
-/// [`encode`], opening only the spans `allowed` names, moving footnote
+/// `encode`, opening only the spans `allowed` names, moving footnote
 /// labels out of spans only when `labels`, and noting malformed
 /// delimiters in `check`.
 fn encode_spans_checked(source: &str, allowed: Allowed, labels: bool, check: &mut Check) -> String {
@@ -1122,7 +1122,7 @@ fn encode_spans_checked(source: &str, allowed: Allowed, labels: bool, check: &mu
     out
 }
 
-/// [`encode`], opening only the spans `allowed` names, and moving footnote
+/// `encode`, opening only the spans `allowed` names, and moving footnote
 /// labels out of spans only when `labels`.
 fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
     encode_spans_checked(source, allowed, labels, &mut Check::default())
@@ -1822,7 +1822,7 @@ fn footnote_label(text: &str) -> Option<&str> {
     Some(&text[..2 + close + 2 + spaces])
 }
 
-/// [`encode`] without moving footnote labels: the spans as written, for
+/// `encode` without moving footnote labels: the spans as written, for
 /// reading the markup rather than the Markdown.
 pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
@@ -3171,7 +3171,7 @@ mod tests {
         );
     }
 
-    /// [`encode`] with the closer-search steps it took: the builders in
+    /// `encode` with the closer-search steps it took: the builders in
     /// [`Closers::new`] walk the source once each and every lookup is a
     /// step, so a linear encode stays within a small constant times the
     /// input, while a search that rescans the rest of the text per

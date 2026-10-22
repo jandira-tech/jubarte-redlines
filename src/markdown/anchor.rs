@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Two helpers the agent-view tooling uses to map between the
-//! CriticMarkup-flavoured Markdown [`markdown::read`] prints and the
+//! CriticMarkup-flavoured Markdown [`crate::markdown::read`] prints and the
 //! plain text a paragraph of the source document carries:
 //!
 //! - [`plain_anchor`] drops CriticMarkup marks, block markers and

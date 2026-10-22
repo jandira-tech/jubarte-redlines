@@ -10,7 +10,7 @@
 //! `--changed`/`--by` match S's original revision/comment inventory, and
 //! `--context` neighbours are read-only original-S observations. The
 //! selected decisions (`accept`/`reject`) and the remaining-revision
-//! policy then produce W through the same [`settle`] path apply uses, so
+//! policy then produce W through the same `settle` path apply uses, so
 //! the hashes and readiness a caller sees describe the same basis a plan
 //! would be checked against. Readiness is operation- and range-specific
 //! evidence about the present document, never a promise about an

@@ -605,7 +605,7 @@ fn fill_task_date(task: &mut Command) {
 ///
 /// Canonicalizing on Windows returns a verbatim path (`\\?\C:\…`), which
 /// this spelling would show as `//?/C:/…` — a string that is no path at
-/// all (#1222). [`unverbatimed`] drops that prefix from the components
+/// all (#1222). `unverbatimed` drops that prefix from the components
 /// first, so an agent-facing canonical path spells `C:/…`.
 pub fn slash_path(path: &Path) -> String {
     let path = unverbatimed(path).unwrap_or_else(|| path.to_path_buf());

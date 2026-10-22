@@ -1074,7 +1074,7 @@ fn resolve_for_edit_or_cli(
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none): [`changes_in`] skips it because the view has no ids there.
+/// has none): `changes_in` skips it because the view has no ids there.
 pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();

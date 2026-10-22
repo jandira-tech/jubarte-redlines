@@ -226,7 +226,7 @@ pub(super) struct TrackedParagraphs {
     pub(super) insertion_origins: BTreeMap<String, String>,
 }
 
-/// As [`result_v2`], also returning the tracked primary's paragraph walks
+/// As `result_v2`, also returning the tracked primary's paragraph walks
 /// (see [`TrackedParagraphs`]).
 pub(super) fn result_v2_with_paragraphs(
     tx: &Transaction<'_>,

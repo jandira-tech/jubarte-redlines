@@ -11,8 +11,8 @@
 //! The truth is the md→docx reader's own run model: `*a{++_b_++}c*` is
 //! the italic runs `a`, `b` (inserted) and `c`, which accepting turns
 //! into one italic run `abc`. So for each inline block holding a mark,
-//! the spliced bytes' runs ([`inline_runs`]) are compared with the
-//! source's runs resolved under the decision ([`resolved_runs`]). Equal:
+//! the spliced bytes' runs (`inline_runs`) are compared with the
+//! source's runs resolved under the decision (`resolved_runs`). Equal:
 //! the splice's bytes stay. Different: the smallest inline span holding
 //! the mark — the seam — is re-emitted from the truth as the
 //! common-format interval tree (`**a*b*c**`), the user's delimiter
@@ -97,7 +97,7 @@ pub(crate) fn resolved_runs(markdown: &str, accept: bool) -> Vec<InlineRun> {
     runs_of(&read(markdown, &DocxOptions::default()), Some(accept))
 }
 
-/// [`resolved_runs`] with the document's link definitions appended, so
+/// `resolved_runs` with the document's link definitions appended, so
 /// a fragment's reference links resolve as they do in the document.
 /// `accept` of `None` keeps every change the text still names. `None`
 /// when the read leaves a malformed-delimiter warning: the reader's

@@ -5,10 +5,10 @@
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 //!
 //! The internal pipeline that
-//! [`markdown_to_docx`](super::markdown_to_docx) and the redline task
+//! [`markdown_to_docx`] and the redline task
 //! use to convert one Markdown document to a Word document package.
 //! Backs `jubarte convert FILE.md`, the Markdown side of
-//! [`crate::markdown::redline`], and the Python / WASM
+//! [`crate::markdown::redline()`], and the Python / WASM
 //! `markdown_to_docx` binding.
 
 use std::borrow::Cow;
