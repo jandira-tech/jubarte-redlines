@@ -218,6 +218,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   A framed paragraph now prints paragraph by paragraph with its frame
   (`p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin,
   vAnchor: text, xAlign: right, y: 1}}`), and converting back writes it.
+  A frame naming the same attribute twice does not read, and the story
+  entry with it: an element cannot carry both values, so the view names
+  neither.
 - **A style's zero spacing or single line survives the Markdown legend**
   (#1421). The `styles:` legend left out a `before`/`after` of 0 and a
   single line even when the default style has some, so a heading with no

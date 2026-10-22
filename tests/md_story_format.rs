@@ -437,6 +437,37 @@ fn a_frame_that_does_not_read_drops_the_story_entry() {
     }
 }
 
+/// A frame naming one attribute twice is no frame the writer can state:
+/// which of the two values `w:framePr` keeps is not the view's choice,
+/// so the entry does not read, as an `indent:` that names a side twice.
+#[test]
+fn a_frame_that_names_an_attribute_twice_does_not_read() {
+    let first = view(&with_header(PAGE_FRAME));
+    let printed = "frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}";
+    assert!(first.contains(printed), "{first}");
+    for bad in [
+        "frame: {wrap: none, wrap: around, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}",
+        "frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1, y: 2}",
+    ] {
+        let edited = first.replace(printed, bad);
+        assert_ne!(edited, first, "{first}");
+        let written =
+            markdown_to_docx(&edited, &DocxOptions::default()).expect("the Markdown reads");
+        assert!(
+            written
+                .warnings
+                .iter()
+                .any(|w| w.contains("front matter headers: default does not read")),
+            "{bad}: {:?}",
+            written.warnings
+        );
+        assert!(
+            part_string(&written.docx, "word/header1.xml").is_none(),
+            "{bad}: a dropped story writes no header"
+        );
+    }
+}
+
 /// A frame the schema does not allow is no frame the writer writes: the
 /// story entry does not read, as a border that does not read (#526).
 #[test]
