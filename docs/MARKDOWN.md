@@ -1361,8 +1361,8 @@ ends with `--force`.
   lengths in twips, in the schema's order. It is the frame the paragraph
   lays out in, its style's under its own, and the writer puts it on the
   paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
-  attribute, or a value the schema does not allow, does not read, and the
-  story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
+  attribute, a value the schema does not allow, or the same attribute
+  twice, does not read, and the story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
   {first-line: 0.25in, right: 0.25in}` right after the alignment
   (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
   the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's

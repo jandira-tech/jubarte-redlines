@@ -107,19 +107,26 @@ impl ParaFormat {
             None => None,
         };
         // A frame names only the schema's attributes, with values it
-        // allows: anything else would be a `w:framePr` Word refuses.
+        // allows: anything else would be a `w:framePr` Word refuses. The
+        // same attribute twice is no frame either: an element cannot
+        // carry both values, so which one the writer keeps is not the
+        // view's to leave open (#526).
         let frame = match entries.iter().find(|(k, _)| k == "frame") {
-            Some((_, Value::Map(items))) => Some(
-                items
-                    .iter()
-                    .map(|(name, value)| match value {
-                        Value::Text(value) if super::frames::valid(name, value) => {
-                            Some((name.clone(), value.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            Some((_, Value::Map(items))) => {
+                let mut frame: Vec<(String, String)> = Vec::with_capacity(items.len());
+                for (name, value) in items {
+                    let Value::Text(value) = value else {
+                        return None;
+                    };
+                    if !super::frames::valid(name, value)
+                        || frame.iter().any(|(seen, _)| seen == name)
+                    {
+                        return None;
+                    }
+                    frame.push((name.clone(), value.clone()));
+                }
+                Some(frame)
+            }
             Some(_) => return None,
             None => None,
         };
