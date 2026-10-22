@@ -342,7 +342,7 @@ def python_surface(root: Path = ROOT) -> list[str]:
         elif isinstance(node, ast.AugAssign) and getattr(node.target, "id", "") == "__all__":
             target = node.value
         if isinstance(target, (ast.List, ast.Tuple)):
-            exported += [e.value for e in target.elts if isinstance(e, ast.Constant)]
+            exported += [e.value for e in target.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
     # Functions only (lower case); classes are documented through their use.
     names += [n for n in exported if n[:1].islower() and not n.startswith("_")]
     return sorted(set(names))

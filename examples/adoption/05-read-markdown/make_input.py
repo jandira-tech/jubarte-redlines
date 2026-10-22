@@ -126,7 +126,7 @@ def build() -> None:
     doc.add_paragraph("Signed for the Company: ______________________", style="Normal")
     doc.add_paragraph("Signed for the Client:  ______________________", style="Normal")
 
-    doc.save(OUT)
+    doc.save(str(OUT))
 
 
 def inject_footnote() -> None:

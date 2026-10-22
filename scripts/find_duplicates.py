@@ -83,7 +83,7 @@ for (a, b) in cand.keys():
     A, B = sh[a], sh[b]
     if min(len(A), len(B)) < 25: continue
     j = len(A & B) / len(A | B)
-    if j >= 0.80 and byid[a]["file"] + str(byid[a]["line"]) != byid[b]["file"] + str(byid[b]["line"]):
+    if j >= 0.80 and f'{byid[a]["file"]}{byid[a]["line"]}' != f'{byid[b]["file"]}{byid[b]["line"]}':
         near.append((j, a, b))
 near.sort(reverse=True)
 

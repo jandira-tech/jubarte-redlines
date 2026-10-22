@@ -455,9 +455,9 @@ def _input(args: argparse.Namespace, *, notice: bool = True) -> bytes:
 
     docx = _read(args.file).to_bytes()
     if notice and not getattr(args, "quiet", False):
-        notice = _native.input_notice(docx, _spelled(args, "file"))
-        if notice is not None:
-            print(notice, file=sys.stderr)
+        message = _native.input_notice(docx, _spelled(args, "file"))
+        if message is not None:
+            print(message, file=sys.stderr)
     return docx
 
 

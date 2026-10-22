@@ -240,7 +240,7 @@ def compare_to_baseline(
     )
 
 
-def _pct(value: object) -> float:
+def _pct(value: float | str | None) -> float:
     if value is None:
         return 0.0
     number = float(value)

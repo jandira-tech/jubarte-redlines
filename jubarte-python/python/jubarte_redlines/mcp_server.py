@@ -211,9 +211,9 @@ def build_server(*, root: Path) -> MCPServer:
                 files.append((out / "redline.pdf", rendered.pdf))
                 written["pdf"] = str(out / "redline.pdf")
             for i, png in enumerate(rendered.pngs, start=1):
-                path = out / f"redline-page-{i:02d}.png"
-                files.append((path, png))
-                written["pages"].append(str(path))
+                page = out / f"redline-page-{i:02d}.png"
+                files.append((page, png))
+                written["pages"].append(str(page))
         publish(files, overwrite)
         return written
 

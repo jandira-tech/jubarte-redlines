@@ -9,6 +9,7 @@ Writes per-kind manifests, one per-file function manifest, and symbols.json.
 No type information is available, so call resolution is name based and every
 resolved edge carries a confidence tag (exact / by-name / ambiguous / external).
 """
+from typing import Any
 import json, re, sys
 from collections import defaultdict
 from pathlib import Path
@@ -140,6 +141,27 @@ class Item:
         "trait",
         "vis",
     )
+    # Every slot is set in __init__, None when the caller leaves it out.
+    attrs: Any
+    calls: Any
+    doc: Any
+    docsrc: Any
+    end: Any
+    env: Any
+    file: Any
+    has_body: Any
+    id: Any
+    impl_type: Any
+    is_test: Any
+    kind: Any
+    line: Any
+    modpath: Any
+    name: Any
+    parent: Any
+    qual: Any
+    sig: Any
+    trait: Any
+    vis: Any
     def __init__(self, **kw):
         for k in self.__slots__: setattr(self, k, kw.get(k))
 

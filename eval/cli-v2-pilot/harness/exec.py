@@ -132,7 +132,9 @@ def parse_claim(stdout_text: str) -> tuple[ClaimObservation | None, str]:
     if not matches:
         return None, stdout_text
     last = matches[-1]
-    return ClaimObservation(raw=last.group(0).strip(), value=last.group(1)), stdout_text
+    # CLAIM_RE matches only the three values; pydantic checks it again.
+    value = last.group(1)  # pyrefly: ignore[bad-assignment]
+    return ClaimObservation(raw=last.group(0).strip(), value=value), stdout_text  # pyrefly: ignore[bad-argument-type]
 
 
 def scan_artifact(declared: Path) -> tuple[bool, str | None, int | None]:
