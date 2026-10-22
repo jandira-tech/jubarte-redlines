@@ -57,11 +57,9 @@ class Timeout(unittest.TestCase):
             raise RuntimeError("timed out after 120s: jubarte read x.docx")
 
         pairs = [(f"r{n}", "x.docx") for n in range(40)]
-        with (
-            tempfile.TemporaryDirectory() as scratch,
-            unittest.mock.patch.object(cli_locations, "verdict", hang),
-            unittest.mock.patch.object(cli_locations, "change_ids", lambda *_: []),
-        ):
+        with tempfile.TemporaryDirectory() as scratch, unittest.mock.patch.object(
+            cli_locations, "verdict", hang
+        ), unittest.mock.patch.object(cli_locations, "change_ids", lambda *_: []):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 cli_locations.probe_table(Path("jubarte"), pairs, Path(scratch), "t")
         jobs = 4 * len(pairs)

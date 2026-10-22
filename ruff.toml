@@ -10,6 +10,9 @@ line-length = 119
 # Preview rules change between releases; 0.17 is the first whose preview
 # set this config was checked against (CI installs the latest ruff).
 required-version = ">=0.17"
+# The release gates run scripts/ on the self-hosted runner's Python 3.8: no
+# parenthesised `with`, no itertools.pairwise, no match (release checklist).
+per-file-target-version = { "scripts/**" = "py38" }
 
 [lint]
 preview = true

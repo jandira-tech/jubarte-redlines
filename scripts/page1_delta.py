@@ -21,7 +21,6 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-import itertools
 
 
 @dataclass(frozen=True)
@@ -52,7 +51,7 @@ def band_pitch(mask: list[bool]) -> float | None:
     starts = _band_starts(mask)
     if len(starts) < 3:
         return None
-    gaps = [b - a for a, b in itertools.pairwise(starts)]
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
     return float(statistics.median(gaps))
 
 
