@@ -394,8 +394,10 @@ fn md_roundtrip_sample_matches_docx_route_after_resolve() {
 #[test]
 fn many_lines_with_one_changed_word_each_pair_them_by_position() {
     // Many lines, each with one word change. Should NOT use reflow (positions differ).
-    let old = "first row alpha\nsecond row beta\nthird row gamma\nfourth row delta\nfifth row epsilon";
-    let new = "first row ALPHA\nsecond row beta\nthird row GAMMA\nfourth row delta\nfifth row epsilon";
+    let old =
+        "first row alpha\nsecond row beta\nthird row gamma\nfourth row delta\nfifth row epsilon";
+    let new =
+        "first row ALPHA\nsecond row beta\nthird row GAMMA\nfourth row delta\nfifth row epsilon";
     let diff = diff_markdown(old, new);
     let acc = resolve_critic(&diff, TrackChanges::Accept);
     assert_eq!(acc, new, "accept mismatch:\n  diff {diff:?}\n  acc {acc:?}");
@@ -450,7 +452,11 @@ fn at_exactly_4_000_000_pair_bound_round_trips() {
         .collect();
     let start = Instant::now();
     let diff = diff_markdown(&old, &new);
-    eprintln!("k=m=2000 diff took {:?}, len = {}", start.elapsed(), diff.len());
+    eprintln!(
+        "k=m=2000 diff took {:?}, len = {}",
+        start.elapsed(),
+        diff.len()
+    );
     let acc = resolve_critic(&diff, TrackChanges::Accept);
     let rej = resolve_critic(&diff, TrackChanges::Reject);
     assert_eq!(acc, new, "accept mismatch (k=m=2000)");
@@ -504,12 +510,10 @@ fn many_paragraphs_with_one_word_change_each_round_trip() {
     };
     for &width in &[20usize, 24, 40] {
         for copies in [1usize, 5, 20, 100] {
-            let old_paras = std::iter::repeat(wrap(base, width))
-                .take(copies)
+            let old_paras = std::iter::repeat_n(wrap(base, width), copies)
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            let new_paras = std::iter::repeat(wrap(&added, width))
-                .take(copies)
+            let new_paras = std::iter::repeat_n(wrap(&added, width), copies)
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let start = Instant::now();
