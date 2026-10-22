@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Release
+
+- **Registries publish from CI with OIDC trusted publishing** (#1642). `release.yml` publishes crates.io (`rust-lang/crates-io-auth-action`, self-hosted runners), PyPI (`uv publish --trusted-publishing always`, the seven CI wheels plus one shared sdist, self-hosted runners) and npm (`jubarte-wasm`, then `jubarte-redlines`, on a GitHub-hosted runner because npm refuses self-hosted ones). No registry token exists. `scripts/release.sh` steps 9–11 wait for those jobs, and `--local-publish` keeps the old token path as the fallback.
+
 ### Breaking
 
 - **Markdown images stay inside their folder** (#617). `convert`, `compare` and `diff` read an image only when its decoded path resolves, symlinks followed, inside the Markdown file's folder or the `--resource-path` root. An absolute path, a `..` walk, a symlink out or a percent-encoded scheme (`file%3A…`, `DATA%3A…`) now becomes the image's alt text, and each alt-text warning names its reason (`outside the resource root`, `a URL scheme`, `not found`). Pass `--resource-path DIR` to trust another root.
