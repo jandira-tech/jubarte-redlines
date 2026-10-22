@@ -877,6 +877,31 @@ fn every_failed_flag_operation_uses_flags() {
     }
 }
 
+/// A rewrite's insertion that first touches another author's move and
+/// then lands on the run after it was not refused by that move: a later
+/// range's refusal in the same rewrite carries no revision data from it
+/// (#1308 review).
+#[test]
+fn a_retried_insertion_leaves_no_revision_data_on_a_later_refusal() {
+    let body = format!(
+        r#"<w:p><w:moveTo w:id="8" w:author="Bob" w:date="{DATE}"><w:r><w:t>a,</w:t></w:r></w:moveTo><w:r><w:t>b;</w:t></w:r><w:hyperlink w:anchor="dest"><w:r><w:t>c</w:t></w:r></w:hyperlink></w:p>"#
+    );
+    let source = docx(&body);
+    let plan = json!({"schema_version":1,"source_sha256":source_sha256(&source),"author":"Carol Diaz","date":DATE,"existing_revisions":"keep","operations":[{"kind":"rewrite","paragraph":{"index":0},"text":"a,x b;d"}]});
+    let e = apply_plan(&source, &EditPlan::from_json(&plan.to_string()).unwrap()).unwrap_err();
+    let error = serde_json::to_value(&e).unwrap();
+    assert!(
+        error["message"].as_str().unwrap().contains(HYPERLINK),
+        "the later range is refused for the link: {error}"
+    );
+    assert!(
+        error
+            .get("revision_refusals")
+            .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty)),
+        "no revision refused this rewrite: {error}"
+    );
+}
+
 #[test]
 fn structured_engine_error_retains_the_real_revision_pair() {
     let c = case("range_move");
