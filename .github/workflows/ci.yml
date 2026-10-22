@@ -102,7 +102,7 @@ jobs:
       # Every failing test, not just the first binary's (the `ci` profile
       # does not fail fast), with JUnit XML for Codecov's test results.
       # The strict Markdown round trip is red until the reader work lands
-      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # (spec 2026-10-13 §5.4); the `roundtrip` job below is its gate, so this job
       # keeps reporting every other test.
       - run: cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
@@ -190,7 +190,7 @@ jobs:
       # check of the library skips. One Linux run on the declared
       # `rust-version` (Cargo.toml) beside the three stable runs above.
       # The strict Markdown round trip is red until the reader work lands
-      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # (spec 2026-10-13 §5.4); the `roundtrip` job below is its gate, so this job
       # keeps reporting every other test.
       - run: cargo nextest run --all-features --no-fail-fast -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
@@ -268,18 +268,6 @@ jobs:
       - uses: ./.github/actions/mbx
       - run: cargo publish --dry-run
 
-  deny:
-    name: cargo-deny + REUSE
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-      # Per-file SPDX licensing/provenance (REUSE.toml, LICENSES/).
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
-        if: ${{ !cancelled() }}
-
   python:
     name: python bindings
     runs-on: self-hosted
@@ -346,3 +334,21 @@ jobs:
         with:
           node-version: "24"
       - run: node --test jubarte-wasm/cli/test/*.test.mjs
+
+  # Strict: every Markdown fixture in our dialect (tests/fixtures/md-roundtrip/*.md)
+  # must come back exactly after md -> docx -> md, and every docx listed in
+  # tests/fixtures/md-roundtrip/docx.txt must print the same Markdown after
+  # docx -> md -> docx -> md (tests/md_fixed_point.rs). There is no list of
+  # known failures: the job fails until the round trip is exact
+  # (docs/superpowers/specs/2026-10-13-ids-and-markdown-roundtrip.md §0).
+  roundtrip:
+    name: md -> docx -> md, exact
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: ./.github/actions/mbx
+      - run: cargo test --all-features --test md_fixed_point

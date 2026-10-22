@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 name: Security
+
+# Supply chain and secrets: cargo-deny over every manifest (advisories, nightly
+# too, so a new advisory surfaces without a commit), the full cargo-deny check
+# and REUSE on the root crate, and gitleaks over history and the tree.
 on:
   push:
     branches: [main]
@@ -38,3 +42,15 @@ jobs:
           cache: false
       - run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
       - run: bash scripts/security-check.sh
+
+  deny:
+    name: cargo-deny + REUSE
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # Per-file SPDX licensing/provenance (REUSE.toml, LICENSES/).
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+        if: ${{ !cancelled() }}

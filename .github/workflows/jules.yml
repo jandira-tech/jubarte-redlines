@@ -2,17 +2,23 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# 🐇🥕 Jules, el conejo: multi-stage PR review. It runs the static analysis this
-# repository already trusts (cargo clippy, cargo deny, ruff, shellcheck), posts
-# one report comment on the PR, and asks Jules to open a companion PR that fixes
-# what it found. Adapted from arthrod/jules-el-conejo examples/pr-reviewer.yml;
-# the review skills live in skills/jules-el-conejo/.
-name: Jules, el conejo PR review
+# Jules on every pull request, two jobs:
+#
+# - `review` — the line-by-line LLM review (audited fork of
+#   thalesraymond/jules-pr-reviewer, pinned by commit; audit and rollout:
+#   https://github.com/arthrod/jules-pr-reviewer/issues/1). It reads
+#   .github/jules-review-rules.md: correctness and Word fidelity, security,
+#   performance and improvements, best practices and tests, syntax and style.
+# - `conejo` — 🐇🥕 Jules, el conejo: lint, syntax, security and workflow
+#   checks over the changed files, one report comment kept current, and a
+#   companion fix PR from Jules. Adapted from arthrod/jules-el-conejo
+#   examples/pr-reviewer.yml; its skills live in skills/jules-el-conejo/.
+name: Jules review
 
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
-  # 🥕 Force a review of any open PR: gh workflow run jules-el-conejo-review.yml -f pr_number=123
+  # 🥕 Force el conejo on any open PR: gh workflow run jules.yml -f pr_number=123
   workflow_dispatch:
     inputs:
       pr_number:
@@ -20,16 +26,69 @@ on:
         required: true
         type: string
 
-# No default token permissions; the job asks only for what it uses.
+# No default token permissions; each job asks only for what it uses.
 permissions: {}
-
-concurrency:
-  group: jules-el-conejo-review-${{ github.event.pull_request.number || inputs.pr_number }}
-  # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
-  cancel-in-progress: false
 
 jobs:
   review:
+    # Fork and Dependabot PRs get no repository secrets, so there is no key to run with.
+    # A label is not new code: the line review runs on code events only.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    # GitHub-hosted by default. To use a self-hosted runner (e.g. Coolify), set a repo
+    # variable: gh variable set JULES_RUNNER -R <owner/repo> -b self-hosted
+    # The runner must be recent enough to run node24 actions.
+    runs-on: ${{ vars.JULES_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    concurrency:
+      group: jules-review-${{ github.event.pull_request.number }}
+      # Queue instead of cancel: a cancelled run still spends the Jules session it started.
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      # No checkout: the action reads the diff and rules through the GitHub API,
+      # so no token is persisted to disk in the workspace.
+      - name: Jules review
+        uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Jules checks out the PR branch itself and reviews the full base...head diff with repo context.
+          diff_mode: agentic
+          strictness: assertive
+          min_severity_to_report: info
+          enable_suggestions: "true"
+          dedupe: "true"
+          skip_drafts: "false"
+          timeout_minutes: "45"
+          fail_on: never
+          # An LLM verdict must never count as a human approval.
+          enable_approve: "false"
+          # Correctness, security, performance, best practices and syntax,
+          # with this repository's own rules (Word parity first).
+          rules_file: .github/jules-review-rules.md
+          extra_instructions: |
+            Be exhaustive. Check every changed hunk for: correctness and edge cases; security
+            (secrets in code or logs, injection, authz, unsafe deserialization, SSRF, path traversal);
+            error handling and resource cleanup; concurrency and async misuse; performance regressions;
+            missing or weakened tests for changed behaviour; breaking API or schema changes; docs that
+            no longer match the code. Prefer concrete file:line findings with a fix over general advice.
+            This is a DOCX engine whose first target is Microsoft Word parity (AGENTS.md): never ask
+            jubarte to refuse, strip or rewrite an input that Word opens. ZIP part names are OPC URIs
+            read in memory and never written to disk, so file-system rules (Windows reserved names,
+            path length) do not apply to them. Do not report findings in code the PR does not change.
+          ignored_paths: >-
+            ["**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/bun.lock",
+            "**/bun.lockb", "**/uv.lock", "**/poetry.lock", "**/Cargo.lock", "**/*.min.js",
+            "**/*.map", "dist/**", "build/**", ".next/**", "node_modules/**"]
+
+  conejo:
     name: Static analysis, review report & companion fix PR
     # 🥕 Fork and Dependabot PRs get no secrets; drafts and WIP titles wait. 🐇
     if: >-
@@ -43,6 +102,10 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency:
+      group: jules-el-conejo-${{ github.event.pull_request.number || inputs.pr_number }}
+      # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write

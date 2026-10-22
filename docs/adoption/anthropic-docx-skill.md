@@ -92,7 +92,7 @@ cd ../comment-thread && cat README.md
 Every row above has a side-by-side folder in
 [`examples/adoption/`](../../examples/adoption/) (the replaced tool's output
 next to jubarte's) and a test in `tests/adoption.rs`;
-`.github/workflows/adoption.yml` runs both.
+`.github/workflows/docs.yml` runs both.
 
 What we found ourselves, stated plainly: on 2026-10-02, LibreOffice 24.2.7
 and `jubarte accept` agreed on all seven spacer-paragraph cases. The case
