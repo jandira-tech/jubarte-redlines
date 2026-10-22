@@ -666,7 +666,8 @@ converting back puts a part's `fmt` changes on its separator, then its
 continuation separator (the view does not say which a lone one was on;
 its tag, author and date come back). The clause also updates a reference
 file's separators; removing it removes their old formatting-change marks.
-A `fmt` clause alone creates the notes part it names. A
+A `fmt` clause alone creates the notes part it names. A `rev:` there
+(an insertion or deletion in a separator) is not written, and says so. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
