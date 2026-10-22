@@ -1508,11 +1508,7 @@ pub(super) fn story(
                         (
                             formats.cells.get(&at).cloned(),
                             formats.cell_marks.get(&at).cloned(),
-                            formats
-                                .cell_borders
-                                .iter()
-                                .find(|(cells, _)| cells.holds(at.0, at.1))
-                                .map(|(_, sides)| super::borders::xml(sides)),
+                            cell_borders_at(&formats.cell_borders, at),
                         )
                     })
                     .unwrap_or_default();
@@ -2941,6 +2937,26 @@ fn legacy_date_attribute(date: &str) -> String {
     } else {
         format!(" w:date=\"{}\"", escape(&word_date(date)))
     }
+}
+
+/// The borders of the cell at `at`: every `cell-borders` group that holds
+/// it, a side a later group names replacing the earlier one's
+/// (`… in all; left none in t0.row1`).
+fn cell_borders_at(
+    groups: &[(super::view_notes::CellsAt, super::borders::Sides)],
+    at: (usize, usize),
+) -> Option<String> {
+    let mut found: Vec<_> = groups
+        .iter()
+        .filter(|(cells, _)| cells.holds(at.0, at.1))
+        .flat_map(|(_, sides)| sides.iter().cloned())
+        .collect();
+    if found.is_empty() {
+        return None;
+    }
+    found.reverse();
+    let sides = super::borders::ordered(&found, &super::borders::CELL_SIDES);
+    Some(super::borders::xml(&sides))
 }
 
 #[cfg(test)]
