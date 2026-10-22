@@ -47829,6 +47829,8 @@ mod coverage_boundary_tests {
         style.line_mult = 0.0;
         assert_eq!(line_box_from_natural(12.0, &style), 12.0);
         assert_eq!(grid_line_box(12.0, &style, 18.0), 18.0);
+        // No multiple set: a face over one grid line takes the lines it needs.
+        assert_eq!(grid_line_box(20.0, &style, 18.0), 36.0);
         style.line_exact = Some(4.0);
         assert_eq!(line_fit_need(12.0, 8.0, &style, 4.0), 4.0);
         assert_eq!(para_grid_pitch(&style, 18.0), 0.0);
