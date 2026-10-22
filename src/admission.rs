@@ -752,11 +752,24 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
         return refuse("backslash or NUL");
     }
     let segments = name.strip_suffix('/').unwrap_or(name);
-    if segments
-        .split('/')
-        .any(|s| s.is_empty() || s == "." || s == "..")
-    {
-        return refuse("empty, . or .. segment");
+    for part in segments.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return refuse("empty, . or .. segment");
+        }
+        let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+        if matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        ) || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|n| {
+                matches!(
+                    n,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        }) {
+            return refuse("Windows reserved filename");
+        }
     }
     Ok(())
 }
@@ -1610,6 +1623,10 @@ mod tests {
             "word\\x.xml",
             "word//x.xml",
             "word/./x.xml",
+            "CON.xml",
+            "word/AUX.xml",
+            "word/media/COM1",
+            "word/LPT¹.xml",
         ] {
             let bytes = docx_with(&[(name, b"<x/>")]);
             assert_eq!(
