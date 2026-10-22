@@ -303,17 +303,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The runner's system Python is 3.8; the script tests need newer syntax
-      # (test_release_sh.py's parenthesized `with (…)` needs 3.9+). uv
-      # installs 3.14 and puts its venv first on PATH, so every `python3`
-      # below is 3.14.
+      # Python 3.12 is the scripts' floor, so they are tested on it. The
+      # runner's system Python is older; uv installs 3.12 and puts its venv
+      # first on PATH, so every `python3` below is 3.12.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: "3.14"
+          python-version: "3.12"
           activate-environment: true
           venv-path: ${{ runner.temp }}/scripts-py
-      - name: python3 is 3.14
-        run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
+      - name: python3 is 3.12
+        run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
       - run: uv run --with pyyaml python3 scripts/test_release_workflow.py

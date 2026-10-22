@@ -463,10 +463,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The runner's system Python is 3.8 (see ci.yml's convert-sweep-unit).
+      # Python 3.12, the scripts' floor (see ci.yml's convert-sweep-unit).
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.12"
           activate-environment: true
           venv-path: ${{ runner.temp }}/publish-py
       # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN
