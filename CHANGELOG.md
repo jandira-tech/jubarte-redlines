@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Release
+
+- **Registries publish from CI with OIDC trusted publishing** (#1642). `release.yml` publishes crates.io (`rust-lang/crates-io-auth-action`, self-hosted runners), PyPI (`uv publish --trusted-publishing always`, the seven CI wheels plus one shared sdist, self-hosted runners) and npm (`jubarte-wasm`, then `jubarte-redlines`, on a GitHub-hosted runner because npm refuses self-hosted ones). No registry token exists. `scripts/release.sh` steps 9–11 wait for those jobs, and `--local-publish` keeps the old token path as the fallback.
+
 ### Breaking
 
 - **`replace` keeps what it keeps** (plan 12, #1262). A `replace` with
