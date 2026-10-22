@@ -462,7 +462,7 @@ def drift(old: list[Entry], new: list[Entry]) -> list[tuple[Entry | None, Entry 
     sides: dict = defaultdict(lambda: (set(), set()))
     for i, listing in enumerate((old, new)):
         for e in listing:
-            sides[(e.path, e.kind)][i].add(e)
+            sides[e.path, e.kind][i].add(e)
     pairs: list = []
     for key in sorted(sides):
         was, now = sides[key]

@@ -14,7 +14,6 @@ non-main branch, so a run that gets past argument validation stops at the
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
 import shutil

@@ -70,10 +70,8 @@ def package(name, body, *, sect_refs="", sect_change="", parts=None, rels=None, 
                          '<w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>')
     parts["word/styles.xml"] = STYLES.replace("{extra}", styles_extra)
     parts["word/settings.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:settings {W}>{settings}</w:settings>'
-    rels = [("rIdStyles", f"{REL}/styles", "styles.xml"), ("rIdSettings", f"{REL}/settings", "settings.xml")] + rels
-    types = [("/word/document.xml", f"{CT}.document.main+xml"),
-             ("/word/styles.xml", f"{CT}.styles+xml"),
-             ("/word/settings.xml", f"{CT}.settings+xml")] + types
+    rels = [("rIdStyles", f"{REL}/styles", "styles.xml"), ("rIdSettings", f"{REL}/settings", "settings.xml"), *rels]
+    types = [("/word/document.xml", f"{CT}.document.main+xml"), ("/word/styles.xml", f"{CT}.styles+xml"), ("/word/settings.xml", f"{CT}.settings+xml"), *types]
     package_rels = [("rId1", f"{REL}/officeDocument", "word/document.xml")]
     if core is not None:
         parts["docProps/core.xml"] = (
@@ -96,7 +94,7 @@ def package(name, body, *, sect_refs="", sect_change="", parts=None, rels=None, 
         + "".join(f'<Relationship Id="{i}" Type="{t}" Target="{g}"{" TargetMode=\"External\"" if g.startswith("http") else ""}/>'
                   for i, t, g in rels)
         + "</Relationships>")
-    order = ["[Content_Types].xml", "_rels/.rels"] + sorted(k for k in parts if k not in ("[Content_Types].xml", "_rels/.rels"))
+    order = ["[Content_Types].xml", "_rels/.rels", *sorted(k for k in parts if k not in ("[Content_Types].xml", "_rels/.rels"))]
     with zipfile.ZipFile(HERE / name, "w", zipfile.ZIP_DEFLATED) as z:
         for part in order:
             info = zipfile.ZipInfo(part, date_time=(1980, 1, 1, 0, 0, 0))
@@ -456,7 +454,8 @@ def edge_notes_table():
     sep = '<w:footnote w:type="separator" w:id="-1">' + p('<w:r><w:separator/></w:r>') + '</w:footnote><w:footnote w:type="continuationSeparator" w:id="0">' + p('<w:r><w:continuationSeparator/></w:r>') + '</w:footnote>'
     ppr = '<w:pStyle w:val="FootnoteText"/>'
     grid = '<w:tblGrid><w:gridCol w:w="2400"/><w:gridCol w:w="2400"/></w:tblGrid>'
-    cell = lambda text: '<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>' + p(r(text), ppr=ppr) + '</w:tc>'
+    def cell(text):
+        return '<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr>' + p(r(text), ppr=ppr) + '</w:tc>'
     tbl = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' + grid
            + '<w:tr>' + cell("fn-a") + cell("fn-b") + '</w:tr><w:tr>' + cell("fn-c") + cell("fn-d") + '</w:tr></w:tbl>')
     fn = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:footnotes {W}>{sep}'

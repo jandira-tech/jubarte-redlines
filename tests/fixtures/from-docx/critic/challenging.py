@@ -244,7 +244,8 @@ def formatting(d: Doc) -> list[str]:
 
 
 def tables(d: Doc) -> list[str]:
-    cell = lambda content, extra="": f'<table:table-cell office:value-type="string"{extra}>{content}</table:table-cell>'
+    def cell(content, extra=""):
+        return f'<table:table-cell office:value-type="string"{extra}>{content}</table:table-cell>'
     covered = "<table:covered-table-cell/>"
     span = ' table:number-columns-spanned="2"'
     nested = (

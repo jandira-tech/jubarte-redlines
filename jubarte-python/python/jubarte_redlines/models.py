@@ -1311,9 +1311,7 @@ def _set_occurrence(op: dict[str, object], occurrence: int | None) -> None:
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
-    for key, value in extra.items():
-        if value is not None:
-            op[key] = value
+    op.update({key: value for key, value in extra.items() if value is not None})
     if "id" in op:
         # Keep the id first for readable plans.
         op = {"id": op.pop("id"), **op}

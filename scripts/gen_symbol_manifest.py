@@ -118,8 +118,28 @@ def norm_type(t):
     return t.split("::")[-1].strip()
 
 class Item:
-    __slots__ = ("id", "kind", "name", "qual", "file", "line", "end", "vis", "sig", "doc", "docsrc", "is_test",
-                 "impl_type", "trait", "modpath", "calls", "parent", "attrs", "has_body", "env")
+    __slots__ = (
+        "attrs",
+        "calls",
+        "doc",
+        "docsrc",
+        "end",
+        "env",
+        "file",
+        "has_body",
+        "id",
+        "impl_type",
+        "is_test",
+        "kind",
+        "line",
+        "modpath",
+        "name",
+        "parent",
+        "qual",
+        "sig",
+        "trait",
+        "vis",
+    )
     def __init__(self, **kw):
         for k in self.__slots__: setattr(self, k, kw.get(k))
 
@@ -138,7 +158,7 @@ for p in files:
             if any(a == "#[cfg(test)]" for a in attrs_before(n)):
                 nm = txt(n.child_by_field_name("name"))
                 base = mod_path(p)
-                mod_decl_test.add(base + (nm,))
+                mod_decl_test.add((*base, nm))
 FILE_TEST = {p: any(mod_path(p)[:k] in mod_decl_test for k in range(1, len(mod_path(p)) + 1)) for p in files}
 
 class Walker:
@@ -169,7 +189,7 @@ class Walker:
             tst = test or any(a == "#[cfg(test)]" for a in attrs)
             body = node.child_by_field_name("body")
             self.mk(node, "module", name, mods, impl, tst, None, sig=f"mod {name}", qual=name, has_body=body is not None)
-            if body is not None: self.walk(body, mods + [name], None, None, tst)
+            if body is not None: self.walk(body, [*mods, name], None, None, tst)
             return
         if t == "impl_item":
             ty = type_head(node.child_by_field_name("type"))
@@ -195,7 +215,7 @@ class Walker:
             if impl and impl[1] == "trait-decl": qual = f"{impl[0]}::{name}"
             elif impl and impl[1]: qual = f"<{impl[0]} as {impl[1]}>::{name}"
             elif impl: qual = f"{impl[0]}::{name}"
-            else: qual = "::".join(mods + [name]) if mods else name
+            else: qual = "::".join([*mods, name]) if mods else name
             if fn is not None: qual = f"{fn.qual}::{{fn {name}}}"; kind = "function"
             it = self.mk(node, kind, name, mods, impl if fn is None else None, tst, fn.id if fn else None,
                          sig=signature(node, self.src), qual=qual,
@@ -211,7 +231,7 @@ class Walker:
             name = txt(nm) if nm is not None else ""
             if t == "macro_definition": name = txt(node.child_by_field_name("name"))
             tst = test or any(a.startswith("#[cfg(test)") for a in attrs_before(node))
-            qual = "::".join(mods + [name]) if mods else name
+            qual = "::".join([*mods, name]) if mods else name
             if impl: qual = f"{impl[0]}::{name}"
             it = self.mk(node, KIND_NODES[t], name, mods, impl, tst, fn.id if fn else None, sig=signature(node, self.src), qual=qual, has_body=True)
             it.id = f"{self.rel}::{qual}@{it.line}"
@@ -219,7 +239,7 @@ class Walker:
                 # variants are listed in the signature-less enum body; record them as a compact attr
                 body = node.child_by_field_name("body")
                 vs = [txt(v.child_by_field_name("name")) for v in (body.children if body else []) if v.type == "enum_variant"]
-                it.attrs = it.attrs + [f"variants={','.join(vs)}"]
+                it.attrs = [*it.attrs, f"variants={','.join(vs)}"]
             if t == "struct_item":
                 body = node.child_by_field_name("body")
                 if body is not None and body.type == "field_declaration_list":
@@ -227,7 +247,7 @@ class Walker:
                         if f.type == "field_declaration":
                             STRUCT_FIELDS[name][txt(f.child_by_field_name("name"))] = norm_type(txt(f.child_by_field_name("type")))
                     fs = [txt(f.child_by_field_name("name")) for f in body.children if f.type == "field_declaration"]
-                    it.attrs = it.attrs + [f"fields={','.join(fs)}"]
+                    it.attrs = [*it.attrs, f"fields={','.join(fs)}"]
             return
         # other nodes: descend (macro_rules bodies are token trees; skip)
         if t in ("token_tree",): return
@@ -331,7 +351,7 @@ free_by_name = defaultdict(list); meth_by_name = defaultdict(list); meth_by_type
 for f in fns:
     if f.kind == "function": free_by_name[f.name].append(f)
     else:
-        meth_by_name[f.name].append(f); meth_by_type[(f.impl_type, f.name)].append(f)
+        meth_by_name[f.name].append(f); meth_by_type[f.impl_type, f.name].append(f)
 mod_files = {}  # tail module name -> files
 file_mod = {}
 for p in files:
@@ -494,7 +514,7 @@ def fn_entry(i, L):
     if not i.calls: L.append("- **Calls:** none")
     cb = callers.get(i.id, [])
     if cb:
-        seen_c = [];
+        seen_c = []
         for cid, conf in cb:
             if cid not in [s[0] for s in seen_c]: seen_c.append((cid, conf))
         shown = seen_c[:12]
@@ -514,8 +534,7 @@ for rel, its in sorted(perfile.items()):
     for i in sorted(prod, key=lambda x: x.line): fn_entry(i, L)
     if tst:
         L.append(f"## Test functions ({len(tst)})\n")
-        for i in sorted(tst, key=lambda x: x.line):
-            L.append(f"- `{i.qual}` (L{i.line}): {does(i)}")
+        L.extend(f"- `{i.qual}` (L{i.line}): {does(i)}" for i in sorted(tst, key=lambda x: x.line))
         L.append("")
     out = OUT / "functions" / (rel.replace("src/", "").replace("/", "__").replace(".rs", "") + ".md")
     out.write_text("\n".join(L))
@@ -589,8 +608,7 @@ R = ["# Symbol manifest for `src/`\n",
      "",
      "## Call edges (non-test functions, counting call sites)\n",
      "| Confidence | Call sites |", "|---|---:|"]
-for k in ("exact", "by-name", "ambiguous", "external", "macro"):
-    R.append(f"| {k} | {edges.get(k, 0):,} |")
+R.extend(f"| {k} | {edges.get(k, 0):,} |" for k in ("exact", "by-name", "ambiguous", "external", "macro"))
 R.append("")
 (OUT / "README.md").write_text("\n".join(R))
 

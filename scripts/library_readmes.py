@@ -330,9 +330,7 @@ def python_surface(root: Path = ROOT) -> list[str]:
     tree = ast.parse((pkg / "document.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "Document":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"):
-                    names.append(item.name)
+            names.extend(item.name for item in node.body if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"))
     init = ast.parse((pkg / "__init__.py").read_text(encoding="utf-8"))
     exported: list[str] = []
     for node in ast.walk(init):

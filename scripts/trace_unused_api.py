@@ -31,7 +31,7 @@ def modpath(file):
     return parts
 
 def api_key(r):
-    return "::".join(["jubarte"] + modpath(r["file"]) + r["qual"].split("::"))
+    return "::".join(["jubarte", *modpath(r["file"]), *r["qual"].split("::")])
 
 def first_release(r):
     key = api_key(r)

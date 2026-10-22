@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The lint rules this repository's Python is held to. A repository config
+# replaces a user-level one, so `ruff check` gives every checkout the same
+# answer. No [format] section: the formatter's defaults (double quotes)
+# are the repository's style.
+line-length = 119
+
+[lint]
+preview = true
+select = [
+  "F",
+  "G",    # flake8-logging-format
+  "PERF", # perflint
+  "RUF",  # Ruff-specific rules
+  "W6",
+  "E71",
+  "E72",
+  "E112",
+  "E113",
+  "E203",
+  "E272",
+  "E702",
+  "E703",
+  "E731",
+  "W191",
+  "W291",
+  "W293",
+  "UP039",
+]
+ignore = ["RUF012", "E722"]
+
+[lint.per-file-ignores]
+# Developer tools written compactly, one statement group per line.
+"docs/design/cli-v2/validate_examples.py" = ["E702"]
+"scripts/gen_symbol_manifest.py" = ["E702"]
+"scripts/gen_unused_report.py" = ["E702"]
+"scripts/find_duplicates.py" = ["E702"]
+# The fixture's confusable characters (a Hebrew vav, no-break spaces) are
+# what it tests.
+"tests/fixtures/from-docx/critic/challenging.py" = ["RUF001"]
+# A failure in one item must not stop the rest; the loop's cost is the
+# subprocess or office call it wraps, not the try.
+"scripts/md_roundtrip.py" = ["PERF203"]
+"tests/fixtures/from-docx/critic/libreoffice-oracle.py" = ["PERF203"]
+# The package's public functions live in its `__init__`.
+# Its `__all__` order is the order docs/python.md documents the API in.
+"jubarte-python/python/jubarte_redlines/__init__.py" = ["RUF022", "RUF067"]

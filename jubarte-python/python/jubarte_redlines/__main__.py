@@ -430,9 +430,7 @@ def _print_refusal(exc: EditPlanError) -> None:
     """A refused plan's per-operation report on stdout, the error on stderr."""
     for i, o in enumerate(exc.outcomes, start=1):
         row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
-        for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)):
-            if value is not None:
-                row[key] = value
+        row.update({key: value for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)) if value is not None})
         print(_jsonl(row))
     print(_jsonl({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}))
     sys.stdout.flush()
