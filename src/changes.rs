@@ -28,6 +28,8 @@ use crate::opc::PartFs;
 use crate::revision_processor::{FROZEN_NS, Resolution, resolve_package, revision_bearing_parts};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+mod logical;
+
 /// What a change does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +42,10 @@ pub enum ChangeKind {
     Move,
     /// Changed run, paragraph, section, table, row or cell properties.
     Formatting,
+    /// One author's deletion and the insertion right after it, listed as
+    /// one change ([`list_logical_changes`]). No single element has this
+    /// kind, so a filter of it is refused ([`ChangeFilter::normalized`]).
+    Replacement,
 }
 
 /// Which side of a move a change is.
@@ -95,6 +101,41 @@ pub struct Change {
     /// or the moved-to side) takes this one along.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inside: Option<String>,
+    /// The comments (`c4`, and a reply's `c5`) whose reference mark this
+    /// change holds: resolving it so its content goes (as for
+    /// [`Self::inside`]) removes their threads, as Word does (#1159).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holds_comments: Vec<String>,
+    /// The marks of a logical change ([`list_logical_changes`]) that Word
+    /// wrote as several elements, in reading order: empty for one element.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<ChangeMember>,
+}
+
+impl Change {
+    /// The ids of the elements this change is made of, in reading order:
+    /// its [`Self::members`]', or its own for a change of one element.
+    pub fn element_ids(&self) -> impl Iterator<Item = &str> {
+        let own = self.members.is_empty().then_some(self.id.as_str());
+        own.into_iter()
+            .chain(self.members.iter().map(|m| m.id.as_str()))
+    }
+}
+
+/// One mark of a logical change: an element Word wrote for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ChangeMember {
+    /// The element's own id (`r7`), as [`list_changes`] lists it.
+    pub id: String,
+    /// What the element does: an insertion or a deletion.
+    pub kind: ChangeKind,
+    /// `text` or `paragraph_mark`.
+    pub target: &'static str,
+    /// The element's own date, as [`Change::date`] reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
+    /// The text it covers (empty for a paragraph mark).
+    pub text: String,
 }
 
 /// Private audit view: public `Change` serialization stays unchanged.
@@ -299,7 +340,22 @@ impl ChangeFilter {
     /// once. Only settled ids parse ([`crate::ids::parse_change_ids`]):
     /// `12`, 0.12's `#12` and the expired `body:rev:12` are
     /// [`ChangeError::InvalidId`], naming the spelling to use.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::InvalidId`] for an id that does not parse, and for
+    /// the kind [`ChangeKind::Replacement`], which no element has: it would
+    /// select nothing.
     pub fn normalized(&self) -> Result<Self, ChangeError> {
+        if self
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| kinds.contains(&ChangeKind::Replacement))
+        {
+            return Err(ChangeError::InvalidId(
+                "the kind replacement names a logical change, not its marks: select a replacement by its id (r3+4), or its marks by kind (deletion, insertion)".into(),
+            ));
+        }
         let Some(ids) = &self.ids else {
             return Ok(self.clone());
         };
@@ -366,7 +422,8 @@ pub enum ChangeError {
     Package(String),
     /// A filter id names no change in the document.
     UnknownChange(String),
-    /// A filter id is not a change id ([`crate::ids::parse_change_ids`]).
+    /// A filter id is not a change id ([`crate::ids::parse_change_ids`]),
+    /// or a filter kind is one no element has ([`ChangeFilter::normalized`]).
     InvalidId(String),
     /// A filter id names more than one listed change: a
     /// duplicate `w:id` in one story.
@@ -375,6 +432,18 @@ pub enum ChangeError {
         id: String,
         /// The changes it names, in document order.
         candidates: Vec<Change>,
+    },
+    /// The filter's ids name only some of the marks of one logical change
+    /// ([`list_logical_changes`]), or only part of one side of a
+    /// replacement.
+    PartOfChange {
+        /// The marks named, as one id (`r7+8`).
+        named: String,
+        /// The whole change (`r7+8+9+10`).
+        whole: String,
+        /// For part of one side of a replacement: the side (`r20+21`) and
+        /// its kind.
+        side: Option<(String, ChangeKind)>,
     },
 }
 
@@ -409,6 +478,29 @@ impl fmt::Display for ChangeError {
                     .collect();
                 write!(f, ": {}", listed.join("; "))
             }
+            ChangeError::PartOfChange {
+                named,
+                whole,
+                side: None,
+            } => write!(
+                f,
+                "{named} is part of {whole}; name the whole change ({whole})"
+            ),
+            ChangeError::PartOfChange {
+                named,
+                whole,
+                side: Some((side, kind)),
+            } => {
+                let kind = if *kind == ChangeKind::Deletion {
+                    "deleted"
+                } else {
+                    "inserted"
+                };
+                write!(
+                    f,
+                    "{named} is part of {side}, the {kind} side of {whole}; name that side ({side}) or the whole change ({whole})"
+                )
+            }
         }
     }
 }
@@ -421,25 +513,37 @@ fn kind_name(kind: ChangeKind) -> &'static str {
         ChangeKind::Deletion => "deletion",
         ChangeKind::Move => "move",
         ChangeKind::Formatting => "formatting",
+        ChangeKind::Replacement => "replacement",
     }
 }
 
 /// `jubarte changes`' listing: one line per change, `{ref}\t{kind}\t{target}
-/// \t{author}\t{paragraph}\t{text}[\tinside {ref}]` (`-` for an absent
-/// author or paragraph; the text quoted, its first 60 characters), then
-/// `{n} change(s)`.
+/// \t{author}\t{paragraph}\t{text}[\t({n} elements)][\tinside {ref}][\tholds
+/// comment {c}'s mark]` (`-` for an absent author or paragraph; the text
+/// quoted, its first 60 characters; `({n} elements)` for a logical change
+/// Word wrote as several; `holds comment marks {c}, {c}` for several), then
+/// `{n} change(s)`. A row has six fields, and one more for each suffix.
 pub fn changes_text(changes: &[Change]) -> String {
     let mut out = String::new();
     for c in changes {
         let preview: String = c.text.chars().take(60).collect();
         let paragraph = c.paragraph.as_deref().unwrap_or("-");
+        let elements = match c.members.len() {
+            0 => String::new(),
+            n => format!("\t({n} elements)"),
+        };
         let inside = c
             .inside
             .as_deref()
             .map(|id| format!("\tinside {id}"))
             .unwrap_or_default();
+        let holds = match c.holds_comments.as_slice() {
+            [] => String::new(),
+            [one] => format!("\tholds comment {one}'s mark"),
+            many => format!("\tholds comment marks {}", many.join(", ")),
+        };
         out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{inside}\n",
+            "{}\t{}\t{}\t{}\t{paragraph}\t{preview:?}{elements}{inside}{holds}\n",
             c.r#ref,
             kind_name(c.kind),
             c.target,
@@ -461,14 +565,75 @@ pub fn list_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(changes_in(&open(docx)?))
 }
 
+/// Every logical change, story by story, in document order: the changes
+/// `jubarte changes` lists. One author's touching insertions, or touching
+/// deletions, are one change with a composite id (`r7+8+9+10`) and
+/// [`Change::members`]; a deletion run followed by the same author's
+/// insertion run is one [`ChangeKind::Replacement`] (module `logical`
+/// has the rule). Every other element is listed as [`list_changes`]
+/// lists it.
+///
+/// # Errors
+///
+/// [`ChangeError::Package`] when the package is not a readable zip.
+pub fn list_logical_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+    Ok(logical_changes_in(&open(docx)?))
+}
+
+/// The logical changes of an opened package ([`list_logical_changes`]).
+pub(crate) fn logical_changes_in(pkg: &PartFs) -> Vec<Change> {
+    let mut out = Vec::new();
+    for_each_story(pkg, |dom, root, story| {
+        out.extend(logical::logical(dom, root, &carriers(dom, root, story)));
+    });
+    out
+}
+
+/// Refuse ids that name only some marks of a logical change
+/// ([`ChangeError::PartOfChange`]): the check `accept` and `reject` make,
+/// for an edit plan's `resolve_revisions` and the edit flags to make on
+/// their source before they resolve anything.
+pub(crate) fn check_whole_changes(docx: &[u8], filter: &ChangeFilter) -> Result<(), ChangeError> {
+    let filter = filter.normalized()?;
+    if filter.ids.is_none() {
+        return Ok(());
+    }
+    logical::check_whole(&filter, &logical_changes_in(&open(docx)?))
+}
+
 /// [`list_changes`] for a view that already renders the package: no
 /// admission, and a part that does not parse lists nothing, so the view's
 /// count fails only where the package itself does.
 pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+    Ok(changes_in(&tolerant(docx)?))
+}
+
+/// [`list_logical_changes`] as [`list_changes_tolerant`] lists the marks:
+/// the changes a view's tags name.
+pub(crate) fn list_logical_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
+    Ok(logical_changes_in(&tolerant(docx)?))
+}
+
+/// The package a view reads, opened without admission. Its parts parse
+/// permissively, so one nesting deeper than the view reads is refused
+/// before the parser recurses into it (#1353 review).
+fn tolerant(docx: &[u8]) -> Result<PartFs, ChangeError> {
+    use crate::xmllinq::parse::{PERMISSIVE_MAX_DEPTH, nests_deeper};
+
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
     let pkg = PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
-    Ok(changes_in(&pkg))
+    for (part, _) in revision_bearing_parts(&pkg) {
+        if pkg
+            .part_string(&part)
+            .is_some_and(|xml| nests_deeper(&xml, PERMISSIVE_MAX_DEPTH))
+        {
+            return Err(ChangeError::Package(format!(
+                "{part}: XML nesting too deep"
+            )));
+        }
+    }
+    Ok(pkg)
 }
 
 /// The changes of an opened (transitional) package, as [`list_changes`]
@@ -476,9 +641,22 @@ pub(crate) fn list_changes_tolerant(docx: &[u8]) -> Result<Vec<Change>, ChangeEr
 /// revisions stay unlisted — the view has no ids for them yet — so an
 /// `--id` cannot name one. Author and kind filters still resolve them.
 pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
+    let mut out = Vec::new();
+    for_each_story(pkg, |dom, root, story| {
+        out.extend(
+            carriers(dom, root, story)
+                .into_iter()
+                .filter_map(|c| c.change),
+        );
+    });
+    out
+}
+
+/// Each listed story's parsed part, in [`list_changes`] order: every
+/// revision-bearing part but the comments part.
+fn for_each_story(pkg: &PartFs, mut each: impl FnMut(&Dom, NodeId, &str)) {
     let main = main_part(pkg);
     let comments = crate::revision_processor::comments_part(pkg);
-    let mut out = Vec::new();
     for (part, _) in revision_bearing_parts(pkg) {
         if Some(&part) == comments.as_ref() {
             continue;
@@ -491,14 +669,8 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
         let Some(root) = dom.root(doc) else {
             continue;
         };
-        let story = story_id(&main, &part);
-        out.extend(
-            carriers(&dom, root, &story)
-                .into_iter()
-                .filter_map(|c| c.change),
-        );
+        each(&dom, root, &story_id(&main, &part));
     }
-    out
 }
 
 /// Accept the changes `filter` selects; the others stay tracked. A Strict
@@ -510,8 +682,10 @@ pub(crate) fn changes_in(pkg: &PartFs) -> Vec<Change> {
 /// [`ChangeError::InvalidId`] for an id `filter` accepts that is not a
 /// change id; [`ChangeError::UnknownChange`] for an id not present in the
 /// document; [`ChangeError::Ambiguous`] for an id that names more than one
-/// listed change; [`ChangeError::Package`] when
-/// the package cannot be read or rewritten.
+/// listed change; [`ChangeError::PartOfChange`] when the ids name only some
+/// of the marks of a logical change ([`list_logical_changes`]), so that it
+/// would be half settled ([`accept_elements`] settles marks one by one);
+/// [`ChangeError::Package`] when the package cannot be read or rewritten.
 pub fn accept_changes(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
     resolve(docx, filter, Resolution::Accept).map(|(document, _, _)| document)
 }
@@ -532,12 +706,99 @@ pub struct ResolvedChanges {
     /// The document after resolving the selected changes.
     pub document: Vec<u8>,
     /// Removed comments, including replies, with their original ids and text.
-    /// Surviving comments may be renumbered in `document`.
+    /// Surviving comments keep their ids in `document` (#1264).
     pub removed_comments: Vec<crate::comments::CommentRecord>,
+    /// Why each of `removed_comments` went, in its order: `anchor removed
+    /// by accepting r13`, naming the change that held its mark, or its
+    /// thread root's (#1159).
+    pub removed_why: Vec<String>,
     /// Tracked changes still inside comment bodies after the resolution:
     /// an author or kind filter resolves them, an id selection cannot name
     /// them, so a partial selection can leave some (#1223).
     pub comment_changes_left: usize,
+    /// Threads rescued onto empty anchors, in source comment ids; the CLI's
+    /// `--keep-nested-comment` opt-in (#1279). Empty when settlement
+    /// removed the threads (Word's behaviour, and the default).
+    pub kept_comments: Vec<crate::edit::KeptComment>,
+}
+
+/// `anchor removed by accepting r13`: the verb of `resolution`, and the
+/// change of `changes` (the source's) that held the reference mark of a
+/// comment of `thread` (the root's first, then each reply's). The change
+/// must be one the verb removes the content of (a deletion or moved-from
+/// side accepted, an insertion or moved-to side rejected) and one the pass
+/// settled: an id of `settled`, or the other side of a move it holds, which
+/// it names as `settled` does; `None` settled every change. Of changes
+/// nested in one another the innermost is named. A thread also goes when
+/// the changes resolved remove all its range's text, its mark outside them
+/// (Word prunes a dead range): that names no change.
+pub(crate) fn why_removed(
+    changes: &[Change],
+    thread: &[String],
+    resolution: Resolution,
+    settled: Option<&[String]>,
+    wholes: &HashMap<String, String>,
+) -> String {
+    let (verb, kind, side) = match resolution {
+        Resolution::Accept => ("accepting", ChangeKind::Deletion, MoveSide::From),
+        Resolution::Reject => ("rejecting", ChangeKind::Insertion, MoveSide::To),
+    };
+    let removes = |ch: &Change| {
+        ch.kind == kind || (ch.kind == ChangeKind::Move && ch.move_side == Some(side))
+    };
+    // The id the pass selected for `ch`: its own, or its move's other side.
+    let named = |ch: &Change| -> Option<String> {
+        let Some(settled) = settled else {
+            return Some(ch.id.clone());
+        };
+        if settled.contains(&ch.id) {
+            return Some(ch.id.clone());
+        }
+        let name = ch.move_name.as_ref()?;
+        changes
+            .iter()
+            .find(|other| {
+                other.id != ch.id
+                    && other.move_name.as_ref() == Some(name)
+                    && settled.contains(&other.id)
+            })
+            .map(|other| other.id.clone())
+    };
+    let holder = thread.iter().find_map(|c| {
+        let held: Vec<&Change> = changes
+            .iter()
+            .filter(|ch| ch.holds_comments.contains(c) && removes(ch) && named(ch).is_some())
+            .collect();
+        held.iter()
+            .find(|ch| {
+                !held
+                    .iter()
+                    .any(|inner| inner.inside.as_ref() == Some(&ch.id))
+            })
+            .and_then(|ch| named(ch))
+    });
+    match holder {
+        Some(change) => format!(
+            "anchor removed by {verb} {}",
+            wholes.get(&change).unwrap_or(&change)
+        ),
+        None => format!("anchor removed by {verb} the changes that held all its text"),
+    }
+}
+
+/// Each mark of a change of several marks, by its id, with the id of that
+/// change: a removed comment's reason names the whole change, as `changes`
+/// lists it and a selection names it (#1261).
+pub(crate) fn member_wholes(docx: &[u8]) -> Result<HashMap<String, String>, ChangeError> {
+    Ok(list_logical_changes_tolerant(docx)?
+        .into_iter()
+        .flat_map(|change| {
+            change
+                .members
+                .into_iter()
+                .map(move |member| (member.id, change.id.clone()))
+        })
+        .collect())
 }
 
 /// Accept selected changes and report comments that disappeared with them.
@@ -562,26 +823,90 @@ pub fn reject_changes_with_report(
     resolve_with_report(docx, filter, Resolution::Reject)
 }
 
+/// Accept selected changes, keeping wholly removed comment threads on
+/// empty anchors (#1279). The CLI's `--keep-nested-comment` opt-in; the
+/// default removes them, as Word does.
+///
+/// # Errors
+/// As [`accept_changes_with_report`].
+pub fn accept_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Accept)
+}
+
+/// Reject selected changes, keeping wholly removed comment threads on
+/// empty anchors (#1279). The CLI's `--keep-nested-comment` opt-in; the
+/// default removes them, as Word does.
+///
+/// # Errors
+/// As [`reject_changes_with_report`].
+pub fn reject_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Reject)
+}
+
 fn resolve_with_report(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<ResolvedChanges, ChangeError> {
     let (document, removed, comment_changes_left) = resolve(docx, filter, resolution)?;
-    let removed_comments = if removed.is_empty() {
-        Vec::new()
+    let (removed_comments, removed_why) = if removed.is_empty() {
+        (Vec::new(), Vec::new())
     } else {
-        crate::comments::list_comments(docx)
-            .map_err(|e| ChangeError::Package(e.to_string()))?
-            .into_iter()
-            .filter(|c| removed.contains(&c.id.to_string()))
-            .collect()
+        removed_comment_report(docx, &removed, filter, resolution)?
     };
     Ok(ResolvedChanges {
         document,
         removed_comments,
+        removed_why,
         comment_changes_left,
+        kept_comments: Vec::new(),
     })
+}
+
+/// The `removed_comments` / `removed_why` pair for the comment ids
+/// `removed`: each record (replies included) beside the reason its thread
+/// went, naming the selected change that held it.
+fn removed_comment_report(
+    docx: &[u8],
+    removed: &[String],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<(Vec<crate::comments::CommentRecord>, Vec<String>), ChangeError> {
+    let comments =
+        crate::comments::list_comments(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
+    let listed = list_changes_tolerant(docx)?;
+    let wholes = member_wholes(docx)?;
+    let filter = filter.normalized()?;
+    let settled: Vec<String> = listed
+        .iter()
+        .filter(|c| filter.matches(c))
+        .map(|c| c.id.clone())
+        .collect();
+    let removed_comments: Vec<crate::comments::CommentRecord> = comments
+        .iter()
+        .filter(|c| removed.contains(&c.id.to_string()))
+        .cloned()
+        .collect();
+    // A reply's thread: itself, then each comment it replies to.
+    let removed_why = removed_comments
+        .iter()
+        .map(|c| {
+            let mut thread = vec![format!("c{}", c.id)];
+            let mut parent = c.parent;
+            while let Some(id) = parent.filter(|id| !thread.contains(&format!("c{id}"))) {
+                thread.push(format!("c{id}"));
+                parent = comments.iter().find(|p| p.id == id).and_then(|p| p.parent);
+            }
+            why_removed(&listed, &thread, resolution, Some(&settled), &wholes)
+        })
+        .collect();
+    Ok((removed_comments, removed_why))
 }
 
 fn resolve(
@@ -589,8 +914,66 @@ fn resolve(
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError> {
-    resolve_for_edit_or_cli(docx, filter, resolution, None)
+    resolve_for_edit_or_cli(docx, filter, resolution, None, true)
         .map(|out| (out.document, out.removed, out.comment_left))
+}
+
+fn resolve_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<ResolvedChanges, ChangeError> {
+    let out = resolve_for_edit_or_cli(docx, filter, resolution, Some(true), true)?;
+    let document = if out.kept.is_empty() {
+        out.document
+    } else {
+        // Publish the rescued threads on the lowest free comment ids; the
+        // receipt keeps the source ids (#1279).
+        let mut pkg = open(&out.document)?;
+        crate::revision_processor::renumber_rescued_comments(&mut pkg, &out.kept);
+        pkg.to_zip()
+            .map_err(|e| ChangeError::Package(e.to_string()))?
+    };
+    let (removed_comments, removed_why) = if out.removed.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        removed_comment_report(docx, &out.removed, filter, resolution)?
+    };
+    let mut anchors = crate::edit::comment_settlement::AnchorChanges::default();
+    anchors.extend(Vec::new(), out.kept, resolution, None);
+    let (_removed_records, kept_comments) = anchors
+        .records(docx)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    Ok(ResolvedChanges {
+        document,
+        removed_comments,
+        removed_why,
+        comment_changes_left: out.comment_left,
+        kept_comments,
+    })
+}
+
+/// Accept the elements `filter` selects, each `w:ins`, `w:del` or other
+/// mark by its own id ([`list_changes`]), even when it is only part of a
+/// logical change: for tools that work mark by mark, such as a comparison
+/// with Word's own handling of each element. [`accept_changes`] refuses
+/// such a selection.
+///
+/// # Errors
+///
+/// As [`accept_changes`], but never [`ChangeError::PartOfChange`].
+pub fn accept_elements(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
+    resolve_for_edit_or_cli(docx, filter, Resolution::Accept, None, false).map(|out| out.document)
+}
+
+/// Reject the elements `filter` selects, as [`accept_elements`] accepts
+/// them.
+///
+/// # Errors
+///
+/// As [`accept_elements`].
+pub fn reject_elements(docx: &[u8], filter: &ChangeFilter) -> Result<Vec<u8>, ChangeError> {
+    resolve_for_edit_or_cli(docx, filter, Resolution::Reject, None, false).map(|out| out.document)
 }
 
 /// Serialized document, pruned comment ids, and rescued comment ids.
@@ -604,7 +987,10 @@ pub(crate) fn resolve_for_edit(
     resolution: Resolution,
     keep_comments: bool,
 ) -> Result<CommentResolution, ChangeError> {
-    resolve_for_edit_or_cli(docx, filter, resolution, Some(keep_comments))
+    // The plan's own selection was checked on its source
+    // ([`check_whole_changes`]); what is left after its accepts may group
+    // differently.
+    resolve_for_edit_or_cli(docx, filter, resolution, Some(keep_comments), false)
         .map(|out| (out.document, out.removed, out.kept))
 }
 
@@ -613,11 +999,15 @@ fn resolve_for_edit_or_cli(
     filter: &ChangeFilter,
     resolution: Resolution,
     edit: Option<bool>,
+    whole: bool,
 ) -> Result<ResolutionOutcome, ChangeError> {
     let filter = &filter.normalized()?;
     let mut pkg = open(docx)?;
     let listed = changes_in(&pkg);
     filter.check(&listed)?;
+    if whole && filter.ids.is_some() {
+        logical::check_whole(filter, &logical_changes_in(&pkg))?;
+    }
     // Comment-body revisions are never listed, but an author or kind
     // filter selects them all the same (#1223).
     let comment_changes = comment_changes_in(&pkg);
@@ -684,8 +1074,8 @@ fn resolve_for_edit_or_cli(
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none): [`changes_in`] skips it because the view has no ids there.
-fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
+/// has none): `changes_in` skips it because the view has no ids there.
+pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();
     };
@@ -902,6 +1292,8 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                     _ => None,
                 },
                 inside: None,
+                holds_comments: Vec::new(),
+                members: Vec::new(),
             }),
         });
     }
@@ -914,6 +1306,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
     let paragraphs = (story != "styles").then(|| paragraph_index(dom, root));
     for c in &mut out {
         if let Some(change) = &mut c.change {
+            change.holds_comments = held_comment_marks(dom, c.node, change.target);
             change.inside = holder(dom, c.node, &ids);
             change.paragraph = paragraphs
                 .as_ref()
@@ -922,6 +1315,32 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
         }
     }
     out
+}
+
+/// The comments whose reference mark the content of change `e` holds
+/// (`c4`, `c5`), in document order: what resolving the change so its
+/// content goes removes. A paragraph mark's or formatting change removes
+/// no content; a row's or cell's change removes the row's or cell's.
+fn held_comment_marks(dom: &Dom, e: NodeId, target: &str) -> Vec<String> {
+    let content = match target {
+        "text" => Some(e),
+        "table_row" => dom.ancestors(e, Some(&W::tr())).first().copied(),
+        "table_cell" => dom.ancestors(e, Some(&W::tc())).first().copied(),
+        _ => None,
+    };
+    let mut held = Vec::new();
+    for mark in content
+        .map(|c| dom.descendants(c, Some(&W::name("commentReference"))))
+        .unwrap_or_default()
+    {
+        if let Some(id) = dom.attribute(mark, &W::id()) {
+            let id = format!("c{id}");
+            if !held.contains(&id) {
+                held.push(id);
+            }
+        }
+    }
+    held
 }
 
 /// Word stores a text box twice, in an `mc:AlternateContent`'s `mc:Choice`

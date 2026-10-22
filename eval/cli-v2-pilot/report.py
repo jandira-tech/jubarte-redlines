@@ -169,8 +169,8 @@ def main(argv: list[str]) -> int:
             and g.preservation_defect_count is not None
         ]
         totals[arm] = {
-            "unintended_edits": sum(g.unintended_edit_count for g in assessed),
-            "preservation_defects": sum(g.preservation_defect_count for g in assessed),
+            "unintended_edits": sum(g.unintended_edit_count or 0 for g in assessed),
+            "preservation_defects": sum(g.preservation_defect_count or 0 for g in assessed),
         }
         rows.append(
             [
@@ -209,10 +209,10 @@ def main(argv: list[str]) -> int:
                     arm,
                     len(assessed),
                     len(subset) - len(assessed),
-                    sum(g.unintended_edit_count for g in assessed)
+                    sum(g.unintended_edit_count or 0 for g in assessed)
                     if assessed
                     else "not assessed",
-                    sum(g.preservation_defect_count for g in assessed)
+                    sum(g.preservation_defect_count or 0 for g in assessed)
                     if assessed
                     else "not assessed",
                 ]

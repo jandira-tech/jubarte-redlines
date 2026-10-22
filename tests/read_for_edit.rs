@@ -1057,9 +1057,17 @@ mod cli_policy {
         );
     }
 
+    /// The CLI prints the library's result plus the validity of the input
+    /// it read, which the clean source has none of (#1340).
     fn agrees_with_library(actual: &Value, bytes: &[u8], request: &ForEditRequest) {
+        let mut actual = actual.clone();
+        let validity = actual.as_object_mut().unwrap().remove("input_validity");
         assert_eq!(
-            *actual,
+            validity,
+            Some(serde_json::json!({"errors": 0, "warnings": 0}))
+        );
+        assert_eq!(
+            actual,
             serde_json::to_value(for_edit(bytes, request).unwrap()).unwrap()
         );
     }

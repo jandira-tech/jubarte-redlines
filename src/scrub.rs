@@ -107,7 +107,8 @@ impl std::error::Error for ScrubError {}
 /// document, the options are invalid, or scrubbing would introduce new
 /// validation findings.
 pub fn scrub(docx: &[u8], options: &ScrubOptions) -> Result<Vec<u8>, ScrubError> {
-    let mut pkg = PartFs::open(docx).map_err(|e| ScrubError::Package(e.to_string()))?;
+    let mut pkg = PartFs::open(docx)
+        .map_err(|e| ScrubError::Package(crate::opc::refusal_message(docx, &e)))?;
     if pkg
         .main_document_part()
         .is_none_or(|main| pkg.part_bytes(&main).is_none())
@@ -439,7 +440,9 @@ pub(crate) fn leaks_within(
                 break;
             }
         };
-        let name = name.into_owned();
+        // Findings echo the name: escape control characters so a
+        // crafted name cannot write terminal sequences.
+        let name = crate::admission::shown(&name).into_owned();
         if entry.size() > limits.max_part_bytes {
             let error = crate::admission::part_declared_over(&name, entry.size(), &limits);
             found.insert(format!("{name} ({error})"));

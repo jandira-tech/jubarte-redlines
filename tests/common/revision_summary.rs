@@ -14,8 +14,73 @@ pub const KINDS: [&str; 6] = [
 
 /// Independent text oracle: count complete attributed marks, never ids in an
 /// `re` chain or the two ids joined by a substitution. Id-line clauses carry
-/// paragraph marks and table changes that have no inline delimiter.
+/// paragraph marks and table changes that have no inline delimiter. A change
+/// of several marks prints its joined id on each piece and counts once, as
+/// the kind its pieces make together (#1261).
 pub fn printed_counts(body: &str) -> [usize; 6] {
+    let mut counts = [0; 6];
+    for change in printed_changes(body) {
+        counts[change.kind] += 1;
+    }
+    counts
+}
+
+/// One change the body prints: its kind, an index into [`KINDS`], and the
+/// raw Word marks it stands for.
+pub struct Printed {
+    pub kind: usize,
+    pub marks: usize,
+}
+
+/// A deleted paragraph mark while pieces join: it counts as a paragraph
+/// mark ([`KINDS`]' 3, the inserted one's) once its change is known.
+const DELETED_MARK: usize = 6;
+
+/// The kind of one change whose pieces print as `was` and `kind`: a deletion
+/// with an insertion is a substitution, and so is text with a paragraph mark
+/// of the other side (#1362); a mark goes with its own side's text.
+fn joined(was: usize, kind: usize) -> usize {
+    match (was, kind) {
+        (a, b) if a == b => a,
+        (2, _) | (_, 2) | (0, 1) | (1, 0) => 2,
+        (3, 1) | (1, 3) | (DELETED_MARK, 0) | (0, DELETED_MARK) => 2,
+        (3 | DELETED_MARK, other) | (other, 3 | DELETED_MARK) => other,
+        (a, _) => a,
+    }
+}
+
+/// The printed changes in reading order, each change of several marks once.
+pub fn printed_changes(body: &str) -> Vec<Printed> {
+    let joined_id = Regex::new(r"^(?:[A-Za-z0-9_-]+\.)?r[0-9]+(?:\+[0-9]+)+$").unwrap();
+    let mut seen: Vec<(String, usize)> = Vec::new();
+    let mut out: Vec<(Option<String>, usize)> = Vec::new();
+    for (id, kind) in printed_tags(body) {
+        if joined_id.is_match(&id) {
+            if let Some(at) = seen.iter().position(|(other, _)| *other == id) {
+                let slot = seen[at].1;
+                out[slot].1 = joined(out[slot].1, kind);
+                continue;
+            }
+            seen.push((id.clone(), out.len()));
+            out.push((Some(id), kind));
+        } else {
+            out.push((None, kind));
+        }
+    }
+    out.into_iter()
+        .map(|(id, kind)| {
+            let ids = id.map_or(1, |id| id.matches('+').count() + 1);
+            let kind = if kind == DELETED_MARK { 3 } else { kind };
+            Printed {
+                kind,
+                marks: ids.max(if kind == 2 { 2 } else { 1 }),
+            }
+        })
+        .collect()
+}
+
+/// Every complete attributed tag the body prints: its own id and its kind.
+fn printed_tags(body: &str) -> Vec<(String, usize)> {
     // The header reports note stories separately, including a note inserted
     // with its body reference (whose attribution is repeated in its definition).
     let body = body
@@ -25,7 +90,7 @@ pub fn printed_counts(body: &str) -> [usize; 6] {
         .split("<!-- endnotes")
         .next()
         .unwrap();
-    let mut counts = [0; 6];
+    let mut tags = Vec::new();
     // An attribution is grammar, not arbitrary text after an @. In
     // particular, a backslash before its closer makes it literal text.
     let id =
@@ -52,22 +117,63 @@ pub fn printed_counts(body: &str) -> [usize; 6] {
         .map(|found| found.range())
         .collect::<Vec<_>>();
     let visible = |at: usize| !escaped(at) && !comments.iter().any(|range| range.contains(&at));
-    let inline = Regex::new(&format!(r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{{attribution}\}}")).unwrap();
+    let own = |attribution: &str| attribution.split_whitespace().next().unwrap().to_string();
+    // A note may name several changes, `; ` between them, before its `re`.
+    let inline = Regex::new(&format!(
+        r"(\+\+\}}|--\}}|~~\}})[*_`]*\{{({part}(?:; {part})*(?: re {part})*)\}}"
+    ))
+    .unwrap();
+    // A piece of one mark split around a change nested in it goes on with
+    // that mark: the one-mark piece read last, while the changes right
+    // after it name it with `re`, and whether one has. Pieces of one id
+    // touching with no nest between are two marks (a repeated id).
+    let mut split: Option<((String, usize), bool)> = None;
+    let mut last_end = None;
     for cap in inline.captures_iter(body) {
-        if !visible(cap.get(0).unwrap().start()) {
+        let whole = cap.get(0).unwrap();
+        if !visible(whole.start()) {
             continue;
         }
-        counts[match &cap[1] {
+        let kind = match &cap[1] {
             "++}" => 0,
             "--}" => 1,
             _ => 2,
-        }] += 1;
+        };
+        let opener = ["{++", "{--", "{~~"][kind];
+        let touches = body[..whole.start()]
+            .rfind(opener)
+            .is_some_and(|at| Some(at) == last_end);
+        last_end = Some(whole.end());
+        let mut chain = cap[2].split(" re ");
+        let own_tags = chain.next().unwrap();
+        let parents: Vec<String> = chain.map(own).collect();
+        let piece = (!own_tags.contains("; ") && !own(own_tags).contains('+'))
+            .then(|| (own(own_tags), kind));
+        match &mut split {
+            Some((was, nest)) if *nest && touches && piece.as_ref() == Some(was) => {
+                *nest = false;
+                continue;
+            }
+            Some(((id, _), nest)) if touches && parents.contains(id) => *nest = true,
+            _ => split = piece.map(|piece| (piece, false)),
+        }
+        match own_tags.split("; ").collect::<Vec<_>>().as_slice() {
+            // A substitution of two tags is a deletion and an insertion.
+            [old, new] if kind == 2 => {
+                tags.push((own(old), 1));
+                tags.push((own(new), 0));
+            }
+            _ => tags.push((own(&cap[2]), kind)),
+        }
     }
-    counts[3] += Regex::new(&format!(r"¶\{{{attribution}\}}"))
+    for cap in Regex::new(&format!(r"¶\{{({attribution})\}}"))
         .unwrap()
-        .find_iter(body)
-        .filter(|found| visible(found.start()))
-        .count();
+        .captures_iter(body)
+    {
+        if visible(cap.get(0).unwrap().start()) {
+            tags.push((own(&cap[1]), 3));
+        }
+    }
     let tag = Regex::new(&format!(r"^{attribution}(?: in [A-Za-z0-9_.-]+)?$")).unwrap();
     for line in body
         .lines()
@@ -97,7 +203,9 @@ pub fn printed_counts(body: &str) -> [usize; 6] {
                 if !tag.is_match(item) {
                     continue;
                 }
-                let kind = if key.starts_with("break-") {
+                let kind = if key == "break-del" {
+                    DELETED_MARK
+                } else if key == "break-ins" {
                     3
                 } else if item.contains(".cell") {
                     5
@@ -106,11 +214,11 @@ pub fn printed_counts(body: &str) -> [usize; 6] {
                 } else {
                     usize::from(key.ends_with("del"))
                 };
-                counts[kind] += 1;
+                tags.push((own(item), kind));
             }
         }
     }
-    counts
+    tags
 }
 
 #[track_caller]
@@ -131,7 +239,23 @@ pub fn assert_summary(view: &str) {
         .unwrap();
     let mut stated = [0; 6];
     let mut total = 0;
-    if let Some((_, summary)) = line.split_once(" shown as ") {
+    if let Some((raw, summary)) = line.split_once(" shown as ") {
+        // The raw mark count the header states before `shown as`, against
+        // the marks the body prints: a right shown-change count excuses no
+        // wrong mark count (#1521 review).
+        let mut words = raw.split_whitespace().rev();
+        let stated_marks = match words.next() {
+            Some("marks" | "mark") => words.next().and_then(|n| n.parse::<usize>().ok()),
+            _ => None,
+        };
+        let Some(stated_marks) = stated_marks else {
+            panic!("{line} states no raw mark count");
+        };
+        let marks = printed_changes(body)
+            .iter()
+            .map(|change| change.marks)
+            .sum::<usize>();
+        assert_eq!(stated_marks, marks, "{line}\n{body}");
         total = summary
             .split_whitespace()
             .next()
@@ -159,7 +283,8 @@ pub fn assert_summary(view: &str) {
     );
 }
 
-/// In tracked views each substitution represents two raw Word marks.
+/// In tracked views each substitution represents two raw Word marks, and a
+/// change printed with a joined id one mark per id it joins.
 #[track_caller]
 pub fn assert_raw_total(view: &str) {
     let (_, rest) = view.split_once("---\n").unwrap();
@@ -169,10 +294,9 @@ pub fn assert_raw_total(view: &str) {
         .find(|line| line.starts_with("revisions:"))
         .unwrap();
     let raw: usize = line.split_whitespace().nth(1).unwrap().parse().unwrap();
-    let counts = printed_counts(body);
-    assert_eq!(
-        raw,
-        counts.iter().sum::<usize>() + counts[2],
-        "{line}\n{body}"
-    );
+    let marks = printed_changes(body)
+        .iter()
+        .map(|change| change.marks)
+        .sum::<usize>();
+    assert_eq!(raw, marks, "{line}\n{body}");
 }

@@ -326,7 +326,7 @@ impl CorrespondenceEntry {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceToOutputCorrespondence {
     entries: Vec<CorrespondenceEntry>,
-    /// short id → position in `entries`, so [`lookup`] is one hash
+    /// short id → position in `entries`, so [`Self::lookup`] is one hash
     /// lookup instead of a linear scan per check.
     index: std::collections::HashMap<String, usize>,
 }
@@ -628,6 +628,10 @@ pub fn evaluate_with_receipt(
     };
     let source_sha = content_sha256(source);
     let stale_source = source_sha != spec.source.sha256;
+    // The source's `w14:paraId` inventory: the correspondence reports
+    // each target's short id only, so the pair's native-key half is
+    // proven here against the document it must name.
+    let native_keys = native_key_inventory(source);
 
     for requirement in &spec.requirements {
         if requirement.checks.is_empty() {
@@ -678,7 +682,7 @@ pub fn evaluate_with_receipt(
             // Both ids must name the SAME entity (schema `$defs.target`),
             // judged through the one ids codec: a disagreeing pair
             // refuses as ambiguous before any lookup (review row 6).
-            if !ids_name_one_entity(&check.target.short_id, &check.target.long_id) {
+            if !ids_name_one_entity(&check.target.short_id, &check.target.long_id, &native_keys) {
                 checks.push(CheckOutcome {
                     key: requirement.key.clone(),
                     target: target_label,
@@ -861,12 +865,18 @@ fn assemble_report(
 /// its PART must be the part the short id's story lives in
 /// (`document` for the body). When the ATTRIBUTE is the contract's
 /// `j:short`, its VALUE must parse to the very same
-/// [`crate::ids::ShortId`]. A long id of any other shape, or one
-/// naming another entity, makes the pair ambiguous. A native-key long
-/// id (`w14:paraId`) is proven against part and element only; its key
-/// identity is the apply path's resolver's to check (the v2
-/// `TARGET_ID_MISMATCH` refusal).
-fn ids_name_one_entity(short_id: &str, long_id: &str) -> bool {
+/// [`crate::ids::ShortId`]; when it is the native key `w14:paraId`, its
+/// VALUE must be the exact attribute spelling
+/// [`native_key_inventory`] recorded for the paragraph the short id
+/// names — what the apply path's pair resolver compares as the whole
+/// long id (`TARGET_ID_MISMATCH`). A long id of any other shape, one
+/// carrying an unregistered attribute, or one naming another entity,
+/// makes the pair ambiguous.
+fn ids_name_one_entity(
+    short_id: &str,
+    long_id: &str,
+    native_keys: &std::collections::HashMap<String, String>,
+) -> bool {
     use crate::ids::{ShortId, Story};
     let Ok(short) = short_id.parse::<ShortId>() else {
         return false;
@@ -888,11 +898,74 @@ fn ids_name_one_entity(short_id: &str, long_id: &str) -> bool {
     if !part_matches {
         return false;
     }
-    if *attribute == "j:short" {
-        return value.parse::<ShortId>().is_ok_and(|named| named == short);
+    match *attribute {
+        "j:short" => value.parse::<ShortId>().is_ok_and(|named| named == short),
+        "w14:paraId" => native_keys
+            .get(short_id)
+            .is_some_and(|named| named == value),
+        _ => false,
     }
-    // A native key: part and element agree; the value names the key.
-    !value.is_empty()
+}
+
+/// The `w14:paraId` native key each source paragraph carries, keyed by
+/// the printed short id the correspondence carries (`p0`, `header1`,
+/// `header1.p2`). The shared native-key policy
+/// ([`crate::edit::native_keys::para_id`]) decides whether the attribute
+/// is a key at all, and a key another paragraph of the same story
+/// repeats is no long-id key — the pair resolver spells `j:short` for
+/// it — so a `w14:paraId` pair naming one is ambiguous too. An
+/// unopenable source or story yields no entries for it, which refuses
+/// every native-key pair aimed there rather than guessing.
+fn native_key_inventory(source: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut keys = std::collections::HashMap::new();
+    let Ok(opened) = crate::inspect::Opened::open(source) else {
+        return keys;
+    };
+    story_keys(
+        &opened.dom,
+        &crate::inspect::body_paragraph_nodes(&opened.dom, opened.body),
+        crate::inspect::BODY_STORY,
+        &mut keys,
+    );
+    for (id, _, part) in opened.story_parts() {
+        if let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) {
+            story_keys(
+                &dom,
+                &crate::inspect::story_paragraph_nodes(&dom, root),
+                &id,
+                &mut keys,
+            );
+        }
+    }
+    keys
+}
+
+/// [`native_key_inventory`] for one story's paragraphs, in the same
+/// walk order [`crate::ids::paragraph_id`] numbers them in.
+fn story_keys(
+    dom: &crate::xmllinq::Dom,
+    nodes: &[crate::xmllinq::NodeId],
+    story: &str,
+    out: &mut std::collections::HashMap<String, String>,
+) {
+    let para_id = crate::namespaces::W14::name("paraId");
+    let mut counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    for &node in nodes {
+        if let Some(key) = dom
+            .attribute(node, &para_id)
+            .and_then(crate::edit::native_keys::para_id)
+        {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    for (index, &node) in nodes.iter().enumerate() {
+        let Some(raw) = dom.attribute(node, &para_id) else {
+            continue;
+        };
+        if crate::edit::native_keys::para_id(raw).is_some_and(|key| counts[&key] == 1) {
+            out.insert(crate::ids::paragraph_id(story, index), raw.to_string());
+        }
+    }
 }
 
 fn is_paragraph_target(short_id: &str) -> bool {

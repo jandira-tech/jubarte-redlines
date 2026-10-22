@@ -816,6 +816,39 @@ fn probe_style_name_with_a_comma_fails() {
     assert!(named[0].message.contains("List,Para"), "{named:?}");
 }
 
+/// `w:pPr` takes no `w:pPr` of its own: `CT_PPr`'s children are
+/// `CT_PPrBase`'s, then `w:rPr`, `w:sectPr` and `w:pPrChange`
+/// (`Sch_InvalidElementContentExpectingComplex` from `tools/validate-docx`).
+/// The previous properties of a `w:pPrChange` sit under the change, and are
+/// Word's own shape.
+#[test]
+fn probe_ppr_inside_a_ppr_fails() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>
+    <w:pPr><w:keepNext/><w:pPr><w:pPrChange w:id="9" w:author="Ana"><w:pPr/></w:pPrChange></w:pPr>
+    <w:rPr><w:i/></w:rPr></w:pPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Fine"><w:name w:val="Fine"/>
+    <w:pPr><w:keepNext/><w:pPrChange w:id="10" w:author="Ana"><w:pPr><w:keepNext/></w:pPr></w:pPrChange></w:pPr>
+  </w:style>
+</w:styles>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/styles.xml", styles),
+    ]);
+    let nested: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "NESTED_PPR")
+        .collect();
+    assert_eq!(nested.len(), 1, "{nested:?}");
+    let finding = &nested[0];
+    assert_eq!(finding.part, "word/styles.xml");
+    assert_eq!(finding.r#ref, finding.location);
+    // OOXML-invalid, but no Word probe is recorded: a lead, not Word-fatal.
+    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+}
+
 #[test]
 fn probe_paraid_overflow_is_a_repairable_lead() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -2090,6 +2123,78 @@ fn issue650_distinct_attribute_namespaces_are_valid() {
             "{shape}"
         );
     }
+}
+
+/// Two ZIP entries naming one OPC part — byte-equal or an ASCII-case
+/// alias (ECMA-376 Part 2 §6.2.2.3 M1.12 makes them one part) — is the
+/// package Word refused in probes p1, p2, p6, p7 and p9 (#600). The
+/// invariant lives at the package open, not in `ring1`: a `PartFs`
+/// cannot hold two parts of one identity, so the refusal precedes it —
+/// the same place the admission-level invariants of #594/#644/#639
+/// live. `jubarte validate` reports it through the typed
+/// `DUPLICATE_PART` refusal, and `debug::findings` reports the
+/// structural defect for triage.
+#[test]
+fn probe_duplicate_zip_part_identity_fails() {
+    let document = "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Carol Diaz</w:t></w:r></w:p></w:body></w:document>";
+    for (what, bytes) in [
+        (
+            "case-aliased main part",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("word/Document.xml", "<w:document/>"),
+            ]),
+        ),
+        (
+            "upper-case main part",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("WORD/document.xml", "<w:document/>"),
+            ]),
+        ),
+        (
+            "case-aliased content types",
+            zip_with_parts(&[
+                ("word/document.xml", document),
+                ("[content_types].xml", "<Types/>"),
+            ]),
+        ),
+        (
+            "case-aliased package rels",
+            zip_with_parts(&[("word/document.xml", document), ("_RELS/.RELS", "<R/>")]),
+        ),
+    ] {
+        let err = jubarte::validate::validate(&bytes)
+            .expect_err("Word refuses a package with two entries of one part");
+        assert!(err.to_string().contains("DUPLICATE_PART"), "{what}: {err}");
+        assert!(
+            check_word_valid_package(&bytes)
+                .errors
+                .iter()
+                .any(|e| e.contains("DUPLICATE_PART")),
+            "{what}: the Ring-1 wrapper reports the refusal"
+        );
+    }
+    // An exact duplicate is the same shape; the writer will not emit it
+    // twice under one name, so the fixture renames the entry in place.
+    let mut bytes = zip_with_parts(&[
+        ("word/document.xm0", "<w:document/>"),
+        ("word/document.xml", document),
+    ]);
+    let (local_at, central_at) = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
+        let entry = archive.by_name("word/document.xm0").unwrap();
+        (
+            usize::try_from(entry.header_start()).unwrap(),
+            usize::try_from(entry.central_header_start()).unwrap(),
+        )
+    };
+    // Both headers take the alias, as a hostile writer emits it.
+    bytes[local_at + 30..local_at + 47].copy_from_slice(b"word/document.xml");
+    bytes[central_at + 46..central_at + 63].copy_from_slice(b"word/document.xml");
+    let err = jubarte::validate::validate(&bytes)
+        .expect_err("Word refuses two entries with the same name");
+    assert!(err.to_string().contains("DUPLICATE_PART"), "{err}");
 }
 
 /// A bound content control (#1427): Word fills it from the custom XML

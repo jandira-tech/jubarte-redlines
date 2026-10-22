@@ -29,7 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import make_redline
+import make_redline  # pyrefly: ignore[missing-import] -- found through the sys.path line above
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -38,7 +38,10 @@ def paragraphs(docx: Path) -> list[str]:
     """Body paragraphs as text, `#` when numbered (numId other than 0), `_` when empty."""
     root = ET.fromstring(zipfile.ZipFile(docx).read("word/document.xml"))
     out = []
-    for para in root.find(f"{W}body").findall(f"{W}p"):
+    body = root.find(f"{W}body")
+    if body is None:
+        raise ValueError(f"{docx}: document.xml has no w:body")
+    for para in body.findall(f"{W}p"):
         text = "".join(t.text or "" for t in para.iter(f"{W}t"))
         num = para.find(f"{W}pPr/{W}numPr/{W}numId")
         numbered = num is not None and num.get(f"{W}val") != "0"

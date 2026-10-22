@@ -225,10 +225,10 @@ impl Package {
             // structural findings collected above still reach the
             // report (#644). `by_index` borrows `zip` mutably while its
             // result lives, so the central name is resolved first.
-            let shown = zip
-                .name_for_index(i)
-                .and_then(Result::ok)
-                .map_or_else(|| "unnamed".to_string(), |name| format!("'{name}'"));
+            let shown = zip.name_for_index(i).and_then(Result::ok).map_or_else(
+                || "unnamed".to_string(),
+                |name| format!("'{}'", crate::admission::shown(&name)),
+            );
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
                 Err(error) => {
@@ -239,8 +239,11 @@ impl Package {
                     continue;
                 }
             };
+            // Names reach every finding and the report: decode escapes
+            // control characters so a crafted name cannot write terminal
+            // sequences when the report is displayed.
             let name = match f.name() {
-                Ok(name) => name.into_owned(),
+                Ok(name) => crate::admission::shown(&name).into_owned(),
                 Err(error) => {
                     defects.push(crate::opc::ZipDefect {
                         kind: crate::opc::ZipDefectKind::EntryRead,
@@ -269,6 +272,17 @@ impl Package {
                             "directory entry '{name}' has an unreadable payload: {error}"
                         ),
                     });
+                    // A read that fails after producing bytes still owes
+                    // the budget what `data` holds: uncharged failures
+                    // would hand the next entry a fresh allowance.
+                    crate::admission::tally_inflated(
+                        &mut total,
+                        data.len() as u64,
+                        &name,
+                        cap,
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
                     continue;
                 }
                 Err(error) => {
@@ -276,6 +290,14 @@ impl Package {
                         kind: crate::opc::ZipDefectKind::EntryRead,
                         detail: format!("entry '{name}' has an unreadable payload: {error}"),
                     });
+                    crate::admission::tally_inflated(
+                        &mut total,
+                        data.len() as u64,
+                        &name,
+                        cap,
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
                     continue;
                 }
             };
@@ -354,14 +376,27 @@ fn decode_xml(data: &[u8]) -> Option<String> {
 #[derive(Default)]
 struct Findings {
     by_kind: BTreeMap<String, Vec<(String, String)>>,
+    /// In step with `by_kind`: where each example sits, as `validate`'s
+    /// element chain ([`crate::validate::element_path`]), or empty.
+    places: BTreeMap<String, Vec<String>>,
 }
 
 impl Findings {
     fn add(&mut self, kind: &str, part: &str, detail: String) {
+        self.push(kind, part, detail, String::new());
+    }
+
+    /// [`Findings::add`] for an example at element `n`.
+    fn add_at(&mut self, kind: &str, part: &str, detail: String, dom: &Dom, n: NodeId) {
+        self.push(kind, part, detail, crate::validate::element_path(dom, n));
+    }
+
+    fn push(&mut self, kind: &str, part: &str, detail: String, place: String) {
         self.by_kind
             .entry(kind.to_string())
             .or_default()
             .push((part.to_string(), detail));
+        self.places.entry(kind.to_string()).or_default().push(place);
     }
 }
 
@@ -425,7 +460,7 @@ fn path(dom: &Dom, n: NodeId) -> String {
 }
 
 fn clip(s: &str, max: usize) -> String {
-    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let s = crate::util::collapse_whitespace(s);
     if s.chars().count() <= max {
         s
     } else {
@@ -470,10 +505,12 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
     for n in dom.descendants(root, None) {
         let name = local(dom, n);
         match name.as_str() {
-            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add(
+            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add_at(
                 &format!("orphan-{name}"),
                 part,
                 format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+                dom,
+                n,
             ),
             "t" | "instrText"
                 if state(dom, n) == 'D'
@@ -482,10 +519,12 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .iter()
                         .any(|&a| local(dom, a) == "del") =>
             {
-                f.add(
+                f.add_at(
                     &format!("{name}-under-del"),
                     part,
                     format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+                    dom,
+                    n,
                 );
             }
             "r" => {
@@ -510,7 +549,7 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .map(|c| local(dom, c))
                         .filter(|c| c != "rPr")
                         .collect();
-                    f.add(
+                    f.add_at(
                         "bare-run-in-deleted-textbox",
                         part,
                         format!(
@@ -519,6 +558,8 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                             kids.join(","),
                             clip(&dom.value(n), 30)
                         ),
+                        dom,
+                        n,
                     );
                 }
             }
@@ -533,6 +574,7 @@ struct OpenField {
     instr: Vec<(bool, char)>,
     code: String,
     at: String,
+    node: NodeId,
 }
 
 fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
@@ -551,7 +593,7 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     open.instr.push((name == "delInstrText", st));
                     open.code.push_str(&dom.value(n));
                 }
-                None => f.add("field-code-outside-field", part, path(dom, n)),
+                None => f.add_at("field-code-outside-field", part, path(dom, n), dom, n),
             }
             continue;
         }
@@ -568,14 +610,15 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 instr: Vec::new(),
                 code: String::new(),
                 at: path(dom, n),
+                node: n,
             }),
             "separate" => match stack.last_mut() {
                 Some(open) => open.separate = Some(st),
-                None => f.add("field-separate-without-begin", part, path(dom, n)),
+                None => f.add_at("field-separate-without-begin", part, path(dom, n), dom, n),
             },
             "end" => {
                 let Some(open) = stack.pop() else {
-                    f.add("field-end-without-begin", part, path(dom, n));
+                    f.add_at("field-end-without-begin", part, path(dom, n), dom, n);
                     continue;
                 };
                 let states: String = std::iter::once(open.begin)
@@ -585,17 +628,21 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .collect();
                 let code = clip(&open.code, 40);
                 if states.contains('D') && states.chars().any(|c| c != 'D') {
-                    f.add(
+                    f.add_at(
                         "field-partly-deleted",
                         part,
                         format!("begin/code/separate/end={states} \"{code}\" at {}", open.at),
+                        dom,
+                        open.node,
                     );
                 }
                 if open.instr.iter().any(|&(del, s)| del != (s == 'D')) {
-                    f.add(
+                    f.add_at(
                         "field-code-kind-vs-state",
                         part,
                         format!("states={states} \"{code}\" at {}", open.at),
+                        dom,
+                        open.node,
                     );
                 }
             }
@@ -603,10 +650,12 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
         }
     }
     for open in stacks.into_values().flatten() {
-        f.add(
+        f.add_at(
             "field-unclosed",
             part,
             format!("\"{}\" at {}", clip(&open.code, 40), open.at),
+            dom,
+            open.node,
         );
     }
 }
@@ -997,7 +1046,7 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 }
             }
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
-                f.add(&format!("{name}-empty"), part, path(dom, n));
+                f.add_at(&format!("{name}-empty"), part, path(dom, n), dom, n);
             }
             "tc" if !cell_ends_in_paragraph(dom, n) => {
                 let last = dom
@@ -1005,10 +1054,12 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .into_iter()
                     .map(|c| local(dom, c))
                     .rfind(|c| c.as_str() != "tcPr");
-                f.add(
+                f.add_at(
                     "cell-not-ending-in-p",
                     part,
                     format!("{} last={}", path(dom, n), last.unwrap_or_default()),
+                    dom,
+                    n,
                 );
             }
             "tr" if !dom
@@ -1016,7 +1067,7 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 .iter()
                 .any(|&c| local(dom, c) == "tc") =>
             {
-                f.add("row-without-cell", part, path(dom, n));
+                f.add_at("row-without-cell", part, path(dom, n), dom, n);
             }
             // Only `ins`/`del` count as interleaving: Word's measured
             // reject-all misreading (#1134, 2026-10-17) alternates the two. A
@@ -1037,7 +1088,13 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     })
                     .any(|a| matches!(local(dom, a).as_str(), "ins" | "del"));
                 let relation = if alternating { "interleaved" } else { "nested" };
-                f.add(&format!("{name}-{relation}-in-{name}"), part, path(dom, n));
+                f.add_at(
+                    &format!("{name}-{relation}-in-{name}"),
+                    part,
+                    path(dom, n),
+                    dom,
+                    n,
+                );
             }
             "body" => {
                 let kids = dom.elements(n, None);
@@ -2543,13 +2600,17 @@ pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
     let mut out = Vec::new();
     for (kind, items) in &analysis.findings.by_kind {
         let code = finding_code(kind);
-        for (part, detail) in items {
+        // An example with no place listed has none, as `Findings::add`
+        // writes it: no example is dropped, and none panics.
+        let places = analysis.findings.places.get(kind);
+        for (i, (part, detail)) in items.iter().enumerate() {
+            let place = places.and_then(|p| p.get(i)).map_or("", String::as_str);
             let message = if detail.is_empty() {
                 format!("{kind} in '{part}'")
             } else {
                 format!("{kind} in '{part}': {detail}")
             };
-            let mut finding = crate::validate::Finding::new(&code, part, "", message);
+            let mut finding = crate::validate::Finding::new(&code, part, place, message);
             if code == "NESTED_SAME_REVISION" {
                 if matches!(kind.as_str(), "ins-nested-in-ins" | "del-nested-in-del") {
                     finding.severity = "info".to_string();
@@ -3038,6 +3099,37 @@ mod tests {
             found.iter().any(|f| f.code == "ZIP_DIRECTORY_PAYLOAD"),
             "{found:?}"
         );
+    }
+
+    /// A failed read still owes the budget the bytes it inflated: an
+    /// entry whose payload errors after producing bytes must charge them,
+    /// or every unreadable entry hands the next one a fresh allowance and
+    /// `debug` inflates past `max_uncompressed_bytes` (#645).
+    #[test]
+    fn failed_entry_reads_still_consume_the_inflate_budget() {
+        let payload = vec![b'x'; 2048];
+        let mut pkg = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"word/a/", &payload),
+                zip_names::RawEntry::raw(b"word/b.bin", &payload),
+            ],
+        );
+        // Corrupt both payloads so each entry's read fails at its CRC
+        // after inflating its full stored size.
+        for name in ["word/a/", "word/b.bin"] {
+            let at = local_header_at(&pkg, name) + 30 + name.len();
+            pkg[at] = b'y';
+        }
+        let limits = crate::admission::InputLimits {
+            max_part_bytes: 8192,
+            max_uncompressed_bytes: 4096,
+            ..crate::admission::InputLimits::compare()
+        };
+        let err = Package::open_within(&pkg, limits)
+            .err()
+            .expect("two failed 2048-byte reads must exhaust the 4096-byte budget");
+        assert!(err.contains("INPUT_LIMIT"), "{err}");
     }
 
     /// The report or its refusal message, so a package `debug` cannot

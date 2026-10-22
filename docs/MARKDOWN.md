@@ -87,7 +87,7 @@ An author the `authors:` table names, and a date a tag carries, come before
 all of these. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output from
 identical inputs. This represents the document, so its own metadata
 counts; `compare`, `edit`, `add` and `diff` change a file instead, and
-sign and date their changes with `--author` (default `Redline`) and
+sign and date their changes with `--author` (default `Jubarte`) and
 `-d/--datetime` (default now) only, never the files' metadata.
 
 Library calls keep that epoch instead of now and read no reference
@@ -109,7 +109,7 @@ CLI reads them.
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`; one whose borders vary names each side (`table: TableGrid, borders top double 3pt bottom double 3pt`). Header row repeated, column alignment kept |
+| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). Word's border effects follow it: `single 1pt 2F5496 shadow frame` (`w:shadow`, `w:frame`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`; one whose borders vary names each side (`table: TableGrid, borders top double 3pt bottom double 3pt`). Header row repeated, column alignment kept |
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
@@ -132,6 +132,10 @@ reference definition holds its frame and a text-free template. Matching
 Markdown and word hashes restore the template's original structure (apart
 from package relationship and drawing ids); edited paragraphs rebuild the
 box content inside the same frame. The payload cannot override edited words.
+A box whose words carry no change of their own prints them with its
+anchor's tag (`{++box ++}{r7 @B}` inside an inserted drawing). That copy of
+a single id is the anchor's mark, which already holds the box, so the
+writer writes the words bare, with no id of their own and no warning.
 
 A text box nested in another box has an ordinary `![alt][dN]` token at its
 position inside the enclosing box's region. Its own regions follow the
@@ -268,8 +272,30 @@ accepted or rejected, through the same engine as `jubarte accept` and
 `jubarte reject`. With `-t md` the Markdown itself is resolved instead. The
 flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
 accept` renders the accepted document to PDF.
+`--keep-nested-comment` preserves comments and replies whose whole range
+settlement removes, on an empty untracked anchor at the removed text.
+`accept` and `reject` offer the same opt-in. Partial overlaps keep their
+existing behavior. Without `--track-changes accept` or `reject`, convert
+refuses the keep flag with exit 2.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too, and says so in a warning.
+
+Resolving the Markdown splices the kept side of every mark back into the
+source and lets Markdown re-read it, which CommonMark's delimiter rules
+do not always give back the same document: a kept `_b_` inside `*a…c*`
+reads as literal underscores and `*a{++*b*++}c*` reads as a bare `b`,
+while the same input written to Word and accepted there reads as one
+italic `abc`. Every block holding a mark is therefore verified against
+the md→docx reader's own runs. A block that already reads like them is
+left byte-for-byte as it is; one that does not has the smallest inline
+span holding the mark re-emitted from those runs — bold+italic `a`/`b`/`c`
+as `**a*b*c**`, in the flavour the document already used — with the
+block's own syntax (a heading marker, a list bullet, a table cell) and
+its neighbours kept. The text a Markdown reader cannot model is never
+re-emitted: a comment or a highlight inside a change, a change named as
+nested inside another (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`), an
+anchor, a malformed delimiter and a mark holding a line break all keep
+the resolved splice.
 
 A comment or highlight whole inside a change is text to the change's
 own delimiters: `{~~a{>>x ~> y<<} b~>c~~}` substitutes `a b` for `c` and
@@ -338,12 +364,62 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+1 @AC} review call.
 ```
 
+`revisions:` counts the body's marks, then the changes `jubarte changes`
+lists for the body, kind by kind (#1356). That includes a change printed
+only as another's parent (`re r7 @B`), and a row whose cells all print
+its id counts once, as a table row. A selection counts the changes whose
+ids it prints. Each other story then counts the changes `jubarte changes`
+lists for it, with its marks when they differ: `3 in header1 (7 marks)`.
+
 `--track-changes accept|reject` prints the document with every change
 resolved, `--comments none` leaves the comments out of the text (their ids
 move to the id lines), `--dates` puts timestamps in notes whose author's
 recorded date forms differ, including offsets for the same instant.
 `-p p3,p10-p20,t0`, `--head N` and `--tail N` print a selection, and
 `--no-page-markers` skips the layout pass.
+
+`--json` prints the snapshot and `--tables` the grids instead of the
+view. Both read the accepted text; `--track-changes reject` reads the
+text and formatting Word's Reject All leaves (`accepted` and `rejected`
+spell the two choices too), every paragraph, row and cell keeping its id,
+and the snapshot names an `accept` or `reject` in a top-level
+`track_changes` (its `summary.track_changes` still says whether the
+document tracks changes; `summary`, `changes` and `comments` describe the
+file as stored). `--comments`, `--dates` and `--no-page-markers` shape
+only the view, so `--json`, `--for-edit` and the grids of `--tables` take
+them and change nothing.
+
+`--tables -p` reads the selection as the view does: `t1` is the view's
+`t1`, and a `pN` or a range inside a table reaches that table. It prints
+the grids of the tables the selection reaches, each with the tables
+nested in it, once and in document order, then an empty line and what
+`read -p` prints for the same selection, unchanged. The grids' `table N`
+counts nested tables too, so it can differ from `t1`. A pick that reaches
+no table is a usage error (`p0 is not in a table; --tables -p takes tN,
+or a pN inside a table`); what the view refuses (`t9 is not a table of
+this document`) fails as `read -p` does.
+
+With `--json` on the command line, an error also prints on stdout as one
+line, `{"error":{"code":"USAGE","message":"unexpected argument '--bogus'
+found","usage":"jubarte read [OPTIONS] <FILE>"}}`, so `| jq .error.code`
+reads it from stdout alone; stderr and the exit code stay as they are.
+stderr is text, the error alone, so pipe stdout alone, never `2>&1 |
+jq`. Its `usage` is the task's, a line per form; the `Usage:` line on stderr is
+clap's, which names the flags given. The code is the message's leading
+code (`STALE_SOURCE`), else `USAGE` for an exit 2 and `ERROR` for any
+other.
+
+A JSON read names the input's own validity findings in its output, not
+on stderr (#1309), `-q` or not: `read --json` in the snapshot's
+`summary.input_validity`, `{"errors":0,"warnings":2,"next":"jubarte
+validate FILE"}` (a clean input reads `{"errors":0,"warnings":0}`),
+`read --for-edit` in its result's `input_validity` (#1340), and `changes
+--json` and `comments --json` on their last line,
+`{"input_validity":{…}}`, always there, after the records. `read -o
+FILE.json` writes what `read --json` prints, and `read --for-edit -o
+FILE.json` what `--for-edit` prints; with stdout free, the Markdown view
+and `-o` keep the one stderr line (`input has 2 validity warnings;
+jubarte validate FILE lists them`, which `-q` drops).
 
 ### Id lines
 
@@ -352,7 +428,7 @@ clauses joined by `, ` (no clauses: `<!-- p2 -->`).
 
 ```text
 head:     p{N}[ {Style}][ outline {n}]
-clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
+clauses:  {align} · first-line {x}in · hanging {x}in · left {x}in · right {x}in · before {x}pt | before auto · after {x}pt | after auto · line {r} | line {x}pt exact | line {x}pt atLeast · size {x}pt · num "{label}" | bullet · level {n} · page-break | page-break-ins {tag} | page-break-del {tag} · section-break · break-del {tags} · fmt {tags} · rev {tags} · comments c{ids} · in c{ids}
 examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-- p0 Quote justify, hanging 0.25in, left 0.5in -->   <!-- p3 rev r0 @AC; r2+1 @AC -->
 ```
 
@@ -373,6 +449,35 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   `right`, `justify`, else `left`. Indents come from the paragraph's own
   `w:ind`, in inches, with as many decimals (two to four) as it takes to
   read back the same twips (`0.7875in` is 1134).
+- `before`, `after` and `line` come from the paragraph's own `w:spacing`
+  (its style's spacing is the legend's): `before 6pt`, `after 0pt` (a
+  zero the paragraph states still prints: it overrides its style), in
+  points with up to two decimals (a twip is a twentieth of a point; a
+  Strict file's `12.945pt` reads as the nearest twip, as Word keeps it).
+  Values past Word's 1584pt print and read back as the file has them.
+  `before auto` and `after auto` are Word's automatic space
+  (`w:beforeAutospacing`, which HTML paste writes): Word puts it in place
+  of the value, so the view prints no value beside it.
+  `line 1.15` is an `auto` line, a multiple of single spacing with the
+  fewest decimals (two to four) that read back the same 240ths (`line
+  1.038` is 249); `line 12pt exact` and `line 14pt atLeast` are the other
+  two rules. An empty paragraph with its own spacing keeps its own id
+  line: a range of empty ones would drop it. Body and table-cell
+  paragraphs keep their spacing this way; a note's, a comment's or a text
+  box's paragraph keeps only its style's for now, and spacing in lines
+  (`w:beforeLines`, `w:afterLines`, for East Asian layout) is not kept.
+- `size 9pt` is the paragraph's own text size: the one `w:sz` every run of
+  its text states (`size 10.5pt`, in half points as Word keeps it), or,
+  for a paragraph with no text, its mark's, when its style (through
+  `basedOn` and the document defaults, Word's 10pt without any) gives
+  another. Runs of different sizes, or a run that states none, print
+  nothing, and neither does the mark of a paragraph with text. The writer
+  puts the size on every run of the paragraph and on its mark (`w:sz` and
+  `w:szCs`). An empty paragraph with its own size keeps its own id line:
+  it is a line of that height. Body and table-cell paragraphs keep their
+  size this way (a cell paragraph's on the table line, beside its
+  spacing: `p8-p38 line 8.65pt exact size 9pt`); a note's, a comment's
+  or a text box's paragraph keeps only its style's for now.
 - `num "1)"` is the label Word prints (the level's `w:lvlText`, each `%k`
   in its level's number format: `1)`, `a)`, `ii.`, `1.2`; a `"` or `\` in
   it is escaped with `\`). A level text naming a deeper level (`%3` on
@@ -424,7 +529,11 @@ examples: <!-- p0 center -->   <!-- p18 first-line 0.5in, comments c11 -->   <!-
   A paragraph joined into the one before it hands its revisions over. In
   the tracked view, the insertions, deletions and moves its text has no
   tag for: a deleted picture, line break, field character or empty run
-  (a tracked page break has its own clause).
+  (a tracked page break has its own clause); `rev-del` names the
+  deletions among them. A replacement with no text on either side (a
+  field deleted and another put in its place) names each side by its own
+  marks, `rev r4 @D, rev-del r3 @D`: either side is one `accept --id`
+  takes.
 - `comments`: with `--comments none` only, the comments whose ranges or
   references the paragraph holds.
 - `in c5`: with comments inline, the comment threads whose range runs on
@@ -452,7 +561,27 @@ than the grid has holds an empty cell the view could not tell from padding
 `p10 center` for each cell paragraph aligned against its column (the delimiter row's `:-`, `:-:` or `-:` is the
 alignment most of a column's cell paragraphs have; left and none count
 alike, a tie or justified text prints `-`; the `center` or `right` after
-`t0` places the table itself on the page), then `merged t0.row0.cell1 across 2; t0.row1.cell0
+`t0` places the table itself on the page), then `p8 Quote` for each cell
+paragraph that states a style, then `p8-p10 after 0pt line 1 size 9pt`
+for cell paragraphs with their own spacing or text size (the id line's
+clauses joined by spaces, one range for neighbours that say the same), then the table's
+geometry: `widths 1.5in 2in 3in` for the grid's columns (`w:gridCol`),
+printed when they are not an even split of the text width (the body
+section's page width less its margins); the reader writes the grid from
+it, each cell's `w:tcW` from the columns it spans, and a row's gap
+columns as `w:wBefore`/`w:wAfter`, while widths naming a column count
+the grid does not have are dropped with a warning and the columns split
+the text width evenly. `width auto`, `width 6in` or `width 80%` is the
+table's preferred width (`w:tblW`); without one the table fills the text
+width (`5000` fiftieths of a percent), so a table Word sizes to its
+contents, or whose `w:tblW` gives no width or 0, says `width auto`; the
+reader takes up to 22in or 600%, and the view prints no width past
+either. `indent 0.5in` is its indent from the margin (`w:tblInd`), and
+`layout fixed` keeps its column widths as set instead of fitting them to
+the text (`w:tblLayout`). Only a numbered table has a table line, so the
+geometry is a body table's: a table nested in a cell, or in a note,
+header or footer, prints none and its widths are not kept. After that come `header row
+repeats`, the table's `style` and its `borders`, then `merged t0.row0.cell1 across 2; t0.row1.cell0
 down 3` for a cell spanning grid columns or a vertical merge and the rows
 it covers (the view prints a span's other columns as empty cells, and
 leaves out empty columns at the right; the reader counts both back, and a
@@ -480,9 +609,10 @@ paragraphs included, keyed by its id
 names only what its style sets apart from the style it is based on:
 font and size, `before`/`after` (`after 0pt` too, when the base has
 some), `line` (`line 1` for single, when the base is not), alignment, `keep-next`,
-`keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, and
-`contextual spacing` (no space between paragraphs of that style, as List
-Paragraph has). A line ends `, named Text Heading 2` when the style's name
+`keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, `right Xin`
+for the right indent (the id line's word; `right` alone is the alignment),
+and `contextual spacing` (no space between paragraphs of that style, as
+List Paragraph has). A line ends `, named Text Heading 2` when the style's name
 is not its id (for a `HeadingN` heading, not `heading N`). The `table:`
 line of the legend ends `, named Normal Table` the same way when the
 style's name is not the one the writer would give its id; a style the
@@ -558,7 +688,8 @@ converting back puts a part's `fmt` changes on its separator, then its
 continuation separator (the view does not say which a lone one was on;
 its tag, author and date come back). The clause also updates a reference
 file's separators; removing it removes their old formatting-change marks.
-A `fmt` clause alone creates the notes part it names. A
+A `fmt` clause alone creates the notes part it names. A `rev:` there
+(an insertion or deletion in a separator) is not written, and says so. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
@@ -621,21 +752,25 @@ staged in the contract's plan, not landed.
 {++quarterly++}{r0 @AC}
 {--ninety days--}{r7 @AC}
 {~~weekly~>monthly~~}{r2+1 @AC}       one author, deleted id first
+{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}  one author, insertion first
 {--old--}{r2 @JD}{++new++}{r1 @AC}    different authors stay separate
-{++bold ++}{r7 @AC}{++words++}{r8 @AC}  distinct ids stay separate
+{++bold ++}{r7+8 @AC}{++words++}{r7+8 @AC}  one change of two marks
+{++new text++}{r5+6 @AC}¶{r5+6 @AC}  a change that ends its paragraph
 {++quarterly++}{r0 @AC 2026-10-03T14:05:00Z}  with --dates
 {--deleted--}{r3 @BO re r1 @AL}        deletion inside insertion r1
 Text¶{r9 @AC}                        inserted paragraph mark
 ```
 
-A change that was the only content of another — `A` inserted text, `B`
-later deleted it — has nothing of the outer change left to split around
-it, so its note names the outer one after ` re ` and the outer change's
-own tag, each with its own timestamp as notes print them: `r3 @BO re
+A change inside another — `A` inserted text, `B` later deleted some or
+all of it — names the outer one after ` re ` and the outer change's own
+tag, whether or not text of the outer change is left beside it (#1111),
+each with its own timestamp as notes print them: `r3 @BO re
 r1 @AL`, or `r3 Ben Ode (2026-09-30T09:00:00Z) re r1 Ana Lima
 (2026-09-29T14:05:00Z)` in the plain view. The writer puts the change
 back inside the one it names. A row's or cell's own mark is never
-named: the writer rebuilds those where they stand. Deeper nests chain
+named: the writer rebuilds those where they stand, and the table line
+that places the mark places the changes inside it (#1376). A formatting
+change's `fmt` tag names no parent yet (#1377). Deeper nests chain
 the same way, innermost first (`r5 @CD re r3 @BO re r1 @AL`). The body
 writer currently rebuilds only the first outer a chain names; headers and
 footers rebuild the full chain. Word opens `ins > del > ins` but misreads
@@ -665,18 +800,43 @@ holding ` re r1 Kim` of its own stays one name. A part with a bare
 parenthesis in its name makes the note no fold: it reads as the change's
 plain attribution, or as a comment.
 
-Distinct revision ids always stay separate, including adjacent insertions or
-adjacent deletions by the same author. One id may appear on several marks.
-When writing DOCX, adjacent pieces with the same id, kind, author and date
-become one revision element, including formatting boundaries and changes
-nested inside that revision. Pieces separated by live text or a paragraph
+A tag names the logical change its piece belongs to, the one `jubarte
+changes` lists (#1261): the marks Word writes for one edit (one author's
+touching insertions, or deletions, in a story, whatever their dates; a
+deletion and that author's insertion after it; an insertion and that
+author's deletion touching it; the paragraph mark the change ends with)
+are one change with a joined id, and every piece prints it: `{++bold
+++}{r7+8 @AC}{++words++}{r7+8 @AC}`. A replacement holds one run of
+insertions and one of deletions, its ids in reading order (`r1+2` for an
+insertion first, `r2+1` for a deletion first). The pieces keep their own
+text, formatting and, under `--dates`, their own dates. Original text,
+another author's deletion, a field, a move, a table cell or the end of a
+paragraph separates two changes. So does original text the view prints
+nothing for: hidden text, a soft hyphen, a symbol, a page break. Written
+back, those two changes touch, so they read back as one (#1369). Another
+author's insertion among the marks does not, unless the marks were made
+inside it, or it sits between an insertion and the deletion after it,
+which touch only with nothing between them. Empty runs, bookmarks,
+comment ranges and Word's rendered-page-break hints separate nothing. When writing DOCX,
+the pieces that print one joined id take its ids in reading order, one
+each, so reading the DOCX back prints the same view. One id may appear on
+several marks. When writing DOCX, adjacent pieces with the same single id,
+kind, author and date become one revision element, including formatting
+boundaries and changes nested inside that revision. Pieces separated by live text or a paragraph
 boundary take distinct OOXML ids. The writer warns with the source line
 and the replacement id; reading the DOCX back prints that new id. Reusing
 an id with a different kind, author or date also requires a new id.
-Only a deletion directly followed by a live insertion by the same author
-pairs as a substitution. Proofing markers, bookmarks that print nothing,
-and empty runs may intervene; visible text and rendered content interrupt
-adjacency. An insertion followed by a deletion stays in document order.
+A substitution is one change: only a deletion directly followed by a live
+insertion of the same change, as `changes` lists it, pairs as one. Two
+changes print apart, each with its own tag (#1363): one author's deletion
+and insertion with hidden text, a soft hyphen, a symbol or a page break
+between them, a move and the insertion beside it, or a deletion and an
+insertion that repeat one `w:id` (`{--old--}{r7 @B}{++new++}{r7 @B}`:
+`changes` never joins a repeated id). Proofing markers,
+bookmarks that print nothing, and empty runs may intervene; visible text
+and rendered content interrupt adjacency. An insertion followed by a
+deletion stays in document order, one change when they touch:
+`{++an++}{r1+2 @AC}{--his--}{r1+2 @AC}`.
 In `{~~old~>new~~}{r4+5 @B re r3 @A}`, `re` applies only to the old side;
 the new side follows the parent insertion. Story prefixes remain intact.
 
@@ -710,6 +870,18 @@ line, `??: ""`, keeps the date its note gives.
 A comment is `{==anchored text==}{>>c5 @AC: text<<}`; a reply names its
 thread root, `{>>c6 @AS re c5: Disagree.<<}`; a resolved root reads
 `{>>c5 @AC resolved: text<<}`.
+
+A note that prints outside the change holding its comment's reference
+mark names that change last: `{==Kept.==}{>>c5 @AC in r13: text<<}{-- Gone.--}{r13 @JD}`,
+or `<!-- p1 rev-del r13 @JD -->` with `{==text==}{>>c5 @AC in r13: text<<}`
+when r13 holds nothing but the mark. Accepting a deletion that holds the
+mark removes the thread, as Word does; rejecting an insertion that holds
+it does the same. Converting back puts the mark inside r13 again. A note
+inside its change (`{--{==Gone.==}{>>c5 @AC: text<<}--}{r13 @JD}`) needs no
+`in`; neither does a mark outside any change. The view names one change:
+a mark inside a move or inside two nested changes prints no `in`, and a
+note whose paragraph has no r13 keeps its mark after its text, with a
+warning.
 
 A handle is the comment `w:initials` that author wrote, else the initials of
 the name's words, letters and digits only; a collision appends a digit. The
@@ -850,7 +1022,7 @@ name) keeps one author's. A selection keeps the footnotes its blocks cite;
 jubarte read FILE                      the view; jubarte FILE is the same
   -p p5,p12-p20,t0   --head N   --tail N   --changed [--by AC]
   --track-changes accept|reject   --comments none   --dates   --no-page-markers
-  --json (the snapshot)   --tables (the grids)   -o FILE.md|FILE.json
+  --json (the snapshot)   --tables [-p t0] (the grids)   -o FILE.md|FILE.json
 jubarte A B                            accept both sides' changes, compare, print the redline's view
                                        (read options apply; -o FILE writes the file instead)
 jubarte compare A B                    the same; -o FILE writes the redline (.docx, .pdf, .png, .md)
@@ -860,10 +1032,12 @@ jubarte edit FILE -p WHERE --anchor FIND --content WITH        replace FIND (an 
 jubarte edit FILE -p WHERE --content TEXT                      rewrite the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --delete            delete FIND, or the paragraph
 jubarte edit FILE -p WHERE [--anchor FIND] --style SPEC        format FIND, or set the paragraph style
-jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment
+jubarte edit FILE -p c5 --content TEXT | --delete | --resolve  a comment (another author's: --rewrite-others-comments)
 jubarte edit FILE -p c5 --reply TEXT                           a reply
 jubarte edit FILE -p c5.text --content TEXT                    replace the text c5 covers
 jubarte edit FILE -p r12 --accept | --reject                   resolve one tracked change (prints SUCCESS and a fenced diff containing the resolved text)
+jubarte edit FILE -p r12 --strike | --restore                  reject another author's change visibly (--reject --visible picks by kind)
+jubarte edit FILE --plan PLAN.json --skip-failed              apply what passes; the failed operations go to PLAN.failed.json
 jubarte add  FILE -p WHERE --content TEXT [--before]           a new paragraph after (or before) WHERE
 jubarte add  FILE -p WHERE --anchor FIND --content TEXT        a comment on FIND (--comment: on the whole paragraph)
 jubarte add  FILE -p c5 --content TEXT                         a reply (also --reply TEXT)
@@ -887,7 +1061,10 @@ exit 2. Table ranges (`t0-t2`) are not part of the `-p` grammar; list them
 as `t0,t1,t2`. `--head`, `--tail`, `--changed` and `--by` cannot be combined
 with `--tables`.
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion followed by its author's insertion is one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
@@ -913,7 +1090,7 @@ suggesting mode, the edited document in editing mode. Editing
 the bundle instead, in `<stem>.edit` by default.
 
 The options apply to every operation of the command: `--author NAME`
-(default `Redline`), `--datetime ISO8601` (default now, UTC),
+(default `Jubarte`), `--datetime ISO8601` (default now, UTC),
 `--suggesting-mode` (the default: tracked changes; the bundle holds
 `redline.docx`, `clean.docx`, `patch.diff` and `report.jsonl`) or
 `--editing-mode` (the edits land directly; the bundle holds `clean.docx`
@@ -955,6 +1132,213 @@ soft hyphens, stay distinct. Typed v2 edits still require literal anchors.
 The existing v1 Markdown/lookalike fallback keeps its versioned behavior;
 near reporting adds no new successful match.
 
+New words join no range they were not typed in. At a bookmark, a comment's
+range or a permission range, an insertion goes before the markers that
+open a range there and after the markers that close one, so in the clean
+copy, after Accept All and after Reject All each range covers the words it
+covered in the source. Words typed inside a range join it. A replacement
+takes the place of words its range covers, and stays in that range. A
+range at body level holds whole paragraphs, and its markers stay between
+them. The redline of such an edit is written directly, as under `keep`.
+A plan with `update_fields` goes through Compare, as before: a heading a
+TOC lists holds its `_Toc` bookmark around its text, and words typed
+before it refresh the TOC. So does a plan that also holds an operation
+that cannot be written as a tracked change (`page_setup`,
+`insert_footnote`, `insert_image`, `fill_control`). Compare can carry the
+marker into the insertion, and the edit is then refused with
+`CANDIDATE_INVALID`. Under `update_fields` it is refused too when Reject
+All of the redline would drop a bookmark, a comment's range or a
+permission range the source holds: a heading replaced whole loses its
+`_Toc` bookmark that way, and the TOC would read "Error! Bookmark not
+defined.". The refusal adds the route: drop `update_fields` and run
+`jubarte convert FILE --update-fields` afterwards.
+
+An empty paragraph (`<!-- p9 empty -->`) takes text as Word types it:
+`edit FILE -p p9 --content "text"`, an `insert` at `position` `start` or
+`end`, and a `rewrite` write one new run in your insertion. The run is
+formatted as the paragraph mark (a copy of its `w:pPr/w:rPr`, without the
+mark's own revisions or `w:oMath`, which only a mark takes), and the
+paragraph's properties stay as they were. What the paragraph holds without
+text (a field with no result, a bookmark's markers) stays where it is: an
+`insert` at `start`, a `rewrite` and `--content` go before it, an `insert`
+at `end` after it, so the words join no range they were not typed in.
+Several inserts go to their edges, each edge in plan order (#1303); a v2
+plan that mixes both edges of one empty paragraph is refused as ambiguous,
+both edges being one point. A `format` on the operation applies over the
+mark's formatting. In a table cell, a header or a footer too. Accept All
+leaves one plain paragraph holding the text; Reject All, the empty
+paragraph.
+
+### Visible rejects
+
+`--reject` is Word's Reject: another author's insertion vanishes and their
+deletion silently comes back, and nothing in the document shows the
+decision. `--strike` and `--restore` reject visibly, as your own tracked
+change beside theirs:
+
+- `-p r12 --strike` (`{"kind":"strike","revision":"r12"}`) deletes the
+  words of another author's insertion, your tracked deletion inside it.
+- `-p r12 --restore` (`{"kind":"restore","revision":"r12"}`) leaves their
+  deletion as it is and inserts a copy of its words right after it, with
+  their formatting.
+- `-p r12 --reject --visible`, and `"resolve_revisions":{"reject":{"ids":[…],"visible":true}}`
+  in a plan, strike each insertion and restore each deletion they name.
+
+`--content` (a plan's `comment`) adds a comment on the struck or restored
+words. Accept All reads as their change rejected, Reject All as the
+document before both, and rejecting only your changes gives theirs back
+intact. Both need the file's revisions kept (`--existing-revisions keep`,
+the default for a file with tracked changes). Striking an insertion you
+already struck is `ok`, with the note `already struck`. Refused, each with
+the route that takes it instead: your own revision of any kind, named
+first (`OWN_REVISION`), a revision with no text (`EMPTY_REVISION`, naming
+the comment marks it holds), a revision the same command also accepts or
+rejects (`REVISION_CONFLICT`), the source of a move to restore or its
+destination to strike, a paragraph mark, a formatting change (no visible
+reject of formatting yet: `--reject` undoes it without a trace), an
+insertion holding anything but plain text (a field among them) to strike,
+and a deletion split over several places, holding anything but plain
+text, or sitting in a hyperlink, content control or field, to restore. A
+plan's `"reject":{"visible":true}` with no `ids`, `authors` or `kinds`
+takes every revision, as a silent reject does. A `--reject` recorded into
+a `--plan` whose reject is visible is refused: record it as `--reject
+--visible`, or start a new plan.
+
+### Refusals
+
+Text inside another author's insertion is editable: the edit nests in
+their insertion, and Accept All and Reject All give what each would
+without it. Their insertion splits around the edit, and the report's
+`summary` line names the pieces under its source id
+(`"split_revisions":[{"from":"r3","to":["r3","r9"]}]`). Deleting a
+paragraph nests the deletion in their insertions, leaves their deletions
+as they are, and removes your own pending insertion outright. Text
+another author deleted or moved, a paragraph holding a move, and a
+paragraph or run whose mark or formatting change is still tracked, are
+not. The refusal
+(`UNSUPPORTED_STRUCTURE`, exit 3) names that revision by id, author and
+text, then each way around it with what that way costs, in the syntax the
+command used:
+
+```text
+error: plan refused: UNSUPPORTED_STRUCTURE (op-1): the text is inside r4, "bankers" deleted by "Bob".
+  put it back visibly:  -p r4 --restore (their deletion stays, your insertion shows)
+  let it go:            -p r4 --accept  (their words leave the document for good)
+  put it back silently: -p r4 --reject  (their deletion disappears, no trace)
+  or comment on it:     add -p p0 --anchor "…" --content "…"
+```
+
+Accepting or rejecting goes in the same command, before the edit
+(`edit FILE -p r4 --reject -p p0 --anchor bankers --content brokers`). A
+restore goes in a command of its own (an edit of its words in the same
+command is refused, saying so): the next edit finds the restored words,
+your own insertion, and rewrites them in place. A
+`--plan` quotes `{"kind":"restore","revision":"r4"}`,
+`"resolve_revisions":{"reject":{"ids":["r4"]}}` and a
+`{"kind":"comment",…}` operation instead; `edit apply` quotes a whole
+`"resolve_revisions":{"accept":[…],"reject":[…]}` naming the revision's
+`short_id` and `long_id`, and a comment on the refused operation's own
+`target`, but no restore: its plans have none yet. The visible route is
+offered only where restore would land: not for a deletion split over
+several places or holding a field, a picture or a note reference. Each JSON route pastes into its plan as written. An anchor that
+misses the visible text but reaches into a deletion gets the same refusal,
+not `ANCHOR_NOT_FOUND`, whether it is copied with the deletion's marks
+(`{--bankers--}`) or without them, with a tab as `\t` or a curly quote
+typed straight. A move offers "keep the move" and "undo it silently";
+a formatting change, "keep their formatting" and "undo it silently". A
+field, hyperlink or content control names itself instead.
+
+### Plan errors
+
+A `--plan` that does not read says where and what it takes
+(`INVALID_PLAN`, exit 3). The operation is named by its `id`, else
+`op-N`, then its kind, the field, the nearest field it takes and the list
+of its fields:
+
+```text
+error: INVALID_PLAN (op-2): delete: unknown field "ocurrence"; did you mean "occurrence"? fields: comment, find, occurrence, paragraph
+```
+
+An unknown kind lists the kinds, a missing `schema_version` says which
+this build reads, characters after the plan's object give their line and
+column, a bare number for `paragraph` shows `{"index": N}`, a single
+string for `resolve_revisions.accept.ids` shows it as an array, an `id`
+that is no string shows one, and an alias beside the field it is read as
+says to drop one. A byte order mark before the plan is ignored. Two
+slips apply as meant, each with a `note:` line on stderr and in the
+`summary` event's `notes` (left out when none applies): `anchor` for
+`find` on `replace`, `delete` and `comment`, and `comment` for `text` on
+`comment` and `reply_comment`.
+`delete` and `rewrite` take a `comment` of their own: a deletion's sits
+on the struck words, in the redline only, and a rewrite's covers the
+paragraph. `text` on `replace` stays an error, naming `replacement`.
+
+### Ids across a settle
+
+A plan that settles revisions first (`existing_revisions` `accept` or
+`reject`, or `resolve_revisions`) still names the paragraphs as its author
+read them: `p3` is the source's `p3` even when settling moves it. A
+paragraph whose mark the settle removes merges with its neighbour. An edit
+that finds its text there follows it. A whole-paragraph operation
+(`delete_paragraph`, `rewrite`, …) follows it when the merged paragraph
+has no other source. When it has, the refusal names each paragraph in
+its view and a route that reaches the merged one:
+
+```text
+error: PARAGRAPH_RESOLVED (op-1): p3 (as read) merges into p2 (after the plan's revisions settle) together with p4; an operation on a whole paragraph needs a paragraph with one source, so select it by its text instead ({"contains":"Three four."}), or accept the revisions first (`jubarte accept FILE -o OUT.docx`) and edit OUT.docx
+```
+
+The settled id is left out when it reads like one of the source ids the
+message names (`p0 (as read) merges with p1 when the plan's revisions
+settle`). The text route is offered to a `--plan` of the first version
+only, quoting words no other paragraph of the story holds; a plan that
+settles some revisions and keeps or rejects others gets "settle the
+plan's revisions first and edit the result" instead of one command. A
+paragraph whose text the settle removes is refused as gone. One whose own
+text the settle changes (rejecting an insertion inside it, say) is still a
+source of the merge that holds its words: an operation on its neighbour is
+refused, not applied to both.
+
+### Partial runs
+
+A plan is applied whole or refused whole. `--skip-failed` applies every
+operation that passes and leaves the failed ones out:
+
+```text
+$ jubarte edit in.docx --plan plan.json --skip-failed -o out.docx
+wrote out.docx (docx, 6360 bytes)
+sha256: a965bd39a2bb03491a52c57aca2dd1b1ac35556602ddbbe7b5726bfbb2fb4ade
+skipped 2 of 4 operations; the fixes are in plan.failed.json
+```
+
+The output is the bytes the plan without the failed operations writes.
+An operation is one unit, its `comment` included. Operations that stand
+or fall together share a `group` (`"group":"spacing"`): when one fails,
+the rest of its group is left out too, with the code `GROUP_FAILED`. The failed operations go to
+`PLAN.failed.json` beside the plan (`FILE_plan.failed.json` beside FILE
+when operation flags made the plan, and into the bundle with
+`--out-dir`): a plan to fix and run on the document just written. Its
+`source_sha256` is that document's, its `date` the run's, and each
+operation carries a `why` the parser ignores
+(`"why":"ANCHOR_NOT_FOUND: \"two spaces\" does not occur in the
+paragraph"`). In suggesting mode its `existing_revisions` is `keep`: the
+output's tracked changes are the plan's own, and `update_fields` is left
+out with it (the skip line says so). The skip line is a warning: `-q`
+keeps it. The report's `summary` says `"status":"partial"` with
+`ops.skipped`, and each operation left out reports `skipped` with its
+code. Never skipped: `STALE_SOURCE`, a `resolve_revisions` that fails,
+and an operation id used twice. A plan whose every operation fails is
+refused whole (exit 3, nothing written). `--skip-failed` applies a plan,
+so it does not go with operation flags that record into `--plan`.
+
+Every write prints the primary output's `sha256:` (the `summary`
+event's `output_sha256`), the digest a follow-up plan's `source_sha256`
+names. A `--dry-run` that passes whole ends with `next:`, the same
+command without `--dry-run`, quoted for a POSIX shell (`-q` drops it); a
+dry run that would skip operations prints none. When the output is
+already there, a note says the next command replaces it, and `next:`
+ends with `--force`.
+
 ### Limits of the agent view
 
 - Tracked paragraph marks inside comment bodies are not shown.
@@ -977,8 +1361,8 @@ near reporting adds no new successful match.
   lengths in twips, in the schema's order. It is the frame the paragraph
   lays out in, its style's under its own, and the writer puts it on the
   paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
-  attribute, or a value the schema does not allow, does not read, and the
-  story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
+  attribute, a value the schema does not allow, or the same attribute
+  twice, does not read, and the story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
   {first-line: 0.25in, right: 0.25in}` right after the alignment
   (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
   the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's
@@ -1000,9 +1384,11 @@ near reporting adds no new successful match.
   (a page break added after Word last saved turns no page) and does not
   add the blank page an odd- or even-page section start can need.
 - A table is one block for `-p`, `--head` and `--tail`.
-- Distinct revision ids keep separate attribution tags, including when a
-  comment range lies between them. Resolved views preserve them as separate
-  clauses: `rev r7 @AC; r8 @AC`.
+- A change Word wrote as several marks prints its joined id on each of its
+  pieces, as `changes` lists it (`{++bold++}{r7+8 @AC}{++ words++}{r7+8
+  @AC}`); a comment range between the marks does not part them. Separate
+  changes keep separate tags, and resolved views name each change once:
+  `rev r7+8 @AC; r9 @AC`.
 
 ## Diffs
 

@@ -22,7 +22,8 @@
       }
     },
     "operations": {"type": "array", "items": {"type": "object"}},
-    "update_fields": {"type": "boolean", "default": false}
+    "update_fields": {"type": "boolean", "default": false},
+    "rewrite_others_comments": {"type": "boolean", "default": false}
   },
   "$defs": {
     "filter": {

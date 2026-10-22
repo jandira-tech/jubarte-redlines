@@ -302,7 +302,7 @@ fn cached_breaks_inside_a_table_are_named_at_the_next_block() {
     )));
     assert!(
         body(&out).starts_with(
-            "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row -->\n"
+            "<!-- page 1 of 3 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 3x1, cells p1-p3 by row, widths 2.778in, width auto -->\n"
         ),
         "{out}"
     );
@@ -420,6 +420,46 @@ fn id_line_shows_direct_alignment_indent_style_and_number() {
     );
 }
 
+/// A paragraph states its own outline level in its `w:pPr`, whatever
+/// style it carries; a style that gives no level (`Body`) must not swallow
+/// it, or the level is lost on write-back (#1524 review). One the `#` count
+/// already gives needs no clause.
+#[test]
+fn a_styled_paragraph_keeps_the_outline_level_it_states() {
+    let body_xml = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/></w:pPr><w:r><w:t>Deep body</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>Shallow body</w:t></w:r></w:p>"#,
+    );
+    let styles = Part {
+        name: "word/styles.xml",
+        content_type: STYLES_CT,
+        rel_type: STYLES_REL,
+        xml: &format!(
+            r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body Text"/></w:style></w:styles>"#
+        ),
+    };
+    let full = agent(&common::docx::docx_with(body_xml, &[styles]));
+    let out = body(&full).to_string();
+    assert!(
+        out.contains("<!-- p0 Body outline 9 -->\nDeep body"),
+        "{out}"
+    );
+    assert!(out.contains("<!-- p1 Body -->\n## Shallow body"), "{out}");
+    // The level comes back beside the style the line names.
+    let back = markdown_to_docx(&full, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let document = common::docx::part_string(&back, "word/document.xml").unwrap();
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="8"/>"#),
+        "{document}"
+    );
+    assert!(
+        document.contains(r#"<w:pStyle w:val="Body"/><w:outlineLvl w:val="1"/>"#),
+        "{document}"
+    );
+}
+
 #[test]
 fn paragraph_marks_print_inline_and_formatting_changes_on_the_id_line() {
     let body_xml = concat!(
@@ -441,7 +481,7 @@ fn table_line_gives_grid_cells_and_header_row() {
     let bytes = docx(&format!("{}{TABLE_3X2}{}", para("Before"), para("After")));
     assert_eq!(
         body(&agent(&bytes)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 center 3x2, cells p1-p6 by row, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p7 -->\nAfter\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nBefore\n\n<!-- t0 center 3x2, cells p1-p6 by row, widths 2.778in 2.778in, width auto, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p7 -->\nAfter\n"
     );
 }
 
@@ -449,7 +489,7 @@ fn table_line_gives_grid_cells_and_header_row() {
 fn table_line_lists_rows_when_a_cell_holds_two_paragraphs_and_notes_merges_and_marks() {
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:pPr><w:rPr><w:ins w:id="12" w:author="Ann Counsel"/></w:rPr></w:pPr><w:r><w:t>a</w:t></w:r></w:p><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x2, cells t0.row0 p0 t0.row1 p1-p3, widths 2.778in 2.778in, width auto, merged t0.row0.cell0 across 2, break-ins r12 @AC in p1 -->\n"), "{out}");
 }
 
 #[test]
@@ -466,7 +506,7 @@ fn a_cells_empty_paragraphs_keep_their_breaks() {
     let out = body(&agent(&docx(&tbl))).to_string();
     assert!(
         out.starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4 -->\n|a<br><br>b|c<br>|\n"
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells t0.row0 p0-p4, widths 2.778in 2.778in, width auto -->\n|a<br><br>b|c<br>|\n"
         ),
         "{out}"
     );
@@ -478,7 +518,7 @@ fn table_line_names_each_merged_cell_and_how_far_it_reaches() {
     // spanning columns names how many.
     let tbl = r#"<w:tbl><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let out = body(&agent(&docx(tbl))).to_string();
-    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
+    assert!(out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 2x3, cells p0-p4 by row, widths 2.083in 2.083in 2.083in, width auto, merged t0.row0.cell0 down 2; t0.row0.cell1 across 2 -->\n|A|B||\n|-|-|-|\n||C|D|\n"), "{out}");
 }
 
 /// The ids round trip (Task 5b): a table's own property changes and a
@@ -496,7 +536,7 @@ fn table_line_names_the_tables_own_changes() {
     let bytes = docx(&tbl);
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
+        out.starts_with("<!-- page 1 of 1 -->\n\n<!-- t0 center 2x2, cells p0-p3 by row, p2 right, widths 2.778in 2.778in, width auto, rev r5 @AC in t0.row1.cell1, fmt r1 @AC; r2 @??; r3 @AC in t0.row0; r4 @AC in t0.row0.cell1; r6 @AC in p2; r7 @AC in p2 -->\n"),
         "{out}"
     );
     let listed: Vec<String> = jubarte::changes::list_changes(&bytes)
@@ -545,12 +585,12 @@ fn attribution_notes_follow_each_change_with_id_and_handle() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {++forty-five++}{r4 @AC}{--thirty--}{r3 @AC} days, {++quarterly++}{r5 @AC} reports{--, nothing else--}{r6 @AC}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\nPay within {++forty-five++}{r4+3 @AC}{--thirty--}{r4+3 @AC} days, {++quarterly++}{r5 @AC} reports{--, nothing else--}{r6 @AC}\n"
     );
 }
 
 #[test]
-fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
+fn neighbouring_marks_by_one_author_are_one_change_named_on_each_piece() {
     let p = format!(
         "<w:p>{}{}{}</w:p>",
         run("a "),
@@ -559,7 +599,7 @@ fn neighbouring_marks_by_one_author_keep_each_id_and_their_text() {
     );
     assert_eq!(
         body(&agent(&docx(&p))),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7 @AC}{++ words++}{r8 @AC}\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 -->\na {++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}\n"
     );
 }
 
@@ -830,6 +870,42 @@ fn changes_without_text_name_their_ids() {
     }
 }
 
+/// The legend's own order governs `style_changes:`: `docDefaults` leads,
+/// then the default style. `usize::MIN` is zero, so a part that lists the
+/// default style before its defaults used to win the tie (#1521 review).
+#[test]
+fn the_style_changes_legend_leads_with_the_document_defaults() {
+    let rpr_change = |id: u32| {
+        format!(
+            r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Ann Counsel" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr>"#
+        )
+    };
+    // Word writes `w:docDefaults` first; a part that lists the styles
+    // before it is read the same way, and the legend order still holds.
+    let styles = format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>{}</w:style><w:docDefaults><w:rPrDefault>{}</w:rPrDefault></w:docDefaults></w:styles>"#,
+        rpr_change(9),
+        rpr_change(11)
+    );
+    let bytes = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>"#,
+    );
+    let out = agent(&bytes);
+    assert!(
+        header_lines(&out).iter().any(|l| {
+            l.starts_with(r#"style_changes: {docDefaults: styles.r11 @AC, Normal: styles.r9 @AC}"#)
+        }),
+        "{out}"
+    );
+}
+
 /// Task 5b, from Word redlines: an empty row's deletion has no text to tag,
 /// a first-page header still exists when different-first-page is off, and
 /// Word's footnote separators carry formatting changes no note shows.
@@ -876,7 +952,7 @@ fn rows_inactive_headers_and_separators_name_their_changes() {
     );
     let out = agent(&bytes);
     assert!(
-        out.contains("<!-- t0 2x1, cells p0-p1 by row, rev-del r6 @AC in t0.row1 -->"),
+        out.contains("<!-- t0 2x1, cells p0-p1 by row, width auto, rev-del r6 @AC in t0.row1 -->"),
         "{out}"
     );
     let lines = header_lines(&out);
@@ -1152,8 +1228,8 @@ fn numbering_and_styles_authors_get_handles_after_comment_authors() {
 
 /// pi review of Task 5 F1/F2: each view reads a header's changes its own
 /// way, moves included, and the tracked view escapes document text that
-/// reads like a mark. An insertion followed by a deletion keeps both tags,
-/// as in the body.
+/// reads like a mark. An insertion followed by the same author's deletion
+/// is one replacement, its id on both pieces, as in the body (#1359).
 #[test]
 fn header_text_follows_each_view() {
     let header = format!(
@@ -1182,7 +1258,7 @@ fn header_text_follows_each_view() {
     };
     assert_eq!(
         text(&agent(&bytes)),
-        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
+        r#"  default: {id: header1, text: "Status: {++DRAFT++}{header1.r1+2 @AC 2026-10-01T09:00:00Z}{--FINAL--}{header1.r1+2 @AC 2026-10-01T09:00:00Z} {\\>>x<<\\} Page {++2++}{header1.r9 @AC}{--7--}{header1.r8 @AC} of 3", style: Normal}"#
     );
     assert_eq!(
         text(&agent_with(&bytes, TrackChanges::Accept, true)),
@@ -1425,7 +1501,7 @@ fn hidden_comments_in_a_cell_go_on_the_table_line_not_the_next_paragraph() {
     let out = agent_with(&one_comment_docx(&body_xml), TrackChanges::All, false);
     assert!(
         body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->\n"
+            "<!-- page 1 of 1 -->\n\n<!-- t0 1x2, cells p0-p1 by row, widths 2.778in 2.778in, width auto, comments c9 in p1 -->\n"
         ),
         "{out}"
     );
@@ -1481,11 +1557,11 @@ fn accept_all_keeps_indices_comments_and_lists_the_revisions_applied() {
     let bytes = docx(&format!("{p0}{p1}"));
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Accept, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin forty-five\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver quarterly reports\n\n<!-- p1 rev r4+3 @AC -->\nWithin forty-five\n"
     );
     assert_eq!(
         body(&agent_with(&bytes, TrackChanges::Reject, true)),
-        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r4 @AC; r3 @AC -->\nWithin thirty\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p0 rev r0 @AC; r1 @AC -->\nDeliver  reports weekly\n\n<!-- p1 rev r4+3 @AC -->\nWithin thirty\n"
     );
 }
 
@@ -1528,10 +1604,11 @@ fn rev_counts_revisions_inside_links_content_controls_and_fields() {
         ins(10, "Ann Counsel", "field")
     );
     let out = agent_with(&docx(&body_xml), TrackChanges::Accept, true);
+    // The link's mark joins the one before it, and the change is named
+    // once; the content control parts it from the rest.
     assert!(
-        body(&out).starts_with(
-            "<!-- page 1 of 1 -->\n\n<!-- p0 rev r7 @AC; r8 @AC; r9 @AC; r10 @AC -->\n"
-        ),
+        body(&out)
+            .starts_with("<!-- page 1 of 1 -->\n\n<!-- p0 rev r7+8 @AC; r9 @AC; r10 @AC -->\n"),
         "{out}"
     );
 }
@@ -2052,7 +2129,7 @@ fn header_counts_revisions_comments_and_authors() {
     );
     assert_eq!(
         lines[4],
-        "revisions: 3                       # 3 marks shown as 3 changes: 2 insertions, 1 deletion"
+        "revisions: 3                       # 3 marks shown as 2 changes: 1 insertion, 1 substitution"
     );
     assert_eq!(lines[5], "comments: 0");
     assert_eq!(lines[6], "authors:");
@@ -2340,7 +2417,7 @@ fn picks_print_paragraphs_ranges_and_whole_tables_in_document_order() {
     assert!(out.contains("\nrange: p1, p4, p9 of p0-p9\n"), "{out}");
     assert_eq!(
         body(&out),
-        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nOne\n\n<!-- t0 center 3x2, cells p2-p7 by row, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p9 -->\nNine\n"
+        "<!-- page 1 of 1 -->\n\n<!-- p1 -->\nOne\n\n<!-- t0 center 3x2, cells p2-p7 by row, widths 2.778in 2.778in, width auto, header row repeats -->\n|Item|Due|\n|-|-|\n|Report|Day 10|\n|Call|Monthly|\n\n<!-- p9 -->\nNine\n"
     );
     let out = selected(Select::parse("t0,p8-").unwrap());
     assert!(out.contains("\nrange: t0, p8-p9 of p0-p9\n"), "{out}");
@@ -2544,17 +2621,36 @@ fn an_edit_shows_up_with_the_ids_that_changes_and_reject_take() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    let by_id = |id: &str| {
-        rows.iter()
-            .find(|r| r["id"] == format!("r{id}"))
-            .unwrap_or_else(|| panic!("no change r{id} in {changes}"))
-    };
-    assert_eq!(by_id(del_id)["kind"], "deletion");
-    assert_eq!(by_id(del_id)["text"], "thirty");
-    assert_eq!(by_id(ins_id)["kind"], "insertion");
-    assert_eq!(by_id(ins_id)["text"], "forty-five");
-    assert_eq!(by_id(del_id)["ref"], format!("r{del_id}"));
-    assert_eq!(by_id(ins_id)["ref"], format!("r{ins_id}"));
+    // The view's substitution is the one replacement `changes` lists, by
+    // the same id, with its deletion and insertion as members (plan 11).
+    let composite = format!("r{del_id}+{ins_id}");
+    let row = rows
+        .iter()
+        .find(|r| r["id"] == composite)
+        .unwrap_or_else(|| panic!("no change {composite} in {changes}"));
+    assert_eq!(row["ref"], composite);
+    assert_eq!(row["kind"], "replacement");
+    assert_eq!(row["text"], "thirty → forty-five");
+    let members: Vec<(&str, &str, &str)> = row["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["id"].as_str().unwrap(),
+                m["kind"].as_str().unwrap(),
+                m["text"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let (del_ref, ins_ref) = (format!("r{del_id}"), format!("r{ins_id}"));
+    assert_eq!(
+        members,
+        [
+            (del_ref.as_str(), "deletion", "thirty"),
+            (ins_ref.as_str(), "insertion", "forty-five")
+        ]
+    );
 
     // The JSON prints the id the view prints, and that id selects it.
     ok(
@@ -2940,7 +3036,7 @@ fn table_line_counts_rows_inside_content_controls() {
     );
     let out = body(&agent(&docx(&tbl))).to_string();
     assert!(
-        out.contains("<!-- t0 2x2, cells p0-p3 by row -->\n"),
+        out.contains("<!-- t0 2x2, cells p0-p3 by row, widths 2.778in 2.778in, width auto -->\n"),
         "{out}"
     );
 }
@@ -2955,7 +3051,8 @@ fn a_row_revision_shows_on_the_table_line_after_resolution() {
     assert!(accepted.contains(" rev r7 @AC in t0.row1"), "{accepted}");
     let rejected = body(&agent_with(&bytes, TrackChanges::Reject, true)).to_string();
     assert!(
-        rejected.contains("<!-- t0 1x2, cells p0-p1 by row -->"),
+        rejected
+            .contains("<!-- t0 1x2, cells p0-p1 by row, widths 2.778in 2.778in, width auto -->"),
         "{rejected}"
     );
 }
@@ -3268,20 +3365,20 @@ fn edit_flags_group_operations_by_location_and_print_the_changed_blocks() {
         "{out}"
     );
     assert!(
-        out.contains("R: Redline") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
+        out.contains("J: Jubarte") && out.contains("# 4 revisions, 2026-10-01T09:00:00Z"),
         "{out}"
     );
     captures(
         &out,
-        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{r\d+ @R\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ and Expenses\+\+\}\{r\d+ @J\}\n",
     );
     captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{~~thirty~>forty-five~~\}\{r\d+\+\d+ @J\} days of receipt\.\n",
     );
     captures(
         &out,
-        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @R\} ?\.\n",
+        r"<!-- p2 -->\nLate amounts accrue interest at one percent ?\{-- ?per month--\}\{r\d+ @J\} ?\.\n",
     );
     // confirmation_after already asserted unified hunks on the raw stdout.
     let report = std::fs::read_to_string(dir.path().join("base.edit/report.jsonl")).unwrap();
@@ -3399,10 +3496,10 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
         .concat(),
         dir.path(),
     );
-    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days");
+    captures(&out, r"within thirty\{\+\+ \(30\)\+\+\}\{r\d+ @J\} days");
     captures(
         &out,
-        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{r\d+ @R\}Late amounts",
+        r"<!-- p2 -->\n\{\+\+Note: \+\+\}\{r\d+ @J\}Late amounts",
     );
     let report = std::fs::read_to_string(dir.path().join("one/report.jsonl")).unwrap();
     assert_eq!(report.matches(r#""op":"insert""#).count(), 2, "{report}");
@@ -3432,7 +3529,7 @@ fn edit_flags_turn_a_kept_anchor_into_an_insertion_and_keep_the_other_party_s_ma
     );
     captures(
         &out,
-        r"\{\+\+ \(30\)\+\+\}\{r\d+ @R\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
+        r"\{\+\+ \(30\)\+\+\}\{r\d+ @J\} days of \{~~receipt~>the invoice~~\}\{r\d+\+\d+ @JD\}\.",
     );
     let report = std::fs::read_to_string(dir.path().join("two/report.jsonl")).unwrap();
     assert!(
@@ -3517,6 +3614,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
             "--resolve",
             "--author",
             "Cy Young",
+            // c1 is Bob's: Cy rewrites it under Bob's name only on request (#1264).
+            "--rewrite-others-comments",
             "--out-dir",
             "three",
         ],
@@ -3547,7 +3646,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
         dir.path(),
     );
     assert!(
-        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        out.contains("<!-- p0 -->\n{==Fees==}{>>c2 @J: Add a fee schedule.<<}\n"),
         "{out}"
     );
     let out = confirmed(
@@ -3575,7 +3674,7 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
     // lines of the p2 deletion hunk; retain its content check via read.
     let remaining = ok(&["read", "five/redline.docx"], dir.path());
     assert!(
-        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @R: Add a fee schedule.<<}\n"),
+        remaining.contains("<!-- p0 -->\n{==Fees==}{>>c2 @J: Add a fee schedule.<<}\n"),
         "{remaining}"
     );
     assert!(
@@ -3639,7 +3738,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &after,
-        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p2[^>]*-->\n\{\+\+Invoices are due in full\.\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
     );
     let before = confirmed(
         &[
@@ -3661,7 +3760,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     );
     captures(
         &before,
-        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+ @R\}¶\{r\d+ @R\}\n",
+        r"<!-- p1[^>]*-->\n## \{\+\+Payment\+\+\}\{r\d+\+\d+ @J\}¶\{r\d+\+\d+ @J\}\n",
     );
     let xml = common::docx::part_string(
         &std::fs::read(dir.path().join("before/clean.docx")).unwrap(),
@@ -3725,7 +3824,7 @@ fn add_places_paragraphs_styles_them_and_editing_mode_writes_no_redline() {
     assert!(noted_err.contains("\nnote: op-1: anchor \"# Fees\" read as \"Fees\" (Markdown marks are not document text)\n"), "{noted_err}");
     captures(
         &confirmation_after(&noted),
-        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @R\}\n",
+        r"<!-- p0 -->\nFees\{\+\+ \\\* Costs\+\+\}\{r\d+ @J\}\n",
     );
     let (_, marks) = ok_both(
         &[
@@ -3781,11 +3880,14 @@ fn one_file_prints_the_agent_view_and_two_files_print_their_redline() {
         out.starts_with("---\nsource: old_v_new.docx (not written; -o keeps it)\n"),
         "{out}"
     );
-    captures(
+    // The comparer writes the insertion first: one replacement, its id
+    // on both pieces (#1359).
+    let ids = captures(
         &out,
-        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{r\d+ @R\}\{--thirty--\}\{r\d+ @R\} days of receipt\.\n",
+        r"<!-- p1 -->\nClient shall pay each invoice within \{\+\+forty-five\+\+\}\{(r\d+\+\d+) @J\}\{--thirty--\}\{(r\d+\+\d+) @J\} days of receipt\.\n",
     );
-    assert!(out.contains("R: Redline"), "{out}");
+    assert_eq!(ids[0], ids[1], "{out}");
+    assert!(out.contains("J: Jubarte"), "{out}");
     // The digest is the in-memory redline's, neither input's.
     let digest = captures(&out, r"\nsha256: ([0-9a-f]{64})\n")[0].to_string();
     for input in ["old.docx", "new.docx"] {
@@ -4376,8 +4478,9 @@ fn a_failed_layout_warns_that_markers_come_from_the_breaks() {
 }
 
 /// pi review av2 F10: `w:bdo`/`w:dir` are transparent to revisions as they
-/// are to the text: an insertion then a deletion keeps document order,
-/// and the resolved `rev` agrees.
+/// are to the text: an insertion then the same author's deletion is one
+/// replacement printed in document order (#1359), and the resolved `rev`
+/// agrees.
 #[test]
 fn a_bidi_wrapper_keeps_insertion_then_deletion_in_document_order() {
     let doc = docx(&format!(
@@ -4387,14 +4490,11 @@ fn a_bidi_wrapper_keeps_insertion_then_deletion_in_document_order() {
     ));
     let tracked = agent(&doc);
     assert!(
-        tracked.contains("{++b++}{r2 @AC}{--a--}{r1 @AC}"),
+        tracked.contains("{++b++}{r2+1 @AC}{--a--}{r2+1 @AC}"),
         "{tracked}"
     );
     let accepted = agent_with(&doc, TrackChanges::Accept, true);
-    assert!(
-        accepted.contains("<!-- p0 rev r2 @AC; r1 @AC -->"),
-        "{accepted}"
-    );
+    assert!(accepted.contains("<!-- p0 rev r2+1 @AC -->"), "{accepted}");
 }
 
 /// pi review av2 F19: `read --dates` reaches the view through the CLI; an
@@ -4662,7 +4762,7 @@ fn id_lines_inside_a_multi_paragraph_comment_name_it() {
         );
     }
     assert!(
-        out.contains("<!-- t0 1x1, cells p2-p2 by row, in c9 -->"),
+        out.contains("<!-- t0 1x1, cells p2-p2 by row, widths 2.778in, width auto, in c9 -->"),
         "{out}"
     );
     assert!(out.contains("<!-- p4 -->"), "{out}");
@@ -4811,7 +4911,7 @@ fn a_table_line_names_a_range_that_starts_in_a_cell() {
     );
     let out = body(&agent(&bytes)).to_string();
     assert!(
-        out.contains("<!-- t0 1x1, cells p0-p0 by row, in c9 -->"),
+        out.contains("<!-- t0 1x1, cells p0-p0 by row, widths 2.778in, width auto, in c9 -->"),
         "{out}"
     );
     assert!(out.contains("<!-- p1 in c9 -->"), "{out}");
@@ -5331,21 +5431,33 @@ fn missing_revision_id_and_author_have_explicit_unknown_tags() {
     );
 }
 
+/// A cell's replacement is one change on the table line, named once
+/// whichever of its marks comes first (#1359), as on a paragraph's line.
 #[test]
 fn resolved_views_keep_table_cell_revision_ids_and_following_paragraph_numbers() {
-    let bytes = docx(&format!(
-        "<w:tbl><w:tr><w:tc><w:p>{}{}</w:p></w:tc></w:tr></w:tbl>{}",
-        ins(2, "Ann Counsel", "new"),
-        del(1, "Ann Counsel", "old"),
-        para("After")
-    ));
-    for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
-        assert_eq!(
-            body(&agent_with(&bytes, mode, true)),
-            format!(
-                "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, rev r2 @AC in p0; r1 @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
-            )
-        );
+    for (marks, id) in [
+        (
+            [ins(2, "Ann Counsel", "new"), del(1, "Ann Counsel", "old")],
+            "r2+1",
+        ),
+        (
+            [del(1, "Ann Counsel", "old"), ins(2, "Ann Counsel", "new")],
+            "r1+2",
+        ),
+    ] {
+        let bytes = docx(&format!(
+            "<w:tbl><w:tr><w:tc><w:p>{}</w:p></w:tc></w:tr></w:tbl>{}",
+            marks.concat(),
+            para("After")
+        ));
+        for (mode, text) in [(TrackChanges::Accept, "new"), (TrackChanges::Reject, "old")] {
+            assert_eq!(
+                body(&agent_with(&bytes, mode, true)),
+                format!(
+                    "<!-- page 1 of 1 -->\n\n<!-- t0 1x1, cells p0-p0 by row, width auto, rev {id} @AC in p0 -->\n|{text}|\n|-|\n\n<!-- p1 -->\nAfter\n"
+                )
+            );
+        }
     }
 }
 
@@ -5798,7 +5910,7 @@ fn pr392_comment_range_ending_in_a_table_does_not_leak_to_the_next_paragraph() {
     let view = agent(&bytes);
     assert!(view.contains("<!-- p0 in c9 -->"), "{view}");
     assert!(
-        view.contains("<!-- t0 1x1, cells p1-p1 by row, in c9 -->"),
+        view.contains("<!-- t0 1x1, cells p1-p1 by row, widths 2.778in, width auto, in c9 -->"),
         "{view}"
     );
     assert!(view.contains("<!-- p2 -->\nQuiet"), "{view}");

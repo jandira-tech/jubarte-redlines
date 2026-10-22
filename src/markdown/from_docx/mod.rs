@@ -19,12 +19,14 @@ pub(crate) mod drawing;
 mod header;
 mod media;
 mod mermaid;
-mod ooxml;
+pub(crate) mod ooxml;
 mod revise;
 
+pub(crate) use agent::{escape_line_starts, escape_markdown};
+pub(crate) use critic::escape as escape_critic;
 use critic::{Change, Critic, Mark};
 use ooxml::{Blocks, ListIndent, Marks, Media, Package, Rels};
-pub(crate) use ooxml::{Element, element_from, parse_xml};
+pub(crate) use ooxml::{Element, code_fence, element_from, parse_xml};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -94,6 +96,18 @@ fn part_stem(path: &str) -> String {
 }
 
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
+    // The marks Word wrote for one edit print the whole change's id, as
+    // `changes` lists it (#1261). A package the listing cannot read prints
+    // each mark's own.
+    let logical = crate::changes::list_logical_changes_tolerant(bytes).ok();
+    let wholes = logical.as_deref().map(agent::wholes_of).unwrap_or_default();
+    agent::with_wholes(wholes, || {
+        agent::with_logical(logical, || convert_marks(bytes, options))
+    })
+}
+
+/// [`convert`], its tags naming the changes [`agent::with_wholes`] set.
+fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
     package.input_limits = options.input_limits;
     package.check_tag_policy()?;
@@ -271,7 +285,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
     let default_style = styles_root.as_ref().and_then(|root| {
         root.children_named("style")
             .find(|s| {
-                s.attr("type") == Some("paragraph")
+                header::is_paragraph_style(s)
                     && s.attr("default").is_some_and(|d| d == "1" || d == "true")
             })
             .and_then(|s| s.attr("styleId"))
@@ -389,6 +403,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             styles.len() > 1 || (!styles.is_empty() && unstyled)
         },
         custom_grid: custom_table_grid(styles_root.as_ref()),
+        text_width: header::text_width(document.child("body").and_then(|b| b.child("sectPr"))),
+        style_sizes: header::paragraph_style_sizes(styles_root.as_ref(), default_style.as_deref()),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -403,6 +419,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         comments: HashMap::new(),
         notes: HashMap::new(),
         referenced: HashSet::new(),
+        held_marks: HashMap::new(),
         noted_at_end: HashSet::new(),
         noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
@@ -447,6 +464,9 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
+    if writer.agent {
+        writer.held_marks = held_marks(&document);
+    }
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
@@ -711,7 +731,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
         // Resolved views name original revisions with `rev` labels, but
         // print no tracked changes. Count only what this view shows.
         let tags = if accept.is_none() {
-            agent::collect_revisions(&markdown)
+            agent::shown_changes(&markdown, range.is_none())
         } else {
             Vec::new()
         };
@@ -864,8 +884,7 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
                     && (!in_box
                         || styles_root.as_ref().is_some_and(|root| {
                             root.children_named("style").any(|s| {
-                                s.attr("type") == Some("paragraph")
-                                    && s.attr("styleId") == Some(style)
+                                header::is_paragraph_style(s) && s.attr("styleId") == Some(style)
                             })
                         }))
                 {
@@ -896,9 +915,8 @@ pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, Conv
             let source = note_style_sources.get(style).map_or(style, String::as_str);
             if style != default_style.as_deref().unwrap_or("Normal")
                 && styles_root.as_ref().is_some_and(|root| {
-                    root.children_named("style").any(|s| {
-                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(source)
-                    })
+                    root.children_named("style")
+                        .any(|s| header::is_paragraph_style(s) && s.attr("styleId") == Some(source))
                 })
                 && !heading_styles.iter().any(|(_, h)| h == style)
                 && !other_styles.iter().any(|o| o == style)
@@ -1837,7 +1855,7 @@ impl Styles {
             .and_then(font_of);
         let default_paragraph = root
             .children_named("style")
-            .find(|s| s.attr("type") == Some("paragraph") && s.attr("default") == Some("1"))
+            .find(|s| header::is_paragraph_style(s) && s.attr("default") == Some("1"))
             .and_then(|s| s.attr("styleId"))
             .map(str::to_string);
         Self {
@@ -2247,6 +2265,63 @@ fn printed_code(instruction: &str) -> Option<String> {
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
+/// Comment id → the `w:id` of the one insertion or deletion in the body
+/// that holds the comment's reference mark: settling it settles the
+/// thread. A mark outside any change, inside a move, or inside two nested
+/// changes names none; so does an id the view would not print as is.
+fn held_marks(document: &Element) -> HashMap<String, u32> {
+    fn walk(
+        element: &Element,
+        open: &mut Vec<Option<u32>>,
+        found: &mut HashMap<String, Option<u32>>,
+    ) {
+        for child in element.elements() {
+            match child.local() {
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    let id = matches!(child.local(), "ins" | "del")
+                        .then(|| child.attr("id"))
+                        .flatten()
+                        .and_then(|id| id.parse::<u32>().ok().filter(|n| n.to_string() == id))
+                        .filter(|&id| id <= crate::markdown::view_notes::MOST_ID);
+                    open.push(id);
+                    walk(child, open, found);
+                    open.pop();
+                }
+                "commentReference" => {
+                    if let Some(id) = child.attr("id") {
+                        let holder = match open.as_slice() {
+                            [one] => *one,
+                            _ => None,
+                        };
+                        // A reference twice (an `mc:Fallback` twin) names its
+                        // holder only when both agree.
+                        found
+                            .entry(id.to_string())
+                            .and_modify(|seen| {
+                                if *seen != holder {
+                                    *seen = None;
+                                }
+                            })
+                            .or_insert(holder);
+                    }
+                }
+                "rPr" | "pPr" => {}
+                _ => walk(child, open, found),
+            }
+        }
+    }
+    let mut found = HashMap::new();
+    walk(
+        document.child("body").unwrap_or(document),
+        &mut Vec::new(),
+        &mut found,
+    );
+    found
+        .into_iter()
+        .filter_map(|(id, holder)| holder.map(|holder| (id, holder)))
+        .collect()
+}
+
 fn change_of(element: &Element, story: Option<&str>) -> Change {
     let mark = if matches!(element.local(), "ins" | "moveTo") {
         Mark::Insertion
@@ -2351,6 +2426,13 @@ struct Writer<'a> {
     /// The source defines Table Grid with borders of its own
     /// ([`custom_table_grid`]), so the view names it.
     custom_grid: bool,
+    /// Each paragraph style's text size and a paragraph's with no
+    /// `w:pStyle`, in half-points: a paragraph's own `size` is measured
+    /// against them (#1474).
+    style_sizes: (HashMap<String, u32>, u32),
+    /// The body's text width in twips: a table's grid that splits it
+    /// evenly is the writer's own and prints no widths (#1472).
+    text_width: u32,
     /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -2379,6 +2461,9 @@ struct Writer<'a> {
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
+    /// Agent view: comment id → the `w:id` of the one insertion or
+    /// deletion holding its reference ([`held_marks`]).
+    held_marks: HashMap<String, u32>,
     /// Comments whose note followed their range's end, inside a paragraph
     /// and outside any change: there Word puts the reference, and the
     /// writer takes the note back as the range's own comment. Their
@@ -2448,6 +2533,20 @@ struct Writer<'a> {
     pendings: Vec<drawing::Pending>,
 }
 
+/// The text boxes the view shows under `element`, resolving every
+/// `mc:AlternateContent` on the way: a drawing may hold the choice and its
+/// fallback deeper than its own children (`a:graphicData`), and the
+/// fallback's copy of the words is not shown.
+fn shown_text_boxes<'e>(element: &'e Element, out: &mut Vec<&'e Element>) {
+    for child in agent::shown_children(element) {
+        if child.is("txbxContent") {
+            out.push(child);
+        } else {
+            shown_text_boxes(child, out);
+        }
+    }
+}
+
 impl Writer<'_> {
     /// The notes waiting for the next paragraph, as CriticMarkup comments:
     /// their block is prose, whatever their anchor was.
@@ -2485,7 +2584,13 @@ impl Writer<'_> {
                             self.tables_differ
                                 .then(|| view_table_style(child, self.custom_grid))
                                 .flatten(),
-                            &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
+                            &[
+                                self.column_alignments(child).1,
+                                self.cell_styles(child),
+                                self.cell_spacings(child),
+                                agent::geometry_clauses(child, self.text_width),
+                            ]
+                            .concat(),
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
                             &spans,
@@ -2596,7 +2701,9 @@ impl Writer<'_> {
                             !self.referenced.contains(id)
                         };
                         if unprinted && let Some(note) = self.note(id) {
-                            out.comment(&note);
+                            // Outside any change: the one that holds the
+                            // reference is named (`in r13`).
+                            out.comment(&self.held_note(id, note));
                             self.noted_at_end.insert(id.to_string());
                         }
                     }
@@ -2720,21 +2827,37 @@ impl Writer<'_> {
             // which without a `w:pStyle` is the only place it can come
             // from: `outline 2`, and past the heading styles (`outline 7`
             // to `outline 9`) the only place at all, for no `#` count
-            // reaches them.
-            let own_outline = style
-                .is_none()
-                .then(|| {
-                    ppr.and_then(|pr| pr.child("outlineLvl"))
-                        .and_then(|o| o.attr("val"))
-                        .and_then(|v| v.parse::<usize>().ok())
-                        .filter(|l| *l < 9)
-                        .map(|l| l + 1)
-                })
-                .flatten();
+            // reaches them. A style the id line names does not carry a
+            // level the paragraph states past it, so a style that gives
+            // none (`Body`) names it too (#1524 review).
+            let stated = || {
+                ppr.and_then(|pr| pr.child("outlineLvl"))
+                    .and_then(|o| o.attr("val"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|l| *l < 9)
+                    .map(|l| l + 1)
+            };
+            // A style the `#` count implies is not printed on the line,
+            // and the writer reads the clause there as "no style", so the
+            // count keeps the level and the style with it.
+            let implied = style
+                .as_deref()
+                .is_some_and(|s| heading.is_some_and(|level| s == format!("Heading{level}")));
+            let own_outline =
+                stated().filter(|level| style.is_none() || (!implied && heading != Some(*level)));
+            // An empty paragraph's own spacing is a line of the page
+            // (#1473): it keeps an id line of its own to say it.
+            let spaced = ppr
+                .and_then(|pr| pr.child("spacing"))
+                .is_some_and(|sp| !agent::spacing_clauses(sp).is_empty());
+            // So is its mark's own size (#1474): the line's height.
+            let size = self.own_size(p);
             if empty
                 && !numbered
                 && style.is_none()
                 && own_outline.is_none()
+                && !spaced
+                && size.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -2794,6 +2917,7 @@ impl Writer<'_> {
                 spans: &spans,
                 empty,
                 unshown: &unshown,
+                size,
             };
             blocks.push_line(&format!(
                 "{}{}",
@@ -3534,11 +3658,7 @@ impl Writer<'_> {
     /// enqueue their own flat regions, preserving their position as tokens.
     fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        let root = element
-            .child("Choice")
-            .or_else(|| element.child("Fallback"))
-            .unwrap_or(element);
-        root.find_all("txbxContent", &mut boxes);
+        shown_text_boxes(element, &mut boxes);
         let editable = (!self.in_box || self.nested_editable) && drawing::nested_editable(element);
         for content in boxes {
             let open_comments = std::mem::take(&mut self.open_comments);
@@ -3682,6 +3802,64 @@ impl Writer<'_> {
                     format!("p{first} {style}")
                 } else {
                     format!("p{first}-p{last} {style}")
+                }
+            })
+            .collect()
+    }
+
+    /// The text size paragraph `p` states and its style does not give
+    /// (`size 9pt`), in half-points (#1474). A style the styles part does
+    /// not define is the default paragraph style, as Word reads it.
+    fn own_size(&self, p: &Element) -> Option<u32> {
+        let (sizes, default) = &self.style_sizes;
+        let given = p
+            .path(&["pPr", "pStyle"])
+            .and_then(|s| s.attr("val"))
+            .and_then(|id| sizes.get(id))
+            .unwrap_or(default);
+        agent::own_size(p, &self.hidden_styles).filter(|size| size != given)
+    }
+
+    /// `p8-p38 line 8.65pt exact size 9pt`: the cell paragraphs' own
+    /// spacing (#1473) and text size (#1474), consecutive ones that say
+    /// the same as one range.
+    fn cell_spacings(&self, table: &Element) -> Vec<String> {
+        let mut runs: Vec<(usize, usize, String)> = Vec::new();
+        for tr in table_rows(table) {
+            for tc in row_cells(tr) {
+                // As the cells range numbers them: a nested table's too.
+                let mut ps = Vec::new();
+                tc.find_all("p", &mut ps);
+                for p in ps {
+                    let Some(index) = p.attr(agent::INDEX).and_then(|i| i.parse::<usize>().ok())
+                    else {
+                        continue;
+                    };
+                    let mut said = p
+                        .path(&["pPr", "spacing"])
+                        .map(agent::spacing_clauses)
+                        .unwrap_or_default();
+                    // Its own text size too (#1474).
+                    said.extend(self.own_size(p).map(agent::size_clause));
+                    let said = said.join(" ");
+                    if said.is_empty() {
+                        continue;
+                    }
+                    match runs.last_mut() {
+                        Some((_, last, same)) if *last + 1 == index && *same == said => {
+                            *last = index;
+                        }
+                        _ => runs.push((index, index, said)),
+                    }
+                }
+            }
+        }
+        runs.into_iter()
+            .map(|(first, last, said)| {
+                if first == last {
+                    format!("p{first} {said}")
+                } else {
+                    format!("p{first}-p{last} {said}")
                 }
             })
             .collect()
@@ -3921,22 +4099,7 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let note = if self.agent {
-            let date = self
-                .handles
-                .needs_date(comment.attr("author"), self.dates)
-                .then(|| comment.comment_date())
-                .flatten();
-            let head = |text: String| {
-                let mut inner = agent::comment_head(
-                    id,
-                    comment.attr("author"),
-                    date,
-                    &self.handles,
-                    &self.threads,
-                );
-                inner.push_str(&text);
-                inner
-            };
+            let head = |text: String| self.agent_head(id, &comment, None) + &text;
             critic::Note {
                 prose: head(prose),
                 code: head(code),
@@ -3949,6 +4112,41 @@ impl Writer<'_> {
         };
         self.notes.insert(id.to_string(), note.clone());
         Some(note)
+    }
+
+    /// The agent view's head of comment `id`'s note ([`agent::comment_head`]).
+    fn agent_head(&self, id: &str, comment: &Element, held: Option<u32>) -> String {
+        let date = self
+            .handles
+            .needs_date(comment.attr("author"), self.dates)
+            .then(|| comment.comment_date())
+            .flatten();
+        agent::comment_head(
+            id,
+            comment.attr("author"),
+            date,
+            &self.handles,
+            &self.threads,
+            held,
+        )
+    }
+
+    /// `note`, its head naming the change that holds comment `id`'s
+    /// reference (`c0 @B in r13: `), when one does.
+    fn held_note(&self, id: &str, note: critic::Note) -> critic::Note {
+        let (Some(&held), Some(comment)) = (self.held_marks.get(id), self.comments.get(id)) else {
+            return note;
+        };
+        let plain = self.agent_head(id, comment, None);
+        let named = self.agent_head(id, comment, Some(held));
+        let swap = |text: String| match text.strip_prefix(&plain) {
+            Some(rest) => format!("{named}{rest}"),
+            None => text,
+        };
+        critic::Note {
+            prose: swap(note.prose),
+            code: swap(note.code),
+        }
     }
 
     /// The note's paragraphs as one line of text. `code` renders them as
@@ -4711,9 +4909,10 @@ fn story_frame(p: &Element, styles: Option<&Element>, default: Option<&str>) -> 
             if !seen.insert(sid.clone()) {
                 break;
             }
-            let Some(style) = styles.children_named("style").find(|s| {
-                s.attr("styleId") == Some(sid.as_str()) && s.attr("type") == Some("paragraph")
-            }) else {
+            let Some(style) = styles
+                .children_named("style")
+                .find(|s| s.attr("styleId") == Some(sid.as_str()) && header::is_paragraph_style(s))
+            else {
                 break;
             };
             if let Some(frame) = style.path(&["pPr", "framePr"]) {
@@ -5454,6 +5653,34 @@ mod tests {
         format!(
             r#"<w:r><w:drawing><wp:anchor xmlns:wp="wp"><wp:docPr id="7" name="Text Box 7"/><a:graphic xmlns:a="a"><a:graphicData><wps:wsp xmlns:wps="wps"><wps:txbx><w:txbxContent>{inner}</w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#
         )
+    }
+
+    /// A text box the drawing itself carries: `w:drawing` >
+    /// `a:graphicData` > `mc:AlternateContent`, whose `mc:Choice` holds the
+    /// shape and whose `mc:Fallback` the VML copy of the same words. Word
+    /// nests the two like this inside a group of shapes.
+    fn alternate_text_box(inner: &str) -> String {
+        format!(
+            r#"<w:r><w:drawing><wp:anchor xmlns:wp="wp"><wp:docPr id="7" name="Text Box 7"/><a:graphic xmlns:a="a"><a:graphicData><mc:AlternateContent xmlns:mc="mc"><mc:Choice Requires="wps"><wps:wsp xmlns:wps="wps"><wps:txbx><w:txbxContent>{inner}</w:txbxContent></wps:txbx></wps:wsp></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="v" id="_x0000_s1026"><v:textbox><w:txbxContent>{inner}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#
+        )
+    }
+
+    /// `mc:AlternateContent` inside the drawing is resolved as it is at run
+    /// level: the shown branch's text box prints once, never the `mc:Fallback`
+    /// copy beside it (#1523 review).
+    #[test]
+    fn a_fallback_text_box_inside_the_drawing_prints_once() {
+        let body = p("", &alternate_text_box(&p("", &r("inside"))));
+        let view = payloads_elided(&md(&docx(&body, &[])));
+        assert_eq!(
+            view.matches("<!-- text-box ").count(),
+            1,
+            "the fallback copy is a second box: {view}"
+        );
+        assert_eq!(
+            view,
+            "![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\ninside\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n"
+        );
     }
 
     #[test]

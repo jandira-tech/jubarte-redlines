@@ -30,6 +30,13 @@ fn p(n: usize) -> Value {
 fn r(n: u32) -> Value {
     json!({"short_id":format!("r{n}"), "long_id":format!("document.w:ins.w:id.{n}")})
 }
+/// [`plan`] that may change another author's comment: the comment tests
+/// that call it edit "Other"'s `c0` on purpose (#1264).
+fn rewriting_plan(bytes: &[u8], operations: Value) -> Value {
+    let mut request = plan(bytes, operations);
+    request["rewrite_others_comments"] = true.into();
+    request
+}
 fn plan(bytes: &[u8], operations: Value) -> Value {
     let mut request = json!({"schema_version":2, "source":{"sha256":source_sha256(bytes)},
         "policy":{"track":"on","existing_revisions":"keep","text_view":"final"},
@@ -586,7 +593,7 @@ fn comment_delete_conflicts_with_other_thread_mutations() {
         json!({"kind":"edit_comment","target":c(0),"text":"Changed"}),
         json!({"kind":"resolve_comment","target":c(0),"done":true}),
     ] {
-        let q = plan(
+        let q = rewriting_plan(
             &s,
             json!([{"kind":"delete_comment","target":c(0),"include_replies":true},operation]),
         );
@@ -967,7 +974,7 @@ fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
     let s = comment_source();
     let with = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
         ),
@@ -979,7 +986,7 @@ fn duplicate_comment_edits_and_thread_state_aliases_conflict() {
         json!([{"kind":"resolve_comment","target":c(0),"done":true},{"kind":"resolve_comment","target":c(1),"done":true}]),
         json!([{"kind":"resolve_comment","target":c(1),"done":false},{"kind":"resolve_comment","target":c(0),"done":true}]),
     ] {
-        let error = refused(&with, &plan(&with, ops.clone()));
+        let error = refused(&with, &rewriting_plan(&with, ops.clone()));
         assert_eq!(error.code, "CONFLICT");
         assert_eq!(error.operation.as_deref(), Some("/operations/1"));
         assert!(
@@ -998,7 +1005,7 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
     let s = comment_source();
     let with = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([{"kind":"reply_comment","target":c(0),"text":"Existing reply"}]),
         ),
@@ -1019,7 +1026,7 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
                 if reverse {
                     ops.reverse();
                 }
-                let error = refused(&with, &plan(&with, json!(ops)));
+                let error = refused(&with, &rewriting_plan(&with, json!(ops)));
                 assert_eq!(error.code, "CONFLICT");
                 assert_eq!(
                     error.operation.as_deref(),
@@ -1096,7 +1103,7 @@ fn comment_attribution_is_preserved_or_taken_from_plan() {
     let original = jubarte::comments::list_comments(&s).unwrap().remove(0);
     let out = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([
                 {"kind":"edit_comment","target":c(0),"text":"Updated"},
@@ -1235,15 +1242,24 @@ fn unknown_comment_targets_refuse_before_any_candidate() {
 }
 
 #[test]
-fn empty_source_paragraph_keeps_existing_structure_refusal() {
-    // The existing engine deliberately gates insertion into an empty source
-    // paragraph. An attachment must not bypass that structural restriction.
+fn empty_source_paragraph_takes_the_text_and_its_attached_comment() {
+    // An empty source paragraph takes text as Word types it (#1263), and
+    // the attached comment covers the new words.
     let s = docx(&para(""));
     let mut op = rewrite(0, "", "New paragraph text");
     op["attached_comment"] = json!({"text":"Complete paragraph"});
-    let error = run(&s, &plan(&s, json!([op]))).unwrap_err();
-    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE");
-    assert!(error.message.contains("empty paragraph"), "{error}");
+    let out = run(&s, &plan(&s, json!([op]))).unwrap();
+    assert_eq!(texts(&out.clean), ["New paragraph text"]);
+    let comments = jubarte::comments::list_comments(&out.redline).unwrap();
+    assert_eq!(
+        comments
+            .iter()
+            .map(|c| (c.text.as_str(), c.anchor_text.as_str()))
+            .collect::<Vec<_>>(),
+        [("Complete paragraph", "New paragraph text")]
+    );
+    assert_word_valid_package(&out.redline);
+    assert_word_valid_package(&out.clean);
 }
 
 #[test]
@@ -1311,7 +1327,7 @@ fn comment_mapping_does_not_mask_text_or_thread_conflicts() {
         ]),
     ] {
         let thread = ops.as_array().unwrap().len() == 3;
-        let error = refused(&s, &plan(&s, ops));
+        let error = refused(&s, &rewriting_plan(&s, ops));
         assert_eq!(error.code, "CONFLICT", "{error}");
         assert_eq!(
             error.operation.as_deref(),
@@ -1440,15 +1456,55 @@ fn delete_paragraph_maps_source_target_through_settlement() {
 }
 
 #[test]
-fn delete_paragraph_with_kept_tracked_changes_refuses() {
+fn delete_paragraph_with_kept_tracked_changes_nests_in_their_insertion() {
+    // #1136: the paragraph goes; Other's "45" keeps its insertion with the
+    // deletion nested in it.
     let s = source();
+    let q = plan(&s, json!([{"kind":"delete_paragraph","target":p(0)}]));
+    let out = run(&s, &q).unwrap();
+    assert_word_valid_package(&out.redline);
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        red.contains(r#"<w:ins w:id="7" w:author="Other""#)
+            && red.contains("<w:delText>45</w:delText>"),
+        "{red}"
+    );
+    let rejected = reject_changes(
+        &out.redline,
+        &ChangeFilter {
+            authors: Some(vec![out.report.author.clone()]),
+            ..ChangeFilter::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        paragraphs(&rejected).unwrap()[0].text,
+        paragraphs(&s).unwrap()[0].text
+    );
+}
+
+#[test]
+fn delete_paragraph_holding_a_move_names_it_in_v2_syntax() {
+    let s = docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:moveTo w:id="7" {STAMP}><w:r><w:t>45</w:t></w:r></w:moveTo></w:p>{}"#,
+        para("Last.")
+    ));
     let q = plan(&s, json!([{"kind":"delete_paragraph","target":p(0)}]));
     let e = run(&s, &q).unwrap_err();
     assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
     assert_eq!(e.operation.as_deref(), Some("/operations/0"));
     assert!(
+        e.message.starts_with(
+            r#"under keep, a paragraph that holds a move cannot be deleted yet: the move is r7, "45" moved here by "Other"."#
+        ),
+        "{}",
         e.message
-            .contains("holds tracked changes cannot be deleted")
+    );
+    assert!(
+        e.message
+            .contains(r#"{"short_id":"r7","long_id":"document.w:moveTo.w:id.7"}"#),
+        "{}",
+        e.message
     );
 }
 
@@ -1657,7 +1713,7 @@ fn comment_direct_scope_does_not_follow_paragraph_scope() {
         json!({"kind":"resolve_comment","target":c(0),"done":true}),
         json!({"kind":"delete_comment","target":c(0),"include_replies":true}),
     ] {
-        let mut q = plan(&s, json!([op]));
+        let mut q = rewriting_plan(&s, json!([op]));
         q["scope"] = json!({"kind":"selected","targets":[p(0)]});
         let e = run(&s, &q).unwrap_err();
         assert_eq!(e.code, "OUT_OF_SCOPE");
@@ -1670,7 +1726,7 @@ fn comment_direct_scope_does_not_follow_paragraph_scope() {
 #[test]
 fn comment_source_context_is_checked_against_original_text() {
     let s = comment_source();
-    let mut q = plan(
+    let mut q = rewriting_plan(
         &s,
         json!([{"kind":"edit_comment","target":c(0),"text":"New text"}]),
     );
@@ -3461,5 +3517,23 @@ mod generator {
             "--json",
         ]);
         assert!(!both.status.success(), "--find with --regex must refuse");
+    }
+}
+
+#[test]
+fn deleting_all_of_their_insertion_lands_tracked_and_direct() {
+    // The direct copy has no carrier left for Other's "45"; the tracked one
+    // keeps it with the deletion nested in it.
+    let s = source();
+    for track in ["on", "off"] {
+        let mut q = plan(&s, json!([replace(0, "45", "")]));
+        q["policy"]["track"] = json!(track);
+        let out = run(&s, &q).unwrap_or_else(|e| panic!("track {track}: {e}"));
+        assert_word_valid_package(&out.redline);
+        assert_eq!(
+            paragraphs(&out.clean).unwrap()[0].text,
+            "Pay  days, Delaware law.",
+            "track {track}"
+        );
     }
 }

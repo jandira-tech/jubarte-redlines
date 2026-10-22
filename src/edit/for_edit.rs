@@ -10,7 +10,7 @@
 //! `--changed`/`--by` match S's original revision/comment inventory, and
 //! `--context` neighbours are read-only original-S observations. The
 //! selected decisions (`accept`/`reject`) and the remaining-revision
-//! policy then produce W through the same [`settle`] path apply uses, so
+//! policy then produce W through the same `settle` path apply uses, so
 //! the hashes and readiness a caller sees describe the same basis a plan
 //! would be checked against. Readiness is operation- and range-specific
 //! evidence about the present document, never a promise about an
@@ -435,6 +435,11 @@ pub struct ForEdit {
     /// Continuation token; `null` when the selection is exhausted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// The input's validity findings, as `read --json` carries them in
+    /// `summary.input_validity`: set only by the CLI, which read the file
+    /// (#1340); absent from the library's result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_validity: Option<crate::validate::InputValidity>,
 }
 
 fn existing_revisions_name(policy: ExistingRevisions) -> &'static str {
@@ -1594,12 +1599,14 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
                     .then(|| ChangeFilter::ids(request.accept.iter().cloned())),
                 reject: (!request.reject.is_empty())
                     .then(|| ChangeFilter::ids(request.reject.iter().cloned())),
+                reject_visible: false,
             }
         }),
         removed_anchor_comments: Default::default(),
         existing_revisions: request.existing_revisions,
         operations: Vec::new(),
         update_fields: false,
+        rewrite_others_comments: false,
     };
     let Settled {
         base,
@@ -1792,7 +1799,28 @@ pub fn for_edit(source: &[u8], request: &ForEditRequest) -> Result<ForEdit, Edit
         source_context: context_rows,
         comments: comment_list,
         next_cursor,
+        input_validity: None,
     })
+}
+
+/// [`for_edit`]'s result as `read --for-edit` prints it: the document
+/// carries `validity` (the input's findings, `None` when the caller read
+/// none — #1340), serialized to the one JSON line the binary writes to
+/// stdout or a `.json` file. The native binary, the Python module and the
+/// WASM binding all print this string.
+///
+/// # Errors
+///
+/// [`for_edit`]'s.
+pub fn for_edit_json(
+    source: &[u8],
+    request: &ForEditRequest,
+    validity: Option<crate::validate::InputValidity>,
+) -> Result<String, EditError> {
+    let mut result = for_edit(source, request)?;
+    result.input_validity = validity;
+    let json = serde_json::to_string(&result).expect("ForEdit serializes");
+    Ok(format!("{json}\n"))
 }
 
 #[cfg(test)]

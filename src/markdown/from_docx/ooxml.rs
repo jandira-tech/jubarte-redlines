@@ -26,7 +26,7 @@ pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest number of entries a container may declare.
 pub(crate) const MAX_ENTRIES: usize = 10_000;
 /// Deepest XML nesting we accept; deeper input is treated as hostile.
-const MAX_DEPTH: usize = 512;
+const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH;
 
 pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
     ConvertError::Invalid(message.to_string())
@@ -598,7 +598,7 @@ fn push_text(stack: &mut [Element], text: &str) {
 }
 
 pub(crate) fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(s)
 }
 
 /// How a stretch of inline text is set: the marks printed around it.
@@ -1013,7 +1013,7 @@ fn delimiters_read(
 /// The backticks around a code span's text: one more than its longest run
 /// of backticks, padded when an edge backtick or space needs protecting.
 /// CommonMark removes one space at both ends except in an all-space span.
-fn code_fence(text: &str) -> (String, String) {
+pub(crate) fn code_fence(text: &str) -> (String, String) {
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest + 1);
     let pad = if text.starts_with('`')

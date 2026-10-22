@@ -53,7 +53,7 @@ fn retired_names_work_once_with_a_note() {
     assert_eq!(stderr, "note: text is now read; text is removed in 0.14\n");
     let (code, stdout, stderr) = run(&["inspect", file, "--json"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("{\"schema_version\":2"), "{stdout}");
+    assert!(stdout.starts_with("{\"schema_version\":3"), "{stdout}");
     assert_eq!(
         stderr,
         "note: inspect is now read; inspect is removed in 0.14\n"
@@ -110,7 +110,7 @@ fn json(args: &[&str]) -> serde_json::Value {
 #[test]
 fn read_json_prints_the_snapshot_with_changes_and_comments() {
     let snapshot = json(&["read", RECEIVED, "--json"]);
-    assert_eq!(snapshot["schema_version"], 2);
+    assert_eq!(snapshot["schema_version"], 3);
     assert_eq!(snapshot["paragraphs"][1]["id"], "p1");
     assert_eq!(snapshot["changes"][0]["ref"], "r0");
     assert_eq!(snapshot["comments"][0]["ref"], "c5");
@@ -123,13 +123,17 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     for (task, key) in [("changes", "changes"), ("comments", "comments")] {
         let (code, stdout, _) = run(&[task, RECEIVED, "--json"]);
         assert_eq!(code, 0);
-        let listed: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
-            Ok(serde_json::Value::Array(all)) => all,
-            _ => stdout
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect(),
-        };
+        let mut listed: Vec<serde_json::Value> = stdout
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        // The last line is the input's validity, the snapshot's summary's
+        // (#1309), never a record.
+        let validity = listed.pop().unwrap();
+        assert_eq!(
+            validity["input_validity"], snapshot["summary"]["input_validity"],
+            "{task}"
+        );
         assert_eq!(
             listed.len(),
             snapshot[key].as_array().unwrap().len(),
@@ -144,15 +148,15 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     }
 }
 
-/// The library's snapshot carries what `list_changes` and `list_comments`
-/// list, and `retain` keeps a paragraph's own records.
+/// The library's snapshot carries what `list_logical_changes` and
+/// `list_comments` list, and `retain` keeps a paragraph's own records.
 #[test]
 fn the_snapshot_lists_changes_and_comments_and_retains_by_paragraph() {
     let bytes = std::fs::read(RECEIVED).unwrap();
     let mut snapshot = jubarte::inspect::snapshot(&bytes).unwrap();
     assert_eq!(
         snapshot.changes,
-        jubarte::changes::list_changes(&bytes).unwrap()
+        jubarte::changes::list_logical_changes(&bytes).unwrap()
     );
     assert_eq!(
         snapshot.comments,
@@ -282,19 +286,21 @@ fn read_tables_and_the_json_refusals() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("--tables reads one document"), "{stderr}");
     for args in [
-        &["read", RECEIVED, "--json", "--dates"][..],
-        &["read", RECEIVED, "--json", "--comments", "none"],
-        &["read", RECEIVED, "--json", "--track-changes", "accept"],
-        &["read", RECEIVED, "--tables", "--head", "2"],
+        &["read", RECEIVED, "--tables", "--head", "2"][..],
+        &["read", RECEIVED, "--tables", "-p", "p0"],
+        &["read", RECEIVED, "--tables", "--json"],
         &[RECEIVED, RECEIVED, "--tables"],
     ] {
         assert_eq!(run(args).0, 2, "{args:?}");
     }
-    // Suppressing page markers also holds for a snapshot.
-    assert_eq!(
-        json(&["read", RECEIVED, "--json", "--no-page-markers"]),
-        json(&["read", RECEIVED, "--json"])
-    );
+    // The view's own options change nothing in the snapshot (#1255).
+    for args in [
+        &["read", RECEIVED, "--json", "--dates"][..],
+        &["read", RECEIVED, "--json", "--comments", "none"],
+        &["read", RECEIVED, "--json", "--no-page-markers"],
+    ] {
+        assert_eq!(json(args), json(&["read", RECEIVED, "--json"]), "{args:?}");
+    }
     // The one-file shorthand reads like `read`.
     assert_eq!(
         json(&[RECEIVED, "--json"]),
@@ -922,9 +928,9 @@ fn read_json_fixture(dir: &Path) {
     std::fs::write(dir.join("source.docx"), docx(&body)).unwrap();
 }
 
-/// `--no-page-markers` with an output that has no page markers: dropped
-/// with one warning on stderr, the output itself unchanged.
-fn no_page_markers_is_dropped_with_a_warning(shorthand: bool, output: &[&str]) {
+/// `--no-page-markers` with an output that has no page markers: taken,
+/// and nothing changes, stdout, stderr or the file written (#1255).
+fn no_page_markers_changes_nothing(shorthand: bool, output: &[&str]) {
     let dir = tempfile::tempdir().unwrap();
     read_json_fixture(dir.path());
     let prefix = if shorthand {
@@ -940,21 +946,7 @@ fn no_page_markers_is_dropped_with_a_warning(shorthand: bool, output: &[&str]) {
         .then(|| std::fs::read(dir.path().join("snap.json")).unwrap());
     let fast_args = [args.as_slice(), &["--no-page-markers", "--force"]].concat();
     let fast = run_in(dir.path(), &fast_args);
-    assert_eq!(fast.0, 0, "{fast_args:?}: {}", fast.2);
-    assert_eq!(fast.1, plain.1, "{fast_args:?}");
-    let what = if output.contains(&"--tables") {
-        "--tables"
-    } else {
-        "JSON"
-    };
-    assert_eq!(
-        fast.2,
-        format!(
-            "warning: --no-page-markers dropped: no page markers in {what}, proceeding\n{}",
-            plain.2
-        ),
-        "{fast_args:?}"
-    );
+    assert_eq!(fast, plain, "{fast_args:?}");
     if let Some(file) = file {
         assert_eq!(
             std::fs::read(dir.path().join("snap.json")).unwrap(),
@@ -968,7 +960,7 @@ macro_rules! no_page_markers_case {
     ($name:ident, $shorthand:expr, [$($output:expr),*]) => {
         #[test]
         fn $name() {
-            no_page_markers_is_dropped_with_a_warning($shorthand, &[$($output),*]);
+            no_page_markers_changes_nothing($shorthand, &[$($output),*]);
         }
     };
 }
@@ -1051,76 +1043,96 @@ macro_rules! read_view_conflict_case {
 }
 
 read_view_conflict_case!(
-    read_view_conflict_comments_json,
-    ["--comments", "inline"],
-    ["--json"],
-    "--json"
-);
-read_view_conflict_case!(
-    read_view_conflict_comments_tables,
-    ["--comments", "inline"],
-    ["--tables"],
-    "--tables"
-);
-read_view_conflict_case!(
-    read_view_conflict_comments_for_edit,
-    ["--comments", "inline"],
-    ["--for-edit"],
-    "--for-edit"
-);
-read_view_conflict_case!(
-    read_view_conflict_comments_file,
-    ["--comments", "inline"],
-    ["-o", "snap.json"],
-    "-o FILE.json"
-);
-read_view_conflict_case!(
-    read_view_conflict_track_changes_json,
-    ["--track-changes", "all"],
-    ["--json"],
-    "--json"
-);
-read_view_conflict_case!(
-    read_view_conflict_track_changes_tables,
-    ["--track-changes", "all"],
-    ["--tables"],
-    "--tables"
-);
-read_view_conflict_case!(
     read_view_conflict_track_changes_for_edit,
     ["--track-changes", "all"],
     ["--for-edit"],
     "--for-edit"
 );
-read_view_conflict_case!(
-    read_view_conflict_track_changes_file,
+
+/// A view option beside an output without a view: taken, under every
+/// spelling of `read`, and `--comments`/`--dates` change nothing (#1255).
+fn read_view_option_is_taken(flags: &[&str], output: &[&str]) {
+    let dir = tempfile::tempdir().unwrap();
+    read_json_fixture(dir.path());
+    for prefix in [
+        &["read", "source.docx"][..],
+        &["source.docx"],
+        &["text", "source.docx"],
+    ] {
+        let plain = [prefix, output, &["--force"]].concat();
+        let plain = (
+            run_in(dir.path(), &plain),
+            std::fs::read(dir.path().join("snap.json")).ok(),
+        );
+        let args = [prefix, flags, output, &["--force"]].concat();
+        let (code, stdout, stderr) = run_in(dir.path(), &args);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+        assert!(
+            !stderr.contains("error") && !stderr.contains("warning"),
+            "{args:?}: {stderr}"
+        );
+        if flags[0] != "--track-changes" {
+            assert_eq!((code, stdout, stderr), plain.0, "{args:?}");
+            assert_eq!(
+                std::fs::read(dir.path().join("snap.json")).ok(),
+                plain.1,
+                "{args:?}"
+            );
+        }
+    }
+}
+
+macro_rules! read_view_option_case {
+    ($name:ident, [$($flag:expr),*], [$($output:expr),*]) => {
+        #[test]
+        fn $name() {
+            read_view_option_is_taken(&[$($flag),*], &[$($output),*]);
+        }
+    };
+}
+
+read_view_option_case!(
+    read_view_option_comments_json,
+    ["--comments", "inline"],
+    ["--json"]
+);
+read_view_option_case!(
+    read_view_option_comments_tables,
+    ["--comments", "inline"],
+    ["--tables"]
+);
+read_view_option_case!(
+    read_view_option_comments_for_edit,
+    ["--comments", "inline"],
+    ["--for-edit"]
+);
+read_view_option_case!(
+    read_view_option_comments_file,
+    ["--comments", "inline"],
+    ["-o", "snap.json"]
+);
+read_view_option_case!(
+    read_view_option_track_changes_json,
     ["--track-changes", "all"],
-    ["-o", "snap.json"],
-    "-o FILE.json"
+    ["--json"]
 );
-read_view_conflict_case!(
-    read_view_conflict_dates_json,
-    ["--dates"],
-    ["--json"],
-    "--json"
+read_view_option_case!(
+    read_view_option_track_changes_tables,
+    ["--track-changes", "all"],
+    ["--tables"]
 );
-read_view_conflict_case!(
-    read_view_conflict_dates_tables,
-    ["--dates"],
-    ["--tables"],
-    "--tables"
+read_view_option_case!(
+    read_view_option_track_changes_file,
+    ["--track-changes", "all"],
+    ["-o", "snap.json"]
 );
-read_view_conflict_case!(
-    read_view_conflict_dates_for_edit,
+read_view_option_case!(read_view_option_dates_json, ["--dates"], ["--json"]);
+read_view_option_case!(read_view_option_dates_tables, ["--dates"], ["--tables"]);
+read_view_option_case!(read_view_option_dates_for_edit, ["--dates"], ["--for-edit"]);
+read_view_option_case!(
+    read_view_option_dates_file,
     ["--dates"],
-    ["--for-edit"],
-    "--for-edit"
-);
-read_view_conflict_case!(
-    read_view_conflict_dates_file,
-    ["--dates"],
-    ["-o", "snap.json"],
-    "-o FILE.json"
+    ["-o", "snap.json"]
 );
 
 fn read_option_help(option: &str, clause: &str) {
@@ -1139,23 +1151,32 @@ fn read_option_help(option: &str, clause: &str) {
 
 #[test]
 fn read_help_track_changes_exclusion() {
-    read_option_help("--track-changes", "not with --json, --tables or --for-edit");
+    read_option_help(
+        "--track-changes",
+        "--json and --tables read the accepted text",
+    );
 }
 
 #[test]
 fn read_help_comments_exclusion() {
-    read_option_help("--comments", "not with --json, --tables or --for-edit");
+    read_option_help(
+        "--comments",
+        "ignored by --json, --for-edit and the --tables grids",
+    );
 }
 
 #[test]
 fn read_help_dates_exclusion() {
-    read_option_help("--dates", "not with --json, --tables or --for-edit");
+    read_option_help(
+        "--dates",
+        "ignored by --json, --for-edit and the --tables grids",
+    );
 }
 
 #[test]
 fn read_help_no_page_markers_structured_outputs() {
     read_option_help(
         "--no-page-markers",
-        "dropped with a warning with --json, --tables, --for-edit or -o FILE.json",
+        "ignored by --json, --for-edit and the --tables grids",
     );
 }

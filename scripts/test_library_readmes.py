@@ -18,7 +18,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import library_readmes as lr  # noqa: E402
+import library_readmes as lr
 
 # REUSE-IgnoreStart
 ROOT_README = """<!--

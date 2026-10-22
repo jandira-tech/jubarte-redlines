@@ -616,8 +616,15 @@ fn json_writer_keeps_unselected_changes_and_scrubbed_authors() {
         );
         let snapshot: serde_json::Value =
             serde_json::from_slice(&std::fs::read(dir.path().join(output)).unwrap()).unwrap();
+        // Legal's deletion and insertion are one replacement (plan 11).
         let changes = snapshot["changes"].as_array().unwrap();
-        assert_eq!(changes.len(), 2, "{task}: {snapshot}");
+        assert_eq!(changes.len(), 1, "{task}: {snapshot}");
+        assert_eq!(changes[0]["kind"], "replacement", "{task}: {snapshot}");
+        assert_eq!(
+            changes[0]["members"].as_array().map(Vec::len),
+            Some(2),
+            "{task}: {snapshot}"
+        );
         assert!(
             changes.iter().all(|change| change["author"] == author),
             "{task}: {snapshot}"

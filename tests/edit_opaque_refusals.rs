@@ -16,7 +16,7 @@ const LINK: &str = r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyp
 const SIMPLE_FIELD: &str = r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>3</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> of the deed.</w:t></w:r></w:p>"#;
 const COMPLEX_FIELD: &str = r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TITLE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Master Agreement</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
 const CONTROL: &str = r#"<w:p><w:r><w:t xml:space="preserve">Signed by </w:t></w:r><w:sdt><w:sdtPr><w:alias w:val="Signer"/></w:sdtPr><w:sdtContent><w:r><w:t>Ann Counsel</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t>.</w:t></w:r></w:p>"#;
-const THEIRS: &str = r#"<w:p><w:r><w:t xml:space="preserve">Payment within </w:t></w:r><w:ins w:id="7" w:author="Trainer 1 - LargeCo" w:date="2026-09-01T00:00:00Z"><w:r><w:t>45</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> days.</w:t></w:r></w:p>"#;
+const THEIRS: &str = r#"<w:p><w:r><w:t xml:space="preserve">Payment within </w:t></w:r><w:ins w:id="7" w:author="Bob Lee" w:date="2026-09-01T00:00:00Z"><w:r><w:t>45</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> days.</w:t></w:r></w:p>"#;
 
 fn source() -> Vec<u8> {
     docx(&[LINK, SIMPLE_FIELD, COMPLEX_FIELD, CONTROL, THEIRS].concat())

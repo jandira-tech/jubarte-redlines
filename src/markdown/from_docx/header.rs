@@ -223,9 +223,10 @@ fn join(items: &[String]) -> String {
 
 /// The `revisions:` line's comment: the body's marks and the changes the
 /// view shows them as, then formatting (body and styles) and each other
-/// story's count: `9 marks shown as 5 changes: 1 insertion, 4
-/// substitutions; 2 formatting; 1 in header1`. Resolved views describe
-/// the raw marks by kind, without `shown as`. Empty for no change.
+/// story's changes, with its marks when they differ: `9 marks shown as 5
+/// changes: 1 insertion, 4 substitutions; 2 formatting; 3 in header1 (7
+/// marks)`. Resolved views describe the raw marks by kind, without
+/// `shown as`. Empty for no change.
 fn revisions_comment(f: &Facts) -> String {
     use crate::changes::ChangeKind;
     let story = |c: &crate::changes::Change| {
@@ -275,9 +276,23 @@ fn revisions_comment(f: &Facts) -> String {
             order.push(s);
         }
     }
-    let others: Vec<(String, usize)> = order
+    // Each story counts the changes `jubarte changes` lists for it, as the
+    // body does, and its marks when they differ; a resolved view counts
+    // the raw marks.
+    let listed = f
+        .resolved
+        .is_none()
+        .then(super::agent::story_changes)
+        .flatten();
+    let others: Vec<(String, usize, usize)> = order
         .into_iter()
-        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
+        .filter_map(|s| {
+            let marks = *counts.get(&s)?;
+            let changes = listed
+                .as_ref()
+                .map_or(marks, |l| l.get(&s).copied().unwrap_or(marks));
+            Some((s, changes, marks))
+        })
         .collect();
     let mut parts = Vec::new();
     let raw_kinds = if f.resolved.is_some() {
@@ -292,6 +307,7 @@ fn revisions_comment(f: &Facts) -> String {
                 (_, ChangeKind::Deletion) => "del",
                 (_, ChangeKind::Move) => "move",
                 (_, ChangeKind::Formatting) => "fmt",
+                (_, ChangeKind::Replacement) => "sub",
             })
             .collect::<Vec<_>>()
     } else {
@@ -334,8 +350,12 @@ fn revisions_comment(f: &Facts) -> String {
     if formatting > 0 {
         parts.push(format!("{formatting} formatting"));
     }
-    for (name, n) in others {
-        parts.push(format!("{n} in {name}"));
+    for (name, changes, marks) in others {
+        parts.push(if changes == marks {
+            format!("{changes} in {name}")
+        } else {
+            format!("{changes} in {name} ({})", plural(marks, "mark", "marks"))
+        });
     }
     parts.join("; ")
 }
@@ -603,6 +623,19 @@ fn twips(e: &Element, attr: &str) -> Option<f64> {
     })
 }
 
+/// The page width less the side margins of `sect`, in twips, as the
+/// writer computes it (`package.rs`): what it splits a table's columns
+/// over when the table line gives no widths (#1472).
+pub(crate) fn text_width(sect: Option<&Element>) -> u32 {
+    let size = sect.and_then(|s| s.child("pgSz"));
+    let margins = sect.and_then(|s| s.child("pgMar"));
+    let width = size.and_then(|s| twips(s, "w")).unwrap_or(12240.0);
+    let side = |a: &str| margins.and_then(|m| twips(m, a)).unwrap_or(1440.0);
+    let text = (width - side("left") - side("right")).round().max(1440.0);
+    // `as` saturates: a width past u32 is no page Word writes.
+    text as u32
+}
+
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
 fn page_setup(sect: &Element) -> String {
     let size = sect.child("pgSz");
@@ -742,6 +775,8 @@ struct Resolved {
     contextual_spacing: bool,
     /// Twips.
     left: Option<f64>,
+    /// Twips.
+    right: Option<f64>,
     first_line: Option<f64>,
     hanging: Option<f64>,
     align: Option<String>,
@@ -818,6 +853,9 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             if r.left.is_none() {
                 r.left = twips(ind, "left").or_else(|| twips(ind, "start"));
             }
+            if r.right.is_none() {
+                r.right = twips(ind, "right").or_else(|| twips(ind, "end"));
+            }
             if r.first_line.is_none() {
                 r.first_line = twips(ind, "firstLine");
             }
@@ -867,6 +905,40 @@ fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resol
         );
     }
     r
+}
+
+/// Whether `style` is a paragraph style: ECMA-376 `w:style` reads "If
+/// this attribute is not specified, then the default value shall be
+/// assumed to be paragraph" (#1485 review).
+pub(crate) fn is_paragraph_style(style: &Element) -> bool {
+    style.attr("type").is_none_or(|t| t == "paragraph")
+}
+
+/// Each paragraph style's text size through its `basedOn` chain and the
+/// document defaults, in half-points, and the size of a paragraph with no
+/// `w:pStyle` (the default paragraph style's): what a paragraph's own
+/// `size` clause is measured against (#1474). Word's own default is 10pt.
+pub(crate) fn paragraph_style_sizes(
+    styles: Option<&Element>,
+    default_style: Option<&str>,
+) -> (HashMap<String, u32>, u32) {
+    let size = |id: &str| {
+        let half = resolve(styles, None, id)
+            .size_half_points
+            .filter(|h| h.is_finite())
+            .unwrap_or(20.0)
+            .round();
+        // `as` cannot truncate: the value is clamped to ST_HpsMeasure.
+        half.clamp(1.0, 3276.0) as u32
+    };
+    let sizes = styles
+        .into_iter()
+        .flat_map(|root| root.children_named("style"))
+        .filter(|s| is_paragraph_style(s))
+        .filter_map(|s| s.attr("styleId"))
+        .map(|id| (id.to_string(), size(id)))
+        .collect();
+    (sizes, size(default_style.unwrap_or("")))
 }
 
 fn points(twips: f64) -> String {
@@ -955,7 +1027,8 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.keep_lines && differs(|x| x.keep_lines.to_string()) {
         parts.push("keep-lines".to_string());
     }
-    // Left, then first-line, then hanging: the order the writer reads back.
+    // Left, then first-line, hanging and right (#1489): the order the
+    // writer reads back.
     if differs(|x| format!("{:?}", x.left))
         && let Some(left) = r.left
         && (base.is_some() || left != 0.0)
@@ -973,6 +1046,12 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
         && (base.is_some() || hanging != 0.0)
     {
         parts.push(format!("hanging {}", super::agent::inches(hanging)));
+    }
+    if differs(|x| format!("{:?}", x.right))
+        && let Some(right) = r.right
+        && (base.is_some() || right != 0.0)
+    {
+        parts.push(format!("right {}", super::agent::inches(right)));
     }
     if r.contextual_spacing && differs(|x| x.contextual_spacing.to_string()) {
         parts.push("contextual spacing".to_string());
@@ -1535,30 +1614,33 @@ fn part_two(out: &mut String, f: &Facts) {
         ),
     }
     if !changes.is_empty() {
-        // Legend order: the default style first, then the styles the body
-        // uses, then the ones only a change names; `docDefaults` leads.
-        let order = |id: &str| {
+        // Legend order: `docDefaults` leads, then the default style, then the
+        // styles the body uses, then the ones only a change names. The key
+        // is a pair of tiers, because `usize::MIN` is zero: one number
+        // cannot put `docDefaults` ahead of the default style, which is
+        // keyed 0 (#1521 review).
+        let order = |id: &str| -> (u8, usize) {
             if id == "docDefaults" {
-                return usize::MIN;
+                return (0, 0);
             }
             if id == default {
-                return 0;
+                return (1, 0);
             }
             f.heading_styles
                 .iter()
                 .position(|(_, h)| h == id)
-                .map(|i| i + 1)
+                .map(|i| (1, i + 1))
                 .or_else(|| {
                     f.other_styles
                         .iter()
                         .position(|o| o == id)
-                        .map(|i| i + 1 + f.heading_styles.len())
+                        .map(|i| (1, i + 1 + f.heading_styles.len()))
                 })
                 .unwrap_or_else(|| {
                     changes
                         .iter()
                         .position(|(holder, _)| holder == id)
-                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                        .map_or((2, 0), |i| (2, i))
                 })
         };
         let mut ordered = changes.clone();
@@ -1639,7 +1721,7 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
     super::agent::paragraphs(root)
 }
 
-/// How [`story_text`] reads a header or footer's tracked changes.
+/// How `story_text` reads a header or footer's tracked changes.
 #[derive(Clone, Copy)]
 pub(crate) enum StoryView<'a> {
     /// The agent's tracked view, with the handles and the part's stem:
@@ -1667,7 +1749,7 @@ fn story_text(p: &Element, view: StoryView) -> String {
     story_text_with(p, view, &mut |_, _| None)
 }
 
-/// [`story_text`], calling `draw` for each `w:drawing`, `w:pict`, `w:object`
+/// `story_text`, calling `draw` for each `w:drawing`, `w:pict`, `w:object`
 /// and drawing-holding `mc:AlternateContent` element: its Markdown (`None`
 /// prints nothing). The `bool` says the element is run content, spliced
 /// inside a `w:r` (`true`) or where a `w:r` may sit (`false`, a
@@ -2351,6 +2433,36 @@ mod tests {
             font: Some("Calibri".to_string()),
             size_half_points: Some(22.0),
             left: Some(0.0),
+            ..Resolved::default()
+        };
+        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
+    }
+
+    /// A style's right indent is named, as `right 0.5in` (the id line's
+    /// word): the legend dropped it, and the written text ran wider (#1489).
+    /// It inherits through `basedOn` as the left indent does, and Strict's
+    /// `w:end` reads as `w:right`.
+    #[test]
+    fn the_legend_names_a_right_indent() {
+        let xml = format!(
+            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Quote"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:styleId="Inherits"><w:basedOn w:val="Quote"/></w:style><w:style w:styleId="Reset"><w:basedOn w:val="Quote"/><w:pPr><w:ind w:right="0"/></w:pPr></w:style><w:style w:styleId="End"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:end="1440"/></w:pPr></w:style><w:style w:styleId="Hang"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="2520" w:right="720" w:hanging="2520"/></w:pPr></w:style></w:styles>"#
+        );
+        let styles = parse_xml(xml.as_bytes()).unwrap();
+        let base = resolve(Some(&styles), None, "Normal");
+        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
+        assert_eq!(describe(&base, None), "Calibri 11pt, left");
+        assert_eq!(line("Quote"), "Calibri 11pt, indent 0.5in, right 0.5in");
+        assert_eq!(line("Inherits"), "Calibri 11pt, indent 0.5in, right 0.5in");
+        assert_eq!(line("Reset"), "Calibri 11pt, indent 0.5in, right 0in");
+        assert_eq!(line("End"), "Calibri 11pt, right 1in");
+        assert_eq!(
+            line("Hang"),
+            "Calibri 11pt, indent 1.75in, hanging 1.75in, right 0.5in"
+        );
+        let flat = Resolved {
+            font: Some("Calibri".to_string()),
+            size_half_points: Some(22.0),
+            right: Some(0.0),
             ..Resolved::default()
         };
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");

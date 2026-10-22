@@ -15,6 +15,10 @@ pub struct RemovedComment {
     pub author: String,
     /// Removed replies, in comment order.
     pub replies: Vec<String>,
+    /// Why the thread went: `anchor removed by accepting r13`, naming the
+    /// change that held its mark in the source (#1159).
+    #[serde(default)]
+    pub why: String,
     /// The pass that removed this thread; presentation metadata, not a source id.
     #[serde(skip)]
     pub decision: Option<String>,
@@ -29,31 +33,41 @@ pub struct KeptComment {
     pub replies: Vec<String>,
     /// The new anchor kind (`empty`).
     pub anchor: String,
-    /// Published comment id, for resolving the anchor through the shared map.
-    #[serde(skip)]
-    pub written_id: Option<u32>,
+}
+
+use crate::revision_processor::Resolution;
+
+/// The pass that removed a thread: how it resolved, and the change ids it
+/// selected (`None` for a blanket pass over every change left).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Pass {
+    resolution: Resolution,
+    settled: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct AnchorChanges {
+pub(crate) struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
-    decisions: std::collections::HashMap<String, String>,
+    passes: std::collections::HashMap<String, Pass>,
 }
 
 impl AnchorChanges {
+    /// Record a pass's receipts: `settled` names the ids it selected, or
+    /// `None` when it resolved every change left.
     pub fn extend(
         &mut self,
         removed: Vec<String>,
         kept: Vec<String>,
-        resolution: crate::revision_processor::Resolution,
+        resolution: Resolution,
+        settled: Option<&[String]>,
     ) {
-        let decision = match resolution {
-            crate::revision_processor::Resolution::Accept => "acceptance",
-            crate::revision_processor::Resolution::Reject => "rejection",
+        let pass = Pass {
+            resolution,
+            settled: settled.map(<[String]>::to_vec),
         };
         for id in &removed {
-            self.decisions.insert(id.clone(), decision.into());
+            self.passes.insert(id.clone(), pass.clone());
         }
         self.removed.extend(removed);
         self.kept.extend(kept);
@@ -101,18 +115,53 @@ impl AnchorChanges {
                         .iter()
                         .filter(|c| c.id != root.id && family.contains(&c.id))
                         .map(|c| format!("c{}", c.id))
-                        .collect();
+                        .collect::<Vec<String>>();
                     (root, replies)
                 })
                 .collect::<Vec<_>>()
         };
+        let (holders, wholes) = if self.removed.is_empty() {
+            (Vec::new(), std::collections::HashMap::new())
+        } else {
+            let invalid = |e: crate::changes::ChangeError| {
+                super::err("INVALID_DOCUMENT", None, e.to_string())
+            };
+            (
+                crate::changes::list_changes_tolerant(source).map_err(invalid)?,
+                crate::changes::member_wholes(source).map_err(invalid)?,
+            )
+        };
         let removed = groups(&self.removed)
             .into_iter()
-            .map(|(c, replies)| RemovedComment {
-                id: format!("c{}", c.id),
-                author: c.author.clone(),
-                replies,
-                decision: self.decisions.get(&c.id.to_string()).cloned(),
+            .map(|(c, replies)| {
+                let pass = self
+                    .passes
+                    .get(&c.id.to_string())
+                    .expect("every removed thread is recorded with its pass");
+                let id = format!("c{}", c.id);
+                let thread: Vec<String> = std::iter::once(id.clone())
+                    .chain(replies.iter().cloned())
+                    .collect();
+                let why = crate::changes::why_removed(
+                    &holders,
+                    &thread,
+                    pass.resolution,
+                    pass.settled.as_deref(),
+                    &wholes,
+                );
+                RemovedComment {
+                    id,
+                    author: c.author.clone(),
+                    replies,
+                    why,
+                    decision: Some(
+                        match pass.resolution {
+                            Resolution::Accept => "acceptance",
+                            Resolution::Reject => "rejection",
+                        }
+                        .into(),
+                    ),
+                }
             })
             .collect();
         let kept = groups(&self.kept)
@@ -121,52 +170,8 @@ impl AnchorChanges {
                 id: format!("c{}", c.id),
                 replies,
                 anchor: "empty".into(),
-                written_id: None,
             })
             .collect();
         Ok((removed, kept))
-    }
-}
-
-/// Renumber the revision-free working document once, before deriving outputs.
-/// Replay uses this allocation, never its own annotation walk.
-pub(super) fn renumber_working(
-    clean: &mut Vec<u8>,
-    settled: bool,
-) -> Result<Option<crate::revision_processor::AnnotationIds>, super::EditError> {
-    if !settled {
-        return Ok(None);
-    }
-    let mut pkg = crate::opc::PartFs::open(clean)
-        .map_err(|e| super::err("INVALID_DOCUMENT", None, e.to_string()))?;
-    let Some(ids) = crate::revision_processor::renumber_settled_annotations(&mut pkg) else {
-        return Ok(None);
-    };
-    *clean = pkg
-        .to_zip()
-        .map_err(|e| super::err("PACKAGE_WRITE", None, e.to_string()))?;
-    Ok(Some(ids))
-}
-
-pub(super) fn remap_report(
-    report: &mut super::EditReport,
-    ids: Option<&crate::revision_processor::AnnotationIds>,
-) {
-    let Some(ids) = ids else {
-        return;
-    };
-    for outcome in &mut report.operations {
-        if let Some(id) = outcome.comment_id
-            && let Some(new) = ids.comments.get(&id.to_string())
-        {
-            outcome.comment_id = new.parse().ok();
-        }
-    }
-    for kept in &mut report.kept_comments {
-        kept.written_id = kept
-            .id
-            .strip_prefix('c')
-            .and_then(|id| ids.comments.get(id))
-            .and_then(|id| id.parse().ok());
     }
 }

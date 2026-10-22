@@ -135,7 +135,7 @@ def measure(docx: Path) -> dict:
 
 
 def measure_one(docx: Path) -> dict:
-    result = {}
+    result: dict[str, dict[str, str | None]] = {}
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         # The source sits apart from the Markdown: a conversion anchored on a file beside the
@@ -150,7 +150,7 @@ def measure_one(docx: Path) -> dict:
             return {dialect: dict(failed) for dialect in DIALECTS}
         want = dimensions(original)
         for dialect in DIALECTS:
-            row = {}
+            row: dict[str, str | None] = {}
             md1, docx2, md3 = work / f"{dialect}.1.md", work / f"{dialect}.2.docx", work / f"{dialect}.3.md"
             if not markdown(dialect, src, md1, work):
                 result[dialect] = {d: "docx -> md failed" for d in [*DIMENSIONS, "md fixed point"]}

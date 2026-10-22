@@ -183,6 +183,7 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             resolve_revisions: None,
             operations,
             update_fields: false,
+            rewrite_others_comments: false,
         };
         match apply_plan(docx, &plan) {
             Ok(result) => {
@@ -261,7 +262,11 @@ fn paragraph_styles(docx: &[u8]) -> HashSet<String> {
     use crate::namespaces::W;
     dom.elements(root, Some(&W::name("style")))
         .into_iter()
-        .filter(|&style| dom.attribute(style, &W::name("type")) == Some("paragraph"))
+        // No `w:type` is a paragraph style (ECMA-376 `w:style`).
+        .filter(|&style| {
+            dom.attribute(style, &W::name("type"))
+                .is_none_or(|t| t == "paragraph")
+        })
         .filter_map(|style| {
             let name = dom.element(style, &W::name("name"))?;
             Some(dom.attribute(name, &W::val())?.to_lowercase())
@@ -310,7 +315,7 @@ fn describe(edit: &Edit, paragraphs: &[Paragraph], blocks: &[Block]) -> String {
 /// typed numbering left out.
 fn key(text: &str) -> String {
     let spaced = text.replace('\u{FFFC}', " ");
-    let collapsed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
+    let collapsed = crate::util::collapse_whitespace(&spaced);
     collapsed[enumerator_len(&collapsed)..].to_string()
 }
 
@@ -577,9 +582,11 @@ fn operations(
                 if !whole.contains(&entry) {
                     operations.push(Operation {
                         id,
+                        group: None,
                         kind: OperationKind::Rewrite {
                             paragraph: at(p),
                             text: rewritten(paragraph, block),
+                            comment: None,
                         },
                     });
                     continue;
@@ -597,10 +604,12 @@ fn operations(
                 };
                 operations.push(Operation {
                     id: Some(format!("edit:{entry}:new")),
+                    group: None,
                     kind,
                 });
                 operations.push(Operation {
                     id,
+                    group: None,
                     kind: OperationKind::DeleteParagraph {
                         paragraph: at(p),
                         comment: None,
@@ -613,6 +622,7 @@ fn operations(
                     OperationKind::Rewrite {
                         paragraph: at(p),
                         text: String::new(),
+                        comment: None,
                     }
                 } else {
                     OperationKind::DeleteParagraph {
@@ -620,7 +630,11 @@ fn operations(
                         comment: None,
                     }
                 };
-                operations.push(Operation { id, kind });
+                operations.push(Operation {
+                    id,
+                    group: None,
+                    kind,
+                });
             }
             Edit::Insert(b, after) => {
                 let block = &blocks[b];
@@ -632,7 +646,11 @@ fn operations(
                     Edit::Insert(..) => None,
                 });
                 if let Some(kind) = insert(block, after, next) {
-                    operations.push(Operation { id, kind });
+                    operations.push(Operation {
+                        id,
+                        group: None,
+                        kind,
+                    });
                 }
             }
         }

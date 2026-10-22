@@ -23,14 +23,14 @@ OUT = Path(__file__).resolve().parent / "hand_edited.docx"
 
 
 def main() -> None:
-    d = docx.Document(SRC)
+    d = docx.Document(str(SRC))
     for p in d.paragraphs:
         if p.text.startswith("The Company will invoice"):
             p.runs[-1].text += " All amounts are exclusive of VAT."
             break
     else:
         raise SystemExit("payment paragraph not found")
-    d.save(OUT)
+    d.save(str(OUT))
     print(f"wrote {OUT.name} (one silent, untracked edit)")
 
 

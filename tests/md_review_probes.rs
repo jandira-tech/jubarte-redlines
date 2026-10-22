@@ -5,7 +5,7 @@
 //! (`tests/fixtures/md-roundtrip/review`): table rows wider than their grid,
 //! an author's date range, the document owner; and the author and date a
 //! change or comment that names none takes (flag, front matter, the
-//! reference document's creator and creation time, else Redline and
+//! reference document's creator and creation time, else Jubarte and
 //! now).
 
 use std::path::{Path, PathBuf};
@@ -90,19 +90,22 @@ fn a_row_wider_than_its_grid_keeps_its_cells_and_merges() {
         // An empty cell past the grid.
         (
             "p19_wide_empty_extra.docx",
-            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7 -->",
+            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7, widths 1.667in 1.667in 1.667in, \
+             width auto -->",
         ),
         // A gap after over columns cells take.
         (
             "p16_after_overflows_cell.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, merged t0.row0.cell1 across 2, \
-             gaps t0.row0 after 1; t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, widths 1.667in 1.667in 1.667in \
+             1.667in, width auto, merged t0.row0.cell1 across 2, gaps t0.row0 after 1; \
+             t0.row1 after 3 -->",
         ),
         // A merged pad cell longer than the room the gap leaves.
         (
             "p17_span_cut_by_after.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, merged t0.row0.cell1 across 3, \
-             gaps t0.row0 after 2; t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, widths 1.667in 1.667in 1.667in \
+             1.667in, width auto, merged t0.row0.cell1 across 3, gaps t0.row0 after 2; \
+             t0.row1 after 3 -->",
         ),
     ] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
@@ -353,11 +356,11 @@ fn date_of(ins: &str) -> String {
 }
 
 #[test]
-fn an_unnamed_change_is_signed_redline_and_dated_now() {
+fn an_unnamed_change_is_signed_jubarte_and_dated_now() {
     let before = jubarte::convert::utc_now_iso8601();
     let ins = stamped("", &[]);
     let after = jubarte::convert::utc_now_iso8601();
-    assert!(ins.contains("w:author=\"Redline\""), "{ins}");
+    assert!(ins.contains("w:author=\"Jubarte\""), "{ins}");
     // The same format sorts by time.
     let date = date_of(&ins);
     assert!(
@@ -429,7 +432,7 @@ fn the_date_flag_is_gone_for_datetime() {
 /// null or comment-only `author:`, keys after a thematic break that opens
 /// no front matter (round-7 defaults review, findings 1, 4 and 5).
 #[test]
-fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
+fn front_matter_that_names_no_one_or_no_real_date_leaves_jubarte_and_now() {
     for front in [
         "---\ndate: 2026-02-30\n---\n\n",
         "---\nlast_modified: 2026-99-99T99:99:99Z\n---\n\n",
@@ -441,7 +444,7 @@ fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
         let before = jubarte::convert::utc_now_iso8601();
         let ins = stamped(front, &[]);
         let after = jubarte::convert::utc_now_iso8601();
-        assert!(ins.contains("w:author=\"Redline\""), "{front:?}: {ins}");
+        assert!(ins.contains("w:author=\"Jubarte\""), "{front:?}: {ins}");
         let date = date_of(&ins);
         assert!(before <= date && date <= after, "{front:?}: {ins}");
     }

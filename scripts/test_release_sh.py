@@ -14,7 +14,6 @@ non-main branch, so a run that gets past argument validation stops at the
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
 import shutil
@@ -1069,7 +1068,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_4_windows_stack_and_old_python(self) -> None:
         self.kw("1 MiB")
-        self.kw("Python 3.8")
+        self.kw("Python 3.12")
 
     def test_stack_proof_names_the_runnable_script_and_all_required_inputs(self) -> None:
         lines = self.out.stdout.splitlines()

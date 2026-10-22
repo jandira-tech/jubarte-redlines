@@ -70,7 +70,8 @@ fn writable(path: &Path, inputs: &[(&Path, &str)], force: bool) -> Result<(), Fa
 }
 
 enum Request {
-    V1(EditPlan),
+    /// A v1 plan and the notes of the fields it read as others.
+    V1(EditPlan, Vec<String>),
     V2(PlanV2),
 }
 impl Request {
@@ -81,7 +82,7 @@ impl Request {
     ) -> Result<PreparedEdit, jubarte::edit::EditError> {
         match self {
             Self::V2(plan) => jubarte::edit::prepare_v2(source, plan, base),
-            Self::V1(plan) => {
+            Self::V1(plan, notes) => {
                 // The v1 typed route publishes the redline when the
                 // transaction is tracked: ask `prepare` for the redline
                 // role so its chosen-primary checks (serialized-story
@@ -93,13 +94,15 @@ impl Request {
                     role: PrimaryRole::Redline,
                     ..*base
                 };
-                jubarte::edit::prepare(source, plan, &options)
+                let mut prepared = jubarte::edit::prepare(source, plan, &options)?;
+                prepared.result.report.notes.clone_from(notes);
+                Ok(prepared)
             }
         }
     }
     fn count(&self) -> usize {
         match self {
-            Self::V1(p) => p.operations.len(),
+            Self::V1(p, _) => p.operations.len(),
             Self::V2(p) => p.operations.len(),
         }
     }
@@ -301,8 +304,27 @@ fn request(
     {
         let json = std::str::from_utf8(plan_bytes.expect("read plan"))
             .map_err(|e| failure("INVALID_PLAN", e.to_string()))?;
-        let version: serde_json::Value =
-            serde_json::from_str(json).map_err(|e| failure("INVALID_PLAN", e.to_string()))?;
+        let json = json.strip_prefix('\u{feff}').unwrap_or(json);
+        // The v1 parser words a malformed plan as every v1 caller sees it.
+        let version: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            EditPlan::from_json(json)
+                .err()
+                .map_or_else(|| failure("INVALID_PLAN", e.to_string()), edit_error)
+        })?;
+        // So is a plan that is no object: an array is no plan without its
+        // version.
+        if !version.is_object() {
+            return Err(EditPlan::from_json(json).err().map_or_else(
+                || failure("INVALID_PLAN", "the plan must be exactly one JSON object"),
+                edit_error,
+            ));
+        }
+        if version.get("schema_version").is_none() {
+            return Err(failure(
+                "INVALID_PLAN",
+                "schema_version is required (1 or 2 for edit apply)",
+            ));
+        }
         match version
             .get("schema_version")
             .and_then(serde_json::Value::as_u64)
@@ -324,7 +346,7 @@ fn request(
                 Ok((Request::V2(plan), "bound"))
             }
             Some(1) => {
-                let mut plan = EditPlan::from_json(json).map_err(edit_error)?;
+                let (mut plan, notes) = EditPlan::from_json_with_notes(json).map_err(edit_error)?;
                 let binding = check_hash(
                     plan.source_sha256.as_deref(),
                     delivery.expect_sha256.as_deref(),
@@ -334,7 +356,7 @@ fn request(
                 if plan.source_sha256.is_none() {
                     plan.source_sha256.clone_from(&delivery.expect_sha256);
                 }
-                Ok((Request::V1(plan), binding))
+                Ok((Request::V1(plan, notes), binding))
             }
             _ => Err(failure(
                 "UNSUPPORTED_SCHEMA",
@@ -431,7 +453,7 @@ fn prepare_and_publish(
         }
     }
     let (request, binding) = request(action, source, payload, plan_bytes.as_deref())?;
-    if delivery.expect.is_some() && matches!(&request, Request::V1(_)) {
+    if delivery.expect.is_some() && matches!(&request, Request::V1(..)) {
         // The v1 primary is a comparer redline with no tracked
         // source-to-output correspondence; guessing one could grade the
         // wrong paragraph, so the combination refuses.
@@ -440,6 +462,24 @@ fn prepare_and_publish(
             "--expect requires a PlanV2 request in this layer; re-save the plan as v2 (edit template / --save-plan) or use jubarte check on the output",
         ));
     }
+    // A refusal quotes its routes, and records its choices, in the syntax
+    // the caller wrote: the typed options, or the plan's JSON.
+    let (syntax, revision_syntax) = if action.inline().is_some() {
+        (
+            jubarte::edit::PlanSyntax::Typed,
+            jubarte::edit::refusal::RevisionSyntax::TypedAction,
+        )
+    } else if matches!(request, Request::V2(_)) {
+        (
+            jubarte::edit::PlanSyntax::V2,
+            jubarte::edit::refusal::RevisionSyntax::V2Plan,
+        )
+    } else {
+        (
+            jubarte::edit::PlanSyntax::V1,
+            jubarte::edit::refusal::RevisionSyntax::V1Plan,
+        )
+    };
     let prepared = request
         .prepare(
             source,
@@ -447,6 +487,8 @@ fn prepare_and_publish(
                 require_change: delivery.require_change,
                 exact_text: matches!(request, Request::V2(_)),
                 role: PrimaryRole::Clean,
+                syntax,
+                ..PrepareOptions::default()
             },
         )
         .map_err(|e| {
@@ -456,14 +498,7 @@ fn prepare_and_publish(
                 }
                 _ => None,
             };
-            let syntax = if action.inline().is_some() {
-                jubarte::edit::refusal::RevisionSyntax::TypedAction
-            } else if matches!(request, Request::V2(_)) {
-                jubarte::edit::refusal::RevisionSyntax::V2Plan
-            } else {
-                jubarte::edit::refusal::RevisionSyntax::V1Plan
-            };
-            let e = e.with_revision_syntax(syntax);
+            let e = e.with_revision_syntax(revision_syntax);
             let actions = e.revision_next_actions(
                 &absolute(action.file()),
                 &jubarte::inspect::source_sha256(source),
@@ -528,7 +563,7 @@ fn prepare_and_publish(
             serde_json::to_value(plan.policy.track).expect("track"),
             serde_json::to_value(plan.policy.existing_revisions).expect("policy"),
         ),
-        Request::V1(_) => (
+        Request::V1(..) => (
             prepared.result.report.author.clone(),
             prepared.result.report.date.clone(),
             serde_json::json!("on"),
@@ -900,6 +935,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                         &data.removed_comments,
                         &data.kept_comments,
                         &bytes,
+                        source,
                         "settlement",
                     ) {
                         edit_status(format_args!("{line}"));

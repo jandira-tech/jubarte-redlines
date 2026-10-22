@@ -110,8 +110,7 @@ def main() -> None:
         "# role\tstem\tbaseline_score",
         "# selection: worst 50 + top 10 >90 (descending, ties by stem) + next-highest fill to 10 controls",
     ]
-    for row in stems:
-        lines.append(f"{row['role']}\t{row['stem']}\t{row['baseline_score']:.10f}")
+    lines.extend(f"{row['role']}\t{row['stem']}\t{row['baseline_score']:.10f}" for row in stems)
     spec["membership_txt"].write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {spec['membership']} n={len(stems)} gt90={n_gt90} fill={n_fill}")
 

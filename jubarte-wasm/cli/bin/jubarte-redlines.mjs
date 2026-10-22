@@ -32,6 +32,9 @@ class CliError extends Error {}
 /** A host capability mismatch; rejected before file I/O, exit 2. */
 class UsageError extends Error {}
 
+/** An engine refusal that exits 3, as `read --for-edit`'s. */
+class RefusalError extends Error {}
+
 // strerror's text for the errors a file task meets, so an I/O error reads
 // as the binary's: `No such file or directory (os error 2)`.
 const STRERROR = {
@@ -71,6 +74,24 @@ function read(file, forceKind) {
     return bytes.subarray(3);
   }
   return bytes;
+}
+
+/** The JSON reads report the input's validity findings in their output,
+ * not on stderr (#1309). (A binding older than that has no
+ * inputValidityLine; its JSON reads keep the stderr line.) */
+const jsonValidity = typeof wasm.inputValidityLine === "function";
+
+/** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
+ * says how many validity findings the input has, as the binary's does,
+ * but for a JSON read (`json`), which carries them. (A binding older than
+ * #1256 has no inputNotice and says nothing.) */
+function readInput(file, o, json = false) {
+  const docx = read(file);
+  if (!o.quiet && !(json && jsonValidity) && wasm.inputNotice) {
+    const notice = wasm.inputNotice(docx, file);
+    if (notice) console.error(notice);
+  }
+  return docx;
 }
 
 function ensureWritable(file, force) {
@@ -126,20 +147,52 @@ function wrote(o, file, format, size, pages) {
   if (!o.quiet) console.error(wasm.wroteLine(file, format, size, pages));
 }
 
-/** The read options that select paragraphs, as `readJson` takes them. */
+/** `readJson`'s `validityFile` for FILE as typed, when the binding takes it. */
+function validity(file) {
+  return file != null && jsonValidity ? { validityFile: file } : {};
+}
+
+/** The read options that select paragraphs, and the text --track-changes
+ * settles, as `readJson` takes them. */
 function selection(o = {}) {
-  return { paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
+  return { trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
+}
+
+/** `read --for-edit`'s working-document JSON, from the flags the shared
+ * parser stored; `validityFile` is FILE as typed. Usage failures are
+ * `jubarte-wasm: USAGE: …`, refusals `jubarte-wasm: CODE: …`. */
+function forEditJson(docx, o, validityFile) {
+  try {
+    return wasm.forEdit(docx, JSON.stringify({
+      paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined,
+      find: o.find ?? undefined, regex: o.regex ?? undefined, ignoreCase: Boolean(o.ignore_case),
+      changed: Boolean(o.changed), by: o.by ?? undefined,
+      context: o.context ?? undefined, limit: o.limit ?? undefined, maxChars: o.max_chars ?? undefined,
+      all: Boolean(o.all), cursor: o.cursor ?? undefined,
+      acceptChange: o.accept_change?.length ? o.accept_change : undefined,
+      rejectChange: o.reject_change?.length ? o.reject_change : undefined,
+      existingRevisions: o.existing_revisions ?? undefined, track: o.track ?? undefined,
+      validityFile,
+    }));
+  } catch (e) {
+    const usage = messageOf(e);
+    if (usage.startsWith("USAGE: ")) throw new UsageError(usage.slice("USAGE: ".length));
+    throw new RefusalError(usage);
+  }
 }
 
 /** `-o` in the format its extension names, as the binary's writer: the Word
  * package, its agent view (.md, headed `source`), its snapshot (.json) or
- * its PDF. `view` is read's options; the defaults elsewhere. */
-function writeResult(o, docx, source, view) {
+ * its PDF. `view` is read's options; the defaults elsewhere. `validityFile`
+ * puts the input's validity in a snapshot's summary, as `read --json`
+ * prints it. */
+function writeResult(o, docx, source, view, validityFile) {
   const output = o.output, kind = o.output_format ?? "docx";
   if (kind === "pdf") return renderTo(o, docx, output);
   ensureWritable(output, o.force);
   const data = kind === "md" ? viewText(docx, view ?? {}, source)
-    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify(selection(view)))}\n`
+    : kind === "json" && view?.for_edit ? forEditJson(docx, view, validityFile)
+    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify({ ...selection(view), ...validity(validityFile) }))}\n`
     : docx;
   write(output, data);
   wrote(o, output, kind, typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length);
@@ -217,21 +270,46 @@ const COMMANDS = {
   },
   changes: {
     run(_, [file], o) {
-      const docx = read(file);
+      const docx = readInput(file, o, o.json);
       if (!o.json) return void process.stdout.write(wasm.changesText(docx));
       for (const change of JSON.parse(wasm.listChanges(docx))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
+      if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
     },
   },
   accept: resolution(true),
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      if (o.tables) return void process.stdout.write(wasm.tablesText(read(file)));
-      if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
-      if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));
-      printView(read(file), o, path.basename(file));
+      const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
+      if (o.for_edit) {
+        if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+        return void process.stdout.write(forEditJson(docx, o, file));
+      }
+      if (o.tables) {
+        // (A binding older than #1255 has no tablesView; its parser
+        // refuses -p and --track-changes here.)
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
+        // With -p, the grids of the tables it reaches, then its view; a
+        // pick that reaches no table is a usage error.
+        let view;
+        try {
+          view = JSON.parse(wasm.tablesView(docx, JSON.stringify({
+            trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+            pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
+          })));
+        } catch (e) {
+          const usage = /^jubarte-wasm: USAGE: (.*)$/s.exec(String(e?.message ?? e));
+          if (usage) throw new UsageError(usage[1]);
+          throw e;
+        }
+        for (const warning of view.warnings) console.error(`warning: ${warning}`);
+        return void process.stdout.write(view.markdown);
+      }
+      if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+      if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));
+      printView(docx, o, path.basename(file));
     },
   },
   convert: {
@@ -358,8 +436,23 @@ function readPlanText(plan, missing = false) {
   }
 }
 
-/** `--plan`'s text, or the plan the operation flags describe, and its notes. */
+/** `--plan`'s text, or the plan the operation flags describe, and its
+ * notes; `--rewrite-others-comments` sets the plan's field. */
 function editPlan(verb, docx, o) {
+  const given = editPlanAsGiven(verb, docx, o);
+  if (!o.rewrite_others_comments) return given;
+  let parsed;
+  try {
+    parsed = JSON.parse(given.plan);
+  } catch {
+    return given; // reported as INVALID_PLAN when applied
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
+  parsed.rewrite_others_comments = true;
+  return { plan: JSON.stringify(parsed), notes: given.notes };
+}
+
+function editPlanAsGiven(verb, docx, o) {
   if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
@@ -394,6 +487,7 @@ function recordPlan(verb, file, docx, o) {
   const options = {
     author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
     file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
+    rewriteOthersComments: Boolean(o.rewrite_others_comments),
   };
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {
@@ -600,11 +694,12 @@ function printResolutionOrView(docx, planJson, result, editing, shown) {
   printChangedView(result, editing, shown);
 }
 
-/** The `note:` lines of an applied edit: the flags' notes, then each anchor
- * read without its Markdown marks. */
+/** The `note:` lines of an applied edit: the flags' notes, the plan's (a field
+ * read as another), then each anchor read without its Markdown marks. */
 function editNotes(notes, result) {
-  const lines = notes.map((note) => `note: ${note}`);
-  for (const outcome of JSON.parse(result.json).operations ?? []) {
+  const report = JSON.parse(result.json);
+  const lines = [...notes, ...(report.notes ?? [])].map((note) => `note: ${note}`);
+  for (const outcome of report.operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
       lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
     }
@@ -755,11 +850,13 @@ function validateHost(name, o) {
   }
 }
 
+/** `--json` before any `--`: an error prints on stdout as JSON too. */
 function main(argv) {
   try {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(argv), PROG, JSON.stringify(Object.keys(COMMANDS))));
     if ("text" in parsed) {
       for (const note of parsed.notes ?? []) console.error(note);
+      if (parsed.json != null) process.stdout.write(parsed.json);
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }
@@ -769,8 +866,11 @@ function main(argv) {
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];
     return COMMANDS[name].run(name, positionals, o) ?? EXIT_OK;
   } catch (e) {
+    const code = e instanceof UsageError ? EXIT_USAGE : e instanceof RefusalError ? EXIT_PLAN_REFUSED : EXIT_ERROR;
+    // A binding older than #1255 has no runtimeJsonError: stdout stays empty.
+    if (wasm.runtimeJsonError && wasm.wantsJson(argv)) process.stdout.write(wasm.runtimeJsonError(messageOf(e), code));
     console.error(`error: ${messageOf(e)}`);
-    return e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
+    return code;
   }
 }
 

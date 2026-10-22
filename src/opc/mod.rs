@@ -79,13 +79,32 @@ where
 {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
+
+/// The message a text surface prints for an [`OpcError`].
+/// `DuplicatePartName` carries only the second entry's spelling, so its
+/// line is the admission refusal for the same package — `DUPLICATE_PART:`
+/// with both spellings — and any other error keeps its own text (#600).
+#[must_use]
+pub fn refusal_message(docx: &[u8], err: &OpcError) -> String {
+    if let OpcError::DuplicatePartName(_) = err
+        && let Ok(archive) = open_archive_unchecked(Cursor::new(docx))
+    {
+        return duplicate_parts(&mut Cursor::new(docx), archive.central_directory_start())
+            .into_iter()
+            .next()
+            .map(|(_, defect)| defect.refusal().to_string())
+            .unwrap_or_else(|| err.to_string());
+    }
+    err.to_string()
+}
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 mod archive;
 mod zip32;
 pub(crate) use archive::{
-    ZipDefect, ZipDefectKind, open_archive, open_archive_unchecked, zip_defects,
+    ZipDefect, ZipDefectKind, duplicate_parts, open_archive, open_archive_unchecked,
+    open_archive_within, zip_defects,
 };
 pub use zip32::Zip32Limit;
 pub(crate) use zip32::zip32_plan;
@@ -127,6 +146,30 @@ fn drop_repeated_relationships(rels: &mut Relationships) -> Result<Vec<String>, 
 
 fn norm(name: &str) -> String {
     format!("/{}", name.trim_start_matches('/'))
+}
+
+/// The OPC identity of a part or relationship-owner name: resolved like a
+/// relationship target (leading slashes, `.`/`..` segments) and compared
+/// under ASCII case (ECMA-376 Part 2 §6.2.2.3 M1.12 — `word/Document.xml`
+/// IS `word/document.xml`, which is how Word opens probes p3–p5 of
+/// ZIP-15/#600). The `part_index`/`rels_index` maps keep one stored
+/// spelling per identity, so lookups stay O(1) without a scan.
+fn identity(name: &str) -> String {
+    // `resolve_rel_target` changes a name only to strip its leading '/'
+    // or to resolve `.`, `..` and empty segments: a name with none of
+    // those IS the resolved name, so the common lookup allocates once
+    // for the lowercasing instead of twice (#600 lookup cost).
+    let needs_resolve = name.starts_with('/')
+        || name
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..");
+    if needs_resolve {
+        let mut resolved = resolve_rel_target("", name);
+        resolved.make_ascii_lowercase();
+        resolved
+    } else {
+        name.to_ascii_lowercase()
+    }
 }
 
 /// The relationship `Target` value that reaches `target_part` from
@@ -281,10 +324,23 @@ fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
 /// wording.
 fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {
     crate::admission::preindex_budget(bytes, limits).map_err(refused)?;
-    let mut archive = open_archive(Cursor::new(bytes))?;
+    // Duplicate part identities are refused below as
+    // `DuplicatePartName`, the variant callers match on (#600); every
+    // other structural defect refuses in the shared open. The raw walk
+    // of the central directory must catch them: zip 9's index collapses
+    // a byte-equal duplicate before the decode loop can see both
+    // records, and its decoded names agree with the per-entry decode on
+    // every shape (bit 11 / CP437 / 0x7075).
+    let mut archive = open_archive_within(Cursor::new(bytes), false)?;
+    if let Some((second, _)) =
+        duplicate_parts(&mut Cursor::new(bytes), archive.central_directory_start())
+            .into_iter()
+            .next()
+    {
+        return Err(OpcError::DuplicatePartName(second));
+    }
     let mut parts = HashMap::new();
     let mut source_order = HashMap::new();
-    let mut identities = HashSet::new();
     let mut total = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
@@ -298,14 +354,6 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         let directory = entry.is_dir();
         if !directory {
             source_order.insert(name.clone(), index);
-        }
-        // OPC part names are case-insensitive: two entries whose decoded
-        // names collide (a legacy CP437 alias or an ASCII case pair) are the
-        // same part, and the second insert used to overwrite the first
-        // silently. Upstream's reader refuses `DuplicatePartName`; so does
-        // the compatibility loader, so no part is lost.
-        if !directory && !identities.insert(name.to_ascii_lowercase()) {
-            return Err(OpcError::DuplicatePartName(name));
         }
         if entry.size() > limits.max_part_bytes {
             return Err(refused(crate::admission::part_declared_over(
@@ -330,7 +378,7 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             .map_err(|e| {
                 refused(crate::admission::AdmissionError {
                     kind: crate::admission::AdmissionErrorKind::InvalidPackage,
-                    message: format!("{name}: {e}"),
+                    message: format!("{}: {e}", crate::admission::shown(&name)),
                 })
             })?
         } else {
@@ -345,7 +393,8 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         if directory {
             continue;
         }
-        if name == "[Content_Types].xml" || name.ends_with(".rels") {
+        let lower = name.to_ascii_lowercase();
+        if lower == "[content_types].xml" || lower.ends_with(".rels") {
             check_opc_attributes(&data)?;
         }
         parts.insert(name, data);
@@ -356,24 +405,40 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         part_rels: HashMap::new(),
         source_order,
         repaired_duplicate_ids: Vec::new(),
+        part_index: HashMap::new(),
+        rels_index: HashMap::new(),
     };
-    package.pkg.content_types = read_content_types(
-        &parts
-            .remove("[Content_Types].xml")
-            .ok_or_else(|| OpcError::PartNotFound("[Content_Types].xml".to_string()))?,
-    )?;
-    if let Some(xml) = parts.remove("_rels/.rels") {
-        package.package_rels = read_relationships(&xml)?;
+    // The reserved names match under ASCII case (M1.12): a lone
+    // `[content_types].xml` or `_RELS/.RELS` is the part (Word opens it,
+    // #600 probes p4/p5); `to_zip` writes the canonical spelling back.
+    let content_types = parts
+        .keys()
+        .find(|name| name.eq_ignore_ascii_case("[Content_Types].xml"))
+        .cloned()
+        .and_then(|name| parts.remove(&name))
+        .ok_or_else(|| OpcError::PartNotFound("[Content_Types].xml".to_string()))?;
+    package.pkg.content_types = read_content_types(&content_types)?;
+    if let Some(name) = parts
+        .keys()
+        .find(|name| name.eq_ignore_ascii_case("_rels/.rels"))
+        .cloned()
+    {
+        package.package_rels = read_relationships(&parts.remove(&name).unwrap_or_default())?;
     }
     for (name, data) in parts {
-        if name.ends_with(".rels") {
-            let owner = rels_path_to_part_name(&name)
-                .unwrap_or_else(|| name.strip_suffix(".rels").unwrap_or(&name).to_string());
-            package
-                .part_rels
-                .insert(norm(&owner), read_relationships(&data)?);
+        if name.to_ascii_lowercase().ends_with(".rels") {
+            let owner = rels_path_to_part_name(&name).unwrap_or_else(|| {
+                name.get(..name.len().saturating_sub(5))
+                    .unwrap_or(name.as_str())
+                    .to_string()
+            });
+            let key = norm(&owner);
+            package.rels_index.insert(identity(&key), key.clone());
+            package.part_rels.insert(key, read_relationships(&data)?);
         } else {
-            package.pkg.parts.insert(norm(&name), data);
+            let key = norm(&name);
+            package.part_index.insert(identity(&key), key.clone());
+            package.pkg.parts.insert(key, data);
         }
     }
     Ok(package)
@@ -397,10 +462,16 @@ fn part_name_to_rels_path(part_name: &str) -> String {
 /// The part a `.rels` path belongs to (`word/_rels/header1.xml.rels` →
 /// `word/header1.xml`; `_rels/.rels` → the package, as `""`), or None when
 /// `name` is not a relationships path. Inverse of `part_name_to_rels_path`.
+/// The `_rels` segment and the `.rels` suffix match under ASCII case —
+/// `_RELS/.RELS` is the package's own relationships (Word opens it, ZIP-15
+/// probe p5) — while the owner's spelling keeps the entry's case.
 fn rels_path_to_part_name(name: &str) -> Option<String> {
     let name = name.strip_prefix('/').unwrap_or(name);
-    let file = name.strip_suffix(".rels")?;
+    let lower = name.to_ascii_lowercase();
+    let file = lower.strip_suffix(".rels")?;
     let (dir, base) = file.rsplit_once('/')?;
+    let tail = name.len().checked_sub(5)?;
+    let base = name.get(tail.checked_sub(base.len())?..tail)?;
     let owner_dir = if dir == "_rels" {
         ""
     } else {
@@ -409,7 +480,7 @@ fn rels_path_to_part_name(name: &str) -> Option<String> {
     Some(if owner_dir.is_empty() {
         base.to_string()
     } else {
-        format!("{owner_dir}/{base}")
+        format!("{}/{base}", name.get(..owner_dir.len())?)
     })
 }
 
@@ -467,22 +538,21 @@ pub struct PartFs {
     /// `(part, Id)` of each relationship the source repeated identically and
     /// [`PartFs::open`] kept once (`""` is the package's own relationships).
     repaired_duplicate_ids: Vec<(String, String)>,
+    /// `pkg.parts` by OPC identity (ASCII-lowercased resolved name): one
+    /// stored key per identity, so an alias resolves in O(1) (ZIP-15/#600).
+    part_index: HashMap<String, String>,
+    /// `part_rels` owners by identity, same contract as `part_index`.
+    rels_index: HashMap<String, String>,
 }
 
 /// Canonical target resolution shared by package APIs and text story labels.
 pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
-    let joined = OpcPackage::resolve_rel_target(&norm(source_part), rel_target);
-    let mut segments: Vec<&str> = Vec::new();
-    for seg in joined.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            s => segments.push(s),
-        }
-    }
-    segments.join("/")
+    // The upstream resolver already returns the normalized absolute
+    // name (`.`/`..`/empty segments collapsed under a leading '/');
+    // PartFs stores the no-leading-slash form.
+    OpcPackage::resolve_rel_target(&norm(source_part), rel_target)
+        .trim_start_matches('/')
+        .to_string()
 }
 
 impl PartFs {
@@ -507,8 +577,11 @@ impl PartFs {
     /// (an [`crate::admission::AdmissionError`] with code `INPUT_LIMIT` as
     /// the [`std::io::Error`] source), an OPC metadata element exceeding
     /// 256 attributes, two relationships under the same `Id` that differ in
-    /// any attribute, or two entries whose decoded part names collide
-    /// case-insensitively ([`OpcError::DuplicatePartName`]).
+    /// any attribute, or two entries whose decoded part names are equal
+    /// byte-for-byte or under ASCII case
+    /// ([`OpcError::DuplicatePartName`], naming the second entry's
+    /// spelling; text surfaces print the admission `DUPLICATE_PART`
+    /// detail through [`refusal_message`]).
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
         Self::open_within(bytes, crate::admission::InputLimits::compare())
     }
@@ -527,18 +600,15 @@ impl PartFs {
                 .into_iter()
                 .map(|id| (String::new(), id))
                 .collect();
-        let mut owners: Vec<&String> = fs.part_rels.keys().collect();
-        owners.sort();
-        let owners: Vec<String> = owners.into_iter().cloned().collect();
-        for owner in owners {
-            if let Some(rels) = fs.part_rels.get_mut(&owner) {
-                let part = owner.trim_start_matches('/').to_string();
-                repaired_duplicate_ids.extend(
-                    drop_repeated_relationships(rels)?
-                        .into_iter()
-                        .map(|id| (part.clone(), id)),
-                );
-            }
+        let mut owners: Vec<(&String, &mut Relationships)> = fs.part_rels.iter_mut().collect();
+        owners.sort_by(|a, b| a.0.cmp(b.0));
+        for (owner, rels) in owners {
+            let part = owner.trim_start_matches('/').to_string();
+            repaired_duplicate_ids.extend(
+                drop_repeated_relationships(rels)?
+                    .into_iter()
+                    .map(|id| (part.clone(), id)),
+            );
         }
         fs.repaired_duplicate_ids = repaired_duplicate_ids;
         Ok(fs)
@@ -552,9 +622,14 @@ impl PartFs {
         &self.repaired_duplicate_ids
     }
 
-    /// `PartFS.partBytes(name)` — raw bytes of a part.
+    /// `PartFS.partBytes(name)` — raw bytes of a part. The lookup resolves
+    /// under OPC identity: `word/document.xml` finds a part stored as
+    /// `word/Document.xml` (#600).
     pub fn part_bytes(&self, name: &str) -> Option<&[u8]> {
-        self.pkg.get_part(&norm(name))
+        self.pkg
+            .parts
+            .get(self.part_index.get(&identity(name))?)
+            .map(Vec::as_slice)
     }
 
     /// Read a part as a UTF-8 string.
@@ -570,6 +645,19 @@ impl PartFs {
     /// raw parts, so a raw `.rels` copy would be a second zip entry of the same
     /// name (the whole package fails) and invisible to `read_rels_for`.
     /// Unparseable relationship XML is kept raw, as before.
+    /// `PartFS.setPart(name, data)` — replace or add a part. A name that
+    /// is a case alias of a stored part replaces it and keeps the stored
+    /// spelling (there is one part per identity, #600).
+    ///
+    /// A `…/_rels/<part>.rels` name (matched under ASCII case) replaces
+    /// that part's relationships: the package keeps relationships parsed,
+    /// and `to_zip` writes them next to the raw parts, so a raw `.rels`
+    /// copy would be a second zip entry of the same name (the whole
+    /// package fails) and invisible to `read_rels_for`. Unparseable
+    /// relationship XML is kept raw, as before; `to_zip` then refuses the
+    /// collision rather than write a duplicate name. A
+    /// `[Content_Types].xml` name likewise replaces the parsed content
+    /// types when it parses.
     pub fn set_part(&mut self, name: &str, data: Vec<u8>) {
         if let Some(owner) = rels_path_to_part_name(name)
             && check_opc_attributes(&data).is_ok()
@@ -578,17 +666,67 @@ impl PartFs {
             if owner.is_empty() {
                 self.package_rels = rels;
             } else {
-                self.part_rels.insert(norm(&owner), rels);
+                let key = self
+                    .rels_index
+                    .get(&identity(&owner))
+                    .cloned()
+                    .unwrap_or_else(|| norm(&owner));
+                self.rels_index.insert(identity(&key), key.clone());
+                self.part_rels.insert(key, rels);
+            }
+            // A raw part of the same .rels identity is superseded: `to_zip`
+            // writes the parsed copy, and two entries of one name fail.
+            if let Some(key) = self.part_index.remove(&identity(name)) {
+                self.pkg.parts.remove(&key);
             }
             return;
         }
-        self.pkg.set_part(&norm(name), data);
+        if name
+            .trim_start_matches('/')
+            .eq_ignore_ascii_case("[Content_Types].xml")
+            && check_opc_attributes(&data).is_ok()
+            && let Ok(types) = read_content_types(&data)
+        {
+            self.pkg.content_types = types;
+            if let Some(key) = self.part_index.remove(&identity(name)) {
+                self.pkg.parts.remove(&key);
+            }
+            return;
+        }
+        let key = self
+            .part_index
+            .get(&identity(name))
+            .cloned()
+            .unwrap_or_else(|| norm(name));
+        self.part_index.insert(identity(&key), key.clone());
+        self.pkg.parts.insert(key, data);
     }
 
-    /// Remove a part (no-op when absent). Content-type overrides and rels
-    /// pointing at it are left to the caller.
+    /// Remove a part (no-op when absent), resolved under OPC identity:
+    /// an alias removes the stored part, a `.rels` name removes the
+    /// owner's relationships, and the `[Content_Types].xml` identity
+    /// clears the content types. Content-type overrides and rels pointing
+    /// at the part are left to the caller.
     pub fn remove_part(&mut self, name: &str) {
-        self.pkg.parts.remove(&norm(name));
+        if let Some(owner) = rels_path_to_part_name(name) {
+            if owner.is_empty() {
+                self.package_rels = Relationships::new();
+            } else if let Some(key) = self.rels_index.remove(&identity(&owner)) {
+                self.part_rels.remove(&key);
+            }
+        }
+        if name
+            .trim_start_matches('/')
+            .eq_ignore_ascii_case("[Content_Types].xml")
+        {
+            self.pkg.content_types = ContentTypes {
+                defaults: HashMap::new(),
+                overrides: HashMap::new(),
+            };
+        }
+        if let Some(key) = self.part_index.remove(&identity(name)) {
+            self.pkg.parts.remove(&key);
+        }
     }
 
     /// Enumerate all part names (docxodus style, no leading slash), sorted.
@@ -649,6 +787,20 @@ impl PartFs {
                 .map(|(name, entry)| (name.as_ref(), entry.len())),
         )
         .collect();
+        // One entry per OPC identity (ZIP-15/#600): a raw part that shares
+        // a name with a parsed rels part or a reserved name is
+        // `DUPLICATE_PART`, not an archive Word refuses.
+        let mut emitted = HashSet::new();
+        if let Some(name) = plan
+            .iter()
+            .map(|(name, _)| name)
+            .find(|name| !emitted.insert(name.to_ascii_lowercase()))
+        {
+            return Err(refused(crate::admission::AdmissionError::new(
+                crate::admission::AdmissionErrorKind::DuplicatePart,
+                format!("'{name}' would be written twice (part names ignore case)"),
+            )));
+        }
         zip32_plan(&plan).map_err(refused)?;
 
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
@@ -707,6 +859,10 @@ impl PartFs {
     /// source types is left alone rather than guessed.
     pub fn adopt_missing_content_types(&mut self, sources: &[&PartFs]) {
         for part in self.parts() {
+            // `content_type_for` already matches a Default under another
+            // case (`png` for `image3.PNG`), so a part typed by our own
+            // Default stops here: a second Default for the same extension
+            // would make the package unopenable.
             if self.content_type_for(&part).is_some() {
                 continue;
             }
@@ -721,15 +877,9 @@ impl PartFs {
                     .find(|(e, _)| e.eq_ignore_ascii_case(ext))
                     .map(|(_, ct)| ct.clone())
             };
-            // Our own Default under another case (`png` for `image3.PNG`)
-            // already types the part: a second Default for the same extension
-            // makes the package unopenable.
-            if by_ext(self).is_some() {
-                continue;
-            }
             let key = norm(&part);
             for src in sources {
-                if let Some(ct) = src.pkg.content_types.overrides.get(&key).cloned() {
+                if let Some(ct) = src.pkg.content_types.override_for(&key).map(str::to_string) {
                     self.add_content_type_override(&part, &ct);
                     break;
                 }
@@ -741,9 +891,11 @@ impl PartFs {
         }
     }
 
-    /// Remove an Override entry from `[Content_Types].xml` (no-op when absent).
+    /// Remove an Override entry from `[Content_Types].xml` (no-op when
+    /// absent). The name resolves under OPC identity, so an alias removes
+    /// the stored spelling (#600).
     pub fn remove_content_type_override(&mut self, part_name: &str) {
-        self.pkg.content_types.overrides.remove(&norm(part_name));
+        self.pkg.content_types.remove_override(&norm(part_name));
     }
 
     /// Remove every relationship of `source_part` with the given type.
@@ -772,18 +924,19 @@ impl PartFs {
         let Some(key) = self.part_rels_key(source_part).cloned() else {
             return;
         };
-        let Some(target) = self.part_rels.get(&key).and_then(|rels| {
-            rels.items
-                .iter()
-                .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
-                .map(|r| r.target.clone())
-        }) else {
+        let Some(rels) = self.part_rels.get_mut(&key) else {
             return;
         };
+        let Some(target) = rels
+            .items
+            .iter()
+            .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
+            .map(|r| r.target.clone())
+        else {
+            return;
+        };
+        rels.items.retain(|r| r.id != rel_id);
         let part = self.resolve_rel_target(source_part, &target);
-        if let Some(rels) = self.part_rels.get_mut(&key) {
-            rels.items.retain(|r| r.id != rel_id);
-        }
         self.remove_untargeted_part(&part);
     }
 
@@ -792,29 +945,33 @@ impl PartFs {
     /// targeted that is left untargeted. Its own relationships never keep
     /// it, and a removed part ends a loop.
     fn remove_untargeted_part(&mut self, part: &str) {
-        let key = norm(part);
-        if !self.pkg.parts.contains_key(&key) {
+        let part_id = identity(part);
+        let Some(key) = self.part_index.get(&part_id).cloned() else {
             return;
-        }
+        };
         let still_targeted = self
             .part_rels
             .iter()
-            .filter(|(source, _)| **source != key)
+            .filter(|(source, _)| identity(source) != part_id)
             .map(|(source, rels)| (source.as_str(), rels))
             .chain(std::iter::once(("/", &self.package_rels)))
             .any(|(source, rels)| {
                 rels.items.iter().any(|r| {
                     r.target_mode.as_deref() != Some("External")
-                        && self.resolve_rel_target(source, &r.target) == part
+                        && self
+                            .resolve_rel_target(source, &r.target)
+                            .eq_ignore_ascii_case(part)
                 })
             });
         if still_targeted {
             return;
         }
+        self.part_index.remove(&part_id);
         self.pkg.parts.remove(&key);
+        let rels_key = self.rels_index.get(&part_id).cloned().unwrap_or(key);
         let targets: Vec<String> = self
             .part_rels
-            .remove(&key)
+            .remove(&rels_key)
             .map(|rels| {
                 rels.items
                     .iter()
@@ -823,6 +980,7 @@ impl PartFs {
                     .collect()
             })
             .unwrap_or_default();
+        self.rels_index.remove(&part_id);
         self.remove_content_type_override(&format!("/{part}"));
         for target in targets {
             self.remove_untargeted_part(&target);
@@ -834,14 +992,10 @@ impl PartFs {
         self.part_rels.get(self.part_rels_key(part_name)?)
     }
 
-    // Preserve upstream's case-insensitive, normalized lookup and deterministic
-    // spelling choice when more than one stored owner has the same identity.
+    // The stored owner key for `part_name` under OPC identity — upstream's
+    // case-insensitive, normalized lookup over the rels index.
     fn part_rels_key(&self, part_name: &str) -> Option<&String> {
-        let key = resolve_rel_target("", part_name);
-        self.part_rels
-            .keys()
-            .filter(|candidate| resolve_rel_target("", candidate).eq_ignore_ascii_case(&key))
-            .min()
+        self.rels_index.get(&identity(part_name))
     }
 
     /// `addDocumentRelationship(...)` — add a relationship to a part, returning
@@ -870,10 +1024,20 @@ impl PartFs {
     /// dependency's `get_or_create_part_rels` defaults to `rId0`.
     fn part_rels_mut(&mut self, source_part: &str) -> &mut Relationships {
         use std::collections::hash_map::Entry;
-        // Not `or_default()`: the derived `Default` is the rId0 counter.
-        match self.part_rels.entry(norm(source_part)) {
+        // An alias of a stored owner resolves to it rather than creating a
+        // second rels entry of one identity (#600). Not `or_default()`:
+        // the derived `Default` is the rId0 counter.
+        let key = self
+            .rels_index
+            .get(&identity(source_part))
+            .cloned()
+            .unwrap_or_else(|| norm(source_part));
+        match self.part_rels.entry(key.clone()) {
             Entry::Occupied(rels) => rels.into_mut(),
-            Entry::Vacant(slot) => slot.insert(Relationships::new()),
+            Entry::Vacant(slot) => {
+                self.rels_index.insert(identity(&key), key);
+                slot.insert(Relationships::new())
+            }
         }
     }
 
@@ -1197,6 +1361,20 @@ mod tests {
         );
         // Nothing to adopt: left alone rather than guessed.
         assert_eq!(out.content_type_for("word/media/unknown.zzz"), None);
+        // A part with no extension has no Default to ask for.
+        out.set_part("word/media/LICENSE", vec![6]);
+        out.adopt_missing_content_types(&[&src]);
+        assert_eq!(out.content_type_for("word/media/LICENSE"), None);
+        // A part the source names in an Override adopts that Override.
+        let mut typed = package_with_header_rels();
+        typed.add_content_type_override("word/media/logo.bin", "image/x-logo");
+        let mut out = package_with_header_rels();
+        out.set_part("word/media/logo.bin", vec![7]);
+        out.adopt_missing_content_types(&[&typed]);
+        assert_eq!(
+            out.content_type_for("word/media/logo.bin").as_deref(),
+            Some("image/x-logo")
+        );
     }
 
     #[test]
@@ -1341,6 +1519,43 @@ mod tests {
         assert_eq!(
             relative_rel_target("word/document.xml", "wordy/x.xml"),
             "/wordy/x.xml"
+        );
+
+        // Edge cases
+        assert_eq!(
+            relative_rel_target("a.xml", "b.xml"),
+            "/b.xml",
+            "Root level source and target"
+        );
+        assert_eq!(
+            relative_rel_target("document.xml", "media/image.bin"),
+            "/media/image.bin",
+            "Root level source"
+        );
+        assert_eq!(
+            relative_rel_target("word/theme/theme1.xml", "word/theme/themeManager.xml"),
+            "themeManager.xml",
+            "Deeply nested matching paths"
+        );
+        assert_eq!(
+            relative_rel_target("//word/document.xml", "//word/comments.xml"),
+            "comments.xml",
+            "Multiple leading slashes"
+        );
+        assert_eq!(
+            relative_rel_target("a/b.xml", "a/c/d.xml"),
+            "c/d.xml",
+            "Target as a subdirectory of the source directory"
+        );
+        assert_eq!(
+            relative_rel_target("a/b/c.xml", "a/b/d.xml"),
+            "d.xml",
+            "Target and source in the same deeply nested directory"
+        );
+        assert_eq!(
+            relative_rel_target("a/b.xml", "b/c.xml"),
+            "/b/c.xml",
+            "Target in completely different directory"
         );
     }
 
@@ -1569,31 +1784,53 @@ mod tests {
         // Two entries whose decoded names collide are one OPC part: the second
         // `parts.insert` used to overwrite the first silently, `parts()` lost
         // a member and `to_zip()` dropped it. Upstream's reader refuses
-        // `DuplicatePartName` on the ASCII-lowercased name
-        // (oxml-opc-0.14.2/src/package.rs 159-162); the compatibility loader
-        // refuses the same way, so nothing is lost (#524).
+        // `DuplicatePartName` on the second entry's name
+        // (oxml-opc-0.14.2/src/package.rs 159-162); so does the constructor —
+        // the raw central-directory pass reports the defect for `admit`,
+        // `debug` and the archive readers while the constructor keeps the
+        // typed variant Rust callers match on (#600).
         let base = |extra: &[zip_names::RawEntry<'_>]| zip_names::docx_package("", extra);
-        // (a) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
+        // (a) two entries of the same name, byte for byte (the p1 shape):
+        // one part, the refusal names the second entry's spelling.
+        let exact = base(&[
+            zip_names::RawEntry::raw(b"x.bin", b"FIRST"),
+            zip_names::RawEntry::raw(b"x.bin", b"SECOND"),
+        ]);
+        assert!(
+            matches!(PartFs::open(&exact), Err(OpcError::DuplicatePartName(ref n)) if n == "x.bin"),
+            "{:?}",
+            PartFs::open(&exact).err()
+        );
+        assert!(
+            matches!(
+                PartFs::open_within(&exact, crate::admission::InputLimits::compare()),
+                Err(OpcError::DuplicatePartName(ref n)) if n == "x.bin"
+            ),
+            "open_within refuses the same"
+        );
+        // (b) two raw names, bit 11 set, whose lossy UTF-8 decode is the same
         // `x\u{FFFD}.bin`: two parts, one name.
         let aliased = base(&[
             zip_names::RawEntry::raw(b"x\x82.bin", b"FIRST").utf8(),
             zip_names::RawEntry::raw(b"x\x83.bin", b"SECOND").utf8(),
         ]);
-        assert!(matches!(
-            PartFs::open(&aliased),
-            Err(OpcError::DuplicatePartName(name)) if name == "x\u{FFFD}.bin"
-        ));
-        // (b) two names that differ only in ASCII case: one part, OPC names
+        assert!(
+            matches!(PartFs::open(&aliased), Err(OpcError::DuplicatePartName(ref n)) if n == "x\u{FFFD}.bin"),
+            "{:?}",
+            PartFs::open(&aliased).err()
+        );
+        // (c) two names that differ only in ASCII case: one part, OPC names
         // are case-insensitive.
         let cased = base(&[
             zip_names::RawEntry::raw(b"word/A.bin", b"FIRST"),
             zip_names::RawEntry::raw(b"word/a.bin", b"SECOND"),
         ]);
-        assert!(matches!(
-            PartFs::open(&cased),
-            Err(OpcError::DuplicatePartName(name)) if name == "word/a.bin"
-        ));
-        // (c) the zip 8 shape: both names flag-clear, CP437 decodes them
+        assert!(
+            matches!(PartFs::open(&cased), Err(OpcError::DuplicatePartName(ref n)) if n == "word/a.bin"),
+            "{:?}",
+            PartFs::open(&cased).err()
+        );
+        // (d) the zip 8 shape: both names flag-clear, CP437 decodes them
         // apart (`x\x82.bin` → `xé.bin`, `x\xc3\xa9.bin` → `x├⌐.bin`), and
         // both payloads survive instead of aliasing as zip 9's UTF-8-first
         // `name()` had them.
@@ -1630,6 +1867,347 @@ mod tests {
                 .unicode_path(b"\xff\xfe"),
         );
         assert!(matches!(PartFs::open(&bytes), Err(OpcError::Zip(_))));
+    }
+
+    /// A package with caller-chosen entry names — case-variant spellings
+    /// of the reserved parts and the main part (#600 probes p3–p5).
+    fn variant_package(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
+        zip_names::zip(
+            &entries
+                .iter()
+                .map(|(name, data)| zip_names::RawEntry::raw(name, data))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    const TYPES: &[u8] = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const PKG_RELS: &[u8] = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    /// ZIP-15 (#600): OPC part names ignore ASCII case, so a single
+    /// case-variant name is the part — Word opens these packages (probes
+    /// p3, p4, p5) and every lookup must resolve the variant's content.
+    #[test]
+    fn a_case_variant_name_is_the_part_on_every_lookup() {
+        let fs = PartFs::open(&variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/Document.xml", b"<w:document/>"),
+        ]))
+        .expect("the case-variant main part is the part the rels target names (p3)");
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml")
+        );
+        assert_eq!(
+            fs.part_bytes("word/document.xml"),
+            Some(b"<w:document/>".as_slice())
+        );
+        assert_eq!(
+            fs.content_type_for("word/document.xml").as_deref(),
+            Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+            ),
+            "the Override names /word/document.xml and must match by identity"
+        );
+
+        let fs = PartFs::open(&variant_package(&[
+            (b"[content_types].xml", TYPES),
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+        ]))
+        .expect("the lower-case [Content_Types].xml is the content types (p4)");
+        assert_eq!(
+            fs.content_type_for("word/document.xml").as_deref(),
+            Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+            )
+        );
+
+        let fs = PartFs::open(&variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_RELS/.RELS", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+        ]))
+        .expect("the upper-case _RELS/.RELS is the package relationships (p5)");
+        assert_eq!(fs.package_relationships().items.len(), 1);
+        assert_eq!(
+            fs.main_document_part().as_deref(),
+            Some("word/document.xml")
+        );
+    }
+
+    /// `to_zip` of a package opened from case-variant spellings writes
+    /// exactly one entry per identity: the reserved parts come out with
+    /// their canonical names, an ordinary part keeps the spelling it was
+    /// read with (#600).
+    #[test]
+    fn to_zip_writes_one_entry_per_identity() {
+        let fs = PartFs::open(&variant_package(&[
+            (b"[content_types].xml", TYPES),
+            (b"_RELS/.RELS", PKG_RELS),
+            (b"word/Document.xml", b"<w:document/>"),
+        ]))
+        .expect("case variants are the parts");
+        let bytes = fs.to_zip().expect("one entry per identity serializes");
+        let mut names: Vec<String> = ZipArchive::new(Cursor::new(&bytes))
+            .unwrap()
+            .file_names()
+            .map(|name| name.expect("decode ZIP fixture name").into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["[Content_Types].xml", "_rels/.rels", "word/Document.xml"]
+        );
+        // … which the same open reads back under one identity.
+        assert_eq!(
+            PartFs::open(&bytes)
+                .unwrap()
+                .part_bytes("word/document.xml"),
+            Some(b"<w:document/>".as_slice())
+        );
+    }
+
+    /// Mutation keeps one part per identity: `set_part` with a case alias
+    /// replaces the stored part and keeps its spelling; `remove_part`
+    /// with an alias removes it; a `.rels` alias routes to the owner's
+    /// parsed relationships (#600).
+    #[test]
+    fn mutations_resolve_under_the_one_identity() {
+        let mut fs = package_with_header_rels();
+        fs.set_part("WORD/DOCUMENT.XML", b"replaced".to_vec());
+        assert_eq!(fs.parts(), ["word/document.xml", "word/header1.xml"]);
+        assert_eq!(
+            fs.part_bytes("word/document.xml"),
+            Some(b"replaced".as_slice()),
+            "the alias replaced the stored part and kept its spelling"
+        );
+        // `_RELS/.RELS` is the package's own relationships.
+        fs.set_part(
+            "_RELS/.RELS",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId9" Type="{HYPERLINK}" Target="https://c.example/" TargetMode="External"/></Relationships>"#).into_bytes(),
+        );
+        assert_eq!(fs.package_relationships().items.len(), 1);
+        assert_eq!(fs.package_relationships().items[0].id, "rId9");
+        // A rels alias replaces the owner's parsed relationships.
+        fs.set_part(
+            "word/_RELS/HEADER1.xml.RELS",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId3" Type="{HYPERLINK}" Target="https://d.example/" TargetMode="External"/></Relationships>"#).into_bytes(),
+        );
+        let rels = fs
+            .read_rels_for("WORD/header1.XML")
+            .expect("owner resolves by identity");
+        assert_eq!(rels.items.len(), 1);
+        assert_eq!(rels.items[0].id, "rId3");
+        // A `.rels` name for the package itself (any case) removes the
+        // package's own relationships.
+        fs.remove_part("_RELS/.rels");
+        assert!(fs.package_relationships().items.is_empty());
+        fs.remove_part("WORD/HEADER1.XML");
+        assert_eq!(fs.parts(), ["word/document.xml"]);
+        fs.remove_part("word/document.XML");
+        assert!(fs.parts().is_empty());
+    }
+
+    /// `set_part` with a `.rels` name whose XML does not parse keeps the
+    /// raw part, and a later parseable `.rels` supersedes it — `to_zip`
+    /// writes the parsed copy and no second entry of the one identity
+    /// (#600).
+    #[test]
+    fn a_raw_rels_part_is_superseded_by_parsed_relationships() {
+        let mut fs = package_with_header_rels();
+        fs.set_part("word/_rels/extra.xml.rels", b"<broken".to_vec());
+        assert_eq!(
+            fs.part_bytes("word/_rels/extra.xml.rels"),
+            Some(b"<broken".as_slice()),
+            "unparseable relationship XML is kept raw"
+        );
+        fs.set_part(
+            "word/_rels/extra.xml.rels",
+            format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId5" Type="{HYPERLINK}" Target="https://e.example/" TargetMode="External"/></Relationships>"#).into_bytes(),
+        );
+        assert_eq!(
+            fs.part_bytes("word/_rels/extra.xml.rels"),
+            None,
+            "the parsed copy supersedes the raw part"
+        );
+        assert_eq!(
+            fs.read_rels_for("word/extra.xml").unwrap().items[0].id,
+            "rId5"
+        );
+        fs.to_zip()
+            .expect("one entry of the rels identity serializes");
+    }
+
+    /// The identity a part or owner name resolves to: the part a
+    /// relationship target names (leading slashes and `.`/`..` segments
+    /// resolved), compared under ASCII case (#600).
+    #[test]
+    fn identity_resolves_like_a_relationship_target() {
+        assert_eq!(identity("word/document.xml"), "word/document.xml");
+        assert_eq!(identity("/word/Document.xml"), "word/document.xml");
+        assert_eq!(identity("WORD/document.xml"), "word/document.xml");
+        assert_eq!(identity("word/./document.xml"), "word/document.xml");
+        assert_eq!(identity("word/../word/document.xml"), "word/document.xml");
+        assert_eq!(identity(""), "");
+    }
+
+    /// `to_zip` must not write two entries of one identity: a raw part
+    /// whose name aliases a rels path (or the reserved names) is
+    /// `DUPLICATE_PART`, not a broken archive (#600).
+    #[test]
+    fn to_zip_refuses_an_identity_collision() {
+        let mut fs = package_with_header_rels();
+        fs.pkg
+            .parts
+            .insert("word/_rels/header1.xml.rels".to_string(), b"raw".to_vec());
+        let err = fs
+            .to_zip()
+            .expect_err("the raw copy collides with the parsed one");
+        let text = err.to_string();
+        assert!(text.contains("DUPLICATE_PART"), "{text}");
+        let mut fs = package_with_header_rels();
+        fs.pkg
+            .parts
+            .insert("[CONTENT_TYPES].XML".to_string(), b"raw".to_vec());
+        let err = fs
+            .to_zip()
+            .expect_err("the raw copy collides with the reserved part");
+        assert!(err.to_string().contains("DUPLICATE_PART"), "{err}");
+    }
+
+    /// A `.rels` entry that is not a `…/_rels/….rels` path still parses:
+    /// its owner is the part the name's stem names, and `to_zip` writes it
+    /// back beside that root part (#600 identity coverage).
+    #[test]
+    fn a_root_rels_part_belongs_to_its_stem() {
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="{HYPERLINK}" Target="https://f.example/" TargetMode="External"/></Relationships>"#
+        );
+        let bytes = variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+            (b"x.rels", rels.as_bytes()),
+        ]);
+        let fs = PartFs::open(&bytes).expect("a root .rels part opens");
+        // It is relationships storage, not a part of its own.
+        assert!(!fs.parts().iter().any(|p| p == "x.rels"));
+        assert_eq!(fs.read_rels_for("x").unwrap().items[0].id, "rId1");
+    }
+
+    /// A package without `[Content_Types].xml` names the reserved part it
+    /// is missing, under any spelling the entry could have carried.
+    #[test]
+    fn a_package_without_content_types_is_part_not_found() {
+        let bytes = variant_package(&[
+            (b"_rels/.rels", PKG_RELS),
+            (b"word/document.xml", b"<w:document/>"),
+        ]);
+        assert!(matches!(
+            PartFs::open(&bytes),
+            Err(OpcError::PartNotFound(name)) if name == "[Content_Types].xml"
+        ));
+    }
+
+    /// Mutations resolve under the one OPC identity everywhere: a `.rels`
+    /// name drops its owner's parsed relationships, the
+    /// `[Content_Types].xml` identity clears the content types, a raw
+    /// part of a reserved identity is superseded by a parsed one, the
+    /// relationship helpers no-op on absent owners and unknown ids, and
+    /// a root part's relationships serialize as `_rels/<part>.rels`.
+    #[test]
+    fn helper_mutations_resolve_under_the_same_index() {
+        let mut fs = package_with_header_rels();
+        fs.remove_part("word/_rels/header1.xml.rels");
+        assert!(fs.read_rels_for("word/header1.xml").is_none());
+        fs.remove_part("[CONTENT_TYPES].XML");
+        assert_eq!(fs.content_type_for("word/document.xml"), None);
+        // Absent owners and unknown or external ids are no-ops.
+        assert!(fs.read_rels_for("word/styles.xml").is_none());
+        fs.remove_relationships_by_type("word/styles.xml", HYPERLINK);
+        fs.remove_related_part("word/styles.xml", "rId1");
+        fs.remove_related_part("word/document.xml", "rId404");
+        fs.set_rel_target_mode_external("word/document.xml", "rId9");
+        // Removing by type drops matching items of a part's rels or the
+        // package's own.
+        assert_eq!(
+            fs.add_package_relationship(HYPERLINK, "https://g.example/"),
+            "rId2"
+        );
+        fs.add_document_relationship_external("word/document.xml", HYPERLINK, "https://h.example/");
+        fs.set_rel_target_mode_external("word/document.xml", "rId1");
+        fs.set_rel_target_mode_external("word/document.xml", "rId77");
+        fs.remove_package_relationships_by_type(HYPERLINK);
+        assert!(
+            fs.package_relationships()
+                .items
+                .iter()
+                .all(|r| r.rel_type != HYPERLINK)
+        );
+        fs.remove_relationships_by_type("word/document.xml", HYPERLINK);
+        assert!(
+            fs.read_rels_for("word/document.xml")
+                .unwrap()
+                .items
+                .iter()
+                .all(|r| r.rel_type != HYPERLINK)
+        );
+        // An absent id inside present rels is a no-op; an internal
+        // relationship's removal drops the part it alone targeted.
+        fs.remove_related_part("word/document.xml", "rId404");
+        fs.set_part("word/media/bye.png", vec![9]);
+        let drop_id = fs.add_document_relationship("word/document.xml", "image", "media/bye.png");
+        fs.remove_related_part("word/document.xml", &drop_id);
+        assert_eq!(fs.part_bytes("word/media/bye.png"), None);
+        // A `.rels` path whose owner has no rels is a no-op, as is a
+        // parseable [Content_Types].xml over none raw part.
+        fs.remove_part("word/_rels/styles.xml.rels");
+        fs.set_part("[Content_Types].xml", TYPES.to_vec());
+        // A raw [Content_Types].xml part is superseded by a parseable one.
+        fs.set_part("[Content_Types].xml", b"<broken".to_vec());
+        assert!(fs.part_bytes("[content_types].xml").is_some());
+        fs.set_part("[content_types].xml", TYPES.to_vec());
+        assert_eq!(
+            fs.part_bytes("[Content_Types].xml"),
+            None,
+            "the parsed content types supersede the raw part"
+        );
+        // Root-part relationships serialize as `_rels/<part>.rels`.
+        fs.set_part("x.xml", b"<x/>".to_vec());
+        fs.add_document_relationship("x.xml", HYPERLINK, "https://i.example/");
+        let mut names: Vec<String> = ZipArchive::new(Cursor::new(&fs.to_zip().unwrap()))
+            .unwrap()
+            .file_names()
+            .map(|name| name.expect("decode ZIP fixture name").into_owned())
+            .collect();
+        names.sort();
+        assert!(names.contains(&"_rels/x.xml.rels".to_string()), "{names:?}");
+    }
+
+    /// A relationship Id repeated three or more times still repairs to
+    /// one entry and reports the Id once, in the package's own rels as in
+    /// a part's (#600 coverage of the package-level repair and the
+    /// recorded-ids dedup).
+    #[test]
+    fn a_relationship_repeated_more_than_twice_is_repaired_once() {
+        let rels = format!(
+            r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/><Relationship Id="rId2" Type="{HYPERLINK}" Target="https://j.example/" TargetMode="External"/></Relationships>"#
+        );
+        let bytes = variant_package(&[
+            (b"[Content_Types].xml", TYPES),
+            (b"_rels/.rels", rels.as_bytes()),
+            (b"word/document.xml", b"<w:document/>"),
+        ]);
+        let fs = PartFs::open(&bytes).expect("identical repeats repair");
+        assert_eq!(fs.package_relationships().items.len(), 2);
+        assert_eq!(
+            fs.repaired_duplicate_ids(),
+            [
+                (String::new(), "rId1".to_string()),
+                (String::new(), "rId2".to_string())
+            ]
+        );
     }
 }
 

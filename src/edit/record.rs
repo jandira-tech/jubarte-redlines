@@ -128,7 +128,7 @@ impl Recorded {
 
 /// Where a recording is written: the file a symbolic link names (the link
 /// stays a link), else `plan` itself.
-pub fn plan_target(plan: &Path) -> PathBuf {
+pub(crate) fn plan_target(plan: &Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(plan) {
         return real;
     }
@@ -234,8 +234,8 @@ pub fn record(
 /// options, as the Python and npm CLIs parse them.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct RecordOptions {
-    /// `--author` (default `Redline`).
+pub(crate) struct RecordOptions {
+    /// `--author` (default `Jubarte`).
     pub author: Option<String>,
     /// `--datetime`.
     pub date: Option<String>,
@@ -250,11 +250,14 @@ pub struct RecordOptions {
     pub default_plan: bool,
     /// `--dry-run`: the summary says "would record".
     pub dry_run: bool,
+    /// `--rewrite-others-comments`: the plan may edit another author's
+    /// comment.
+    pub rewrite_others_comments: bool,
 }
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
 /// `add`, `operations` the parsed command's `operations` array, `held`
-/// PLAN.json's text, `options` a [`RecordOptions`] object. Returns `{plan,
+/// PLAN.json's text, `options` a `RecordOptions` object. Returns `{plan,
 /// json, notes, summary}`: `plan` to preview, `json` to write, `notes` and
 /// `summary` to print.
 ///
@@ -300,8 +303,9 @@ pub fn record_json(
             )));
         }
     };
-    let author = options.author.as_deref().unwrap_or("Redline");
-    let recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
+    let author = options.author.as_deref().unwrap_or("Jubarte");
+    let mut recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
+    recorded.plan.rewrite_others_comments |= options.rewrite_others_comments;
     Ok(serde_json::json!({
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),

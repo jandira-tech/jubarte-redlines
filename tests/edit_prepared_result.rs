@@ -11,8 +11,8 @@ mod common;
 use common::docx::{Part, docx, docx_with_sect, para};
 use common::validity::assert_word_valid_package;
 use jubarte::edit::{
-    EditPlan, PrepareOptions, PrimaryBytes, PrimaryRole, apply_plan_json, apply_plan_json_with,
-    introduced_findings, prepare, preview_plan_with,
+    EditPlan, PlanSyntax, PrepareOptions, PrimaryBytes, PrimaryRole, apply_plan_json,
+    apply_plan_json_with, introduced_findings, prepare, preview_plan_with,
 };
 use jubarte::inspect::{controls, paragraphs, source_sha256, stories};
 use jubarte::result::Effect;
@@ -22,16 +22,22 @@ const DEFAULT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: false,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 const REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 const EXACT: PrepareOptions = PrepareOptions {
     require_change: false,
     exact_text: true,
     role: PrimaryRole::Clean,
+    syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 
 fn plan(json: &str) -> EditPlan {
@@ -225,6 +231,8 @@ fn unchanged_copy_and_require_change_are_distinct() {
             require_change: true,
             exact_text: true,
             role: PrimaryRole::Clean,
+            syntax: PlanSyntax::V1,
+            skip_failed: false,
         },
     )
     .unwrap_err();
@@ -310,8 +318,12 @@ fn introduced_bookmark_crossing_fails_the_candidate() {
             .all(|f| !f.code.starts_with("BOOKMARK_")),
         "the source carries no bookmark finding to begin with"
     );
+    // The page setup is no change the emitter writes, so the plan's redline
+    // comes from the comparer, which rewrites "beta" whole and takes the
+    // bookmark's end into the insertion (#1293). Alone, the replacement is
+    // emitted and keeps the end outside it (#1156).
     let plan = plan(
-        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"}]}"#,
+        r#"{"schema_version":1,"author":"Ed Itor","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
     );
     let e = prepare(&source, &plan, &DEFAULT).unwrap_err();
     assert_eq!(e.code, "CANDIDATE_INVALID");
@@ -463,6 +475,8 @@ const REDLINE_REQUIRE_CHANGE: PrepareOptions = PrepareOptions {
     require_change: true,
     exact_text: false,
     role: PrimaryRole::Redline,
+    syntax: PlanSyntax::V1,
+    skip_failed: false,
 };
 
 /// For a changed v1 typed apply, the receipt digest names the bytes that

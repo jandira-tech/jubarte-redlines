@@ -15,7 +15,7 @@
 /// case, so `1234ABCD` and `1234abcd` are one key that occurs twice;
 /// callers that count occurrences must count this `u32`, not the raw
 /// string.
-pub(super) fn para_id(value: &str) -> Option<u32> {
+pub(crate) fn para_id(value: &str) -> Option<u32> {
     if value.len() != 8 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }

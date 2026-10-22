@@ -37,9 +37,9 @@ for row, cells in enumerate(data, start=1):
 
 for para in doc.paragraphs:
     if para.text in BULLETS:
-        para.style = doc.styles["List Bullet"]
+        para.style = "List Bullet"
     elif para.text in NUMBERS:
-        para.style = doc.styles["List Number"]
+        para.style = "List Number"
 
 # Keep the saved bytes deterministic.
 props = doc.core_properties

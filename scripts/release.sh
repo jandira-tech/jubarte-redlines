@@ -146,7 +146,7 @@ before|you|main's rules let the releaser land the release: a bypass for the owne
 before|you|a run in flight owns its worktree: the version bump stays uncommitted from step 1 to step 8 by design — nobody commits, pushes, edits or tidies there until the script ends (0.11.2: the bump was committed mid-run with a .gitignore line that made step 8 unable to stage the vendored app)|git -C <release worktree> status --short (changes there during a run are the release, not dirt)
 before|you|queued CI is cancelled before the tag is pushed, so release.yml gets the runners first; the pushes to main start CI and Docs runs again — cancel those too|gh run list --repo jandira-tech/jubarte-redlines --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId'
 before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows' default) on the release samples — every job exits zero|python3 scripts/stack1m.py <release binary> <bench root> <out dir> release_info/sample_*_<version>_*.csv
-before|you|Python 3.8: the script tests must run on the self-hosted runner's old Python — no parenthesised with, no str.removeprefix, no itertools.pairwise, no match statement|uv run -q --no-project --python 3.8 python scripts/test_release_sh.py
+before|you|Python 3.12: the script tests pass on the scripts' floor, Python 3.12 (ruff.toml targets py312 and reports newer syntax)|uv run -q --no-project --python 3.12 python scripts/test_release_sh.py
 before|you|unused: scan every manifest for dependencies nothing references — each workspace Cargo.toml, every package.json, pyproject (0.11.2 found js-sys in jubarte-wasm/Cargo.toml)|grep -rn <crate> src jubarte-wasm/src benches examples (empty output = removable)
 before|you|keywords: every channel's tags are current and inside its limits — crates.io at most 5 keywords and 5 categories, npm jubarte-wasm AND jubarte-redlines, PyPI keywords, GitHub topics|grep -n keywords Cargo.toml jubarte-python/pyproject.toml jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json; gh api repos/jandira-tech/jubarte-redlines/topics
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|JUBARTE_CHANGELOG_DIR=<dir> NUMBERS="<measured sentence>" python3 apply_changelogs_v2.py <engine> <app repo>
@@ -261,8 +261,8 @@ while [ $# -gt 0 ]; do
     --how-readme-and-other-docs-were-updated) need "$@"; DOCS_UPDATED=$2; shift ;;
     -h|--help)    usage; exit 0 ;;
     -*)           echo "unknown flag: $1" >&2; usage; exit 2 ;;
-    *)            [ -z "$VER" ] && VER="$1" \
-                  || { echo "unexpected arg: $1" >&2; exit 2; } ;;
+    *)            if [ -z "$VER" ]; then VER="$1"
+                  else echo "unexpected arg: $1" >&2; exit 2; fi ;;
   esac
   shift
 done
@@ -813,7 +813,7 @@ fi
 rm -rf target/release-check
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
-sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
+sdist=$(find target/release-check -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)
 [ -n "$sdist" ] || die "maturin produced no sdist"
 member=$(tar -tzf "$sdist" | grep '/pyproject.toml$' | head -1)
 [ -n "$member" ] || die "sdist has no pyproject.toml"
@@ -1119,7 +1119,17 @@ elif [ "$LOCAL_PUBLISH" = 1 ]; then
     # missing wheels only after the release is out.
     [ "$NO_WAIT" = 1 ] \
       || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --local-publish --no-wait to consent to the partial set"
-    uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
+    # The wheel's panic locations would name this home and checkout (#1480);
+    # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
+    # As build-npm.sh does: the checkout by both its paths, and no whitespace,
+    # which cargo would split the list on.
+    repo_logical=$(pwd -L)
+    repo_physical=$(pwd -P)
+    case "$HOME$repo_logical$repo_physical" in
+      *[[:space:]]*) die "whitespace in \$HOME or the checkout path; cargo splits RUSTFLAGS on it" ;;
+    esac
+    RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines" \
+      uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2
   fi

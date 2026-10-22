@@ -188,7 +188,25 @@ def _decode_revisions(payload: str) -> tuple[Revision, ...]:
     )
 
 
-ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
+ChangeKind = Literal["insertion", "deletion", "move", "formatting", "replacement"]
+
+#: The kinds a change filter selects by: an element's own. ``replacement``
+#: is listed (an author's deletion and their insertion right after it) but
+#: no single element has it, so the engine refuses it in a filter.
+FilterKind = Literal["insertion", "deletion", "move", "formatting"]
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeMember:
+    """One mark of a change Word wrote as several: its own ``id`` (``r7``),
+    ``kind`` (``insertion`` or ``deletion``), ``target`` (``text`` or
+    ``paragraph_mark``), ``date`` and ``text``."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: str | None
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +222,13 @@ class Change:
     one so its content goes takes this one along. ``ref`` equals ``id``: the
     short id the CLI prints and ``-p``/``--id`` take;
     ``paragraph`` is the id of the paragraph the change is in (``p3``).
+    ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
+    reference mark the change holds: resolving it so its content goes
+    removes their threads, as Word does. A change Word wrote as several
+    marks (one typed insertion split by session, or a deletion with the
+    insertion that replaces it, kind ``replacement``) has the composite id
+    ``r7+8+9+10`` and lists its marks in ``members``; selecting only some of
+    them is refused.
     """
 
     id: str
@@ -217,6 +242,18 @@ class Change:
     inside: str | None
     ref: str | None = None
     paragraph: str | None = None
+    holds_comments: tuple[str, ...] = ()
+    members: tuple[ChangeMember, ...] = ()
+
+
+class _MemberRow(TypedDict):
+    """One ``members`` entry of the native ``changes`` JSON."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: NotRequired[str]
+    text: str
 
 
 class _ChangeRow(TypedDict):
@@ -233,6 +270,8 @@ class _ChangeRow(TypedDict):
     inside: NotRequired[str]
     ref: NotRequired[str]
     paragraph: NotRequired[str]
+    holds_comments: NotRequired[list[str]]
+    members: NotRequired[list[_MemberRow]]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
@@ -253,6 +292,17 @@ def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
             inside=row.get("inside"),
             ref=row.get("ref"),
             paragraph=row.get("paragraph"),
+            holds_comments=tuple(row.get("holds_comments", ())),
+            members=tuple(
+                ChangeMember(
+                    id=m["id"],
+                    kind=m["kind"],
+                    target=m["target"],
+                    date=m.get("date"),
+                    text=m["text"],
+                )
+                for m in row.get("members", ())
+            ),
         )
         for row in rows
     )
@@ -334,7 +384,7 @@ def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
-    kinds: Sequence[ChangeKind] | None = None,
+    kinds: Sequence[FilterKind] | None = None,
 ) -> str:
     """The engine's change filter as JSON: a change is selected when it
     matches every list given; ``None`` leaves that list out (any), an empty
@@ -716,12 +766,18 @@ class EditPlan:
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
     update_fields: bool = False
+    #: Let ``edit_comment`` change another author's comment; it keeps their
+    #: name. Without it that is refused (``COMMENT_NOT_YOURS``): one author
+    #: answers another with ``reply_comment``.
+    rewrite_others_comments: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
         if not isinstance(self.update_fields, bool):
             raise TypeError("update_fields must be a bool")
+        if not isinstance(self.rewrite_others_comments, bool):
+            raise TypeError("rewrite_others_comments must be a bool")
         if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
             raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
@@ -997,7 +1053,11 @@ class EditPlan:
         return self._with(_with_optional(op, id=id))
 
     def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
-        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        """Replace the text of comment ``comment_id``; its author, date and thread stay.
+
+        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+        plan sets ``rewrite_others_comments``.
+        """
         op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
         return self._with(_with_optional(op, id=id))
 
@@ -1221,6 +1281,8 @@ class EditPlan:
         wire["operations"] = [dict(op) for op in self.operations]
         if self.update_fields:
             wire["update_fields"] = True
+        if self.rewrite_others_comments:
+            wire["rewrite_others_comments"] = True
         return wire
 
     def to_json(self) -> str:
@@ -1249,9 +1311,7 @@ def _set_occurrence(op: dict[str, object], occurrence: int | None) -> None:
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
-    for key, value in extra.items():
-        if value is not None:
-            op[key] = value
+    op.update({key: value for key, value in extra.items() if value is not None})
     if "id" in op:
         # Keep the id first for readable plans.
         op = {"id": op.pop("id"), **op}
@@ -1290,13 +1350,18 @@ class EditOutcome:
 
 @dataclass(frozen=True, slots=True)
 class RevisionCounts:
-    """Comparer revision records in the redline."""
+    """The redline's changes by kind, as ``changes`` lists them.
+
+    ``replaced`` counts replacements: a deletion and the insertion that
+    replaces it, listed as one change. ``total`` is the sum of the others.
+    """
 
     inserted: int
     deleted: int
     moved: int
     format_changed: int
     total: int
+    replaced: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1333,6 +1398,9 @@ class EditReport:
     revisions: RevisionCounts
     resolved_revisions: ResolvedRevisions = ResolvedRevisions()
     fields: tuple[FieldUpdate, ...] = ()
+    notes: tuple[str, ...] = ()
+    """What the plan said that jubarte read another way (field ``anchor``
+    read as ``find``, ...): the CLI prints each as a ``note:`` line."""
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -1382,6 +1450,7 @@ def _decode_report(payload: str) -> EditReport:
             rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
         ),
         fields=_decode_field_updates(data.get("fields", ())),
+        notes=tuple(data.get("notes", ())),
         _json=payload,
     )
 

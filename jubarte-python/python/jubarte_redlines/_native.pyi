@@ -25,16 +25,50 @@ def list_changes_json(docx: bytes) -> str: ...
 def list_comments_json(docx: bytes, author: str | None = None, latest: bool = False) -> str: ...
 def changes_text(docx: bytes) -> str: ...
 def comments_text(docx: bytes, author: str | None = None, latest: bool = False) -> str: ...
-def tables_text(docx: bytes) -> str: ...
+def tables_text(docx: bytes, *, track_changes: str | None = None) -> str: ...
+def tables_view(
+    docx: bytes,
+    *,
+    track_changes: str | None = None,
+    comments: bool = True,
+    dates: bool = False,
+    page_markers: bool = True,
+    paragraphs: str | None = None,
+    source: str | None = None,
+) -> tuple[str, list[str]]: ...
 def read_json(
     docx: bytes,
     *,
+    track_changes: str | None = None,
     paragraphs: str | None = None,
     head: int | None = None,
     tail: int | None = None,
     changed: bool = False,
     by: str | None = None,
     source: str | None = None,
+    validity_file: str | None = None,
+) -> str: ...
+def for_edit_json(
+    docx: bytes,
+    *,
+    paragraphs: str | None = None,
+    head: int | None = None,
+    tail: int | None = None,
+    find: str | None = None,
+    regex: str | None = None,
+    ignore_case: bool = False,
+    changed: bool = False,
+    by: str | None = None,
+    context: int | None = None,
+    limit: int | None = None,
+    max_chars: int | None = None,
+    all: bool = False,
+    cursor: str | None = None,
+    accept_change: list[str] | None = None,
+    reject_change: list[str] | None = None,
+    existing_revisions: str | None = None,
+    track: str | None = None,
+    validity_file: str | None = None,
 ) -> str: ...
 def wrote_line(path: str | os.PathLike[str], format: str, size: int, pages: int | None = None) -> str: ...
 def wrote_png_line(pattern: str | os.PathLike[str], pages: int, dpi: float) -> str: ...
@@ -119,7 +153,10 @@ def validate_run(
     original: bytes | None = None,
     author: str | None = None,
     strict: bool = False,
+    baseline: bytes | None = None,
 ) -> tuple[str, str, bool]: ...
+def input_notice(docx: bytes, file: str) -> str | None: ...
+def input_validity_line(docx: bytes, file: str) -> str: ...
 def diff_json(
     old: bytes | str,
     new: bytes | str,
@@ -139,6 +176,8 @@ def diff_view(
     new_name: str = "new.docx", context: int = 3, accept_changes: bool = False, full_lines: bool = False
 ) -> str: ...
 def parse_cli_json(arguments: list[str], program: str = "jubarte-redlines", supported: list[str] | None = None) -> str: ...
+def wants_json(arguments: list[str]) -> bool: ...
+def runtime_json_error(message: str, exit: int) -> str: ...
 def redline_documents(old: bytes | str, new: bytes | str, *, author: str, date: str) -> bytes: ...
 def redline_diff_json(
     docx: bytes, *, name: str, author: str, date: str, columns: int = 72, own_only: bool = False

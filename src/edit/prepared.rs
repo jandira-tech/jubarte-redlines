@@ -17,10 +17,11 @@ use std::collections::{BTreeMap, HashSet};
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
     Transaction, check_update_fields, comment_holds_kept_text, comment_text_of, controls,
-    revision_counts, sections, tracked, whole,
+    lift_deletion_comments, revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
+use crate::namespaces::W;
 use crate::result::{Effect, codes};
 use crate::validate::{self, Finding};
 
@@ -142,6 +143,15 @@ pub struct PrepareOptions {
     /// serialized-story postcondition describes and the receipt digest
     /// names, so a redline-only defect cannot slip through.
     pub role: PrimaryRole,
+    /// The request syntax a refusal hint quotes: a flags-built plan names
+    /// flags, a JSON plan names JSON (#1108).
+    pub syntax: super::PlanSyntax,
+    /// `--skip-failed` (#1253): leave out every operation that fails, and
+    /// every operation of its `group`, instead of refusing the plan; the
+    /// rest is applied as a plan of its own. [`PreparedEdit::skipped`]
+    /// lists what was left out. A failure no operation is blamed for is
+    /// never skipped, and a plan whose every operation fails is refused.
+    pub skip_failed: bool,
 }
 
 impl Default for PrepareOptions {
@@ -150,6 +160,8 @@ impl Default for PrepareOptions {
             require_change: false,
             exact_text: false,
             role: PrimaryRole::Clean,
+            syntax: super::PlanSyntax::V1,
+            skip_failed: false,
         }
     }
 }
@@ -179,6 +191,9 @@ pub struct PreparedEdit {
     /// comparer redline with no tracked correspondence: a v1 plan plus
     /// `--expect` refuses instead of guessing.
     pub correspondence: Option<crate::expect::SourceToOutputCorrespondence>,
+    /// The operations [`PrepareOptions::skip_failed`] left out, in plan
+    /// order; empty otherwise.
+    pub skipped: Vec<super::SkippedOperation>,
 }
 
 /// Run the shared preparation: resolve, apply, choose the primary bytes,
@@ -198,11 +213,22 @@ pub fn prepare(
     plan: &EditPlan,
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
+    if options.skip_failed {
+        // Each attempt comes back here with `skip_failed` off: the whole
+        // plan, refused at its first failure.
+        return super::skip::prepare_skipping(source, plan, options);
+    }
     check_update_fields(plan)?;
+    let lowered = super::visible::lower(source, plan)?;
+    let plan = lowered.as_ref().unwrap_or(plan);
     let mut tx = Transaction::start(source, plan)?;
+    tx.syntax = options.syntax;
     tx.resolve()?;
     tracked::check(&tx)?;
     let emit = tx.emits_directly()?;
+    // `update_fields` compares an edit beside a range marker (#1156): a
+    // refused candidate then names the route that keeps the marker.
+    let compared_beside = !emit && plan.update_fields && tx.edits_beside_a_range_marker();
     tx.apply()?;
     check_dom_realized(&tx, options.exact_text)?;
     let result = produce(&mut tx, emit, options.role)?;
@@ -214,7 +240,22 @@ pub fn prepare(
             PrimaryRole::Redline => (result.redline.clone(), PrimaryBytes::Candidate),
         },
     };
-    let mut checks = check_candidates(source, &result)?;
+    let mut checks = check_candidates(source, &result)
+        .and_then(|checks| {
+            if compared_beside {
+                check_rejected_ranges(source, &result.redline)?;
+            }
+            Ok(checks)
+        })
+        .map_err(|mut e| {
+            if compared_beside && e.code == "CANDIDATE_INVALID" {
+                e.message = format!(
+                    "{}; update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
+                    e.message
+                );
+            }
+            e
+        })?;
     checks.operation_postconditions = true;
     if options.require_change && effect == Effect::Unchanged {
         return Err(err(
@@ -233,6 +274,7 @@ pub fn prepare(
         primary_effect: effect,
         checks,
         correspondence: None,
+        skipped: Vec::new(),
     })
 }
 
@@ -277,6 +319,76 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
         return Effect::Changed;
     }
     Effect::Unchanged
+}
+
+/// Reject All of `redline` gives the source back, so it keeps each of the
+/// source's bookmarks (by name; Word's own `_GoBack` aside), comment ranges
+/// and permission ranges. Compare places them by the words around them and
+/// can carry one into an insertion, which Reject All then removes: the
+/// TOC entry linking to a heading's `_Toc` bookmark reads "Error! Bookmark
+/// not defined." (#1156).
+fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), EditError> {
+    let rejected = crate::document_comparer::reject_revisions(redline).map_err(|e| {
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!("the redline cannot be rejected: {e}"),
+        )
+    })?;
+    let (before, after) = (range_markers(source), range_markers(&rejected));
+    let lost = before
+        .bookmarks
+        .difference(&after.bookmarks)
+        .map(|name| format!("bookmark {name}"))
+        .chain((after.comments < before.comments).then(|| "a comment's range".to_string()))
+        .chain((after.permissions < before.permissions).then(|| "a permission range".to_string()))
+        .collect::<Vec<_>>();
+    if lost.is_empty() {
+        return Ok(());
+    }
+    Err(err(
+        "CANDIDATE_INVALID",
+        None,
+        format!(
+            "Reject All of the redline drops {} the source holds",
+            lost.join(", ")
+        ),
+    ))
+}
+
+/// The range markers of a package's stories: bookmark names, and how many
+/// comment and permission ranges open.
+#[derive(Default)]
+struct RangeMarkers {
+    bookmarks: std::collections::BTreeSet<String>,
+    comments: usize,
+    permissions: usize,
+}
+
+fn range_markers(docx: &[u8]) -> RangeMarkers {
+    let mut markers = RangeMarkers::default();
+    let Ok(opened) = crate::inspect::Opened::open(docx) else {
+        return markers;
+    };
+    let mut parts = vec![opened.main.clone()];
+    parts.extend(opened.story_parts().into_iter().map(|(_, _, part)| part));
+    for part in parts {
+        let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
+            continue;
+        };
+        for start in dom.descendants(root, Some(&W::name("bookmarkStart"))) {
+            if let Some(name) = dom.attribute(start, &W::name("name"))
+                && name != "_GoBack"
+            {
+                markers.bookmarks.insert(name.to_string());
+            }
+        }
+        markers.comments += dom
+            .descendants(root, Some(&W::name("commentRangeStart")))
+            .len();
+        markers.permissions += dom.descendants(root, Some(&W::name("permStart"))).len();
+    }
+    markers
 }
 
 /// Findings on the input and what each serialized artifact adds. The
@@ -368,8 +480,9 @@ enum ExpectedScope {
 /// requested text itself — so a requested change the algorithm normalizes
 /// away is detected instead of passing as a no-op.
 fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText)> {
-    /// `para` → (first op id, `(start, end, replacement, op)` spans).
-    type Spans = (String, Vec<(usize, usize, String, usize)>);
+    /// `para` → (first op id, `(start, end, replacement, op, restore,
+    /// attach_before)` spans).
+    type Spans = (String, Vec<(usize, usize, String, usize, bool, bool)>);
     let mut edits: BTreeMap<usize, Spans> = BTreeMap::new();
     let mut merges = Vec::new();
     let mut filled: HashSet<usize> = HashSet::new();
@@ -382,12 +495,27 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                 start,
                 end,
                 replacement,
+                attach_before,
                 ..
             } => {
                 let entry = edits
                     .entry(*para)
                     .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
-                entry.1.push((*start, *end, replacement.clone(), *op));
+                entry.1.push((
+                    *start,
+                    *end,
+                    replacement.clone(),
+                    *op,
+                    false,
+                    *attach_before,
+                ));
+            }
+            // A restore's copy is text inserted where the deletion is.
+            Resolved::Restore { para, at, text, .. } => {
+                let entry = edits
+                    .entry(*para)
+                    .or_insert_with(|| (tx.outcomes[*op].id.clone(), Vec::new()));
+                entry.1.push((*at, *at, text.clone(), *op, true, false));
             }
             Resolved::MergeParagraphs {
                 para,
@@ -421,7 +549,12 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let rewrite = if exact { rewrite_text(tx, para) } else { None };
         let rewrite_op = rewrite.as_ref().map(|&(op, _)| op);
         let base = &tx.projections[para].text;
-        spans.sort_by_key(|&(start, ..)| start);
+        // A restore's copy follows its deletion, ahead of the visible text
+        // that starts where the deletion is; other spans keep their order,
+        // but in an empty paragraph the start edge's text comes first, as
+        // `sort_edits` applies it (#1303).
+        let empty = base.is_empty();
+        spans.sort_by_key(|&(start, .., restore, after)| (start, !restore, empty && after));
         let mut text = String::with_capacity(base.len());
         // The rewrite's own spans alone, composed on the base: a rewrite
         // beside co-resident edits must still realize its request, or the
@@ -429,7 +562,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
         let mut own = String::with_capacity(base.len());
         let mut at = 0;
         let mut own_at = 0;
-        for (start, end, replacement, span_op) in spans {
+        for (start, end, replacement, span_op, ..) in spans {
             text.push_str(&base[at..start]);
             text.push_str(&replacement);
             at = end;
@@ -477,7 +610,10 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
     // A rewrite that resolved to no edits still has a postcondition.
     if exact {
         for (i, op) in tx.plan.operations.iter().enumerate() {
-            let OperationKind::Rewrite { paragraph, text } = &op.kind else {
+            let OperationKind::Rewrite {
+                paragraph, text, ..
+            } = &op.kind
+            else {
                 continue;
             };
             if comment_text_of(paragraph).is_some() {
@@ -856,14 +992,34 @@ fn produce(
         .iter()
         .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
     {
-        let mut error = tx.conflict(
-            op,
-            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph",
-        );
+        // Under keep the deletion is written as given, and its comment
+        // wraps the words named, its reply the struck paragraph.
+        let keep = match tx.syntax {
+            super::PlanSyntax::Flags | super::PlanSyntax::Typed => "--existing-revisions keep",
+            super::PlanSyntax::V1 | super::PlanSyntax::V2 => r#""existing_revisions": "keep""#,
+        };
+        let message = match plan.operations[op].kind {
+            OperationKind::Delete { .. } => format!(
+                "the comparer deleted the same words elsewhere instead, so the comment would sit on text that stays; pass {keep} to write the deletion as given, or delete without a comment"
+            ),
+            OperationKind::ReplyComment { .. } => format!(
+                "the comparer deleted an identical paragraph instead, so the reply would sit on text that stays; pass {keep} to write the deletion as given"
+            ),
+            _ => "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph".to_string(),
+        };
+        let mut error = tx.conflict(op, &message);
         error.code = "UNSUPPORTED_STRUCTURE".into();
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    // A deleted text's comment wraps its deletion, as a strike's does.
+    let lifted: Vec<u32> = tx
+        .deletion_comments
+        .iter()
+        .filter(|&&(_, op)| matches!(plan.operations[op].kind, OperationKind::Delete { .. }))
+        .map(|&(id, _)| id)
+        .collect();
+    redline = lift_deletion_comments(&redline, &lifted)?;
     // Settings are not revisions: the redline takes them as they are.
     if let Some(request) = &tx.settings {
         redline = crate::settings::apply_settings_to_docx(&redline, request)
@@ -904,7 +1060,13 @@ pub fn prepare_v2(
     plan: &super::v2::PlanV2,
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
-    let applied = super::v2_apply::apply_plan(source, plan)?;
+    // A v2 plan's refusals quote its JSON, unless a typed command built it.
+    let syntax = if options.syntax == super::PlanSyntax::Typed {
+        super::PlanSyntax::Typed
+    } else {
+        super::PlanSyntax::V2
+    };
+    let applied = super::v2_apply::apply_quoting(source, plan, syntax)?;
     let result = EditResult {
         clean: applied.clean,
         redline: applied.redline,
@@ -944,6 +1106,7 @@ pub fn prepare_v2(
         result,
         checks,
         correspondence: Some(applied.correspondence),
+        skipped: Vec::new(),
     })
 }
 
@@ -972,11 +1135,15 @@ pub(crate) mod tests {
                 removed_comments: Vec::new(),
                 kept_comments: Vec::new(),
                 paragraph_ids: Vec::new(),
+                split_revisions: Vec::new(),
                 paragraphs: ParagraphDelta::default(),
                 operations: Vec::new(),
                 comments_added: 0,
                 revisions: Default::default(),
                 fields: Vec::new(),
+                skipped: 0,
+                notes: Vec::new(),
+                output_sha256: None,
             },
         }
     }

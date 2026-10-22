@@ -90,13 +90,45 @@ fn format_change_ids(xml: &str) -> Vec<String> {
     let mut dom = jubarte::xmllinq::Dom::new();
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc).unwrap();
-    dom.descendants(root, Some(&jubarte::namespaces::W::name("pPrChange")))
+    change_ids_in(&dom, root)
+}
+
+/// The `w:id`s of the formatting changes under `node`, in order.
+fn change_ids_in(dom: &jubarte::xmllinq::Dom, node: jubarte::xmllinq::NodeId) -> Vec<String> {
+    dom.descendants(node, Some(&jubarte::namespaces::W::name("pPrChange")))
         .iter()
         .filter_map(|&node| {
             dom.attribute(node, &jubarte::namespaces::W::id())
                 .map(str::to_string)
         })
         .collect()
+}
+
+/// The `w:id`s of the formatting changes the `ty` note of `kind`
+/// (`footnote`, `endnote`) carries: `separator` and
+/// `continuationSeparator` are two notes, so a test that only counts the
+/// part's changes cannot say which separator each came back on. This one
+/// looks the note up by its `w:type`, so putting both changes on one
+/// separator fails.
+fn separator_change_ids(xml: &str, kind: &str, ty: &str) -> Vec<String> {
+    let mut dom = jubarte::xmllinq::Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc).unwrap();
+    let note = dom
+        .elements(root, Some(&jubarte::namespaces::W::name(kind)))
+        .into_iter()
+        .find(|&note| dom.attribute(note, &jubarte::namespaces::W::name("type")) == Some(ty))
+        .unwrap_or_else(|| panic!("a {ty} {kind} in {xml}"));
+    change_ids_in(&dom, note)
+}
+
+/// What the view names for each separator, and the `w:id`s each one
+/// carries back: `(kind, separator id, continuation id)`.
+fn separator_pairs(xml: &str, kind: &str) -> (Vec<String>, Vec<String>) {
+    (
+        separator_change_ids(xml, kind, "separator"),
+        separator_change_ids(xml, kind, "continuationSeparator"),
+    )
 }
 
 #[test]
@@ -117,8 +149,18 @@ fn separator_formatting_changes_come_back_on_their_separators() {
     let footnotes = part(&again, "word/footnotes.xml");
     assert_eq!(format_change_ids(&footnotes), ["0", "1"], "{footnotes}");
     assert!(footnotes.contains(r#"w:author="A Smith""#), "{footnotes}");
+    // Each change comes back on its own separator: the first on the
+    // separator note, the second on the continuation.
+    assert_eq!(
+        separator_pairs(&footnotes, "footnote"),
+        (vec!["0".into()], vec!["1".into()])
+    );
     let endnotes = part(&again, "word/endnotes.xml");
     assert_eq!(format_change_ids(&endnotes), ["2", "3"], "{endnotes}");
+    assert_eq!(
+        separator_pairs(&endnotes, "endnote"),
+        (vec!["2".into()], vec!["3".into()])
+    );
     assert_eq!(second, first);
 }
 
@@ -242,6 +284,15 @@ fn a_reference_separators_changes_follow_the_edited_view() {
         .unwrap();
         let xml = part(&written.docx, "word/footnotes.xml");
         assert_eq!(format_change_ids(&xml), expected, "{xml}");
+        // The part-wide list above cannot say which separator carries
+        // the change: this one names the separator note and the
+        // continuation note separately.
+        let (separator, continuation) = separator_pairs(&xml, "footnote");
+        assert_eq!(continuation, Vec::<String>::new(), "{xml}");
+        assert_eq!(
+            separator, expected,
+            "the change did not land on the separator note\n{xml}"
+        );
         common::validity::assert_word_valid_package(&written.docx);
     }
 }
@@ -265,4 +316,20 @@ fn fresh_separator_ids_stay_in_words_integer_range() {
     assert_eq!(ids[0], "2147483647");
     assert_ne!(ids[0], ids[1]);
     assert!(ids.iter().all(|id| id.parse::<i32>().is_ok()), "{xml}");
+}
+
+#[test]
+fn separator_insertions_and_deletions_warn() {
+    // pi on #504, F7: `rev:` was dropped without a word.
+    let view = "---\nview: tracked\nnotes: {rev: footnotes.r4 @AS, empty: [footnotes]}\n\
+                ---\n\n<!-- p0 -->\nBody.\n";
+    let written = markdown_to_docx(view, &DocxOptions::default()).expect("the view reads");
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("rev: footnotes.r4 @AS") && w.contains("not written")),
+        "{:?}",
+        written.warnings
+    );
 }

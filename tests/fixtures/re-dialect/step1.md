@@ -3,7 +3,7 @@ source: step1.docx
 sha256: 80099a6753087edc8e44a1f0ac1802ae6fc5efdfeba862f563d278d075c4a917
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 2                       # 2 marks shown as 2 changes: 1 insertion, 1 paragraph mark
+revisions: 2                       # 2 marks shown as 1 change: 1 insertion
 comments: 0
 authors:
   document_owner: Alma Sato Reyes  # dc:creator
@@ -17,6 +17,6 @@ styles:
 <!-- page 1 of 1 -->
 
 <!-- p0 -->
-{++The parties agree to pay the bankers a pro-rata amount by the end of the month.++}{r1 @ASR}¶{r0 @ASR}
+{++The parties agree to pay the bankers a pro-rata amount by the end of the month.++}{r1+0 @ASR}¶{r1+0 @ASR}
 
 <!-- p1 empty -->

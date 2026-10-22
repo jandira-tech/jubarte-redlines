@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: on                  # w:trackRevisions set; edits are tracked
-revisions: 64                      # 63 marks shown as 61 changes: 27 insertions, 28 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
+revisions: 64                      # 63 marks shown as 60 changes: 27 insertions, 27 deletions, 2 substitutions, 4 paragraph marks; 1 in footnotes
 comments: 30 threads open, style Normal  # 30 comments: c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23, c24, c25, c26, c27, c28, c29
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -18,7 +18,7 @@ styles:
   table: TableNormal
 ---
 
-<!-- p0 left, hanging 0in, left 0in -->
+<!-- p0 left, hanging 0in, left 0in, before 12pt, after 6pt -->
 # Heavy on everything
 
 <!-- p1 Normal left -->
@@ -27,7 +27,7 @@ styles:
 <!-- p2 Normal left -->
 Either party may end this agreement with ninety days{== written notice{++ without undue delay++}{r4 @BC}.==}{>>c1 @CD: Client asked for this.<<}
 
-<!-- t0 5x3, cells p3-p17 by row, p3-p17 Normal -->
+<!-- t0 5x3, cells p3-p17 by row, p3-p17 Normal, widths 2.2306in 2.231in 2.231in, layout fixed -->
 |Clause|Change|Status|
 |:-|:-|:-|
 |Late payments{++ as reasonably required++}{r5 @BC}{== carry interest.==}{>>c2 @AL: Client asked for this.<<}|Each {--party--}{r6 @CD}{++sixty++}{r7 @AL} keeps {--the--}{r8 @DP}{++supplier++}{r9 @AL}.|{--The--}{r10 @BC}{++sixty++}{r11 @CD} warranty{== period is.==}{>>c3 @DP: Client asked for this.<<}{>>c4 @DP: Legal to review.<<}|
@@ -57,7 +57,7 @@ Neither party is liable{== for==}{>>c18 @AL: Is this consistent with the master 
 {>>c19 @BC: Legal to review.<<}The warranty period is twelve months from{++ without undue delay++}{r37 @CD} delivery.
 
 <!-- p25 Normal left, break-del r45 @DP -->
-Either party may{-- end--}{r38 @DP}{-- --}{r39 @AL}{--_this_--}{r40 @AL}{== agreement {--with--}{r41 @CD}{++customer++}{r42 @BC}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{r43 @CD} written{++ unless agreed otherwise++}{r44 @CD} notice.
+Either party may{-- end--}{r38 @DP}{-- --}{r39+40 @AL}{--_this_--}{r39+40 @AL}{== agreement {--with--}{r41 @CD}{++customer++}{r42 @BC}==}{>>c20 @CD: Agreed.<<} ninety{-- days--}{r43 @CD} written{++ unless agreed otherwise++}{r44 @CD} notice.
 
 <!-- p26 Normal left -->
 &#32;The supplier may subcontract only with the buyer's{== prior **consent**.==}{>>c21 @CD: Why thirty and not sixty?<<}{>>c22 @AL: Too broad, narrow it down.<<}

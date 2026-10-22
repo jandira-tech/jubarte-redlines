@@ -27,7 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 
-import uno  # noqa: F401  (must run under a Python that has it)
+import uno
 from com.sun.star.beans import PropertyValue
 from com.sun.star.connection import NoConnectException
 from com.sun.star.lang import DisposedException

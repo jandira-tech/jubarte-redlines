@@ -5,8 +5,8 @@
 //! Revision accept / reject pipeline (M3).
 //!
 //! Port of `RevisionProcessor.ts` — the byte-level accept / reject facade
-//! (`accept_revisions_package`, `accept_revisions_package_keeping_ids`,
-//! `reject_revisions_package`) and the A.0–A.11 transforms that compose
+//! (`accept_revisions_package`, `reject_revisions_package`) and the
+//! A.0–A.11 transforms that compose
 //! them: paragraph / block-content iteration, paragraph-mark and
 //! content-control re-wrap, moveFrom / moveTo, deleted-cell merging,
 //! adjacent-table merging, and the reject path (revert → reverse →
@@ -17,8 +17,6 @@
 //! the per-subtree entry the M4 compare pipeline calls to hash the
 //! accepted / rejected projections before correlating them.
 
-mod annotation_ids;
-pub(crate) use annotation_ids::AnnotationIds;
 mod bookmarks;
 pub(crate) mod comments;
 mod notes;
@@ -26,7 +24,7 @@ mod sections;
 pub(crate) mod style_records;
 mod word_save;
 
-pub(crate) use comments::prune_orphan_comments;
+pub(crate) use comments::{prune_orphan_comments, renumber_rescued_comments};
 pub(crate) use sections::Resolution;
 pub(crate) use word_save::drop_unreferenced_headers_footers;
 
@@ -215,6 +213,155 @@ fn has_run_content(dom: &Dom, element: NodeId) -> bool {
         .any(|e| dom.name(e).is_some_and(|n| content_names.contains(&n)))
 }
 
+fn try_accept_wholly_revised_equation(
+    dom: &mut Dom,
+    node: NodeId,
+    name: &XName,
+) -> Option<Vec<NodeId>> {
+    if name == &M::name("oMath") || name == &M::name("oMathPara") {
+        let owners: Vec<_> = dom
+            .descendants(node, None)
+            .into_iter()
+            .filter(|&n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
+            .collect();
+        let has_authored_empty_equation = dom
+            .descendants(node, Some(&M::name("oMath")))
+            .into_iter()
+            .any(|equation| {
+                !dom.descendants(equation, None)
+                    .into_iter()
+                    .any(|n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
+            });
+        let has_unowned_content = dom.descendants(node, None).into_iter().any(|child| {
+            let ancestors = dom.ancestors(child, None);
+            if dom.name_is(child, &W::del())
+                || ancestors
+                    .iter()
+                    .any(|&ancestor| dom.name_is(ancestor, &W::del()))
+            {
+                return false;
+            }
+            let Some(child_name) = dom.name(child) else {
+                return !dom
+                    .text_value(child)
+                    .is_some_and(|text| text.trim().is_empty());
+            };
+            // oMath admits ordinary WML runs, anchors and transparent controls.
+            // They are independent owners even when all m:r owners are deleted.
+            if child_name.namespace_name() != M::URI {
+                return true;
+            }
+            if child_name.local_name() == "r" || child_name.local_name() == "ctrlPr" {
+                return false;
+            }
+            // Math property leaves describe the removed equation; an empty
+            // expression/container outside properties is an authored sibling.
+            let in_math_properties = child_name.local_name().ends_with("Pr")
+                || ancestors.iter().any(|&ancestor| {
+                    dom.name(ancestor).is_some_and(|name| {
+                        name.namespace_name() == M::URI && name.local_name().ends_with("Pr")
+                    })
+                });
+            !in_math_properties && dom.elements(child, None).is_empty()
+        });
+        if !has_authored_empty_equation
+            && !has_unowned_content
+            && !owners.is_empty()
+            && owners.iter().all(|&owner| {
+                let children = dom.elements(owner, None);
+                !children.is_empty()
+                    && children.iter().all(|&child| dom.name_is(child, &W::del()))
+                    && dom.nodes(owner).into_iter().all(|child| {
+                        dom.is_element(child)
+                            || dom
+                                .text_value(child)
+                                .is_some_and(|text| text.trim().is_empty())
+                    })
+            })
+        {
+            return Some(hoist_range_markers_from(dom, node));
+        }
+    }
+    None
+}
+
+fn try_accept_math_fraction(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &M::name("f") {
+        let removed = dom
+            .elements(node, Some(&M::name("fPr")))
+            .into_iter()
+            .any(|fpr| has_path(dom, fpr, &M::name("ctrlPr"), &W::del()));
+        if removed {
+            return Some(vec![]);
+        }
+    }
+    None
+}
+
+fn try_accept_deleted_row(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
+        return Some(vec![]);
+    }
+    None
+}
+
+fn try_accept_deleted_table(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::tbl() && table_rows_all_deleted(dom, node) {
+        return Some(vec![]);
+    }
+    None
+}
+
+fn try_accept_deleted_text(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::del() {
+        return Some(hoist_range_markers_from(dom, node));
+    }
+    None
+}
+
+fn try_accept_cell_merge(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::cell_merge() {
+        let parent_is_tcpr = dom
+            .parent(node)
+            .and_then(|p| dom.name(p))
+            .is_some_and(|pn| pn == W::tc_pr());
+        if parent_is_tcpr {
+            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
+            if vmerge.as_deref() == Some("rest") {
+                let v = dom.new_element(W::v_merge());
+                dom.set_attribute_value(v, &W::val(), Some("restart"));
+                return Some(vec![v]);
+            }
+            if vmerge.as_deref() == Some("cont") {
+                let v = dom.new_element(W::v_merge());
+                dom.set_attribute_value(v, &W::val(), Some("continue"));
+                return Some(vec![v]);
+            }
+        }
+    }
+    None
+}
+
+fn try_accept_hyperlink(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
+    if name == &W::hyperlink() {
+        let ne = dom.new_element(name.clone());
+        for (an, av) in dom.attributes(node) {
+            dom.set_attribute_value(ne, &an, Some(&av));
+        }
+        for c in dom.nodes(node) {
+            for tn in accept_all_other_revisions_transform(dom, c) {
+                dom.add(ne, tn);
+            }
+        }
+        return Some(if has_run_content(dom, ne) {
+            vec![ne]
+        } else {
+            hoist_range_markers_from(dom, ne)
+        });
+    }
+    None
+}
+
 /// Port of `AcceptAllOtherRevisionsTransform` — accept inserts (unwrap
 /// `w:ins`), drop deletions and revision-range markers, accept formatting-
 /// change markers, handle deleted rows/tables, cell merges, and empty
@@ -285,150 +432,30 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
         return vec![];
     }
 
-    // Word serializes a wholly revised equation by marking every math run
-    // and control-property owner internally. Removing those deleted children
-    // must remove the equation too, rather than leave an empty oMath shell in
-    // a surviving paragraph. Require every owner to be wholly deleted: mixed
-    // equations and authored empty runs are independent live source content.
-    if name == M::name("oMath") || name == M::name("oMathPara") {
-        let owners: Vec<_> = dom
-            .descendants(node, None)
-            .into_iter()
-            .filter(|&n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
-            .collect();
-        let has_authored_empty_equation = dom
-            .descendants(node, Some(&M::name("oMath")))
-            .into_iter()
-            .any(|equation| {
-                !dom.descendants(equation, None)
-                    .into_iter()
-                    .any(|n| dom.name_is(n, &M::name("r")) || dom.name_is(n, &M::name("ctrlPr")))
-            });
-        let has_unowned_content = dom.descendants(node, None).into_iter().any(|child| {
-            let ancestors = dom.ancestors(child, None);
-            if dom.name_is(child, &W::del())
-                || ancestors
-                    .iter()
-                    .any(|&ancestor| dom.name_is(ancestor, &W::del()))
-            {
-                return false;
-            }
-            let Some(child_name) = dom.name(child) else {
-                return !dom
-                    .text_value(child)
-                    .is_some_and(|text| text.trim().is_empty());
-            };
-            // oMath admits ordinary WML runs, anchors and transparent controls.
-            // They are independent owners even when all m:r owners are deleted.
-            if child_name.namespace_name() != M::URI {
-                return true;
-            }
-            if child_name.local_name() == "r" || child_name.local_name() == "ctrlPr" {
-                return false;
-            }
-            // Math property leaves describe the removed equation; an empty
-            // expression/container outside properties is an authored sibling.
-            let in_math_properties = child_name.local_name().ends_with("Pr")
-                || ancestors.iter().any(|&ancestor| {
-                    dom.name(ancestor).is_some_and(|name| {
-                        name.namespace_name() == M::URI && name.local_name().ends_with("Pr")
-                    })
-                });
-            !in_math_properties && dom.elements(child, None).is_empty()
-        });
-        if !has_authored_empty_equation
-            && !has_unowned_content
-            && !owners.is_empty()
-            && owners.iter().all(|&owner| {
-                let children = dom.elements(owner, None);
-                !children.is_empty()
-                    && children.iter().all(|&child| dom.name_is(child, &W::del()))
-                    && dom.nodes(owner).into_iter().all(|child| {
-                        dom.is_element(child)
-                            || dom
-                                .text_value(child)
-                                .is_some_and(|text| text.trim().is_empty())
-                    })
-            })
-        {
-            return hoist_range_markers_from(dom, node);
-        }
+    if let Some(res) = try_accept_wholly_revised_equation(dom, node, &name) {
+        return res;
     }
-
-    // m:f / m:fPr / m:ctrlPr / w:del → remove the math fraction.
-    if name == M::name("f") {
-        let removed = dom
-            .elements(node, Some(&M::name("fPr")))
-            .into_iter()
-            .any(|fpr| has_path(dom, fpr, &M::name("ctrlPr"), &W::del()));
-        if removed {
-            return vec![];
-        }
+    if let Some(res) = try_accept_math_fraction(dom, node, &name) {
+        return res;
     }
-
-    // w:tr / w:trPr / w:del → deleted row.
-    if name == W::tr() && has_path(dom, node, &W::tr_pr(), &W::del()) {
-        return vec![];
+    if let Some(res) = try_accept_deleted_row(dom, node, &name) {
+        return res;
     }
-
-    // w:tbl whose rows are ALL deleted → drop the whole table.
-    if name == W::tbl() && table_rows_all_deleted(dom, node) {
-        return vec![];
+    if let Some(res) = try_accept_deleted_table(dom, node, &name) {
+        return res;
     }
-
-    // Accept deleted text: drop w:del. Hoist comment range markers that lived
-    // inside the deletion so nested/table comment anchors survive accept
-    // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
-    // dropping the whole w:del orphaned those comments → carry 2/6), and the
-    // bookmarks left there: `bookmarks::drop_wholly_deleted_bookmarks` has
-    // already removed those whose every character went.
-    if name == W::del() {
-        return hoist_range_markers_from(dom, node);
+    if let Some(res) = try_accept_deleted_text(dom, node, &name) {
+        return res;
     }
-
-    // Vertically-merged cell markers.
-    if name == W::cell_merge() {
-        let parent_is_tcpr = dom
-            .parent(node)
-            .and_then(|p| dom.name(p))
-            .is_some_and(|pn| pn == W::tc_pr());
-        if parent_is_tcpr {
-            let vmerge = dom.attribute(node, &W::v_merge()).map(|s| s.to_string());
-            if vmerge.as_deref() == Some("rest") {
-                let v = dom.new_element(W::v_merge());
-                dom.set_attribute_value(v, &W::val(), Some("restart"));
-                return vec![v];
-            }
-            if vmerge.as_deref() == Some("cont") {
-                let v = dom.new_element(W::v_merge());
-                dom.set_attribute_value(v, &W::val(), Some("continue"));
-                return vec![v];
-            }
-        }
+    if let Some(res) = try_accept_cell_merge(dom, node, &name) {
+        return res;
     }
-
-    // w:hyperlink that collapses to an empty shell after accepting children → drop.
-    if name == W::hyperlink() {
-        let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
-            dom.set_attribute_value(ne, &an, Some(&av));
-        }
-        for c in dom.nodes(node) {
-            for tn in accept_all_other_revisions_transform(dom, c) {
-                dom.add(ne, tn);
-            }
-        }
-        return if has_run_content(dom, ne) {
-            vec![ne]
-        } else {
-            // Discard the empty link while retaining surviving range anchors
-            // hoisted from its deleted content.
-            hoist_range_markers_from(dom, ne)
-        };
+    if let Some(res) = try_accept_hyperlink(dom, node, &name) {
+        return res;
     }
 
     // Identity clone with transformed children.
-    let ne = dom.new_element(name);
+    let ne = dom.new_element(name.clone());
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
     }
@@ -3755,12 +3782,6 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
     resolve_package(pkg, Resolution::Accept, None);
 }
 
-/// [`accept_revisions_package`] without renumbering bookmarks and comments,
-/// for a document about to be compared: the redline keeps its comment ids.
-pub fn accept_revisions_package_keeping_ids(pkg: &mut crate::opc::PartFs) {
-    resolve(pkg, Resolution::Accept, None, false);
-}
-
 /// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
 /// revert → reverse → rsid-strip → full-accept composition (the C# phases the
 /// same steps across all parts; parts are independent, so per-part composition
@@ -3852,29 +3873,19 @@ pub(crate) fn clone_with_fresh_property_ids(
 /// is resolved; renames the revisions to keep into [`FROZEN_NS`].
 pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
 
-/// Accept or reject every revision `freeze` leaves in place. Annotation ids
-/// are renumbered only when no revision is left, so the ids of the ones kept
-/// still name them. Return the removed comments' original ids.
+/// Accept or reject every revision `freeze` leaves in place. Bookmark and
+/// comment ids are identifiers: the ones kept keep their ids, whatever is
+/// left (#1264). Return the removed comments' original ids.
 pub(crate) fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
 ) -> Vec<String> {
-    resolve(pkg, resolution, freeze, true)
+    resolve_with_comments(pkg, resolution, freeze, false, &mut Vec::new())
 }
 
-fn resolve(
-    pkg: &mut crate::opc::PartFs,
-    resolution: Resolution,
-    freeze: Option<Freeze<'_>>,
-    renumber: bool,
-) -> Vec<String> {
-    resolve_with_comments(pkg, resolution, freeze, renumber, false, &mut Vec::new())
-}
-
-/// Edit plans retain annotation ids so subsequent operations still address the
-/// snapshot they read. The edit result renumbers once all operations finish.
-/// Only this entry point can rescue removed anchors.
+/// [`resolve_package`] for an edit plan, the only entry point that can
+/// rescue removed anchors.
 pub(crate) fn resolve_package_for_edit(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
@@ -3882,7 +3893,7 @@ pub(crate) fn resolve_package_for_edit(
     keep_comments: bool,
 ) -> (Vec<String>, Vec<String>) {
     let mut kept = Vec::new();
-    let removed = resolve_with_comments(pkg, resolution, freeze, false, keep_comments, &mut kept);
+    let removed = resolve_with_comments(pkg, resolution, freeze, keep_comments, &mut kept);
     (removed, kept)
 }
 
@@ -3890,7 +3901,6 @@ fn resolve_with_comments(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
-    renumber: bool,
     keep_comments: bool,
     kept_comments: &mut Vec<String>,
 ) -> Vec<String> {
@@ -3900,9 +3910,19 @@ fn resolve_with_comments(
         .and_then(|p| pkg.part_string(&p))
         .map(|xml| style_records::Levels::parse(&xml))
         .unwrap_or_default();
-    let mut kept = false;
+    // #1223 settles revisions inside comment bodies. A comments part with
+    // none is neither settled nor tidied, as before #1223, so a redline
+    // carries it as Word's does (#1467); a comment whose anchors are gone
+    // is still pruned from it.
+    let comments = comments_part(pkg);
+    let mut untouched_comments = None;
     for (part, is_styles) in parts.clone() {
+        let is_comments = comments.as_ref() == Some(&part);
         process_part(pkg, &part, |dom, root| {
+            if is_comments && !element_has_tracked_revisions(dom, root) {
+                untouched_comments = Some(part.clone());
+                return None;
+            }
             if let Some(freeze) = freeze {
                 freeze(&part, dom, root);
             }
@@ -3932,36 +3952,23 @@ fn resolve_with_comments(
                     })
                 }
             }?;
-            kept |= thaw(dom, resolved);
+            thaw(dom, resolved);
             Some(resolved)
         });
     }
     let stories = story_parts(&parts);
     let removed_comments = comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
-    if renumber && !kept {
-        let _ = annotation_ids::renumber(pkg, &stories);
-    }
-    word_save::tidy(pkg, &stories);
+    let tidied: Vec<String> = stories
+        .into_iter()
+        .filter(|part| untouched_comments.as_ref() != Some(part))
+        .collect();
+    word_save::tidy(pkg, &tidied);
     removed_comments
 }
 
-/// Canonicalize annotation ids after every operation of an edit plan has run.
-/// Pending revisions keep their snapshot ids, just as selective settlement does.
-pub(crate) fn renumber_settled_annotations(pkg: &mut crate::opc::PartFs) -> Option<AnnotationIds> {
-    let parts = revision_bearing_parts(pkg);
-    if parts.iter().any(|(part, _)| {
-        comments::Parsed::load(pkg, part)
-            .is_some_and(|p| element_has_tracked_revisions(&p.dom, p.root))
-    }) {
-        return None;
-    }
-    Some(annotation_ids::renumber_with_map(pkg, &story_parts(&parts)))
-}
-
-/// Rename every frozen revision element under `root` back into `w:`; true
-/// when there was one.
-fn thaw(dom: &mut Dom, root: NodeId) -> bool {
+/// Rename every frozen revision element under `root` back into `w:`.
+fn thaw(dom: &mut Dom, root: NodeId) {
     let frozen: Vec<(NodeId, String)> = dom
         .descendants_and_self(root, None)
         .into_iter()
@@ -3973,7 +3980,6 @@ fn thaw(dom: &mut Dom, root: NodeId) -> bool {
     for (e, local) in &frozen {
         dom.set_name(*e, W::name(local));
     }
-    !frozen.is_empty()
 }
 
 /// The content parts of [`revision_bearing_parts`] (styles left out).
@@ -4584,8 +4590,7 @@ mod revision_boundary_coverage_tests {
     fn internally_deleted_math_does_not_consume_independent_anchors_controls_or_empty_branches() {
         fn semantic(dom: &Dom, node: NodeId) -> String {
             let mut attributes = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .collect::<Vec<_>>();
             attributes.sort_by(|a, b| {
@@ -5051,8 +5056,7 @@ mod body_equation_paragraph_mark_ownership_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -5061,7 +5065,7 @@ mod body_equation_paragraph_mark_ownership_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                v.clone(),
+                *v,
             )
         });
         format!(
@@ -5305,8 +5309,7 @@ mod deleted_title_equation_barrier_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -5315,7 +5318,7 @@ mod deleted_title_equation_barrier_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                v.clone(),
+                *v,
             )
         });
         format!(
@@ -5438,7 +5441,7 @@ mod complete_field_instruction_metadata_boundary_tests {
                 assert_eq!(dom.serialize_element(wrappers[0]), first);
                 assert_eq!(dom.serialize_element(wrappers[2]), last);
                 assert!(
-                    dom.attributes(wrappers[1]).is_empty(),
+                    !dom.has_attributes(wrappers[1]),
                     "A.1 generated field-code wrapper has no invented attribution"
                 );
                 let actual_codes = dom
@@ -5497,8 +5500,7 @@ mod alternate_content_paragraph_owner_tests {
         if dom.is_element(node) {
             let name = dom.name(node).unwrap();
             let mut attrs = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(n, _)| !dom.is_namespace_declaration(n))
                 .map(|(n, v)| (n.clark(), v))
                 .collect::<Vec<_>>();

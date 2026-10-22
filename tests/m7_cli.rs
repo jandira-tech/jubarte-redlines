@@ -382,15 +382,24 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // ref \t kind \t target \t author \t paragraph \t {text:?}
-        // This 6-field count assumes the fixture's revision authors contain no
-        // literal tab (they don't). The human row format is tab-delimited by
-        // contract, so a tab inside an author would need `changes` to escape
-        // it before this could stay parseable.
-        assert_eq!(
-            line.split('\t').count(),
-            6,
-            "row has 6 tab-separated fields: {line:?}"
+        // ref \t kind \t target \t author \t paragraph \t {text:?}, then
+        // `\t(2 elements)` for a change Word wrote as several marks (plan
+        // 11), `\tinside r1` for a change inside another and `\tholds
+        // comment c4's mark` for one holding a comment's mark: this fixture
+        // has no change inside another and no comment, so six fields, or
+        // seven with the element count. The count assumes the fixture's
+        // revision authors contain no literal tab (they don't). The human
+        // row format is tab-delimited by contract, so a tab inside an author
+        // would need `changes` to escape it before this could stay parseable.
+        let fields: Vec<&str> = line.split('\t').collect();
+        let elements = fields.get(6).is_some_and(|f| {
+            f.strip_prefix('(')
+                .and_then(|f| f.strip_suffix(" elements)"))
+                .is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 1))
+        });
+        assert!(
+            fields.len() == 6 || (fields.len() == 7 && elements),
+            "row has 6 tab-separated fields, and a change of several marks its element count: {line:?}"
         );
         let short = line.split('\t').next().unwrap();
         assert!(
@@ -412,7 +421,13 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         String::from_utf8_lossy(&json.stderr)
     );
     let json_out = String::from_utf8_lossy(&json.stdout).into_owned();
-    let json_lines: Vec<&str> = json_out.lines().collect();
+    let mut json_lines: Vec<&str> = json_out.lines().collect();
+    // The rows end with one line counting the input's validity findings (#1309).
+    let validity = json_lines.pop().expect("validity line present");
+    assert!(
+        validity.starts_with("{\"input_validity\":{\"errors\":"),
+        "{validity:?}"
+    );
     assert_eq!(
         json_lines.len(),
         count,
@@ -462,7 +477,7 @@ fn expected_settings(
         jubarte::comparer::WmlComparerSettings::default()
     };
     jubarte::comparer::WmlComparerSettings {
-        author_for_revisions: "Redline".to_string(),
+        author_for_revisions: "Jubarte".to_string(),
         date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
         detail_threshold: cli_detail_threshold.unwrap_or(base.detail_threshold),
         ..base

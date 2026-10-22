@@ -40,12 +40,12 @@ fn unequal_inline_dates_stay_on_two_marks_and_round_trip() {
     let before = view(&dated_pair(Some(old), Some(new)));
     assert!(
         before.contains(&format!(
-            "{{--old--}}{{r1 @AL {old}}}{{++new++}}{{r2 @AL {new}}}"
+            "{{--old--}}{{r1+2 @AL {old}}}{{++new++}}{{r1+2 @AL {new}}}"
         )),
         "{before}"
     );
     assert!(
-        before.contains("2 marks shown as 2 changes: 1 insertion, 1 deletion"),
+        before.contains("2 marks shown as 1 change: 1 substitution"),
         "{before}"
     );
     let back = markdown_to_docx(&before, &DocxOptions::default())

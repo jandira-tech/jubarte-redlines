@@ -103,6 +103,7 @@ impl SelectionFilter for Selection {
                         KindArg::Deletion => ChangeKind::Deletion,
                         KindArg::Move => ChangeKind::Move,
                         KindArg::Formatting => ChangeKind::Formatting,
+                        KindArg::Replacement => ChangeKind::Replacement,
                     })
                     .collect()
             }),
@@ -382,19 +383,14 @@ fn write_output(out: &Output<'_>, produced: Produced<'_>) -> Result<(), ConvertF
             }
             return Ok(());
         }
-        (Format::Md, Produced::Text(text)) => text.to_string(),
+        (Format::Md | Format::Json, Produced::Text(text)) => text.to_string(),
         (Format::Md, Produced::Docx(bytes)) => {
             agent_view(bytes, Some(out.source.clone()), out.view)?.markdown
         }
         (Format::Json, Produced::Docx(bytes)) => {
-            let snapshot = jubarte::markdown::read_snapshot(
-                bytes,
-                &jubarte::markdown::ReadOptions {
-                    select: selection(out.view)?,
-                    ..jubarte::markdown::ReadOptions::default()
-                },
-            )
-            .map_err(|e| e.to_string())?;
+            let snapshot =
+                jubarte::markdown::read_snapshot(bytes, &snapshot_options(out.view, None)?)
+                    .map_err(|e| e.to_string())?;
             let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
             format!("{json}\n")
         }
@@ -480,19 +476,28 @@ fn run_resolution(
         check_output(out).map_err(|f| (ExitCode::from(f.code), f.message))?;
         let bytes = read_word(file).map_err(failed)?;
         let resolved = apply(&bytes, &filter).map_err(|e| match e {
-            ChangeError::Ambiguous { .. } | ChangeError::InvalidId(_) => {
-                (ExitCode::from(2), e.to_string())
-            }
+            ChangeError::Ambiguous { .. }
+            | ChangeError::InvalidId(_)
+            | ChangeError::PartOfChange { .. } => (ExitCode::from(2), e.to_string()),
             e => failed(format!("{what} failed: {e}")),
         })?;
         write_output(out, Produced::Docx(&resolved.document))
             .map_err(|f| (ExitCode::from(f.code), f.message))?;
-        for comment in &resolved.removed_comments {
+        for (comment, why) in resolved.removed_comments.iter().zip(&resolved.removed_why) {
             let preview: String = comment.text.chars().take(60).collect();
             eprintln!(
-                "warning: {what} removed comment c{} ({}: {preview:?}): its whole range was deleted",
+                "warning: {what} removed comment c{} ({}: {preview:?}): {why}",
                 comment.id, comment.author,
             );
+        }
+        for note in settlement_notes(
+            &[],
+            &resolved.kept_comments,
+            &resolved.document,
+            &bytes,
+            what,
+        ) {
+            eprintln!("note: {note}");
         }
         // #1223: --id cannot name a comment-body change, so a selection can
         // leave some; say how many (an empty selection resolves them all).
@@ -510,36 +515,59 @@ fn run_resolution(
     }
 }
 
-fn run_changes(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = read_word(file)?;
-    let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
-    if !json {
-        outln!(
-            "{}",
-            jubarte::changes::changes_text(&changes).trim_end_matches('\n')
-        );
-        return Ok(());
+fn run_changes(file: &Path, json: bool, quiet: bool) -> Result<(), String> {
+    if json {
+        let (bytes, validity) = read_input_json(file)?;
+        let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
+        for c in &changes {
+            outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+        }
+        return validity_line(&validity);
     }
-    for c in &changes {
-        outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
-    }
+    let bytes = read_input(file, quiet)?;
+    let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
+    outln!(
+        "{}",
+        jubarte::changes::changes_text(&changes).trim_end_matches('\n')
+    );
     Ok(())
 }
 
-fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> Result<(), String> {
-    let bytes = read_word(file)?;
+fn run_comments(
+    file: &Path,
+    json: bool,
+    author: Option<&str>,
+    latest: bool,
+    quiet: bool,
+) -> Result<(), String> {
+    let (bytes, validity) = if json {
+        let (bytes, validity) = read_input_json(file)?;
+        (bytes, Some(validity))
+    } else {
+        (read_input(file, quiet)?, None)
+    };
     let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
     let comments = jubarte::comments::select_comments(comments, author, latest);
-    if !json {
+    let Some(validity) = validity else {
         outln!(
             "{}",
             jubarte::comments::comments_text(&comments).trim_end_matches('\n')
         );
         return Ok(());
-    }
+    };
     for c in &comments {
         outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
     }
+    validity_line(&validity)
+}
+
+/// The input's validity, the last line of `changes --json` and
+/// `comments --json` (#1309).
+fn validity_line(validity: &jubarte::validate::InputValidity) -> Result<(), String> {
+    outln!(
+        "{}",
+        jubarte::validate::input_validity_line(validity).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -617,7 +645,7 @@ fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(ConvertFailure { code: 1, message }) => exit_code(Err(message)),
         Err(ConvertFailure { code, message }) => {
-            eprintln!("error: {message}");
+            say_error(&message, code);
             ExitCode::from(code)
         }
     }
@@ -899,100 +927,40 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
     format!("{stem}-page-{:0width$}.png", index + 1)
 }
 
-/// Resolve the shared `-p` grammar against inventory cell ownership before
-/// printing anything. A bad item refuses the whole request; retaining the
-/// original entries preserves document indices, order and formatting.
-fn select_table_inventory(
-    tables: &mut Vec<jubarte::inspect::Table>,
-    paragraph_count: usize,
-    spec: &str,
-) -> Result<(), String> {
-    use jubarte::markdown::{MarkdownError, Pick, Select};
-    use std::collections::{BTreeSet, HashMap};
-
-    let Select::Picks(picks) = Select::parse(spec)? else {
-        unreachable!("the -p parser returns picks");
-    };
-    fn add_owners<'a>(
-        rows: &'a [Vec<jubarte::inspect::TableCell>],
-        nested: &'a [jubarte::inspect::NestedTable],
-        index: usize,
-        owners: &mut HashMap<&'a str, usize>,
-    ) {
-        for id in rows.iter().flatten().flat_map(|cell| &cell.paragraph_ids) {
-            owners.insert(id, index);
-        }
-        for child in nested {
-            add_owners(&child.rows, &child.nested, index, owners);
-        }
+/// `read --tables`: each body table as a grid; with `-p` the grids of the
+/// tables the view's selection reaches, then that view (#1161), and
+/// `--track-changes reject` reads the rejected text. A pick that reaches
+/// no table exits 2; what the view refuses, as `read -p` does.
+fn run_read_tables(file: &Path, args: &ReadArgs, quiet: bool) -> Result<(), ConvertFailure> {
+    let bytes = read_input(file, quiet)?;
+    warn_nested_text_boxes(&bytes);
+    let view = jubarte::markdown::read_tables(
+        &bytes,
+        &jubarte::markdown::ReadOptions {
+            track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+            comments: args.comments == CommentsArg::Inline,
+            dates: args.dates,
+            page_markers: !args.no_page_markers,
+            select: selection(args).map_err(usage_failure)?,
+            source: file.file_name().map(|n| n.to_string_lossy().into_owned()),
+        },
+    )
+    .map_err(|e| match e {
+        jubarte::markdown::TablesError::Usage(message) => usage_failure(message),
+        jubarte::markdown::TablesError::Read(e) => e.to_string().into(),
+    })?;
+    for warning in &view.warnings {
+        eprintln!("warning: {warning}");
     }
-    let top_level_count = tables.len();
-    let mut owners = HashMap::new();
-    for table in tables.iter() {
-        add_owners(&table.rows, &table.nested, table.index, &mut owners);
-    }
-    let unreadable = |message| MarkdownError::Docx(message).to_string();
-    let mut selected = BTreeSet::new();
-    for pick in picks {
-        match pick {
-            Pick::Table(index) => {
-                if index >= top_level_count {
-                    return Err(unreadable(format!(
-                        "t{index} is not a table of this document"
-                    )));
-                }
-                selected.insert(index);
-            }
-            Pick::Paragraphs { from, to } => {
-                let last = paragraph_count
-                    .checked_sub(1)
-                    .ok_or_else(|| unreadable("the body has no paragraphs".to_string()))?;
-                let to = to.unwrap_or(last);
-                for n in [from, to] {
-                    if n > last {
-                        return Err(unreadable(format!(
-                            "p{n} is past the last paragraph p{last}"
-                        )));
-                    }
-                }
-                for n in from..=to {
-                    let id = format!("p{n}");
-                    let Some(&index) = owners.get(id.as_str()) else {
-                        return Err(format!(
-                            "{id} is not in a table; --tables -p takes tN, or a pN inside a table"
-                        ));
-                    };
-                    selected.insert(index);
-                }
-            }
-        }
-    }
-    tables.retain(|table| selected.contains(&table.index));
-    Ok(())
+    Ok(write_stdout(view.markdown)?)
 }
 
-/// `read --tables`: the inventory, followed by the unchanged view when
-/// `-p` selects tables. Build both before printing, so refusals leave stdout
-/// empty. Selection errors exit 2; I/O failures keep their usual status.
-fn run_read_tables(file: &Path, args: &ReadArgs) -> Result<(), ConvertFailure> {
-    let bytes = read_word(file)?;
-    warn_nested_text_boxes(&bytes);
-    let mut tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
-    if let Some(spec) = args.paragraphs.as_deref() {
-        let paragraph_count = jubarte::inspect::paragraphs(&bytes)
-            .map_err(|e| e.to_string())?
-            .len();
-        select_table_inventory(&mut tables, paragraph_count, spec)
-            .map_err(|message| (EXIT_USAGE, message))?;
+/// A usage error: exit 2.
+fn usage_failure(message: String) -> ConvertFailure {
+    ConvertFailure {
+        code: EXIT_USAGE,
+        message,
     }
-    let mut text = jubarte::inspect::tables_text(&tables);
-    if args.paragraphs.is_some() {
-        let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
-        let view = agent_view(&bytes, source, args)?;
-        text.push('\n');
-        text.push_str(&view.markdown);
-    }
-    write_stdout(text).map_err(Into::into)
 }
 
 /// `read --for-edit` (V2-10): the working document template/apply
@@ -1006,35 +974,8 @@ fn run_for_edit(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
-    use jubarte::cli::{ExistingArg, TrackArg};
-    use jubarte::edit::ExistingRevisions;
-    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
-    let request = ForEditRequest {
-        select: args.paragraphs.clone(),
-        story: None,
-        head: args.head,
-        tail: args.tail,
-        find: args.find.clone(),
-        regex: args.regex.clone(),
-        ignore_case: args.ignore_case,
-        changed: args.changed,
-        by: args.by.clone(),
-        by_any: Vec::new(),
-        context: args.context.unwrap_or(0),
-        limit: args.limit,
-        max_chars: args.max_chars,
-        all: args.all,
-        cursor: args.cursor.clone(),
-        accept: args.accept_change.clone(),
-        reject: args.reject_change.clone(),
-        existing_revisions: args
-            .existing_revisions
-            .and_then(ExistingArg::plan_value)
-            .unwrap_or(ExistingRevisions::Keep),
-        track: args.track.unwrap_or(TrackArg::On) == TrackArg::On,
-        // `read --for-edit` keeps the open-ended spellings its help documents.
-        closed_ranges_only: false,
-    };
+    use jubarte::edit::for_edit::for_edit_json;
+    let request = args.for_edit_request();
     let refused = |e: jubarte::edit::EditError| {
         let code = if e.code == "USAGE" {
             EXIT_USAGE
@@ -1046,11 +987,17 @@ fn run_for_edit(
             message: format!("{e}"),
         }
     };
-    let bytes = read_word(file).map_err(ConvertFailure::from)?;
+    // A JSON read: the result carries the input's findings (#1340).
+    let (bytes, validity) = read_input_json(file).map_err(ConvertFailure::from)?;
+    // A file leaves stdout free, so the notice stays, as at `read -o FILE.json`.
+    if output.is_some()
+        && !quiet
+        && let Some(line) = jubarte::validate::input_notice_of(&validity)
+    {
+        eprintln!("{line}");
+    }
     warn_nested_text_boxes(&bytes);
-    let result = for_edit(&bytes, &request).map_err(refused)?;
-    let json =
-        serde_json::to_string(&result).map_err(|e| ConvertFailure::from(e.to_string()))? + "\n";
+    let json = for_edit_json(&bytes, &request, Some(validity)).map_err(refused)?;
     if let Some(path) = output {
         ensure_writable(path, force)?;
         publish_file(path, json.as_bytes(), force).map_err(ConvertFailure::from)?;
@@ -1072,31 +1019,13 @@ fn run_text(
     force: bool,
     quiet: bool,
 ) -> Result<(), ConvertFailure> {
-    if args.no_page_markers {
-        // The structured outputs never run the layout pass: the flag has
-        // nothing to skip there, so it is dropped, and said so.
-        let json_file = output.is_some_and(|path| {
-            matches!(
-                output_format(Task::Read, Some(path), None),
-                Ok(Some(Format::Json))
-            )
-        });
-        let kind = if args.tables {
-            Some("--tables")
-        } else if args.for_edit || args.json || json_file {
-            Some("JSON")
-        } else {
-            None
-        };
-        if let Some(kind) = kind {
-            eprintln!("warning: --no-page-markers dropped: no page markers in {kind}, proceeding");
-        }
-    }
+    // A selection that does not parse is a usage error, before I/O.
+    selection(args).map_err(usage_failure)?;
     if args.for_edit {
         return run_for_edit(file, args, output, force, quiet);
     }
     if args.tables {
-        return run_read_tables(file, args);
+        return run_read_tables(file, args, quiet);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -1115,26 +1044,44 @@ fn run_text(
             render: &render,
         };
         check_output(&out)?;
-        let bytes = read_word(file)?;
+        if kind == Format::Json {
+            // The file holds the bytes --json prints, its input_validity
+            // too; stdout is free, so the stderr notice stays.
+            let (bytes, validity) = read_input_json(file)?;
+            if !quiet && let Some(line) = jubarte::validate::input_notice_of(&validity) {
+                eprintln!("{line}");
+            }
+            warn_nested_text_boxes(&bytes);
+            let json = read_json(&bytes, args, None, validity)?;
+            return write_output(&out, Produced::Text(&json));
+        }
+        let bytes = read_input(file, quiet)?;
         warn_nested_text_boxes(&bytes);
         return write_output(&out, Produced::Docx(&bytes));
     }
-    let bytes = read_word(file)?;
-    warn_nested_text_boxes(&bytes);
     if args.json {
-        let snapshot = jubarte::markdown::read_snapshot(
-            &bytes,
-            &jubarte::markdown::ReadOptions {
-                select: selection(args)?,
-                source,
-                ..jubarte::markdown::ReadOptions::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
-        let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
-        return Ok(write_stdout(format!("{json}\n"))?);
+        let (bytes, validity) = read_input_json(file)?;
+        warn_nested_text_boxes(&bytes);
+        return Ok(write_stdout(read_json(&bytes, args, source, validity)?)?);
     }
+    let bytes = read_input(file, quiet)?;
+    warn_nested_text_boxes(&bytes);
     Ok(print_agent_view(&bytes, source, args)?)
+}
+
+/// The options `read --json` and `read -o FILE.json` read the snapshot
+/// with: the selection, and the text `--track-changes` settles. The view's
+/// other options change nothing in a snapshot.
+fn snapshot_options(
+    args: &ReadArgs,
+    source: Option<String>,
+) -> Result<jubarte::markdown::ReadOptions, String> {
+    Ok(jubarte::markdown::ReadOptions {
+        track_changes: args.track_changes.unwrap_or(TrackChanges::All).into(),
+        select: selection(args)?,
+        source,
+        ..jubarte::markdown::ReadOptions::default()
+    })
 }
 
 /// The paragraphs `-p`, `--head`, `--tail`, `--changed` and `--by` select.
@@ -1303,6 +1250,8 @@ struct EditJob<'a> {
     target: &'a EditTarget,
     mode: Mode,
     dry_run: bool,
+    /// `--skip-failed`: where the plan of the failed operations goes.
+    skip_failed: Option<PathBuf>,
     /// `--require-change`: refuse when the primary has no document effect.
     require_change: bool,
     force: bool,
@@ -1320,21 +1269,34 @@ const EXIT_PLAN_REFUSED: u8 = 3;
 /// Exit 2: the operation flags do not describe an operation.
 const EXIT_USAGE: u8 = 2;
 
-/// The plan of an `edit` or `add` invocation and the notes its flags left:
-/// `--plan`'s file, or the plan the operation flags describe.
+/// The plan of an `edit` or `add` invocation, with its notes.
+struct PlanInput {
+    plan: jubarte::edit::EditPlan,
+    /// The notes the operation flags left.
+    notes: Vec<String>,
+    /// The plan's own notes: a field `--plan`'s file names another way.
+    plan_notes: Vec<String>,
+}
+
+/// The plan of an `edit` or `add` invocation: `--plan`'s file, or the plan
+/// the operation flags describe.
 fn edit_plan(
     verb: jubarte::edit::flags::Verb,
     plan: Option<&Path>,
     operations: &[FlagOp],
     options: &EditOptions,
     source: &[u8],
-) -> Result<(jubarte::edit::EditPlan, Vec<String>), (u8, String)> {
+) -> Result<PlanInput, (u8, String)> {
     if let Some(path) = plan {
         let json = std::fs::read_to_string(path)
             .map_err(|e| (1, format!("reading {}: {e}", path.display())))?;
-        let plan = jubarte::edit::EditPlan::from_json(&json)
+        let (plan, plan_notes) = jubarte::edit::EditPlan::from_json_with_notes(&json)
             .map_err(|e| (EXIT_PLAN_REFUSED, e.to_string()))?;
-        return Ok((plan, Vec::new()));
+        return Ok(PlanInput {
+            plan,
+            notes: Vec::new(),
+            plan_notes,
+        });
     }
     let built = jubarte::edit::flags::plan_from_flags(
         verb,
@@ -1345,21 +1307,36 @@ fn edit_plan(
         source,
     )
     .map_err(|m| (EXIT_USAGE, m))?;
-    Ok((built.plan, built.notes))
+    Ok(PlanInput {
+        plan: built.plan,
+        notes: built.notes,
+        plan_notes: Vec::new(),
+    })
 }
 
+/// Prepare `plan` on `source` and publish it as `job` says. The number of
+/// operations `--skip-failed` left out of what was written (none on a dry
+/// run).
 fn run_edit(
     job: &EditJob<'_>,
     plan: &jubarte::edit::EditPlan,
     source: &[u8],
     notes: &[String],
-) -> Result<(), (u8, String)> {
+    plan_notes: &[String],
+) -> Result<usize, (u8, String)> {
     let fail = |m: String| (1u8, m);
     // Dry run and apply share one preparation path (V2-08): the dry run
     // prepares and checks the same serialized candidate and stops before
     // publication.
     let options = jubarte::edit::PrepareOptions {
         require_change: job.require_change,
+        // Refusal hints quote the flags a flags-built plan came from.
+        syntax: if job.plan.is_some() {
+            jubarte::edit::PlanSyntax::V1
+        } else {
+            jubarte::edit::PlanSyntax::Flags
+        },
+        skip_failed: job.skip_failed.is_some(),
         ..jubarte::edit::PrepareOptions::default()
     };
     let refuse = |e: jubarte::edit::EditError| {
@@ -1371,16 +1348,90 @@ fn run_edit(
         refused(&e.with_revision_syntax(syntax), job.file, source)
     };
     if job.dry_run {
-        let report = jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
-        return write_stdout(report.to_jsonl()).map_err(fail);
+        let mut report =
+            jubarte::edit::preview_plan_with(source, plan, &options).map_err(refuse)?;
+        report.notes.splice(0..0, plan_notes.iter().cloned());
+        write_stdout(report.to_jsonl()).map_err(fail)?;
+        // A clean dry run says how to apply it: the same command, with the
+        // --force an output already there needs. An output --force cannot
+        // replace gets no command, only what to do.
+        if report.ok && !job.quiet {
+            match taken_edit_output(job) {
+                Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                Some(Taken::Replaceable(taken)) if !job.force => {
+                    edit_status(format_args!(
+                        "note: {} exists; the next command replaces it (--force)",
+                        slash_path(&taken)
+                    ));
+                    edit_status(format_args!("next: {}", next_command(true)));
+                }
+                _ => edit_status(format_args!("next: {}", next_command(false))),
+            }
+        }
+        return Ok(0);
     }
     // The plan first: a refused plan prints its whole report, whatever the
     // outputs (D15).
-    let result = jubarte::edit::prepare(source, plan, &options)
-        .map_err(refuse)?
-        .result;
+    let prepared = jubarte::edit::prepare(source, plan, &options).map_err(refuse)?;
+    let skipped = prepared.skipped.len();
+    publish_edit(job, plan, source, notes, plan_notes, prepared).map(|()| skipped)
+}
+
+/// Write what `prepared` holds where `job` says, with its status lines.
+fn publish_edit(
+    job: &EditJob<'_>,
+    plan: &jubarte::edit::EditPlan,
+    source: &[u8],
+    notes: &[String],
+    plan_notes: &[String],
+    prepared: jubarte::edit::PreparedEdit,
+) -> Result<(), (u8, String)> {
+    let fail = |m: String| (1u8, m);
+    let mut result = prepared.result;
+    result.report.notes.splice(0..0, plan_notes.iter().cloned());
+    let primary = match job.mode {
+        Mode::Suggesting => &result.redline,
+        Mode::Editing => &result.clean,
+    };
+    let digest = jubarte::inspect::source_sha256(primary);
+    result.report.output_sha256 = Some(digest.clone());
+    // The failed operations, as a plan bound to the document written:
+    // under suggesting mode that is a redline, whose tracked changes are
+    // the plan's own, so the plan keeps them.
+    let failed = job
+        .skip_failed
+        .as_ref()
+        .filter(|_| !prepared.skipped.is_empty())
+        .map(|path| {
+            let revisions = fixes_revisions(job, plan);
+            let json = jubarte::edit::failed_plan_json(
+                source,
+                plan,
+                &prepared.skipped,
+                &result.report.date,
+                &digest,
+                revisions,
+                job.mode == Mode::Suggesting,
+            );
+            // What the fixes cannot do on the output, on the skip line.
+            let mut notes = Vec::new();
+            if plan.update_fields && revisions == jubarte::edit::ExistingRevisions::Keep {
+                notes.push(
+                    "update_fields left out: it cannot go with existing_revisions keep".to_string(),
+                );
+            }
+            notes.extend(jubarte::edit::keep_notes(&prepared.skipped, revisions));
+            FailedPlan {
+                path: path.clone(),
+                json: json.into_bytes(),
+                notes,
+            }
+        });
+    let result = result;
     let dir = match job.target {
-        EditTarget::Single(path) => return write_edited(job, path, &result, notes, source),
+        EditTarget::Single(path) => {
+            return write_edited(job, path, &result, failed.as_ref(), notes, source);
+        }
         EditTarget::Bundle(dir) => dir,
     };
     let input_dir = job
@@ -1464,6 +1515,15 @@ fn run_edit(
         ],
         Mode::Editing => vec![("clean.docx".into(), result.clean.clone())],
     };
+    // The failed plan goes with the document it binds to.
+    let failed = failed.map(|failed| {
+        let name = failed.path.file_name().map_or_else(
+            || "plan.failed.json".into(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        outputs.push((name.clone(), failed.json));
+        (out_dir.join(name), failed.notes)
+    });
     for (name, rendered) in renders {
         if let Some(pdf) = rendered.pdf {
             outputs.push((format!("{name}.pdf"), pdf));
@@ -1528,7 +1588,11 @@ fn run_edit(
             outputs.len()
         ))
     };
+    let failed = failed
+        .as_ref()
+        .map(|(path, notes)| (path.as_path(), notes.as_slice()));
     if job.quiet {
+        skipped_status(&result, failed);
         return Ok(());
     }
     // Preserve the existing summary contract for ordinary edits.
@@ -1547,7 +1611,8 @@ fn run_edit(
         Mode::Suggesting => &result.redline,
         Mode::Editing => &result.clean,
     };
-    for note in edit_notes(notes, &result, primary) {
+    written_status(&result, failed);
+    for note in edit_notes(notes, &result, primary, source) {
         edit_status(format_args!("{note}"));
     }
     for (name, bytes) in &outputs {
@@ -1831,8 +1896,33 @@ fn publish_files(
 /// in it (a user's file, an input under a subdirectory) would be deleted by
 /// the replacement, so the publication refuses before staging.
 fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let foreign = foreign_bundle_entries(dir);
+    if foreign.is_empty() {
         return Ok(());
+    }
+    Err((
+        EXIT_USAGE,
+        format!(
+            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+            dir.display(),
+            foreign.join(", ")
+        ),
+    ))
+}
+
+/// What to do about a bundle directory --force will not replace.
+const FORCE_BUNDLE_ONLY: &str =
+    "--force replaces only a jubarte bundle, so move those files or name another --out-dir";
+
+/// The entries of `dir` no earlier bundle's `report.jsonl` names, sorted,
+/// a directory with a trailing `/`; none when `dir` does not exist. A
+/// directory that cannot be read is no bundle `--force` may replace: it
+/// reads as one foreign `(unreadable: …)` entry (#1431 review).
+fn foreign_bundle_entries(dir: &Path) -> Vec<String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => return vec![format!("(unreadable: {e})")],
     };
     let mut ours: std::collections::BTreeSet<String> = ["report.jsonl".to_string()].into();
     if let Ok(report) = std::fs::read_to_string(dir.join("report.jsonl")) {
@@ -1857,18 +1947,8 @@ fn refuse_foreign_bundle_contents(dir: &Path) -> Result<(), (u8, String)> {
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .map(|e| format!("{}/", e.file_name().to_string_lossy())),
     );
-    if foreign.is_empty() {
-        return Ok(());
-    }
     foreign.sort();
-    Err((
-        EXIT_USAGE,
-        format!(
-            "OUTPUT_DIR_NOT_EMPTY: '{}' holds what no earlier bundle wrote ({}); --force replaces only a jubarte bundle, so move those files or name another --out-dir",
-            dir.display(),
-            foreign.join(", ")
-        ),
-    ))
+    foreign
 }
 
 /// The sibling temp directory a bundle is staged in (V2-05). Its parent
@@ -2016,10 +2096,13 @@ fn publish_dir(
 }
 
 /// One receipt line per thread, shared by legacy and typed edit publication.
+/// `source_for_paragraph` carries the original doc's comments: paragraph
+/// lookups read source ids when settlement renumbered the kept threads.
 fn settlement_notes(
     removed: &[jubarte::edit::RemovedComment],
     kept: &[jubarte::edit::KeptComment],
     document: &[u8],
+    source_for_paragraph: &[u8],
     decision: &str,
 ) -> Vec<String> {
     let reply_text = |replies: &[String]| match replies {
@@ -2029,27 +2112,45 @@ fn settlement_notes(
     };
     let mut lines = Vec::new();
     for c in removed {
-        let decision = c.decision.as_deref().unwrap_or(decision);
+        // A receipt read from an older report has no `why`.
+        let why = if c.why.is_empty() {
+            let decision = c.decision.as_deref().unwrap_or(decision);
+            format!("their anchor was text the {decision} removed")
+        } else {
+            c.why.clone()
+        };
         lines.push(format!(
-            "removed {} ({}){}: their anchor was text the {decision} removed",
+            "removed {} ({}){}: {why}",
             c.id,
             c.author,
             reply_text(&c.replies)
         ));
     }
-    let comments = if kept.is_empty() {
-        Vec::new()
-    } else {
-        jubarte::comments::list_comments(document).unwrap_or_default()
-    };
+    let source_comments =
+        jubarte::comments::list_comments(source_for_paragraph).unwrap_or_default();
+    let document_comments = jubarte::comments::list_comments(document).unwrap_or_default();
     for c in kept {
-        let paragraph = comments
-            .iter()
-            .find(|r| {
-                c.written_id
-                    .map_or_else(|| format!("c{}", r.id) == c.id, |id| r.id == id)
+        let source_int = c.id.strip_prefix('c').and_then(|s| s.parse::<u32>().ok());
+        // Prefer the published doc: an edit plan can move the kept anchor
+        // to a different paragraph (a deleted container, a plan delete),
+        // and `list_comments` on the published bytes tracks that. CLI
+        // `--keep-nested-comment` resolves through a path that renumbers
+        // the doc, so the published lookup misses; the source has the
+        // anchor's original paragraph.
+        let paragraph = source_int
+            .and_then(|id| {
+                document_comments
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.paragraph.as_deref())
             })
-            .and_then(|r| r.paragraph.as_deref())
+            .or_else(|| {
+                let id = source_int?;
+                source_comments
+                    .iter()
+                    .find(|r| r.id == id)
+                    .and_then(|r| r.paragraph.as_deref())
+            })
             .unwrap_or("the document");
         lines.push(format!(
             "kept {}{} on an empty anchor in {paragraph}",
@@ -2060,15 +2161,21 @@ fn settlement_notes(
     lines
 }
 
-/// The `note:` lines of an applied edit: the flags' notes, then each
-/// anchor that matched as the paragraph reads rather than as typed. A kept
-/// comment names its paragraph in `published`, the copy the mode writes.
+/// The `note:` lines of an applied edit: the flags' notes, the plan's (a
+/// field read as another), then each anchor that matched as the paragraph
+/// reads rather than as typed. A kept comment names its paragraph in
+/// `published`, the copy the mode writes.
 fn edit_notes(
     notes: &[String],
     result: &jubarte::edit::EditResult,
     published: &[u8],
+    source: &[u8],
 ) -> Vec<String> {
-    let mut lines: Vec<String> = notes.iter().map(|note| format!("note: {note}")).collect();
+    let mut lines: Vec<String> = notes
+        .iter()
+        .chain(&result.report.notes)
+        .map(|note| format!("note: {note}"))
+        .collect();
     let decision = if result.report.resolved_revisions.rejected.is_empty() {
         "acceptance"
     } else {
@@ -2078,6 +2185,7 @@ fn edit_notes(
         &result.report.removed_comments,
         &result.report.kept_comments,
         published,
+        source,
         decision,
     ));
     for outcome in &result.report.operations {
@@ -2108,6 +2216,7 @@ fn write_edited(
     job: &EditJob<'_>,
     path: &Path,
     result: &jubarte::edit::EditResult,
+    failed: Option<&FailedPlan>,
     notes: &[String],
     source: &[u8],
 ) -> Result<(), (u8, String)> {
@@ -2117,6 +2226,11 @@ fn write_edited(
         Mode::Editing => &result.clean,
     };
     let mut outputs: Vec<(PathBuf, &[u8])> = vec![(path.to_path_buf(), document)];
+    // `--skip-failed`: the plan of what was left out, published with the
+    // document it binds to.
+    if let Some(failed) = failed {
+        outputs.push((failed.path.clone(), &failed.json));
+    }
     // Render before writing, so a failed render writes nothing.
     let rendered = if job.pdf || job.png {
         let options = jubarte::convert::PdfOptions {
@@ -2184,7 +2298,9 @@ fn write_edited(
             source: &|| recheck_edit_source(job.file, source),
         },
     )?;
+    let failed = failed.map(|f| (f.path.as_path(), f.notes.as_slice()));
     if job.quiet {
+        skipped_status(result, failed);
         return Ok(());
     }
     edit_status(format_args!(
@@ -2209,7 +2325,8 @@ fn write_edited(
             wrote_png_line(&pattern, png_count, job.dpi)
         ));
     }
-    for note in edit_notes(notes, result, document) {
+    written_status(result, failed);
+    for note in edit_notes(notes, result, document, source) {
         edit_status(format_args!("{note}"));
     }
     print_edit_success(
@@ -2231,6 +2348,140 @@ fn write_edited(
     })
 }
 
+/// The plan of what `--skip-failed` left out: where it goes, its JSON,
+/// and what it cannot do on the document written (the skip line's notes).
+struct FailedPlan {
+    path: PathBuf,
+    json: Vec<u8>,
+    notes: Vec<String>,
+}
+
+/// The status lines after a write: the written document's SHA-256, then
+/// what `--skip-failed` left out and where its plan went.
+fn written_status(result: &jubarte::edit::EditResult, failed: Option<(&Path, &[String])>) {
+    if let Some(digest) = &result.report.output_sha256 {
+        edit_status(format_args!("sha256: {digest}"));
+    }
+    skipped_status(result, failed);
+}
+
+/// The skip line of `--skip-failed`, a warning even under `-q`: operations
+/// asked for are not in the document. Its notes say what the plan of the
+/// fixes, which keeps the output's revisions, cannot do.
+fn skipped_status(result: &jubarte::edit::EditResult, failed: Option<(&Path, &[String])>) {
+    if let Some((path, notes)) = failed {
+        let notes = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join("; "))
+        };
+        edit_status(format_args!(
+            "skipped {} of {} operations; the fixes are in {}{notes}",
+            result.report.skipped,
+            result.report.operations.len(),
+            slash_path(path),
+        ));
+    }
+}
+
+/// The `existing_revisions` of the fixes plan: under suggesting mode the
+/// document written is a redline, whose tracked changes are the plan's
+/// own, so the fixes keep them.
+fn fixes_revisions(
+    job: &EditJob<'_>,
+    plan: &jubarte::edit::EditPlan,
+) -> jubarte::edit::ExistingRevisions {
+    match job.mode {
+        Mode::Suggesting => jubarte::edit::ExistingRevisions::Keep,
+        Mode::Editing => plan.existing_revisions,
+    }
+}
+
+/// An output of `edit` already on disk.
+enum Taken {
+    /// One --force replaces.
+    Replaceable(PathBuf),
+    /// One --force is refused over too: why, and what to do instead.
+    Blocked(String),
+}
+
+/// The output of `job` already on disk, if any: the document or its PDF,
+/// or the bundle directory, empty or not (an existing --out-dir is refused
+/// without --force). A directory where the document goes, a file where the
+/// bundle goes, or a bundle directory holding what no bundle wrote is
+/// refused under --force as well. The PNG names are known only once
+/// rendered, so a dry run does not look for them.
+fn taken_edit_output(job: &EditJob<'_>) -> Option<Taken> {
+    match job.target {
+        EditTarget::Single(path) => {
+            let taken: Vec<PathBuf> = [
+                Some(path.clone()),
+                job.pdf.then(|| path.with_extension("pdf")),
+            ]
+            .into_iter()
+            .flatten()
+            .filter(|p| p.symlink_metadata().is_ok())
+            .collect();
+            match taken
+                .iter()
+                .find(|p| p.symlink_metadata().is_ok_and(|m| m.is_dir()))
+            {
+                Some(dir) => Some(Taken::Blocked(format!(
+                    "{} is a directory; name another output",
+                    slash_path(dir)
+                ))),
+                None => taken.into_iter().next().map(Taken::Replaceable),
+            }
+        }
+        EditTarget::Bundle(dir) => {
+            dir.symlink_metadata().ok()?;
+            let foreign = foreign_bundle_entries(dir);
+            Some(if !dir.is_dir() {
+                Taken::Blocked(format!(
+                    "{} is an existing file, not a directory; name another --out-dir",
+                    slash_path(dir)
+                ))
+            } else if foreign.is_empty() {
+                Taken::Replaceable(dir.clone())
+            } else {
+                Taken::Blocked(format!(
+                    "{} holds what no earlier bundle wrote ({}); {FORCE_BUNDLE_ONLY}",
+                    slash_path(dir),
+                    foreign.join(", ")
+                ))
+            })
+        }
+    }
+}
+
+/// Where `--skip-failed` writes the failed operations: beside the plan as
+/// `PLAN.failed.json`, or beside FILE as `FILE_plan.failed.json` (the name
+/// `--plan` records under, D16) when operation flags made the plan.
+fn failed_plan_path(plan: Option<&Path>, file: &Path) -> PathBuf {
+    let stem = |path: &Path| {
+        path.file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    };
+    match plan {
+        Some(plan) => plan.with_file_name(format!("{}.failed.json", stem(plan))),
+        None => file.with_file_name(format!("{}_plan.failed.json", stem(file))),
+    }
+}
+
+/// This invocation without its `--dry-run` flag (`--force` added when
+/// `force`), quoted for a POSIX shell: what a clean dry run prints as its
+/// `next:` command.
+fn next_command(force: bool) -> String {
+    let mut args = std::env::args_os().map(|arg| arg.to_string_lossy().into_owned());
+    let program = args.next().unwrap_or_default();
+    let rest: Vec<String> = args.collect();
+    std::iter::once(program)
+        .chain(jubarte::cli::next_command(&rest, force))
+        .map(|arg| jubarte::cli::shell_word(&arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// One `edit` or `add` invocation, parsed.
 struct EditFlags<'a> {
     verb: jubarte::edit::flags::Verb,
@@ -2242,12 +2493,16 @@ struct EditFlags<'a> {
     operations: &'a [FlagOp],
     options: &'a EditOptions,
     dry_run: bool,
+    /// `--skip-failed` (`edit` only; `add` passes false).
+    skip_failed: bool,
     /// `--require-change` (`edit` only; `add` passes false).
     require_change: bool,
     pdf: bool,
     png: bool,
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
+    /// `--rewrite-others-comments` (`edit` only; `add` passes false).
+    rewrite_others_comments: bool,
     /// The global `-q`.
     quiet: bool,
 }
@@ -2263,6 +2518,12 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
     if let Some(path) = flags.plan
         && !flags.operations.is_empty()
     {
+        if flags.skip_failed {
+            return Err((
+                EXIT_USAGE,
+                "--skip-failed applies a plan, and with --plan the operation flags record into it: drop --plan to apply them with --skip-failed, or drop --skip-failed to record".into(),
+            ));
+        }
         return record_plan(flags, path, &source);
     }
     // What --consume deletes once the edit is written: the plan file as it
@@ -2284,17 +2545,22 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         }
         None => None,
     };
-    let (plan, notes) = edit_plan(
+    let PlanInput {
+        mut plan,
+        notes,
+        plan_notes,
+    } = edit_plan(
         flags.verb,
         flags.plan,
         flags.operations,
         flags.options,
         &source,
     )?;
+    plan.rewrite_others_comments |= flags.rewrite_others_comments;
     if flags.options.editing_mode
         && let Some(message) = jubarte::edit::flags::editing_mode_conflict(&plan, &source)
     {
-        return Err((EXIT_USAGE, message.to_string()));
+        return Err((EXIT_USAGE, message));
     }
     let target = flags.options.target(flags.file);
     let job = EditJob {
@@ -2308,6 +2574,9 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
             Mode::Suggesting
         },
         dry_run: flags.dry_run,
+        skip_failed: flags
+            .skip_failed
+            .then(|| failed_plan_path(flags.plan, flags.file)),
         require_change: flags.require_change,
         force: flags.options.force,
         pdf: flags.pdf,
@@ -2316,7 +2585,17 @@ fn run_flags(flags: &EditFlags<'_>) -> Result<(), (u8, String)> {
         revisions: flags.revisions,
         quiet: flags.quiet,
     };
-    run_edit(&job, &plan, &source, &notes)?;
+    let skipped = run_edit(&job, &plan, &source, &notes, &plan_notes)?;
+    if let Some((path, _)) = consumed.as_ref().filter(|_| skipped > 0) {
+        // Even under -q: the caller asked for the plan gone. The skip line
+        // can send them back to it.
+        edit_status(format_args!(
+            "note: --consume kept {}: {skipped} of its {} operations did not land",
+            slash_path(path),
+            plan.operations.len()
+        ));
+        return Ok(());
+    }
     if let Some((path, held)) = consumed {
         let kept = |why: String| {
             (
@@ -2350,7 +2629,7 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err((1, format!("reading {}: {e}", path.display()))),
     };
-    let recorded = record(
+    let mut recorded = record(
         flags.verb,
         flags.operations,
         &options.author,
@@ -2363,13 +2642,15 @@ fn record_plan(flags: &EditFlags<'_>, path: &Path, source: &[u8]) -> Result<(), 
         RecordError::Usage(m) => (EXIT_USAGE, m),
         RecordError::Plan(m) => (EXIT_PLAN_REFUSED, format!("{}: {m}", path.display())),
     })?;
-    jubarte::edit::check_plan(source, &recorded.plan).map_err(|e| {
-        refused(
-            &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
-            flags.file,
-            source,
-        )
-    })?;
+    recorded.plan.rewrite_others_comments |= flags.rewrite_others_comments;
+    jubarte::edit::check_plan_quoting(source, &recorded.plan, jubarte::edit::PlanSyntax::Flags)
+        .map_err(|e| {
+            refused(
+                &e.with_revision_syntax(jubarte::edit::refusal::RevisionSyntax::LegacyFlags),
+                flags.file,
+                source,
+            )
+        })?;
     if !flags.quiet {
         for note in &recorded.notes {
             outln!("note: {note}");
@@ -2522,7 +2803,7 @@ fn resolve_compare(compare: CompareArgs, quiet: bool) -> Job {
         reference: compare.reference_doc,
         critic: compare.critic,
         resource_path: compare.resource_path,
-        // A change is made now, by Redline unless a flag names someone:
+        // A change is made now, by Jubarte unless a flag names someone:
         // never the files' own metadata (Arthur, 2026-10-14).
         author: compare.author,
         date: compare
@@ -2696,10 +2977,26 @@ fn exit_code(r: Result<(), String>) -> ExitCode {
     match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            say_error(&e, 1);
             ExitCode::FAILURE
         }
     }
+}
+
+/// Set when the command line asks for JSON (`--json` before any `--`): an
+/// error then prints on stdout too, as one
+/// [`jubarte::cli::json_error`] line, for a reader that pipes stdout to a
+/// JSON parser (#1158).
+static JSON_ERRORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says `message` as the error a run ends with `exit` for: `error: …` on
+/// stderr, and under `--json` its JSON object on stdout too.
+fn say_error(message: &str, exit: u8) {
+    if JSON_ERRORS.load(std::sync::atomic::Ordering::Relaxed) {
+        // stdout may be closed already; stderr still says it.
+        let _ = write_stdout(jubarte::cli::runtime_json_error(message, exit));
+    }
+    eprintln!("error: {message}");
 }
 
 /// A document read for comparison: Word bytes or Markdown text.
@@ -2762,6 +3059,46 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = read_document(path)?;
     admit_word(path, &bytes)?;
     Ok(bytes)
+}
+
+/// [`read_word`] for a task that reads the document (`read`, `changes`,
+/// `comments`): unless `quiet`, one stderr line says how many validity
+/// findings the input has ([`jubarte::validate::input_notice`]), so they
+/// are not taken for the reader's own, and where `validate` lists them.
+fn read_input(path: &Path, quiet: bool) -> Result<Vec<u8>, String> {
+    let bytes = read_word(path)?;
+    if !quiet
+        && let Ok(findings) = jubarte::validate::validate(&bytes)
+        && let Some(line) = jubarte::validate::input_notice(&findings, &path.to_string_lossy())
+    {
+        eprintln!("{line}");
+    }
+    Ok(bytes)
+}
+
+/// `read --json`'s snapshot of `bytes`, one line, its `summary` carrying
+/// the input's `validity` (#1309).
+fn read_json(
+    bytes: &[u8],
+    args: &ReadArgs,
+    source: Option<String>,
+    validity: jubarte::validate::InputValidity,
+) -> Result<String, ConvertFailure> {
+    let mut snapshot = jubarte::markdown::read_snapshot(bytes, &snapshot_options(args, source)?)
+        .map_err(|e| e.to_string())?;
+    snapshot.summary.input_validity = Some(validity);
+    let json = serde_json::to_string(&snapshot).map_err(|e| e.to_string())?;
+    Ok(format!("{json}\n"))
+}
+
+/// [`read_word`] for a JSON read (`read --json`, `changes --json`,
+/// `comments --json`): no stderr line, which would break `--json 2>&1 |
+/// jq`; the input's findings come back for the output to carry (#1309),
+/// under `-q` too. A package that cannot be validated has none.
+fn read_input_json(path: &Path) -> Result<(Vec<u8>, jubarte::validate::InputValidity), String> {
+    let bytes = read_word(path)?;
+    let validity = jubarte::validate::input_validity_of(&bytes, &path.to_string_lossy());
+    Ok((bytes, validity))
 }
 
 /// `CODE: FILE is …` when `bytes`, read from `path`, are no Word package.
@@ -3177,6 +3514,37 @@ fn run_convert_any(
     if from == Format::Docx && to == Format::Md {
         warn_nested_text_boxes(&bytes);
     }
+
+    // Pre-settle the .docx when keep_nested_comment is on (a wholly removed
+    // thread becomes an empty anchor the convert pipeline then renders).
+    // The receipt is printed after a successful output publication; the
+    // helper only resolves. Every input that yields a writable docx goes
+    // through the keeper: the .doc and Markdown paths build one first.
+    let needs_keep = markdown.keep_nested_comment
+        && matches!(from, Format::Docx | Format::Md)
+        && matches!(
+            markdown.track_changes,
+            TrackChanges::Accept | TrackChanges::Reject
+        );
+    type KeepResolver = fn(&[u8]) -> Result<jubarte::changes::ResolvedChanges, String>;
+    let keep_resolver: Option<KeepResolver> = if needs_keep {
+        Some(match markdown.track_changes {
+            TrackChanges::Accept => |b: &[u8]| {
+                jubarte::document_comparer::accept_revisions_keeping_comments(b)
+                    .map_err(|e| format!("convert failed: {e}"))
+            },
+            TrackChanges::Reject => |b: &[u8]| {
+                jubarte::document_comparer::reject_revisions_keeping_comments(b)
+                    .map_err(|e| format!("convert failed: {e}"))
+            },
+            _ => unreachable!("needs_keep gates this"),
+        })
+    } else {
+        None
+    };
+    // Held across every match arm; printed only after a successful run.
+    let mut keep_receipts: Vec<String> = Vec::new();
+
     let render = RenderArgs::default();
     // Where a Word, Markdown or JSON output goes: -o, else FILE.<ext>.
     let output_at = |kind: Format| {
@@ -3198,43 +3566,85 @@ fn run_convert_any(
             ..*job
         })
     };
-    match (from, to) {
+    let result: Result<(), ConvertFailure> = match (from, to) {
         (Format::Docx, Format::Json) => {
             let path = output_at(Format::Json);
             at(Format::Json, &path, None)?;
-            let resolved = match markdown.track_changes {
-                TrackChanges::All => bytes,
-                TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
-                    .map_err(|e| {
-                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                    })?,
-                TrackChanges::Reject => jubarte::document_comparer::reject_revisions(&bytes)
-                    .map_err(|e| {
-                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                    })?,
+            let resolved = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::All => bytes,
+                    TrackChanges::Accept => jubarte::document_comparer::accept_revisions(&bytes)
+                        .map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?,
+                    TrackChanges::Reject => jubarte::document_comparer::reject_revisions(&bytes)
+                        .map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?,
+                }
             };
             at(Format::Json, &path, Some(Produced::Docx(&resolved)))
         }
-        (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
-            TrackChanges::All => pdf_job(converted, to),
-            // The pages of the document with every change accepted or rejected.
-            choice => {
-                let resolve = if choice == TrackChanges::Accept {
-                    jubarte::document_comparer::accept_revisions
-                } else {
-                    jubarte::document_comparer::reject_revisions
-                };
-                let resolved = resolve(&bytes).map_err(|e| {
-                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                })?;
-                pdf_job(Some(&resolved), to)
+        (Format::Docx, Format::Pdf | Format::Png) => {
+            if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                pdf_job(Some(&r.document), to)
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::All => pdf_job(converted, to),
+                    // The pages of the document with every change accepted or rejected.
+                    choice => {
+                        let resolve = if choice == TrackChanges::Accept {
+                            jubarte::document_comparer::accept_revisions
+                        } else {
+                            jubarte::document_comparer::reject_revisions
+                        };
+                        let resolved = resolve(&bytes).map_err(|e| {
+                            refusal("convert", &e)
+                                .unwrap_or_else(|| format!("convert failed: {e:?}"))
+                        })?;
+                        pdf_job(Some(&resolved), to)
+                    }
+                }
             }
-        },
+        }
         (Format::Docx, Format::Md) if !markdown.commonmark => {
+            let source = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                bytes
+            };
             // The agent view, as `jubarte read` prints it: the dialect that
             // comes back whole through `convert` to Word.
             let view = jubarte::markdown::read(
-                &bytes,
+                &source,
                 &jubarte::markdown::ReadOptions {
                     track_changes: markdown.track_changes.into(),
                     comments: true,
@@ -3259,8 +3669,21 @@ fn run_convert_any(
             }
         }
         (Format::Docx, Format::Md) => {
+            let source = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                bytes
+            };
             let read = jubarte::markdown::docx_to_markdown(
-                &bytes,
+                &source,
                 &jubarte::markdown::MarkdownOptions {
                     track_changes: markdown.track_changes.into(),
                     extract_media: None,
@@ -3272,7 +3695,7 @@ fn run_convert_any(
                 read.markdown
             } else {
                 paginated(
-                    &bytes,
+                    &source,
                     &read.markdown,
                     markdown.track_changes,
                     job.options.revisions,
@@ -3284,21 +3707,25 @@ fn run_convert_any(
             }
         }
         (Format::Docx, Format::Docx) => {
-            let resolve = match markdown.track_changes {
-                TrackChanges::Accept => {
-                    Some(jubarte::document_comparer::accept_revisions as Resolve)
-                }
-                TrackChanges::Reject => {
-                    Some(jubarte::document_comparer::reject_revisions as Resolve)
-                }
-                // The `.doc` read as it is, or the fields refreshed.
-                TrackChanges::All if legacy || update_fields => None,
-                TrackChanges::All => {
-                    return Err(format!(
-                        "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
-                        job.file.display()
-                    )
-                    .into());
+            let resolve: Option<Resolve> = if keep_resolver.is_some() {
+                None
+            } else {
+                match markdown.track_changes {
+                    TrackChanges::Accept => {
+                        Some(jubarte::document_comparer::accept_revisions as Resolve)
+                    }
+                    TrackChanges::Reject => {
+                        Some(jubarte::document_comparer::reject_revisions as Resolve)
+                    }
+                    // The `.doc` read as it is, or the fields refreshed.
+                    TrackChanges::All if legacy || update_fields => None,
+                    TrackChanges::All => {
+                        return Err(format!(
+                            "{} is already Word: give --track-changes accept or reject, --update-fields, or another --to",
+                            job.file.display()
+                        )
+                        .into());
+                    }
                 }
             };
             let path = match job.output {
@@ -3312,11 +3739,23 @@ fn run_convert_any(
             }
             ensure_writable(&path, job.force)?;
             let before = (!job.quiet).then(|| confirmation_view(job.file, &bytes));
-            let out = match resolve {
-                Some(resolve) => resolve(&bytes).map_err(|e| {
-                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
-                })?,
-                None => bytes,
+            let out = if let Some(resolve) = keep_resolver {
+                let r = resolve(&bytes)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &bytes,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                match resolve {
+                    Some(resolve) => resolve(&bytes).map_err(|e| {
+                        refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                    })?,
+                    None => bytes,
+                }
             };
             if update_fields {
                 let (updated, report_json) = refresh_fields(&out)?;
@@ -3346,11 +3785,12 @@ fn run_convert_any(
                 if let Some(before) = before {
                     print_success(job.file, before, &path, docx)?;
                 }
-                return Ok(());
+                Ok(())
+            } else {
+                at(Format::Docx, &path, Some(Produced::Docx(&out)))
             }
-            at(Format::Docx, &path, Some(Produced::Docx(&out)))
         }
-        (Format::Md, Format::Md) => {
+        (Format::Md, Format::Md) if keep_resolver.is_none() => {
             let text = markdown_text(job.file, bytes)?;
             let out = if markdown.no_critic {
                 text
@@ -3362,7 +3802,7 @@ fn run_convert_any(
                 None => write_stdout(&out).map_err(ConvertFailure::from),
             }
         }
-        (Format::Md, Format::Docx | Format::Pdf | Format::Png | Format::Json) => {
+        (Format::Md, _) => {
             let text = markdown_text(job.file, bytes)?;
             let reference = markdown
                 .reference_doc
@@ -3376,7 +3816,7 @@ fn run_convert_any(
             );
             // The changes and comments that name no author or date take
             // the flag's, else the front matter's, else the reference
-            // document's creator and creation time, else Redline and now.
+            // document's creator and creation time, else Jubarte and now.
             let (creator, created) = reference
                 .as_deref()
                 .map(jubarte::markdown::docx_stamp)
@@ -3384,12 +3824,20 @@ fn run_convert_any(
             let options = jubarte::markdown::DocxOptions {
                 reference: reference.as_deref(),
                 critic: !markdown.no_critic,
-                track_changes: markdown.track_changes.into(),
+                // --keep-nested-comment: write tracked changes first, then
+                // resolve through the keeper so the rescue sees the
+                // rejected ranges; without the flag, resolve at write
+                // time the way the markdown engine usually does.
+                track_changes: if keep_resolver.is_some() {
+                    jubarte::markdown::TrackChanges::All
+                } else {
+                    markdown.track_changes.into()
+                },
                 author: markdown
                     .author
                     .clone()
                     .or(creator)
-                    .unwrap_or_else(|| "Redline".to_string()),
+                    .unwrap_or_else(|| "Jubarte".to_string()),
                 date: markdown
                     .datetime
                     .clone()
@@ -3409,16 +3857,54 @@ fn run_convert_any(
             for warning in &written.warnings {
                 eprintln!("warning: {}", image_warning_reason(warning, &refusals));
             }
-            if matches!(to, Format::Pdf | Format::Png) {
-                return pdf_job(Some(&written.docx), to);
+            // --keep-nested-comment: resolve the freshly built DOCX
+            // through the keeper; rerender to text only when the output is
+            // .md (a path), so the .md file does not contain DOCX bytes.
+            let docx = if let Some(resolve) = keep_resolver {
+                let r = resolve(&written.docx)?;
+                keep_receipts.extend(settlement_notes(
+                    &[],
+                    &r.kept_comments,
+                    &r.document,
+                    &written.docx,
+                    "settlement",
+                ));
+                r.document
+            } else {
+                written.docx
+            };
+            // --keep-nested-comment on Markdown output: the .md file holds
+            // the agent view of the settled document, not the DOCX package.
+            if to == Format::Md {
+                let view = jubarte::markdown::read(
+                    &docx,
+                    &jubarte::markdown::ReadOptions {
+                        page_markers: !markdown.no_page_markers,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| format!("convert failed: {e}"))?;
+                match job.output {
+                    Some(path) => at(Format::Md, path, Some(Produced::Text(&view.markdown))),
+                    None => write_stdout(&view.markdown).map_err(ConvertFailure::from),
+                }
+            } else if matches!(to, Format::Pdf | Format::Png) {
+                pdf_job(Some(&docx), to)
+            } else {
+                let path = output_at(to);
+                at(to, &path, Some(Produced::Docx(&docx)))
             }
-            let path = output_at(to);
-            at(to, &path, Some(Produced::Docx(&written.docx)))
         }
         (Format::Pdf | Format::Png | Format::Json, _) => {
             Err(format!("{}: PDF, PNG and JSON are not inputs", job.file.display()).into())
         }
+    };
+    if result.is_ok() {
+        for note in &keep_receipts {
+            eprintln!("note: {note}");
+        }
     }
+    result
 }
 
 /// `jubarte debug`'s report options: the checks asked for, else the
@@ -3457,6 +3943,8 @@ struct ValidateJob<'a> {
     rules: &'a [String],
     strict: bool,
     repair: Option<&'a Path>,
+    /// The document the edits started from (`--baseline`).
+    baseline: Option<&'a Path>,
     original: Option<&'a Path>,
     author: Option<&'a str>,
     force: bool,
@@ -3466,9 +3954,14 @@ struct ValidateJob<'a> {
 /// `jubarte validate`: `Ok(true)` when the findings fail the run
 /// ([`jubarte::validate::fails`]), `Err` when a file could not be read or
 /// written or the rules cannot run. With `--repair` the findings are the
-/// repaired package's.
+/// repaired package's; with `--baseline` only the findings the baseline
+/// lacks count ([`jubarte::validate::baseline`]), and the baseline is the
+/// edits rule's original when `--original` is not given.
 fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
-    use jubarte::validate::{fails, findings_text, repair, validate_with};
+    use jubarte::validate::{
+        baselined_json, baselined_text, fails, findings_text, repair, validate_baselined,
+        validate_with,
+    };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
     if let Some(out) = job.repair {
@@ -3484,12 +3977,30 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         docx = fixed.docx;
     }
     let before = job.original.map(read).transpose()?;
-    let original = before.as_deref().zip(job.author);
     let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
+    if let Some(path) = job.baseline {
+        // A baseline that is no Word package is refused by its name.
+        let base = read_word(path)?;
+        let split = validate_baselined(
+            &docx,
+            &base,
+            &rules,
+            before.as_deref(),
+            job.author,
+            Some(&mut jubarte::audit::word_layout),
+        )
+        .map_err(|e| e.to_string())?;
+        if job.json {
+            write_stdout(baselined_json(&split).map_err(|e| e.to_string())?)?;
+        } else {
+            write_stdout(baselined_text(&split))?;
+        }
+        return Ok(fails(&split.new, job.strict));
+    }
     let findings = validate_with(
         &docx,
         &rules,
-        original,
+        before.as_deref().zip(job.author),
         Some(&mut jubarte::audit::word_layout),
     )
     .map_err(|e| e.to_string())?;
@@ -3603,7 +4114,14 @@ fn cli_main() -> ExitCode {
         if let Some((old, now)) =
             jubarte::cli::removed_spellings(argv.iter().map(String::as_str)).first()
         {
-            eprintln!("{}", jubarte::cli::removed_error(old, now));
+            let removed = jubarte::cli::removed_error(old, now);
+            if jubarte::cli::wants_json(&argv) {
+                let message = removed.strip_prefix("error: ").unwrap_or(&removed);
+                let _ = write_stdout(jubarte::cli::removed_json_error(
+                    &error, &argv, "jubarte", message,
+                ));
+            }
+            eprintln!("{removed}");
             std::process::exit(2);
         }
         // Help, version and usage errors say a name is retired too: the run
@@ -3611,11 +4129,20 @@ fn cli_main() -> ExitCode {
         for note in jubarte::cli::notes(&argv) {
             eprintln!("{note}");
         }
+        if jubarte::cli::wants_json(&argv)
+            && let Some(line) = jubarte::cli::usage_json_error(&error, &argv, "jubarte")
+        {
+            let _ = write_stdout(line);
+        }
         error.exit()
     });
     for note in jubarte::cli::notes(&argv) {
         eprintln!("{note}");
     }
+    JSON_ERRORS.store(
+        jubarte::cli::wants_json(&argv),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let quiet = cli.quiet;
     match cli.command {
         Some(Command::EditTemplate(jubarte::cli::edit_template::TemplateDispatch {
@@ -3629,7 +4156,7 @@ fn cli_main() -> ExitCode {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }
         Some(Command::Changes { file, json }) => {
-            return exit_code(run_changes(&file, json));
+            return exit_code(run_changes(&file, json, quiet));
         }
         Some(Command::Comments {
             file,
@@ -3637,12 +4164,13 @@ fn cli_main() -> ExitCode {
             author,
             latest,
         }) => {
-            return exit_code(run_comments(&file, json, author.as_deref(), latest));
+            return exit_code(run_comments(&file, json, author.as_deref(), latest, quiet));
         }
         Some(Command::Accept {
             file,
             output,
             force,
+            keep_nested_comment,
             selection,
             render,
         }) => {
@@ -3650,18 +4178,18 @@ fn cli_main() -> ExitCode {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
-            return run_resolution(
-                &file,
-                &out,
-                &selection.filter(),
-                jubarte::changes::accept_changes_with_report,
-                "accept",
-            );
+            let apply = if keep_nested_comment {
+                jubarte::changes::accept_changes_keeping_comments
+            } else {
+                jubarte::changes::accept_changes_with_report
+            };
+            return run_resolution(&file, &out, &selection.filter(), apply, "accept");
         }
         Some(Command::Reject {
             file,
             output,
             force,
+            keep_nested_comment,
             selection,
             render,
         }) => {
@@ -3669,13 +4197,12 @@ fn cli_main() -> ExitCode {
                 Ok(out) => out,
                 Err(e) => return exit_code(Err(e)),
             };
-            return run_resolution(
-                &file,
-                &out,
-                &selection.filter(),
-                jubarte::changes::reject_changes_with_report,
-                "reject",
-            );
+            let apply = if keep_nested_comment {
+                jubarte::changes::reject_changes_keeping_comments
+            } else {
+                jubarte::changes::reject_changes_with_report
+            };
+            return run_resolution(&file, &out, &selection.filter(), apply, "reject");
         }
         Some(Command::Convert {
             file,
@@ -3784,11 +4311,6 @@ fn cli_main() -> ExitCode {
             output,
             force,
         }) => {
-            // A selection that does not parse is a usage error, before I/O.
-            if let Err(e) = selection(&args) {
-                eprintln!("error: {e}");
-                return ExitCode::from(2);
-            }
             return convert_exit_code(run_text(&file, &args, output.as_deref(), force, quiet));
         }
         Some(Command::Edit {
@@ -3798,12 +4320,14 @@ fn cli_main() -> ExitCode {
             consume,
             options,
             dry_run,
+            skip_failed,
             require_change,
             pdf,
             png,
             dpi,
             revisions,
             revision_palette,
+            rewrite_others_comments,
             operations,
             ..
         }) => {
@@ -3820,11 +4344,13 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run,
+                skip_failed,
                 require_change,
                 pdf,
                 png,
                 dpi,
                 revisions: style,
+                rewrite_others_comments,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -3847,11 +4373,13 @@ fn cli_main() -> ExitCode {
                 operations: &operations,
                 options: &options,
                 dry_run: false,
+                skip_failed: false,
                 require_change: false,
                 pdf: false,
                 png: false,
                 dpi: 96.0,
                 revisions: jubarte::convert::RevisionStyle::Conventional,
+                rewrite_others_comments: false,
                 quiet,
             };
             return edit_exit(run_flags(&flags));
@@ -3994,6 +4522,7 @@ fn cli_main() -> ExitCode {
             rules,
             strict,
             repair,
+            baseline,
             original,
             author,
             force,
@@ -4004,6 +4533,7 @@ fn cli_main() -> ExitCode {
                 rules: &rules,
                 strict,
                 repair: repair.as_deref(),
+                baseline: baseline.as_deref(),
                 original: original.as_deref(),
                 author: author.as_deref(),
                 force,
@@ -4103,6 +4633,29 @@ fn refresh_fields(bytes: &[u8]) -> Result<(jubarte::fields::Updated, String), St
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    /// A bundle directory `--force` cannot read is no earlier bundle it may
+    /// replace: an unreadable one blocks (#1431 review), a missing one is
+    /// nothing to replace.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_bundle_is_foreign() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("bundle");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), "mine").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = std::fs::read_dir(&dir).is_ok();
+        let foreign = foreign_bundle_entries(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if readable {
+            return; // root reads any directory
+        }
+        assert_eq!(foreign.len(), 1, "{foreign:?}");
+        assert!(foreign[0].starts_with("(unreadable: "), "{foreign:?}");
+        assert!(foreign_bundle_entries(&root.path().join("missing")).is_empty());
+    }
 
     #[test]
     fn publication_cleanup_warnings_reach_stderr_for_both_outcomes() {
@@ -4406,7 +4959,7 @@ mod tests {
         let j = job_of(&["jubarte", "compare", "a.docx", "b.docx"]);
         let after = jubarte::convert::utc_now_iso8601();
         assert_eq!(j.output, None, "so does compare");
-        assert_eq!(j.author, "Redline");
+        assert_eq!(j.author, "Jubarte");
         // Without -d the revisions are dated now (D17); the fixed-width
         // UTC form orders as text.
         assert!(
@@ -4580,6 +5133,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(
@@ -4643,6 +5197,7 @@ mod tests {
                 force,
                 selection,
                 render,
+                ..
             }) => {
                 assert!(render.pages.is_none() && !render.move_comments);
                 assert_eq!(

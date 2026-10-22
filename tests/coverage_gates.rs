@@ -38,6 +38,44 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The `.rs` files of the git checkout at `root` that git tracks or would
+/// add: an ignored folder never builds. `None` when `root` is no checkout
+/// (it has no `.git`); inside one, git must answer, so a failing git never
+/// falls back to the walk unseen.
+fn checkout_rust_files(root: &Path) -> Option<Vec<PathBuf>> {
+    if !root.join(".git").exists() {
+        return None;
+    }
+    // The repository's own ignore rules only: a user's global excludes
+    // file must not hide a file of the crate.
+    let listed = std::process::Command::new("git")
+        .args(["-c", "core.excludesFile=", "ls-files", "-z"])
+        .args(["--cached", "--others", "--exclude-standard", "--", "*.rs"])
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|e| panic!("git ls-files in {}: {e}", root.display()));
+    assert!(
+        listed.status.success(),
+        "git ls-files in {} failed: {}",
+        root.display(),
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let names = String::from_utf8(listed.stdout).expect("git lists UTF-8 paths");
+    let mut files = Vec::new();
+    for name in names.split('\0').filter(|name| !name.is_empty()) {
+        let path = root.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() => files.push(path),
+            // A link: the walk below skips links too.
+            Ok(_) => {}
+            // A tracked file deleted from the checkout.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("{}: {e}", path.display()),
+        }
+    }
+    Some(files)
+}
+
 /// Line number and predicate of each `cfg_attr(PREDICATE, ATTRIBUTE)` whose
 /// attribute is `attribute`, however rustfmt splits it over lines.
 fn predicates<'a>(text: &'a str, attribute: &str) -> Vec<(usize, &'a str)> {
@@ -131,8 +169,11 @@ fn audit(root: &Path) -> (String, usize, Vec<String>) {
         "the crate roots gate the feature alike: {gates:?}"
     );
     let gate = gates[0].clone();
-    let mut files = Vec::new();
-    rust_files(root, &mut files);
+    let mut files = checkout_rust_files(root).unwrap_or_else(|| {
+        let mut files = Vec::new();
+        rust_files(root, &mut files);
+        files
+    });
     files.sort();
     let mut sites = 0;
     let mut loose = Vec::new();
@@ -225,6 +266,34 @@ fn a_loose_gate_outside_src_is_reported() {
         "tests/t.rs",
         "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
     )]);
+    let (_, sites, loose) = audit(dir.path());
+    assert_eq!(sites, 1, "{loose:?}");
+    assert_eq!(loose.len(), 1, "{loose:?}");
+    assert!(loose[0].starts_with("tests/t.rs:1: "), "{loose:?}");
+}
+
+#[test]
+fn a_folder_git_ignores_is_not_scanned() {
+    // An ignored local folder (old evidence, a scratch copy of a crate)
+    // never builds, so a loose gate in it is no E0658. A file git would
+    // add is still scanned.
+    let dir = sample_crate(&[
+        (".gitignore", "/archive/\n"),
+        (
+            "archive/probe/src/lib.rs",
+            "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
+        ),
+        (
+            "tests/t.rs",
+            "#[cfg_attr(coverage_nightly, coverage(off))]\nfn helper() {}\n",
+        ),
+    ]);
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir.path())
+        .status()
+        .expect("git runs");
+    assert!(init.success());
     let (_, sites, loose) = audit(dir.path());
     assert_eq!(sites, 1, "{loose:?}");
     assert_eq!(loose.len(), 1, "{loose:?}");

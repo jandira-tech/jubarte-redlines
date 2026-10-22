@@ -10,8 +10,8 @@ mod common;
 use common::docx::{Part, docx, docx_with_sect, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::changes::{
-    Change, ChangeError, ChangeFilter, ChangeKind, MoveSide, accept_changes, list_changes,
-    reject_changes,
+    Change, ChangeError, ChangeFilter, ChangeKind, MoveSide, accept_changes, accept_elements,
+    list_changes, list_logical_changes, reject_changes, reject_elements,
 };
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use std::collections::HashSet;
@@ -164,9 +164,11 @@ fn a_move_resolves_both_sides() {
     assert_eq!(ids(&out), ["r14"]);
 }
 
-/// A paragraph mark's own insertion is a change of its own.
+/// A paragraph mark's own insertion is an element of its own, and one
+/// change with the paragraph's inserted text (plan 11): settling the text
+/// alone takes the element API.
 #[test]
-fn an_inserted_paragraph_mark_is_its_own_change() {
+fn an_inserted_paragraph_mark_is_its_own_element_of_its_paragraphs_change() {
     let pkg = docx(&format!(
         r#"<w:p><w:pPr><w:rPr><w:ins w:id="5" {A}/></w:rPr></w:pPr><w:ins w:id="6" {A}><w:r><w:t>First</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>Second</w:t></w:r></w:p>"#
     ));
@@ -174,9 +176,19 @@ fn an_inserted_paragraph_mark_is_its_own_change() {
     assert_eq!(listed.len(), 2);
     assert_eq!(listed[0].target, "paragraph_mark");
     assert_eq!(listed[1].target, "text");
-    let out = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
+    let logical = list_logical_changes(&pkg).unwrap();
+    assert_eq!(logical.len(), 1, "{logical:#?}");
+    assert_eq!(logical[0].id, "r6+5");
+    assert!(matches!(
+        reject_changes(&pkg, &filter_ids(&["r6"])),
+        Err(ChangeError::PartOfChange { ref whole, .. }) if whole == "r6+5"
+    ));
+    let out = reject_elements(&pkg, &filter_ids(&["r6"])).unwrap();
     assert_word_valid_package(&out);
     assert_eq!(ids(&out), ["r5"]);
+    let whole = reject_changes(&pkg, &filter_ids(&["r6+5"])).unwrap();
+    assert_word_valid_package(&whole);
+    assert!(ids(&whole).is_empty());
 }
 
 #[test]
@@ -329,7 +341,7 @@ fn rejecting_alternate_changes_allocates_fresh_style_history_ids() {
     assert_unique(&redline);
     let listed = list_changes(&redline).unwrap();
     let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
-    let partial = reject_changes(&redline, &half).unwrap();
+    let partial = reject_elements(&redline, &half).unwrap();
     assert_unique(&partial);
     let copies = fresh_style_copies(&redline, &partial, &half);
     assert_eq!(
@@ -389,7 +401,7 @@ fn half_way_style_reject_ignores_div_and_bookmark_ids() {
         .max()
         .unwrap();
     let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
-    let partial = reject_changes(&redline, &half).unwrap();
+    let partial = reject_elements(&redline, &half).unwrap();
     let old = style_histories(&redline);
     let after = style_histories(&partial);
     let copies: Vec<_> = after.iter().filter(|r| !old.contains(r)).collect();
@@ -522,10 +534,10 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
         for (name, one, all) in [
             (
                 "accept",
-                accept_changes as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+                accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
                 accept_revisions as fn(&[u8]) -> Result<Vec<u8>, _>,
             ),
-            ("reject", reject_changes, reject_revisions),
+            ("reject", reject_elements, reject_revisions),
         ] {
             pairs += 1;
             let partial = one(&redline, &first).unwrap();

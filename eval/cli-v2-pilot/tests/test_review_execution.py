@@ -418,7 +418,7 @@ def test_row21_failed_inspection_is_not_measured_zero(tmp_path, monkeypatch, err
 
     monkeypatch.setattr(grading, "read_snapshot", read)
     monkeypatch.setattr(
-        grading, "validate", lambda *a: (SimpleNamespace(return_code=0), [])
+        grading, "validate", lambda *a, **kw: (SimpleNamespace(return_code=0), [])
     )
     try:
         grade = grading.grade_one(run, _task(), binary, repo_root=tmp_path)
@@ -467,7 +467,9 @@ def observed_grade(tmp_path, monkeypatch, source, artifact, *, validation_rc=0):
     monkeypatch.setattr(grading, "read_snapshot", lambda *a: artifact)
     monkeypatch.setattr(grading, "_source_snapshot", lambda *a: source)
     monkeypatch.setattr(
-        grading, "validate", lambda *a: (SimpleNamespace(return_code=validation_rc), [])
+        grading,
+        "validate",
+        lambda *a, **kw: (SimpleNamespace(return_code=validation_rc), []),
     )
     return grading.grade_one(run, task, binary, repo_root=tmp_path)
 

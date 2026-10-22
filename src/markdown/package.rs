@@ -110,8 +110,12 @@ pub(super) fn assemble(
         Some(bytes) => bytes.to_vec(),
         None => default_template(options.page).map_err(err)?,
     };
-    let mut package = PartFs::open(&template)
-        .map_err(|e| MarkdownError::Reference(format!("not a readable .docx ({e})")))?;
+    let mut package = PartFs::open(&template).map_err(|e| {
+        MarkdownError::Reference(format!(
+            "not a readable .docx ({})",
+            crate::opc::refusal_message(&template, &e)
+        ))
+    })?;
     let main = package
         .main_document_part()
         .ok_or_else(|| MarkdownError::Reference("it has no main document part".into()))?;
@@ -227,6 +231,7 @@ pub(super) fn assemble(
         warnings,
         revision_prefix: "",
         pending_marks: Vec::new(),
+        run_sizes: Vec::new(),
         num_ids,
         label_nums,
         note_ids: Vec::new(),
@@ -562,17 +567,27 @@ fn final_section(source: &str) -> Option<String> {
 
 /// The page width less the side margins, in twentieths of a point.
 fn text_width(section: &str) -> u32 {
-    let attribute = |element: &str, name: &str| -> Option<u32> {
+    // Twips, or the universal measure (`2cm`) a Strict reference writes:
+    // the view reads both (`header::text_width`), and the two must agree
+    // on which grids are an even split (#1483 review).
+    let attribute = |element: &str, name: &str| -> Option<f64> {
         let at = section.find(&format!("<w:{element} "))?;
         let tag = &section[at..at + section[at..].find('>')?];
         let key = format!("w:{name}=\"");
         let value = &tag[tag.find(&key)? + key.len()..];
-        value[..value.find('"')?].parse().ok()
+        let value = &value[..value.find('"')?];
+        value
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(value))
+            .filter(|t| t.is_finite())
     };
-    let width = attribute("pgSz", "w").unwrap_or(12240);
-    let left = attribute("pgMar", "left").unwrap_or(1440);
-    let right = attribute("pgMar", "right").unwrap_or(1440);
-    width.saturating_sub(left + right).max(1440)
+    let width = attribute("pgSz", "w").unwrap_or(12240.0);
+    let left = attribute("pgMar", "left").unwrap_or(1440.0);
+    let right = attribute("pgMar", "right").unwrap_or(1440.0);
+    let text = (width - left - right).round().max(1440.0);
+    // `as` saturates: a width past u32 is no page Word writes.
+    text as u32
 }
 
 /// Drops the reference body's relationships (pictures, links, comments...)
@@ -1847,6 +1862,20 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_text_width_reads_universal_measures_as_the_view_does() {
+        // 2cm is 1133.86 twips: the view's text width of this section is
+        // 9972, and an even grid it prints nothing for must stay even
+        // (#1483 review). A plain twip count reads as before.
+        let section =
+            r#"<w:sectPr><w:pgSz w:w="12240"/><w:pgMar w:left="2cm" w:right="2cm"/></w:sectPr>"#;
+        assert_eq!(text_width(section), 9972);
+        let section =
+            r#"<w:sectPr><w:pgSz w:w="11906"/><w:pgMar w:left="1134" w:right="1134"/></w:sectPr>"#;
+        assert_eq!(text_width(section), 9638);
+        assert_eq!(text_width("<w:sectPr/>"), 9360);
+    }
 
     #[test]
     fn a_theme_colour_is_found_under_any_drawingml_prefix() {

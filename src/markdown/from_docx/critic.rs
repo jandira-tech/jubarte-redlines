@@ -20,8 +20,9 @@
 //!
 //! An insertion or deletion carries its attribution after the closer in
 //! braces: `{++new++}{r1 Alice (2026-09-29T14:05:00Z)}`. Distinct revision
-//! ids keep separate marks. Only a deletion then a live insertion by the
-//! same author becomes a substitution, with old ids before new ids.
+//! ids keep separate marks. Only a deletion then a live insertion of one
+//! change (as `jubarte changes` lists it) becomes a substitution, with old
+//! ids before new ids; two changes print apart (#1363).
 //!
 //! Document text that happens to contain a CriticMarkup delimiter is escaped
 //! with a Markdown backslash (`{\++`), which renders as the original characters
@@ -88,6 +89,20 @@ fn outer_of(by: Option<&str>) -> Option<&str> {
         .or_else(|| by.strip_prefix(PLAIN))?
         .split_once(ON)
         .map(|(_, outer)| outer)
+}
+
+/// Whether `new_by`'s change is the one `old_by`'s sits in: a deletion
+/// in one mark of an insertion never pairs with the insertion's next mark
+/// (`{--old--}{r5 @B re r3+4 @B}{++new++}{r3+4 @B}`), for the
+/// substitution's new side would be its own parent.
+fn holds(new_by: Option<&str>, old_by: Option<&str>) -> bool {
+    fn first(tagged: &str) -> &str {
+        tag_parts(tagged.split(ON).next().unwrap_or(tagged)).0
+    }
+    match (tag(new_by), outer_of(old_by)) {
+        (Some(own), Some(outer)) => super::agent::same_change(first(own), first(outer)),
+        _ => false,
+    }
 }
 
 /// The changes a note names sit behind this sentinel after the change's
@@ -208,6 +223,16 @@ fn pairable_attribution(a: Option<&str>, b: Option<&str>) -> bool {
             same && tag_parts(ta).1 == tag_parts(tb).1 && split_tag(own_a).0 == split_tag(own_b).0
         }
         _ => a == b,
+    }
+}
+
+/// Whether two sides' changes are one: a substitution prints one change,
+/// as `jubarte changes` lists it (#1363). A deletion and the insertion
+/// after it with content between them, printed or not, are two.
+fn one_change(old_by: Option<&str>, new_by: Option<&str>) -> bool {
+    match (tag(old_by), tag(new_by)) {
+        (Some(old), Some(new)) => super::agent::one_replacement(tag_parts(old).0, tag_parts(new).0),
+        _ => true,
     }
 }
 
@@ -904,7 +929,7 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mu
     let mut index = 0;
     while index < nodes.len() {
         match (&nodes[index], nodes.get(index + 1)) {
-            // Pair a deletion then a live insertion by the same author.
+            // Pair a deletion then a live insertion of one change.
             // The old side keeps its parent; a parent on the new side
             // prevents pairing. Insertion then deletion stays in order.
             // A rendered bookmark, comment range or field (w:fldChar)
@@ -914,6 +939,8 @@ fn render(nodes: &[Node], out: &mut Vec<Piece>, escaping: Escaping<'_>, ids: &mu
                 Node::Span(Mark::Deletion, old_by, old),
                 Some(Node::Span(Mark::Insertion, new_by, new)),
             ) if outer_of(new_by.as_deref()).is_none()
+                && !holds(new_by.as_deref(), old_by.as_deref())
+                && one_change(old_by.as_deref(), new_by.as_deref())
                 && escaping.pairable(old_by.as_deref(), new_by.as_deref())
                 && new.iter().any(Node::has_content) =>
             {
@@ -1273,7 +1300,7 @@ fn break_delimiters(text: &str, marks: &[(&str, &str)]) -> String {
 }
 
 /// An equation's changes (`$A={--π--}r^2$`), which the converter marks
-/// with [`math::INSERT_START`] and its kin so `defuse` leaves them whole.
+/// with [`crate::markdown::math::INSERT_START`] and its kin so `defuse` leaves them whole.
 fn math_changes(markdown: &str) -> String {
     use crate::markdown::math;
     if !markdown.contains([

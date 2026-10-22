@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 6                       # 3 in header1; 3 in footer1
+revisions: 6                       # 2 in header1 (3 marks); 3 in footer1
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml

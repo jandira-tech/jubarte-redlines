@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Backticks in single quotes are Markdown text, not command substitution.
+# shellcheck disable=SC2016
 # SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 #
 # SPDX-License-Identifier: AGPL-3.0-only

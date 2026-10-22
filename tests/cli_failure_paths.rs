@@ -6,7 +6,8 @@
 
 mod common;
 
-use common::docx::{docx, para, part_string};
+use common::docx::{Part, docx, docx_with, para, part_string};
+use std::io::Cursor;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -18,13 +19,13 @@ fn run(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn success(out: &Output) -> String {
+fn success(out: &Output) -> &str {
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8(out.stdout.clone()).unwrap()
+    std::str::from_utf8(&out.stdout).unwrap()
 }
 
 #[test]
@@ -523,16 +524,18 @@ fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
             ],
         ]
         .concat();
-        let text = success(&run(dir.path(), &args));
+        let out = run(dir.path(), &args);
+        let text = success(&out);
         assert!(
             text.contains("Original clause") && text.contains("Revised clause"),
             "{text}"
         );
     }
-    let equal = success(&run(
+    let out = run(
         dir.path(),
         &["debug", "old/same.docx", "old/same.docx", "--list"],
-    ));
+    );
+    let equal = success(&out);
     assert!(equal.contains("0 changed"), "{equal}");
 }
 
@@ -544,8 +547,9 @@ fn read_json_exposes_paragraph_flags_and_long_unicode_text() {
         r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:pageBreakBefore/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:br w:type="page"/><w:t>{long}</w:t></w:r></w:p>"#
     );
     std::fs::write(dir.path().join("input.docx"), docx(&body)).unwrap();
-    let json = success(&run(dir.path(), &["read", "input.docx", "--json"]));
-    let snapshot: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let out = run(dir.path(), &["read", "input.docx", "--json"]);
+    let json = success(&out);
+    let snapshot: serde_json::Value = serde_json::from_str(json).unwrap();
     let paragraph = &snapshot["paragraphs"][0];
     assert_eq!(paragraph["style"], "Heading1", "{paragraph}");
     assert_eq!(paragraph["numbered"], true, "{paragraph}");
@@ -654,11 +658,16 @@ fn changes_json_lines_preserve_each_owned_revision_without_a_text_summary() {
     std::fs::write(dir.path().join("revisions.docx"), &original).unwrap();
     let expected = jubarte::changes::list_changes(&original).unwrap();
     assert_eq!(expected.len(), 2);
-    let rows: Vec<serde_json::Value> =
+    let mut rows: Vec<serde_json::Value> =
         success(&run(dir.path(), &["changes", "revisions.docx", "--json"]))
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
+    // The last line is the input's validity, never a change (#1309).
+    assert_eq!(
+        rows.pop(),
+        Some(serde_json::json!({"input_validity": {"errors": 0, "warnings": 0}}))
+    );
     assert_eq!(rows[0]["author"], "Original owner");
     assert_eq!(rows[0]["text"], "original");
     assert_eq!(rows[1]["author"], "Revised owner");
@@ -670,7 +679,8 @@ fn changes_json_lines_preserve_each_owned_revision_without_a_text_summary() {
             .map(|change| serde_json::to_value(change).unwrap())
             .collect::<Vec<_>>()
     );
-    let text = success(&run(dir.path(), &["changes", "revisions.docx"]));
+    let out = run(dir.path(), &["changes", "revisions.docx"]);
+    let text = success(&out);
     assert!(text.ends_with("2 change(s)\n"));
     assert!(text.contains("Original owner") && text.contains("Revised owner"));
     assert_eq!(
@@ -901,8 +911,70 @@ fn a_word_input_that_is_not_a_zip_reads_the_same_on_every_task() {
         let out = run(dir.path(), args);
         assert_eq!(out.status.code(), Some(1), "{args:?}");
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected, "{args:?}");
-        assert!(out.stdout.is_empty(), "{args:?}");
+        if args.contains(&"--json") {
+            // With --json, stdout says it as JSON too (#1255).
+            let line: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(line["error"]["code"], "INVALID_PACKAGE", "{args:?}");
+            assert_eq!(
+                line["error"]["message"],
+                expected.trim_end().strip_prefix("error: ").unwrap(),
+                "{args:?}"
+            );
+        } else {
+            assert!(out.stdout.is_empty(), "{args:?}");
+        }
     }
+}
+
+/// A valid package carrying a second entry that names `alias` exactly or
+/// under ASCII case (#600). `stand_in` is the name the writer emitted (it
+/// must keep `alias`'s byte length); the local and central records of the
+/// extra part are renamed to `alias` so the two records agree.
+fn duplicate_part_docx(stand_in: &str, alias: &str) -> Vec<u8> {
+    assert_eq!(stand_in.len(), alias.len(), "names must keep the length");
+    let mut bytes = docx_with(
+        &para("first copy"),
+        &[Part {
+            name: stand_in,
+            content_type: "application/xml",
+            rel_type: "",
+            xml: "second copy",
+        }],
+    );
+    let (local, central) = {
+        let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let entry = archive.by_name(stand_in).unwrap();
+        (
+            usize::try_from(entry.header_start()).unwrap(),
+            usize::try_from(entry.central_header_start()).unwrap(),
+        )
+    };
+    bytes[local + 30..local + 30 + alias.len()].copy_from_slice(alias.as_bytes());
+    bytes[central + 46..central + 46 + alias.len()].copy_from_slice(alias.as_bytes());
+    bytes
+}
+
+/// Two entries naming one part — byte-equal (p1) or an ASCII-case alias
+/// (p2) — refuse with the stable `DUPLICATE_PART` code and both spellings
+/// on every CLI route the read takes (#600).
+#[test]
+fn read_and_convert_refuse_a_duplicate_part_with_both_spellings() {
+    let dir = tempfile::tempdir().unwrap();
+    let exact = duplicate_part_docx("word/document.xm0", "word/document.xml");
+    let cased = duplicate_part_docx("word/document.xm0", "word/Document.xml");
+    std::fs::write(dir.path().join("p1.docx"), &exact).unwrap();
+    std::fs::write(dir.path().join("p2.docx"), &cased).unwrap();
+    let read = run(dir.path(), &["read", "p1.docx"]);
+    assert_eq!(read.status.code(), Some(1), "{read:?}");
+    let stderr = String::from_utf8_lossy(&read.stderr);
+    assert!(stderr.contains("DUPLICATE_PART"), "{stderr}");
+    assert!(stderr.contains("word/document.xml"), "{stderr}");
+    let convert = run(dir.path(), &["convert", "p2.docx", "-t", "md"]);
+    assert_eq!(convert.status.code(), Some(1), "{convert:?}");
+    let stderr = String::from_utf8_lossy(&convert.stderr);
+    assert!(stderr.contains("DUPLICATE_PART"), "{stderr}");
+    assert!(stderr.contains("word/document.xml"), "{stderr}");
+    assert!(stderr.contains("word/Document.xml"), "{stderr}");
 }
 
 /// V2-05 (plan §5): a reporting failure after a successful commit says

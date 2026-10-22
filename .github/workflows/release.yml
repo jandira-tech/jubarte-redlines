@@ -88,7 +88,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # No build cache: a shipped binary is built from a clean state, so a
+      # poisoned cache entry cannot reach a release (zizmor cache-poisoning).
       - run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
 
       - name: Stage archive (unix)
@@ -204,7 +205,8 @@ jobs:
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --locked --out dist --compatibility pypi
           working-directory: jubarte-python
-          sccache: "true"
+          # No sccache, for the reason the binaries job has no rust-cache.
+          sccache: "false"
       # Install the wheel that was just built and run the engine once: the
       # artifact that ships is the one that imports, not a rebuilt one. The
       # glibc wheels are tried on the host; the musl wheels in Alpine.
@@ -461,10 +463,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The runner's system Python is 3.8 (see ci.yml's convert-sweep-unit).
+      # Python 3.12, the scripts' floor (see ci.yml's convert-sweep-unit).
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.14"
+          python-version: "3.12"
           activate-environment: true
           venv-path: ${{ runner.temp }}/publish-py
       # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN

@@ -330,9 +330,7 @@ def python_surface(root: Path = ROOT) -> list[str]:
     tree = ast.parse((pkg / "document.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "Document":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"):
-                    names.append(item.name)
+            names.extend(item.name for item in node.body if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"))
     init = ast.parse((pkg / "__init__.py").read_text(encoding="utf-8"))
     exported: list[str] = []
     for node in ast.walk(init):
@@ -344,7 +342,7 @@ def python_surface(root: Path = ROOT) -> list[str]:
         elif isinstance(node, ast.AugAssign) and getattr(node.target, "id", "") == "__all__":
             target = node.value
         if isinstance(target, (ast.List, ast.Tuple)):
-            exported += [e.value for e in target.elts if isinstance(e, ast.Constant)]
+            exported += [e.value for e in target.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
     # Functions only (lower case); classes are documented through their use.
     names += [n for n in exported if n[:1].islower() and not n.startswith("_")]
     return sorted(set(names))

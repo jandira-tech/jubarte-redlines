@@ -46,7 +46,7 @@ import subprocess
 from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from harness.models import (
     CheckResult,
@@ -145,6 +145,7 @@ def compute_unintended_edits(
                 if (
                     old is not None
                     and new is not None
+                    and key is not None
                     and authorized.get(key) == new_text
                 ):
                     continue
@@ -179,8 +180,28 @@ def compute_preservation_defects(
     """
     allowed = set(settlement_targets or ())
     defects = []
+
+    def entities(kind: str, rows: Iterable[dict]) -> Iterable[dict]:
+        """`jubarte read --json` groups a substitution as one row whose
+        `members` carry the per-change ids the task files name. Compare
+        member by member so settling r0 of r0+1 licenses only r0."""
+        for row in rows:
+            members = row.get("members") if kind == "revision" else None
+            if not members:
+                yield row
+                continue
+            for member in members:
+                merged = {k: v for k, v in row.items() if k != "members"}
+                merged.update(member)
+                merged.pop("ref", None)
+                yield merged
+
     for kind, src, art in (
-        ("revision", source_snap.revisions, artifact_snap.revisions),
+        (
+            "revision",
+            entities("revision", source_snap.revisions),
+            entities("revision", artifact_snap.revisions),
+        ),
         ("comment", source_snap.comments, artifact_snap.comments),
     ):
         by_ref = {entity_ref(row, kind): row for row in art}
@@ -247,14 +268,14 @@ def compute_preservation_defects(
 
     def table_structure(table):
         return {
-            **{
-                k: v
-                for k, v in table.items()
-                if k not in ("index", "rows", "nested")
-            },
+            **{k: v for k, v in table.items() if k not in ("index", "rows", "nested")},
             "rows": [
                 [
-                    {k: v for k, v in cell.items() if k not in ("text", "paragraph_ids")}
+                    {
+                        k: v
+                        for k, v in cell.items()
+                        if k not in ("text", "paragraph_ids")
+                    }
                     for cell in row
                 ]
                 for row in table.get("rows", [])
@@ -615,7 +636,7 @@ def claim_accuracy(
     snapshot_ok: bool,
     task_checks: list[CheckResult],
     artifact_exists: bool,
-) -> tuple[ClaimValue | None, ClaimValue, str, str]:
+) -> tuple[ClaimValue | None, ClaimValue, Literal["accurate", "inaccurate", "missing"], str]:
     """Compare the agent's printed JUBARTE_RESULT against the artifact."""
 
     completion_pass = all(c.status == "pass" for c in task_checks)
@@ -649,14 +670,79 @@ def grade_one(
     errors = []
     snap = empty_snapshot()
     snapshot_ok, validate_rc, validate_findings = False, 2, []
+    tracked_audit = False
     if run.artifact_exists:
         try:
             snap = read_snapshot(grader_binary, Path(run.artifact_path))
             snapshot_ok = snap.ok
             if not snap.ok:
                 errors.append(snap.error or "artifact snapshot failed")
-            result, validate_findings = validate(grader_binary, Path(run.artifact_path))
+            # A tracked task is audited against its source under the
+            # required author (`jubarte validate --original --author`,
+            # the `edits` rule): a desired text written directly, or a
+            # change under another author, is a finding, not a passing
+            # validity check.
+            audit_source = None
+            if task.tracked and repo_root is not None:
+                candidate = repo_root / task.source.path
+                if candidate.is_file():
+                    audit_source = candidate
+                    tracked_audit = True
+            result, validate_findings = validate(
+                grader_binary,
+                Path(run.artifact_path),
+                original=audit_source,
+                author=task.required_author if audit_source is not None else None,
+            )
             validate_rc = result.return_code
+            if validate_rc != 0 and audit_source is not None and task.settlement:
+                # The edits audit cannot mark what a settlement task
+                # licenses: removing a `settled_revisions` entry reports
+                # FOREIGN_AUTHOR "gone", and rejecting a foreign
+                # insertion leaves no tracked mark, so the same removal
+                # also shows as UNTRACKED_EDIT at the revision's
+                # paragraph. Both are the declared effect, not foreign
+                # damage. Anything else still fails.
+                settled_locations: set[str] = set()
+                try:
+                    src_snap = _source_snapshot(grader_binary, audit_source)
+                    if src_snap.ok:
+                        settled_locations = {
+                            str(row.get("paragraph") or rev.get("paragraph"))
+                            for rev in src_snap.revisions
+                            for row in (rev, *rev.get("members", []))
+                            if entity_ref(row, "revision") in task.settled_revisions
+                            and (row.get("paragraph") or rev.get("paragraph"))
+                        }
+                except (
+                    OSError,
+                    TimeoutError,
+                    subprocess.TimeoutExpired,
+                    ValueError,
+                ) as exc:
+                    errors.append(f"settlement licence inspection: {exc}")
+                failing = [
+                    f
+                    for f in validate_findings
+                    if f.get("set") in ("word", "edits") or f.get("severity") == "error"
+                ]
+                licensed = (
+                    (
+                        f.get("code") == "FOREIGN_AUTHOR"
+                        and any(
+                            f"{ref} in the original is gone" in (f.get("message") or "")
+                            for ref in task.settled_revisions
+                        )
+                    )
+                    or (
+                        f.get("code") == "UNTRACKED_EDIT"
+                        and bool(f.get("location"))
+                        and f.get("location") in settled_locations
+                    )
+                    for f in failing
+                )
+                if failing and all(licensed):
+                    validate_rc = 0
         except (
             OSError,
             TimeoutError,
@@ -681,7 +767,7 @@ def grade_one(
             source_path = repo_root / task.source.path
             if source_path.is_file():
                 src = _source_snapshot(grader_binary, source_path)
-                if src.ok and snapshot_ok:
+                if src.ok and snapshot_ok and isinstance(snap, Snapshot):
                     assessed = True
                     unintended_edits = compute_unintended_edits(
                         src, snap, authorized_text=task.expected_paragraphs
@@ -749,6 +835,8 @@ def grade_one(
     ]
     if not assessed:
         unassessed += ["unintended edits", "exposed structure/comments/revisions"]
+    if task.tracked and run.artifact_exists and not tracked_audit:
+        unassessed.append("tracked-edit audit")
     if any(e.adjudication_required for e in unintended_edits):
         unassessed.append("ambiguous paragraph alignment requires adjudication")
     return GradeRecord(

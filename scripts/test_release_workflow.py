@@ -88,6 +88,18 @@ class TrustedPublishing(unittest.TestCase):
             ids = [s.get("id") for s in self.jobs[name]["steps"]]
             self.assertIn("live", ids, name)
 
+    def test_no_build_cache_feeds_a_shipped_artifact(self) -> None:
+        # A restored cache is a path for a poisoned entry into a release
+        # binary or wheel (zizmor cache-poisoning): release builds start clean.
+        for name, job in self.jobs.items():
+            for step in job.get("steps", []):
+                uses = step.get("uses", "")
+                with self.subTest(job=name, uses=uses):
+                    self.assertNotIn("rust-cache", uses)
+                    self.assertNotIn("actions/cache", uses)
+                    if "maturin-action" in uses:
+                        self.assertEqual(str(step["with"].get("sccache")), "false")
+
     def test_every_action_is_pinned_to_a_commit(self) -> None:
         for name, job in self.jobs.items():
             for s in job.get("steps", []):

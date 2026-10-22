@@ -32,6 +32,7 @@ proc = subprocess.Popen(
     text=True,
     bufsize=1,
 )
+assert proc.stdin is not None and proc.stdout is not None  # both are PIPEs
 log = open(FOLDER / "mcp_session.jsonl", "w")
 
 

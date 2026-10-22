@@ -95,17 +95,26 @@ inserted or deleted row.
 | Form | Meaning |
 | --- | --- |
 | `{++x++}{r12 @AC}` | revision r12; attribution follows the closer |
-| `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | same-author deletion then insertion; parent applies to old side only |
-| `{++a++}{r1 @AC}{++b++}{r2 @AC}` | different ids remain separate marks |
+| `{~~a~>b~~}{r1+2 @AC re r0 @JD}` | one change: a deletion then that author's insertion touching it; parent applies to old side only |
+| `{--a--}{r1 @AC}{++b++}{r2 @AC}` | two changes, printed apart (#1363): one author's deletion and insertion with content between them (hidden text, a soft hyphen, a symbol, a page break), or a move and the insertion beside it |
+| `{++b++}{r1+2 @AC}{--a--}{r1+2 @AC}` | same-author insertion then a deletion touching it: one replacement (#1359), printed in document order, each piece naming the whole change, its ids in reading order |
+| `{++bold++}{r7+8 @AC}{++ words++}{r7+8 @AC}` | one change of two marks (#1261): each piece names the whole change, as `jubarte changes` lists it, and writes back as its own mark |
+| `{++a++}{r1 @AC}{++b++}{r2 @JD}` | different authors, or changes apart, keep their own ids |
+| `{--30 days--}{r50 @TL}{++45 days++}{r60 @RC}` | two authors' deletion and insertion are two changes, in document order (#1111); the reader still takes the pair `{~~30 days~>45 days~~}{r50 @TL; r60 @RC}` (old side's tag first) and writes the same two marks, but the view prints a substitution only for one change, as `changes` lists it (#1363) |
+| `{++the ++}{r13 @RC}{--applicable--}{r16 @TL re r13 @RC}{++ law++}{r13 @RC}` | a text change inside another text change names it with `re`, beside live text too, as `changes` lists it (`r16 … inside r13`); a change inside an inserted cell or row is placed by the table line's `rev … in t0.row0.cell0` instead (#1376), and a formatting change's `fmt` tag names no parent yet (#1377) |
+| `{++new++}{r5+6 @AC}¶{r5+6 @AC}` | a change that ends its paragraph holds the mark too |
 | `¶{r3 @AC}` | inserted paragraph mark at the end of its text |
 | `\{r3 @C}` after a closer or `¶` | literal tag-like text |
 | `{>>c5 @AC: text<<}`, `re c5`, `resolved` | comment, reply, resolved thread |
+| `{>>c5 @AC in r13: text<<}` | c5's reference mark is inside r13, which the note prints outside; resolving r13 so its content goes (accepting a deletion, rejecting an insertion) removes the thread, the other way keeps it |
 | `header1.r3 @AC`, `footnotes.r7 @AC` | change in another story |
 | `@??` | a mark with no author's name; written back as an empty `w:author` |
 | no tag | new, by the plan author |
 
 With `--dates`, substitution pairing compares the stored dates, including
 an absent date, even when the author header elides a shared timestamp.
+Sides dated apart print apart, each with its date, and both still name the
+one change: `{--old--}{r1+2 @AL 2026-10-01T09:00:00Z}{++new++}{r1+2 @AL 2026-10-02T10:00:00Z}`.
 The default view omits per-revision dates and keeps its existing grouping.
 Rejecting `¶{tag}` removes its following paragraph separator; a list marker
 on the joined paragraph is removed with it. A patch records that separator

@@ -397,14 +397,17 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
         table(DEMO_BORDERS)
     );
     let (first, again, second) = round_trip(&docx(&body));
+    // The tables' 4000-twip columns are not an even split of the text
+    // width, and their width is auto, so both lines name their geometry.
     assert!(
         first.contains(
-            "<!-- t1 2x2, cells p6-p9 by row, style TableNormal, borders single 0.5pt 000000 -->"
+            "<!-- t1 2x2, cells p6-p9 by row, widths 2.778in 2.778in, width auto, \
+             style TableNormal, borders single 0.5pt 000000 -->"
         ),
         "{first}"
     );
     assert!(
-        first.contains("<!-- t0 2x2, cells p0-p3 by row -->"),
+        first.contains("<!-- t0 2x2, cells p0-p3 by row, widths 2.778in 2.778in, width auto -->"),
         "{first}"
     );
     let document = part(&again, "word/document.xml");
@@ -820,6 +823,93 @@ fn a_table_style_whose_borders_vary_names_each_side() {
             r#"<w:tblBorders><w:top w:val="double" w:sz="24" w:space="0" w:color="auto"/><w:bottom w:val="double" w:sz="24" w:space="0" w:color="auto"/></w:tblBorders>"#
         ),
         "{written}"
+    );
+    assert_eq!(second, first);
+}
+
+/// Harvested from `cell_border_groups_that_share_a_cell_all_reach_it`
+/// in `tests/md_table_borders.rs` (feat/md-table-grid-default).
+///
+/// The view reads "cell-borders top double 0.5pt in t0.row0.cell1
+/// t0.row1.cell1"; adding `; bottom single 1pt in t0.row1.cell1
+/// t0.row0.cell0` should give D (t0.row1.cell1) both top and bottom
+/// borders (the new bottom line is shared with A at t0.row0.cell0).
+///
+#[test]
+fn cell_border_groups_that_share_a_cell_all_reach_it() {
+    let rule = "<w:tcBorders><w:top w:val=\"double\" w:sz=\"4\"/></w:tcBorders>";
+    let first = view(&docx(&table_with("", &["", rule, "", rule])));
+    let line = ", cell-borders top double 0.5pt in t0.row0.cell1 t0.row1.cell1";
+    assert!(first.contains(line), "{first}");
+    let edited = first.replace(
+        line,
+        &format!("{line}; bottom single 1pt in t0.row1.cell1 t0.row0.cell0"),
+    );
+    let docx_bytes = write(&edited);
+    let document = part(&docx_bytes, "word/document.xml");
+    let top = "<w:top w:val=\"double\" w:sz=\"4\" w:space=\"0\"/>";
+    let bottom = "<w:bottom w:val=\"single\" w:sz=\"8\" w:space=\"0\"/>";
+    let cells = cell_borders(&document);
+    let want = [
+        Some(bottom.to_string()),
+        Some(top.to_string()),
+        None,
+        Some(format!("{top}{bottom}")),
+    ];
+    assert_eq!(
+        cells, want,
+        "expected t0.row1.cell1 to carry both top and bottom borders"
+    );
+}
+
+/// A later `cell-borders` group overrides the side an earlier one gives
+/// the same cell (`… in all; top double 0.5pt in t0.row1.cell1`).
+#[test]
+fn a_later_cell_border_group_overrides_an_earlier_side() {
+    let rule = "<w:tcBorders><w:top w:val=\"double\" w:sz=\"4\"/></w:tcBorders>";
+    let first = view(&docx(&table_with("", &["", rule, "", rule])));
+    let line = ", cell-borders top double 0.5pt in t0.row0.cell1 t0.row1.cell1";
+    assert!(first.contains(line), "{first}");
+    let edited = first.replace(
+        line,
+        ", cell-borders top single 1pt in all; top double 0.5pt in t0.row1.cell1",
+    );
+    let document = part(&write(&edited), "word/document.xml");
+    let single = "<w:top w:val=\"single\" w:sz=\"8\" w:space=\"0\"/>".to_string();
+    let double = "<w:top w:val=\"double\" w:sz=\"4\" w:space=\"0\"/>".to_string();
+    assert_eq!(
+        cell_borders(&document),
+        [
+            Some(single.clone()),
+            Some(single.clone()),
+            Some(single),
+            Some(double)
+        ]
+    );
+}
+
+#[test]
+fn border_shadow_and_frame_come_back() {
+    // `w:shadow` and `w:frame` are border effects Word draws; the view
+    // names them after the colour and the round trip keeps them.
+    let border = "w:val=\"single\" w:sz=\"8\" w:space=\"0\" w:color=\"2F5496\" \
+                  w:themeColor=\"accent1\" w:shadow=\"1\" w:frame=\"1\"";
+    let props = format!("<w:tblBorders>{}</w:tblBorders>", sides(&ALL, border));
+    let cell = "<w:tcBorders><w:bottom w:val=\"double\" w:sz=\"4\" w:space=\"0\" w:shadow=\"1\"/></w:tcBorders>";
+    let (first, again, second) = round_trip(&docx(&table_with(&props, &[cell, "", "", ""])));
+    assert!(
+        first.contains(", borders single 1pt 2F5496 theme accent1 shadow frame"),
+        "{first}"
+    );
+    assert!(
+        first.contains(", cell-borders bottom double 0.5pt shadow in t0.row0.cell0"),
+        "{first}"
+    );
+    let document = part(&again, "word/document.xml");
+    assert_eq!(table_borders(&document), [Some(sides(&ALL, border))]);
+    assert_eq!(
+        cell_borders(&document)[0].as_deref(),
+        Some("<w:bottom w:val=\"double\" w:sz=\"4\" w:space=\"0\" w:shadow=\"1\"/>")
     );
     assert_eq!(second, first);
 }

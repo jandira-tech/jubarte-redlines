@@ -55,8 +55,16 @@ fn only_rendered_boundaries_separate_a_deletion_and_an_insertion() {
             "{name}: {view}"
         );
         if !pairs {
+            // A bookmark a link names prints between the sides, which stay
+            // one change; a field between them is content, and parts them.
+            let (old, new) = if name == "field" {
+                ("r1", "r2")
+            } else {
+                ("r1+2", "r1+2")
+            };
             assert!(
-                view.contains("{--old--}{r1 @AL}") && view.contains("{++new++}{r2 @AL}"),
+                view.contains(&format!("{{--old--}}{{{old} @AL}}"))
+                    && view.contains(&format!("{{++new++}}{{{new} @AL}}")),
                 "{name}: {view}"
             );
         }

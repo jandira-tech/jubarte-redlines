@@ -2478,8 +2478,7 @@ mod public_option_source_ownership_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -2555,8 +2554,7 @@ mod public_option_source_ownership_tests {
                         walk(&notes, child, pkg, &mut note_events);
                     }
                     let mut owner_attrs = notes
-                        .attributes(note)
-                        .into_iter()
+                        .attributes_iter(note)
                         .filter(|(name, _)| !notes.is_namespace_declaration(name))
                         .map(|(name, value)| {
                             (
@@ -2590,8 +2588,7 @@ mod public_option_source_ownership_tests {
                 .any(|name| dom.name_is(node, name))
             {
                 let mut attrs = dom
-                    .attributes(node)
-                    .into_iter()
+                    .attributes_iter(node)
                     .filter(|(name, _)| !dom.is_namespace_declaration(name))
                     .map(|(name, value)| (format!("{name:?}"), value))
                     .collect::<Vec<_>>();

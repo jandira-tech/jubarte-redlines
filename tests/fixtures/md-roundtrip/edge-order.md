@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 16                      # 16 marks shown as 13 changes: 5 insertions, 5 deletions, 3 substitutions
+revisions: 16                      # 16 marks shown as 12 changes: 4 insertions, 4 deletions, 4 substitutions
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -17,7 +17,7 @@ styles:
 Del then ins: {~~old~>new~~}{r50+51 @AL}.
 
 <!-- p1 -->
-Ins then del: {++new++}{r52 @AL}{--old--}{r53 @AL}.
+Ins then del: {++new++}{r52+53 @AL}{--old--}{r52+53 @AL}.
 
 <!-- p2 -->
 Ins ins del del: {++one ++}{r54 @AL}{++two ++}{r55 @BC}{--three --}{r56 @AL}{--four--}{r57 @BC}.

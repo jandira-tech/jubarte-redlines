@@ -553,7 +553,8 @@ pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
 
 /// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
-/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
+/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `, and any of them with
+/// `in r13` last (`c6 @AS re c5 in r13: `).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CommentHead {
     /// The comment's number in the source (`c5` → 5).
@@ -563,6 +564,9 @@ pub(super) struct CommentHead {
     /// The number of the comment this one replies to.
     pub reply_to: Option<u32>,
     pub resolved: bool,
+    /// The `w:id`s of the change that holds the comment's reference mark
+    /// (`in r13` → 13): the note prints outside it, so it says so.
+    pub held_in: Vec<u32>,
 }
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
@@ -596,8 +600,11 @@ pub(super) struct TableLine {
     pub one_per_cell: Option<usize>,
     pub header_repeats: bool,
     /// The cell paragraphs' mark changes, by paragraph (`break-ins r3 @SW
-    /// in p1`): true for an insertion.
-    pub marks: HashMap<usize, (bool, Tag)>,
+    /// in p1`): true for an insertion. Word lets one paragraph mark name
+    /// an insertion and a deletion (`w:pPr/w:rPr` holds both `w:ins` and
+    /// `w:del`), so a paragraph numbers to a list of its marks, in clause
+    /// order.
+    pub marks: HashMap<usize, Vec<(bool, Tag)>>,
     /// The grid's columns (`4x7`).
     pub columns: Option<usize>,
     /// The table's alignment (`t0 center 4x7`), as Word's `jc` value.
@@ -611,6 +618,15 @@ pub(super) struct TableLine {
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`,
     /// `p6-p9 Caption`), by paragraph.
     pub styles: HashMap<usize, String>,
+    /// Cell paragraphs' own spacing (`p8-p38 line 8.65pt exact`), by
+    /// paragraph (#1473).
+    pub spacings: HashMap<usize, super::xml::Spacing>,
+    /// Cell paragraphs' own text size (`p8-p38 size 9pt`), in half-points,
+    /// by paragraph (#1474).
+    pub sizes: HashMap<usize, u32>,
+    /// The grid's widths, the table's width, indent and layout (`widths
+    /// 2.14in 1in, width auto, indent 0.25in, layout fixed`), #1472.
+    pub geometry: super::xml::TableGeometry,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// The table's own borders (`borders single 0.5pt 000000`).
@@ -646,6 +662,19 @@ pub(super) struct TableLine {
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
+}
+
+/// The mark a cell paragraph's own changes give it, when they name one:
+/// a paragraph mark naming both an insertion and a deletion is the
+/// paragraph's deletion, since the paragraph still leaves when both are
+/// accepted.
+pub(super) fn paragraph_mark(marks: &[(bool, Tag)]) -> Option<(bool, &Tag)> {
+    marks
+        .iter()
+        .rev()
+        .find(|(inserted, _)| !*inserted)
+        .or_else(|| marks.first())
+        .map(|(inserted, tag)| (*inserted, tag))
 }
 
 /// A cell's own change: `w:cellIns`, `w:cellDel` or `w:cellMerge`.
@@ -740,6 +769,13 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
     Ok(kinds)
 }
 
+/// The header's `notes: {rev: footnotes.r4 @AS, …}`: the insertions and
+/// deletions tracked on a separator, which the writer does not write (a
+/// warning names them); none without the clause.
+pub(super) fn note_revisions(value: &str) -> Option<String> {
+    super::view_stories::flow_text(value, "rev").filter(|tags| !tags.is_empty())
+}
+
 /// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
 /// each formatting change on a notes part's separators, with its part's
 /// kind (`footnote`, `endnote`), in the order the view lists them; none
@@ -783,6 +819,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         merges: HashMap::new(),
         aligns: HashMap::new(),
         styles: HashMap::new(),
+        spacings: HashMap::new(),
+        sizes: HashMap::new(),
+        geometry: super::xml::TableGeometry::default(),
         style: None,
         borders: None,
         cell_borders: Vec::new(),
@@ -812,6 +851,22 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             parsed.aligns.insert(at, jc);
             continue;
         }
+        // `p8-p38 line 8.65pt exact`, `p5 before 2pt after 2pt size 9pt`:
+        // cell paragraphs' own spacing and text size.
+        if let Some((at, tail)) = clause.split_once(' ')
+            && let Some((first, count)) = paragraph_range(at)
+            && let Some((spacing, size)) = spacing_words(tail)
+        {
+            for n in first..first + count {
+                if !spacing.is_empty() {
+                    parsed.spacings.insert(n, spacing);
+                }
+                if let Some(size) = size {
+                    parsed.sizes.insert(n, size);
+                }
+            }
+            continue;
+        }
         // `p5 ListParagraph`, `p6-p9 Caption`, `p7 "My Style"`: cell
         // paragraphs in a style.
         if let Some((at, tail)) = clause.split_once(' ')
@@ -821,6 +876,10 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             for n in first..first + count {
                 parsed.styles.insert(n, style.clone());
             }
+            continue;
+        }
+        // `widths 2.14in 1in`, `width 50%`, `indent 0.25in`, `layout fixed`.
+        if i > 0 && parsed.geometry.clause(clause).is_some() {
             continue;
         }
         if clause == "header row repeats" {
@@ -994,7 +1053,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                     && let Some(at) = crate::ids::short_number(at, 'p')
                     && let Some(tag) = first_tag(tag)
                 {
-                    parsed.marks.insert(at, (inserted, tag));
+                    parsed.marks.entry(at).or_default().push((inserted, tag));
                 }
             }
         }
@@ -1151,7 +1210,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 21] = [
+const CLAUSE_WORDS: [&str; 25] = [
     "empty",
     "outline",
     "center",
@@ -1160,6 +1219,10 @@ const CLAUSE_WORDS: [&str; 21] = [
     "left",
     "first-line",
     "hanging",
+    "before",
+    "after",
+    "line",
+    "size",
     "bullet",
     "num",
     "level",
@@ -1178,8 +1241,12 @@ const CLAUSE_WORDS: [&str; 21] = [
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
 /// read as.
-const TABLE_WORDS: [&str; 10] = [
+const TABLE_WORDS: [&str; 14] = [
     "cells",
+    "widths",
+    "width",
+    "indent",
+    "layout",
     "borders",
     "cell-borders",
     "row-borders",
@@ -1302,6 +1369,11 @@ pub(super) struct IdLine {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
+    /// Its own spacing (`before 6pt`, `after 0pt`, `line 1.5`, `line
+    /// 8.65pt exact`), #1473.
+    pub spacing: super::xml::Spacing,
+    /// Its own text size (`size 9pt`), in half-points (#1474).
+    pub size: Option<u32>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
     /// The page break's tracked change, `true` for an insertion
@@ -1320,10 +1392,12 @@ pub(super) struct IdLine {
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
     /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
-    /// @AL`); a `rev-del` tag is in `rev_del` too.
-    pub rev: Vec<Tag>,
-    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
-    /// alone names insertions.
+    /// @AL`), in clause order, each with whether its own clause named an
+    /// insertion. The kind rides with the tag because two tags can be
+    /// equal: `noid` names no id, so one author's inserted and deleted
+    /// marks are one tag (`rev noid @AL, rev-del noid @AL`).
+    pub rev: Vec<(bool, Tag)>,
+    /// The `rev` tags a `rev-del` clause named, as deletions.
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
@@ -1396,6 +1470,17 @@ impl IdLine {
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
+            Some((word @ ("before" | "after" | "line"), v)) => {
+                // A value out of range leaves what an earlier clause said.
+                let mut spacing = self.spacing;
+                if spacing.clause(word, v).is_some() {
+                    self.spacing = spacing;
+                }
+            }
+            // A size out of range leaves what an earlier clause said.
+            Some(("size", v)) => {
+                self.size = super::xml::size_half_points(v).or(self.size);
+            }
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1406,15 +1491,44 @@ impl IdLine {
                 self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
             }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
-            Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev", v)) => self.rev.extend(
+                revision_tags(v)
+                    .into_iter()
+                    .flatten()
+                    .map(|tag| (true, tag)),
+            ),
             Some(("rev-del", v)) => {
                 let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
-                self.rev.extend(tags.iter().cloned());
+                self.rev
+                    .extend(tags.iter().cloned().map(|tag| (false, tag)));
                 self.rev_del.extend(tags);
             }
             Some(_) => {}
         }
     }
+}
+
+/// `before 2pt after 2pt line 8.65pt exact size 9pt`: a cell paragraph's
+/// spacing and text size on the table line, the id line's clauses joined
+/// by spaces. `None` unless every word is one of them.
+fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
+    let mut spacing = super::xml::Spacing::default();
+    let mut size = None;
+    let mut words = text.split(' ').peekable();
+    while let Some(word) = words.next() {
+        let mut value = words.next()?.to_string();
+        if word == "size" {
+            size = Some(super::xml::size_half_points(&value)?);
+            continue;
+        }
+        if word == "line"
+            && let Some(rule) = words.next_if(|w| matches!(*w, "exact" | "atLeast"))
+        {
+            value = format!("{value} {rule}");
+        }
+        spacing.clause(word, &value)?;
+    }
+    (!spacing.is_empty() || size.is_some()).then_some((spacing, size))
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.
@@ -1491,6 +1605,7 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         date: None,
         reply_to: None,
         resolved: false,
+        held_in: Vec::new(),
     };
     if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
         if !is_handle(handle) {
@@ -1503,10 +1618,24 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         parsed.date = Some((*date).to_string());
         words.next();
     }
-    match (words.next(), words.next(), words.next()) {
-        (None, ..) => {}
-        (Some("resolved"), None, _) => parsed.resolved = true,
-        (Some("re"), Some(root), None) if root.starts_with('c') => {
+    let mut rest: Vec<&str> = words.collect();
+    // `in r13` last: the change whose mark holds the reference.
+    if let [.., "in", change] = rest.as_slice() {
+        let ids = crate::ids::parse_change_ids(change).ok()?;
+        if change.starts_with(|c: char| c.is_ascii_digit()) || ids.iter().any(|c| c.story != "body")
+        {
+            return None;
+        }
+        parsed.held_in = ids
+            .iter()
+            .map(|c| c.wid.parse().ok().filter(|&id| id <= MOST_ID))
+            .collect::<Option<_>>()?;
+        rest.truncate(rest.len() - 2);
+    }
+    match rest.as_slice() {
+        [] => {}
+        ["resolved"] => parsed.resolved = true,
+        ["re", root] if root.starts_with('c') => {
             parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
         }
         _ => return None,
@@ -1951,7 +2080,8 @@ mod tests {
                 handle: Some("AC".into()),
                 date: None,
                 reply_to: None,
-                resolved: false
+                resolved: false,
+                held_in: Vec::new(),
             }
         );
         assert_eq!(text, "Is one percent the cap?");
@@ -1972,6 +2102,32 @@ mod tests {
             "c5 @AC maybe: x",
             "p5 @AC: x",
             "c5 @A-C: x",
+        ] {
+            assert_eq!(comment_head(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_head_names_the_change_that_holds_its_mark_last() {
+        let (head, text) = comment_head("c0 @B in r13: Bob's note.").unwrap();
+        assert_eq!(
+            (head.held_in, head.reply_to, text),
+            (vec![13], None, "Bob's note.")
+        );
+        let (head, _) = comment_head("c1 @C re c0 in r13: Carol agrees.").unwrap();
+        assert_eq!((head.reply_to, head.held_in), (Some(0), vec![13]));
+        let (head, _) = comment_head("c2 @B 2026-10-01T09:00:00Z resolved in r4+5: ok").unwrap();
+        assert!(head.resolved);
+        assert_eq!(head.held_in, [4, 5]);
+        let (head, text) = comment_head("c3 in r7:").unwrap();
+        assert_eq!((head.handle, head.held_in, text), (None, vec![7], ""));
+        for text in [
+            "c0 @B in: x",
+            "c0 @B in c3: x",
+            "c0 @B in 13: x",
+            "c0 @B in r13 re c1: x",
+            "c0 @B in r13 in r14: x",
+            "c0 @B in footnotes.r2: x",
         ] {
             assert_eq!(comment_head(text), None, "{text}");
         }

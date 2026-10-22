@@ -651,7 +651,7 @@ fn doc_default_ppr_delta(
     let (a_sp, b_sp, b_own_sp) = (sp(dom, a_dd), sp(dom, b_dd), sp(dom, b_own));
     let mut attrs: Vec<(String, String)> = Vec::new();
     for s in [a_sp, b_sp].into_iter().flatten() {
-        for (n, _) in dom.attributes(s) {
+        for (n, _) in dom.attributes_iter(s) {
             let local = n.local_name();
             if n.namespace_name() == W::URI
                 && matches!(local, "beforeLines" | "afterLines")
@@ -3695,25 +3695,26 @@ fn canonicalize_style_ids(
 
     // Pass 2: drop collisions — target held by a non-renaming style, or two
     // styles racing for the same target (first wins; prefer already-matching).
-    let leaving: std::collections::HashSet<String> =
-        desired.iter().map(|(_, old, _)| old.clone()).collect();
-    let mut taken_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let leaving: std::collections::HashSet<&str> =
+        desired.iter().map(|(_, old, _)| old.as_str()).collect();
+    let mut taken_targets: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut renames: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut plan: Vec<(NodeId, String)> = Vec::new();
-    for (s, old, new_id) in desired {
-        if taken_targets.contains(&new_id) {
+    for (s, old, new_id) in &desired {
+        if taken_targets.contains(new_id.as_str()) {
             continue;
         }
         // Occupied by a style that stays put?
         let occupied_by_stayer = styles.iter().any(|&other| {
-            dom.attribute(other, &style_id) == Some(new_id.as_str()) && !leaving.contains(&new_id)
+            dom.attribute(other, &style_id) == Some(new_id.as_str())
+                && !leaving.contains(new_id.as_str())
         });
         if occupied_by_stayer {
             continue;
         }
-        taken_targets.insert(new_id.clone());
-        renames.insert(old, new_id.clone());
-        plan.push((s, new_id));
+        taken_targets.insert(new_id.as_str());
+        renames.insert(old.clone(), new_id.clone());
+        plan.push((*s, new_id.clone()));
     }
     for (s, new_id) in &plan {
         dom.set_attribute_value(*s, &style_id, Some(new_id));
@@ -3878,7 +3879,7 @@ fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool
                 changed = true;
             }
         }
-        if dom.attributes(fonts).is_empty() {
+        if !dom.has_attributes(fonts) {
             dom.remove(fonts);
             changed = true;
         }
@@ -4267,7 +4268,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                         changed = true;
                     }
                 }
-                if dom.attributes(rf).is_empty() {
+                if !dom.has_attributes(rf) {
                     dom.remove(rf);
                 }
             }
@@ -4333,7 +4334,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                 changed = true;
             }
         }
-        if dom.attributes(sp).is_empty() {
+        if !dom.has_attributes(sp) {
             dom.remove(sp);
         }
     }
@@ -4965,16 +4966,16 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
-/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
-/// its comments by the ids the documents gave them, as `edit` reports them.
-/// Opened under the caller's admission budget, which the compare flow
-/// already checked (#645).
+/// [`accept_revisions`] under the caller's admission budget, which the
+/// compare flow already checked (#645). Bookmark and comment ids stay, so a
+/// redline names its comments by the ids the documents gave them, as
+/// `edit` reports them.
 fn accept_source_revisions(
     docx: &[u8],
     limits: crate::admission::InputLimits,
 ) -> Result<Vec<u8>, OpcError> {
     let mut pkg = PartFs::open_within(docx, limits)?;
-    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
+    crate::revision_processor::accept_revisions_package(&mut pkg);
     pkg.to_zip()
 }
 
@@ -4986,6 +4987,30 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
     pkg.to_zip()
+}
+
+/// Accept every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes accept`.
+///
+/// # Errors
+/// Refused input, an unreadable package or unreadable comment records.
+pub fn accept_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    crate::changes::accept_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
+}
+
+/// Reject every revision through the processor, rescuing wholly removed
+/// comment threads onto empty anchors (#1279). The CLI's
+/// `--keep-nested-comment` opt-in on `convert --track-changes reject`.
+///
+/// # Errors
+/// As [`accept_revisions_keeping_comments`].
+pub fn reject_revisions_keeping_comments(
+    docx: &[u8],
+) -> Result<crate::changes::ResolvedChanges, crate::changes::ChangeError> {
+    crate::changes::reject_changes_keeping_comments(docx, &crate::changes::ChangeFilter::default())
 }
 
 /// Collision-proof target name for copying `want` (with `bytes`) into `out`:
@@ -6598,7 +6623,10 @@ fn compare_documents_impl(
 
     // After prep, packages may still be byte-identical (rare non-self paths).
     if original_owned == modified_owned {
-        return crate::comparer::fixups::fix_up_drawing_ids_in_package(&original_owned);
+        return crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
+            &original_owned,
+            settings.input_limits,
+        );
     }
 
     let original: &[u8] = &original_owned;
@@ -8119,11 +8147,7 @@ mod tests {
         let d = dom.parse_xdocument(&restored);
         let root = dom.root(d).unwrap();
         let sp = dom.descendants(root, Some(&W::name("spacing")))[0];
-        let mut names: Vec<String> = dom
-            .attributes(sp)
-            .into_iter()
-            .map(|(n, _)| n.clark())
-            .collect();
+        let mut names: Vec<String> = dom.attributes_iter(sp).map(|(n, _)| n.clark()).collect();
         names.sort();
         let w = |l: &str| W::name(l).clark();
         assert_eq!(names, vec![w("line"), w("lineRule")], "{restored}");
@@ -8790,7 +8814,7 @@ mod tests {
                 (
                     dom.name(e).unwrap().local_name().to_string(),
                     dom.attribute(e, &W::val()).map(str::to_string),
-                    dom.attributes(e).len(),
+                    dom.attributes_iter(e).len(),
                 )
             })
             .collect();
@@ -11504,8 +11528,7 @@ mod coverage_package_source_matrix_tests {
     fn signature(dom: &Dom, node: NodeId) -> String {
         let name = dom.name(node).unwrap();
         let mut attrs: Vec<_> = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .map(|(n, v)| {
                 (
                     n.namespace_name().to_string(),
@@ -11543,7 +11566,7 @@ mod coverage_package_source_matrix_tests {
         // after the revision processor removes their last change child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(r, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                     dom.remove(n);
                 }
             }
@@ -11569,7 +11592,7 @@ mod coverage_package_source_matrix_tests {
                     .copied()
                     .find(|&n| dom.name_is(n, &W::name(local)))
                     .and_then(|n| dom.element(n, &W::name(property)))
-                    .filter(|&n| !dom.elements(n, None).is_empty() || !dom.attributes(n).is_empty())
+                    .filter(|&n| !dom.elements(n, None).is_empty() || dom.has_attributes(n))
                     .map(|n| signature(&dom, n))
                     .unwrap_or_default()
             };
@@ -12293,8 +12316,7 @@ mod isolated_header_container_revision_boundary_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -12305,13 +12327,7 @@ mod isolated_header_container_revision_boundary_tests {
         {
             return String::new();
         }
-        attrs.sort_by_key(|(n, v)| {
-            (
-                n.namespace_name().to_owned(),
-                n.local_name().to_owned(),
-                v.clone(),
-            )
-        });
+        attrs.sort_by_key(|(n, v)| (n.namespace_name().to_owned(), n.local_name().to_owned(), *v));
         format!(
             "{:?}{attrs:?}[{}]",
             name,
@@ -12620,8 +12636,7 @@ mod adopted_story_relationship_owner_tests {
             return String::new();
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12798,8 +12813,7 @@ mod word_style_line_owned_boundary_tests {
     }
     fn semantic(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12891,15 +12905,14 @@ mod public_numbering_definition_source_owner_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                value.clone(),
+                *value,
             )
         });
         if attrs.is_empty()

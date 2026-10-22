@@ -34,7 +34,7 @@ use crate::inspect::source_sha256;
 
 /// The wire schema version this module emits. Bumped together with any
 /// backwards-incompatible change to the envelope.
-pub const ENVELOPE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const ENVELOPE_SCHEMA_VERSION: u32 = 1;
 
 /// The terminal status of a v2 result.
 ///
@@ -779,7 +779,7 @@ impl ResultData {
 /// `std::result::Result` in function signatures.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Envelope {
-    /// Wire schema version; equals [`ENVELOPE_SCHEMA_VERSION`].
+    /// Wire schema version; equals `ENVELOPE_SCHEMA_VERSION`.
     pub schema_version: u32,
     /// Command identifier (`edit apply`, `edit template`, ...).
     pub command: String,

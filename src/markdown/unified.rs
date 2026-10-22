@@ -323,7 +323,7 @@ pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, M
         ids: Some(others),
         ..crate::changes::ChangeFilter::default()
     };
-    let own = crate::changes::accept_changes(docx, &filter)
+    let own = crate::changes::accept_elements(docx, &filter)
         .map_err(|error| MarkdownError::Package(error.to_string()))?;
     patch_redline(&own, options)
 }
@@ -535,7 +535,7 @@ fn build_with(
     known: Option<&HashSet<String>>,
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
-    let blocks = blocks(detach_breaks(attribute(segments(&critic))));
+    let blocks = blocks(detach_breaks(join_marks(attribute(segments(&critic)))));
     let owner = &options.owner;
     let mut hunks = Vec::new();
     let mut texts = Vec::new();
@@ -811,6 +811,57 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     out
 }
 
+/// The side a one-sided change is on, and whether it is only paragraph
+/// marks.
+fn one_side(edit: &Edit) -> Option<(Side, bool)> {
+    match (edit.old.is_empty(), edit.new.is_empty()) {
+        (false, true) => Some((Side::Old, edit.old.trim().is_empty())),
+        (true, false) => Some((Side::New, edit.new.trim().is_empty())),
+        _ => None,
+    }
+}
+
+/// The view writes a paragraph mark's change apart from the text beside
+/// it, each with its own id (#1135). Word made them as one, so the patch
+/// reads them as one: a change on the same side by the same author, with
+/// only comments between, joins the change before it when either is the
+/// mark. A paragraph deleted whole is then one change ending in its mark,
+/// and a deletion across paragraphs one change through the mark.
+fn join_marks(segments: Vec<Segment>) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
+    for segment in segments {
+        if let Segment::Edit(edit) = &segment
+            && let Some((side, mark)) = one_side(edit)
+            && let Some(Segment::Edit(before)) = out
+                .iter_mut()
+                .rev()
+                .find(|s| !matches!(s, Segment::Note(..)))
+            && let Some((before_side, _)) = one_side(before)
+            && before_side == side
+            && before.by == edit.by
+            && (mark
+                || match side {
+                    Side::Old => before.old.ends_with('\n'),
+                    Side::New => before.new.ends_with('\n'),
+                })
+        {
+            match side {
+                Side::Old => {
+                    before.old.push_str(&edit.old);
+                    before.old_marked.push_str(&edit.old_marked);
+                }
+                Side::New => {
+                    before.new.push_str(&edit.new);
+                    before.new_marked.push_str(&edit.new_marked);
+                }
+            }
+            continue;
+        }
+        out.push(segment);
+    }
+    out
+}
+
 /// Word deletes or inserts a paragraph with its mark, so the change ends
 /// with the paragraph break (or, for the last paragraph, starts with the
 /// one before it). That break moves out of the change, after its comments,
@@ -819,12 +870,30 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
 /// paragraph the same side changes whole: the view writes a story's last
 /// paragraph and the mark before it as two changes (`{--\n\n--}{r1
 /// @C}{--Last.--}{r2 @C}`), and the paragraph is still a hunk of its own.
+/// A change that starts inside a paragraph stays as it is too: its break
+/// joins that paragraph to the next.
 fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     fn same(out: &mut Vec<Segment>, text: &str) {
         match out.last_mut() {
             Some(Segment::Same(same)) => same.push_str(text),
             _ => out.push(Segment::Same(text.to_string())),
         }
+    }
+    // Whether the next change starts its paragraph: nothing but a list,
+    // quote or heading marker before it on its line.
+    fn starts_paragraph(out: &[Segment]) -> bool {
+        for segment in out.iter().rev() {
+            match segment {
+                Segment::Same(text) => match text.rsplit_once('\n') {
+                    Some((_, line)) => return !visible(line),
+                    None if visible(text) => return false,
+                    None => {}
+                },
+                Segment::Edit(_) => return false,
+                _ => {}
+            }
+        }
+        true
     }
     let leads = leading_breaks(&segments);
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
@@ -860,7 +929,10 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
             same(&mut out, plain);
         } else if plain.trim().is_empty() {
             out.push(Segment::Edit(edit));
-        } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
+        } else if trailing >= 2
+            && marked.ends_with(&plain[plain.len() - trailing..])
+            && starts_paragraph(&out)
+        {
             let text = plain.split_off(plain.len() - trailing);
             marked.truncate(marked.len() - trailing);
             out.push(Segment::Edit(edit));

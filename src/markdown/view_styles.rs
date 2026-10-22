@@ -13,7 +13,7 @@
 //! The default paragraph style's line gives its whole look: font, bold and
 //! italic, size, spacing before and after (none printed is none), line
 //! spacing (none printed is single), keep-next, keep-lines, a paragraph
-//! indent (`indent 0.5in`, and `first-line` or `hanging` when set),
+//! indent (`indent 0.5in`, and `first-line`, `hanging` or `right` when set),
 //! contextual spacing and alignment. A heading's line names its style, its
 //! font, size, bold and italic, and only the spacing, keep-next, keep-lines,
 //! indent, contextual spacing and alignment that differ from the default
@@ -68,24 +68,34 @@ pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMar
                 continue;
             };
             let mut block = out[at..end].to_string();
-            // `w:pPr` is the style's own first: the one before `w:rPr`,
-            // never the previous-properties one inside a change.
+            // The style's own `w:pPr` and `w:rPr`: the `w:rPr` a `w:pPr`
+            // holds is the paragraph mark's (`CT_ParaRPr`), and
+            // `CT_Style` puts the style's own after the `w:pPr`.
             if marks.len() != 2 || index == 0 {
-                let ppr_end = block.find("<w:rPr>").unwrap_or(block.len());
-                if let Some(close) = block[..ppr_end].rfind("</w:pPr>") {
-                    block.insert_str(close, &change("pPr", "pPr"));
-                } else {
-                    block.insert_str(ppr_end, &format!("<w:pPr>{}</w:pPr>", change("pPr", "pPr")));
+                let change = change("pPr", "pPr");
+                match own_ppr(&block) {
+                    Some(ppr) if ppr.empty() => {
+                        block
+                            .replace_range(ppr.start..ppr.end, &format!("<w:pPr>{change}</w:pPr>"));
+                    }
+                    Some(ppr) => block.insert_str(ppr.at(), &change),
+                    // The style had no `w:pPr`: one takes the change,
+                    // where `CT_Style` puts it, before its `w:rPr`.
+                    None => {
+                        let at = own_rpr(&block).map_or(block.len(), |rpr| rpr.start);
+                        block.insert_str(at, &format!("<w:pPr>{change}</w:pPr>"));
+                    }
                 }
             }
             if marks.len() != 2 || index == 1 {
-                let rpr_at = block.find("<w:rPr>");
-                if let Some(close) =
-                    rpr_at.and_then(|at| block[at..].find("</w:rPr>").map(|i| at + i))
-                {
-                    block.insert_str(close, &change("rPr", "rPr"));
-                } else {
-                    block.push_str(&format!("<w:rPr>{}</w:rPr>", change("rPr", "rPr")));
+                let change = change("rPr", "rPr");
+                match own_rpr(&block) {
+                    Some(rpr) if rpr.empty() => {
+                        block
+                            .replace_range(rpr.start..rpr.end, &format!("<w:rPr>{change}</w:rPr>"));
+                    }
+                    Some(rpr) => block.insert_str(rpr.at(), &change),
+                    None => block.push_str(&format!("<w:rPr>{change}</w:rPr>")),
                 }
             }
             out.replace_range(at..end, &block);
@@ -179,6 +189,82 @@ fn open_tag(xml: &str, name: &str, range: std::ops::Range<usize>) -> Option<Open
     None
 }
 
+/// One element of a style the view writes a change into, and where that
+/// change goes: before the element's close tag, which is where each
+/// schema puts its change (`w:pPrChange` last in `CT_PPr`, `w:rPrChange`
+/// last in `CT_RPr`).
+struct Own {
+    start: usize,
+    end: usize,
+    /// The close tag's own start; `None` for `<w:name/>`, which a change
+    /// replaces whole.
+    close: Option<usize>,
+}
+
+impl Own {
+    /// Where a change of this element goes.
+    fn at(&self) -> usize {
+        self.close.unwrap_or(self.start)
+    }
+
+    /// Whether the change replaces the element rather than joining it.
+    fn empty(&self) -> bool {
+        self.close.is_none()
+    }
+}
+
+/// The first `<w:name>` element in `block` from `from`, with where its
+/// change goes. The element nests: a `w:pPrChange` holds the previous
+/// properties in a `w:pPr` of their own.
+fn own(block: &str, name: &str, from: usize) -> Option<Own> {
+    let open = open_tag(block, name, from..block.len())?;
+    if open.empty {
+        return Some(Own {
+            start: open.start,
+            end: open.end,
+            close: None,
+        });
+    }
+    let close = close_at(block, name, open.end)?;
+    let tag = format!("</w:{name}>");
+    Some(Own {
+        start: open.start,
+        end: close + tag.len(),
+        close: Some(close),
+    })
+}
+
+/// Where the `<w:name>` element that opens just before `open_end` closes:
+/// the closes nest, so every open before a close counts unless it is an
+/// empty element, which holds nothing.
+fn close_at(block: &str, name: &str, open_end: usize) -> Option<usize> {
+    let tag = format!("</w:{name}>");
+    let mut depth = 1usize;
+    let mut at = open_end;
+    while let Some(close) = block[at..].find(&tag).map(|i| i + at) {
+        depth += usize::from(open_tag(block, name, at..close).is_some_and(|open| !open.empty));
+        depth = depth.checked_sub(1)?;
+        if depth == 0 {
+            return Some(close);
+        }
+        at = close + tag.len();
+    }
+    None
+}
+
+/// The style's own `w:pPr`: the first one, never the previous properties a
+/// `w:pPrChange` holds.
+fn own_ppr(block: &str) -> Option<Own> {
+    own(block, "pPr", 0)
+}
+
+/// The style's own `w:rPr`: `CT_Style` puts it after the `w:pPr`, and the
+/// `w:rPr` a `w:pPr` holds is the paragraph mark's (`CT_ParaRPr`), not
+/// the style's (#1595 review).
+fn own_rpr(block: &str) -> Option<Own> {
+    own(block, "rPr", own_ppr(block).map_or(0, |ppr| ppr.end))
+}
+
 /// One style the legend describes.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct StyleSpec {
@@ -206,6 +292,8 @@ pub(super) struct StyleSpec {
     pub keep_lines: bool,
     /// Left indent, twips.
     pub left: Option<i64>,
+    /// Right indent, twips.
+    pub right: Option<i64>,
     /// First-line indent, twips.
     pub first_line: Option<i64>,
     /// Hanging indent, twips.
@@ -224,7 +312,7 @@ fn points(value: &str, scale: f64) -> Option<u32> {
 }
 
 /// `0.5in` as twips. Word's indent is at most 22in (31680 twips) either way.
-fn twips_in(value: &str) -> Option<i64> {
+pub(super) fn twips_in(value: &str) -> Option<i64> {
     let n: f64 = value.strip_suffix("in")?.parse().ok()?;
     if !n.is_finite() {
         return None;
@@ -279,6 +367,7 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
         keep_next: false,
         keep_lines: false,
         left: None,
+        right: None,
         first_line: None,
         hanging: None,
         contextual_spacing: false,
@@ -289,6 +378,8 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
             Some(("before", v)) => spec.before = Some(points(v, 20.0)?),
             Some(("after", v)) => spec.after = Some(points(v, 20.0)?),
             Some(("indent", v)) => spec.left = Some(twips_in(v)?),
+            // `right` alone is the alignment; with a value, the indent.
+            Some(("right", v)) => spec.right = Some(twips_in(v)?),
             Some(("first-line", v)) => spec.first_line = Some(twips_in(v)?),
             Some(("hanging", v)) => spec.hanging = Some(twips_in(v)?),
             Some(("contextual", "spacing")) => spec.contextual_spacing = true,
@@ -755,6 +846,7 @@ struct Given {
     keep_lines: bool,
     contextual: bool,
     left: Option<i64>,
+    right: Option<i64>,
     first_line: Option<i64>,
     hanging: Option<i64>,
 }
@@ -776,6 +868,7 @@ impl Given {
             keep_lines: false,
             contextual: false,
             left: None,
+            right: None,
             first_line: None,
             hanging: None,
         }
@@ -800,6 +893,7 @@ fn effective(spec: &StyleSpec) -> Given {
         keep_lines: spec.keep_lines,
         contextual: spec.contextual_spacing,
         left: spec.left,
+        right: spec.right,
         first_line: spec.first_line,
         hanging: spec.hanging,
     }
@@ -866,6 +960,9 @@ fn document_defaults(styles: &str) -> Given {
         if let Some(ind) = ppr.child("ind") {
             if let Some(left) = signed(ind, "left").or_else(|| signed(ind, "start")) {
                 given.left = Some(left);
+            }
+            if let Some(right) = signed(ind, "right").or_else(|| signed(ind, "end")) {
+                given.right = Some(right);
             }
             if let Some(first) = signed(ind, "firstLine") {
                 given.first_line = Some(first);
@@ -1004,13 +1101,27 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
         }
         ppr.push_str("/>");
     }
-    let left = indent_attr(spec.left, inherited.left);
-    let first = indent_attr(spec.first_line, inherited.first_line);
-    let hanging = indent_attr(spec.hanging, inherited.hanging);
-    if left.is_some() || first.is_some() || hanging.is_some() {
+    // The default style's omitted indent is zero, as its spacing is: the
+    // legend names it only when it is not, so a default indent from
+    // `docDefaults` is cleared (#1498 review).
+    let indent = |value: Option<i64>, given: Option<i64>| {
+        if spec.default {
+            indent_attr(value.or(Some(0)), Some(given.unwrap_or(0)))
+        } else {
+            indent_attr(value, given)
+        }
+    };
+    let left = indent(spec.left, inherited.left);
+    let right = indent(spec.right, inherited.right);
+    let first = indent(spec.first_line, inherited.first_line);
+    let hanging = indent(spec.hanging, inherited.hanging);
+    if left.is_some() || right.is_some() || first.is_some() || hanging.is_some() {
         ppr.push_str("<w:ind");
         if let Some(value) = left {
             ppr.push_str(&format!(" w:left=\"{value}\""));
+        }
+        if let Some(value) = right {
+            ppr.push_str(&format!(" w:right=\"{value}\""));
         }
         if let Some(value) = first {
             ppr.push_str(&format!(" w:firstLine=\"{value}\""));
@@ -1133,6 +1244,30 @@ mod tests {
                 "<w:styles><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/>{CARRIER}</w:rPr>\
                  </w:rPrDefault></w:docDefaults><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>"
             )
+        );
+    }
+
+    /// A style's `w:pPr` may hold the paragraph mark's own run properties
+    /// (`CT_ParaRPr`), which CT_Style puts before the style's `w:rPr`: the
+    /// changes belong to the style's own elements, never to the mark's (#1595
+    /// review).
+    #[test]
+    fn a_style_change_lands_in_the_styles_own_ppr_and_rpr() {
+        let mark = FormatMark {
+            id: Some(9),
+            author: "Ana".to_string(),
+            date: String::new(),
+        };
+        let styles = "<w:styles><w:style w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/>\
+                      <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr></w:pPr>\
+                      <w:rPr><w:sz w:val=\"32\"/></w:rPr></w:style></w:styles>";
+        assert_eq!(
+            with_style_changes(styles, &[("Heading1".to_string(), vec![mark])]),
+            "<w:styles><w:style w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/>\
+             <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr>\
+             <w:pPrChange w:id=\"9\" w:author=\"Ana\"><w:pPr/></w:pPrChange></w:pPr>\
+             <w:rPr><w:sz w:val=\"32\"/><w:rPrChange w:id=\"9\" w:author=\"Ana\"><w:rPr/></w:rPrChange>\
+             </w:rPr></w:style></w:styles>"
         );
     }
 
@@ -1387,6 +1522,35 @@ mod tests {
     }
 
     #[test]
+    fn a_right_indent_is_written_and_a_bare_right_still_aligns() {
+        // `right 0.5in` is the style's right indent (#1489); `right` alone
+        // is still its alignment, as on id lines.
+        let specs = legend(
+            "styles:\n  \
+             Normal: Times New Roman 11pt, left\n  \
+             Quote: Times New Roman 11pt, indent 0.5in, right 0.5in, named Quote Text\n  \
+             Flush: Times New Roman 11pt, right\n  \
+             Back: Times New Roman 11pt, right 0in\n",
+        );
+        assert_eq!(specs[1].right, Some(720));
+        assert_eq!(specs[2].right, None);
+        assert_eq!(specs[2].align, Some("right"));
+        assert_eq!(specs[3].right, Some(0));
+        let out = apply("<w:styles></w:styles>", &specs);
+        let quote = style_element(&out, "Quote");
+        assert!(
+            quote.contains("<w:ind w:left=\"720\" w:right=\"720\"/>"),
+            "{quote}"
+        );
+        let flush = style_element(&out, "Flush");
+        assert!(flush.contains("<w:jc w:val=\"right\"/>"), "{flush}");
+        assert!(!flush.contains("<w:ind"), "{flush}");
+        // An explicit zero is kept, as `indent 0in` is: the source said it.
+        let back = style_element(&out, "Back");
+        assert!(back.contains("<w:ind w:right=\"0\"/>"), "{back}");
+    }
+
+    #[test]
     fn a_theme_font_in_the_defaults_is_not_the_named_font() {
         // Word draws the theme's font where `asciiTheme` is set, whatever
         // `ascii` says, so a legend naming the `ascii` font still writes it.
@@ -1458,6 +1622,33 @@ mod tests {
         let quote = style_element(&out, "Quote");
         assert!(!quote.contains("<w:rPr"), "{quote}");
         assert!(!quote.contains("<w:pPr"), "{quote}");
+    }
+
+    #[test]
+    fn the_default_style_s_omitted_indent_is_none() {
+        // The default style's line names an indent only when it is not
+        // zero, so an omitted one is zero: a template's own default
+        // indent may not survive under it (#1498 review).
+        let styles = "<w:styles><w:docDefaults><w:pPrDefault><w:pPr>\
+            <w:ind w:left=\"360\" w:right=\"720\" w:hanging=\"360\"/>\
+            </w:pPr></w:pPrDefault></w:docDefaults></w:styles>";
+        let out = apply(
+            styles,
+            &legend("styles:\n  Normal: Calibri 11pt, left\n  Quote: Calibri 11pt, left\n"),
+        );
+        let normal = style_element(&out, "Normal");
+        assert!(
+            normal.contains("<w:ind w:left=\"0\" w:right=\"0\" w:hanging=\"0\"/>"),
+            "{normal}"
+        );
+        // A style based on the default inherits its zeros.
+        assert!(!style_element(&out, "Quote").contains("<w:ind"), "{out}");
+        // With no default indent there is nothing to clear.
+        let out = apply(
+            "<w:styles></w:styles>",
+            &legend("styles:\n  Normal: Calibri 11pt, left\n"),
+        );
+        assert!(!style_element(&out, "Normal").contains("<w:ind"), "{out}");
     }
 
     #[test]

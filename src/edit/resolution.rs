@@ -87,7 +87,8 @@ fn text_from_to(kind: ChangeKind, move_from: bool, text: &str, accepted: bool) -
         ChangeKind::Insertion => true,
         ChangeKind::Deletion => false,
         ChangeKind::Move => !move_from,
-        ChangeKind::Formatting => {
+        // No element is a replacement: that is a logical change's kind.
+        ChangeKind::Formatting | ChangeKind::Replacement => {
             return (text.to_string(), text.to_string());
         }
     };
@@ -324,7 +325,7 @@ fn single_line(change: &Change, accepted: bool) -> String {
                 ChangeKind::Deletion => false,
                 // A moved mark prints with its side, like text.
                 ChangeKind::Move => change.move_side != Some(crate::changes::MoveSide::From),
-                ChangeKind::Formatting => false,
+                ChangeKind::Formatting | ChangeKind::Replacement => false,
             };
             if change.kind == ChangeKind::Formatting {
                 (change.text.clone(), change.text.clone())

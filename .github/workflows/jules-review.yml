@@ -48,12 +48,19 @@ jobs:
           fail_on: never
           # An LLM verdict must never count as a human approval.
           enable_approve: "false"
+          # Correctness, security, performance, best practices and syntax,
+          # with this repository's own rules (Word parity first).
+          rules_file: .github/jules-review-rules.md
           extra_instructions: |
             Be exhaustive. Check every changed hunk for: correctness and edge cases; security
             (secrets in code or logs, injection, authz, unsafe deserialization, SSRF, path traversal);
             error handling and resource cleanup; concurrency and async misuse; performance regressions;
             missing or weakened tests for changed behaviour; breaking API or schema changes; docs that
             no longer match the code. Prefer concrete file:line findings with a fix over general advice.
+            This is a DOCX engine whose first target is Microsoft Word parity (AGENTS.md): never ask
+            jubarte to refuse, strip or rewrite an input that Word opens. ZIP part names are OPC URIs
+            read in memory and never written to disk, so file-system rules (Windows reserved names,
+            path length) do not apply to them. Do not report findings in code the PR does not change.
           ignored_paths: >-
             ["**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/bun.lock",
             "**/bun.lockb", "**/uv.lock", "**/poetry.lock", "**/Cargo.lock", "**/*.min.js",

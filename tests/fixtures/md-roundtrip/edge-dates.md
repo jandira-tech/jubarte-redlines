@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 6                       # 6 marks shown as 6 changes: 6 insertions
+revisions: 6                       # 6 marks shown as 4 changes: 4 insertions
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -16,13 +16,13 @@ styles:
 ---
 
 <!-- p0 -->
-Range: {++one ++}{r70 @AL}{++two++}{r71 @AL}.
+Range: {++one ++}{r70+71 @AL}{++two++}{r70+71 @AL}.
 
 <!-- p1 -->
 Single: {++once++}{r72 @BC}.
 
 <!-- p2 -->
-Same day: {++morning ++}{r73 @CD}{++evening++}{r74 @CD}.
+Same day: {++morning ++}{r73+74 @CD}{++evening++}{r73+74 @CD}.
 
 <!-- p3 -->
 Undated: {++whenever++}{r75 @DE}.

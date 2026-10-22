@@ -15,7 +15,7 @@
 //!
 //! Backs `jubarte compare` / `jubarte redline`, the Markdown input of
 //! [`crate::text_diff`], and the Python / WASM
-//! [`crate::markdown::redline`] binding.
+//! [`crate::markdown::redline()`] binding.
 
 use super::{
     DocxOptions, ImageLoader, MarkdownError, PageSize, TrackChanges, apply_markdown,
@@ -25,7 +25,7 @@ use crate::comparer::WmlComparerSettings;
 use crate::document_comparer::compare_documents_with_settings;
 
 /// A document side of a comparison: either a `.docx` package or a
-/// Markdown text. Backed onto [`crate::markdown::redline`] from the
+/// Markdown text. Backed onto [`crate::markdown::redline()`] from the
 /// redline command line and from the Python / WASM bindings.
 #[derive(Clone, Copy, Debug)]
 pub enum Source<'a> {
@@ -38,7 +38,8 @@ pub enum Source<'a> {
 /// How [`redline`] reads and compares two [`Source`] documents.
 ///
 /// Defaults: [`WmlComparerSettings::default`] (author
-/// `"Open-Xml-PowerTools"`; the CLI and bindings pass `Redline`,
+/// `"Open-Xml-PowerTools"`; the CLI passes `Jubarte` and the Python and
+/// WebAssembly bindings their own `Redline`,
 /// `DATE "1970-01-01T00:00:00Z"` for reproducible output, Word's own
 /// detail threshold); no reference document, no CriticMarkup recognition,
 /// no image loader.

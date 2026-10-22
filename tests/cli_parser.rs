@@ -204,7 +204,7 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         assert_eq!(result["command"], "compare");
         assert_eq!(result["args"]["original"], "real.docx");
         assert_eq!(result["args"]["modified"], "b.docx");
-        assert_eq!(result["args"]["author"], "Redline");
+        assert_eq!(result["args"]["author"], "Jubarte");
         assert_eq!(result["args"]["mode"], "word");
     }
     assert_eq!(
@@ -1679,10 +1679,6 @@ fn every_writing_task_takes_the_formats_its_output_names() {
             "--json writes the snapshot",
         ),
         (
-            vec!["read", "a.docx", "-o", "v.json", "--dates"],
-            "--dates shapes the Markdown view",
-        ),
-        (
             vec!["read", "a.docx", "-o", "v.md", "--tables"],
             "--tables prints the grids",
         ),
@@ -2257,22 +2253,21 @@ fn writer_render_options_survive_shared_parser_serialization() {
 #[test]
 fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
     for prefix in [&["read", "a.docx"][..], &["text", "a.docx"], &["a.docx"]] {
+        // A .json snapshot is --json's (#1255): --track-changes settles its
+        // text, and the view's other options change nothing in it.
+        for flags in [
+            vec!["--track-changes", "all"],
+            vec!["--track-changes", "rejected"],
+            vec!["--comments", "inline"],
+            vec!["--dates"],
+            vec!["--no-page-markers"],
+        ] {
+            let args = [prefix, &["-o", "v.json"], &flags].concat();
+            let result = parse(&args, &[]);
+            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+            assert_eq!(result["args"]["output_format"], "json", "{args:?}");
+        }
         for (output, flags, message) in [
-            (
-                "v.json",
-                vec!["--track-changes", "all"],
-                "--track-changes shapes the Markdown view",
-            ),
-            (
-                "v.json",
-                vec!["--comments", "inline"],
-                "--comments shapes the Markdown view",
-            ),
-            (
-                "v.json",
-                vec!["--dates"],
-                "--dates shapes the Markdown view",
-            ),
             ("v.json", vec!["--tables"], "--tables prints the grids"),
             ("v.md", vec!["--tables"], "--tables prints the grids"),
             ("v.unknown", vec!["--json"], "--json writes the snapshot"),
@@ -2531,6 +2526,30 @@ fn replace_help_explains_all_matches_overlap_refusal() {
 }
 
 #[test]
+fn apply_help_names_only_the_ways_apply_publishes() {
+    let flat = |action: &str| {
+        let help = Cli::try_parse_from(["jubarte", "edit", action, "--help"])
+            .unwrap_err()
+            .to_string();
+        help.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    // apply has no --save-plan: its output is required unless it bundles
+    // or dry-runs.
+    let apply = flat("apply");
+    assert!(
+        apply.contains("Primary edited DOCX; required unless bundling or dry-running"),
+        "{apply}"
+    );
+    assert!(!apply.contains("saving"), "{apply}");
+    // An inline action saves a plan instead.
+    let replace = flat("replace");
+    assert!(
+        replace.contains("Primary edited DOCX; required unless saving, bundling or dry-running"),
+        "{replace}"
+    );
+}
+
+#[test]
 fn typed_edit_help_and_facade_use_the_public_route() {
     let help = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"])
         .unwrap_err()
@@ -2645,14 +2664,12 @@ fn read_no_page_markers_accepts_structured_outputs_in_the_shared_parser() {
 
 #[test]
 fn read_view_conflict_usage_is_shared_with_bindings() {
-    for flags in [
-        vec!["--comments=inline", "--json"],
-        vec!["--dates", "-o", "snap.json"],
-    ] {
-        let result = parse(&[vec!["source.docx"], flags].concat(), &["compare"]);
-        assert_eq!(result["exit_code"], 2, "{result}");
-        assert_eq!(result["stream"], "stderr", "{result}");
-    }
+    let result = parse(
+        &["source.docx", "--track-changes=all", "--for-edit"],
+        &["compare"],
+    );
+    assert_eq!(result["exit_code"], 2, "{result}");
+    assert_eq!(result["stream"], "stderr", "{result}");
     for prefix in [
         &["read", "source.docx"][..],
         &["text", "source.docx"],
@@ -2678,6 +2695,12 @@ fn read_view_conflict_usage_is_shared_with_bindings() {
                         continue;
                     }
                     let result = parse(&args, &[]);
+                    // Only --for-edit, which settles through its own
+                    // --accept-change, refuses a view option (#1255).
+                    if flags[0] != "--track-changes=all" || output[0] != "--for-edit" {
+                        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+                        continue;
+                    }
                     assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
                     assert_eq!(result["stream"], "stderr", "{result}");
                     let text = result["text"].as_str().unwrap();
@@ -2694,4 +2717,38 @@ fn read_view_conflict_usage_is_shared_with_bindings() {
             }
         }
     }
+}
+
+#[test]
+fn edit_takes_skip_failed_and_add_does_not() {
+    let result = parse(
+        &[
+            "edit",
+            "a.docx",
+            "--plan",
+            "p.json",
+            "--skip-failed",
+            "-o",
+            "b.docx",
+        ],
+        &[],
+    );
+    assert_eq!(result["exit_code"], 0, "{result}");
+    assert_eq!(result["args"]["skip_failed"], true, "{result}");
+    let result = parse(&["edit", "a.docx", "--plan", "p.json"], &[]);
+    assert_eq!(result["args"]["skip_failed"], false, "{result}");
+    // `add` writes one paragraph or comment: nothing to skip.
+    let result = parse(
+        &[
+            "add",
+            "a.docx",
+            "-p",
+            "p0",
+            "--content",
+            "x",
+            "--skip-failed",
+        ],
+        &[],
+    );
+    assert_ne!(result["exit_code"], 0, "{result}");
 }

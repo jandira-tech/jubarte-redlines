@@ -250,7 +250,7 @@ fn each_runtime_advertises_only_dispatched_operations() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        assert_eq!(advertised.len(), 24);
+        assert_eq!(advertised.len(), 26);
         // The advertised list is checked against the real dispatcher, not a
         // second copy of the same catalog: every advertised kind must clear
         // the dispatcher's kind gate on a real document, and the gate must
@@ -310,10 +310,11 @@ fn parser_operations() -> Value {
 }
 
 /// Two body paragraphs with one existing comment: `p0` "Zero" carries
-/// `c0`, `p1` "Six" is plain. Every v2 kind resolves a target on it.
+/// `c0`, `p1` "Six" is plain. Every v2 kind resolves a target on it; `c0`
+/// is the plan author's, so `edit_comment` may change it (#1264).
 fn commented_source() -> Vec<u8> {
     let comments = format!(
-        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Other"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Ann Counsel"><w:p><w:r><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#
     );
     docx_with(
         &format!(
@@ -482,6 +483,8 @@ fn cli_v2_rows_match_prepare_v2_and_bindings_stay_on_v1() {
                     require_change: false,
                     exact_text: true,
                     role: jubarte::edit::PrimaryRole::Clean,
+                    syntax: jubarte::edit::PlanSyntax::V1,
+                    skip_failed: false,
                 },
             );
             let row_name = format!(
@@ -1057,6 +1060,32 @@ fn v1_profiles_are_closed_and_unknown_keys_are_refused() {
             .contains("unknown field \"paragraph\""),
         "a paragraph key on reply_comment must not be silently ignored"
     );
+}
+
+/// Both dialects refuse `edit_comment` on another author's comment, so
+/// every supported row of either version names the opt-in (#1264).
+#[test]
+fn edit_comment_rows_name_the_ownership_opt_in_in_both_versions() {
+    let matrix = jubarte::capabilities::discovery("cli", None, None);
+    let mut versions = std::collections::BTreeSet::new();
+    for profile in matrix["profiles"].as_array().unwrap() {
+        if profile["operation"] != "edit_comment" {
+            continue;
+        }
+        versions.insert(profile["plan_version"].as_u64().unwrap());
+        for row in profile["support"].as_array().unwrap() {
+            if row["status"] == "unsupported" {
+                continue;
+            }
+            let conditions = row["conditions"].as_str().unwrap();
+            assert!(
+                conditions.contains("; another author's comment requires rewrite_others_comments"),
+                "v{} {row}",
+                profile["plan_version"]
+            );
+        }
+    }
+    assert_eq!(versions, std::collections::BTreeSet::from([1, 2]));
 }
 
 #[test]

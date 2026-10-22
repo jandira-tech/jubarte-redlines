@@ -51,6 +51,14 @@ pub struct PlanV2 {
         skip_serializing_if = "Option::is_none"
     )]
     pub removed_anchor_comments: Option<super::RemovedAnchorComments>,
+    /// Opt-in `edit_comment` on another author's comment, which keeps that
+    /// author; refused (`COMMENT_NOT_YOURS`) when absent or false.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rewrite_others_comments: Option<bool>,
     /// Attribution for new revisions and comments; contains a non-whitespace character.
     pub author: String,
     /// Timezone-bearing RFC 3339 timestamp, retaining its supplied offset.
@@ -504,6 +512,7 @@ impl PlanV2 {
     /// field combinations; `UNSUPPORTED_SCHEMA` for another integer version.
     /// Successful parsing does not verify this request against source bytes.
     pub fn from_json(json: &str) -> Result<Self, EditError> {
+        let json = super::without_byte_order_mark(json);
         let plan: Self = serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
         plan.validate()?;
         Ok(plan)

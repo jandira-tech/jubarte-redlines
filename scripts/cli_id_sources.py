@@ -196,10 +196,26 @@ def link_calls(fns: dict[str, Fn]) -> None:
                 elif re.search(
                     rf"(?<![.\w]){name}\s*\(|::{name}\b(?!::)|value_parser\s*=\s*{name}\b|{name}\"", body
                 ):
-                    same_file = [t for t in by_name[name] if not t.impl and t.file == fn.file]
+                    free = [t for t in by_name[name] if not t.impl]
+                    same_file = [t for t in free if t.file == fn.file]
                     pathed = re.search(rf"\b{target.module.split('::')[-1]}::{name}\b", body)
-                    if target in same_file or pathed or len([t for t in by_name[name] if not t.impl]) == 1:
+                    if target in same_file or pathed or len(free) == 1 or target is in_scope(fn, free):
                         fn.calls.add(target.key)
+
+
+def in_scope(caller: Fn, candidates: list[Fn]) -> Fn | None:
+    """The namesake a bare call means when several free functions share its
+    name: the one in the caller's own module, else its nearest enclosing
+    module (what `super::` and `use super::*` reach). A private function in
+    a sibling module is not in scope."""
+    module = caller.module
+    while True:
+        for candidate in candidates:
+            if candidate.module == module:
+                return candidate
+        if not module:
+            return None
+        module = module.rpartition("::")[0]
 
 
 def attribute_uses(root: Path, name: str) -> list[str]:
@@ -233,16 +249,22 @@ def parsers(fns: dict[str, Fn]) -> list[Fn]:
     return sorted(out, key=lambda f: (f.file, f.key))
 
 
+# ids.rs constants per file, kept while the file is unchanged.
+_CONSTS_CACHE: dict[Path, tuple[int, dict[str, str]]] = {}
+
+
 def messages(fn: Fn, root: Path) -> list[str]:
     """The refusals a parser can give: its id-message literals and the ids.rs
     constants it names, spelled out."""
-    consts = dict(
-        re.findall(
-            r'pub const (\w+): &str = "([^"]*)";', (root / "src" / "ids.rs").read_text(encoding="utf-8")
-        )
-    )
+    ids = root / "src" / "ids.rs"
+    stamp = ids.stat().st_mtime_ns
+    cached = _CONSTS_CACHE.get(ids)
+    if cached is None or cached[0] != stamp:
+        cached = (stamp, dict(re.findall(r'pub const (\w+): &str = "([^"]*)";', ids.read_text(encoding="utf-8"))))
+        _CONSTS_CACHE[ids] = cached
+    consts = cached[1]
     found = [m.strip('"') for m in ID_MESSAGE.findall(fn.body)]
-    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body))) if c in consts]
+    found += [consts[c] for c in sorted(set(re.findall(r"\b([A-Z_]{6,})\b", fn.body)).intersection(consts))]
     return sorted(set(found))
 
 
@@ -296,7 +318,7 @@ def id_flags(root: Path) -> list[Flag]:
                         Flag(
                             owner,
                             name,
-                            short.group(1) if hasattr(short, "group") else short or None,
+                            short.group(1) if isinstance(short, re.Match) else short or None,
                             long.group(1) if long else name.replace("_", "-"),
                             vn,
                             value_parser.group(1) if value_parser else "",
@@ -329,7 +351,10 @@ def reaches(fns: dict[str, Fn], start: Fn, targets: set[str], limit: int = 7) ->
 
 
 def where(fn: Fn) -> str:
-    return f"`{fn.module}::{fn.key}`" if fn.module else f"`{fn.key}`"
+    # A key `functions` made unique already starts with its module.
+    if not fn.module or fn.key.startswith(f"{fn.module}::"):
+        return f"`{fn.key}`"
+    return f"`{fn.module}::{fn.key}`"
 
 
 def section(root: Path, cell) -> list[str]:

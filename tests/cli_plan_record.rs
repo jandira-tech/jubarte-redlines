@@ -99,7 +99,7 @@ fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
     let recorded = plan(dir);
     assert_eq!(recorded["operations"].as_array().unwrap().len(), 2);
     assert_eq!(recorded["source_sha256"], source_sha256(&before));
-    assert_eq!(recorded["author"], "Redline");
+    assert_eq!(recorded["author"], "Jubarte");
 
     let (code, _, err) = run(
         dir,
@@ -119,7 +119,7 @@ fn edit_and_add_record_into_one_plan_that_edit_applies_and_consumes() {
         "--consume deletes the plan"
     );
     let (_, view, _) = run(dir, &["read", "out/redline.docx"]);
-    assert!(view.contains("{~~his or her~>their~~}{r1+2 @R}"), "{view}");
+    assert!(view.contains("{~~his or her~>their~~}{r1+2 @J}"), "{view}");
     assert!(view.contains("Why 3?"), "{view}");
 }
 
@@ -224,7 +224,7 @@ fn a_recording_refuses_what_applies_later_and_what_the_plan_names_otherwise() {
     let (code, _, err) = record(&["--author", "Bob"], "letter.docx");
     assert_eq!(code, 2);
     assert!(
-        err.contains(r#"the plan's author is "Redline"; pass --author "Redline""#),
+        err.contains(r#"the plan's author is "Jubarte"; pass --author "Jubarte""#),
         "{err}"
     );
     let (code, _, err) = record(&[], "other.docx");
@@ -310,6 +310,53 @@ fn consume_keeps_the_plan_until_it_has_been_applied() {
     );
 }
 
+/// #933: apply consumes a plan only — a plain apply records nothing into
+/// the plan and deletes none of it.
+#[test]
+fn a_plain_apply_leaves_the_plan_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    letter(dir, "letter.docx", "Sections 1(g), 2(e), 3 survive.");
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "their",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let held = std::fs::read(dir.join("plan.json")).unwrap();
+    let (code, _, err) = run(
+        dir,
+        &[
+            "edit",
+            "letter.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "out.docx",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(dir.join("out.docx").is_file(), "the edit was written");
+    assert!(dir.join("plan.json").is_file(), "the plan still exists");
+    assert_eq!(
+        std::fs::read(dir.join("plan.json")).unwrap(),
+        held,
+        "apply leaves the plan byte-identical"
+    );
+    let (_, view, _) = run(dir, &["read", "out.docx"]);
+    assert!(view.contains("{~~his or her~>their~~}"), "{view}");
+}
+
 /// zcode review 06b F3, F4, F6, F8, F9.
 #[test]
 fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
@@ -351,7 +398,7 @@ fn render_flags_explicit_defaults_links_and_overwritten_plans_are_refused() {
             "--plan",
             "plan.json",
             "--author",
-            "Redline",
+            "Jubarte",
         ],
     );
     assert_eq!(code, 2);

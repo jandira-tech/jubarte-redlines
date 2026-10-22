@@ -27,6 +27,11 @@ Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
 
 ## Command line
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 The wheel installs a `jubarte-redlines` command; `uvx` runs it without
 installing anything:
 
@@ -119,7 +124,11 @@ doc.accept(ids=["r12"])           # or reject(...): resolve a selection,
 result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 ```
 
-The snapshot uses `schema_version: 2`. `summary.tables` and `tables[]`
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion and an insertion by one author that touch, in either
+order, are one `replacement`.
+`summary.tables` and `tables[]`
 count top-level body tables only; each `index` is the view's `tN`.
 Every table has a `nested` array (empty for a leaf), containing its cell tables.
 A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.

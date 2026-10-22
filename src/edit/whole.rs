@@ -294,6 +294,8 @@ fn rewrite_one(
                 for t in dom.descendants(copy, Some(&W::t())) {
                     dom.set_name(t, W::del_text());
                 }
+                settle_format(dom, copy, true);
+                settle_format(dom, item.node, false);
                 deleted.push(copy);
                 inserted.push(item.node);
             }
@@ -363,6 +365,34 @@ fn rewrite_one(
         dom.add(target, item.node);
     }
     Ok(())
+}
+
+/// A kept run's formatting change, settled for one side of the rewrite:
+/// the deleted copy (`old`) shows the text as the source had it, in the
+/// change's old properties, and the inserted run as it is now. Neither
+/// keeps the change, which describes nothing a deletion or an insertion
+/// can undo (#1375).
+fn settle_format(dom: &mut Dom, run: NodeId, old: bool) {
+    let Some(rpr) = dom.element(run, &W::r_pr()) else {
+        return;
+    };
+    let Some(change) = dom.element(rpr, &W::r_pr_change()) else {
+        return;
+    };
+    let before = dom.element(change, &W::r_pr());
+    dom.remove(change);
+    if !old {
+        return;
+    }
+    for child in dom.elements(rpr, None) {
+        dom.remove(child);
+    }
+    if let Some(before) = before {
+        for child in dom.elements(before, None) {
+            dom.remove(child);
+            dom.add(rpr, child);
+        }
+    }
 }
 
 fn flatten(dom: &Dom, p: NodeId) -> Vec<Item> {

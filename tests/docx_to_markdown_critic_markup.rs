@@ -159,10 +159,11 @@ fn every_change_names_its_author_and_date() {
         "{-- to people that--}{r0 Bo Chen (2026-09-29T15:12:00Z)}",
         // A deletion followed by a live insertion from the same author pairs.
         "{~~fonts~>font-styles~~}{r1+2 Ana Lima (2026-09-29T14:05:00Z)}",
-        // LibreOffice splits this insertion into distinct revision ids.
-        "{++**any**++}{r3 Bo Chen (2026-09-29T15:10:00Z)}{++ ++}{r4 Bo Chen (2026-09-29T15:10:00Z)}",
-        // The text and its paragraph mark, each its own mark.
-        "{--This whole paragraph was cut.--}{r5 Ana Lima (2026-09-30T09:00:00Z)}{--\n\n--}{r6 Ana Lima (2026-09-30T09:00:00Z)}",
+        // LibreOffice splits this insertion into two marks: one change,
+        // each piece tagged with the joined id.
+        "{++**any**++}{r3+4 Bo Chen (2026-09-29T15:10:00Z)}{++ ++}{r3+4 Bo Chen (2026-09-29T15:10:00Z)}",
+        // The text and its paragraph mark are one change, one piece.
+        "{--This whole paragraph was cut.\n\n--}{r5+6 Ana Lima (2026-09-30T09:00:00Z)}",
         "¶{r7 Bo Chen (2026-09-30T09:30:00Z)}\n\nsplit in two.",
     ] {
         assert!(markdown.contains(change), "{change} not in {markdown}");

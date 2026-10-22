@@ -40,6 +40,7 @@ mod anchor;
 mod anchor_error;
 mod controls;
 pub mod flags;
+mod hint;
 mod images;
 mod notes;
 mod origin;
@@ -55,16 +56,17 @@ pub mod resolution;
 mod rewrite;
 mod runs;
 mod sections;
+mod skip;
 mod structural;
 mod tracked;
+mod visible;
 mod watermark;
 mod whole;
 
-mod comment_settlement;
+pub(crate) mod comment_settlement;
 #[cfg(feature = "cli")]
 /// Compile typed inline CLI actions into the same source-bound PlanV2 contract.
 pub mod inline;
-/// Source-bound PlanV2 text-and-review requests and exact logical text codec.
 pub mod v2;
 use comment_settlement::AnchorChanges;
 pub use comment_settlement::{KeptComment, RemovedComment};
@@ -73,8 +75,9 @@ pub mod v2_apply;
 /// `read --for-edit`: the working document, hashes and readiness (V2-10).
 pub mod for_edit;
 /// The one native-key policy (`w14:paraId`, revision `w:id`) shared by
-/// generation and application for paired long IDs.
-mod native_keys;
+/// generation, application and the expectations checker for paired
+/// long IDs.
+pub(crate) mod native_keys;
 mod source_refs;
 /// Source-bound desired-text template generation over the for-edit view.
 pub mod template;
@@ -85,6 +88,8 @@ pub use anchor::{NearMatches, NearOccurrence, v2_candidates, v2_select, v2_selec
 pub use anchor_error::{AnchorRefusal, Working, v2_resolve, v2_resolve_all};
 /// Which content control a `fill_control` operation fills.
 pub use controls::ControlSelector;
+/// The request syntax a refusal hint quotes (#1108).
+pub use hint::PlanSyntax;
 /// The shared preparation path [`apply_plan`] and [`preview_plan`] run.
 pub use prepared::{
     CandidateChecks, PrepareOptions, PreparedEdit, PrimaryBytes, PrimaryRole, introduced_findings,
@@ -93,6 +98,8 @@ pub use prepared::{
 /// The `page_setup` operation's `page`, `margins_dxa`, `orientation` and
 /// `section` values.
 pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
+/// `--skip-failed`: what was left out, and the plan to fix and run.
+pub use skip::{SkippedOperation, failed_plan_json, keep_notes};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +139,12 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
+    /// Let `edit_comment` change a comment another author wrote; the
+    /// comment keeps its author, and the report notes each one. Without
+    /// it such an edit is refused (`COMMENT_NOT_YOURS`): a reply is how
+    /// one author answers another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rewrite_others_comments: bool,
 }
 
 /// Treatment of comment anchors removed by a plan's revision settlement.
@@ -156,14 +169,69 @@ impl RemovedAnchorComments {
 /// selected by both (`REVISION_CONFLICT`); both sides of a move count as
 /// one change.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "ResolveRevisionsWire", into = "ResolveRevisionsWire")]
 pub struct ResolveRevisions {
     /// Changes to accept.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept: Option<ChangeFilter>,
     /// Changes to reject (after the accepted ones).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reject: Option<ChangeFilter>,
+    /// `reject.visible`: reject them visibly instead, as our tracked
+    /// changes (a `strike` of each insertion, a `restore` of each
+    /// deletion) that Reject takes back. Needs `existing_revisions` `keep`.
+    pub reject_visible: bool,
+}
+
+/// [`ResolveRevisions`] as plans write it: `visible` inside `reject`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveRevisionsWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accept: Option<ChangeFilter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reject: Option<RejectWire>,
+}
+
+/// A [`ChangeFilter`] with `visible`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RejectWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authors: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kinds: Option<Vec<ChangeKind>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    visible: bool,
+}
+
+impl From<ResolveRevisionsWire> for ResolveRevisions {
+    fn from(wire: ResolveRevisionsWire) -> Self {
+        let reject_visible = wire.reject.as_ref().is_some_and(|r| r.visible);
+        Self {
+            accept: wire.accept,
+            reject: wire.reject.map(|r| ChangeFilter {
+                ids: r.ids,
+                authors: r.authors,
+                kinds: r.kinds,
+            }),
+            reject_visible,
+        }
+    }
+}
+
+impl From<ResolveRevisions> for ResolveRevisionsWire {
+    fn from(selection: ResolveRevisions) -> Self {
+        Self {
+            accept: selection.accept,
+            reject: selection.reject.map(|r| RejectWire {
+                ids: r.ids,
+                authors: r.authors,
+                kinds: r.kinds,
+                visible: selection.reject_visible,
+            }),
+        }
+    }
 }
 
 /// Where a source paragraph id went when the plan's revisions were settled.
@@ -174,6 +242,16 @@ pub struct ParagraphMove {
     /// The id in the output, or `null` when the paragraph is gone with its
     /// text. A paragraph merged with others maps to the merged one.
     pub to: Option<String>,
+}
+
+/// Another author's insertion the plan split to edit inside it (#1136):
+/// its source id and the ids its pieces carry in the redline.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevisionSplit {
+    /// The insertion's id in the source (`r3`).
+    pub from: String,
+    /// Its pieces' ids in the redline, in id order (`r3`, `r9`).
+    pub to: Vec<String>,
 }
 
 /// The changes `resolve_revisions` resolved, by id.
@@ -216,6 +294,11 @@ pub struct Operation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Caller-chosen operation id echoed in the report.
     pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Operations sharing a group stand or fall together under
+    /// `--skip-failed` ([`PrepareOptions::skip_failed`]); without it a
+    /// group changes nothing.
+    pub group: Option<String>,
     #[serde(flatten)]
     /// The operation.
     pub kind: OperationKind,
@@ -298,6 +381,14 @@ pub enum OperationKind {
         /// Which hit of a repeated anchor to use (1-based); required when
         /// the anchor occurs more than once.
         occurrence: Option<usize>,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the deleted text, blank is none. It is in the redline
+        /// only: the clean copy no longer holds the text.
+        comment: Option<String>,
     },
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
     /// The range may cross tabs, symbols, hyperlinks, fields, content
@@ -407,6 +498,13 @@ pub enum OperationKind {
         paragraph: Selector,
         /// The paragraph's new text, plain.
         text: String,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the rewritten paragraph, blank is none.
+        comment: Option<String>,
     },
     /// Reply to comment `comment_id`, as the plan's author; the reply is
     /// anchored on the same range. Word threads are one level deep, so a
@@ -448,6 +546,37 @@ pub enum OperationKind {
         #[serde(deserialize_with = "crate::ids::comment_id_de")]
         #[schemars(with = "crate::ids::RawCommentId")]
         comment_id: u32,
+    },
+    /// Reject another author's insertion visibly: our tracked deletion of
+    /// its words, nested inside it, so Word shows it struck under our name
+    /// and Reject of our change gives it back. Needs `existing_revisions`
+    /// `keep`.
+    #[schemars(extend("x-jubarte-keep-only" = true))]
+    Strike {
+        /// The insertion, as `changes` lists it (`r366`, `header1.r3`).
+        revision: String,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the struck words; blank is none.
+        comment: Option<String>,
+    },
+    /// Reject another author's deletion visibly: their deletion stays, and
+    /// our tracked insertion right after it holds a copy of its words,
+    /// formatting included. Needs `existing_revisions` `keep`.
+    #[schemars(extend("x-jubarte-keep-only" = true))]
+    Restore {
+        /// The deletion, as `changes` lists it (`r12`, `header1.r3`).
+        revision: String,
+        #[serde(
+            default,
+            deserialize_with = "blank_is_none",
+            skip_serializing_if = "Option::is_none"
+        )]
+        /// Comment on the restored words; blank is none.
+        comment: Option<String>,
     },
     /// Insert a table next to the anchor paragraph. Each cell holds one
     /// paragraph in the anchor's paragraph style; the redline shows the
@@ -877,8 +1006,10 @@ pub enum Side {
 /// Ids, short ids and indexes name the source's paragraphs, the ones the
 /// plan's author read, even when `resolve_revisions` or `existing_revisions`
 /// settles changes first; the text forms search the settled text. An edit
-/// anchored on text follows a paragraph into the one it merged with; a
-/// whole-paragraph edit of a merged or vanished paragraph is refused.
+/// anchored on text follows a paragraph into the one it merged with, and so
+/// does a whole-paragraph edit when that paragraph has no other source; a
+/// whole-paragraph edit of a paragraph merged with others, or of a vanished
+/// one, is refused.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
@@ -1003,13 +1134,18 @@ pub struct RevisionCounts {
     /// Formatting changes: run, paragraph, section, table and style
     /// properties.
     pub format_changed: usize,
-    /// All changes.
+    /// Replacements: a deletion and the insertion that replaces it, listed
+    /// as one change ([`ChangeKind::Replacement`]).
+    #[serde(default)]
+    pub replaced: usize,
+    /// All changes, each logical change once (#1261: a change of several
+    /// marks, or a replacement, counts one): the sum of the counts above.
     pub total: usize,
 }
 
 impl RevisionCounts {
     /// The counts of `changes`, one per listed change.
-    pub fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
+    pub(crate) fn from_changes<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Self {
         let mut counts = Self::default();
         for change in changes {
             let slot = match change.kind {
@@ -1017,6 +1153,7 @@ impl RevisionCounts {
                 ChangeKind::Deletion => &mut counts.deleted,
                 ChangeKind::Move => &mut counts.moved,
                 ChangeKind::Formatting => &mut counts.format_changed,
+                ChangeKind::Replacement => &mut counts.replaced,
             };
             *slot += 1;
             counts.total += 1;
@@ -1070,6 +1207,9 @@ pub struct EditReport {
     /// source's ids; the output documents carry these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paragraph_ids: Vec<ParagraphMove>,
+    /// Other authors' insertions the redline splits, by source id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub split_revisions: Vec<RevisionSplit>,
     /// Body paragraph count before and after.
     pub paragraphs: ParagraphDelta,
     /// One outcome per operation, in plan order.
@@ -1081,6 +1221,22 @@ pub struct EditReport {
     /// Fields whose results `update_fields` wrote into the clean copy.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<crate::fields::FieldUpdate>,
+    /// Operations `--skip-failed` left out (status `skipped`); `ok` is
+    /// false whenever one was.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped: usize,
+    /// What the plan said that jubarte read another way (`anchor` read as
+    /// `find`, …): the CLI prints each as a `note:` line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// SHA-256 of the document written, set by whoever writes it (the
+    /// CLI): the bytes a follow-up plan binds to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_sha256: Option<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl EditReport {
@@ -1160,17 +1316,41 @@ impl EditReport {
             .filter(|o| o.status == "failed")
             .count();
         let ok = self.operations.iter().filter(|o| o.status == "ok").count();
-        push(serde_json::json!({
+        // Under --skip-failed the operations that passed landed: partial.
+        let status = match (self.ok, self.skipped) {
+            (true, _) => "ok",
+            (false, 0) => "failed",
+            (false, _) if ok > 0 => "partial",
+            (false, _) => "failed",
+        };
+        let mut ops = serde_json::json!({"ok": ok, "failed": failed});
+        if self.skipped > 0 {
+            ops["skipped"] = self.skipped.into();
+        }
+        let mut summary = serde_json::json!({
             "ev": "summary",
-            "status": if self.ok { "ok" } else { "failed" },
-            "ops": {"ok": ok, "failed": failed},
+            "status": status,
+            "ops": ops,
             "paras": {"from": self.paragraphs.from, "to": self.paragraphs.to,
                       "d": self.paragraphs.to as i64 - self.paragraphs.from as i64},
             "revs": self.revisions,
             "comments": {"added": self.comments_added},
             "removed_comments": self.removed_comments,
             "kept_comments": self.kept_comments,
-        }));
+        });
+        if !self.split_revisions.is_empty() {
+            summary.as_object_mut().expect("object").insert(
+                "split_revisions".into(),
+                serde_json::to_value(&self.split_revisions).expect("serializes"),
+            );
+        }
+        if let Some(digest) = &self.output_sha256 {
+            summary["output_sha256"] = digest.clone().into();
+        }
+        if !self.notes.is_empty() {
+            summary["notes"] = self.notes.clone().into();
+        }
+        push(summary);
         out
     }
 }
@@ -1241,6 +1421,64 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
     }
 }
 
+/// A [`ChangeError`] of a `resolve_revisions` selection as the plan's error.
+fn selection_error(e: ChangeError) -> EditError {
+    match e {
+        ChangeError::UnknownChange(id) => err(
+            "UNKNOWN_CHANGE",
+            None,
+            format!("resolve_revisions: no tracked change {id}"),
+        ),
+        ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
+        ambiguous @ ChangeError::Ambiguous { .. } => err(
+            "AMBIGUOUS_CHANGE",
+            None,
+            format!("resolve_revisions: {ambiguous}"),
+        ),
+        part @ ChangeError::PartOfChange { .. } => err(
+            "INCOMPLETE_CHANGE",
+            None,
+            format!("resolve_revisions: {part}"),
+        ),
+        ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
+    }
+}
+
+/// The ids of `listed` a `resolve_revisions` side selects, in document
+/// order, a move's other side included.
+fn selected_ids(
+    listed: &[Change],
+    filter: Option<&ChangeFilter>,
+) -> Result<Vec<String>, EditError> {
+    let Some(filter) = filter else {
+        return Ok(Vec::new());
+    };
+    let filter = &filter.normalized().map_err(selection_error)?;
+    filter.check(listed).map_err(selection_error)?;
+    let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
+    Ok(listed
+        .iter()
+        .filter(|c| {
+            hit.iter()
+                .any(|h| h.id == c.id || h.move_name.is_some() && h.move_name == c.move_name)
+        })
+        .map(|c| c.id.clone())
+        .collect())
+}
+
+/// The ids `filter` itself selects in `listed`, before [`selected_ids`]
+/// adds each move's other side: the ones a receipt names as resolved.
+fn named_ids(listed: &[Change], filter: Option<&ChangeFilter>) -> Vec<String> {
+    let Some(filter) = filter.and_then(|f| f.normalized().ok()) else {
+        return Vec::new();
+    };
+    listed
+        .iter()
+        .filter(|c| filter.matches(c))
+        .map(|c| c.id.clone())
+        .collect()
+}
+
 /// Accept, then reject, the changes `resolve_revisions` selects: the new
 /// source (`None` when it selects nothing) and what was resolved.
 fn resolve_selected(
@@ -1253,40 +1491,23 @@ fn resolve_selected(
     let Some(selection) = selection else {
         return Ok((None, resolved, comments));
     };
-    let change_err = |e: ChangeError| match e {
-        ChangeError::UnknownChange(id) => err(
-            "UNKNOWN_CHANGE",
-            None,
-            format!("resolve_revisions: no tracked change {id}"),
-        ),
-        ChangeError::InvalidId(m) => err("INVALID_PLAN", None, format!("resolve_revisions: {m}")),
-        ambiguous @ ChangeError::Ambiguous { .. } => err(
-            "AMBIGUOUS_CHANGE",
-            None,
-            format!("resolve_revisions: {ambiguous}"),
-        ),
-        ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
-    };
+    let change_err = selection_error;
+    // Each side names whole changes, checked on the source: an accept can
+    // join what is left (#1261).
+    for side in [selection.accept.as_ref(), selection.reject.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        crate::changes::check_whole_changes(source, side).map_err(change_err)?;
+    }
     let listed = crate::changes::list_changes(source).map_err(change_err)?;
-    // The ids a side selects, a move's other side included.
-    let select = |filter: Option<&ChangeFilter>| -> Result<Vec<String>, EditError> {
-        let Some(filter) = filter else {
-            return Ok(Vec::new());
-        };
-        let filter = &filter.normalized().map_err(change_err)?;
-        filter.check(&listed).map_err(change_err)?;
-        let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
-        Ok(listed
-            .iter()
-            .filter(|c| {
-                hit.iter()
-                    .any(|h| h.id == c.id || h.move_name.is_some() && h.move_name == c.move_name)
-            })
-            .map(|c| c.id.clone())
-            .collect())
+    let accept = selected_ids(&listed, selection.accept.as_ref())?;
+    // A visible reject settles nothing: it is lowered to operations.
+    let reject = if selection.reject_visible {
+        Vec::new()
+    } else {
+        selected_ids(&listed, selection.reject.as_ref())?
     };
-    let accept = select(selection.accept.as_ref())?;
-    let reject = select(selection.reject.as_ref())?;
     if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
         return Err(err(
             "REVISION_CONFLICT",
@@ -1306,7 +1527,12 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Accept);
+        comments.extend(
+            removed,
+            kept,
+            crate::revision_processor::Resolution::Accept,
+            Some(&named_ids(&listed, selection.accept.as_ref())),
+        );
         bytes = document;
         resolved.accepted = accept;
     }
@@ -1324,7 +1550,12 @@ fn resolve_selected(
             policy == RemovedAnchorComments::Keep,
         )
         .map_err(change_err)?;
-        comments.extend(removed, kept, crate::revision_processor::Resolution::Reject);
+        comments.extend(
+            removed,
+            kept,
+            crate::revision_processor::Resolution::Reject,
+            Some(&named_ids(&listed, selection.reject.as_ref())),
+        );
         bytes = document;
         resolved.rejected = reject;
     }
@@ -1336,7 +1567,7 @@ fn resolve_selected(
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
 /// A selection that does not resolve is the plan's error, reported when it
 /// runs; here it leaves every change in place.
-pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
+pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     let resolved = resolve_selected(
         source,
         plan.resolve_revisions.as_ref(),
@@ -1346,6 +1577,25 @@ pub fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     .and_then(|(bytes, _, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
         .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
+}
+
+/// The replies `plan` makes to a comment on a paragraph it deletes, each
+/// as the parent's id and the deleted paragraph's id. Tracked, the reply
+/// sits on the struck text; untracked, as `--editing-mode` publishes the
+/// edit, the paragraph and the thread are gone and the reply lands nowhere.
+/// A plan that does not resolve names none here: running it reports why.
+pub fn replies_on_deleted_paragraphs(source: &[u8], plan: &EditPlan) -> Vec<(u32, Option<String>)> {
+    let Ok(lowered) = visible::lower(source, plan) else {
+        return Vec::new();
+    };
+    let plan = lowered.as_ref().unwrap_or(plan);
+    let Ok(tx) = resolved(source, plan, PlanSyntax::V1) else {
+        return Vec::new();
+    };
+    (0..plan.operations.len())
+        .filter_map(|op| tx.reply_on_deleted(op))
+        .map(|(parent, by)| (parent, tx.outcomes[by].paragraph.clone()))
+        .collect()
 }
 
 /// The document a plan edits once `resolve_revisions` and
@@ -1400,7 +1650,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
                 plan.removed_anchor_comments == RemovedAnchorComments::Keep,
             )
             .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-            comment_changes.extend(removed, kept, resolution);
+            comment_changes.extend(removed, kept, resolution, None);
             let reopened = Opened::open(&flattened).map_err(open_error)?;
             (flattened, reopened, true)
         }
@@ -1528,30 +1778,67 @@ fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditE
 }
 
 impl EditPlan {
-    /// Parse and validate a plan's JSON.
+    /// Parse and validate a plan's JSON. A field read as another (`anchor`
+    /// as `find`, …) is read without its note: [`Self::from_json_with_notes`]
+    /// returns the notes, and [`apply_plan_json`] puts them in
+    /// `EditReport.notes`.
     ///
     /// # Errors
     ///
-    /// `INVALID_PLAN` when the JSON is malformed or names an unknown field
-    /// or operation kind; `UNSUPPORTED_SCHEMA` when `schema_version` differs
-    /// from [`SCHEMA_VERSION`].
+    /// As [`Self::from_json_with_notes`].
     pub fn from_json(json: &str) -> Result<Self, EditError> {
-        let value: serde_json::Value =
-            serde_json::from_str(json).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
-        check_operation_keys(&value)?;
-        let plan: Self =
-            serde_json::from_value(value).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
-        if plan.schema_version != SCHEMA_VERSION {
+        Self::from_json_with_notes(json).map(|(plan, _)| plan)
+    }
+
+    /// Parse and validate a plan's JSON, with a note for each field read
+    /// as another: `anchor` as `find` on `replace`, `delete` and `comment`,
+    /// and `comment` as `text` on `comment` and `reply_comment`.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_PLAN` when the JSON is malformed or more than one value,
+    /// lacks `schema_version`, or names an unknown field or operation kind:
+    /// the message names the operation, its kind, the fields the kind takes
+    /// and the nearest one. `UNSUPPORTED_SCHEMA` when `schema_version`
+    /// differs from [`SCHEMA_VERSION`].
+    pub fn from_json_with_notes(json: &str) -> Result<(Self, Vec<String>), EditError> {
+        let json = without_byte_order_mark(json);
+        let mut value = plan_value(json)?;
+        let Some(version) = value.get("schema_version") else {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("schema_version is required ({SCHEMA_VERSION} for this build)"),
+            ));
+        };
+        if let Some(version) = version.as_u64().filter(|v| *v != u64::from(SCHEMA_VERSION)) {
             return Err(err(
                 "UNSUPPORTED_SCHEMA",
                 None,
-                format!(
-                    "schema_version {} is not supported (expected {SCHEMA_VERSION})",
-                    plan.schema_version
-                ),
+                format!("schema_version {version} is not supported (expected {SCHEMA_VERSION})"),
             ));
         }
-        Ok(plan)
+        check_plan_keys(&value)?;
+        check_change_filters(&value)?;
+        let notes = check_operations(&mut value)?;
+        // Each operation is read on its own, so its error names it.
+        let operations = match value.get_mut("operations") {
+            Some(serde_json::Value::Array(operations)) => std::mem::take(operations),
+            _ => Vec::new(),
+        };
+        let mut plan: Self =
+            serde_json::from_value(value).map_err(|e| err("INVALID_PLAN", None, e.to_string()))?;
+        plan.operations = operations
+            .into_iter()
+            .enumerate()
+            .map(|(i, op)| {
+                let label = operation_label(i, &op);
+                let kind = op["kind"].as_str().unwrap_or_default().to_string();
+                serde_json::from_value(op)
+                    .map_err(|e| err("INVALID_PLAN", Some(label.as_str()), format!("{kind}: {e}")))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok((plan, notes))
     }
 
     /// Serialize the plan.
@@ -1563,7 +1850,7 @@ impl EditPlan {
 /// The legacy dispatcher contract, derived from its typed Serde operations.
 /// Native, Python and WASM all dispatch through `apply_plan_json` / `apply_plan`.
 /// The parser's key gate and capability discovery share these exact field facts.
-pub fn operation_schemas() -> &'static [serde_json::Value] {
+pub(crate) fn operation_schemas() -> &'static [serde_json::Value] {
     static SCHEMAS: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(|| {
         let settings = schemars::generate::SchemaSettings::draft2020_12()
             .with(|s| s.inline_subschemas = true)
@@ -1583,6 +1870,12 @@ pub fn operation_schemas() -> &'static [serde_json::Value] {
             .clone();
         for variant in &mut variants {
             variant["properties"]["id"] = common["properties"]["id"].clone();
+            variant["properties"]["group"] = common["properties"]["group"].clone();
+            // A failed plan's note; read and ignored.
+            variant["properties"]["why"] = serde_json::json!({
+                "type": "string",
+                "description": "Why `--skip-failed` left this operation out; ignored."
+            });
             // Closed as `check_operation_keys` is: a key outside these
             // properties (besides the flattened `id`) is an error, not a
             // silently ignored extra.
@@ -1604,6 +1897,15 @@ pub fn dispatched_operation_kinds() -> Vec<String> {
                 .to_string()
         })
         .collect()
+}
+
+/// The operation answers another author's revision beside it, so it runs
+/// only when the plan keeps revisions (`strike`, `restore`).
+pub(crate) fn operation_needs_keep(kind: &str) -> bool {
+    operation_schemas()
+        .iter()
+        .find(|s| s["properties"]["kind"]["const"] == kind)
+        .is_some_and(|s| s["x-jubarte-keep-only"] == true)
 }
 
 pub(crate) fn operation_supports_keep(kind: &str) -> bool {
@@ -1636,68 +1938,123 @@ fn exactly_one(fields: &[&str]) -> serde_json::Value {
     )
 }
 
-/// Allowed keys per operation kind; serde's `flatten` cannot deny unknown
-/// fields itself, and a misspelled key must not silently change meaning.
-fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
-    const COMMON: &[&str] = &["id", "kind"];
-    let Some(ops) = plan.get("operations").and_then(|o| o.as_array()) else {
-        return Ok(());
-    };
-    for (i, op) in ops.iter().enumerate() {
-        let Some(map) = op.as_object() else {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}] is not an object"),
-            ));
+/// The top-level fields of a plan, as [`EditPlan`] reads them.
+const PLAN_FIELDS: &[&str] = &[
+    "author",
+    "date",
+    "existing_revisions",
+    "initials",
+    "operations",
+    "removed_anchor_comments",
+    "resolve_revisions",
+    "rewrite_others_comments",
+    "schema_version",
+    "source_sha256",
+    "update_fields",
+];
+
+/// A field one kind's operations take under another name, read as meant
+/// with a note: (written, read as, kinds).
+const ALIASES: &[(&str, &str, &[&str])] = &[
+    ("comment", "text", &["comment", "reply_comment"]),
+    ("anchor", "find", &["replace", "delete", "comment"]),
+];
+
+/// `json` without a leading byte order mark, which RFC 8259 (§8.1) lets a
+/// parser ignore: editors that save UTF-8 with one write it first.
+pub(crate) fn without_byte_order_mark(json: &str) -> &str {
+    json.strip_prefix('\u{feff}').unwrap_or(json)
+}
+
+/// The plan's JSON: one value, an object, with nothing after it.
+fn plan_value(json: &str) -> Result<serde_json::Value, EditError> {
+    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        // One whole value parses: what the parser refused follows it.
+        let whole = serde_json::Deserializer::from_str(json)
+            .into_iter::<serde::de::IgnoredAny>()
+            .next()
+            .is_some_and(|first| first.is_ok());
+        let message = if whole {
+            format!(
+                "the plan must be exactly one JSON object; characters follow it at line {} column {}",
+                e.line(),
+                e.column()
+            )
+        } else {
+            e.to_string()
         };
-        let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-        let Some(schema) = operation_schemas()
-            .iter()
-            .find(|schema| schema["properties"]["kind"]["const"] == kind)
-        else {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}]: unknown kind {kind:?}"),
-            ));
-        };
-        let allowed = schema["properties"]
-            .as_object()
-            .expect("operation properties");
-        let refusal = match kind {
-            "list" => Some("takes paragraphs, not paragraph"),
-            "watermark" => Some("a watermark takes no paragraph"),
-            "settings" => Some("settings take no paragraph"),
-            _ => None,
-        };
-        if let Some(message) = refusal.filter(|_| map.contains_key("paragraph")) {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}] ({kind}): {message}"),
-            ));
-        }
-        if kind == "fill_control" && map.contains_key("paragraph") {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}] (fill_control): selects a control, not a paragraph"),
-            ));
-        }
-        if kind == "page_setup" && map.contains_key("paragraph") {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                format!("operations[{i}] (page_setup): sections take no paragraph"),
-            ));
-        }
-        for key in map.keys() {
-            if !COMMON.contains(&key.as_str()) && !allowed.contains_key(key) {
+        err("INVALID_PLAN", None, message)
+    })?;
+    if !value.is_object() {
+        return Err(err(
+            "INVALID_PLAN",
+            None,
+            format!(
+                "the plan must be exactly one JSON object, not {}",
+                json_kind(&value)
+            ),
+        ));
+    }
+    Ok(value)
+}
+
+/// What a JSON value is, for a message.
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
+}
+
+/// The name an error gives operation `i`: its `id`, else `op-N` as the
+/// report names it.
+fn operation_label(i: usize, op: &serde_json::Value) -> String {
+    op.get("id")
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| format!("op-{}", i + 1), str::to_string)
+}
+
+/// The plan's own fields: an unknown one names the fields and the nearest.
+fn check_plan_keys(plan: &serde_json::Value) -> Result<(), EditError> {
+    let map = plan.as_object().expect("plan_value checked an object");
+    match map.keys().find(|key| !PLAN_FIELDS.contains(&key.as_str())) {
+        Some(key) => Err(err(
+            "INVALID_PLAN",
+            None,
+            unknown_field(key, PLAN_FIELDS, None),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// `unknown field "key"; did you mean "nearest"? fields: …`.
+fn unknown_field(key: &str, fields: &[&str], meant: Option<&str>) -> String {
+    let hint = nearest(key, fields, meant)
+        .map(|name| format!("did you mean {name:?}? "))
+        .unwrap_or_default();
+    format!("unknown field {key:?}; {hint}fields: {}", fields.join(", "))
+}
+
+/// `resolve_revisions.accept.ids` (and `authors`, `kinds`) are arrays; a
+/// single string is the slip worth naming.
+fn check_change_filters(plan: &serde_json::Value) -> Result<(), EditError> {
+    for side in ["accept", "reject"] {
+        for key in ["ids", "authors", "kinds"] {
+            if let Some(one) = plan
+                .pointer(&format!("/resolve_revisions/{side}/{key}"))
+                .and_then(serde_json::Value::as_str)
+            {
                 return Err(err(
                     "INVALID_PLAN",
                     None,
-                    format!("operations[{i}] ({kind}): unknown field {key:?}"),
+                    format!(
+                        "resolve_revisions.{side}.{key} is an array: write {}",
+                        serde_json::json!([one])
+                    ),
                 ));
             }
         }
@@ -1705,14 +2062,213 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
     Ok(())
 }
 
-/// Apply a plan given as JSON: [`EditPlan::from_json`], then [`apply_plan`].
+/// Each operation's fields against its kind's schema (the table
+/// `capabilities` lists): an error names the operation, its kind, the
+/// fields the kind takes and the nearest one. Serde's `flatten` cannot
+/// deny unknown fields itself, and a misspelled key must not silently
+/// change meaning. The [`ALIASES`] are read as meant, each with a note,
+/// and a failed plan's `why` is dropped: a note for whoever fixes it.
+fn check_operations(plan: &mut serde_json::Value) -> Result<Vec<String>, EditError> {
+    const COMMON: &[&str] = &["id", "kind", "group", "why"];
+    let mut notes = Vec::new();
+    let Some(ops) = plan
+        .get_mut("operations")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(notes);
+    };
+    let kinds = dispatched_operation_kinds();
+    let kind_names: Vec<&str> = kinds.iter().map(String::as_str).collect();
+    for (i, op) in ops.iter_mut().enumerate() {
+        let label = operation_label(i, op);
+        let invalid = |message: String| err("INVALID_PLAN", Some(label.as_str()), message);
+        let what = json_kind(op);
+        let Some(map) = op.as_object_mut() else {
+            return Err(invalid(format!(
+                "an operation is a JSON object, not {what}"
+            )));
+        };
+        match map.get("id") {
+            Some(serde_json::Value::Number(n)) => {
+                return Err(invalid(format!(
+                    "id is a string, not a number: write \"{n}\""
+                )));
+            }
+            Some(id) if !id.is_string() => {
+                return Err(invalid(format!("id is a string, not {}", json_kind(id))));
+            }
+            _ => {}
+        }
+        let kind = match map.get("kind") {
+            Some(serde_json::Value::String(kind)) => kind.clone(),
+            None => {
+                return Err(invalid(format!(
+                    "kind is required; kinds: {}",
+                    kinds.join(", ")
+                )));
+            }
+            Some(other) => {
+                return Err(invalid(format!(
+                    "kind is a string, not {}; kinds: {}",
+                    json_kind(other),
+                    kinds.join(", ")
+                )));
+            }
+        };
+        let Some(schema) = operation_schemas()
+            .iter()
+            .find(|schema| schema["properties"]["kind"]["const"] == kind.as_str())
+        else {
+            let hint = nearest(&kind, &kind_names, None)
+                .map(|name| format!("did you mean {name:?}? "))
+                .unwrap_or_default();
+            return Err(invalid(format!(
+                "unknown kind {kind:?}; {hint}kinds: {}",
+                kinds.join(", ")
+            )));
+        };
+        for (written, read, takes) in ALIASES {
+            if takes.contains(&kind.as_str())
+                && !map.contains_key(*read)
+                && let Some(value) = map.remove(*written)
+            {
+                map.insert((*read).to_string(), value);
+                notes.push(format!(
+                    "{label} ({kind}): field {written:?} is read as {read:?}"
+                ));
+            }
+        }
+        let refusal = match kind.as_str() {
+            "list" => Some("takes paragraphs, not paragraph"),
+            "watermark" => Some("a watermark takes no paragraph"),
+            "settings" => Some("settings take no paragraph"),
+            "fill_control" => Some("selects a control, not a paragraph"),
+            "page_setup" => Some("sections take no paragraph"),
+            _ => None,
+        };
+        if let Some(message) = refusal.filter(|_| map.contains_key("paragraph")) {
+            return Err(invalid(format!("{kind}: {message}")));
+        }
+        let allowed = schema["properties"]
+            .as_object()
+            .expect("operation properties");
+        let fields: Vec<&str> = allowed
+            .keys()
+            .map(String::as_str)
+            .filter(|field| !COMMON.contains(field))
+            .collect();
+        if let Some(key) = map
+            .keys()
+            .find(|key| !COMMON.contains(&key.as_str()) && !allowed.contains_key(*key))
+        {
+            if let Some((_, read, _)) = ALIASES.iter().find(|(written, read, takes)| {
+                written == key && takes.contains(&kind.as_str()) && map.contains_key(*read)
+            }) {
+                return Err(invalid(format!(
+                    "{kind}: {key:?} is read as {read:?}, which the operation gives too: drop one"
+                )));
+            }
+            // A name the operation already gives is no suggestion.
+            let absent: Vec<&str> = fields
+                .iter()
+                .copied()
+                .filter(|field| !map.contains_key(*field))
+                .collect();
+            let hint = nearest(key, &absent, meant_field(&kind, key))
+                .map(|name| format!("did you mean {name:?}? "))
+                .unwrap_or_default();
+            return Err(invalid(format!(
+                "{kind}: unknown field {key:?}; {hint}fields: {}",
+                fields.join(", ")
+            )));
+        }
+        for key in ["paragraph", "like", "through"] {
+            if let Some(n) = map.get(key).filter(|v| v.is_number()) {
+                return Err(invalid(format!(
+                    "{kind}: {key} is a selector, not a number: write {}",
+                    index_selector(n)
+                )));
+            }
+        }
+        if let Some(n) = map
+            .get("paragraphs")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|list| list.iter().find(|v| v.is_number()))
+        {
+            return Err(invalid(format!(
+                "{kind}: paragraphs holds selectors, not numbers: write {}",
+                index_selector(n)
+            )));
+        }
+        map.remove("why");
+    }
+    Ok(notes)
+}
+
+/// The selector a bare paragraph number meant: `{"index": n}` for a whole
+/// number from 0, else what an index is.
+fn index_selector(n: &serde_json::Value) -> String {
+    n.as_u64().map_or_else(
+        || r#"{"index": N}, N a whole number from 0"#.to_string(),
+        |n| format!(r#"{{"index": {n}}}"#),
+    )
+}
+
+/// The field a plan gives another one's name: `text` for a replacement,
+/// `comment` for a comment's text, `anchor` for `find`.
+/// `text` on `replace` is no alias, only a hint: `text` is what `insert`
+/// and `rewrite` take, so the slip is named rather than read.
+fn meant_field(kind: &str, key: &str) -> Option<&'static str> {
+    match (kind, key) {
+        ("replace", "text") => Some("replacement"),
+        (_, "comment") => Some("text"),
+        (_, "anchor") => Some("find"),
+        _ => None,
+    }
+}
+
+/// The name a slip most likely meant: `meant` when it is one of `names`,
+/// else the closest by edit distance within a third of the slip's length.
+fn nearest<'a>(key: &str, names: &[&'a str], meant: Option<&str>) -> Option<&'a str> {
+    if let Some(name) = meant.and_then(|m| names.iter().copied().find(|name| *name == m)) {
+        return Some(name);
+    }
+    let limit = (key.chars().count() / 3).max(1);
+    names
+        .iter()
+        .map(|name| (edit_distance(key, name), *name))
+        .filter(|(distance, _)| *distance <= limit)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, name)| name)
+}
+
+/// Levenshtein distance between two names, by characters.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (above + 1)
+                .min(row[j] + 1)
+                .min(diagonal + usize::from(ca != *cb));
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
+/// Apply a plan given as JSON: [`EditPlan::from_json_with_notes`], then
+/// [`apply_plan`]; the report's `notes` name each field read as another.
 ///
 /// # Errors
 ///
 /// `INVALID_PLAN` and `UNSUPPORTED_SCHEMA` from parsing the plan, and every
 /// error [`apply_plan`] reports.
 pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, EditError> {
-    apply_plan(source, &EditPlan::from_json(plan_json)?)
+    apply_plan_json_with(source, plan_json, &PrepareOptions::default())
 }
 
 /// [`apply_plan_json`] with the shared preparation's options:
@@ -1729,7 +2285,11 @@ pub fn apply_plan_json_with(
     plan_json: &str,
     options: &PrepareOptions,
 ) -> Result<EditResult, EditError> {
-    prepared::prepare(source, &EditPlan::from_json(plan_json)?, options).map(|p| p.result)
+    let (plan, mut notes) = EditPlan::from_json_with_notes(plan_json)?;
+    let mut result = prepared::prepare(source, &plan, options)?.result;
+    notes.append(&mut result.report.notes);
+    result.report.notes = notes;
+    Ok(result)
 }
 
 /// Resolve and apply the plan; compare source and copy into a redline.
@@ -1750,8 +2310,9 @@ pub fn apply_plan_json_with(
 /// `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE` and
 /// `AMBIGUOUS_CHANGE` while settling revisions; `ANCHOR_NOT_FOUND`,
 /// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,
-/// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,
-/// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`
+/// `COMMENT_NOT_YOURS`, `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`,
+/// `PARAGRAPH_RESOLVED`, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and
+/// `UNSUPPORTED_IMAGE`
 /// while resolving and applying operations; `UNSUPPORTED` for a `settings`
 /// operation with a protection password. `FIELDS_FAILED` when field
 /// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be
@@ -1779,12 +2340,28 @@ fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
 /// it: what `add --plan` runs on each recorded operation, so recording a
 /// long plan never re-applies it.
 pub fn check_plan(source: &[u8], plan: &EditPlan) -> Result<(), EditError> {
-    resolved(source, plan).map(|_| ())
+    check_plan_quoting(source, plan, PlanSyntax::V1)
 }
 
-fn resolved<'a>(source: &'a [u8], plan: &'a EditPlan) -> Result<Transaction<'a>, EditError> {
+/// [`check_plan`], its refusals quoting their routes in `syntax`: the
+/// flags `add --plan` records come back as flags.
+pub fn check_plan_quoting(
+    source: &[u8],
+    plan: &EditPlan,
+    syntax: PlanSyntax,
+) -> Result<(), EditError> {
+    let lowered = visible::lower(source, plan)?;
+    resolved(source, lowered.as_ref().unwrap_or(plan), syntax).map(|_| ())
+}
+
+fn resolved<'a>(
+    source: &'a [u8],
+    plan: &'a EditPlan,
+    syntax: PlanSyntax,
+) -> Result<Transaction<'a>, EditError> {
     check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
+    tx.syntax = syntax;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.emits_directly()?;
@@ -1816,7 +2393,7 @@ pub fn preview_plan_with(
 
 /// The comparer's redline holds this edit's changes only: all of them.
 fn revision_counts(redline: &[u8]) -> RevisionCounts {
-    RevisionCounts::from_changes(&crate::changes::list_changes(redline).unwrap_or_default())
+    RevisionCounts::from_changes(&crate::changes::list_logical_changes(redline).unwrap_or_default())
 }
 
 /// A text edit scheduled on one paragraph, in source projection bytes.
@@ -1953,6 +2530,26 @@ enum Resolved {
     PageSetup {
         targets: sections::Targets,
     },
+    /// The comment of a `strike` or a `delete`, on the words `[start, end)`
+    /// of `para` (source offsets) it deletes: anchored before they are
+    /// deleted, in the redline only, as a commented paragraph deletion's.
+    StrikeComment {
+        para: usize,
+        start: usize,
+        end: usize,
+    },
+    /// A `restore`: plain copies of deletion `wid`'s runs right after it
+    /// (projection offset `at`), inserted as ours in the redline.
+    Restore {
+        para: usize,
+        /// The deletion's `w:id`.
+        wid: String,
+        at: usize,
+        /// The copies' text, as the projection reads it.
+        text: String,
+        /// Comment text anchored on the copies.
+        comment: Option<String>,
+    },
 }
 
 /// What a thread operation does to an existing comment.
@@ -2022,10 +2619,16 @@ struct Transaction<'p> {
     origin: Option<origin::Origin>,
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
+    /// `(paragraph, start, end)` a `replace` names, by operation, where
+    /// its diff wrote only some of it: other operations conflict with the
+    /// whole range, its kept words too.
+    claims: BTreeMap<usize, (usize, usize, usize)>,
     /// While an operation naming `cN.text` resolves: `N` and the span of
     /// its paragraph's projection the comment covers. Anchors are looked
     /// up there only.
     anchor_window: std::cell::Cell<Option<(u32, usize, usize)>>,
+    /// The request syntax refusals quote (#1108).
+    syntax: PlanSyntax,
     comments: Vec<(u32, String)>,
     /// `(comment id, operation)` of each commented paragraph deletion.
     deletion_comments: Vec<(u32, usize)>,
@@ -2044,6 +2647,9 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
+    /// Another author's comments `edit_comment` rewrites under
+    /// `rewrite_others_comments`: (outcome index, comment id, author).
+    rewritten: Vec<(usize, u32, String)>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
     /// The body's content controls, in document order.
@@ -2091,6 +2697,7 @@ impl<'p> Transaction<'p> {
         if plan.author.trim().is_empty() {
             return Err(err("INVALID_PLAN", None, "author must be nonempty"));
         }
+        visible::check_keep(plan)?;
         let probe = Opened::open(source).map_err(open_error)?;
         if probe
             .pkg
@@ -2105,6 +2712,7 @@ impl<'p> Transaction<'p> {
             ));
         }
         let source_bytes = source;
+        let source_comment_max = existing_comment_ids(&probe);
         let Settled {
             mut base,
             mut opened,
@@ -2151,7 +2759,11 @@ impl<'p> Transaction<'p> {
                 .collect::<String>()
                 .to_uppercase()
         });
-        let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        // Above the source's ids too: an id the settling removed never
+        // names a new comment in the same report (#1264).
+        let next_comment_id = existing_comment_ids(&opened)
+            .max(source_comment_max)
+            .map_or(0, |max| u64::from(max) + 1);
         let controls = crate::inspect::body_control_nodes(&opened.dom, opened.body);
         let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
@@ -2175,7 +2787,9 @@ impl<'p> Transaction<'p> {
             origin,
             outcomes: Vec::new(),
             resolved: Vec::new(),
+            claims: BTreeMap::new(),
             anchor_window: std::cell::Cell::new(None),
+            syntax: PlanSyntax::default(),
             comments: Vec::new(),
             deletion_comments: Vec::new(),
             preset_comment_ids: Vec::new(),
@@ -2186,6 +2800,7 @@ impl<'p> Transaction<'p> {
             needed_styles: std::collections::BTreeSet::new(),
             family: Some(family),
             reply_parents: BTreeMap::new(),
+            rewritten: Vec::new(),
             watermark: None,
             controls,
             control_records,
@@ -2201,7 +2816,18 @@ impl<'p> Transaction<'p> {
     /// cannot track (a footnote, an image). `update_fields` refreshes only
     /// the clean copy, which the emitted redline would then not accept to:
     /// refused beside such an edit, as under keep.
+    ///
+    /// The comparer also places a bookmark, comment or permission marker by
+    /// the words around it, so an edit right beside one (or over one) can
+    /// carry it into the new insertion, or drop it from the rejected side:
+    /// such a plan is emitted too, and its new words join no range (#1156).
+    /// Under `update_fields` it is compared, as before: a heading the TOC
+    /// lists holds its `_Toc` bookmark around its text, and renaming it is
+    /// what a plan refreshing the TOC does.
     fn emits_directly(&self) -> Result<bool, EditError> {
+        if !tracked::emits_all(self) {
+            return Ok(false);
+        }
         // The comparer resolves compatibility branches before comparing.
         // Emit edits beside raw AC tables directly so an untouched Fallback
         // survives, as it does under keep.
@@ -2221,16 +2847,64 @@ impl<'p> Transaction<'p> {
                         )
                         .is_empty()
             });
-        let emit =
-            (self.edits_a_comment_range() || has_alternate_table) && tracked::emits_all(self);
-        if emit && self.plan.update_fields {
-            return Err(err(
-                "INVALID_PLAN",
-                None,
-                "update_fields cannot be combined with replacing the text a comment covers; refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
-            ));
+        if self.edits_a_comment_range() || has_alternate_table {
+            if self.plan.update_fields {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    "update_fields cannot be combined with replacing the text a comment covers; refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
+                ));
+            }
+            return Ok(true);
         }
-        Ok(emit)
+        Ok(!self.plan.update_fields && self.edits_beside_a_range_marker())
+    }
+
+    /// Whether a text edit writes new words beside a range marker: one in
+    /// a word the edit touches (the comparer rewrites whole words), or one
+    /// at body level next to the paragraph's first or last character. A
+    /// comment's marker inside the text a replacement removes does not
+    /// count: a replacement of the text a comment covers is
+    /// [`Self::edits_a_comment_range`], and the comparer takes a comment
+    /// whose words an edit removes into the deletion, as Word does. One at
+    /// the replaced text's edge, or further into its word, counts.
+    fn edits_beside_a_range_marker(&self) -> bool {
+        let separators = crate::comparer::WmlComparerSettings::default().word_separators;
+        self.resolved.iter().any(|(_, r)| match r {
+            Resolved::Text {
+                para,
+                start,
+                end,
+                replacement,
+                ..
+            } if !replacement.is_empty() => {
+                let text = &self.projections[*para].text;
+                let (from, to) = word_window(text, *start, *end, &separators);
+                let marks = self.range_marks(*para);
+                marks.iter().any(|(name, _, at)| {
+                    (from..=to).contains(at)
+                        && !(name.starts_with("comment") && (*start + 1..*end).contains(at))
+                }) || (from == 0 && self.body_level_marker_beside(*para, true))
+                    || (to == text.len() && self.body_level_marker_beside(*para, false))
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether a range marker sits at body level right before (or after)
+    /// paragraph `para`.
+    fn body_level_marker_beside(&self, para: usize, before: bool) -> bool {
+        let dom = &self.opened.dom;
+        let node = self.paragraph_nodes[para];
+        let beside = if before {
+            dom.nodes_before_self(node)
+                .into_iter()
+                .rev()
+                .find(|&n| dom.is_element(n))
+        } else {
+            dom.next_element(node)
+        };
+        beside.is_some_and(|n| range_marker(dom, n).is_some())
     }
 
     /// Whether the plan names a comment's text (`cN.text`), or one of its
@@ -2276,6 +2950,23 @@ impl<'p> Transaction<'p> {
     fn comment_marks(&self, para: usize) -> Vec<(String, bool, usize)> {
         #[cfg(test)]
         COMMENT_MARK_SCANS.with(|scans| scans.set(scans.get() + 1));
+        self.range_marks(para)
+            .into_iter()
+            .filter_map(|(name, id, offset)| {
+                let starts = match name {
+                    "commentRangeStart" => true,
+                    "commentRangeEnd" => false,
+                    _ => return None,
+                };
+                Some((id?, starts, offset))
+            })
+            .collect()
+    }
+
+    /// Each range marker of paragraph `para` (see [`range_marker`]), in
+    /// document order: its local name, its `w:id`, and its projection
+    /// offset.
+    fn range_marks(&self, para: usize) -> Vec<(&'static str, Option<String>, usize)> {
         let dom = &self.opened.dom;
         let mut ends = BTreeMap::new();
         for segment in &self.projections[para].segments {
@@ -2292,16 +2983,9 @@ impl<'p> Transaction<'p> {
                 offset = end;
                 continue;
             }
-            let Some(name) = dom.name(node).filter(|n| n.namespace_name() == W::URI) else {
-                continue;
-            };
-            let starts = match name.local_name() {
-                "commentRangeStart" => true,
-                "commentRangeEnd" => false,
-                _ => continue,
-            };
-            if let Some(id) = dom.attribute(node, &W::id()) {
-                marks.push((id.to_string(), starts, offset));
+            if let Some(name) = range_marker(dom, node) {
+                let id = dom.attribute(node, &W::id()).map(str::to_string);
+                marks.push((name, id, offset));
             }
         }
         marks
@@ -2508,6 +3192,7 @@ impl<'p> Transaction<'p> {
                 .as_ref()
                 .map(|o| o.moves(|p| self.paragraph_id(p)))
                 .unwrap_or_default(),
+            split_revisions: Vec::new(),
             paragraphs: ParagraphDelta {
                 from: self.body_paragraph_count(),
                 to: self.body_paragraph_count(),
@@ -2516,7 +3201,64 @@ impl<'p> Transaction<'p> {
             comments_added: self.comments_added,
             revisions: RevisionCounts::default(),
             fields: Vec::new(),
+            skipped: 0,
+            notes: self.rewrite_notes(),
+            output_sha256: None,
         }
+    }
+
+    /// New comments take ids above every comment `source` defines, as
+    /// [`Self::start`] does when it settles the source itself.
+    fn skip_comment_ids_of(&mut self, source: &[u8]) -> Result<(), EditError> {
+        let opened = Opened::open(source).map_err(open_error)?;
+        if let Some(max) = existing_comment_ids(&opened) {
+            self.next_comment_id = self.next_comment_id.max(u64::from(max) + 1);
+        }
+        Ok(())
+    }
+
+    /// One note per comment of another author an `edit_comment` rewrote
+    /// under `rewrite_others_comments`: their name now carries our words.
+    fn rewrite_notes(&self) -> Vec<String> {
+        self.rewritten
+            .iter()
+            .filter_map(|(i, comment, author)| {
+                let outcome = self.outcomes.get(*i).filter(|o| o.status == "ok")?;
+                let what = if author.is_empty() {
+                    format!("c{comment} names no author; its words were changed")
+                } else {
+                    format!(
+                        "c{comment} is by {author:?}; their words were changed under their name"
+                    )
+                };
+                Some(format!("{} (edit_comment): {what}", outcome.id))
+            })
+            .collect()
+    }
+
+    /// Record each `edit_comment` among `resolved` (the operation whose
+    /// outcome will be `outcomes[outcome]`) that changes a comment not the
+    /// plan author's, for [`Self::rewrite_notes`]: v1 and v2 alike.
+    pub(crate) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
+        for r in resolved {
+            if let Resolved::Thread {
+                op: ThreadOp::Edit { id: comment, .. },
+                ..
+            } = r
+                && let Some(family) = &self.family
+                && let Some(author) = self.not_own_comment(family, *comment)
+            {
+                self.rewritten.push((outcome, *comment, author));
+            }
+        }
+    }
+
+    /// The author of comment `id` when it is not the plan author's, `""`
+    /// for one that names no author: only a comment that names the plan's
+    /// author is its own (#1264).
+    fn not_own_comment(&self, family: &crate::comments::CommentFamily, id: u32) -> Option<String> {
+        let author = family.author(id).unwrap_or_default();
+        (author != self.plan.author).then(|| author.to_string())
     }
 
     /// Resolve every operation against the untouched source; the first
@@ -2536,16 +3278,19 @@ impl<'p> Transaction<'p> {
                         .map(|c| (n, c.start, c.end))
                 });
             self.anchor_window.set(window);
+            let mut claim = None;
             let result = match &op.kind {
-                OperationKind::Rewrite { paragraph, text } => {
-                    self.resolve_rewrite(&id, paragraph, text)
-                }
+                OperationKind::Rewrite {
+                    paragraph,
+                    text,
+                    comment,
+                } => self.resolve_rewrite(&id, paragraph, text, comment.as_deref()),
                 // `-p cN.text --delete`: the covered text goes.
                 OperationKind::DeleteParagraph {
                     paragraph,
                     comment: None,
                 } if comment_text_of(paragraph).is_some() => {
-                    self.resolve_rewrite(&id, paragraph, "")
+                    self.resolve_rewrite(&id, paragraph, "", None)
                 }
                 OperationKind::List {
                     paragraphs,
@@ -2639,9 +3384,49 @@ impl<'p> Transaction<'p> {
                         (Vec::new(), outcome)
                     })
                 }
-                other => self
-                    .resolve_one(&id, other)
-                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::Strike { revision, comment }
+                | OperationKind::Restore { revision, comment } => {
+                    let visible = match &op.kind {
+                        OperationKind::Strike { .. } => visible::Visible::Strike,
+                        _ => visible::Visible::Restore,
+                    };
+                    self.resolve_visible(&id, visible, revision, comment.as_deref())
+                }
+                other => self.resolve_one(&id, other).map(|(resolved, mut outcome)| {
+                    if let OperationKind::Replace {
+                        whole: false,
+                        format: None,
+                        ..
+                    } = other
+                    {
+                        if let Resolved::Text {
+                            para, start, end, ..
+                        } = resolved
+                        {
+                            claim = Some((para, start, end));
+                        }
+                        let pieces = self.replace_pieces(resolved, &mut outcome);
+                        return (pieces, outcome);
+                    }
+                    // A deletion's comment sits on the words it strikes, as a
+                    // strike's does: in the redline only.
+                    let comment = match (other, &resolved) {
+                        (
+                            OperationKind::Delete {
+                                comment: Some(_), ..
+                            },
+                            Resolved::Text {
+                                para, start, end, ..
+                            },
+                        ) => Some(Resolved::StrikeComment {
+                            para: *para,
+                            start: *start,
+                            end: *end,
+                        }),
+                        _ => None,
+                    };
+                    (comment.into_iter().chain([resolved]).collect(), outcome)
+                }),
             };
             self.anchor_window.set(None);
             match result {
@@ -2649,6 +3434,10 @@ impl<'p> Transaction<'p> {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
+                    if let Some(claim) = claim {
+                        self.claims.insert(i, claim);
+                    }
+                    self.note_rewrites(self.outcomes.len(), &resolved);
                     self.outcomes.push(outcome);
                     self.resolved
                         .extend(resolved.into_iter().map(|resolved| (i, resolved)));
@@ -2835,6 +3624,13 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ));
             }
+            OperationKind::Strike { .. } | OperationKind::Restore { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "strike and restore resolve through resolve_visible".into(),
+                    outcome,
+                ));
+            }
         };
         let para = match self.select(selector, finds_text(kind)) {
             Ok(p) => p,
@@ -2897,6 +3693,7 @@ impl<'p> Transaction<'p> {
         let comments = match kind {
             OperationKind::Replace { comment, .. }
             | OperationKind::Insert { comment, .. }
+            | OperationKind::Delete { comment, .. }
             | OperationKind::InsertParagraph { comment, .. } => comment.is_some(),
             OperationKind::Comment { .. } => true,
             _ => false,
@@ -2972,8 +3769,14 @@ impl<'p> Transaction<'p> {
                 ))
             }
             OperationKind::Delete {
-                find, occurrence, ..
+                find,
+                occurrence,
+                comment,
+                ..
             } => {
+                if let Some(note) = comment {
+                    check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
                 let (start, end) = self
                     .find_range(projection, find, *occurrence, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
@@ -3309,6 +4112,11 @@ impl<'p> Transaction<'p> {
                 "settings resolve through resolve_settings".into(),
                 outcome,
             )),
+            OperationKind::Strike { .. } | OperationKind::Restore { .. } => Err(fail(
+                "INVALID_PLAN",
+                "strike and restore resolve through resolve_visible".into(),
+                outcome,
+            )),
             OperationKind::InsertParagraph {
                 position,
                 runs,
@@ -3564,7 +4372,9 @@ impl<'p> Transaction<'p> {
     /// properties are discarded, so it may not carry a section break.
     /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
     /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
-    /// comment's reference to anchor on.
+    /// comment's reference to anchor on; `edit_comment` on another
+    /// author's comment needs `rewrite_others_comments`
+    /// (`COMMENT_NOT_YOURS`).
     fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
@@ -3634,6 +4444,32 @@ impl<'p> Transaction<'p> {
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         }
+        // A comment speaks for its author: another author answers it.
+        if let ThreadOp::Edit { id, .. } = op
+            && !self.plan.rewrite_others_comments
+            && let Some(author) = self.not_own_comment(family, id)
+        {
+            let (reply, rewrite) = match self.syntax {
+                PlanSyntax::Flags | PlanSyntax::Typed => (
+                    format!("-p c{id} --reply TEXT"),
+                    "--rewrite-others-comments",
+                ),
+                PlanSyntax::V1 | PlanSyntax::V2 => (
+                    "reply_comment".to_string(),
+                    r#""rewrite_others_comments": true"#,
+                ),
+            };
+            let message = if author.is_empty() {
+                format!(
+                    "c{id} names no author; reply instead ({reply}), or pass {rewrite} to change its words"
+                )
+            } else {
+                format!(
+                    "c{id} is by {author:?}; reply instead ({reply}), or pass {rewrite} to change their words under their name"
+                )
+            };
+            return Err(fail("COMMENT_NOT_YOURS", message, outcome));
+        }
         let ids = match &op {
             ThreadOp::Delete { id } => family.with_replies(*id),
             _ => vec![target],
@@ -3702,6 +4538,70 @@ impl<'p> Transaction<'p> {
         (stories, reference)
     }
 
+    /// A `replace` as the word-level edits that make its matched text read
+    /// as the replacement (plan 12): kept words stay in their runs, with
+    /// their formatting and the document's characters (a curly quote the
+    /// anchor typed straight), and only the words that change are written,
+    /// a new one formatted like the text before it. A comment covers the
+    /// whole matched text. When a piece has no place to go, the replacement
+    /// stays one edit that re-types the range, as `whole` does.
+    fn replace_pieces(&self, resolved: Resolved, outcome: &mut EditOutcome) -> Vec<Resolved> {
+        let Resolved::Text {
+            para,
+            start,
+            end,
+            replacement,
+            comment,
+            ..
+        } = &resolved
+        else {
+            return vec![resolved];
+        };
+        let (para, start, end) = (*para, *start, *end);
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let mut pieces = Vec::new();
+        for (s, e, piece) in rewrite::replace_ranges(&text[start..end], replacement) {
+            let (s, e) = (start + s, start + e);
+            let mut attach_before = text[..s]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c != '\u{FFFC}');
+            let checked = if s == e {
+                self.check_insert_either(projection, s, &mut attach_before)
+            } else {
+                self.check_range(projection, s, e)
+            };
+            if checked.is_err() {
+                return vec![resolved];
+            }
+            pieces.push(Resolved::Text {
+                para,
+                start: s,
+                end: e,
+                replacement: piece,
+                comment: None,
+                attach_before,
+                format: None,
+            });
+        }
+        if pieces.is_empty() {
+            outcome.message = Some(
+                "nothing changed: the text already reads as the replacement (a look-alike such as a curly quote stays; whole: true writes the replacement as typed)"
+                    .into(),
+            );
+        }
+        if let Some(text) = comment.clone() {
+            pieces.push(Resolved::CommentRange {
+                para,
+                start,
+                end,
+                text,
+            });
+        }
+        pieces
+    }
+
     /// `rewrite`: the smallest word-level edits that make the paragraph read
     /// as `new_text`, each checked as a `replace` or an `insert` is.
     fn resolve_rewrite(
@@ -3709,6 +4609,7 @@ impl<'p> Transaction<'p> {
         id: &str,
         paragraph: &Selector,
         new_text: &str,
+        comment: Option<&str>,
     ) -> Resolution<Vec<Resolved>> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
@@ -3727,7 +4628,19 @@ impl<'p> Transaction<'p> {
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
         };
+        if let Some(note) = comment {
+            check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        }
         if let Some(n) = comment_text_of(paragraph) {
+            if comment.is_some() {
+                return Err(fail(
+                    "INVALID_EDIT",
+                    format!(
+                        "a rewrite of the text comment c{n} covers takes no comment; add one with a comment operation"
+                    ),
+                    outcome,
+                ));
+            }
             return match self.resolve_comment_text(n, new_text, &mut outcome) {
                 Ok(resolved) => Ok((resolved, outcome)),
                 Err((code, message)) => Err(fail(&code, message, outcome)),
@@ -3741,6 +4654,13 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
+        if comment.is_some() && self.paragraph_story[para].0 != 0 {
+            return Err(fail(
+                "COMMENT_NOT_IN_BODY",
+                "comments are supported in the body only: Word cannot anchor one in a header, footer or note".into(),
+                outcome,
+            ));
+        }
         let projection = &self.projections[para];
         // The paragraph's symbols may be copied into the text; they stay.
         check_run_text(&new_text.replace('\u{FFFC}', ""))
@@ -3775,12 +4695,7 @@ impl<'p> Transaction<'p> {
                 .next_back()
                 .is_some_and(|c| c != '\u{FFFC}');
             let checked = if start == end {
-                self.check_insert_position(projection, start, attach_before)
-                    .or_else(|first| {
-                        self.check_insert_position(projection, start, !attach_before)
-                            .map(|()| attach_before = !attach_before)
-                            .map_err(|_| first)
-                    })
+                self.check_insert_either(projection, start, &mut attach_before)
             } else {
                 self.check_range(projection, start, end)
             };
@@ -3793,6 +4708,15 @@ impl<'p> Transaction<'p> {
                 comment: None,
                 attach_before,
                 format: None,
+            });
+        }
+        // The comment covers the rewritten paragraph, words kept and words
+        // inserted at either edge included, as PlanV2's rewrite anchors it.
+        if let Some(note) = comment {
+            resolved.push(Resolved::CommentSpan {
+                para,
+                last: para,
+                text: note.to_string(),
             });
         }
         outcome.matches = 1;
@@ -4013,9 +4937,43 @@ impl<'p> Transaction<'p> {
         }
     }
 
+    /// A plan's selector that reaches paragraph `global` by its text: its
+    /// first words, or all of it, as `{"contains": …}` (with its story
+    /// outside the body), when no other paragraph of its story holds them.
+    /// Only a JSON plan of the first version has one.
+    fn text_selector(&self, global: usize) -> Option<String> {
+        if self.syntax != PlanSyntax::V1 {
+            return None;
+        }
+        let text = &self.projections[global].text;
+        let story = self.paragraph_story[global].0;
+        let unique = |wanted: &str| {
+            !wanted.trim().is_empty()
+                && (0..self.paragraph_nodes.len())
+                    .filter(|&g| self.paragraph_story[g].0 == story)
+                    .filter(|&g| self.projections[g].text.contains(wanted))
+                    .count()
+                    == 1
+        };
+        let first: String = text.chars().take(SELECTOR_CHARS).collect();
+        let first = match first.rfind(char::is_whitespace) {
+            Some(at) if first.len() < text.len() => first[..at].trim_end(),
+            _ => first.as_str(),
+        };
+        let contains = [first, text.as_str()]
+            .into_iter()
+            .find(|wanted| unique(wanted))?
+            .to_string();
+        let selector = Selector::Contains {
+            contains,
+            story: (story != 0).then(|| self.stories[story].id.clone()),
+        };
+        serde_json::to_string(&selector).ok()
+    }
+
     /// The paragraph `selector` names. Positional ids name the source's
     /// paragraphs, as its author read them, even when settling revisions
-    /// moved them; a paragraph merged with another is only followed when
+    /// moved them; a paragraph merged with others is only followed when
     /// `merged_ok` (an edit that finds its text there). Text selectors read
     /// the settled text.
     fn select(&self, selector: &Selector, merged_ok: bool) -> Result<usize, origin::Miss> {
@@ -4025,7 +4983,12 @@ impl<'p> Transaction<'p> {
         let story_index = match &self.origin {
             Some(origin) => match origin.ids().position(selector)? {
                 Ok(source) => {
-                    return origin.follow(source, merged_ok, |p| self.paragraph_id(p));
+                    return origin.follow(
+                        source,
+                        merged_ok,
+                        |p| self.paragraph_id(p),
+                        |p| self.text_selector(p),
+                    );
                 }
                 // The text selector's story, by name in the settled document.
                 Err(_) => self.ids().position(selector)?,
@@ -4102,7 +5065,9 @@ impl<'p> Transaction<'p> {
                 | Resolved::FormatParagraph { para, .. }
                 | Resolved::MergeParagraphs { para, .. }
                 | Resolved::FormatRun { para, .. }
-                | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
+                | Resolved::InsertFootnote { para, .. }
+                | Resolved::StrikeComment { para, .. }
+                | Resolved::Restore { para, .. } => vec![self.paragraph_story[*para].0],
                 Resolved::InsertParagraph { anchor, .. }
                 | Resolved::InsertTable { anchor, .. }
                 | Resolved::InsertImage { anchor, .. } => {
@@ -4168,13 +5133,21 @@ impl<'p> Transaction<'p> {
         occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
-        let (start, end) = locate(
+        let (start, end) = match locate(
             projection,
             find,
             occurrence,
             outcome,
             self.anchor_window.get(),
-        )?;
+        ) {
+            Err((code, message)) if code == "ANCHOR_NOT_FOUND" => {
+                return Err(match self.removed_anchor(projection, find) {
+                    Some(hint) => ("UNSUPPORTED_STRUCTURE".into(), hint),
+                    None => (code, message),
+                });
+            }
+            found => found?,
+        };
         self.check_range(projection, start, end)
             .map_err(|m| ("UNSUPPORTED_STRUCTURE".to_string(), m))?;
         Ok((start, end))
@@ -4190,7 +5163,7 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-                return Err(self.opaque_structure(run_of(&seg.piece), "the text sits inside"));
+                return Err(self.refuse_opaque(run_of(&seg.piece), "the text"));
             }
             if is_symbol(projection, seg) {
                 return Err("the text crosses a symbol".into());
@@ -4213,10 +5186,28 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// What holds `run`, a run no edit may touch, and the way around it:
-    /// a revision by id and author first, with both review choices, else
-    /// the innermost hyperlink, field or content control.
-    fn opaque_structure(&self, run: NodeId, reason: &str) -> String {
+    /// Why `subject` (the text, the insertion point) in `run` cannot be
+    /// edited, and the way around it: another author's move or deletion by
+    /// id, author and text, with each route around it (#1108); else the
+    /// innermost hyperlink, field or content control. An insertion is
+    /// editable (#1136), so what refuses inside one is the structure
+    /// around or inside it.
+    fn refuse_opaque(&self, run: NodeId, subject: &str) -> String {
+        let dom = &self.opened.dom;
+        let revision = dom
+            .ancestors(run, None)
+            .into_iter()
+            .take_while(|&n| !dom.name_is(n, &W::p()))
+            .find(|&n| hint::Held::of(dom, n).is_some_and(|held| held != hint::Held::Inserted));
+        match revision {
+            Some(revision) => self.revision_hint(revision, &format!("{subject} is inside")),
+            None => format!("{subject} sits inside {}", self.opaque_structure(run)),
+        }
+    }
+
+    /// The innermost hyperlink, field or content control that holds `run`,
+    /// and the way around it.
+    fn opaque_structure(&self, run: NodeId) -> String {
         let dom = &self.opened.dom;
         let ancestors = dom.ancestors(run, None);
         let mut inner: Option<String> = None;
@@ -4224,15 +5215,10 @@ impl<'p> Transaction<'p> {
             if dom.name_is(node, &W::p()) {
                 break;
             }
-            let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            for local in ["ins", "moveTo", "del"] {
-                if dom.name_is(node, &W::name(local)) {
-                    return self.revision_refusal_message(reason, &[node]);
-                }
-            }
             if inner.is_some() {
                 continue;
             }
+            let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
             if dom.name_is(node, &W::name("hyperlink")) {
                 inner = Some(
                     "a hyperlink; edit the text on either side of it, or comment on it".into(),
@@ -4260,10 +5246,135 @@ impl<'p> Transaction<'p> {
                 ));
             }
         }
-        let structure = inner.unwrap_or_else(|| {
+        inner.unwrap_or_else(|| {
             "the result of a field; edit the text on either side of it, or comment on it".into()
-        });
-        format!("{reason} {structure}")
+        })
+    }
+
+    /// The refusal for an edit `revision` holds (a `w:ins`, `w:del`,
+    /// `w:moveTo`, `w:moveFrom`, `w:pPrChange` or `w:rPrChange`): `lead`
+    /// says what was refused up to the revision's id, then the revision and
+    /// its routes in the plan's syntax.
+    fn revision_hint(&self, revision: NodeId, lead: &str) -> String {
+        let dom = &self.opened.dom;
+        let ancestors = dom.ancestors(revision, None);
+        let story = self.stories.iter().find(|s| ancestors.contains(&s.root));
+        // The same revision as data (`revision_refusals`, #1147), beside
+        // the routes the message spells out.
+        if story.is_some() {
+            self.revision_refusal
+                .replace(Some(refusal::RevisionRefusal::new(self, lead, &[revision])));
+        }
+        let wid = dom.attribute(revision, &W::id()).unwrap_or_default();
+        let story_id = story.map_or("body", |s| s.id.as_str());
+        let id = crate::ids::ChangeId::new(story_id, wid).short();
+        let local = dom.name(revision).map(|n| n.local_name().to_string());
+        let long_id = v2_apply::revision_long_id(
+            story.map_or("word/document.xml", |s| s.part.as_str()),
+            local.as_deref().unwrap_or("ins"),
+            story_id,
+            wid,
+        );
+        let held = hint::Held::of(dom, revision).unwrap_or(hint::Held::Inserted);
+        // A formatting change holds the text of the run or paragraph it
+        // formats; a mark revision holds none.
+        let owner = if held == hint::Held::Formatted {
+            ancestors
+                .iter()
+                .copied()
+                .find(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &W::p()))
+                .unwrap_or(revision)
+        } else {
+            revision
+        };
+        let text: String = dom
+            .descendants(owner, None)
+            .into_iter()
+            .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+            .map(|n| dom.value(n))
+            .collect();
+        let paragraph = ancestors
+            .iter()
+            .find(|&&n| dom.name_is(n, &W::p()))
+            .and_then(|p| self.paragraph_nodes.iter().position(|n| n == p))
+            .map_or_else(String::new, |para| self.paragraph_id(para));
+        let author = dom.attribute(revision, &W::author()).unwrap_or_default();
+        // Restore takes another author's deletion in one stretch.
+        let restorable = held == hint::Held::Deleted
+            && author != self.plan.author
+            && story.is_some_and(|s| {
+                let stretches = dom
+                    .descendants(s.root, Some(&W::name("del")))
+                    .into_iter()
+                    .filter(|&n| {
+                        dom.attribute(n, &W::id()) == Some(wid)
+                            && dom.parent(n).is_some_and(|p| !dom.name_is(p, &W::r_pr()))
+                    })
+                    .count();
+                visible::restorable(dom, revision, stretches)
+            });
+        let holder = hint::Holder {
+            held,
+            id: &id,
+            long_id: &long_id,
+            author,
+            text: &text,
+            paragraph: &paragraph,
+            lead,
+            restorable,
+        };
+        // A restore of the same deletion in this command lands first; the
+        // edit of its words waits for the next command.
+        let restored_here = held == hint::Held::Deleted
+            && self.plan.operations.iter().any(|op| {
+                matches!(&op.kind, OperationKind::Restore { revision, .. }
+                    if crate::ids::parse_change_ids(revision.trim())
+                        .is_ok_and(|ids| ids.iter().any(|c| c.short() == id)))
+            });
+        if restored_here {
+            return hint::restored_here_hint(&holder);
+        }
+        hint::settle_hint(&holder, self.syntax)
+    }
+
+    /// When `find` misses `projection`'s visible text but reaches into text
+    /// another author deleted or moved away, the refusal that names that
+    /// revision; the anchor is otherwise just not there.
+    fn removed_anchor(&self, projection: &Projection, find: &str) -> Option<String> {
+        // The projections are the transaction's own, one per paragraph.
+        let para = self
+            .projections
+            .iter()
+            .position(|p| std::ptr::eq(p, projection))?;
+        self.removed_anchor_in(para, find)
+    }
+
+    /// [`Self::removed_anchor`] for paragraph `para`.
+    fn removed_anchor_in(&self, para: usize, find: &str) -> Option<String> {
+        let dom = &self.opened.dom;
+        hint::removed_holder(dom, self.paragraph_nodes[para], find)
+            .map(|revision| self.revision_hint(revision, "the text is inside"))
+    }
+
+    /// [`Self::check_insert_position`] on the side `attach_before` names,
+    /// else on the other, which `attach_before` then names. A first side
+    /// that failed leaves no refusal behind when the other holds: its
+    /// revision did not block the edit (#1308 review).
+    fn check_insert_either(
+        &self,
+        projection: &Projection,
+        pos: usize,
+        attach_before: &mut bool,
+    ) -> Result<(), String> {
+        self.check_insert_position(projection, pos, *attach_before)
+            .or_else(|first| {
+                self.check_insert_position(projection, pos, !*attach_before)
+                    .map(|()| {
+                        *attach_before = !*attach_before;
+                        self.revision_refusal.take();
+                    })
+                    .map_err(|_| first)
+            })
     }
 
     fn check_insert_position(
@@ -4273,14 +5384,13 @@ impl<'p> Transaction<'p> {
         attach_before: bool,
     ) -> Result<(), String> {
         if projection.text.is_empty() {
-            return Err("cannot insert text into an empty paragraph; use insert_paragraph".into());
+            // Typed as Word types it: a run formatted as the mark.
+            return Ok(());
         }
         let seg = attach_segment(projection, pos, attach_before)
             .ok_or_else(|| "no run holds the insertion point".to_string())?;
         if !seg.direct && editable_insertion(&self.opened.dom, &seg.piece).is_none() {
-            return Err(
-                self.opaque_structure(run_of(&seg.piece), "the insertion point sits inside")
-            );
+            return Err(self.refuse_opaque(run_of(&seg.piece), "the insertion point"));
         }
         if is_symbol(projection, seg) {
             return Err("the insertion point touches a symbol".into());
@@ -4320,11 +5430,21 @@ impl<'p> Transaction<'p> {
         self.check_comment_ids_fit()?;
         self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
+        for (&i, &(para, start, end)) in &self.claims {
+            if deleted.contains(&para) {
+                return Err(self.conflict(i, "edits text of a deleted paragraph"));
+            }
+            ranges.entry(para).or_default().push((start, end, i));
+        }
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
+                // A replace's pieces lie inside the range it claims.
+                Resolved::Text { .. } if self.claims.contains_key(i) => continue,
                 Resolved::Text {
                     para, start, end, ..
                 } => (*para, *start, *end),
+                // A restore inserts its copy where the deletion is.
+                Resolved::Restore { para, at, .. } => (*para, *at, *at),
                 Resolved::CommentRange { para, .. } => {
                     if deleted.contains(para) {
                         return Err(comment_conflict(*i, "comments on a deleted paragraph"));
@@ -4370,23 +5490,18 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::Thread {
-                    op: ThreadOp::Reply { .. },
-                    anchor: Some(anchor),
-                    ..
-                } if deleted.contains(anchor) => {
-                    return Err(self.conflict(
-                        *i,
-                        "replies to a comment whose reference is in a deleted paragraph",
-                    ));
-                }
+                // A reply to a comment whose paragraph the plan deletes:
+                // the tracked deletion keeps the reference in struck text,
+                // where Word shows the thread (#1159). Editing mode removes
+                // the anchor, which v2's anchor check refuses.
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::List { .. }
                 | Resolved::PageSetup { .. }
                 | Resolved::Thread { .. }
-                | Resolved::FillControl { .. } => continue,
+                | Resolved::FillControl { .. }
+                | Resolved::StrikeComment { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -4653,7 +5768,10 @@ impl<'p> Transaction<'p> {
                 }
                 Resolved::CommentRange { .. } | Resolved::CommentSpan { .. } => true,
                 Resolved::Thread { op, .. } => matches!(op, ThreadOp::Reply { .. }),
-                Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
+                Resolved::DeleteParagraph { .. } | Resolved::StrikeComment { .. } => {
+                    self.deletion_comment(*i).is_some()
+                }
+                Resolved::Restore { comment, .. } => comment.is_some(),
                 Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::InsertTable { .. }
@@ -4760,7 +5878,7 @@ impl<'p> Transaction<'p> {
     }
 
     /// Mutate the copy. Resolution succeeded, so every step here is total.
-    fn apply(&mut self) -> Result<(), EditError> {
+    fn apply_comments(&mut self) -> BTreeMap<usize, u32> {
         // 0. Comment ids follow plan order, whatever paragraph they land in.
         let mut ids: BTreeMap<usize, u32> = BTreeMap::new();
         let comments: Vec<(usize, String)> =
@@ -4776,9 +5894,10 @@ impl<'p> Transaction<'p> {
                             op: ThreadOp::Reply { text, .. },
                             ..
                         } => Some(text.clone()),
-                        Resolved::DeleteParagraph { .. } => {
+                        Resolved::DeleteParagraph { .. } | Resolved::StrikeComment { .. } => {
                             self.deletion_comment(*i).map(str::to_string)
                         }
+                        Resolved::Restore { comment, .. } => comment.clone(),
                         Resolved::FormatParagraph { .. }
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
@@ -4794,7 +5913,7 @@ impl<'p> Transaction<'p> {
                 })
                 .collect();
         for (i, text) in comments {
-            let id = if self.deletion_comment(i).is_some() {
+            let id = if self.deletion_comment(i).is_some() || self.reply_in_deleted(i) {
                 // Written into the source copy the comparer reads, not here.
                 let id = self.reserve_comment_id();
                 self.deletion_comments.push((id, i));
@@ -4814,6 +5933,10 @@ impl<'p> Transaction<'p> {
                 self.reply_parents.insert(ids[i], *parent);
             }
         }
+        ids
+    }
+
+    fn apply_text_edits(&mut self, ids: &BTreeMap<usize, u32>) -> Result<(), EditError> {
         // 1. Text edits and their comments, paragraph by paragraph.
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
@@ -4905,18 +6028,47 @@ impl<'p> Transaction<'p> {
         for para in touched {
             let node = self.paragraph_nodes[para];
             let mut edits = by_para.remove(&para).unwrap_or_default();
-            edits.sort_by_key(|e| (e.start, e.end, e.op));
+            let mut empty = project_paragraph(&self.opened.dom, node)
+                .text
+                .is_empty()
+                .then(EmptyPlacement::default);
+            sort_edits(&mut edits, empty.is_some());
             // Apply in reverse so earlier source offsets stay valid.
             for edit in edits.iter().rev() {
                 let projection = project_paragraph(&self.opened.dom, node);
-                apply_text_edit(
-                    &mut self.opened.dom,
-                    &projection,
-                    edit.start,
-                    edit.end,
-                    &edit.replacement,
-                    edit.attach_before,
-                );
+                // The insertions the edit reaches into: one it empties goes,
+                // as in the redline.
+                let mut carriers: Vec<NodeId> = projection
+                    .segments
+                    .iter()
+                    .filter(|s| s.start < edit.end && edit.start < s.end)
+                    .filter_map(|s| {
+                        self.opened
+                            .dom
+                            .parent(run_of(&s.piece))
+                            .filter(|&n| self.opened.dom.name_is(n, &W::ins()))
+                    })
+                    .collect();
+                carriers.dedup();
+                if let Some(placement) = empty.as_mut() {
+                    if !edit.replacement.is_empty() {
+                        let run = mark_run(&mut self.opened.dom, node);
+                        placement.place(&mut self.opened.dom, node, run, edit.attach_before);
+                        write_mark_run_text(&mut self.opened.dom, run, &edit.replacement);
+                    }
+                } else {
+                    apply_text_edit(
+                        &mut self.opened.dom,
+                        &projection,
+                        edit.start,
+                        edit.end,
+                        &edit.replacement,
+                        edit.attach_before,
+                    );
+                }
+                for ins in carriers {
+                    tracked::remove_empty_insertion(&mut self.opened.dom, ins);
+                }
             }
             // Formatting of new text, in new coordinates.
             for edit in &edits {
@@ -4952,15 +6104,16 @@ impl<'p> Transaction<'p> {
             // placed below land inside them, on the inserted text.
             let plan = self.plan;
             for edit in &edits {
-                let OperationKind::Replace {
-                    find, whole: true, ..
-                } = &plan.operations[edit.op].kind
+                let OperationKind::Replace { whole: true, .. } = &plan.operations[edit.op].kind
                 else {
                     continue;
                 };
                 if edit.replacement.is_empty() {
                     continue;
                 }
+                // The text the anchor matched, as the document has it: an
+                // anchor typed with look-alikes or Markdown marks reads as it.
+                let find = self.projections[para].text[edit.start..edit.end].to_string();
                 let s = new_position(&edits, edit.start, true, Some(edit.op));
                 let end = s + edit.replacement.len();
                 let story = self.paragraph_story[para].0;
@@ -4970,7 +6123,7 @@ impl<'p> Transaction<'p> {
                     node,
                     (s, end),
                     (edit.op, part),
-                    (find, &edit.replacement),
+                    (&find, &edit.replacement),
                 ) {
                     self.whole_marks.push(mark);
                 }
@@ -4984,8 +6137,15 @@ impl<'p> Transaction<'p> {
                 }
             }
             for (start, end, i, text) in comment_ranges.remove(&para).unwrap_or_default() {
-                let s = new_position(&edits, start, true, None);
-                let e = new_position(&edits, end, false, None);
+                // The operation's own insertions at either end of its
+                // range are its new text: its comment holds them.
+                let own_at_end: usize = edits
+                    .iter()
+                    .filter(|x| x.op == i && x.start == end && x.end == end)
+                    .map(|x| x.replacement.len())
+                    .sum();
+                let s = new_position(&edits, start, true, Some(i));
+                let e = new_position(&edits, end, false, None) + own_at_end;
                 pending.push((s, e, i, text));
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
@@ -4993,6 +6153,22 @@ impl<'p> Transaction<'p> {
                 anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
             }
         }
+        // 1a. Restores: plain copies of the deletion's runs after it, which
+        // stays; found by `w:id`, so the text edits before do not move them.
+        for (i, r) in &self.resolved {
+            let Resolved::Restore { para, wid, .. } = r else {
+                continue;
+            };
+            let node = self.paragraph_nodes[*para];
+            let placed = visible::restore_plain(&mut self.opened.dom, node, wid);
+            if let (Some((first, last)), Some(&id)) = (placed, ids.get(i)) {
+                visible::comment_around(&mut self.opened.dom, first, last, id);
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_comment_spans(&mut self, ids: &BTreeMap<usize, u32>) {
         // 1b. Comments over several paragraphs, in their edited text.
         for (i, r) in &self.resolved {
             if let Resolved::CommentSpan { para, last, .. } = r {
@@ -5004,8 +6180,9 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
-        // 1c. Content control fills (text edits never reach control content).
-        self.apply_fills();
+    }
+
+    fn apply_insertions(&mut self, ids: &BTreeMap<usize, u32>) -> Vec<NodeId> {
         // 2. Paragraph and table insertions (anchors are source paragraphs,
         // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
@@ -5098,6 +6275,10 @@ impl<'p> Transaction<'p> {
                 anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
             }
         }
+        tables
+    }
+
+    fn apply_paragraph_formatting(&mut self) {
         // 3. Paragraph formatting.
         for (_, r) in &self.resolved {
             if let Resolved::FormatParagraph {
@@ -5116,6 +6297,9 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
+    }
+
+    fn apply_lists(&mut self) {
         // 3b. Lists: new numbering instances take ids after the source's.
         let (mut next_abstract, mut next_num) = structural::next_numbering_ids(&self.opened);
         for (_, r) in &self.resolved {
@@ -5157,6 +6341,9 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
+    }
+
+    fn apply_merges(&mut self) {
         // 4. Merges, first first, so a chain folds into its last paragraph.
         let mut merges: Vec<(usize, usize, String)> = self
             .resolved
@@ -5179,12 +6366,18 @@ impl<'p> Transaction<'p> {
                 &separator,
             );
         }
+    }
+
+    fn apply_paragraph_deletions(&mut self) {
         // 5. Paragraph deletions.
         for (_, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
             }
         }
+    }
+
+    fn apply_reply_markers(&mut self, ids: &BTreeMap<usize, u32>) {
         // 6. Reply markers beside their comment's; deleted comments' markers.
         let roots: Vec<NodeId> = self.stories.iter().map(|s| s.root).collect();
         for (i, r) in &self.resolved {
@@ -5207,11 +6400,17 @@ impl<'p> Transaction<'p> {
                 ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
             }
         }
+    }
+
+    fn apply_table_separations(&mut self, tables: Vec<NodeId>) {
         // 7. A paragraph after each new table, and between it and a table
         // before it, once the deletions have settled its neighbours.
         for table in tables {
             structural::separate(&mut self.opened.dom, table);
         }
+    }
+
+    fn apply_page_setups(&mut self) {
         // 8. Page setup.
         let setups: Vec<sections::Targets> = self
             .resolved
@@ -5224,9 +6423,25 @@ impl<'p> Transaction<'p> {
         for targets in &setups {
             self.apply_page_setup(targets);
         }
-        Ok(())
     }
 
+    /// Mutate the copy. Resolution succeeded, so every step here is total.
+    fn apply(&mut self) -> Result<(), EditError> {
+        let ids = self.apply_comments();
+        self.apply_text_edits(&ids)?;
+        self.apply_comment_spans(&ids);
+        // 1c. Content control fills (text edits never reach control content).
+        self.apply_fills();
+        let tables = self.apply_insertions(&ids);
+        self.apply_paragraph_formatting();
+        self.apply_lists();
+        self.apply_merges();
+        self.apply_paragraph_deletions();
+        self.apply_reply_markers(&ids);
+        self.apply_table_separations(tables);
+        self.apply_page_setups();
+        Ok(())
+    }
     fn new_comment(&mut self, text: String) -> u32 {
         let id = self.reserve_comment_id();
         self.comments.push((id, text));
@@ -5244,16 +6459,59 @@ impl<'p> Transaction<'p> {
         id
     }
 
-    /// The comment of operation `op` when it deletes a paragraph.
+    /// The comment of operation `op` when it deletes text or a paragraph,
+    /// or strikes an insertion: on deleted text, so in the redline only.
     fn deletion_comment(&self, op: usize) -> Option<&str> {
         match &self.plan.operations[op].kind {
-            OperationKind::DeleteParagraph { comment, .. } => comment.as_deref(),
+            OperationKind::Delete { comment, .. }
+            | OperationKind::DeleteParagraph { comment, .. }
+            | OperationKind::Strike { comment, .. } => comment.as_deref(),
             _ => None,
         }
     }
 
+    /// Whether operation `op` replies to a comment whose reference sits in
+    /// a paragraph this plan deletes: the copy loses the reference, so the
+    /// reply goes where the parent's stays, on the deleted text (#1159).
+    fn reply_in_deleted(&self, op: usize) -> bool {
+        self.reply_on_deleted(op).is_some()
+    }
+
+    /// The parent of reply `op` and the operation that deletes the
+    /// paragraph the parent is on, when the plan deletes it.
+    fn reply_on_deleted(&self, op: usize) -> Option<(u32, usize)> {
+        self.resolved.iter().find_map(|(i, r)| match r {
+            Resolved::Thread {
+                op: ThreadOp::Reply { parent, .. },
+                anchor: Some(anchor),
+                ..
+            } if *i == op => self.deletes_paragraph(*anchor).map(|by| (*parent, by)),
+            _ => None,
+        })
+    }
+
+    /// The operation that deletes paragraph `para`, if one does.
+    fn deletes_paragraph(&self, para: usize) -> Option<usize> {
+        self.resolved.iter().find_map(|(i, r)| {
+            matches!(r, Resolved::DeleteParagraph { para: p } if *p == para).then_some(*i)
+        })
+    }
+
+    /// The text of [`Self::deletion_comment`], or of a reply
+    /// [`Self::reply_in_deleted`] names: what goes on the deleted text.
+    fn deleted_text_comment(&self, op: usize) -> Option<&str> {
+        self.deletion_comment(op)
+            .or_else(|| match &self.plan.operations[op].kind {
+                OperationKind::ReplyComment { text, .. } if self.reply_in_deleted(op) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+    }
+
     /// The copy the comparer reads as the original: the base, with each
-    /// deleted paragraph's comment anchored on its whole text. The comparer
+    /// deleted paragraph's comment anchored on its whole text, and each
+    /// reply to a comment in a deleted paragraph beside its parent. The comparer
     /// carries the comment onto the deleted text of the redline. A plan's
     /// watermark is written into this copy as well, so it stays untracked.
     fn commented_base(&self) -> Result<std::borrow::Cow<'_, [u8]>, EditError> {
@@ -5287,28 +6545,61 @@ impl<'p> Transaction<'p> {
         {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
+        // A strike's comment is emitted with it, under keep: never compared.
         let mut operations: Vec<Operation> = self
             .deletion_comments
             .iter()
-            .map(|&(_, op)| {
+            .filter_map(|&(_, op)| {
                 let operation = &self.plan.operations[op];
-                let OperationKind::DeleteParagraph {
-                    paragraph,
-                    comment: Some(text),
-                } = &operation.kind
-                else {
-                    unreachable!("deletion_comments holds commented deletions");
+                // A reply sits beside its parent in the base, as in Word.
+                if matches!(operation.kind, OperationKind::ReplyComment { .. }) {
+                    return Some(operation.clone());
+                }
+                // A deleted text's comment takes the deletion's own anchor,
+                // which finds the same words in the base.
+                let (paragraph, find, occurrence, text) = match &operation.kind {
+                    OperationKind::DeleteParagraph {
+                        paragraph,
+                        comment: Some(text),
+                    } => (paragraph, None, None, text),
+                    OperationKind::Delete {
+                        paragraph,
+                        find,
+                        occurrence,
+                        comment: Some(text),
+                    } => (paragraph, Some(find.clone()), *occurrence, text),
+                    _ => return None,
                 };
-                Operation {
+                // A positional id names the paragraph as the plan's author
+                // read it, and the base is settled: the copy names the
+                // deletion's own paragraph by its id there. A comment's
+                // text (`c5.text`) reads the same in both.
+                let paragraph = match comment_text_of(paragraph) {
+                    Some(_) => paragraph.clone(),
+                    None => self
+                        .resolved
+                        .iter()
+                        .find_map(|(i, resolved)| match resolved {
+                            Resolved::Text { para, .. } | Resolved::DeleteParagraph { para }
+                                if *i == op =>
+                            {
+                                Some(Selector::Name(self.paragraph_id(*para)))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| paragraph.clone()),
+                };
+                Some(Operation {
                     id: operation.id.clone(),
+                    group: operation.group.clone(),
                     kind: OperationKind::Comment {
-                        paragraph: paragraph.clone(),
-                        find: None,
+                        paragraph,
+                        find,
                         text: text.clone(),
                         through: None,
-                        occurrence: None,
+                        occurrence,
                     },
-                }
+                })
             })
             .collect();
         operations.extend(thread_ops);
@@ -5333,6 +6624,7 @@ impl<'p> Transaction<'p> {
             existing_revisions: ExistingRevisions::default(),
             operations,
             update_fields: false,
+            rewrite_others_comments: self.plan.rewrite_others_comments,
         };
         let mut tx = Transaction::start(&self.base, &plan)?;
         tx.preset_comment_ids = self
@@ -5520,6 +6812,121 @@ impl<'p> Transaction<'p> {
     }
 }
 
+/// Comment `id`'s markers under `scope`, anchored on words a deletion then
+/// took: the range start leaves the deletion it opens in, and the range
+/// end, with the reference run after it, the one it closes in. A marker in
+/// the middle of a deletion (the comparer joins deletions that touch into
+/// one) splits it in two, the second part under the fresh revision id
+/// `next_id`. So the comment wraps the deleted words, as a strike's does,
+/// and accepting the deletion keeps the comment's reference.
+fn lift_out_of_deletion(dom: &mut Dom, scope: NodeId, id: u32, next_id: &mut u64) {
+    let id = id.to_string();
+    let marker = |dom: &Dom, local: &str| {
+        dom.descendants(scope, Some(&W::name(local)))
+            .into_iter()
+            .find(|&m| dom.attribute(m, &W::id()) == Some(id.as_str()))
+    };
+    if let Some(start) = marker(dom, "commentRangeStart") {
+        while let Some(del) = dom.parent(start).filter(|&p| dom.name_is(p, &W::del())) {
+            if dom.elements(del, None).first() != Some(&start) {
+                split_deletion_before(dom, del, start, next_id);
+                continue;
+            }
+            dom.remove(start);
+            dom.add_before_self(del, start);
+            drop_if_empty(dom, del);
+        }
+    }
+    let Some(end) = marker(dom, "commentRangeEnd") else {
+        return;
+    };
+    let reference = dom.next_element(end).filter(|&run| {
+        dom.element(run, &W::name("commentReference"))
+            .is_some_and(|r| dom.attribute(r, &W::id()) == Some(id.as_str()))
+    });
+    let last = reference.unwrap_or(end);
+    while let Some(del) = dom.parent(end).filter(|&p| dom.name_is(p, &W::del())) {
+        if dom.elements(del, None).last() != Some(&last) {
+            if let Some(&after) = dom.nodes_after_self(last).first() {
+                split_deletion_before(dom, del, after, next_id);
+            }
+            continue;
+        }
+        dom.remove(end);
+        dom.add_after_self(del, end);
+        if let Some(run) = reference {
+            dom.remove(run);
+            dom.add_after_self(end, run);
+        }
+        drop_if_empty(dom, del);
+    }
+}
+
+/// Split deletion `del` before its child `at`: `at` and what follows it
+/// move into a copy of `del` right after it, under revision id `next_id`.
+fn split_deletion_before(dom: &mut Dom, del: NodeId, at: NodeId, next_id: &mut u64) {
+    let tail = dom.new_element(W::del());
+    for (name, value) in dom.attributes(del) {
+        dom.set_attribute_value(tail, &name, Some(&value));
+    }
+    dom.set_attribute_value(tail, &W::id(), Some(&next_id.to_string()));
+    *next_id += 1;
+    let mut moved = vec![at];
+    moved.extend(dom.nodes_after_self(at));
+    for node in moved {
+        dom.remove(node);
+        dom.add(tail, node);
+    }
+    dom.add_after_self(del, tail);
+}
+
+/// Remove deletion `del` once a lifted marker leaves it no element.
+fn drop_if_empty(dom: &mut Dom, del: NodeId) {
+    if dom.elements(del, None).is_empty() {
+        dom.remove(del);
+    }
+}
+
+/// One more than the largest `w:id` in the stories of `opened`: a revision
+/// id no annotation holds.
+fn next_annotation_id(opened: &Opened) -> u64 {
+    let largest = |dom: &Dom, root: NodeId| {
+        dom.descendants(root, None)
+            .into_iter()
+            .filter_map(|n| dom.attribute(n, &W::id())?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+    };
+    let mut max = largest(&opened.dom, opened.document);
+    for (_, _, part) in opened.story_parts() {
+        if let Ok((dom, document, _)) = crate::inspect::parse_part(&opened.pkg, &part) {
+            max = max.max(largest(&dom, document));
+        }
+    }
+    max + 1
+}
+
+/// `redline` with the markers of each comment in `ids`, on words the
+/// comparer deleted, lifted out of those deletions
+/// ([`lift_out_of_deletion`]): the comment wraps the deletion,
+/// so accepting it keeps the comment's reference.
+fn lift_deletion_comments(redline: &[u8], ids: &[u32]) -> Result<Vec<u8>, EditError> {
+    if ids.is_empty() {
+        return Ok(redline.to_vec());
+    }
+    let mut red = Opened::open(redline).map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
+    let mut next_id = next_annotation_id(&red);
+    for &id in ids {
+        lift_out_of_deletion(&mut red.dom, red.body, id, &mut next_id);
+    }
+    let xml = red.dom.serialize_document(red.document);
+    let main = red.main.clone();
+    red.pkg.set_part(&main, xml.into_bytes());
+    red.pkg
+        .to_zip()
+        .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))
+}
+
 /// Whether comment `id`'s range in `redline` holds text that is not deleted.
 fn comment_holds_kept_text(redline: &[u8], id: u32) -> bool {
     let Ok(opened) = Opened::open(redline) else {
@@ -5605,6 +7012,8 @@ pub(crate) fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertToc { .. } => "insert_toc",
         OperationKind::Redact { .. } => "redact",
         OperationKind::Settings { .. } => "settings",
+        OperationKind::Strike { .. } => "strike",
+        OperationKind::Restore { .. } => "restore",
     }
 }
 
@@ -5637,6 +7046,34 @@ fn selector_of(kind: &OperationKind) -> Option<&Selector> {
         | OperationKind::InsertImage { paragraph, .. }
         | OperationKind::Redact { paragraph, .. } => Some(paragraph),
         _ => None,
+    }
+}
+
+/// Every paragraph an operation names: its paragraph, a comment's
+/// `through`, an inserted paragraph's `like`, a list's `paragraphs`.
+fn selectors_mut(kind: &mut OperationKind) -> Vec<&mut Selector> {
+    match kind {
+        OperationKind::Comment {
+            paragraph, through, ..
+        } => std::iter::once(paragraph).chain(through.as_mut()).collect(),
+        OperationKind::InsertParagraph {
+            paragraph, like, ..
+        } => std::iter::once(paragraph).chain(like.as_mut()).collect(),
+        OperationKind::List { paragraphs, .. } => paragraphs.iter_mut().collect(),
+        OperationKind::Replace { paragraph, .. }
+        | OperationKind::Insert { paragraph, .. }
+        | OperationKind::Delete { paragraph, .. }
+        | OperationKind::DeleteParagraph { paragraph, .. }
+        | OperationKind::FormatParagraph { paragraph, .. }
+        | OperationKind::MergeParagraphs { paragraph, .. }
+        | OperationKind::Rewrite { paragraph, .. }
+        | OperationKind::InsertTable { paragraph, .. }
+        | OperationKind::InsertToc { paragraph, .. }
+        | OperationKind::FormatRun { paragraph, .. }
+        | OperationKind::InsertFootnote { paragraph, .. }
+        | OperationKind::InsertImage { paragraph, .. }
+        | OperationKind::Redact { paragraph, .. } => vec![paragraph],
+        _ => Vec::new(),
     }
 }
 
@@ -5734,8 +7171,10 @@ fn excerpt(text: &str, max: usize) -> String {
 /// sharing a point land in plan order, so `own` shifts only past the ones
 /// planned before it.
 fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
+    // Insertions at one point stand in `edits`' order (see `sort_edits`).
+    let own_at = own.and_then(|o| edits.iter().position(|e| e.op == o));
     let mut delta: i64 = 0;
-    for edit in edits {
+    for (k, edit) in edits.iter().enumerate() {
         let (start, end, i) = (edit.start, edit.end, edit.op);
         if Some(i) == own {
             continue;
@@ -5743,7 +7182,7 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
         let shifts = if start == end {
             // insertion
             if inclusive {
-                start < pos || (start == pos && own.is_none_or(|o| i < o))
+                start < pos || (start == pos && own_at.is_none_or(|o| k < o))
             } else {
                 start < pos
             }
@@ -5886,6 +7325,8 @@ fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
         if node == target {
             return (fields == 0).then_some(ins);
         }
+        // Markers in removed text count too: Word's Accept All takes the
+        // words between a deleted `begin` and `end` with the field.
         if dom.name_is(node, &W::name("fldChar")) {
             match dom.attribute(node, &W::name("fldCharType")) {
                 Some("begin") => fields += 1,
@@ -5920,6 +7361,85 @@ fn attach_segment(
             .find(|s| s.start <= pos && pos < s.end)
             .or_else(|| segs.iter().rev().find(|s| s.end == pos))
     }
+}
+
+/// How many characters of a paragraph's text a suggested `contains`
+/// selector quotes at most.
+const SELECTOR_CHARS: usize = 60;
+
+/// The byte span of the words of `text` that `[start, end)` touches: out
+/// to the nearest whitespace or comparer word separator on each side, so
+/// at least the words the comparer would rewrite. `start` and `end` are
+/// byte offsets on char boundaries, as every projection offset is.
+fn word_window(text: &str, start: usize, end: usize, separators: &[char]) -> (usize, usize) {
+    let wordy = |c: char| !c.is_whitespace() && !separators.contains(&c);
+    let from = text[..start]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, c)| wordy(c))
+        .last()
+        .map_or(start, |(i, _)| i);
+    let to = text[end..]
+        .char_indices()
+        .find(|&(_, c)| !wordy(c))
+        .map_or(text.len(), |(i, _)| end + i);
+    (from, to)
+}
+
+/// `node`'s local name when it is a range marker: an opener of
+/// [`tracked::RANGE_STARTS`], a closer of [`tracked::RANGE_ENDS`], or a
+/// comment range's end.
+fn range_marker(dom: &Dom, node: NodeId) -> Option<&'static str> {
+    let name = dom.name(node).filter(|n| n.namespace_name() == W::URI)?;
+    tracked::RANGE_STARTS
+        .into_iter()
+        .chain(tracked::RANGE_ENDS)
+        .chain([tracked::COMMENT_RANGE_END])
+        .find(|&marker| marker == name.local_name())
+}
+
+/// Insert `replacement` at `at` of `t` (of `len` bytes: a `w:t`, or a tab
+/// or break glyph) in its own run, formatted as `run`, when `at` is an edge
+/// of `run` with a range marker beside it: the new words then join no range
+/// they meet, as the redline writes them (#1156). Whether it did.
+fn insert_outside_ranges(
+    dom: &mut Dom,
+    run: NodeId,
+    t: NodeId,
+    at: usize,
+    len: usize,
+    replacement: &str,
+) -> bool {
+    let content: Vec<NodeId> = dom
+        .elements(run, None)
+        .into_iter()
+        .filter(|&n| !dom.name_is(n, &W::r_pr()))
+        .collect();
+    let before = if at == 0 && content.first() == Some(&t) {
+        true
+    } else if at == len && content.last() == Some(&t) {
+        false
+    } else {
+        return false;
+    };
+    let beside = tracked::outside_ranges(dom, run, before);
+    if beside == run {
+        return false;
+    }
+    let new = dom.new_element(W::r());
+    if let Some(rpr) = dom.element(run, &W::r_pr()) {
+        let rpr = tracked::clean_rpr(dom, rpr);
+        dom.add(new, rpr);
+    }
+    let text = dom.new_element(W::t());
+    dom.add(new, text);
+    write_text(dom, text, replacement);
+    if before {
+        dom.add_before_self(beside, new);
+    } else {
+        dom.add_after_self(beside, new);
+    }
+    true
 }
 
 /// Replace `[start, end)` of the paragraph's projection with `replacement`.
@@ -5974,27 +7494,33 @@ fn apply_text_edit(
             }
         }
         match seg.piece {
-            Piece::Text { t, .. } => {
+            Piece::Text { t, run } => {
                 let value = dom.value(t);
                 let at = start - seg.start;
-                let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
-                write_text_new_in(dom, t, &updated, at..at + replacement.len());
+                if !insert_outside_ranges(dom, run, t, at, value.len(), replacement) {
+                    let updated = format!("{}{}{}", &value[..at], replacement, &value[at..]);
+                    write_text_new_in(dom, t, &updated, at..at + replacement.len());
+                }
             }
             // Beside a tab or a break: new text of the glyph's run, after it
             // when it holds the char before the point.
-            Piece::Glyph { element, .. } => {
-                let t = dom.new_element(W::t());
-                if seg.end == start {
-                    dom.add_after_self(element, t);
-                } else {
-                    dom.add_before_self(element, t);
+            Piece::Glyph { element, run } => {
+                let (at, len) = (start - seg.start, seg.end - seg.start);
+                if !insert_outside_ranges(dom, run, element, at, len, replacement) {
+                    let t = dom.new_element(W::t());
+                    if seg.end == start {
+                        dom.add_after_self(element, t);
+                    } else {
+                        dom.add_before_self(element, t);
+                    }
+                    write_text(dom, t, replacement);
                 }
-                write_text(dom, t, replacement);
             }
         }
         return;
     }
-    let inside = inner_comment_references(dom, projection, start, end);
+    let mut inside = inner_comment_references(dom, projection, start, end);
+    inside.extend(closing_comment_references(dom, projection, start, end));
     let mut pending = Some(replacement);
     for seg in &projection.segments {
         if seg.end <= start || seg.start >= end {
@@ -6059,6 +7585,73 @@ fn inner_comment_references(
         .collect()
 }
 
+/// The references of the comments wholly inside `[start, end)` that close
+/// where it ends: the edit deletes all their text, as it does a comment
+/// whose reference stands between its first and last character, but the
+/// reference follows the last one, where [`inner_comment_references`]
+/// does not look. A comment that opens where the range opens is not one:
+/// replaced exactly, it keeps the new text.
+fn closing_comment_references(
+    dom: &Dom,
+    projection: &Projection,
+    start: usize,
+    end: usize,
+) -> Vec<NodeId> {
+    let node = |seg: &crate::inspect::Segment| match seg.piece {
+        Piece::Text { t, .. } => t,
+        Piece::Glyph { element, .. } => element,
+    };
+    let mut covered = projection
+        .segments
+        .iter()
+        .filter(|seg| seg.end > start && seg.start < end);
+    let (Some(first), Some(last)) = (covered.next(), covered.next_back()) else {
+        return Vec::new();
+    };
+    if last.end != end {
+        return Vec::new();
+    }
+    let Some(&paragraph) = dom.ancestors(node(first), Some(&W::p())).first() else {
+        return Vec::new();
+    };
+    let order = dom.descendants(paragraph, None);
+    let at = |n: NodeId| order.iter().position(|&o| o == n);
+    let (Some(from), Some(to)) = (at(node(first)), at(node(last))) else {
+        return Vec::new();
+    };
+    if from >= to {
+        return Vec::new();
+    }
+    let next = projection
+        .segments
+        .iter()
+        .find(|seg| seg.start >= end)
+        .and_then(|seg| at(node(seg)))
+        .unwrap_or(order.len())
+        .max(to + 1);
+    let marker = |local: &str, id: &str, range: std::ops::Range<usize>| {
+        order[range]
+            .iter()
+            .any(|&n| dom.name_is(n, &W::name(local)) && dom.attribute(n, &W::id()) == Some(id))
+    };
+    let opened: Vec<&str> = order[from + 1..to]
+        .iter()
+        .filter(|&&n| dom.name_is(n, &W::name("commentRangeStart")))
+        .filter_map(|&n| dom.attribute(n, &W::id()))
+        .filter(|id| marker("commentRangeEnd", id, to + 1..next))
+        .collect();
+    order[to + 1..next]
+        .iter()
+        .copied()
+        .filter(|&n| {
+            dom.name_is(n, &W::name("commentReference"))
+                && dom
+                    .attribute(n, &W::id())
+                    .is_some_and(|id| opened.contains(&id))
+        })
+        .collect()
+}
+
 /// Remove comment references, with the run when it holds nothing else.
 fn remove_comment_references(dom: &mut Dom, references: &[NodeId]) {
     for &reference in references {
@@ -6076,6 +7669,76 @@ fn remove_comment_references(dom: &mut Dom, references: &[NodeId]) {
 fn set_text(dom: &mut Dom, t: NodeId, value: &str) {
     dom.set_value(t, value);
     dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+}
+
+/// A new run for text typed into the empty `paragraph`, as Word types it:
+/// formatted as the paragraph mark (its `w:pPr/w:rPr`, without the mark's
+/// own revisions or `w:oMath`, which only a mark takes). Not yet in the
+/// tree.
+pub(super) fn mark_run(dom: &mut Dom, paragraph: NodeId) -> NodeId {
+    let run = dom.new_element(W::r());
+    if let Some(rpr) = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    {
+        let rpr = tracked::clean_rpr(dom, rpr);
+        if let Some(math) = dom.element(rpr, &W::name("oMath")) {
+            dom.remove(math);
+        }
+        if dom.has_elements(rpr) {
+            dom.add(run, rpr);
+        }
+    }
+    run
+}
+
+/// `text` written into `run`, a [`mark_run`] already in the tree.
+pub(super) fn write_mark_run_text(dom: &mut Dom, run: NodeId, text: &str) {
+    let t = dom.new_element(W::t());
+    dom.add(run, t);
+    write_text(dom, t, text);
+}
+
+/// Text typed into an empty paragraph, placed edit by edit in reverse
+/// [`sort_edits`] order, so that each edge keeps plan order and what the
+/// paragraph holds (a field, a bookmark's markers) stays between them: the
+/// text joins no range it was not typed in (#1303).
+#[derive(Default)]
+pub(super) struct EmptyPlacement {
+    /// The end text placed last, which the next end text goes before.
+    next_end: Option<NodeId>,
+}
+
+impl EmptyPlacement {
+    /// Put `node` where its text was typed in `paragraph`: last for an
+    /// insert at the end (before the end text already placed), else first,
+    /// after the paragraph's properties (an insert at the start, a rewrite).
+    pub(super) fn place(
+        &mut self,
+        dom: &mut Dom,
+        paragraph: NodeId,
+        node: NodeId,
+        attach_before: bool,
+    ) {
+        if attach_before {
+            match self.next_end {
+                Some(next) => dom.add_before_self(next, node),
+                None => dom.add(paragraph, node),
+            }
+            self.next_end = Some(node);
+        } else if let Some(ppr) = dom.element(paragraph, &W::p_pr()) {
+            dom.add_after_self(ppr, node);
+        } else {
+            dom.add_first(paragraph, node);
+        }
+    }
+}
+
+/// Sort a paragraph's edits for applying: by source range, then plan
+/// order. In an `empty` paragraph every edit sits at its one point, and the
+/// start edge's text comes before the end edge's (#1303).
+fn sort_edits(edits: &mut [ScheduledEdit], empty: bool) {
+    edits.sort_by_key(|e| (e.start, e.end, empty && e.attach_before, e.op));
 }
 
 /// Set the text of `t`, a `w:t` in a run, writing each `\t` as a `w:tab`
@@ -6908,7 +8571,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_json_roundtrips_and_rejects_unknown_fields() {
+    fn plan_json_roundtrips() {
         let json = r#"{"schema_version":1,"author":"A","operations":[
             {"kind":"replace","paragraph":{"index":0},"find":"a","replacement":"b"},
             {"kind":"insert","paragraph":{"id":"p1"},"after":"x","text":"y","comment":"c"},
@@ -6921,12 +8584,91 @@ mod tests {
         assert_eq!(plan.existing_revisions, ExistingRevisions::Refuse);
         let again = EditPlan::from_json(&plan.to_json()).unwrap();
         assert_eq!(again, plan);
+    }
+
+    #[test]
+    fn plan_json_rejects_unknown_fields() {
         let bad = r#"{"schema_version":1,"author":"A","extra":1,"operations":[]}"#;
         assert_eq!(EditPlan::from_json(bad).unwrap_err().code, "INVALID_PLAN");
         let bad = r#"{"schema_version":1,"author":"A","operations":[{"kind":"replace","paragraph":{"index":0},"find":"a","replacement":"b","typo":1}]}"#;
         assert_eq!(EditPlan::from_json(bad).unwrap_err().code, "INVALID_PLAN");
+    }
+
+    #[test]
+    fn plan_json_rejects_malformed_json() {
         let e = EditPlan::from_json("{").unwrap_err();
         assert!(e.to_string().starts_with("INVALID_PLAN: "));
+    }
+
+    #[test]
+    fn plan_json_refuses_another_schema_version() {
+        let other = SCHEMA_VERSION + 1;
+        let json = format!(r#"{{"schema_version":{other},"author":"A","operations":[]}}"#);
+        let e = EditPlan::from_json(&json).unwrap_err();
+        assert_eq!(e.code, "UNSUPPORTED_SCHEMA");
+        assert!(e.to_string().starts_with(&format!(
+            "UNSUPPORTED_SCHEMA: schema_version {other} is not supported (expected {SCHEMA_VERSION})"
+        )));
+    }
+
+    #[test]
+    fn plan_to_json_is_pretty_and_a_fixed_point() {
+        let pretty = r#"{
+  "schema_version": 1,
+  "source_sha256": "sha",
+  "author": "Author",
+  "date": "2024-01-01T00:00:00Z",
+  "initials": "A",
+  "existing_revisions": "refuse",
+  "operations": []
+}"#;
+        assert_eq!(EditPlan::from_json(pretty).unwrap().to_json(), pretty);
+    }
+
+    #[test]
+    fn plan_fields_name_every_field_a_plan_serializes() {
+        let plan = EditPlan {
+            schema_version: SCHEMA_VERSION,
+            source_sha256: Some("0".repeat(64)),
+            author: "A".into(),
+            date: Some("2026-10-01T09:00:00Z".into()),
+            initials: Some("A".into()),
+            resolve_revisions: Some(ResolveRevisions::default()),
+            removed_anchor_comments: RemovedAnchorComments::Keep,
+            existing_revisions: ExistingRevisions::Keep,
+            operations: Vec::new(),
+            update_fields: true,
+            rewrite_others_comments: true,
+        };
+        let value = serde_json::to_value(&plan).unwrap();
+        let written: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(written, PLAN_FIELDS);
+        let bad = r#"{"schema_version":1,"author":"A","operatons":[]}"#;
+        assert_eq!(
+            EditPlan::from_json(bad).unwrap_err().to_string(),
+            format!(
+                r#"INVALID_PLAN: unknown field "operatons"; did you mean "operations"? fields: {}"#,
+                PLAN_FIELDS.join(", ")
+            )
+        );
+    }
+
+    #[test]
+    fn nearest_names_the_closest_within_a_third() {
+        assert_eq!(edit_distance("ocurrence", "occurrence"), 1);
+        assert_eq!(edit_distance("", "find"), 4);
+        assert_eq!(edit_distance("é", "e"), 1);
+        let fields = ["comment_id", "text"];
+        assert_eq!(nearest("txt", &fields, None), Some("text"));
+        assert_eq!(nearest("comment", &fields, Some("text")), Some("text"));
+        assert_eq!(nearest("urgency", &fields, None), None);
+        // A meant name the operation cannot take is no suggestion.
+        assert_eq!(nearest("anchor", &fields, Some("find")), None);
     }
 
     #[test]
@@ -7068,6 +8810,32 @@ mod deeper_boundary_tests {
     }
 
     // Baseline gaps: 113, 916, 933, 936, 942, 945, 958.
+    /// A retry that holds clears the refusal its first side stored, so a
+    /// later failure of the same operation names no revision that did not
+    /// block it (#1308 review).
+    #[test]
+    fn a_retried_insertion_point_leaves_no_refusal() {
+        let source = docx(concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Alpha </w:t></w:r>"#,
+            r#"<w:moveTo w:id="9" w:author="Bob" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Beta</w:t></w:r></w:moveTo>"#,
+            r#"<w:r><w:t>Gamma</w:t></w:r></w:p>"#,
+        ));
+        let plan = EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Carol","date":"2026-02-02T00:00:00Z","existing_revisions":"keep","operations":[]}"#,
+        )
+        .unwrap();
+        let tx = Transaction::start(&source, &plan).unwrap();
+        let projection = &tx.projections[0];
+        assert_eq!(projection.text, "Alpha BetaGamma");
+        let mut attach_before = true;
+        assert_eq!(
+            tx.check_insert_either(projection, 10, &mut attach_before),
+            Ok(())
+        );
+        assert!(!attach_before);
+        assert!(tx.revision_refusal.borrow().is_none());
+    }
+
     #[test]
     fn report_optional_fields_and_resolution_truth_table() {
         let source = docx(&format!(
@@ -7151,6 +8919,7 @@ mod deeper_boundary_tests {
             ResolveRevisions {
                 accept: Some(ChangeFilter::ids(Vec::<String>::new())),
                 reject: Some(ChangeFilter::ids(Vec::<String>::new())),
+                reject_visible: false,
             },
         ] {
             assert_eq!(
@@ -7161,6 +8930,7 @@ mod deeper_boundary_tests {
         let selection = ResolveRevisions {
             accept: None,
             reject: Some(ChangeFilter::ids(["r1"])),
+            reject_visible: false,
         };
         let (bytes, resolved, _) =
             resolve_selected(&source, Some(&selection), RemovedAnchorComments::Remove).unwrap();
@@ -7587,6 +9357,7 @@ mod deeper_boundary_tests {
                     };
                     Operation {
                         id: Some(format!("case-{i}")),
+                        group: None,
                         kind,
                     }
                 })
@@ -7725,17 +9496,6 @@ mod deeper_boundary_tests {
                 "comments on a deleted paragraph",
             ),
             (
-                Resolved::Thread {
-                    op: ThreadOp::Reply {
-                        parent: 7,
-                        text: "n".into(),
-                    },
-                    stories: vec![0],
-                    anchor: Some(0),
-                },
-                "replies to a comment whose reference is in a deleted paragraph",
-            ),
-            (
                 Resolved::FormatParagraph {
                     para: 0,
                     style: None,
@@ -7763,6 +9523,17 @@ mod deeper_boundary_tests {
             assert_eq!(e.outcomes[0].status, "ok");
             assert_eq!(e.outcomes[1].message.as_deref(), Some(message));
         }
+        // A reply to a comment in the deleted paragraph is not one: the
+        // tracked deletion keeps the reference in struck text (#1159).
+        let reply = Resolved::Thread {
+            op: ThreadOp::Reply {
+                parent: 7,
+                text: "n".into(),
+            },
+            stories: vec![0],
+            anchor: Some(0),
+        };
+        conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, reply]).unwrap();
         let e = conflicts(
             &source,
             vec![
