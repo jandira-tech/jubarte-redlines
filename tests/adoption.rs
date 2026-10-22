@@ -6,7 +6,7 @@
 //! `docs/adoption/openai-doc-skill.md`, run through the `jubarte` command
 //! line as those pages write it. One test per row: when a page's claim stops
 //! being true, the test that names it fails. The side-by-side outputs with
-//! the replaced tools are in `examples/adoption/`; `.github/workflows/adoption.yml`
+//! the replaced tools are in `examples/adoption/`; `.github/workflows/docs.yml`
 //! runs this file and those folders.
 
 mod common;

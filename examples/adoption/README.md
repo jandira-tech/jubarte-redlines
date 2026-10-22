@@ -49,4 +49,4 @@ What jubarte cannot do yet, and the plan for each:
 `tests/adoption.rs` runs the jubarte command of every row that has one
 (00 measures install size; 17's MCP server is tested in
 `jubarte-python/tests/test_mcp_server.py`);
-`.github/workflows/adoption.yml` runs that file and every `run.sh`.
+`.github/workflows/docs.yml` runs that file and every `run.sh`.

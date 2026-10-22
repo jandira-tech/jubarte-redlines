@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-name: Docs
+name: Docs and adoption
 
 # The generated blocks in docs/rust.md, docs/python.md and docs/javascript.md
 # (CLI references from real --help output, API references from the shipped
@@ -11,34 +11,15 @@ name: Docs
 # catalogues (docs/flags_datetime.md, docs/locations.md) must never drift
 # from the code. This job
 # regenerates them and fails when the committed pages differ.
+#
+# The adoption pages (docs/adoption/) make claims about jubarte beside the
+# tools it replaces: `claims` runs one test per row (tests/adoption.rs) and
+# the .doc reader, and `examples` reruns every examples/adoption/*/run.sh and
+# checks each still writes its committed jubarte output.
 on:
+  # Every push to main: the adoption examples have no path filter there.
   push:
     branches: [main]
-    paths:
-      - .github/workflows/docs.yml
-      - src/**
-      - jubarte-python/**
-      - jubarte-wasm/**
-      - docs/rust.md
-      - docs/python.md
-      - docs/javascript.md
-      - README.md
-      - README.crates.md
-      - "**/README.fragment.md"
-      - scripts/library_readmes.py
-      - scripts/gen_docs.sh
-      - scripts/gen_cli_docs.py
-      - scripts/gen_python_api.py
-      - scripts/gen_wasm_api.py
-      - scripts/cli_flags.sh
-      - scripts/cli_locations.py
-      - scripts/cli_id_sources.py
-      - examples/cli_flags.rs
-      - Cargo.toml
-      - Cargo.lock
-      - docs/flags_datetime.md
-      - docs/locations.md
-      - tests/fixtures/**
   pull_request:
     paths:
       - .github/workflows/docs.yml
@@ -65,6 +46,13 @@ on:
       - docs/flags_datetime.md
       - docs/locations.md
       - tests/fixtures/**
+      - tests/adoption.rs
+      - tests/common/**
+      - tests/legacy_doc_convert.rs
+      - tests/legacy_doc.rs
+      - examples/adoption/**
+      - docs/adoption/**
+  workflow_dispatch:
 
 # One run per PR (or branch): a new push cancels the PR's older run, and
 # on main a newer commit replaces any run still waiting. The self-hosted
@@ -75,6 +63,10 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   drift:
@@ -97,3 +89,98 @@ jobs:
           node-version: "24"
       - name: Regenerate and compare
         run: scripts/gen_docs.sh --check
+
+  claims:
+    name: adoption claims (tests/adoption.rs)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: ./.github/actions/mbx
+      - name: one test per adoption-page row, and the .doc reader
+        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc
+
+  examples:
+    name: side-by-side examples (examples/adoption)
+    runs-on: self-hosted
+    needs: claims
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: ./.github/actions/mbx
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: cargo build --release --bin jubarte
+      # The examples' input generators (make_input.py and the like) import
+      # python-docx under `set -e`; 1.2.0 is the version the committed
+      # evidence records (examples/adoption/*/versions.txt). A venv first on
+      # PATH makes it the `python3` every run.sh calls.
+      - name: python-docx for the examples' input generators
+        run: |
+          uv venv "$RUNNER_TEMP/adoption-py"
+          uv pip install --python "$RUNNER_TEMP/adoption-py" python-docx==1.2.0
+          echo "$RUNNER_TEMP/adoption-py/bin" >> "$GITHUB_PATH"
+      - name: which replaced tools this runner has
+        run: |
+          for tool in soffice pdftoppm pdfinfo pdffonts pandoc bun uvx; do
+            if command -v "$tool" >/dev/null; then echo "$tool: $(command -v "$tool")"; else echo "$tool: absent (its side is skipped)"; fi
+          done
+          python3 -c 'import docx; print("python-docx", docx.__version__)'
+      - name: run every example
+        env:
+          JUBARTE: ${{ github.workspace }}/target/release/jubarte
+          # 17-mcp serves this checkout's Python package, not the PyPI release.
+          JUBARTE_MCP_FROM: jubarte-redlines[mcp] @ ${{ github.workspace }}/jubarte-python
+        run: |
+          failed=0
+          for script in examples/adoption/*/run.sh; do
+            echo "::group::$script"
+            if bash "$script"; then echo "ok: $script"; else echo "::error file=$script::exited $?"; failed=1; fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: every folder still has its README and jubarte output
+        run: |
+          missing=0
+          for dir in examples/adoption/*/; do
+            [ -f "$dir/README.md" ] || { echo "::error::$dir has no README.md"; missing=1; }
+            [ -f "$dir/run.sh" ] || { echo "::error::$dir has no run.sh"; missing=1; }
+            find "$dir" -mindepth 1 -maxdepth 1 -iname '*jubarte*' | grep -q . || { echo "::error::$dir has no jubarte output"; missing=1; }
+          done
+          exit "$missing"
+      # Rasters and replaced-tool outputs depend on the runner's fonts and
+      # tool versions, so regenerated evidence is not byte-compared. A
+      # script that stops writing a committed jubarte file fails here, and
+      # what changed is listed for the reviewer. Some jubarte-named files
+      # need a replaced tool too: jubarte's document through soffice
+      # (`*_jubarte_soffice.png`, `pdf_page_size_*`), jubarte's PDF read by
+      # pdffonts, another tool's document through jubarte (`*_pandoc_*`,
+      # `*_docxjs_*`). Such a file may be missing only when a tool that
+      # makes it is absent on this runner.
+      - name: committed evidence is still produced
+        run: |
+          git status --porcelain -- examples/adoption
+          # Every tool a file's name involves, not the first match: a
+          # `*_pandoc_soffice*` file needs pandoc as well as soffice.
+          needs() {
+            case "$1" in *soffice*|*libreoffice*) echo soffice pdftoppm ;; esac
+            # 14's run.sh: soffice and pdftoppm open the branch, pdfinfo writes it.
+            case "$1" in *pdf_page_size_*) echo soffice pdftoppm pdfinfo ;; esac
+            case "$1" in *fonts_jubarte_pdf*) echo pdffonts ;; esac
+            case "$1" in *pandoc*) echo pandoc ;; esac
+            case "$1" in *docxjs*) echo bun ;; esac
+          }
+          deleted=""
+          for file in $(git ls-files --deleted -- examples/adoption | grep -i jubarte || true); do
+            excused=0
+            for tool in $(needs "$file"); do
+              command -v "$tool" >/dev/null || excused=1
+            done
+            [ "$excused" = 1 ] || deleted="$deleted $file"
+          done
+          if [ -n "$deleted" ]; then echo "::error::no longer produced:$deleted"; exit 1; fi
+          changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
+          echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"
