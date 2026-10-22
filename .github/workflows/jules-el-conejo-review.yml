@@ -153,14 +153,17 @@ jobs:
         uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-deny
+      # 🥕 Pinned: ruff.toml sets preview = true, and each ruff release adds
+      # preview rules (0.17 added RUF105/RUF201). Bump together with ruff.toml.
       - name: 🐇 Install ruff
-        run: pipx install ruff
+        run: pipx install ruff==0.17.2
 
       # 🥕 Stage 2: the repository's own gates, with the same flags as ci.yml.
       - name: 🥕 Run static analysis
         id: static_analysis
         env:
           RUST_CHANGED: ${{ steps.skills.outputs.rust_changed }}
+          CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
         run: |
           REPORT_FILE="$(mktemp)"
           STATUS="passed"
@@ -194,13 +197,22 @@ jobs:
             } >> "$REPORT_FILE"
           fi
 
-          if git ls-files '*.py' | grep -q .; then
-            run_tool "ruff (Python, repository config)" ruff check --output-format=concise .
+          # 🐇 ruff and shellcheck read only the files this PR changes: a
+          # repository-wide run reported the same old findings on every PR.
+          # clippy and cargo deny stay crate-wide (a crate is their unit).
+          mapfile -t PY_FILES < <(printf '%s\n' "$CHANGED_FILES" | grep -E '\.pyi?$' || true)
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            run_tool "ruff (${#PY_FILES[@]} changed Python files, repository config)" \
+              ruff check --force-exclude --output-format=concise -- "${PY_FILES[@]}"
           fi
 
-          mapfile -t SHELL_FILES < <(git ls-files '*.sh')
+          mapfile -t SHELL_FILES < <(printf '%s\n' "$CHANGED_FILES" | grep -E '\.(sh|bash)$' || true)
           if [ "${#SHELL_FILES[@]}" -gt 0 ]; then
-            run_tool "shellcheck (shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
+            run_tool "shellcheck (${#SHELL_FILES[@]} changed shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
+          fi
+
+          if [ "$RUST_CHANGED" != true ] && [ "${#PY_FILES[@]}" -eq 0 ] && [ "${#SHELL_FILES[@]}" -eq 0 ]; then
+            echo "- ⏭️ No Rust, Python or shell file changed." >> "$REPORT_FILE"
           fi
 
           {
@@ -216,6 +228,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PR_BODY: ${{ steps.pr.outputs.body }}
           STATIC_STATUS: ${{ steps.static_analysis.outputs.status }}
           STATIC_REPORT: ${{ steps.static_analysis.outputs.report }}
@@ -228,12 +241,13 @@ jobs:
             const files = (process.env.CHANGED_FILES || '').split('\n').filter(Boolean);
             const listed = files.slice(0, 25).map((f) => `- \`${f}\``).join('\n') || '- *(no changed files)*';
             const more = files.length > 25 ? `\n- …and ${files.length - 25} more` : '';
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: Number(process.env.PR_NUMBER),
-              body: [
+            // 🐇 One report per PR, edited in place on each push, not a new comment per push.
+            const MARKER = '<!-- jules-el-conejo-report -->';
+            const issue_number = Number(process.env.PR_NUMBER);
+            const report = [
+                MARKER,
                 '## 🐇🥕 Jules, el conejo — PR review report',
+                `_Head: \`${process.env.HEAD_SHA.slice(0, 8)}\`_`,
                 '',
                 `| Stage | Status |`,
                 '| :--- | :--- |',
@@ -250,8 +264,31 @@ jobs:
                 `- ${has('Summary') ? '✅' : '⚠️'} \`## Summary\``,
                 `- ${has('Evidence') ? '✅' : '⚠️'} \`## Evidence\` (Before/After)`,
                 `- ${has('Merge Danger') ? '✅' : '⚠️'} \`## Merge Danger\` (Door & Blast Radius)`,
-              ].join('\n'),
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
             });
+            const mine = comments.find(
+              (c) => c.user?.type === 'Bot' && (c.body || '').startsWith(MARKER),
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: mine.id,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body: report,
+              });
+            }
 
       # 🥕 Stage 4: Jules opens a companion fix PR. Only for a trusted author or
       # dispatcher, and only when a PR opens, reopens, leaves draft, gets the
@@ -278,6 +315,12 @@ jobs:
             ("${{ steps.pr.outputs.title }}", branch ${{ steps.pr.outputs.head_ref }}).
 
             Follow AGENTS.md and CONTRIBUTING.md in the repository; they override generic advice below.
+
+            Word parity comes first. Never make jubarte refuse, strip or rewrite an input that
+            Microsoft Word opens: that is a regression, not hardening. A ZIP part name is an OPC
+            URI that jubarte reads in memory and never writes to the file system, so file-system
+            rules (Windows reserved names such as CON or AUX, path length) do not apply to it.
+            A finding that claims Word behaviour must say how it was established.
 
             ## Changed files
             ${{ steps.skills.outputs.changed_files }}
