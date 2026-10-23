@@ -2752,11 +2752,11 @@ fn compare_history(
                 *end = *start + (*end - *start).saturating_sub(rewrite.taken);
                 *end - *start
             });
-            if kept(c, record.as_ref()).is_none() {
-                return !rewrite.words.is_empty() || left.unwrap_or(0) > 0;
+            let remains = !rewrite.words.is_empty() || left.unwrap_or(0) > 0;
+            if remains && kept(c, record.as_ref()).is_some() {
+                c.text.clone_from(&rewrite.words);
             }
-            c.text.clone_from(&rewrite.words);
-            return true;
+            return remains;
         }
         if !edited.contains(&c.id) {
             return true;
