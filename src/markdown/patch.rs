@@ -591,21 +591,21 @@ fn operations(
                     });
                     continue;
                 }
-                // The paragraph replaced whole: the new one next to a
-                // neighbour, then the old one deleted.
-                let replaced = Block {
-                    kind: paragraph.kind,
-                    runs: block.runs.clone(),
-                };
-                let before = p.checked_sub(1);
-                let after = (p + 1 < paragraphs.len()).then_some(p + 1);
-                let Some(kind) = insert(&replaced, before, after) else {
-                    continue;
-                };
+                // The paragraph replaced whole: the new one right after it,
+                // with its properties, then the old one deleted. A new
+                // paragraph beside a deleted one takes its place, in its
+                // cell or story (#1668).
                 operations.push(Operation {
                     id: Some(format!("edit:{entry}:new")),
                     group: None,
-                    kind,
+                    kind: OperationKind::InsertParagraph {
+                        paragraph: at(p),
+                        position: Side::After,
+                        runs: block.runs.clone(),
+                        like: None,
+                        style: None,
+                        comment: None,
+                    },
                 });
                 operations.push(Operation {
                     id,

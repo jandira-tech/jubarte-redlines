@@ -611,12 +611,20 @@ fn insert(p: &str, side: &str, text: &str) -> String {
     )
 }
 
-/// Every `w:tc` in `part` of `bytes` ends with a paragraph.
+/// Every `w:tc` in `part` of `bytes` ends with a paragraph, maybe inside
+/// the content controls and custom XML elements that close with it.
 fn assert_cells_end_in_a_paragraph(bytes: &[u8], what: &str) {
     let xml = part_string(bytes, "word/document.xml").unwrap();
     for (at, _) in xml.match_indices("</w:tc>") {
+        let mut end = &xml[..at];
+        while let Some(inner) = end
+            .strip_suffix("</w:sdtContent></w:sdt>")
+            .or_else(|| end.strip_suffix("</w:customXml>"))
+        {
+            end = inner;
+        }
         assert!(
-            xml[..at].ends_with("</w:p>") || xml[..at].ends_with("<w:p />"),
+            end.ends_with("</w:p>") || end.ends_with("<w:p />"),
             "{what}: a cell does not end in a paragraph: {xml}"
         );
     }
@@ -966,26 +974,35 @@ fn deleting_the_bodys_every_paragraph_empties_the_last() {
 }
 
 /// What still fails, and fails whole, with the code it failed with before:
-/// a table anchored on a deleted paragraph.
+/// a table or an image anchored on a deleted paragraph, each refusal naming
+/// what it anchors (MiniMax on #1670, round 7).
 #[test]
 fn a_table_on_a_deleted_paragraph_is_still_refused() {
     let table = |p: &str| {
         format!(r#"{{"kind":"insert_table","paragraph":"{p}","position":"after","rows":[["x"]]}}"#)
     };
+    // A 1x1 PNG.
+    let image = |p: &str| {
+        format!(
+            r#"{{"kind":"insert_image","paragraph":"{p}","position":"after","image_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==","content_type":"image/png","width_emu":914400,"alt":"Dot"}}"#
+        )
+    };
     let source = table_with_cell(&format!("{}{}", para("One."), para("Two.")));
     for mode in MODES {
-        let operations = [delete("p0"), table("p0")];
-        let Err(error) = apply_plan(&source, &plan_of(mode, &operations)) else {
-            panic!("{mode}: published")
-        };
-        assert_eq!(
-            (error.code.as_str(), error.message.as_str()),
-            (
-                "OVERLAPPING_EDITS",
-                "anchors a new table on a deleted paragraph"
-            ),
-            "{mode}"
-        );
+        for (operation, message) in [
+            (table("p0"), "anchors a new table on a deleted paragraph"),
+            (image("p0"), "anchors a new image on a deleted paragraph"),
+        ] {
+            let operations = [delete("p0"), operation];
+            let Err(error) = apply_plan(&source, &plan_of(mode, &operations)) else {
+                panic!("{mode}: published")
+            };
+            assert_eq!(
+                (error.code.as_str(), error.message.as_str()),
+                ("OVERLAPPING_EDITS", message),
+                "{mode}"
+            );
+        }
     }
 }
 
@@ -1148,5 +1165,286 @@ fn a_typed_plan_replaces_a_cells_only_paragraph() {
                 assert_eq!(texts(&rejected), texts(&source), "{what}");
             }
         }
+    }
+}
+
+/// `body` in a block content control, and in a custom XML element.
+fn wrapped(body: &str) -> [String; 2] {
+    [
+        format!(
+            r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{body}</w:sdtContent></w:sdt>"#
+        ),
+        format!(r#"<w:customXml w:element="item">{body}</w:customXml>"#),
+    ]
+}
+
+/// A paragraph in a block content control or a custom XML element is its
+/// container's: when it is the last, its mark stays, in the body and in a
+/// cell (codex, crush, glm-5.3 and MiniMax on #1670, round 7). The custom
+/// XML element runs under keep only: the comparer panics on it (#1674).
+#[test]
+fn a_wrapped_final_paragraph_keeps_its_mark() {
+    for mode in MODES {
+        let cases = wrapped(&para("Old."));
+        let cases = if mode.is_empty() {
+            &cases[..1]
+        } else {
+            &cases[..]
+        };
+        for body in cases {
+            check_outputs(
+                &docx(body),
+                &plan_of(mode, &[delete("p0")]),
+                &[""],
+                &format!("{mode} body {body}"),
+            );
+        }
+        for cell in cases {
+            check_outputs(
+                &table_with_cell(cell),
+                &plan_of(mode, &[delete("p2")]),
+                &["Before.", "Full.", "", "After."],
+                &format!("{mode} cell {cell}"),
+            );
+        }
+    }
+}
+
+/// A cell holding a paragraph and then a table (a shape other tools
+/// write, already without a closing paragraph) keeps that paragraph when
+/// the plan deletes it: emptied, never removed (glm-5.3 on #1670, round 7).
+/// Under keep only: the comparer re-inserts the nested table (#1675).
+#[test]
+fn a_cells_last_paragraph_before_a_nested_table_is_emptied() {
+    let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Inner.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let source = table_with_cell(&format!("{}{inner}", para("Only.")));
+    for mode in &MODES[1..] {
+        let result = apply_plan(&source, &plan_of(mode, &[delete("p2")]))
+            .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
+        let expected = ["Before.", "Full.", "", "Inner.", "After."];
+        assert_eq!(texts(&result.clean), expected, "{mode}: clean");
+        assert_eq!(
+            texts(&accept_revisions(&result.redline).unwrap()),
+            expected,
+            "{mode}: Accept All"
+        );
+        assert_eq!(
+            texts(&reject_revisions(&result.redline).unwrap()),
+            texts(&source),
+            "{mode}: Reject All"
+        );
+    }
+}
+
+/// A paragraph deleted ahead of a table takes a deleted mark of its own,
+/// as Word's Compare writes it, in the body and in a cell; the paragraph
+/// after the table, the container's last, keeps its mark (crush on #1670,
+/// round 7; Word oracle in #1670's round-7 ledger). Under keep only: the
+/// comparer deletes and re-inserts the table instead (#1675).
+#[test]
+fn a_paragraph_deleted_before_a_table_takes_its_own_deleted_mark() {
+    let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let blocks = format!("{}{inner}{}", para("One."), para("Two."));
+    let body = docx(&blocks);
+    let cell = table_with_cell(&blocks);
+    let keep = MODES[1];
+    let own_deleted_mark = |result: EditResult| {
+        let one = paragraphs_in(&normalized(
+            &part_string(&result.redline, "word/document.xml").unwrap(),
+        ))
+        .into_iter()
+        .find(|p| p.contains("One."))
+        .unwrap();
+        assert_eq!(mark(&one), "-", "{one}");
+    };
+    own_deleted_mark(check_outputs(
+        &body,
+        &plan_of(keep, &[delete("p0")]),
+        &["In.", "Two."],
+        "body",
+    ));
+    own_deleted_mark(check_outputs(
+        &body,
+        &plan_of(keep, &[delete("p0"), delete("p2")]),
+        &["In.", ""],
+        "body, both",
+    ));
+    own_deleted_mark(check_outputs(
+        &cell,
+        &plan_of(keep, &[delete("p2")]),
+        &["Before.", "Full.", "In.", "Two.", "After."],
+        "cell",
+    ));
+    own_deleted_mark(check_outputs(
+        &cell,
+        &plan_of(keep, &[delete("p2"), delete("p4")]),
+        &["Before.", "Full.", "In.", "", "After."],
+        "cell, both",
+    ));
+}
+
+/// Under keep, a replacement joins a final mark whose formatting change is
+/// still tracked only when it keeps that formatting: otherwise the record
+/// would be lost, and the plan is refused as a format would be (codex,
+/// crush, glm-5.3 and MiniMax on #1670, round 7).
+#[test]
+fn a_final_mark_with_a_tracked_formatting_change_keeps_its_record() {
+    let source = docx(&format!(
+        r#"{}<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="7" w:author="Other" w:date="2026-10-01T00:00:00Z"><w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#,
+        para("Template.")
+    ));
+    let like = r#"{"kind":"insert_paragraph","paragraph":"p1","position":"after","like":"p0","runs":[{"text":"New."}]}"#;
+    let Err(error) = apply_plan(&source, &plan_of(MODES[1], &[delete("p1"), like.into()])) else {
+        panic!("keep: published")
+    };
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
+    assert!(
+        error.message.contains("formatting change is still tracked"),
+        "{error:?}"
+    );
+    // Keeping the formatting keeps the record.
+    let result = apply_plan(
+        &source,
+        &plan_of(MODES[1], &[delete("p1"), insert("p1", "after", "New.")]),
+    )
+    .unwrap();
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"w:id="7""#), "{xml}");
+}
+
+/// Under keep, a final paragraph replaced while the paragraph before it
+/// carries another author's deleted mark is no longer refused: the
+/// replacement takes the final mark and needs no carrier (crush and
+/// glm-5.3 on #1670, round 7). Deleted alone, it is emptied: no paragraph
+/// before it can carry its mark away, so the mark stays, as Word keeps it.
+#[test]
+fn a_replacement_beside_a_deleted_mark_needs_no_carrier() {
+    let source = docx(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Other" w:date="2026-10-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>First.</w:t></w:r></w:p>{}"#,
+        para("Last.")
+    ));
+    let result = apply_plan(
+        &source,
+        &plan_of(MODES[1], &[delete("p1"), insert("p1", "after", "New.")]),
+    )
+    .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(texts(&result.clean), ["First.", "New."]);
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        ["First.", "Last."]
+    );
+    let alone = apply_plan(&source, &plan_of(MODES[1], &[delete("p1")]))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    assert_eq!(texts(&alone.clean), ["First.", ""]);
+    assert_eq!(
+        texts(&reject_revisions(&alone.redline).unwrap()),
+        ["First.", "Last."]
+    );
+    // Accepting Other's deleted mark too joins its words to the kept mark.
+    assert_eq!(
+        texts(&accept_revisions(&alone.redline).unwrap()),
+        ["First."]
+    );
+}
+
+/// A final paragraph that no paragraph before it can carry away (a table
+/// or a content control comes first) is emptied, in both outputs alike;
+/// a carrier past the paragraphs the plan deletes is found whatever the
+/// order of the deletions (Word check of #1670, round 7).
+#[test]
+fn a_final_paragraph_nothing_before_can_carry_is_emptied() {
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let [sdt, _] = wrapped(&para("Old."));
+    for mode in MODES {
+        check_outputs(
+            &docx(&format!("{}{table}{}", para("A."), para("Last."))),
+            &plan_of(mode, &[delete("p2")]),
+            &["A.", "In.", ""],
+            &format!("{mode} after a table"),
+        );
+        check_outputs(
+            &docx(&format!("{}{sdt}", para("Lead."))),
+            &plan_of(mode, &[delete("p1")]),
+            &["Lead.", ""],
+            &format!("{mode} in a content control"),
+        );
+        let three = docx(&format!("{}{}{}", para("A."), para("B."), para("Last.")));
+        for operations in [[delete("p1"), delete("p2")], [delete("p2"), delete("p1")]] {
+            check_outputs(&three, &plan_of(mode, &operations), &["A."], mode);
+        }
+    }
+}
+
+/// A replacement anchored on another deleted paragraph of the container
+/// still takes the final mark, with its own properties: Accept All formats
+/// it as the clean copy does (codex on #1670, round 7).
+#[test]
+fn a_replacement_anchored_elsewhere_takes_the_final_mark() {
+    let source = docx(&format!(
+        r#"{}<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Last.</w:t></w:r></w:p>"#,
+        para("First.")
+    ));
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(
+                mode,
+                &[delete("p0"), delete("p1"), insert("p0", "after", "New.")],
+            ),
+            &["New."],
+            mode,
+        );
+        let accepted = accept_revisions(&result.redline).unwrap();
+        assert_eq!(
+            ppr(&paragraph_xml(&accepted, 0)),
+            ppr(&paragraph_xml(&result.clean, 0)),
+            "{mode}"
+        );
+    }
+}
+
+/// The kept final mark takes the replacement's mark formatting, the old
+/// in a `w:rPrChange`, as Word's Compare writes it: Accept All formats the
+/// mark as the clean copy does (MiniMax on #1670, round 7). Reject All is
+/// checked under keep only: the comparer drops the old formatting (#1677).
+#[test]
+fn the_kept_final_mark_takes_the_replacements_mark_formatting() {
+    let source =
+        docx(r#"<w:p><w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#);
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[delete("p0"), insert("p0", "after", "New.")]),
+            &["New."],
+            mode,
+        );
+        let accepted = accept_revisions(&result.redline).unwrap();
+        assert_eq!(
+            ppr(&paragraph_xml(&accepted, 0)),
+            ppr(&paragraph_xml(&result.clean, 0)),
+            "{mode}"
+        );
+        if !mode.is_empty() {
+            let rejected = reject_revisions(&result.redline).unwrap();
+            assert_eq!(
+                ppr(&paragraph_xml(&rejected, 0)),
+                ppr(&paragraph_xml(&source, 0)),
+                "{mode}"
+            );
+        }
+    }
+}
+
+/// Under keep, a paragraph whose content the replay cannot delete as a
+/// tracked change (an equation) is refused, not left in the redline while
+/// the clean copy drops it (codex on #1670, round 7).
+#[test]
+fn a_deleted_equation_is_refused_under_keep() {
+    let math = r#"<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath></w:p>"#;
+    for source in [docx(math), docx(&format!("{math}{}", para("After.")))] {
+        let Err(error) = apply_plan(&source, &plan_of(MODES[1], &[delete("p0")])) else {
+            panic!("keep: published")
+        };
+        assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
     }
 }

@@ -110,6 +110,7 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
     }
     tx.revision_refusal.take();
     let dom = &tx.opened.dom;
+    let emptied = tx.emptied_paragraphs();
     let refuse = |op: usize, message: &str| {
         let mut error = tx.conflict(op, message);
         error.code = "UNSUPPORTED_STRUCTURE".into();
@@ -131,14 +132,29 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
         let message = match resolved {
             Resolved::DeleteParagraph { para } => {
                 let node = tx.paragraph_nodes[*para];
+                let replacement = tx.final_replacement(*para);
                 if let Some(moved) = moved_in(dom, node) {
                     Some(named(
                         "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
                         moved,
                     ))
-                } else if dom
-                    .next_element(node)
-                    .is_none_or(|n| !dom.name_is(n, &W::p()))
+                } else if let Some(foreign) = untrackable_content(dom, node) {
+                    let name = dom.name(foreign).expect("an element");
+                    Some(format!(
+                        "under keep, a paragraph holding content other than runs ({} in {}) cannot be deleted as a tracked change yet; apply it in a plan without existing_revisions keep",
+                        name.local_name(),
+                        name.namespace_name()
+                    ))
+                } else if let Some(change) =
+                    replacement.and_then(|op| record_replaced(tx, node, op))
+                {
+                    Some(named(
+                        "under keep, a final paragraph whose formatting change is still tracked cannot be replaced by a paragraph formatted otherwise: that change is",
+                        change,
+                    ))
+                } else if replacement.is_none()
+                    && !emptied.contains(para)
+                    && dom.next_element(node).is_none_or(|n| !is_block(dom, n))
                 {
                     previous_paragraph(dom, node)
                         .and_then(|p| mark_revision(dom, p, &DELETED))
@@ -479,6 +495,16 @@ fn emit(
             _ => None,
         })
         .collect();
+    // The operation whose new paragraph takes each final mark that stays,
+    // and the paragraph that carries each other final mark away.
+    let replacements: BTreeMap<usize, usize> = finals
+        .iter()
+        .filter_map(|&para| t.final_replacement(para).map(|op| (para, op)))
+        .collect();
+    let carriers: BTreeMap<usize, NodeId> = finals
+        .iter()
+        .filter_map(|&para| t.final_carrier(para).map(|carrier| (para, carrier)))
+        .collect();
     // 0. Run formatting, on source offsets (no text edit overlaps it), each
     // run's old properties in `w:rPrChange`.
     for (_, r) in &t.resolved {
@@ -654,8 +680,8 @@ fn emit(
     // 2. Paragraph and table insertions: every run, row and paragraph mark
     // inserted.
     let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
-    // The new paragraphs beside each anchor, in document order.
-    let mut placed: BTreeMap<usize, (Vec<NodeId>, Vec<NodeId>)> = BTreeMap::new();
+    // Each insertion's last new block.
+    let mut inserted: BTreeMap<usize, NodeId> = BTreeMap::new();
     let mut tables: Vec<NodeId> = Vec::new();
     for (i, r) in &t.resolved {
         let (anchor, side, news, commented) = match r {
@@ -700,22 +726,20 @@ fn emit(
         };
         let anchor_node = t.paragraph_nodes[anchor];
         let dom = &mut t.opened.dom;
-        let (before, after) = placed.entry(anchor).or_default();
         for &new in &news {
             match side {
                 Side::After => {
                     let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
                     dom.add_after_self(prev, new);
                     last_after.insert(anchor, new);
-                    after.push(new);
                 }
                 Side::Before => {
                     dom.add_before_self(anchor_node, new);
-                    before.push(new);
                 }
             }
         }
         let new = news[news.len() - 1];
+        inserted.insert(*i, new);
         if commented && let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, new);
             anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.ids);
@@ -828,20 +852,18 @@ fn emit(
         if emptied.contains(para) {
             continue;
         }
-        if finals.contains(para)
-            && let Some((before, after)) = placed.get(para)
-            && let Some(&last) = after.last().or(before.last())
-        {
+        if let Some(&last) = replacements.get(para).and_then(|op| inserted.get(op)) {
             keep_final_mark(dom, node, last, stamp);
             continue;
         }
-        // The mark of the last paragraph of a container cannot go: its
-        // content joins the paragraph before it, whose mark is deleted.
-        let carrier = if dom
-            .next_element(node)
-            .is_some_and(|n| dom.name_is(n, &W::p()))
-        {
+        // A paragraph before another or before a table takes a deleted
+        // mark of its own, as Word's Compare writes it. The mark of the
+        // last paragraph of a container cannot go: its content joins the
+        // paragraph before it, whose mark is deleted.
+        let carrier = if dom.next_element(node).is_some_and(|n| is_block(dom, n)) {
             Some(node)
+        } else if let Some(&carrier) = carriers.get(para) {
+            Some(carrier)
         } else {
             let mut cursor = previous_paragraph(dom, node);
             while let Some(p) = cursor.filter(|&p| mark_has(dom, p, &DELETED)) {
@@ -874,11 +896,14 @@ fn coalesce_insertions(edits: &[ScheduledEdit]) -> Vec<ScheduledEdit> {
     emission
 }
 
-/// `last`, the final new paragraph beside the container-final `old`, takes
+/// `last`, the new paragraph that replaces the container-final `old`, takes
 /// `old`'s place and mark, as Word writes text typed over a final
 /// paragraph: `old` holds `last`'s inserted content before its own deleted
 /// content, and `last`'s properties, the old ones in a `w:pPrChange` when
-/// they differ. The other new paragraphs keep their inserted marks before it.
+/// they differ; its mark takes `last`'s formatting, the old in a
+/// `w:rPrChange`. A change record already there stays: `check` refuses,
+/// under keep, the plans that would have to replace it. The other new
+/// paragraphs keep their inserted marks before it.
 fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
     let content: Vec<NodeId> = dom
         .nodes(last)
@@ -896,29 +921,15 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
             None => dom.add(old, c),
         }
     }
-    // The properties without the mark's own (`w:rPr`) or a change record;
-    // none at all reads as an empty `w:pPr`.
-    let bare = |dom: &Dom, paragraph: NodeId| -> Vec<NodeId> {
-        dom.element(paragraph, &W::p_pr())
-            .map(|ppr| dom.elements(ppr, None))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|&child| {
-                !dom.name_is(child, &W::r_pr())
-                    && !dom.name_is(child, &W::sect_pr())
-                    && !dom.name_is(child, &W::p_pr_change())
-            })
-            .collect()
-    };
-    let text = |dom: &Dom, children: &[NodeId]| -> Vec<String> {
-        children.iter().map(|&c| dom.serialize_element(c)).collect()
-    };
-    let wanted = bare(dom, last);
-    if text(dom, &wanted) != text(dom, &bare(dom, old)) {
+    let wanted = bare_properties(dom, last);
+    if serialized(dom, &wanted) != serialized(dom, &bare_properties(dom, old)) {
         track_properties(dom, old, stamp, |dom| {
             let ppr = paragraph_properties(dom, old);
             for child in dom.elements(ppr, None) {
-                if !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &W::sect_pr()) {
+                if !dom.name_is(child, &W::r_pr())
+                    && !dom.name_is(child, &W::sect_pr())
+                    && !dom.name_is(child, &W::p_pr_change())
+                {
                     dom.remove(child);
                 }
             }
@@ -928,9 +939,68 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
             }
         });
     }
+    let wanted = mark_formatting(dom, last);
+    let had = mark_formatting(dom, old);
+    if serialized(dom, &wanted) != serialized(dom, &had) {
+        let rpr = mark_properties(dom, old);
+        // A record already there holds the mark's original formatting.
+        let change = dom.element(rpr, &W::r_pr_change());
+        let before = dom.new_element(W::r_pr());
+        for &child in &had {
+            dom.remove(child);
+            dom.add(before, child);
+        }
+        for child in wanted {
+            dom.remove(child);
+            match change {
+                Some(change) => dom.add_before_self(change, child),
+                None => dom.add(rpr, child),
+            }
+        }
+        if change.is_none() {
+            let record = stamp.container(dom, W::r_pr_change());
+            dom.add(record, before);
+            dom.add(rpr, record);
+        }
+    }
     dom.remove(old);
     dom.add_after_self(last, old);
     dom.remove(last);
+}
+
+/// `paragraph`'s properties without the mark's own (`w:rPr`), its section
+/// or a change record; none at all reads as an empty `w:pPr`.
+fn bare_properties(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
+    dom.element(paragraph, &W::p_pr())
+        .map(|ppr| dom.elements(ppr, None))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|&child| {
+            !dom.name_is(child, &W::r_pr())
+                && !dom.name_is(child, &W::sect_pr())
+                && !dom.name_is(child, &W::p_pr_change())
+        })
+        .collect()
+}
+
+/// The formatting of `paragraph`'s mark (`w:pPr/w:rPr`), without its
+/// revisions or a change record.
+fn mark_formatting(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| dom.elements(rpr, None))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|&child| !is_one_of(dom, child, &MARK_RECORDS))
+        .collect()
+}
+
+/// What a paragraph mark's `w:rPr` holds besides its formatting.
+const MARK_RECORDS: [&str; 5] = ["ins", "del", "moveFrom", "moveTo", "rPrChange"];
+
+/// `children` as XML, to compare property sets.
+fn serialized(dom: &Dom, children: &[NodeId]) -> Vec<String> {
+    children.iter().map(|&c| dom.serialize_element(c)).collect()
 }
 
 /// Wrap a new paragraph's content in one `w:ins` and mark it inserted.
@@ -1901,12 +1971,79 @@ fn paragraph_format_change(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
         .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
 }
 
+/// The change record of the container-final `paragraph` that operation
+/// `op`'s new paragraph would have to replace when it takes the final mark
+/// (`keep_final_mark`): its `w:pPrChange` when the new properties differ,
+/// or its mark's `w:rPrChange` when the mark's formatting goes (a new
+/// paragraph's mark carries none, as `build_paragraph` writes it).
+fn record_replaced(tx: &Transaction<'_>, paragraph: NodeId, op: usize) -> Option<NodeId> {
+    let dom = &tx.opened.dom;
+    let Some((
+        _,
+        Resolved::InsertParagraph {
+            like, style, toc, ..
+        },
+    )) = tx.resolved.iter().find(|(i, _)| *i == op)
+    else {
+        return None;
+    };
+    let like = tx.paragraph_nodes[*like];
+    let style_of = |p: NodeId| {
+        dom.element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::p_style()))
+            .and_then(|s| dom.attribute(s, &W::val()))
+    };
+    let unstyled = |p: NodeId| -> Vec<String> {
+        let children: Vec<NodeId> = bare_properties(dom, p)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_style()))
+            .collect();
+        serialized(dom, &children)
+    };
+    let same = toc.is_none()
+        && style.as_deref().or(style_of(like)) == style_of(paragraph)
+        && unstyled(like) == unstyled(paragraph);
+    let properties = paragraph_format_change(dom, paragraph).filter(|_| !same);
+    let mark = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+        .filter(|_| toc.is_some() || !mark_formatting(dom, paragraph).is_empty());
+    properties.or(mark)
+}
+
+/// The first element `paragraph` holds, at the levels `delete_runs` walks,
+/// that is no WordprocessingML (an equation, `m:oMath`): the replay cannot
+/// delete it as a tracked change.
+fn untrackable_content(dom: &Dom, container: NodeId) -> Option<NodeId> {
+    dom.elements(container, None).into_iter().find_map(|child| {
+        let name = dom.name(child)?;
+        if name.namespace_name() != W::URI {
+            return Some(child);
+        }
+        match name.local_name() {
+            "hyperlink" | "smartTag" | "customXml" | "dir" | "bdo" | "fldSimple" | "ins" => {
+                untrackable_content(dom, child)
+            }
+            "sdt" => dom
+                .element(child, &W::sdt_content())
+                .and_then(|content| untrackable_content(dom, content)),
+            _ => None,
+        }
+    })
+}
+
 /// The first move (`w:moveFrom`, `w:moveTo`) `node` holds, in its runs or
 /// its mark.
 fn moved_in(dom: &Dom, node: NodeId) -> Option<NodeId> {
     dom.descendants(node, None)
         .into_iter()
         .find(|&n| is_one_of(dom, n, &["moveFrom", "moveTo"]))
+}
+
+/// Whether `node` is a paragraph or a table.
+fn is_block(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &W::p()) || dom.name_is(node, &W::tbl())
 }
 
 /// The paragraph right before `node` among its siblings.
@@ -1916,6 +2053,19 @@ fn previous_paragraph(dom: &Dom, node: NodeId) -> Option<NodeId> {
         .rev()
         .find(|&n| dom.is_element(n))
         .filter(|&n| dom.name_is(n, &W::p()))
+}
+
+/// `paragraph`'s mark properties (`w:pPr/w:rPr`), created when missing.
+fn mark_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
+    let ppr = paragraph_properties(dom, paragraph);
+    match dom.element(ppr, &W::r_pr()) {
+        Some(rpr) => rpr,
+        None => {
+            let rpr = dom.new_element(W::r_pr());
+            insert_ppr_child(dom, ppr, rpr);
+            rpr
+        }
+    }
 }
 
 /// `paragraph`'s `w:pPr`, created when missing.
@@ -1938,15 +2088,7 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
     if deleting && mark_has(dom, paragraph, &DELETED) {
         return;
     }
-    let ppr = paragraph_properties(dom, paragraph);
-    let rpr = match dom.element(ppr, &W::r_pr()) {
-        Some(rpr) => rpr,
-        None => {
-            let rpr = dom.new_element(W::r_pr());
-            insert_ppr_child(dom, ppr, rpr);
-            rpr
-        }
-    };
+    let rpr = mark_properties(dom, paragraph);
     let node = stamp.container(dom, name);
     match dom.element(rpr, &W::ins()) {
         Some(ins) if deleting => dom.add_after_self(ins, node),
