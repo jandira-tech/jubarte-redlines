@@ -612,16 +612,28 @@ fn insert(p: &str, side: &str, text: &str) -> String {
 }
 
 /// Every `w:tc` in `part` of `bytes` ends with a paragraph, maybe inside
-/// the content controls and custom XML elements that close with it.
+/// the content controls and custom XML elements that close with it, maybe
+/// followed by the range markers Word writes after it.
 fn assert_cells_end_in_a_paragraph(bytes: &[u8], what: &str) {
     let xml = part_string(bytes, "word/document.xml").unwrap();
+    let marker = |end: &str| -> Option<usize> {
+        let at = end.rfind("<w:")?;
+        let local = end[at + 3..].split([' ', '/', '>']).next()?;
+        (end.ends_with("/>") && (local.ends_with("End") || local.ends_with("Start"))).then_some(at)
+    };
     for (at, _) in xml.match_indices("</w:tc>") {
         let mut end = &xml[..at];
-        while let Some(inner) = end
-            .strip_suffix("</w:sdtContent></w:sdt>")
-            .or_else(|| end.strip_suffix("</w:customXml>"))
-        {
-            end = inner;
+        loop {
+            if let Some(inner) = end
+                .strip_suffix("</w:sdtContent></w:sdt>")
+                .or_else(|| end.strip_suffix("</w:customXml>"))
+            {
+                end = inner;
+            } else if let Some(start) = marker(end) {
+                end = &end[..start];
+            } else {
+                break;
+            }
         }
         assert!(
             end.ends_with("</w:p>") || end.ends_with("<w:p />"),
@@ -1447,4 +1459,231 @@ fn a_deleted_equation_is_refused_under_keep() {
         };
         assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
     }
+}
+
+/// A new paragraph placed after the last paragraph that stays takes the
+/// final mark, whatever deleted paragraphs stand between it and the final
+/// one, and whatever the operations' order (codex on #1670, round 8).
+#[test]
+fn a_replacement_before_a_run_of_deleted_paragraphs_takes_the_final_mark() {
+    let source = docx(&format!(
+        "{}{}{}",
+        para("Lead."),
+        para("Middle."),
+        para("Last.")
+    ));
+    let operations = [
+        vec![delete("p1"), delete("p2"), insert("p0", "after", "New.")],
+        vec![insert("p0", "after", "New."), delete("p1"), delete("p2")],
+        vec![delete("p1"), delete("p2"), insert("p1", "before", "New.")],
+        vec![delete("p1"), delete("p2"), insert("p1", "after", "New.")],
+    ];
+    for mode in MODES {
+        for plan in &operations {
+            check_outputs(
+                &source,
+                &plan_of(mode, plan),
+                &["Lead.", "New."],
+                &format!("{mode} {plan:?}"),
+            );
+        }
+    }
+}
+
+/// A paragraph deleted right before a block content control, a custom XML
+/// element or a range marker takes a deleted mark of its own, as before a
+/// paragraph: Accept All removes it (codex on #1670, round 8).
+#[test]
+fn a_paragraph_deleted_before_a_wrapper_or_a_marker_takes_its_own_mark() {
+    let [sdt, custom] = wrapped(&para("Keep."));
+    let marker = format!(
+        r#"<w:bookmarkStart w:id="0" w:name="mark"/>{}<w:bookmarkEnd w:id="0"/>"#,
+        para("Keep.")
+    );
+    for mode in MODES {
+        for (rest, keep_only) in [(&sdt, false), (&custom, true), (&marker, false)] {
+            if keep_only && mode.is_empty() {
+                continue; // the comparer panics on block custom XML (#1674)
+            }
+            let blocks = format!("{}{rest}", para("Remove."));
+            check_outputs(
+                &docx(&blocks),
+                &plan_of(mode, &[delete("p0")]),
+                &["Keep."],
+                &format!("{mode} body {rest}"),
+            );
+            // With a paragraph before, that paragraph's mark stays (MiniMax
+            // on #1670, round 8).
+            let result = check_outputs(
+                &docx(&format!("{}{blocks}", para("Zero."))),
+                &plan_of(mode, &[delete("p1")]),
+                &["Zero.", "Keep."],
+                &format!("{mode} after Zero. {rest}"),
+            );
+            let zero = paragraphs_in(&normalized(
+                &part_string(&result.redline, "word/document.xml").unwrap(),
+            ))
+            .into_iter()
+            .find(|p| p.contains("Zero."))
+            .unwrap();
+            assert_eq!(mark(&zero), "", "{mode} {rest}: {zero}");
+            check_outputs(
+                &table_with_cell(&blocks),
+                &plan_of(mode, &[delete("p2")]),
+                &["Before.", "Full.", "Keep.", "After."],
+                &format!("{mode} cell {rest}"),
+            );
+        }
+    }
+}
+
+/// A table of contents replacing a final paragraph whose formatting change
+/// is still tracked keeps that change when the paragraph's own properties
+/// are none, as the field paragraph's are: nothing is replaced (codex on
+/// #1670, round 8). Other properties are still refused.
+#[test]
+fn a_toc_replacing_an_unformatted_final_paragraph_keeps_its_record() {
+    let toc = r#"{"kind":"insert_toc","paragraph":"p0","position":"after","levels":3}"#;
+    let change = r#"<w:pPrChange w:id="7" w:author="Other" w:date="2026-10-01T00:00:00Z"><w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange>"#;
+    let plain = docx(&format!(
+        r#"<w:p><w:pPr>{change}</w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#
+    ));
+    let result = apply_plan(&plain, &plan_of(MODES[1], &[delete("p0"), toc.into()]))
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"w:id="7""#), "{xml}");
+    let centered = docx(&format!(
+        r#"<w:p><w:pPr><w:jc w:val="center"/>{change}</w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#
+    ));
+    let Err(error) = apply_plan(&centered, &plan_of(MODES[1], &[delete("p0"), toc.into()])) else {
+        panic!("keep: published")
+    };
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
+}
+
+/// The paragraph before a deleted final one carries its mark away when the
+/// plan keeps it and its mark is not deleted yet, past the paragraphs the
+/// plan deletes; never past another author's deleted mark, which would
+/// join two paragraphs the plan keeps: the final paragraph is emptied
+/// instead (MiniMax on #1670, round 8).
+#[test]
+fn a_final_mark_is_carried_past_deleted_paragraphs_never_past_a_deleted_mark() {
+    let source = docx(&format!(
+        r#"{}<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Other" w:date="2026-10-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>First.</w:t></w:r></w:p>{}"#,
+        para("Zero."),
+        para("Last.")
+    ));
+    for (operations, accepted) in [
+        (vec![delete("p1"), delete("p2")], vec!["Zero."]),
+        (vec![delete("p2")], vec!["Zero.", "First."]),
+    ] {
+        let result = apply_plan(&source, &plan_of(MODES[1], &operations))
+            .unwrap_or_else(|e| panic!("{operations:?}: {e:?}"));
+        assert_eq!(
+            texts(&accept_revisions(&result.redline).unwrap()),
+            accepted,
+            "{operations:?}"
+        );
+        assert_eq!(
+            texts(&accept_revisions(&result.clean).unwrap()),
+            accepted,
+            "{operations:?}"
+        );
+        assert_eq!(
+            texts(&reject_revisions(&result.redline).unwrap()),
+            ["Zero.", "First.", "Last."],
+            "{operations:?}"
+        );
+        let zero = paragraphs_in(&normalized(
+            &part_string(&result.redline, "word/document.xml").unwrap(),
+        ))
+        .into_iter()
+        .find(|p| p.contains("Zero."))
+        .unwrap();
+        assert_eq!(
+            mark(&zero),
+            if accepted.len() == 1 { "-" } else { "" },
+            "{zero}"
+        );
+    }
+}
+
+/// A range marker between another author's deleted mark (or moved-away
+/// mark) and the final paragraph changes nothing: the mark is never carried
+/// past it (crush on #1670, round 8).
+#[test]
+fn a_final_mark_is_not_carried_past_a_deleted_mark_behind_a_marker() {
+    for kind in ["del", "moveFrom"] {
+        let source = docx(&format!(
+            r#"{}<w:p><w:pPr><w:rPr><w:{kind} w:id="9" w:author="Other" w:date="2026-10-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>First.</w:t></w:r></w:p><w:bookmarkStart w:id="1" w:name="ref"/>{}<w:bookmarkEnd w:id="1"/>"#,
+            para("Zero."),
+            para("Last.")
+        ));
+        let result = apply_plan(&source, &plan_of(MODES[1], &[delete("p2")]))
+            .unwrap_or_else(|e| panic!("{kind}: {e:?}"));
+        assert_eq!(
+            texts(&accept_revisions(&result.redline).unwrap()),
+            texts(&accept_revisions(&result.clean).unwrap()),
+            "{kind}"
+        );
+        let zero = paragraphs_in(&normalized(
+            &part_string(&result.redline, "word/document.xml").unwrap(),
+        ))
+        .into_iter()
+        .find(|p| p.contains("Zero."))
+        .unwrap();
+        assert_eq!(mark(&zero), "", "{kind}: {zero}");
+    }
+}
+
+/// Under keep, a replacement anchored on the paragraph before the final one
+/// takes the final mark where the final paragraph stands: the range
+/// markers between stay before it, and Reject All restores them there
+/// (crush on #1670, round 8).
+#[test]
+fn a_replacement_anchored_before_a_marker_leaves_the_marker_in_place() {
+    let source = docx(&format!(
+        r#"{}<w:bookmarkStart w:id="1" w:name="ref"/>{}<w:bookmarkEnd w:id="1"/>"#,
+        para("Lead."),
+        para("Last.")
+    ));
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[insert("p0", "after", "New."), delete("p1")]),
+            &["Lead.", "New."],
+            mode,
+        );
+        if mode.is_empty() {
+            // The comparer's redline moves the marker into the final
+            // paragraph on Reject All, as before this change (#1676).
+            continue;
+        }
+        for (bytes, what) in [
+            (reject_revisions(&result.redline).unwrap(), "Reject All"),
+            (result.redline.clone(), "redline"),
+        ] {
+            let xml = part_string(&bytes, "word/document.xml").unwrap();
+            let marker = xml.find("<w:bookmarkStart").unwrap();
+            // The comparer writes "Last" and "." in runs of their own.
+            assert!(marker < xml.find("Last").unwrap(), "{mode} {what}: {xml}");
+            assert!(marker > xml.find("Lead").unwrap(), "{mode} {what}: {xml}");
+        }
+    }
+}
+
+/// Under keep, a paragraph holding a subdocument (`w:subDoc`), which the
+/// replay cannot delete as a tracked change, is refused, as an equation is
+/// (crush on #1670, round 8).
+#[test]
+fn a_deleted_subdocument_is_refused_under_keep() {
+    let source = docx(&format!(
+        r#"<w:p><w:subDoc r:id="rId77"/></w:p>{}"#,
+        para("After.")
+    ));
+    let Err(error) = apply_plan(&source, &plan_of(MODES[1], &[delete("p0")])) else {
+        panic!("keep: published")
+    };
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
+    assert!(error.message.contains("subDoc"), "{error:?}");
 }

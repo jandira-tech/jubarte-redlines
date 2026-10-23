@@ -187,13 +187,16 @@ fn case(site: &str) -> Case {
                 c.reject = "removes the proposed paragraph break";
             }
             if site == "last_paragraph" {
-                // A paragraph before the deleted mark could carry the last
-                // one's mark away past it; without one, the last paragraph
-                // is emptied instead (#1670).
-                c.body = format!("{}{}", para("Zero."), c.body);
-                c.paragraph = "p1";
-                c.lead = "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark: that mark is";
-                delete(&mut c, "p2");
+                // The last paragraph of a content control, not its
+                // container's: a container's final paragraph is emptied or
+                // carried away instead (#1670).
+                c.body = format!(
+                    r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>{}"#,
+                    c.body,
+                    para("Tail.")
+                );
+                c.lead = "under keep, the last paragraph of a content control or a custom XML element cannot be deleted when the paragraph before it already has a deleted mark: that mark is";
+                delete(&mut c, "p1");
             } else {
                 c.lead = "under keep, a paragraph whose mark is already tracked cannot be merged: that mark is";
                 c.operation = json!({"kind":"merge_paragraphs","paragraph":"p0"});

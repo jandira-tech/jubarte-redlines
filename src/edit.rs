@@ -5716,10 +5716,13 @@ impl<'p> Transaction<'p> {
     /// The paragraph that carries a deleted container-final paragraph's
     /// mark away: its own mark deleted, so the final one's content joins
     /// it, as Word writes the deletion of a last paragraph. That is the
-    /// nearest paragraph before it among its siblings (past range markers)
-    /// that the plan keeps and whose mark is not already deleted. `None`
-    /// when a table, a content control or the start of its parent comes
-    /// first: nothing can carry the mark there.
+    /// nearest paragraph before it among its siblings (past range markers
+    /// and the paragraphs the plan deletes) that the plan keeps, when its
+    /// mark is not already deleted: carrying the mark past another
+    /// author's deleted mark would join two paragraphs the plan keeps
+    /// (MiniMax on #1670, round 8). `None` there, and when a table, a
+    /// content control or the start of its parent comes first: nothing can
+    /// carry the mark.
     pub(super) fn final_carrier(&self, para: usize) -> Option<NodeId> {
         let dom = &self.opened.dom;
         let gone: Vec<NodeId> = self
@@ -5730,11 +5733,14 @@ impl<'p> Transaction<'p> {
                 _ => None,
             })
             .collect();
+        // Deleted, or moved away (crush on #1670, round 8).
         let deleted_mark = |p: NodeId| {
             dom.element(p, &W::p_pr())
                 .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-                .and_then(|rpr| dom.element(rpr, &W::del()))
-                .is_some()
+                .is_some_and(|rpr| {
+                    dom.element(rpr, &W::del()).is_some()
+                        || dom.element(rpr, &W::name("moveFrom")).is_some()
+                })
         };
         let mut cursor = self.paragraph_nodes[para];
         loop {
@@ -5742,8 +5748,8 @@ impl<'p> Transaction<'p> {
             if !dom.name_is(previous, &W::p()) {
                 return None;
             }
-            if !gone.contains(&previous) && !deleted_mark(previous) {
-                return Some(previous);
+            if !gone.contains(&previous) {
+                return (!deleted_mark(previous)).then_some(previous);
             }
             cursor = previous;
         }
@@ -5771,12 +5777,13 @@ impl<'p> Transaction<'p> {
     }
 
     /// The operation whose new paragraph takes a deleted container-final
-    /// paragraph's mark: the paragraph that ends up right before it, or the
-    /// last placed after it. That is the last new paragraph placed after
-    /// it, else before it; with nothing placed beside it, the last block
+    /// paragraph's mark: the last new paragraph placed after it, else the
+    /// last placed before it (MiniMax on #1670, round 8); with nothing placed beside it, the last block
     /// placed after the paragraph before it, when that block is a paragraph
-    /// (codex on #1670). `None` for a paragraph that is not its container's
-    /// final one, or that no new paragraph replaces.
+    /// (codex on #1670), back through the paragraphs the plan deletes and
+    /// what is placed before them (codex on #1670, round 8). `None` for a
+    /// paragraph that is not its container's final one, or that no new
+    /// paragraph replaces.
     pub(super) fn final_replacement(&self, para: usize) -> Option<usize> {
         let dom = &self.opened.dom;
         let node = self.paragraph_nodes[para];
@@ -5809,13 +5816,33 @@ impl<'p> Transaction<'p> {
         if !before.is_empty() {
             return None;
         }
-        let previous = previous_block(dom, node)
-            .filter(|&n| dom.name_is(n, &W::p()))
-            .and_then(|p| self.paragraph_nodes.iter().position(|&n| n == p))?;
-        placed(previous, Side::After)
-            .last()
-            .filter(|(_, p)| *p)
-            .map(|(i, _)| *i)
+        let gone: BTreeSet<usize> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::DeleteParagraph { para } => Some(*para),
+                _ => None,
+            })
+            .collect();
+        let mut cursor = node;
+        loop {
+            let previous = previous_block(dom, cursor)
+                .filter(|&n| dom.name_is(n, &W::p()))
+                .and_then(|p| self.paragraph_nodes.iter().position(|&n| n == p))?;
+            // The last block placed after it ends the container; with none,
+            // a kept paragraph does, and a deleted one gives way to what is
+            // placed before it.
+            if let Some(&(op, paragraph)) = placed(previous, Side::After).last() {
+                return paragraph.then_some(op);
+            }
+            if !gone.contains(&previous) {
+                return None;
+            }
+            if let Some(&(op, paragraph)) = placed(previous, Side::Before).last() {
+                return paragraph.then_some(op);
+            }
+            cursor = self.paragraph_nodes[previous];
+        }
     }
 
     /// Thread operations against each other: nothing may act on a comment
