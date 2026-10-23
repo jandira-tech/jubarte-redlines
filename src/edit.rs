@@ -6081,24 +6081,24 @@ impl<'p> Transaction<'p> {
                         &edit.replacement,
                         edit.attach_before,
                     );
+                    // Nothing before the edit has moved yet: its new words
+                    // stand at its own start.
+                    clean_new_words(
+                        &mut self.opened.dom,
+                        node,
+                        edit.start,
+                        edit.start + edit.replacement.len(),
+                        &mut self.revision_ids,
+                    );
                 }
                 for ins in carriers {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
                 }
             }
-            // New words leave the formatting records of the runs they
-            // were written into, and formatting of new text, in new
-            // coordinates.
+            // Formatting of new text, in new coordinates.
             for edit in &edits {
-                let s = new_position(&edits, edit.start, true, Some(edit.op));
-                clean_new_words(
-                    &mut self.opened.dom,
-                    node,
-                    s,
-                    s + edit.replacement.len(),
-                    &mut self.revision_ids,
-                );
                 if let Some(format) = &edit.format {
+                    let s = new_position(&edits, edit.start, true, Some(edit.op));
                     format_range(
                         &mut self.opened.dom,
                         node,
@@ -7887,6 +7887,40 @@ fn split_run_at(
     dom.add_after_self(run, clone);
 }
 
+/// Split `run` so that a run boundary falls before `child` (one of its
+/// descendants): the original keeps the children before it, a copy takes
+/// the child holding it and every child after. The copy's formatting
+/// history takes fresh ids, as [`split_run_at`]'s does.
+fn split_run_before(dom: &mut Dom, run: NodeId, child: NodeId, ids: &mut RevisionCounter) {
+    let Some(holder) = std::iter::once(child)
+        .chain(dom.ancestors(child, None))
+        .find(|&n| dom.parent(n) == Some(run))
+    else {
+        return;
+    };
+    let run_children = dom.elements(run, None);
+    let Some(index) = run_children.iter().position(|&c| c == holder) else {
+        return;
+    };
+    if run_children[..index]
+        .iter()
+        .all(|&c| dom.name_is(c, &W::r_pr()))
+    {
+        return;
+    }
+    let clone = dom.clone_subtree(run);
+    for (i, child) in dom.elements(clone, None).into_iter().enumerate() {
+        if i < index && !dom.name_is(child, &W::r_pr()) {
+            dom.remove(child);
+        }
+    }
+    for &child in &run_children[index..] {
+        dom.remove(child);
+    }
+    refresh_run_history(dom, clone, ids);
+    dom.add_after_self(run, clone);
+}
+
 /// Take the new words at projection offsets `[start, end)` of `paragraph`
 /// out of the formatting records of the runs they were written into: they
 /// go in runs of their own without a record, and the fragments around them
@@ -7914,10 +7948,11 @@ fn clean_new_words(
     {
         return;
     }
-    let originals: HashSet<NodeId> = project_paragraph(dom, paragraph)
-        .segments
-        .iter()
-        .map(|s| run_of(&s.piece))
+    // Every run before the splits, those without projected text included:
+    // a run after the new words that is not one of them is a copy.
+    let originals: HashSet<NodeId> = dom
+        .descendants(paragraph, Some(&W::r()))
+        .into_iter()
         .collect();
     for run in runs_in_range(dom, paragraph, start, end, ids) {
         let Some(mut rpr) = dom.element(run, &W::r_pr()) else {
@@ -7936,6 +7971,9 @@ fn clean_new_words(
             rpr = copied;
         }
         tracked::strip_records(dom, rpr);
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
     }
 }
 
@@ -8254,13 +8292,20 @@ fn runs_in_range(
     }
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
-        if let Some(seg) = projection
-            .segments
-            .iter()
-            .find(|s| s.start < at && at < s.end)
-            .cloned()
+        let segments = &projection.segments;
+        if let Some(seg) = segments.iter().find(|s| s.start < at && at < s.end) {
+            split_run_at(dom, &seg.clone(), at, ids);
+        } else if let Some(next) = segments.iter().find(|s| s.start == at && at < s.end)
+            && segments
+                .iter()
+                .any(|s| s.end == at && run_of(&s.piece) == run_of(&next.piece))
         {
-            split_run_at(dom, &seg, at, ids);
+            // `at` falls between two children of one run.
+            let (run, child) = match next.piece {
+                Piece::Text { t, run } => (run, t),
+                Piece::Glyph { element, run } => (run, element),
+            };
+            split_run_before(dom, run, child, ids);
         }
     }
     let projection = project_paragraph(dom, paragraph);
