@@ -542,14 +542,14 @@ pub(crate) struct Recorded {
     pub characters: Option<(usize, usize)>,
 }
 
-/// Each formatting change's [`Recorded`] by id, in document order: ids may
-/// repeat.
+/// Each formatting change's [`Recorded`], under the story-scoped id
+/// [`list_changes`] gives it (`r3`, `styles.r3`). A `w:id` repeated in one
+/// story keeps every record, in document order.
 pub(crate) type Records = HashMap<String, Vec<Recorded>>;
 
-/// [`list_changes`], and each formatting change's [`Recorded`] by id in
-/// document order (ids may repeat), from one parse of each story. The
-/// content of a change `skip` names, and the paragraph mark it inserts,
-/// count for nothing in the characters.
+/// [`list_changes`] and its formatting changes' [`Records`], from one
+/// parse of each story. The content of a change `skip` names, and the
+/// paragraph mark it inserts, count for nothing in the characters.
 pub(crate) fn changes_and_records(
     docx: &[u8],
     skip: &dyn Fn(&Change) -> bool,
