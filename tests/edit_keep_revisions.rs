@@ -118,10 +118,10 @@ fn an_edit_inside_their_insertion_keeps_the_revision_pending() {
 
 #[test]
 fn paragraph_operations_emit_marks_under_keep() {
-    // The engine refuses an insertion anchored on a paragraph the same plan
-    // deletes, under every policy, so the new paragraph follows p0.
-    // p1 is the last paragraph: its content joins the paragraph before
-    // it, the inserted one, whose mark is then both inserted and deleted.
+    // p1 is the last paragraph, and the new paragraph lands right before
+    // it: the new one takes its mark, as Word writes text typed over a
+    // final paragraph, so no mark is inserted or deleted (#1670); its
+    // words are inserted and p1's deleted.
     let plan = EditPlan::from_json(r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
         {"kind":"insert_paragraph","paragraph":"p0","position":"after","runs":[{"text":"Venue: New York County."}]},
         {"kind":"delete_paragraph","paragraph":"p1"},
@@ -129,12 +129,18 @@ fn paragraph_operations_emit_marks_under_keep() {
     let out = apply_plan(&source(), &plan).unwrap();
     assert_word_valid_package(&out.redline);
     let changes = list_changes(&out.redline).unwrap();
+    assert!(
+        !changes
+            .iter()
+            .any(|c| c.author.as_deref() == Some("Me") && c.target == "paragraph_mark"),
+        "{changes:?}"
+    );
     assert!(changes.iter().any(|c| c.author.as_deref() == Some("Me")
         && c.kind == ChangeKind::Insertion
-        && c.target == "paragraph_mark"));
+        && c.text == "Venue: New York County."));
     assert!(changes.iter().any(|c| c.author.as_deref() == Some("Me")
         && c.kind == ChangeKind::Deletion
-        && c.target == "paragraph_mark"));
+        && c.text == "Governing law: Delaware."));
     assert!(changes.iter().any(|c| c.author.as_deref() == Some("Me")
         && c.kind == ChangeKind::Insertion
         && c.text == " of invoice"));
