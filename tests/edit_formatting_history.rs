@@ -129,6 +129,13 @@ fn assert_unique_ids(bytes: &[u8]) {
 }
 
 fn assert_validates(bytes: &[u8]) {
+    let (passed, report) = validate_report(bytes);
+    assert!(passed, "validate must pass: {report}");
+    assert!(!report.contains("DUPLICATE_REVISION_ID"), "{report}");
+}
+
+/// Whether `jubarte validate` passes `bytes`, and its report.
+fn validate_report(bytes: &[u8]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.docx");
     std::fs::write(&path, bytes).unwrap();
@@ -142,8 +149,7 @@ fn assert_validates(bytes: &[u8]) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "validate must pass: {report}");
-    assert!(!report.contains("DUPLICATE_REVISION_ID"), "{report}");
+    (out.status.success(), report)
 }
 
 /// One formatting record: its id and the text of the run it sits on.
@@ -769,24 +775,24 @@ fn a_typed_replacement_that_splits_the_run_keeps_alices_history() {
     assert_eq!(accepted(&out.redline), "[alpha new gamma]");
 }
 
-/// Every formatting record's id and the text of its run, in document order.
+/// Every run formatting record's id and the text of its run, in document order.
 fn formatting_records(bytes: &[u8]) -> Vec<(String, String)> {
     let (dom, root) = dom(bytes);
     dom.descendants(root, Some(&W::name("rPrChange")))
         .into_iter()
-        .map(|change| {
+        .filter_map(|change| {
+            // A paragraph mark's record sits in no run.
             let run = dom
                 .ancestors(change, None)
                 .into_iter()
-                .find(|&a| dom.name_is(a, &W::r()))
-                .unwrap();
+                .find(|&a| dom.name_is(a, &W::r()))?;
             let text = dom
                 .descendants(run, None)
                 .into_iter()
                 .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
                 .map(|n| dom.value(n))
                 .collect();
-            (dom.attribute(change, &W::id()).unwrap().to_string(), text)
+            Some((dom.attribute(change, &W::id()).unwrap().to_string(), text))
         })
         .collect()
 }
@@ -1298,14 +1304,19 @@ fn a_paragraph_marks_record_with_the_same_id_does_not_hold_alices_id_back() {
             {"kind":"replace","target":target,"find":" beta","text":" B"}
         ])
     });
+    // The mark and the run share an id in the source already: the outputs
+    // keep that duplicate and add none.
+    let duplicates = |bytes: &[u8]| {
+        validate_report(bytes)
+            .1
+            .matches("DUPLICATE_REVISION_ID")
+            .count()
+    };
+    assert_eq!(duplicates(&source), 1);
     for bytes in [&out.redline, &out.clean] {
-        assert_validates(bytes);
+        assert_eq!(duplicates(bytes), 1, "{}", validate_report(bytes).1);
     }
-    let runs: Vec<_> = formatting_records(&out.clean)
-        .into_iter()
-        .filter(|(_, text)| !text.is_empty())
-        .collect();
-    assert_eq!(runs, pairs(&[("5", " gamma")]));
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
 }
 
 #[test]
