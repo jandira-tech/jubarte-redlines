@@ -12,7 +12,7 @@ mod common;
 use common::docx::{docx, para, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
-use jubarte::edit::{EditPlan, apply_plan};
+use jubarte::edit::{EditPlan, EditResult, apply_plan};
 use jubarte::inspect::paragraphs;
 
 const MARK_PPR: &str =
@@ -578,4 +578,575 @@ fn editing_mode_writes_a_plain_run_into_an_empty_paragraph() {
         "{red}"
     );
     assert_word_valid_package(&edited);
+}
+
+/// A table between two paragraphs whose second cell holds `cell`; the
+/// first cell holds "Full.". Body paragraphs: p0 "Before.", p1 "Full.",
+/// p2 the second cell's first paragraph, then the cell's others and
+/// "After.".
+fn table_with_cell(cell: &str) -> Vec<u8> {
+    let tc = |inner: &str| {
+        format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
+    };
+    docx(&format!(
+        "{}<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>{}",
+        para("Before."),
+        tc(&para("Full.")),
+        tc(cell),
+        para("After.")
+    ))
+}
+
+fn plan_of(mode: &str, operations: &[String]) -> EditPlan {
+    plan(mode, &operations.join(","))
+}
+
+fn delete(p: &str) -> String {
+    format!(r#"{{"kind":"delete_paragraph","paragraph":"{p}"}}"#)
+}
+
+fn insert(p: &str, side: &str, text: &str) -> String {
+    format!(
+        r#"{{"kind":"insert_paragraph","paragraph":"{p}","position":"{side}","runs":[{{"text":"{text}"}}]}}"#
+    )
+}
+
+/// Every `w:tc` in `part` of `bytes` ends with a paragraph.
+fn assert_cells_end_in_a_paragraph(bytes: &[u8], what: &str) {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    for (at, _) in xml.match_indices("</w:tc>") {
+        assert!(
+            xml[..at].ends_with("</w:p>") || xml[..at].ends_with("<w:p />"),
+            "{what}: a cell does not end in a paragraph: {xml}"
+        );
+    }
+}
+
+/// The clean copy, the redline, and the redline accepted and rejected:
+/// each Word-valid, every cell ending in a paragraph. Accept All reads as
+/// the clean copy, Reject All as the source.
+fn check_outputs(source: &[u8], plan: &EditPlan, expected: &[&str], what: &str) -> EditResult {
+    let result = apply_plan(source, plan).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    let accepted = accept_revisions(&result.redline).unwrap();
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&result.clean), expected, "{what}: clean");
+    assert_eq!(texts(&accepted), expected, "{what}: Accept All");
+    assert_eq!(
+        texts(&rejected),
+        texts(&reject_revisions(source).unwrap()),
+        "{what}: Reject All"
+    );
+    for (bytes, output) in [
+        (&result.clean, "clean"),
+        (&result.redline, "redline"),
+        (&accepted, "Accept All"),
+        (&rejected, "Reject All"),
+    ] {
+        let report = check_word_valid_package(bytes);
+        assert!(report.ok(), "{what}: {output}: {:?}", report.errors);
+        assert_cells_end_in_a_paragraph(bytes, &format!("{what}: {output}"));
+    }
+    result
+}
+
+/// Each `w:p` in `xml`, which nests no paragraph.
+fn paragraphs_in(xml: &str) -> Vec<String> {
+    xml.match_indices("<w:p")
+        .map(|(i, _)| i)
+        .filter(|&i| matches!(xml.as_bytes()[i + 4], b'>' | b' '))
+        .map(|i| {
+            let rest = &xml[i..];
+            let open = rest.find('>').unwrap();
+            let end = if rest.as_bytes()[open - 1] == b'/' {
+                open + 1
+            } else {
+                rest.find("</w:p>").unwrap() + 6
+            };
+            rest[..end].to_string()
+        })
+        .collect()
+}
+
+/// The paragraphs of the table's second cell.
+fn cell_paragraphs(bytes: &[u8]) -> Vec<String> {
+    let xml = normalized(&part_string(bytes, "word/document.xml").unwrap());
+    let start = xml.rfind("<w:tc>").unwrap();
+    let end = start + xml[start..].find("</w:tc>").unwrap();
+    paragraphs_in(&xml[start..end])
+}
+
+/// The paragraph mark's revision: `+` inserted, `-` deleted, or none.
+fn mark(paragraph: &str) -> &'static str {
+    let ppr = ppr(paragraph);
+    if ppr.contains("<w:ins ") {
+        "+"
+    } else if ppr.contains("<w:del ") {
+        "-"
+    } else {
+        ""
+    }
+}
+
+/// The paragraph's words in document order, one entry per stretch: `+`
+/// before inserted words, `-` before deleted ones, nothing before the rest.
+fn words(paragraph: &str) -> Vec<String> {
+    let paragraph = normalized(paragraph);
+    let body = paragraph
+        .find("</w:pPr>")
+        .map_or(paragraph.as_str(), |e| &paragraph[e + 8..]);
+    let token =
+        regex::Regex::new(r"<w:(ins|del) |</w:(ins|del)>|<w:(t|delText)>([^<]*)</w:").unwrap();
+    let mut side = "";
+    let mut out: Vec<(&str, String)> = Vec::new();
+    for c in token.captures_iter(body) {
+        if let Some(open) = c.get(1) {
+            side = if open.as_str() == "ins" { "+" } else { "-" };
+        } else if c.get(2).is_some() {
+            side = "";
+        } else {
+            match out.last_mut() {
+                Some((s, text)) if *s == side => text.push_str(&c[4]),
+                _ => out.push((side, c[4].to_string())),
+            }
+        }
+    }
+    out.into_iter().map(|(s, t)| format!("{s}{t}")).collect()
+}
+
+/// Each paragraph as its mark's revision and its words.
+fn shape(paragraphs: &[String]) -> Vec<(&'static str, Vec<String>)> {
+    paragraphs.iter().map(|p| (mark(p), words(p))).collect()
+}
+
+fn expect(expected: &[(&'static str, &[&str])]) -> Vec<(&'static str, Vec<String>)> {
+    expected
+        .iter()
+        .map(|(m, w)| (*m, w.iter().map(|w| w.to_string()).collect()))
+        .collect()
+}
+
+/// `paragraphs` hold `expected` (see [`shape`]) when `mode` replays the
+/// edits, as Word's redline of the same change does. Without `keep`, the
+/// comparer writes the redline, words aligned its own way (a deletion
+/// before its insertion): there the paragraphs are only counted. No plan
+/// here changes a paragraph's properties, so no paragraph records a change
+/// of them.
+fn assert_shape(
+    mode: &str,
+    paragraphs: &[String],
+    expected: &[(&'static str, &[&str])],
+    what: &str,
+) {
+    if mode == MODES[1] {
+        assert_eq!(
+            shape(paragraphs),
+            expect(expected),
+            "{what}: {paragraphs:?}"
+        );
+        assert!(
+            paragraphs.iter().all(|p| !p.contains("<w:pPrChange")),
+            "{what}: {paragraphs:?}"
+        );
+    } else {
+        assert_eq!(paragraphs.len(), expected.len(), "{what}: {paragraphs:?}");
+    }
+}
+
+/// The table's second cell holds `expected` (see [`assert_shape`]).
+fn assert_cell(mode: &str, bytes: &[u8], expected: &[(&'static str, &[&str])], what: &str) {
+    assert_shape(mode, &cell_paragraphs(bytes), expected, what);
+}
+
+/// The body's paragraphs hold `expected` (see [`assert_shape`]).
+fn assert_body(mode: &str, bytes: &[u8], expected: &[(&'static str, &[&str])], what: &str) {
+    let body: Vec<String> = (0..texts(bytes).len())
+        .map(|n| paragraph_xml(bytes, n))
+        .collect();
+    assert_shape(mode, &body, expected, what);
+}
+
+/// Task 5 (#1668), as Word redlines it: a plan that replaces a cell's only
+/// paragraph keeps that paragraph and its mark, and writes the new words in
+/// it, before the deleted ones. Before or after, in either operation order,
+/// in both modes.
+#[test]
+fn a_plan_replaces_a_cells_only_paragraph() {
+    let source = table_with_cell(&para("Old."));
+    for mode in MODES {
+        for side in ["before", "after"] {
+            for (order, operations) in [
+                ("delete first", [delete("p2"), insert("p2", side, "New.")]),
+                ("insert first", [insert("p2", side, "New."), delete("p2")]),
+            ] {
+                let what = format!("{mode} {side} {order}");
+                let result = check_outputs(
+                    &source,
+                    &plan_of(mode, &operations),
+                    &["Before.", "Full.", "New.", "After."],
+                    &what,
+                );
+                assert_cell(mode, &result.redline, &[("", &["+New.", "-Old."])], &what);
+                assert_cell(MODES[1], &result.clean, &[("", &["New."])], &what);
+            }
+        }
+    }
+}
+
+/// Several new paragraphs on the deleted one, on one side or both, keep
+/// plan order on each side. As in Word, the last one's words go in the old
+/// paragraph, and the others come before it with inserted marks.
+#[test]
+fn several_paragraphs_replace_a_cells_only_paragraph() {
+    let source = table_with_cell(&para("Old."));
+    for mode in MODES {
+        for (what, operations) in [
+            (
+                "two after",
+                [
+                    insert("p2", "after", "One."),
+                    delete("p2"),
+                    insert("p2", "after", "Two."),
+                ],
+            ),
+            (
+                "one each side",
+                [
+                    insert("p2", "before", "One."),
+                    insert("p2", "after", "Two."),
+                    delete("p2"),
+                ],
+            ),
+            (
+                "two before",
+                [
+                    delete("p2"),
+                    insert("p2", "before", "One."),
+                    insert("p2", "before", "Two."),
+                ],
+            ),
+        ] {
+            let what = format!("{mode} {what}");
+            let result = check_outputs(
+                &source,
+                &plan_of(mode, &operations),
+                &["Before.", "Full.", "One.", "Two.", "After."],
+                &what,
+            );
+            assert_cell(
+                mode,
+                &result.redline,
+                &[("+", &["+One."]), ("", &["+Two.", "-Old."])],
+                &what,
+            );
+        }
+    }
+}
+
+/// A cell's last paragraph replaced while an earlier one stays: Word keeps
+/// the last mark here too.
+#[test]
+fn a_plan_replaces_a_cells_last_paragraph() {
+    let source = table_with_cell(&format!("{}{}", para("Kept."), para("Old.")));
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[delete("p3"), insert("p3", "after", "New.")]),
+            &["Before.", "Full.", "Kept.", "New.", "After."],
+            mode,
+        );
+        assert_cell(
+            mode,
+            &result.redline,
+            &[("", &["Kept."]), ("", &["+New.", "-Old."])],
+            mode,
+        );
+    }
+}
+
+/// A new paragraph whose properties differ from the replaced one's puts
+/// them on the kept mark as a tracked change: the old ones in its
+/// `w:pPrChange`, back on Reject All.
+#[test]
+fn a_replacement_with_other_properties_tracks_them_on_the_kept_mark() {
+    let source = table_with_cell(
+        r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#,
+    );
+    let like = r#"{"kind":"insert_paragraph","paragraph":"p2","position":"after","like":"p0","runs":[{"text":"New."}]}"#;
+    let centred = |bytes: &[u8]| cell_paragraphs(bytes).iter().any(|p| p.contains("<w:jc "));
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[delete("p2"), like.to_string()]),
+            &["Before.", "Full.", "New.", "After."],
+            mode,
+        );
+        assert!(!centred(&result.clean), "{mode}");
+        assert!(
+            !centred(&accept_revisions(&result.redline).unwrap()),
+            "{mode}"
+        );
+        assert!(
+            centred(&reject_revisions(&result.redline).unwrap()),
+            "{mode}"
+        );
+        if mode == MODES[1] {
+            let cell = cell_paragraphs(&result.redline);
+            assert_eq!(
+                shape(&cell),
+                expect(&[("", &["+New.", "-Old."])]),
+                "{cell:?}"
+            );
+            assert!(
+                cell[0].starts_with("<w:p><w:pPr><w:pPrChange ")
+                    && cell[0].contains(
+                        r#"<w:pPr><w:jc w:val="center" /></w:pPr></w:pPrChange></w:pPr>"#
+                    ),
+                "{cell:?}"
+            );
+        }
+    }
+}
+
+/// A plan that deletes every paragraph of a cell empties the last one, as
+/// Word does: its words are deleted, its mark stays. The marks before it go
+/// with their words.
+#[test]
+fn deleting_a_cells_every_paragraph_empties_the_last() {
+    let two = table_with_cell(&format!("{}{}", para("One."), para("Two.")));
+    let one = table_with_cell(&para("Old."));
+    for mode in MODES {
+        for (source, operations, expected, cell) in [
+            (
+                &two,
+                vec![delete("p2"), delete("p3")],
+                &["Before.", "Full.", "", "After."][..],
+                &[("-", &["-One."][..]), ("", &["-Two."][..])][..],
+            ),
+            // A paragraph that lands in another container keeps no cell.
+            (
+                &two,
+                vec![delete("p2"), delete("p3"), insert("p4", "before", "New.")],
+                &["Before.", "Full.", "", "New.", "After."][..],
+                &[("-", &["-One."][..]), ("", &["-Two."][..])][..],
+            ),
+            (
+                &one,
+                vec![delete("p2")],
+                &["Before.", "Full.", "", "After."][..],
+                &[("", &["-Old."][..])][..],
+            ),
+        ] {
+            let what = format!("{mode} {operations:?}");
+            let result = check_outputs(source, &plan_of(mode, &operations), expected, &what);
+            assert_cell(mode, &result.redline, cell, &what);
+            assert_cell(MODES[1], &result.clean, &[("", &[])], &what);
+        }
+    }
+}
+
+/// The body's every paragraph deleted: the same as a cell's.
+#[test]
+fn deleting_the_bodys_every_paragraph_empties_the_last() {
+    let source = docx(&format!("{}{}", para("Alpha."), para("Beta.")));
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[delete("p0"), delete("p1")]),
+            &[""],
+            mode,
+        );
+        assert_body(
+            mode,
+            &result.redline,
+            &[("-", &["-Alpha."]), ("", &["-Beta."])],
+            mode,
+        );
+        assert_body(MODES[1], &result.clean, &[("", &[])], mode);
+    }
+}
+
+/// What still fails, and fails whole, with the code it failed with before:
+/// a table anchored on a deleted paragraph.
+#[test]
+fn a_table_on_a_deleted_paragraph_is_still_refused() {
+    let table = |p: &str| {
+        format!(r#"{{"kind":"insert_table","paragraph":"{p}","position":"after","rows":[["x"]]}}"#)
+    };
+    let source = table_with_cell(&format!("{}{}", para("One."), para("Two.")));
+    for mode in MODES {
+        let operations = [delete("p0"), table("p0")];
+        let Err(error) = apply_plan(&source, &plan_of(mode, &operations)) else {
+            panic!("{mode}: published")
+        };
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str()),
+            (
+                "OVERLAPPING_EDITS",
+                "anchors a new table on a deleted paragraph"
+            ),
+            "{mode}"
+        );
+    }
+}
+
+/// The same replacement in the body, and in a header and a footer whose
+/// only paragraph it is; and a header's only paragraph deleted.
+#[test]
+fn a_plan_replaces_a_storys_only_paragraph() {
+    const HDR: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+    const FTR: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+    const HDR_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+    const FTR_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+    let story = |root: &str, text: &str| {
+        format!(
+            r#"<w:{root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}</w:{root}>"#,
+            para(text)
+        )
+    };
+    let header = story("hdr", "Head.");
+    let footer = story("ftr", "Foot.");
+    let source = common::docx::docx_with_sect(
+        &para("Old."),
+        &[
+            common::docx::Part {
+                name: "word/header1.xml",
+                content_type: HDR,
+                rel_type: HDR_REL,
+                xml: &header,
+            },
+            common::docx::Part {
+                name: "word/footer1.xml",
+                content_type: FTR,
+                rel_type: FTR_REL,
+                xml: &footer,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[delete("p0"), insert("p0", "after", "New.")]),
+            &["New."],
+            &format!("{mode} body"),
+        );
+        assert_body(mode, &result.redline, &[("", &["+New.", "-Old."])], mode);
+        for (part, old, operations, redline, clean) in [
+            (
+                "word/header1.xml",
+                "Head.",
+                vec![insert("header1.p0", "before", "New."), delete("header1.p0")],
+                &["+New.", "-Head."][..],
+                "New.",
+            ),
+            (
+                "word/footer1.xml",
+                "Foot.",
+                vec![insert("footer1.p0", "before", "New."), delete("footer1.p0")],
+                &["+New.", "-Foot."][..],
+                "New.",
+            ),
+            (
+                "word/header1.xml",
+                "Head.",
+                vec![delete("header1.p0")],
+                &["-Head."][..],
+                "",
+            ),
+        ] {
+            let what = format!("{mode} {operations:?}");
+            let result = apply_plan(&source, &plan_of(mode, &operations))
+                .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+            let story =
+                |bytes: &[u8]| paragraphs_in(&normalized(&part_string(bytes, part).unwrap()));
+            // The story's text: its `w:t`, not its deleted `w:delText`.
+            let text = |bytes: &[u8]| {
+                story(bytes)
+                    .iter()
+                    .flat_map(|p| words(p))
+                    .filter(|w| !w.starts_with('-'))
+                    .collect::<String>()
+            };
+            let accepted = accept_revisions(&result.redline).unwrap();
+            let rejected = reject_revisions(&result.redline).unwrap();
+            assert_eq!(text(&result.clean), clean, "{what}");
+            assert_eq!(text(&accepted), clean, "{what}");
+            assert_eq!(text(&rejected), old, "{what}");
+            assert_shape(mode, &story(&result.redline), &[("", redline)], &what);
+            for bytes in [&result.clean, &result.redline, &accepted, &rejected] {
+                let report = check_word_valid_package(bytes);
+                assert!(report.ok(), "{what}: {:?}", report.errors);
+                assert_eq!(story(bytes).len(), 1, "{what}");
+            }
+        }
+    }
+}
+
+/// The same replacement as a typed plan, tracked and untracked.
+#[test]
+fn a_typed_plan_replaces_a_cells_only_paragraph() {
+    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
+    use serde_json::json;
+    let source = table_with_cell(&para("Old."));
+    let view = for_edit(&source, &ForEditRequest::default()).unwrap();
+    let row = view
+        .paragraphs
+        .iter()
+        .find(|row| row.original.text.as_deref() == Some("Old."))
+        .expect("a for-edit row for the cell's paragraph");
+    let target = json!({"short_id": row.target.short_id, "long_id": row.target.long_id});
+    for track in ["on", "off"] {
+        for side in ["before", "after"] {
+            let plan = json!({
+                "schema_version": 2,
+                "source": {"sha256": jubarte::inspect::source_sha256(&source)},
+                "policy": {"track": track, "existing_revisions": "keep", "text_view": "final"},
+                "resolve_revisions": {"accept": [], "reject": []},
+                "author": "Ann Counsel",
+                "date": "2026-10-19T12:00:00Z",
+                "scope": {"kind": "all"},
+                "operations": [
+                    {"kind": "delete_paragraph", "target": target},
+                    {"kind": "insert_paragraph", "target": target, "position": side, "text": "New."},
+                ],
+            });
+            let parsed = jubarte::edit::v2::PlanV2::from_json(&plan.to_string()).unwrap();
+            let prepared = jubarte::edit::prepare_v2(
+                &source,
+                &parsed,
+                &jubarte::edit::PrepareOptions {
+                    require_change: true,
+                    exact_text: true,
+                    role: jubarte::edit::PrimaryRole::Clean,
+                    syntax: jubarte::edit::PlanSyntax::V1,
+                    skip_failed: false,
+                },
+            )
+            .unwrap_or_else(|e| panic!("{track} {side}: {e:?}"));
+            let result = prepared.result;
+            let what = format!("{track} {side}");
+            let expected = ["Before.", "Full.", "New.", "After."];
+            assert_eq!(texts(&result.clean), expected, "{what}");
+            for bytes in [&result.clean, &result.redline] {
+                let report = check_word_valid_package(bytes);
+                assert!(report.ok(), "{what}: {:?}", report.errors);
+                assert_cells_end_in_a_paragraph(bytes, &what);
+            }
+            assert_cell(MODES[1], &result.clean, &[("", &["New."])], &what);
+            if track == "on" {
+                assert_cell(
+                    MODES[1],
+                    &result.redline,
+                    &[("", &["+New.", "-Old."])],
+                    &what,
+                );
+                let accepted = accept_revisions(&result.redline).unwrap();
+                assert_eq!(texts(&accepted), expected, "{what}");
+                let rejected = reject_revisions(&result.redline).unwrap();
+                assert_eq!(texts(&rejected), texts(&source), "{what}");
+            }
+        }
+    }
 }
