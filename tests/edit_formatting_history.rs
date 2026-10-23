@@ -15,6 +15,7 @@ use jubarte::changes::{ChangeFilter, accept_changes, reject_changes};
 use jubarte::edit::{EditPlan, apply_plan};
 use jubarte::inspect::paragraphs;
 use jubarte::namespaces::W;
+use jubarte::validate::audit_tracked;
 use jubarte::xmllinq::{Dom, NodeId};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,7 +58,8 @@ fn plan(operations: Value) -> EditPlan {
     EditPlan::from_json(&request.to_string()).unwrap()
 }
 
-/// Bob's edit; both outputs must hold unique revision ids.
+/// Bob's edit; both outputs must hold unique revision ids, and the
+/// redline must hold Alice's history as she wrote it.
 fn edit(source: &[u8], operations: Value) -> Vec<u8> {
     let out = apply_plan(source, &plan(operations));
     let out = out.unwrap_or_else(|e| panic!("edit must succeed: {e:?}"));
@@ -65,6 +67,8 @@ fn edit(source: &[u8], operations: Value) -> Vec<u8> {
         assert_unique_ids(bytes);
         assert_validates(bytes);
     }
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the edits audit: {audit:#?}");
     alice_records(&out.clean);
     out.redline
 }
