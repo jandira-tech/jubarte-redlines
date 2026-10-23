@@ -128,3 +128,6 @@ report.json
 
 # redline-bench struggle reports (generated every 5 min by /tmp/rb_gw/jub_report.py)
 bench-reports/
+
+# Codex security-scan output (findings, threat model): never committed
+.scan/
