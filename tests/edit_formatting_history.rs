@@ -1279,3 +1279,51 @@ fn a_record_left_on_a_tab_keeps_its_id() {
     );
     assert_eq!(formatting_records(&out.clean), pairs(&[("5", "")]));
 }
+
+#[test]
+fn a_paragraph_marks_record_with_the_same_id_does_not_hold_alices_id_back() {
+    // The paragraph mark's record shares w:id 5 with the run's: only run
+    // records hold the run's lineage, so the id still moves on to Alice's
+    // words (glm on #1664, round 5).
+    let mark = format!(
+        r#"<w:pPr><w:rPr><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr/></w:rPrChange></w:rPr></w:pPr>"#
+    );
+    let source = docx(&format!(
+        r#"<w:p>{mark}<w:r><w:t>[</w:t></w:r>{}<w:r><w:t>]</w:t></w:r></w:p>"#,
+        formatted_run(5, TEXT)
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_validates(bytes);
+    }
+    let runs: Vec<_> = formatting_records(&out.clean)
+        .into_iter()
+        .filter(|(_, text)| !text.is_empty())
+        .collect();
+    assert_eq!(runs, pairs(&[("5", " gamma")]));
+}
+
+#[test]
+fn a_typed_replacement_of_alices_first_words_inside_her_insertion_agrees_in_both_outputs() {
+    // One formatted run inside Alice's insertion; the replacement keeps
+    // `alpha `: the clean copy keeps her record where the accepted redline
+    // does (crush on #1664, round 5).
+    let out = edit_v2(
+        &inside(TEXT),
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"alpha new"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(text(&out.clean), "[alpha new gamma]");
+    let clean = formatting_records(&out.clean);
+    assert_eq!(bob_accepted(&out.redline), clean);
+    assert_eq!(covered(&alice_records(&out.clean)), "alpha  gamma");
+    assert_eq!(clean[0], pairs(&[("7", "alpha ")])[0], "{clean:?}");
+}
