@@ -330,3 +330,25 @@ fn a_paragraph_after_a_whole_replacement_follows_it() {
         ["Start.", "new link", "Extra.", "End."]
     );
 }
+
+#[test]
+fn a_whole_replacement_does_not_take_the_links_character_style() {
+    // The new paragraph's runs start from the paragraph's own runs, never
+    // from the link's: the replacement is no link and must not look like
+    // one (glm-5.3 on #1670, round 8).
+    let source = with_link(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>old link</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+    );
+    let patched = apply_markdown(
+        &source,
+        "| [new link](https://example.com) |\n|---|\n\nAfter.\n",
+    )
+    .unwrap();
+    let xml = PartFs::open(&patched.docx)
+        .unwrap()
+        .part_string("word/document.xml")
+        .unwrap();
+    let at = xml.find("new link").unwrap();
+    let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
+    assert!(!run.contains("Hyperlink"), "{run}");
+}

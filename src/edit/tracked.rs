@@ -864,8 +864,14 @@ fn emit(
         // mark of its own, as Word's Compare writes it. The mark of the
         // last paragraph of a container cannot go: its content joins the
         // paragraph before it, whose mark is deleted.
-        let carrier = if next_block(dom, node).is_some() {
-            Some(node)
+        let carrier = if let Some(next) = next_block(dom, node) {
+            // Between a table the plan inserts and another table, the
+            // paragraph stays, emptied: it is the paragraph the clean copy
+            // puts between them (glm-5.3 on #1670, round 8).
+            let before = super::previous_block(dom, node).filter(|&b| dom.name_is(b, &W::tbl()));
+            let separates = dom.name_is(next, &W::tbl())
+                && before.is_some_and(|b| tables.contains(&b) || tables.contains(&next));
+            (!separates).then_some(node)
         } else if let Some(&carrier) = carriers.get(para) {
             Some(carrier)
         } else {
