@@ -583,6 +583,39 @@ fn repair_tells_structure_from_history() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(!out.contains("history"), "{out}");
     assert!(!dir.path().join("e.docx").exists());
+    // And a ZIP that is no Word package: an empty one, or one holding no
+    // main document (codex and MiniMax on #1666, round 6).
+    let mut plain = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    plain
+        .start_file("notes.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut plain, b"not Word").unwrap();
+    let plain = plain.finish().unwrap().into_inner();
+    let mut empty = b"PK\x05\x06".to_vec();
+    empty.extend([0u8; 18]);
+    for (original, bytes, out_name) in [
+        ("empty.docx", empty, "f.docx"),
+        ("plain.docx", plain, "g.docx"),
+    ] {
+        std::fs::write(dir.path().join(original), bytes).unwrap();
+        let (code, out, err) = run(
+            dir.path(),
+            &[
+                "validate",
+                "carol.docx",
+                "--repair",
+                out_name,
+                "--original",
+                original,
+                "--author",
+                "Carol",
+            ],
+        );
+        assert_eq!(code, 1, "{original}: {out}{err}");
+        assert!(!out.contains("history"), "{original}: {out}");
+        assert!(err.contains(original), "{original}: {err}");
+        assert!(!dir.path().join(out_name).exists(), "{original}");
+    }
     let (_, help, _) = run(dir.path(), &["validate", "--help"]);
     assert!(
         help.contains("A structural repair: it does not check the edits' history"),
