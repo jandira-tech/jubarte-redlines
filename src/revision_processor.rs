@@ -3858,20 +3858,28 @@ pub(crate) fn clone_with_fresh_property_ids(
     next_id: &mut RevisionIds,
 ) -> NodeId {
     let copy = dom.clone_subtree(source);
-    refresh_property_ids(dom, copy, || next_id.allocate());
+    refresh_property_ids(dom, copy, |_| next_id.allocate());
     copy
 }
 
 /// Give every property history under `copy`, `copy` included, an id from
-/// `allocate`, leaving its attribution and payload untouched: a copy of a
-/// record is a distinct record.
-pub(crate) fn refresh_property_ids(dom: &mut Dom, copy: NodeId, mut allocate: impl FnMut() -> u64) {
+/// `allocate`, which is passed the id the record had, leaving its
+/// attribution and payload untouched: a copy of a record is a distinct
+/// record.
+pub(crate) fn refresh_property_ids(
+    dom: &mut Dom,
+    copy: NodeId,
+    mut allocate: impl FnMut(Option<u64>) -> u64,
+) {
     for node in std::iter::once(copy).chain(dom.descendants(copy, None)) {
         if dom.name(node).is_some_and(|name| {
             matches!(name.namespace_name(), W::URI | FROZEN_NS)
                 && matches!(name.local_name(), "rPrChange" | "pPrChange")
         }) {
-            dom.set_attribute_value(node, &W::id(), Some(&allocate().to_string()));
+            let old = dom
+                .attribute(node, &W::id())
+                .and_then(|id| id.parse::<u64>().ok());
+            dom.set_attribute_value(node, &W::id(), Some(&allocate(old).to_string()));
         }
     }
 }

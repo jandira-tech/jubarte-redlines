@@ -19,11 +19,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use super::structural;
 use super::visible;
 use super::{
-    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounts,
-    ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format,
-    apply_text_edit, attach_segment, build_paragraph, format_paragraph, insert_ppr_child,
-    new_position, place_reply_markers, remove_comment_markers, runs_in_range, set_text,
-    split_run_at, toc_paragraphs,
+    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounter,
+    RevisionCounts, ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span,
+    apply_run_format, apply_text_edit, attach_segment, build_paragraph, format_paragraph,
+    insert_ppr_child, new_position, place_reply_markers, remove_comment_markers, runs_in_range,
+    set_text, split_run_at, toc_paragraphs,
 };
 use crate::changes::{list_changes, list_logical_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -42,15 +42,15 @@ struct InsertionOrigin {
 struct Stamp<'a> {
     author: &'a str,
     date: &'a str,
-    next_id: u64,
+    ids: RevisionCounter,
     insertions: HashMap<NodeId, InsertionOrigin>,
 }
 
 impl Stamp<'_> {
     fn container(&mut self, dom: &mut Dom, name: XName) -> NodeId {
         let node = dom.new_element(name);
-        dom.set_attribute_value(node, &W::id(), Some(&self.next_id.to_string()));
-        self.next_id += 1;
+        let id = self.ids.allocate();
+        dom.set_attribute_value(node, &W::id(), Some(&id.to_string()));
         dom.set_attribute_value(node, &W::author(), Some(self.author));
         dom.set_attribute_value(node, &W::date(), Some(self.date));
         node
@@ -232,12 +232,12 @@ pub(super) fn result_v2_with_paragraphs(
     tx: &Transaction<'_>,
     clean: Vec<u8>,
 ) -> Result<(EditResult, TrackedParagraphs), EditError> {
-    let (redline, floor, paragraphs) = redline(tx, true, true)?;
+    let (redline, own, paragraphs) = redline(tx, true, true)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
+    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
     Ok((
         EditResult {
@@ -254,12 +254,12 @@ fn result_with_order(
     clean: Vec<u8>,
     array_order: bool,
 ) -> Result<EditResult, EditError> {
-    let (redline, floor, paragraphs) = redline(tx, array_order, false)?;
+    let (redline, own, paragraphs) = redline(tx, array_order, false)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
+    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, &own);
     report.split_revisions = splits(&paragraphs.insertion_origins);
     Ok(EditResult {
         clean,
@@ -270,8 +270,8 @@ fn result_with_order(
 
 /// Replay `tx`'s resolved operations on a fresh copy of its base as tracked
 /// changes. `tx` has been applied, so its outcomes hold the comment ids.
-/// Returns the redline, the first id its own revisions took (every
-/// source revision's id is below it) and the replay's paragraph walks
+/// Returns the redline, the ids its own revisions took (copies of source
+/// records excluded) and the replay's paragraph walks
 /// ([`TrackedParagraphs`]); the walk is taken after the emission and
 /// before `finish`. `finish` changes the DOM only through
 /// `apply_watermark`, a step no v2 operation reaches, so the walk still
@@ -284,7 +284,7 @@ fn redline(
     tx: &Transaction<'_>,
     array_order: bool,
     final_views: bool,
-) -> Result<(Vec<u8>, u64, TrackedParagraphs), EditError> {
+) -> Result<(Vec<u8>, BTreeSet<u64>, TrackedParagraphs), EditError> {
     let plan = EditPlan {
         source_sha256: None,
         date: Some(tx.date.clone()),
@@ -332,10 +332,9 @@ fn redline(
     let mut stamp = Stamp {
         author: &tx.plan.author,
         date: &tx.date,
-        next_id: first_free_id(&t.opened, &comments),
+        ids: RevisionCounter::new(used_ids(&t.opened, &comments)),
         insertions,
     };
-    let floor = stamp.next_id;
     let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);
     thread_markers(&mut t, &comment_ids);
     // 7. A paragraph after each new table, and between it and a table
@@ -357,7 +356,7 @@ fn redline(
     let (redline, _) = t.finish()?;
     Ok((
         redline,
-        floor,
+        stamp.ids.own().clone(),
         TrackedParagraphs {
             base,
             output,
@@ -398,10 +397,15 @@ fn splits(origins: &BTreeMap<String, String>) -> Vec<super::RevisionSplit> {
 }
 
 /// Counts of the redline's logical changes holding a mark stamped with
-/// `author` and `date` whose `w:id` is at least `floor`: the edit's own. A
-/// source change carrying the very same stamp has an id below `floor`, so
-/// it does not count.
-fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> RevisionCounts {
+/// `author` and `date` whose `w:id` is one of `own_ids`, the ids the edit's
+/// own records took. A source change carrying the very same stamp, or a
+/// copy of one a split made, has another id, so it does not count.
+fn revision_counts(
+    redline: &[u8],
+    author: &str,
+    date: &str,
+    own_ids: &BTreeSet<u64>,
+) -> RevisionCounts {
     let changes = list_changes(redline).unwrap_or_default();
     let own: HashSet<&str> = changes
         .iter()
@@ -410,7 +414,7 @@ fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> Revi
                 && c.date.as_deref() == Some(date)
                 && crate::ids::change_id(&c.id)
                     .and_then(|id| id.wid.parse::<u64>().ok())
-                    .is_some_and(|id| id >= floor)
+                    .is_some_and(|id| own_ids.contains(&id))
         })
         .map(|c| c.id.as_str())
         .collect();
@@ -422,10 +426,10 @@ fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> Revi
     )
 }
 
-/// One past the highest `w:id` in every revision-bearing part and among the
-/// plan's comments, so a new revision id collides with nothing.
-pub(super) fn first_free_id(opened: &Opened, comments: &[(u32, String)]) -> u64 {
-    let mut max: Option<u64> = comments.iter().map(|&(id, _)| u64::from(id)).max();
+/// Every `w:id` in the revision-bearing parts and among the plan's
+/// comments, so a new revision id collides with none of them.
+pub(super) fn used_ids(opened: &Opened, comments: &[(u32, String)]) -> HashSet<u64> {
+    let mut used: HashSet<u64> = comments.iter().map(|&(id, _)| u64::from(id)).collect();
     for (part, _) in crate::revision_processor::revision_bearing_parts(&opened.pkg) {
         let Some(xml) = opened.pkg.part_string(&part) else {
             continue;
@@ -440,11 +444,11 @@ pub(super) fn first_free_id(opened: &Opened, comments: &[(u32, String)]) -> u64 
                 .attribute(node, &W::id())
                 .and_then(|v| v.parse::<u64>().ok())
             {
-                max = max.max(Some(id));
+                used.insert(id);
             }
         }
     }
-    max.map_or(0, |m| m + 1)
+    used
 }
 
 /// The steps of `Transaction::apply`, in its order, as tracked changes.
@@ -537,7 +541,7 @@ fn emit(
         // text leaves the projection with the deletion.
         for (start, end, i) in strike_comments.remove(&para).unwrap_or_default() {
             if let Some(&id) = comment_ids.get(&i) {
-                anchor_comment(dom, node, start, end, id, &mut stamp.next_id);
+                anchor_comment(dom, node, start, end, id, &mut stamp.ids);
             }
         }
         for edit in emission.iter().rev() {
@@ -585,7 +589,7 @@ fn emit(
         pending.sort_by_key(|&(s, _, i)| (s, i));
         for (start, end, i) in pending {
             if let Some(&id) = comment_ids.get(&i) {
-                anchor_comment(dom, node, start, end, id, &mut stamp.next_id);
+                anchor_comment(dom, node, start, end, id, &mut stamp.ids);
             }
         }
     }
@@ -595,7 +599,7 @@ fn emit(
             && let Some(&id) = comment_ids.get(i)
         {
             let (first, last) = (t.paragraph_nodes[*para], t.paragraph_nodes[*last]);
-            anchor_span(&mut t.opened.dom, first, last, id, &mut stamp.next_id);
+            anchor_span(&mut t.opened.dom, first, last, id, &mut stamp.ids);
         }
     }
     // 1c. Restores: their deletion stays, and our insertion of a copy of
@@ -681,7 +685,7 @@ fn emit(
         let new = news[news.len() - 1];
         if commented && let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, new);
-            anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.next_id);
+            anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.ids);
         }
     }
     // 3. Paragraph formatting, with the old properties in `w:pPrChange`.
@@ -783,7 +787,7 @@ fn emit(
         let dom = &mut t.opened.dom;
         if let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, node);
-            anchor_comment(dom, node, 0, projection.text.len(), id, &mut stamp.next_id);
+            anchor_comment(dom, node, 0, projection.text.len(), id, &mut stamp.ids);
         }
         delete_runs(dom, node, stamp);
         // The mark of the last paragraph of a container cannot go: its
@@ -928,7 +932,7 @@ fn track_run_format(
     format: &super::RunFormat,
     stamp: &mut Stamp<'_>,
 ) {
-    for run in runs_in_range(dom, paragraph, start, end, &mut stamp.next_id) {
+    for run in runs_in_range(dom, paragraph, start, end, &mut stamp.ids) {
         let rpr = match dom.element(run, &W::r_pr()) {
             Some(rpr) => rpr,
             None => {
@@ -937,6 +941,13 @@ fn track_run_format(
                 rpr
             }
         };
+        // `check` refuses formatting over a source record, so a record here
+        // is an earlier operation's: it already holds the run's old
+        // properties, and a second one would copy it, id and all (#1656).
+        if dom.element(rpr, &W::r_pr_change()).is_some() {
+            apply_run_format(dom, rpr, format);
+            continue;
+        }
         let old = dom.clone_subtree(rpr);
         apply_run_format(dom, rpr, format);
         if dom.serialize_element(old) == dom.serialize_element(rpr) {
@@ -1058,7 +1069,7 @@ fn emit_text(
                 0,
                 edit.replacement.len(),
                 format,
-                &mut stamp.next_id,
+                &mut stamp.ids,
             );
         }
         return;
@@ -1100,7 +1111,7 @@ fn emit_text(
                 edit.start,
                 edit.start + edit.replacement.len(),
                 format,
-                &mut stamp.next_id,
+                &mut stamp.ids,
             );
         }
         remove_empty_insertion(dom, ins);
@@ -1112,7 +1123,7 @@ fn emit_text(
     let mut ours = Vec::new();
     // `None` places the insertion right after `anchor`, `Some(true)` before.
     let (template, anchor, before) = if start < end {
-        let runs = isolate_range(dom, paragraph, (start, end), &mut stamp.next_id);
+        let runs = isolate_range(dom, paragraph, (start, end), &mut stamp.ids);
         let mut groups: Vec<Vec<NodeId>> = Vec::new();
         for &run in &runs {
             match groups.last_mut() {
@@ -1144,7 +1155,7 @@ fn emit_text(
                                 first.start,
                                 first.start + text.len(),
                                 format,
-                                &mut stamp.next_id,
+                                &mut stamp.ids,
                             );
                         }
                         replacement = "";
@@ -1169,7 +1180,7 @@ fn emit_text(
         let Some(seg) = attach_segment(&projection, start, edit.attach_before).cloned() else {
             return;
         };
-        split_run_at(dom, &seg, start, &mut stamp.next_id);
+        split_run_at(dom, &seg, start, &mut stamp.ids);
         let projection = project_paragraph(dom, paragraph);
         let text_piece = |s: &crate::inspect::Segment| {
             if !s.direct && super::editable_insertion(dom, &s.piece).is_none() {
@@ -1198,7 +1209,7 @@ fn emit_text(
             (None, None) => return,
         };
         let (t, run) = chosen;
-        isolate(dom, run, t, &mut stamp.next_id);
+        isolate(dom, run, t, &mut stamp.ids);
         let anchor = insertion_boundary_anchor(dom, run, before);
         (Some(run), Some(anchor), before)
     };
@@ -1299,8 +1310,8 @@ fn emit_text(
         }
         // Allocate after the deletion and editor insertion, using the same
         // package-wide allocator. The source attribution stays on the tail.
-        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
-        stamp.next_id += 1;
+        let id = stamp.ids.allocate();
+        dom.set_attribute_value(tail, &W::id(), Some(&id.to_string()));
         dom.remove(tail);
         dom.add_after_self(last.expect("a split has a first piece"), tail);
     }
@@ -1500,8 +1511,8 @@ fn place_beside(dom: &mut Dom, del: NodeId, ours: NodeId, stamp: &mut Stamp<'_>)
         if let Some(origin) = stamp.insertions.get(&host).cloned() {
             stamp.insertions.insert(tail, origin);
         }
-        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
-        stamp.next_id += 1;
+        let id = stamp.ids.allocate();
+        dom.set_attribute_value(tail, &W::id(), Some(&id.to_string()));
         dom.add_after_self(ours, tail);
     }
 }
@@ -1526,7 +1537,7 @@ fn isolate_range(
     dom: &mut Dom,
     paragraph: NodeId,
     (start, end): (usize, usize),
-    next_id: &mut u64,
+    ids: &mut RevisionCounter,
 ) -> Vec<NodeId> {
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
@@ -1536,7 +1547,7 @@ fn isolate_range(
             .find(|s| s.start < at && at < s.end)
             .cloned()
         {
-            split_run_at(dom, &seg, at, next_id);
+            split_run_at(dom, &seg, at, ids);
         }
     }
     loop {
@@ -1551,7 +1562,7 @@ fn isolate_range(
             })
             .collect();
         match pieces.iter().find(|&&(t, run)| !alone(dom, run, t)) {
-            Some(&(t, run)) => isolate(dom, run, t, next_id),
+            Some(&(t, run)) => isolate(dom, run, t, ids),
             None => {
                 let mut runs: Vec<NodeId> = Vec::new();
                 for (_, run) in pieces {
@@ -1575,8 +1586,8 @@ fn alone(dom: &Dom, run: NodeId, t: NodeId) -> bool {
 /// Move the children of `run` before `t` into a copy of the run placed
 /// before it, and those after `t` into a copy placed after it; each copy
 /// keeps the run's `w:rPr`. The first fragment keeps the ids of the run's
-/// formatting history; the others take fresh ids from `next_id` (#1656).
-fn isolate(dom: &mut Dom, run: NodeId, t: NodeId, next_id: &mut u64) {
+/// formatting history; the others take fresh ids from `ids` (#1656).
+fn isolate(dom: &mut Dom, run: NodeId, t: NodeId, ids: &mut RevisionCounter) {
     let children = dom.elements(run, None);
     let Some(index) = children.iter().position(|&c| c == t) else {
         return;
@@ -1604,9 +1615,9 @@ fn isolate(dom: &mut Dom, run: NodeId, t: NodeId, next_id: &mut u64) {
             dom.add_before_self(run, copy);
             // The copy is now the first fragment: the original's record
             // becomes the copy.
-            super::refresh_run_history(dom, run, next_id);
+            super::refresh_run_history(dom, run, ids);
         } else {
-            super::refresh_run_history(dom, copy, next_id);
+            super::refresh_run_history(dom, copy, ids);
             dom.add_after_self(run, copy);
         }
     }
@@ -1825,6 +1836,14 @@ pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
 mod tests {
     use super::*;
 
+    /// A counter whose next id is `next`.
+    pub(super) fn counter_at(next: u64) -> RevisionCounter {
+        match next.checked_sub(1) {
+            Some(below) => RevisionCounter::new(HashSet::from([below])),
+            None => RevisionCounter::default(),
+        }
+    }
+
     fn paragraph(dom: &mut Dom, xml: &str) -> NodeId {
         let document = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{xml}</w:p>"#, W::URI));
         dom.root(document).expect("root")
@@ -1839,7 +1858,7 @@ mod tests {
         );
         let run = dom.elements(p, Some(&W::r()))[0];
         let t = dom.element(run, &W::t()).expect("t");
-        isolate(&mut dom, run, t, &mut 0);
+        isolate(&mut dom, run, t, &mut RevisionCounter::default());
         let runs = dom.elements(p, Some(&W::r()));
         assert_eq!(runs.len(), 3);
         assert!(alone(&dom, runs[1], t));
@@ -1848,7 +1867,7 @@ mod tests {
         }
         // Already alone: nothing changes.
         let before = dom.elements(p, None).len();
-        isolate(&mut dom, run, t, &mut 0);
+        isolate(&mut dom, run, t, &mut RevisionCounter::default());
         assert_eq!(dom.elements(p, None).len(), before);
     }
 
@@ -1859,7 +1878,7 @@ mod tests {
         let mut stamp = Stamp {
             author: "Me",
             date: "2026-10-02T00:00:00Z",
-            next_id: 5,
+            ids: counter_at(5),
             insertions: HashMap::new(),
         };
         mark(&mut dom, p, W::ins(), &mut stamp);
@@ -1874,7 +1893,7 @@ mod tests {
             .map(|c| dom.name(c).expect("name").local_name().to_string())
             .collect();
         assert_eq!(names, ["ins", "del"]);
-        assert_eq!(stamp.next_id, 7);
+        assert_eq!(stamp.ids.own(), &BTreeSet::from([5, 6]));
         assert!(mark_has(&dom, p, &DELETED));
         assert!(moved_in(&dom, dom.elements(p, Some(&W::r()))[0]).is_none());
     }
@@ -1889,7 +1908,7 @@ mod tests {
         let mut stamp = Stamp {
             author: "Me",
             date: "d",
-            next_id: 0,
+            ids: counter_at(0),
             insertions: HashMap::new(),
         };
         delete_runs(&mut dom, p, &mut stamp);
@@ -1908,6 +1927,7 @@ mod tests {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod nested_run_deletion_source_boundary_tests {
+    use super::tests::counter_at;
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {
         if !dom.is_element(node) {
@@ -1975,7 +1995,7 @@ mod nested_run_deletion_source_boundary_tests {
             let mut stamp = Stamp {
                 author: "New owner",
                 date: "2001-02-03T04:05:06Z",
-                next_id: 100,
+                ids: counter_at(100),
                 insertions: HashMap::new(),
             };
             delete_runs(&mut dom, paragraph, &mut stamp);
@@ -2003,6 +2023,7 @@ mod nested_run_deletion_source_boundary_tests {
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tracked_source_property_boundary_tests {
+    use super::tests::counter_at;
     use super::*;
 
     fn paragraph(dom: &mut Dom, content: &str) -> NodeId {
@@ -2034,7 +2055,7 @@ mod tracked_source_property_boundary_tests {
             let mut stamp = Stamp {
                 author: "Ada",
                 date: "2026-10-09T12:34:00Z",
-                next_id: 50,
+                ids: counter_at(50),
                 insertions: HashMap::new(),
             };
             track_properties(&mut dom, p, &mut stamp, |dom| {
@@ -2089,7 +2110,7 @@ mod tracked_source_property_boundary_tests {
                 dom.set_attribute_value(jc, &W::val(), Some("center"));
             });
             assert_eq!(dom.serialize_element(record), frozen_record);
-            assert_eq!(stamp.next_id, 51);
+            assert_eq!(stamp.ids.own(), &BTreeSet::from([50]));
             assert_eq!(dom.elements(ppr, Some(&W::p_pr_change())).len(), 1);
             assert_eq!(dom.serialize_element(run), frozen_run);
         }

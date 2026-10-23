@@ -10,7 +10,7 @@
 //! carries Alice's history.
 mod common;
 
-use common::docx::{docx, part_string};
+use common::docx::{Part, docx, docx_with_sect, part_string};
 use jubarte::changes::{ChangeFilter, accept_changes, reject_changes};
 use jubarte::edit::{EditPlan, apply_plan};
 use jubarte::inspect::paragraphs;
@@ -77,32 +77,50 @@ fn dom(bytes: &[u8]) -> (Dom, NodeId) {
     (dom, root)
 }
 
-/// Every revision record's `(kind, w:id)` occurs once.
+/// Every XML part of the package, by name.
+fn xml_parts(bytes: &[u8]) -> Vec<(String, String)> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().to_string())
+        .filter(|name| name.starts_with("word/") && name.ends_with(".xml"))
+        .collect();
+    names
+        .into_iter()
+        .map(|name| {
+            let xml = part_string(bytes, &name).unwrap();
+            (name, xml)
+        })
+        .collect()
+}
+
+/// Every revision record's `(kind, w:id)` occurs once in the whole package.
 fn assert_unique_ids(bytes: &[u8]) {
-    let (dom, root) = dom(bytes);
-    let mut seen: BTreeMap<(String, String), usize> = BTreeMap::new();
-    for node in dom.descendants(root, None) {
-        let Some(name) = dom.name(node) else { continue };
-        if name.namespace_name() != W::URI {
-            continue;
-        }
-        let local = name.local_name();
-        if !matches!(
-            local,
-            "ins" | "del" | "rPrChange" | "pPrChange" | "moveFrom" | "moveTo"
-        ) {
-            continue;
-        }
-        if let Some(id) = dom.attribute(node, &W::id()) {
-            *seen.entry((local.to_string(), id.to_string())).or_default() += 1;
+    let mut seen: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for (part, xml) in xml_parts(bytes) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else { continue };
+        for node in dom.descendants(root, None) {
+            let Some(name) = dom.name(node) else { continue };
+            if name.namespace_name() != W::URI {
+                continue;
+            }
+            let local = name.local_name();
+            if !matches!(
+                local,
+                "ins" | "del" | "rPrChange" | "pPrChange" | "moveFrom" | "moveTo"
+            ) {
+                continue;
+            }
+            if let Some(id) = dom.attribute(node, &W::id()) {
+                seen.entry((local.to_string(), id.to_string()))
+                    .or_default()
+                    .push(part.clone());
+            }
         }
     }
-    let repeated: Vec<_> = seen.iter().filter(|(_, n)| **n > 1).collect();
-    assert!(
-        repeated.is_empty(),
-        "repeated revision ids {repeated:?}: {}",
-        dom.serialize_element(root)
-    );
+    let repeated: Vec<_> = seen.iter().filter(|(_, parts)| parts.len() > 1).collect();
+    assert!(repeated.is_empty(), "repeated revision ids {repeated:?}");
 }
 
 fn assert_validates(bytes: &[u8]) {
@@ -119,6 +137,7 @@ fn assert_validates(bytes: &[u8]) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+    assert!(out.status.success(), "validate must pass: {report}");
     assert!(!report.contains("DUPLICATE_REVISION_ID"), "{report}");
 }
 
@@ -152,6 +171,11 @@ fn alice_records(bytes: &[u8]) -> Vec<Record> {
             .into_iter()
             .find(|&a| dom.name_is(a, &W::r()))
             .expect("a run formatting record sits in a run");
+        let rpr = dom.parent(change).unwrap();
+        assert!(
+            dom.element(rpr, &W::name("b")).is_some(),
+            "a fragment keeps the run's current formatting (bold)"
+        );
         let in_bobs_insertion = dom
             .ancestors(run, None)
             .into_iter()
@@ -280,6 +304,19 @@ fn an_insertion_inside_alices_insertion_gives_each_fragment_its_own_id() {
 }
 
 #[test]
+fn a_whole_word_replacement_gives_each_fragment_its_own_id() {
+    let operations = json!([{"kind":"replace","paragraph":"p0","find":"beta",
+        "replacement":"new","whole":true}]);
+    check_split(
+        &outside(TEXT),
+        "5",
+        "alpha ",
+        operations,
+        "[alpha new gamma]",
+    );
+}
+
+#[test]
 fn a_comment_that_splits_the_run_gives_each_fragment_its_own_id() {
     let operations = json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
     check_split(
@@ -391,4 +428,199 @@ fn an_insertion_after_alices_insertion_splits_nothing() {
         insert("gamma", "X"),
         "[alpha beta gammaX]",
     );
+}
+
+#[test]
+fn a_deletion_inside_a_run_of_several_pieces_gives_each_fragment_its_own_id() {
+    // A run of three text pieces between tabs: the deletion isolates the
+    // middle one, with copies of the run on both sides of it.
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>alpha</w:t><w:tab/><w:t>beta</w:t><w:tab/><w:t>gamma</w:t></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let operations = json!([{"kind":"delete","paragraph":"p0","find":"beta"}]);
+    let out = edit(&source, operations);
+    let records = alice_records(&out);
+    assert_eq!(covered(&records), "alphabetagamma");
+    assert!(records.len() > 1, "the deletion splits Alice's run");
+    assert_eq!(records[0].id, "5", "the first fragment keeps the id");
+    assert_eq!(records[0].text, "alpha");
+}
+
+#[test]
+fn fresh_ids_stay_in_words_signed_32_bit_range() {
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r>{}<w:r><w:t>]</w:t></w:r></w:p>"#,
+        formatted_run(2_147_483_647, TEXT)
+    ));
+    let operations = json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
+    let out = edit(&source, operations);
+    let (dom, root) = dom(&out);
+    for node in dom.descendants(root, None) {
+        if let Some(id) = dom.attribute(node, &W::id()) {
+            let id: u64 = id.parse().unwrap();
+            assert!(id <= i32::MAX as u64, "w:id {id} is past Word's range");
+        }
+    }
+}
+
+#[test]
+fn two_formattings_of_one_run_keep_one_record_of_its_old_properties() {
+    let source = docx(r#"<w:p><w:r><w:t xml:space="preserve">alpha beta gamma</w:t></w:r></w:p>"#);
+    let operations = json!([
+        {"kind":"format_run","paragraph":"p0","find":"alpha beta gamma","format":{"bold":true}},
+        {"kind":"format_run","paragraph":"p0","find":"alpha beta gamma","format":{"italic":true}}
+    ]);
+    let out = apply_plan(&source, &plan(operations)).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let (dom, root) = dom(&out.redline);
+    let records = dom.descendants(root, Some(&W::name("rPrChange")));
+    assert_eq!(records.len(), 1, "{}", dom.serialize_element(root));
+    let record = records[0];
+    assert_eq!(dom.attribute(record, &W::author()), Some(BOB));
+    let old = dom.element(record, &W::r_pr()).expect("old properties");
+    assert!(
+        dom.elements(old, None).is_empty(),
+        "the run had no formatting"
+    );
+    let rpr = dom.parent(record).unwrap();
+    assert!(dom.element(rpr, &W::name("b")).is_some());
+    assert!(dom.element(rpr, &W::name("i")).is_some());
+}
+
+#[test]
+fn a_copied_record_with_the_editors_own_stamp_is_not_counted_as_an_edit() {
+    // Alice comments on her own formatted run, with the very stamp her
+    // record has: the copies the split makes are not new formatting.
+    let request = json!({"schema_version":1,"author":ALICE,"date":OLD,
+        "existing_revisions":"keep",
+        "operations":[{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]});
+    let plan = EditPlan::from_json(&request.to_string()).unwrap();
+    let out = apply_plan(&outside(TEXT), &plan).unwrap();
+    assert_unique_ids(&out.redline);
+    assert_eq!(
+        out.report.revisions.format_changed, 0,
+        "{:?}",
+        out.report.revisions
+    );
+}
+
+#[test]
+fn overlapping_formattings_give_every_fragment_one_record_of_its_own() {
+    // The second formatting splits the run the first one recorded.
+    let source = docx(r#"<w:p><w:r><w:t xml:space="preserve">alpha beta gamma</w:t></w:r></w:p>"#);
+    let operations = json!([
+        {"kind":"format_run","paragraph":"p0","find":"alpha beta","format":{"bold":true}},
+        {"kind":"format_run","paragraph":"p0","find":"beta gamma","format":{"italic":true}}
+    ]);
+    let out = apply_plan(&source, &plan(operations)).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let (dom, root) = dom(&out.redline);
+    let mut fragments = Vec::new();
+    for record in dom.descendants(root, Some(&W::name("rPrChange"))) {
+        assert_eq!(dom.attribute(record, &W::author()), Some(BOB));
+        let old = dom.element(record, &W::r_pr()).expect("old properties");
+        assert!(
+            dom.elements(old, None).is_empty(),
+            "the run had no formatting"
+        );
+        let rpr = dom.parent(record).unwrap();
+        let run = dom.parent(rpr).unwrap();
+        fragments.push((
+            dom.descendants(run, Some(&W::t()))
+                .iter()
+                .map(|&t| dom.value(t))
+                .collect::<String>(),
+            dom.element(rpr, &W::name("b")).is_some(),
+            dom.element(rpr, &W::name("i")).is_some(),
+        ));
+    }
+    assert_eq!(
+        fragments,
+        [
+            ("alpha ".to_string(), true, false),
+            ("beta".to_string(), true, true),
+            (" gamma".to_string(), false, true),
+        ]
+    );
+}
+
+#[test]
+fn fresh_ids_skip_the_ids_other_parts_use() {
+    // The header's insertion holds id 6, the next id after the body's: a
+    // copy must not take it.
+    let header = format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:ins w:id="6" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>head</w:t></w:r></w:ins></w:p></w:hdr>"#
+    );
+    let source = docx_with_sect(
+        &format!(
+            r#"<w:p><w:r><w:t>[</w:t></w:r>{}<w:r><w:t>]</w:t></w:r></w:p>"#,
+            formatted_run(5, TEXT)
+        ),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let operations = json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
+    let out = edit(&source, operations);
+    let records = alice_records(&out);
+    assert_eq!(covered(&records), TEXT);
+    assert_eq!(records[0].id, "5");
+    for record in &records[1..] {
+        assert_ne!(record.id, "6", "a copy took the header's id");
+    }
+}
+
+#[test]
+fn a_split_beside_a_tab_keeps_the_id_on_the_first_fragment() {
+    // The run holds `alpha`, a tab and `beta`: deleting the tab and `beta`
+    // splits it into pieces copied on both sides of the original.
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>alpha</w:t><w:tab/><w:t>beta</w:t></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let operations = json!([{"kind":"delete","paragraph":"p0","find":"\tbeta"}]);
+    let out = edit(&source, operations);
+    let records = alice_records(&out);
+    assert!(records.len() > 1, "the edit splits Alice's run");
+    assert_eq!(records[0].id, "5", "the first fragment keeps the id");
+    assert_eq!(records[0].text, "alpha");
+    assert_eq!(covered(&records), "alphabeta");
+    assert_eq!(accepted(&out), "[alpha]");
+}
+
+#[test]
+fn formatting_over_another_authors_record_is_refused() {
+    // The record already holds the run's old properties: a second record
+    // over it would copy Alice's, so `keep` refuses the formatting.
+    let operations =
+        json!([{"kind":"format_run","paragraph":"p0","find":"beta","format":{"italic":true}}]);
+    let error = apply_plan(&outside(TEXT), &plan(operations)).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
+}
+
+#[test]
+fn a_bookmark_at_the_top_of_words_range_does_not_push_ids_past_it() {
+    // Bookmark ids are not revision ids, but the counter avoids them too:
+    // past the top it takes the lowest free id instead.
+    let source = docx(&format!(
+        r#"<w:p><w:bookmarkStart w:id="2147483647" w:name="top"/><w:r><w:t>[</w:t></w:r>{}<w:r><w:t>]</w:t></w:r><w:bookmarkEnd w:id="2147483647"/></w:p>"#,
+        formatted_run(5, TEXT)
+    ));
+    let operations = json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
+    let out = edit(&source, operations);
+    let records = alice_records(&out);
+    assert_eq!(covered(&records), TEXT);
+    for record in &records {
+        let id: u64 = record.id.parse().unwrap();
+        assert!(id <= 2_147_483_647, "w:id {id} is past Word's range");
+    }
 }
