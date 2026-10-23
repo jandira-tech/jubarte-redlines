@@ -1786,6 +1786,15 @@ fn diagnose_conflict(tx: &Transaction<'_>, mut error: EditError, tracked: bool) 
 /// its run/formatting to an insertion without an explicit ownership rule.
 fn check_boundary_ownership(tx: &Transaction<'_>) -> Result<(), EditError> {
     let mut paragraphs = BTreeMap::<usize, Vec<_>>::new();
+    // A replacement split into word-level pieces owns its whole match, as
+    // before the split: its pieces are not insertions of their own. A
+    // range's side never matters below.
+    for (&i, &(para, start, end)) in &tx.claims {
+        paragraphs
+            .entry(para)
+            .or_default()
+            .push((start, end, true, i));
+    }
     for (i, r) in &tx.resolved {
         if let Resolved::Text {
             para,
@@ -1794,6 +1803,7 @@ fn check_boundary_ownership(tx: &Transaction<'_>) -> Result<(), EditError> {
             attach_before,
             ..
         } = r
+            && !tx.claims.contains_key(i)
         {
             paragraphs
                 .entry(*para)
@@ -2248,32 +2258,26 @@ fn resolve_operation(
 /// A replacement inside one insertion as the word-level edits the redline
 /// replays it as ([`tracked::insertion_pieces`]): the clean copy then keeps
 /// the words the redline keeps, in their runs and with their formatting
-/// history (MiniMax on #1664). Its comment covers the whole match, and its
-/// pieces conflict as the whole match does.
+/// history (MiniMax on #1664). Each piece is checked where it lands, as a
+/// v1 `replace`'s are; its comment covers the whole match, and its pieces
+/// conflict as the whole match does.
 fn replacement_pieces(
     tx: &mut Transaction<'_>,
     i: usize,
     resolved: Vec<Resolved>,
 ) -> Vec<Resolved> {
-    let (para, start, end, replacement, attach_before, comment) = match resolved.as_slice() {
+    let (para, start, end, replacement, comment) = match resolved.as_slice() {
         [
             Resolved::Text {
                 para,
                 start,
                 end,
                 replacement,
-                attach_before,
                 comment,
                 format: None,
+                ..
             },
-        ] => (
-            *para,
-            *start,
-            *end,
-            replacement.clone(),
-            *attach_before,
-            comment.clone(),
-        ),
+        ] => (*para, *start, *end, replacement.clone(), comment.clone()),
         _ => return resolved,
     };
     let node = tx.paragraph_nodes[para];
@@ -2284,19 +2288,10 @@ fn replacement_pieces(
     if pieces == [(start, end, replacement)] {
         return resolved;
     }
+    let Some(mut out) = tx.checked_pieces(para, pieces) else {
+        return resolved;
+    };
     tx.claims.insert(i, (para, start, end));
-    let mut out: Vec<Resolved> = pieces
-        .into_iter()
-        .map(|(start, end, replacement)| Resolved::Text {
-            para,
-            start,
-            end,
-            replacement,
-            attach_before,
-            comment: None,
-            format: None,
-        })
-        .collect();
     if let Some(text) = comment {
         out.push(Resolved::CommentRange {
             para,

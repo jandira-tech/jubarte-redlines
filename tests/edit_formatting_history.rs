@@ -1247,6 +1247,7 @@ fn a_typed_replacement_with_a_comment_inside_alices_insertion_comments_all_its_w
         assert_validates(bytes);
     }
     assert_eq!(commented(&out.clean), "alpha beta delta");
+    assert_eq!(commented(&out.redline), "alpha beta delta");
     assert_eq!(
         formatting_records(&out.clean),
         pairs(&[("5", "alpha beta")])
@@ -1373,4 +1374,111 @@ fn an_untracked_correction_of_ones_own_insertion_keeps_alices_record_on_the_word
         formatting_records(&v1.clean),
         formatting_records(&out.clean)
     );
+}
+
+/// Alice's insertion `alpha beta`, after `before` (raw XML) in one paragraph.
+fn alices_insertion_after(before: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p>{before}<w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins></w:p>"#
+    ))
+}
+
+/// The text of the runs inside `ancestor` elements (`w:hyperlink`,
+/// `w:moveTo`).
+fn text_under(bytes: &[u8], ancestor: &str) -> String {
+    let (dom, root) = dom(bytes);
+    dom.descendants(root, Some(&W::t()))
+        .into_iter()
+        .filter(|&t| {
+            dom.ancestors(t, None)
+                .into_iter()
+                .any(|a| dom.name_is(a, &W::name(ancestor)))
+        })
+        .map(|t| dom.value(t))
+        .collect()
+}
+
+#[test]
+fn a_typed_replacements_comment_holds_its_new_edge_words_in_both_outputs() {
+    // The word diff leaves `new ` or ` new` as an insertion at the match's
+    // edge; the comment holds it in the redline as in the clean copy (codex,
+    // glm-5.3, MiniMax and crush on #1664, round 6).
+    for replacement in ["new alpha beta", "alpha beta new"] {
+        let out = edit_v2(&alices_insertion_after(""), |target| {
+            json!([{"kind":"replace","target":target,"find":"alpha beta","text":replacement,
+                "attached_comment":{"text":"why"}}])
+        });
+        for bytes in [&out.redline, &out.clean] {
+            assert_unique_ids(bytes);
+            assert_validates(bytes);
+        }
+        assert_eq!(commented(&out.clean), replacement);
+        assert_eq!(commented(&out.redline), replacement);
+    }
+}
+
+#[test]
+fn a_typed_replacements_new_first_words_stay_out_of_the_hyperlink_before_it() {
+    // A hyperlink ends where the match starts: the new first words go
+    // inside Alice's insertion, as v1 puts them (codex, glm-5.3 and MiniMax
+    // on #1664, round 6).
+    let source = alices_insertion_after(
+        r#"<w:bookmarkStart w:id="0" w:name="dest"/><w:bookmarkEnd w:id="0"/><w:hyperlink w:anchor="dest"><w:r><w:t>L</w:t></w:r></w:hyperlink>"#,
+    );
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"new alpha beta"}]),
+    );
+    let v1 = apply_plan(&source, &plan(replace("alpha beta", "new alpha beta"))).unwrap();
+    for bytes in [&out.redline, &out.clean, &v1.redline, &v1.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(text_under(bytes, "hyperlink"), "L");
+    }
+    assert_eq!(text(&out.clean), "Lnew alpha beta");
+    assert_eq!(accepted(&out.redline), text(&out.clean));
+}
+
+#[test]
+fn a_typed_replacements_new_first_words_stay_out_of_the_move_before_it() {
+    // Carol's moved text ends where the match starts: the new first words
+    // go inside Alice's insertion, not into Carol's move (glm-5.3 on #1664,
+    // round 6).
+    let source = docx(&format!(
+        r#"<w:p><w:moveToRangeStart w:id="1" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveTo w:id="2" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="1"/><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins></w:p><w:p><w:moveFromRangeStart w:id="3" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveFrom w:id="4" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="3"/><w:r><w:t>tail</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"new alpha beta"}]),
+    );
+    let v1 = apply_plan(&source, &plan(replace("alpha beta", "new alpha beta"))).unwrap();
+    for bytes in [&out.redline, &out.clean, &v1.redline, &v1.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(text_under(bytes, "moveTo"), "M");
+    }
+    assert_eq!(accepted(&out.redline), text(&out.clean));
+}
+
+#[test]
+fn a_split_typed_replacement_claims_its_whole_match_at_a_boundary() {
+    // The replacement keeps `alpha beta` and adds ` delta` at its end; a
+    // second operation inserts at that end, on the other side. The whole
+    // match is the first operation's claim, which the insertion only
+    // touches, as before the split (MiniMax on #1664, round 6).
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins><w:r><w:t>gamma</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha beta","text":"alpha beta delta"},
+            {"kind":"insert","target":target,"text":"Y","before_text":"gamma"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(text(&out.clean), "alpha beta deltaYgamma");
+    assert_eq!(accepted(&out.redline), text(&out.clean));
 }
