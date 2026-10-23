@@ -3993,24 +3993,8 @@ impl<'p> Transaction<'p> {
                         outcome,
                     ));
                 }
-                if let Some(cell) = dom.ancestors(node, Some(&W::tc())).first()
-                    && dom.elements(*cell, Some(&W::p())).len() == 1
-                {
-                    return Err(fail(
-                        "UNSUPPORTED_STRUCTURE",
-                        "a table cell must keep one paragraph".into(),
-                        outcome,
-                    ));
-                }
-                let (container, what) = self.story_container(node);
-                let siblings = dom.elements(container, Some(&W::p()));
-                if siblings.len() == 1 && siblings[0] == node {
-                    return Err(fail(
-                        "UNSUPPORTED_STRUCTURE",
-                        format!("{what} must keep one paragraph"),
-                        outcome,
-                    ));
-                }
+                // A container's final paragraph is emptied, not removed, when
+                // nothing else would stay in it (`emptied_paragraphs`).
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
@@ -5460,7 +5444,6 @@ impl<'p> Transaction<'p> {
                 deleted.push(*para);
             }
         }
-        self.check_deletions_leave_valid_containers(&deleted)?;
         self.check_paragraph_ops(&deleted)?;
         self.check_control_conflicts(&deleted)?;
         self.check_comment_ids_fit()?;
@@ -5487,7 +5470,9 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertImage { anchor, .. } => {
+                // A new paragraph beside a deleted one takes its place.
+                Resolved::InsertParagraph { .. } => continue,
+                Resolved::InsertImage { anchor, .. } => {
                     if deleted.contains(anchor) {
                         return Err(
                             self.conflict(*i, "anchors a new paragraph on a deleted paragraph")
@@ -5708,41 +5693,82 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// Deletions, taken together, must leave every table cell they touch
-    /// ending in a paragraph, and the body with a paragraph.
-    fn check_deletions_leave_valid_containers(&self, deleted: &[usize]) -> Result<(), EditError> {
+    /// The deleted paragraphs a plan empties instead of removing. Word
+    /// never deletes the mark of a container's final paragraph: when a plan
+    /// leaves a table cell, the body, a header, a footer or a note with no
+    /// paragraph of its own and none new in it, the final one stays, its
+    /// content gone (#1668).
+    pub(super) fn emptied_paragraphs(&self) -> BTreeSet<usize> {
         let dom = &self.opened.dom;
+        let deleted: Vec<usize> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::DeleteParagraph { para } => Some(*para),
+                _ => None,
+            })
+            .collect();
         let gone: Vec<NodeId> = deleted.iter().map(|&p| self.paragraph_nodes[p]).collect();
-        for (i, r) in &self.resolved {
-            let Resolved::DeleteParagraph { para } = r else {
-                continue;
-            };
-            let node = self.paragraph_nodes[*para];
-            if let Some(&cell) = dom.ancestors(node, Some(&W::tc())).first() {
-                let children = dom.elements(cell, None);
-                let before = children.last().copied();
-                let after = children.into_iter().rev().find(|c| !gone.contains(c));
-                if after != before && !after.is_some_and(|c| dom.name_is(c, &W::p())) {
-                    return Err(self.conflict(
-                        *i,
-                        "the plan's deletions leave a table cell without a closing paragraph",
-                    ));
+        // The source paragraphs a new paragraph lands beside, and on which
+        // side: it joins its anchor's container (`apply_insertions`).
+        let beside: Vec<(NodeId, Side)> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertParagraph { anchor, side, .. } => {
+                    Some((self.paragraph_nodes[*anchor], *side))
                 }
-            } else {
-                let (container, what) = self.story_container(node);
-                if dom
-                    .elements(container, Some(&W::p()))
-                    .iter()
-                    .all(|p| gone.contains(p))
-                {
-                    return Err(self.conflict(
-                        *i,
-                        &format!("the plan's deletions leave {what} without a paragraph"),
-                    ));
+                _ => None,
+            })
+            .collect();
+        let new_beside = |node: NodeId, side: Side| beside.contains(&(node, side));
+        deleted
+            .into_iter()
+            .filter(|&para| {
+                let node = self.paragraph_nodes[para];
+                if self.final_paragraph(node) != Some(node) {
+                    return false;
                 }
-            }
+                let keeps = if let Some(&cell) = dom.ancestors(node, Some(&W::tc())).first() {
+                    // The cell's last block once the plan applies.
+                    dom.elements(cell, None).iter().rev().find_map(|&c| {
+                        if new_beside(c, Side::After) {
+                            Some(true)
+                        } else if !gone.contains(&c) {
+                            Some(dom.name_is(c, &W::p()))
+                        } else if new_beside(c, Side::Before) {
+                            Some(true)
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    let (container, _) = self.story_container(node);
+                    Some(dom.elements(container, Some(&W::p())).iter().any(|p| {
+                        !gone.contains(p)
+                            || new_beside(*p, Side::Before)
+                            || new_beside(*p, Side::After)
+                    }))
+                };
+                !keeps.unwrap_or(false)
+            })
+            .collect()
+    }
+
+    /// The final paragraph of `node`'s container: a table cell's last
+    /// block when it is a paragraph, or a story's last paragraph. Its mark
+    /// is the one Word never deletes.
+    pub(super) fn final_paragraph(&self, node: NodeId) -> Option<NodeId> {
+        let dom = &self.opened.dom;
+        if let Some(&cell) = dom.ancestors(node, Some(&W::tc())).first() {
+            return dom
+                .elements(cell, None)
+                .last()
+                .copied()
+                .filter(|&c| dom.name_is(c, &W::p()));
         }
-        Ok(())
+        let (container, _) = self.story_container(node);
+        dom.elements(container, Some(&W::p())).last().copied()
     }
 
     /// Thread operations against each other: nothing may act on a comment
@@ -6444,11 +6470,22 @@ impl<'p> Transaction<'p> {
         }
     }
 
-    fn apply_paragraph_deletions(&mut self) {
-        // 5. Paragraph deletions.
+    fn apply_paragraph_deletions(&mut self, emptied: &BTreeSet<usize>) {
+        // 5. Paragraph deletions; a container's final paragraph that nothing
+        // replaces keeps its mark, as Word keeps it.
         for (_, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
-                self.opened.dom.remove(self.paragraph_nodes[*para]);
+                let node = self.paragraph_nodes[*para];
+                if emptied.contains(para) {
+                    let dom = &mut self.opened.dom;
+                    for child in dom.nodes(node) {
+                        if !dom.name_is(child, &W::p_pr()) {
+                            dom.remove(child);
+                        }
+                    }
+                } else {
+                    self.opened.dom.remove(node);
+                }
             }
         }
     }
@@ -6503,6 +6540,8 @@ impl<'p> Transaction<'p> {
 
     /// Mutate the copy. Resolution succeeded, so every step here is total.
     fn apply(&mut self) -> Result<(), EditError> {
+        // Read off the source's structure, before any step changes it.
+        let emptied = self.emptied_paragraphs();
         let ids = self.apply_comments();
         self.apply_text_edits(&ids)?;
         self.apply_comment_spans(&ids);
@@ -6512,7 +6551,7 @@ impl<'p> Transaction<'p> {
         self.apply_paragraph_formatting();
         self.apply_lists();
         self.apply_merges();
-        self.apply_paragraph_deletions();
+        self.apply_paragraph_deletions(&emptied);
         self.apply_reply_markers(&ids);
         self.apply_table_separations(tables);
         self.apply_page_setups();
@@ -9940,7 +9979,9 @@ mod deeper_boundary_tests {
             };
             conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, insert]).unwrap();
         }
-        let e = conflicts(
+        // Nor is deleting every paragraph: the final one is emptied, as
+        // Word empties it (#1668).
+        conflicts(
             &source,
             vec![
                 Resolved::DeleteParagraph { para: 0 },
@@ -9948,11 +9989,7 @@ mod deeper_boundary_tests {
                 Resolved::DeleteParagraph { para: 2 },
             ],
         )
-        .unwrap_err();
-        assert_eq!(
-            e.message,
-            "the plan's deletions leave the body without a paragraph"
-        );
+        .unwrap();
     }
 
     // 3586's Before/tail arm, with a table rather than the existing paragraph integration case.
