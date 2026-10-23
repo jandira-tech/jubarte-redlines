@@ -894,3 +894,112 @@ fn a_typed_insertion_inside_alices_run_keeps_her_history() {
     assert_eq!(formatting_records(&out.clean)[0].0, "5");
     assert_eq!(accepted(&out.redline), "[alpha new beta gamma]");
 }
+
+/// Alice's run r5 with its words in two `w:t`: `aa` and ` bb`.
+fn two_texts() -> String {
+    formatted_run(5, "aa").replace(
+        "</w:t></w:r>",
+        r#"</w:t><w:t xml:space="preserve"> bb</w:t></w:r>"#,
+    )
+}
+
+#[test]
+fn new_words_that_end_where_a_text_ends_leave_the_next_text_its_record() {
+    let source = docx(&format!("<w:p>{}</w:p>", two_texts()));
+    edit(&source, replace("aa", "XX"));
+    let out = apply_plan(&source, &plan(replace("aa", "XX"))).unwrap();
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " bb")]));
+    assert_eq!(covered(&alice_records(&out.redline)), "aa bb");
+    let typed = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"aa","text":"XX"}]),
+    );
+    assert_eq!(formatting_records(&typed.clean), pairs(&[("5", " bb")]));
+}
+
+#[test]
+fn a_correction_of_ones_own_insertion_leaves_the_next_text_its_record() {
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="{BOB}" w:date="{OLD}">{}</w:ins></w:p>"#,
+        two_texts()
+    ));
+    let out = apply_plan(&source, &plan(replace("aa", "XX"))).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(formatting_records(bytes), pairs(&[("5", " bb")]));
+    }
+}
+
+#[test]
+fn a_rewrite_of_two_words_takes_both_out_of_alices_record() {
+    // Two fragments of one operation, around a two-byte character: each
+    // is cleaned where it landed.
+    let source = docx(&format!("<w:p>{}</w:p>", formatted_run(5, "aa é bb tail")));
+    let operations = json!([{"kind":"rewrite","paragraph":"p0","text":"XXXX é YY tail"}]);
+    edit(&source, operations.clone());
+    let out = apply_plan(&source, &plan(operations)).unwrap();
+    assert_eq!(text(&out.clean), "XXXX é YY tail");
+    assert_only_alices_words(
+        &alice_records(&out.clean),
+        &["XXXX".to_string(), "YY".to_string()],
+    );
+    assert_eq!(covered(&alice_records(&out.clean)), " é  tail");
+}
+
+/// The local names of `run`'s properties.
+fn property_names(dom: &Dom, run: NodeId) -> Vec<String> {
+    dom.element(run, &W::r_pr())
+        .map(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .filter_map(|n| dom.name(n).map(|q| q.local_name().to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn new_words_beside_a_run_without_text_leave_that_run_alone() {
+    // A run holding only Word's rendered page break projects no text: it
+    // is no copy of Alice's run, and her record never moves onto it.
+    let other = r#"<w:r><w:rPr><w:sz w:val="28"/></w:rPr><w:lastRenderedPageBreak/></w:r>"#;
+    let source = docx(&format!(
+        r#"<w:p>{}{other}<w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
+        formatted_run(5, "alpha")
+    ));
+    let typed = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha","text":"new"}]),
+    );
+    let out = apply_plan(&source, &plan(replace("alpha", "new"))).unwrap();
+    for bytes in [&out.clean, &typed.clean] {
+        assert!(formatting_records(bytes).is_empty());
+        let (dom, root) = dom(bytes);
+        let br = dom.descendants(root, Some(&W::name("lastRenderedPageBreak")))[0];
+        assert_eq!(property_names(&dom, dom.parent(br).unwrap()), ["sz"]);
+        let new = dom
+            .descendants(root, Some(&W::t()))
+            .into_iter()
+            .find(|&t| dom.value(t) == "new")
+            .unwrap();
+        assert_eq!(property_names(&dom, dom.parent(new).unwrap()), ["b"]);
+    }
+}
+
+#[test]
+fn new_words_take_no_empty_properties() {
+    // Alice's record is the run's only property.
+    let source = docx(&format!(
+        "<w:p>{}</w:p>",
+        formatted_run(5, TEXT).replace("<w:b/>", "")
+    ));
+    let out = apply_plan(&source, &plan(replace("alpha", "new"))).unwrap();
+    let (dom, root) = dom(&out.clean);
+    let new = dom
+        .descendants(root, Some(&W::t()))
+        .into_iter()
+        .find(|&t| dom.value(t) == "new")
+        .unwrap();
+    assert!(dom.element(dom.parent(new).unwrap(), &W::r_pr()).is_none());
+}
