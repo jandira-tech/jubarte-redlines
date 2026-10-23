@@ -917,6 +917,33 @@ fn new_words_that_end_where_a_text_ends_leave_the_next_text_its_record() {
     assert_eq!(formatting_records(&typed.clean), pairs(&[("5", " bb")]));
 }
 
+/// Alice's run `text` (none: no `w:t`) with a tab after it, then `]`.
+fn text_and_tab(text: &str) -> Vec<u8> {
+    let run = formatted_run(5, text)
+        .replace(r#"<w:t xml:space="preserve"></w:t>"#, "")
+        .replace("</w:t></w:r>", "</w:t><w:tab/></w:r>")
+        .replace("</w:rPr></w:r>", "</w:rPr><w:tab/></w:r>");
+    docx(&format!("<w:p>{run}<w:r><w:t>]</w:t></w:r></w:p>"))
+}
+
+#[test]
+fn new_words_after_a_tab_leave_alices_record_on_her_run() {
+    // The new words go in a `w:t` of their own beside the tab, inside
+    // Alice's run: the run splits there, and only they lose the record.
+    for (words, after) in [("alpha", "alpha\t"), ("", "\t")] {
+        let source = text_and_tab(words);
+        let operations = insert(after, " new");
+        edit(&source, operations.clone());
+        let out = apply_plan(&source, &plan(operations)).unwrap();
+        assert_eq!(formatting_records(&out.clean), pairs(&[("5", words)]));
+        let typed = edit_v2(
+            &source,
+            |target| json!([{"kind":"insert","target":target,"text":" new","after_text":after}]),
+        );
+        assert_eq!(formatting_records(&typed.clean), pairs(&[("5", words)]));
+    }
+}
+
 #[test]
 fn a_correction_of_ones_own_insertion_leaves_the_next_text_its_record() {
     let source = docx(&format!(

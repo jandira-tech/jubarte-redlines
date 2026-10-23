@@ -8298,7 +8298,7 @@ fn runs_in_range(
         } else if let Some(next) = segments.iter().find(|s| s.start == at && at < s.end)
             && segments
                 .iter()
-                .any(|s| s.end == at && run_of(&s.piece) == run_of(&next.piece))
+                .any(|s| s.start < at && s.end == at && run_of(&s.piece) == run_of(&next.piece))
         {
             // `at` falls between two children of one run.
             let (run, child) = match next.piece {
