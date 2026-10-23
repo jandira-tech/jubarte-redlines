@@ -8010,8 +8010,9 @@ fn record_id(dom: &Dom, record: NodeId) -> Option<u64> {
 
 /// A record that lost all its words leaves its id to the first copy an
 /// earlier split of the transaction made of it: the id stays, as spelled,
-/// on the words the record still covers, as one edit over the same words
-/// leaves it (Codex on #1664).
+/// on what the record still covers (words, or an atom such as a tab, as
+/// `changes::run_characters` counts them), as one edit over the
+/// same words leaves it (Codex and MiniMax on #1664).
 fn hand_on_ids(
     dom: &mut Dom,
     paragraph: NodeId,

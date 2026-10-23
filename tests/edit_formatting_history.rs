@@ -1252,3 +1252,30 @@ fn typed_replacements_inside_one_insertion_that_overlap_still_conflict() {
     };
     assert_eq!(error.code, "CONFLICT", "{error:?}");
 }
+
+#[test]
+fn a_record_left_on_a_tab_keeps_its_id() {
+    // Alice's record covers `a` and the tab after it. Bob's new words take
+    // `a`; the tab is what the record still covers, and it keeps the id
+    // (MiniMax on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>a</w:t><w:tab/></w:r></w:p>"#
+    ));
+    let out = apply_plan(&source, &plan(replace("a", "xy"))).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let (dom, root) = dom(&out.clean);
+    let tabs = dom.descendants(root, Some(&W::name("tab")));
+    let run = dom.parent(tabs[0]).unwrap();
+    let record = dom
+        .element(run, &W::r_pr())
+        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()));
+    assert!(
+        record.is_some_and(|r| dom.attribute(r, &W::id()) == Some("5")),
+        "{}",
+        dom.serialize_element(run)
+    );
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", "")]));
+}
