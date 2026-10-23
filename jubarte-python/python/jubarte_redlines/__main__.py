@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import sys
+import logging
 from dataclasses import asdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -659,7 +660,7 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
             sys.stdout.write(text)
             return EXIT_OK
         except Exception:
-            pass
+            logging.exception("Failed to write resolution text")
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
@@ -712,7 +713,7 @@ def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult,
             sys.stdout.write(text)
             return
         except Exception:
-            pass
+            logging.exception("Failed to write resolution text")
     _print_changed_view(result, editing, shown)
 
 
