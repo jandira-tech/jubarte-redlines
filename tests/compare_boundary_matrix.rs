@@ -8,7 +8,7 @@
 mod common;
 
 use common::docx::{docx, para, part_string, run};
-use common::validity::assert_word_valid_package;
+use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{
     accept_revisions, compare_documents_with_settings, reject_revisions,
@@ -1116,7 +1116,8 @@ fn structured_documents_recover_text_across_every_ordered_pair() {
                 let label = format!("{mode}: {left_name} -> {right_name}");
                 let compared = compare_documents_with_settings(left, right, &settings)
                     .unwrap_or_else(|error| panic!("{label}: {error}"));
-                assert_word_valid_package(&compared);
+                let report = check_word_valid_package(&compared);
+                assert!(report.ok(), "{label}: {:?}", report.errors);
                 let accepted = accept_revisions(&compared).unwrap();
                 let rejected = reject_revisions(&compared).unwrap();
 
