@@ -171,12 +171,13 @@ pub(super) fn insert_reference(
     at: usize,
     id: u32,
     style: Option<&str>,
+    ids: &mut super::RevisionCounter,
 ) {
     let projection = project_paragraph(dom, paragraph);
     let seg = attach_segment(&projection, at, true)
         .expect("checked at resolution")
         .clone();
-    split_run_at(dom, &seg, at);
+    split_run_at(dom, &seg, at, ids);
     let projection = project_paragraph(dom, paragraph);
     let seg = attach_segment(&projection, at, true).expect("checked at resolution");
     let before = run_of(&seg.piece);
