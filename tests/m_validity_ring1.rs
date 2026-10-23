@@ -2277,3 +2277,40 @@ fn a_data_binding_whose_store_the_main_part_reaches_passes_ring1() {
         report.findings
     );
 }
+
+/// Two `w:customXmlInsRangeStart` may not share an id (OpenXmlValidator:
+/// `Sem_UniqueAttributeValue`); a start and its end do. Repair gives the
+/// second start and its end one fresh id (#1665).
+#[test]
+fn custom_xml_range_starts_take_unique_ids() {
+    let range = |id: u32| {
+        format!(
+            r#"<w:customXmlInsRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:customXmlInsRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let duplicates = |bytes: &[u8]| {
+        jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+            .into_iter()
+            .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+            .count()
+    };
+    let unique = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(6)));
+    assert_eq!(duplicates(&unique), 0);
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(5)));
+    assert_eq!(duplicates(&bytes), 1);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicates(&repaired.docx), 0);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    let ids = |tag: &str| -> Vec<String> {
+        xml.match_indices(&format!("<w:{tag} w:id=\""))
+            .map(|(at, m)| {
+                let id = &xml[at + m.len()..];
+                id[..id.find('"').unwrap()].to_string()
+            })
+            .collect()
+    };
+    let (starts, ends) = (ids("customXmlInsRangeStart"), ids("customXmlInsRangeEnd"));
+    assert_eq!(starts, ends, "{xml}");
+    assert_eq!(starts[0], "5", "{xml}");
+    assert_ne!(starts[1], "5", "{xml}");
+}
