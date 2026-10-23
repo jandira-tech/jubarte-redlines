@@ -2663,6 +2663,10 @@ struct Transaction<'p> {
     /// The story indices `finish` last wrote, body included: the
     /// serialized-stories check compares each one's DOM against the bytes.
     written_stories: std::collections::BTreeSet<usize>,
+    /// The next id for a revision record `apply` copies onto a retained
+    /// fragment of a split run: above every source id, so the copy of
+    /// another author's formatting history collides with nothing (#1656).
+    next_revision_id: u64,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -2768,6 +2772,8 @@ impl<'p> Transaction<'p> {
         let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
+        let next_revision_id =
+            next_annotation_id(&opened).max(tracked::first_free_id(&opened, &[]));
         Ok(Self {
             plan,
             revision_refusal: std::cell::RefCell::new(None),
@@ -2807,6 +2813,7 @@ impl<'p> Transaction<'p> {
             notes_story: None,
             settings: None,
             written_stories: std::collections::BTreeSet::new(),
+            next_revision_id,
         })
     }
 
@@ -6080,6 +6087,7 @@ impl<'p> Transaction<'p> {
                         s,
                         s + edit.replacement.len(),
                         format,
+                        &mut self.next_revision_id,
                     );
                 }
             }
@@ -6087,7 +6095,14 @@ impl<'p> Transaction<'p> {
             for (start, end, format) in format_runs.remove(&para).unwrap_or_default() {
                 let s = new_position(&edits, start, true, None);
                 let e = new_position(&edits, end, false, None);
-                format_range(&mut self.opened.dom, node, s, e, &format);
+                format_range(
+                    &mut self.opened.dom,
+                    node,
+                    s,
+                    e,
+                    &format,
+                    &mut self.next_revision_id,
+                );
             }
             // Footnote reference marks; reversed so marks sharing a point
             // end up in plan order.
@@ -6098,7 +6113,14 @@ impl<'p> Transaction<'p> {
                 .rev()
             {
                 let at = new_position(&edits, at, true, None);
-                notes::insert_reference(&mut self.opened.dom, node, at, id, reference_style);
+                notes::insert_reference(
+                    &mut self.opened.dom,
+                    node,
+                    at,
+                    id,
+                    reference_style,
+                    &mut self.next_revision_id,
+                );
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -6124,6 +6146,7 @@ impl<'p> Transaction<'p> {
                     (s, end),
                     (edit.op, part),
                     (&find, &edit.replacement),
+                    &mut self.next_revision_id,
                 ) {
                     self.whole_marks.push(mark);
                 }
@@ -6150,7 +6173,14 @@ impl<'p> Transaction<'p> {
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
             for (start, end, i, _) in pending {
-                anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
+                anchor_comment(
+                    &mut self.opened.dom,
+                    node,
+                    start,
+                    end,
+                    ids[&i],
+                    &mut self.next_revision_id,
+                );
             }
         }
         // 1a. Restores: plain copies of the deletion's runs after it, which
@@ -6177,6 +6207,7 @@ impl<'p> Transaction<'p> {
                     self.paragraph_nodes[*para],
                     self.paragraph_nodes[*last],
                     ids[i],
+                    &mut self.next_revision_id,
                 );
             }
         }
@@ -6272,7 +6303,14 @@ impl<'p> Transaction<'p> {
             let new = news[news.len() - 1];
             if commented {
                 let projection = project_paragraph(&self.opened.dom, new);
-                anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
+                anchor_comment(
+                    &mut self.opened.dom,
+                    new,
+                    0,
+                    projection.text.len(),
+                    ids[&i],
+                    &mut self.next_revision_id,
+                );
             }
         }
         tables
@@ -7786,7 +7824,10 @@ fn write_text_new_in(dom: &mut Dom, t: NodeId, value: &str, new: std::ops::Range
 
 /// Split the run owning `seg` so that a run boundary falls at projection byte
 /// `at` (inside `seg`). Returns nothing when `at` is already a boundary.
-fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize) {
+/// The right half's copy of a formatting history (another author's
+/// `w:rPrChange`) takes a fresh id from `next_id`; the left half, the
+/// original run, keeps the original id (#1656).
+fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize, next_id: &mut u64) {
     if at <= seg.start || at >= seg.end {
         return;
     }
@@ -7819,12 +7860,36 @@ fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize) {
     set_text(dom, t, &left);
     let clone_t = clone_children[index];
     set_text(dom, clone_t, &right);
+    refresh_run_history(dom, clone, next_id);
     dom.add_after_self(run, clone);
+}
+
+/// Fresh ids for the formatting history in `run`'s own `w:rPr`, for a run
+/// that is a copy of another. Content the copy took over (a text box in a
+/// drawing) moved rather than doubled, so its records keep their ids.
+fn refresh_run_history(dom: &mut Dom, run: NodeId, next_id: &mut u64) {
+    if let Some(rpr) = dom.element(run, &W::r_pr()) {
+        crate::revision_processor::refresh_property_ids(dom, rpr, || take_id(next_id));
+    }
+}
+
+/// The next revision id of a monotonic counter.
+fn take_id(next_id: &mut u64) -> u64 {
+    let id = *next_id;
+    *next_id += 1;
+    id
 }
 
 /// Wrap the projection range `[start, end)` of `paragraph` in comment
 /// markers for comment `id`, splitting runs at the boundaries as needed.
-fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id: u32) {
+fn anchor_comment(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    id: u32,
+    next_id: &mut u64,
+) {
     let id_str = id.to_string();
     let range_start = dom.new_element(W::name("commentRangeStart"));
     dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
@@ -7834,7 +7899,7 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
     let reference = dom.new_element(W::name("commentReference"));
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
-    if wrap_range(dom, paragraph, start, end, range_start, range_end) {
+    if wrap_range(dom, paragraph, start, end, range_start, range_end, next_id) {
         place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(paragraph, range_start);
@@ -7880,14 +7945,14 @@ fn comment_reference_run(dom: &mut Dom, id: &str) -> NodeId {
 /// Comment `id` from the start of paragraph `first` to the end of `last`:
 /// the start marker before `first`'s first run, the end marker and the
 /// reference run after `last`'s last run (appended to an empty paragraph).
-fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
+fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, next_id: &mut u64) {
     let id = id.to_string();
     let range_start = comment_marker(dom, "commentRangeStart", &id);
     let range_end = comment_marker(dom, "commentRangeEnd", &id);
     let reference_run = comment_reference_run(dom, &id);
     let len = project_paragraph(dom, first).text.len();
     let scratch = dom.new_element(W::name("commentRangeEnd"));
-    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch) {
+    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch, next_id) {
         dom.remove(scratch);
     } else {
         match dom.element(first, &W::p_pr()) {
@@ -7897,7 +7962,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
     }
     let len = project_paragraph(dom, last).text.len();
     let scratch = dom.new_element(W::name("commentRangeStart"));
-    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
+    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end, next_id) {
         dom.remove(scratch);
         place_reference(dom, range_start, range_end, reference_run);
     } else {
@@ -7982,6 +8047,7 @@ fn wrap_range(
     end: usize,
     open: NodeId,
     close: NodeId,
+    next_id: &mut u64,
 ) -> bool {
     let projection = project_paragraph(dom, paragraph);
     if let Some(seg) = projection
@@ -7990,7 +8056,7 @@ fn wrap_range(
         .find(|s| s.start < start && start < s.end)
         .cloned()
     {
-        split_run_at(dom, &seg, start);
+        split_run_at(dom, &seg, start, next_id);
     }
     let projection = project_paragraph(dom, paragraph);
     if let Some(seg) = projection
@@ -7999,7 +8065,7 @@ fn wrap_range(
         .find(|s| s.start < end && end < s.end)
         .cloned()
     {
-        split_run_at(dom, &seg, end);
+        split_run_at(dom, &seg, end, next_id);
     }
     let projection = project_paragraph(dom, paragraph);
     let first = projection
@@ -8031,8 +8097,15 @@ fn run_of(piece: &Piece) -> NodeId {
 
 /// Apply `format` to the runs holding projection range `[start, end)` of
 /// `paragraph`, splitting runs at the boundaries first.
-fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, format: &RunFormat) {
-    for run in runs_in_range(dom, paragraph, start, end) {
+fn format_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    format: &RunFormat,
+    next_id: &mut u64,
+) {
+    for run in runs_in_range(dom, paragraph, start, end, next_id) {
         let rpr = match dom.element(run, &W::r_pr()) {
             Some(rpr) => rpr,
             None => {
@@ -8050,7 +8123,13 @@ fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, form
 
 /// The runs holding projection range `[start, end)` of `paragraph`, in
 /// order, split at the boundaries first; none for an empty range.
-fn runs_in_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
+fn runs_in_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    next_id: &mut u64,
+) -> Vec<NodeId> {
     if start >= end {
         return Vec::new();
     }
@@ -8062,7 +8141,7 @@ fn runs_in_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             .find(|s| s.start < at && at < s.end)
             .cloned()
         {
-            split_run_at(dom, &seg, at);
+            split_run_at(dom, &seg, at, next_id);
         }
     }
     let projection = project_paragraph(dom, paragraph);
@@ -9730,17 +9809,17 @@ mod deeper_boundary_tests {
         let seg = &projection.segments[1];
         let before = d.serialize_element(p);
         for at in [seg.start, seg.end, seg.end + 1] {
-            split_run_at(&mut d, seg, at);
+            split_run_at(&mut d, seg, at, &mut 0);
             assert_eq!(d.serialize_element(p), before);
         }
         let (mut glyph_dom, glyph_root) = dom("<w:p><w:r><w:noBreakHyphen/></w:r></w:p>");
         let glyph_p = glyph_dom.element(glyph_root, &W::p()).unwrap();
         let glyph_projection = project_paragraph(&glyph_dom, glyph_p);
-        split_run_at(&mut glyph_dom, &glyph_projection.segments[0], 1);
+        split_run_at(&mut glyph_dom, &glyph_projection.segments[0], 1, &mut 0);
         assert_eq!(project_paragraph(&glyph_dom, glyph_p).text, "\u{2011}");
         assert_eq!(glyph_dom.elements(glyph_p, Some(&W::r())).len(), 1);
         assert_eq!(d.serialize_element(p), before);
-        split_run_at(&mut d, seg, 3);
+        split_run_at(&mut d, seg, 3, &mut 0);
         let runs = d.elements(p, Some(&W::r()));
         assert_eq!(runs.len(), 2);
         assert_eq!(names(&d, runs[0]), ["rPr", "tab", "t"]);
@@ -9759,7 +9838,7 @@ mod deeper_boundary_tests {
     fn empty_comment_anchors_and_reference_cleanup() {
         let (mut d, root) = dom("<w:p><w:pPr><w:jc w:val=\"left\"/></w:pPr></w:p><w:p/>");
         let ps = d.elements(root, Some(&W::p()));
-        anchor_span(&mut d, ps[0], ps[1], 7);
+        anchor_span(&mut d, ps[0], ps[1], 7, &mut 0);
         assert_eq!(names(&d, ps[0]), ["pPr", "commentRangeStart"]);
         assert_eq!(names(&d, ps[1]), ["commentRangeEnd", "r"]);
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
@@ -9767,7 +9846,7 @@ mod deeper_boundary_tests {
             assert_eq!(markers.len(), 1);
             assert_eq!(d.attribute(markers[0], &W::id()), Some("7"));
         }
-        anchor_comment(&mut d, ps[1], 0, 0, 8);
+        anchor_comment(&mut d, ps[1], 0, 0, 8, &mut 0);
         assert_eq!(
             names(&d, ps[1]),
             [
@@ -9792,14 +9871,14 @@ mod deeper_boundary_tests {
         assert_eq!(project_paragraph(&d, p).text, "\t");
         let open = comment_marker(&mut d, "commentRangeStart", "9");
         let close = comment_marker(&mut d, "commentRangeEnd", "9");
-        assert!(!wrap_range(&mut d, p, 0, 0, open, close));
+        assert!(!wrap_range(&mut d, p, 0, 0, open, close, &mut 0));
         assert_eq!(d.parent(open), None);
         assert_eq!(d.parent(close), None);
         let (mut d, root) = dom("<w:p><w:r><w:t>a</w:t><w:t>b</w:t></w:r></w:p>");
         let p = d.element(root, &W::p()).unwrap();
         let open = comment_marker(&mut d, "commentRangeStart", "10");
         let close = comment_marker(&mut d, "commentRangeEnd", "10");
-        assert!(!wrap_range(&mut d, p, 1, 1, open, close));
+        assert!(!wrap_range(&mut d, p, 1, 1, open, close, &mut 0));
         assert_eq!(project_paragraph(&d, p).text, "ab");
         assert_eq!(d.parent(open), None);
         assert_eq!(d.parent(close), None);
@@ -9818,10 +9897,10 @@ mod deeper_boundary_tests {
         };
         let original = d.serialize_element(p);
         for (start, end) in [(0, 0), (2, 1)] {
-            format_range(&mut d, p, start, end, &format);
+            format_range(&mut d, p, start, end, &format, &mut 0);
             assert_eq!(d.serialize_element(p), original);
         }
-        format_range(&mut d, p, 0, 2, &format);
+        format_range(&mut d, p, 0, 2, &format, &mut 0);
         assert_eq!(d.descendants(p, Some(&W::r_pr())).len(), 0);
         assert_eq!(d.elements(p, Some(&W::r())).len(), 2);
         assert_eq!(project_paragraph(&d, p).text, "abc");

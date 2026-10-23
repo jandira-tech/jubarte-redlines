@@ -424,7 +424,7 @@ fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> Revi
 
 /// One past the highest `w:id` in every revision-bearing part and among the
 /// plan's comments, so a new revision id collides with nothing.
-fn first_free_id(opened: &Opened, comments: &[(u32, String)]) -> u64 {
+pub(super) fn first_free_id(opened: &Opened, comments: &[(u32, String)]) -> u64 {
     let mut max: Option<u64> = comments.iter().map(|&(id, _)| u64::from(id)).max();
     for (part, _) in crate::revision_processor::revision_bearing_parts(&opened.pkg) {
         let Some(xml) = opened.pkg.part_string(&part) else {
@@ -537,7 +537,7 @@ fn emit(
         // text leaves the projection with the deletion.
         for (start, end, i) in strike_comments.remove(&para).unwrap_or_default() {
             if let Some(&id) = comment_ids.get(&i) {
-                anchor_comment(dom, node, start, end, id);
+                anchor_comment(dom, node, start, end, id, &mut stamp.next_id);
             }
         }
         for edit in emission.iter().rev() {
@@ -585,7 +585,7 @@ fn emit(
         pending.sort_by_key(|&(s, _, i)| (s, i));
         for (start, end, i) in pending {
             if let Some(&id) = comment_ids.get(&i) {
-                anchor_comment(dom, node, start, end, id);
+                anchor_comment(dom, node, start, end, id, &mut stamp.next_id);
             }
         }
     }
@@ -595,7 +595,7 @@ fn emit(
             && let Some(&id) = comment_ids.get(i)
         {
             let (first, last) = (t.paragraph_nodes[*para], t.paragraph_nodes[*last]);
-            anchor_span(&mut t.opened.dom, first, last, id);
+            anchor_span(&mut t.opened.dom, first, last, id, &mut stamp.next_id);
         }
     }
     // 1c. Restores: their deletion stays, and our insertion of a copy of
@@ -681,7 +681,7 @@ fn emit(
         let new = news[news.len() - 1];
         if commented && let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, new);
-            anchor_comment(dom, new, 0, projection.text.len(), id);
+            anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.next_id);
         }
     }
     // 3. Paragraph formatting, with the old properties in `w:pPrChange`.
@@ -783,7 +783,7 @@ fn emit(
         let dom = &mut t.opened.dom;
         if let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, node);
-            anchor_comment(dom, node, 0, projection.text.len(), id);
+            anchor_comment(dom, node, 0, projection.text.len(), id, &mut stamp.next_id);
         }
         delete_runs(dom, node, stamp);
         // The mark of the last paragraph of a container cannot go: its
@@ -928,7 +928,7 @@ fn track_run_format(
     format: &super::RunFormat,
     stamp: &mut Stamp<'_>,
 ) {
-    for run in runs_in_range(dom, paragraph, start, end) {
+    for run in runs_in_range(dom, paragraph, start, end, &mut stamp.next_id) {
         let rpr = match dom.element(run, &W::r_pr()) {
             Some(rpr) => rpr,
             None => {
@@ -1052,7 +1052,14 @@ fn emit_text(
         dom.add(ins, run);
         super::write_mark_run_text(dom, run, &edit.replacement);
         if let Some(format) = &edit.format {
-            super::format_range(dom, paragraph, 0, edit.replacement.len(), format);
+            super::format_range(
+                dom,
+                paragraph,
+                0,
+                edit.replacement.len(),
+                format,
+                &mut stamp.next_id,
+            );
         }
         return;
     }
@@ -1093,6 +1100,7 @@ fn emit_text(
                 edit.start,
                 edit.start + edit.replacement.len(),
                 format,
+                &mut stamp.next_id,
             );
         }
         remove_empty_insertion(dom, ins);
@@ -1104,7 +1112,7 @@ fn emit_text(
     let mut ours = Vec::new();
     // `None` places the insertion right after `anchor`, `Some(true)` before.
     let (template, anchor, before) = if start < end {
-        let runs = isolate_range(dom, paragraph, start, end);
+        let runs = isolate_range(dom, paragraph, (start, end), &mut stamp.next_id);
         let mut groups: Vec<Vec<NodeId>> = Vec::new();
         for &run in &runs {
             match groups.last_mut() {
@@ -1136,6 +1144,7 @@ fn emit_text(
                                 first.start,
                                 first.start + text.len(),
                                 format,
+                                &mut stamp.next_id,
                             );
                         }
                         replacement = "";
@@ -1160,7 +1169,7 @@ fn emit_text(
         let Some(seg) = attach_segment(&projection, start, edit.attach_before).cloned() else {
             return;
         };
-        split_run_at(dom, &seg, start);
+        split_run_at(dom, &seg, start, &mut stamp.next_id);
         let projection = project_paragraph(dom, paragraph);
         let text_piece = |s: &crate::inspect::Segment| {
             if !s.direct && super::editable_insertion(dom, &s.piece).is_none() {
@@ -1189,7 +1198,7 @@ fn emit_text(
             (None, None) => return,
         };
         let (t, run) = chosen;
-        isolate(dom, run, t);
+        isolate(dom, run, t, &mut stamp.next_id);
         let anchor = insertion_boundary_anchor(dom, run, before);
         (Some(run), Some(anchor), before)
     };
@@ -1513,7 +1522,12 @@ pub(super) fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
 
 /// Split runs so each text or glyph of `[start, end)` sits alone in its
 /// run (beside the run's `w:rPr`); return the runs in document order.
-fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
+fn isolate_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    (start, end): (usize, usize),
+    next_id: &mut u64,
+) -> Vec<NodeId> {
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
         if let Some(seg) = projection
@@ -1522,7 +1536,7 @@ fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             .find(|s| s.start < at && at < s.end)
             .cloned()
         {
-            split_run_at(dom, &seg, at);
+            split_run_at(dom, &seg, at, next_id);
         }
     }
     loop {
@@ -1537,7 +1551,7 @@ fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             })
             .collect();
         match pieces.iter().find(|&&(t, run)| !alone(dom, run, t)) {
-            Some(&(t, run)) => isolate(dom, run, t),
+            Some(&(t, run)) => isolate(dom, run, t, next_id),
             None => {
                 let mut runs: Vec<NodeId> = Vec::new();
                 for (_, run) in pieces {
@@ -1560,8 +1574,9 @@ fn alone(dom: &Dom, run: NodeId, t: NodeId) -> bool {
 
 /// Move the children of `run` before `t` into a copy of the run placed
 /// before it, and those after `t` into a copy placed after it; each copy
-/// keeps the run's `w:rPr`.
-fn isolate(dom: &mut Dom, run: NodeId, t: NodeId) {
+/// keeps the run's `w:rPr`. The first fragment keeps the ids of the run's
+/// formatting history; the others take fresh ids from `next_id` (#1656).
+fn isolate(dom: &mut Dom, run: NodeId, t: NodeId, next_id: &mut u64) {
     let children = dom.elements(run, None);
     let Some(index) = children.iter().position(|&c| c == t) else {
         return;
@@ -1587,7 +1602,11 @@ fn isolate(dom: &mut Dom, run: NodeId, t: NodeId) {
         }
         if place_before {
             dom.add_before_self(run, copy);
+            // The copy is now the first fragment: the original's record
+            // becomes the copy.
+            super::refresh_run_history(dom, run, next_id);
         } else {
+            super::refresh_run_history(dom, copy, next_id);
             dom.add_after_self(run, copy);
         }
     }
@@ -1820,7 +1839,7 @@ mod tests {
         );
         let run = dom.elements(p, Some(&W::r()))[0];
         let t = dom.element(run, &W::t()).expect("t");
-        isolate(&mut dom, run, t);
+        isolate(&mut dom, run, t, &mut 0);
         let runs = dom.elements(p, Some(&W::r()));
         assert_eq!(runs.len(), 3);
         assert!(alone(&dom, runs[1], t));
@@ -1829,7 +1848,7 @@ mod tests {
         }
         // Already alone: nothing changes.
         let before = dom.elements(p, None).len();
-        isolate(&mut dom, run, t);
+        isolate(&mut dom, run, t, &mut 0);
         assert_eq!(dom.elements(p, None).len(), before);
     }
 
