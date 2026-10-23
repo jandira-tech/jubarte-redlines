@@ -472,6 +472,30 @@ pub(crate) fn atom(name: &XName) -> Option<char> {
     })
 }
 
+/// Whether `run` covers any character [`run_characters`] counts: text
+/// outside its properties, or an atom ([`atom`]).
+pub(crate) fn run_has_characters(dom: &Dom, run: NodeId) -> bool {
+    let (t, del_text) = (W::t(), W::del_text());
+    let mut pending: Vec<NodeId> = dom.elements(run, None);
+    while let Some(node) = pending.pop() {
+        let Some(name) = dom.name(node) else {
+            continue;
+        };
+        if properties(&name) {
+            continue;
+        }
+        if dom.name_is(node, &t) || dom.name_is(node, &del_text) {
+            if !dom.value(node).is_empty() {
+                return true;
+            }
+        } else if atom(&name).is_some() {
+            return true;
+        }
+        pending.extend(dom.elements(node, None));
+    }
+    false
+}
+
 /// What each run covers in its story paragraph: the characters of its
 /// `w:t` and `w:delText`, one more per tab, break, drawing or other atom
 /// ([`atom`]), a text box's runs at their place; and each paragraph's

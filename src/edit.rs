@@ -6097,7 +6097,7 @@ impl<'p> Transaction<'p> {
                         edit.start + edit.replacement.len(),
                         &mut self.revision_ids,
                     );
-                    drop_emptied_records(&mut self.opened.dom, node, &reached);
+                    drop_emptied_records(&mut self.opened.dom, node, &reached, &self.revision_ids);
                 }
                 for ins in carriers {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
@@ -7979,17 +7979,28 @@ fn clean_new_words(
             dom.add_first(run, copied);
             rpr = copied;
         }
-        stripped.extend(
-            dom.elements(rpr, Some(&W::r_pr_change()))
-                .into_iter()
-                .filter_map(|record| record_id(dom, record)),
-        );
-        tracked::strip_records(dom, rpr);
-        if dom.elements(rpr, None).is_empty() {
-            dom.remove(rpr);
-        }
+        stripped.extend(strip_run_records(dom, rpr));
     }
     hand_on_ids(dom, paragraph, &stripped, ids);
+}
+
+/// Strip the records in a run's properties `rpr`, and the properties when
+/// nothing else is left in them: each formatting record's id, as a number
+/// and as spelled.
+fn strip_run_records(dom: &mut Dom, rpr: NodeId) -> Vec<(u64, String)> {
+    let ids = dom
+        .elements(rpr, Some(&W::r_pr_change()))
+        .into_iter()
+        .filter_map(|record| {
+            let spelled = dom.attribute(record, &W::id())?;
+            Some((record_id(dom, record)?, spelled.to_string()))
+        })
+        .collect();
+    tracked::strip_records(dom, rpr);
+    if dom.elements(rpr, None).is_empty() {
+        dom.remove(rpr);
+    }
+    ids
 }
 
 /// A formatting record's `w:id`, as a number.
@@ -7997,13 +8008,18 @@ fn record_id(dom: &Dom, record: NodeId) -> Option<u64> {
     dom.attribute(record, &W::id())?.parse().ok()
 }
 
-/// A record that lost all its words to new ones leaves its id to the first
-/// copy an earlier split of the transaction made of it: the id stays on
-/// the words the record still covers, as one edit over the same words
+/// A record that lost all its words leaves its id to the first copy an
+/// earlier split of the transaction made of it: the id stays, as spelled,
+/// on the words the record still covers, as one edit over the same words
 /// leaves it (Codex on #1664).
-fn hand_on_ids(dom: &mut Dom, paragraph: NodeId, stripped: &[u64], ids: &RevisionCounter) {
-    for &id in stripped {
-        let original = ids.original(id);
+fn hand_on_ids(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    stripped: &[(u64, String)],
+    ids: &RevisionCounter,
+) {
+    for (id, spelled) in stripped {
+        let original = ids.original(*id);
         let records = dom.descendants(paragraph, Some(&W::r_pr_change()));
         if records
             .iter()
@@ -8014,34 +8030,38 @@ fn hand_on_ids(dom: &mut Dom, paragraph: NodeId, stripped: &[u64], ids: &Revisio
         if let Some(heir) = records.into_iter().find(|&record| {
             record_id(dom, record).is_some_and(|other| ids.original(other) == original)
         }) {
-            dom.set_attribute_value(heir, &W::id(), Some(&original.to_string()));
+            let spelled = if *id == original {
+                spelled.clone()
+            } else {
+                original.to_string()
+            };
+            dom.set_attribute_value(heir, &W::id(), Some(&spelled));
         }
     }
 }
 
-/// Take the formatting records off the `reached` runs an edit left without
-/// content: a record goes with the last of its words (Codex on #1664).
-fn drop_emptied_records(dom: &mut Dom, paragraph: NodeId, reached: &[NodeId]) {
-    if reached.is_empty() {
-        return;
-    }
-    let projection = project_paragraph(dom, paragraph);
+/// Take the formatting records off the `reached` runs an edit left
+/// without a character the history guard counts
+/// ([`crate::changes::run_has_characters`]): a record goes with the last
+/// of its words, and its id with it to a copy that still covers some
+/// (Codex on #1664).
+fn drop_emptied_records(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    reached: &[NodeId],
+    ids: &RevisionCounter,
+) {
+    let mut stripped = Vec::new();
     for &run in reached {
-        if projection
-            .segments
-            .iter()
-            .any(|s| s.start < s.end && run_of(&s.piece) == run)
-        {
+        if crate::changes::run_has_characters(dom, run) {
             continue;
         }
         let Some(rpr) = dom.element(run, &W::r_pr()) else {
             continue;
         };
-        tracked::strip_records(dom, rpr);
-        if dom.elements(rpr, None).is_empty() {
-            dom.remove(rpr);
-        }
+        stripped.extend(strip_run_records(dom, rpr));
     }
+    hand_on_ids(dom, paragraph, &stripped, ids);
 }
 
 /// Fresh ids for the formatting history in `run`'s own `w:rPr`, for a run
