@@ -3061,6 +3061,25 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// [`read_word`] for an input a task must open before it writes anything
+/// (`validate --original`): the package is admitted whole
+/// ([`jubarte::admission::admit`]), so a ZIP that holds no Word main part
+/// is refused by name, `CODE: FILE is …`, before any output exists.
+fn read_package(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = read_word(path)?;
+    jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::default()).map_err(
+        |refused| {
+            format!(
+                "{}: {} is {}",
+                refused.code(),
+                path.display(),
+                refused.message
+            )
+        },
+    )?;
+    Ok(bytes)
+}
+
 /// [`read_word`] for a task that reads the document (`read`, `changes`,
 /// `comments`): unless `quiet`, one stderr line says how many validity
 /// findings the input has ([`jubarte::validate::input_notice`]), so they
@@ -3966,7 +3985,7 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     let mut docx = read(job.file)?;
     // An original that cannot be read, or is no Word package, stops the run
     // before any repair.
-    let before = job.original.map(read_word).transpose()?;
+    let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;

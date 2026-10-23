@@ -2413,3 +2413,90 @@ fn repair_renames_the_range_end_in_wordprocessingml() {
         "{xml}"
     );
 }
+
+const CUSTOM_XML_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+
+/// Two insertions in one paragraph sharing `w:id` 5.
+const TWO_FIVES: &str = r#"<w:p><w:ins w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:r><w:t>b</w:t></w:r></w:ins></w:p>"#;
+
+/// A Word story stays checked whatever `customXml` relationship also
+/// reaches it: only a part that nothing but `customXml` relationships
+/// reach is custom XML data, and a type that merely ends in `/customXml`
+/// is no `customXml` relationship (codex and crush on #1666, round 6).
+#[test]
+fn a_word_story_stays_checked_whatever_custom_xml_relationship_reaches_it() {
+    for rel_type in ["urn:application/customXml", CUSTOM_XML_REL] {
+        let mut pkg = PartFs::open(&common::docx::docx(TWO_FIVES)).unwrap();
+        pkg.add_document_relationship("word/document.xml", rel_type, "document.xml");
+        assert_eq!(
+            duplicate_revision_ids(&pkg.to_zip().unwrap()),
+            1,
+            "main document, {rel_type}"
+        );
+    }
+    const HEADER_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+    let header = format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{TWO_FIVES}</w:hdr>"#
+    );
+    let mut pkg = PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+    pkg.set_part("word/header1.xml", header.into_bytes());
+    pkg.add_content_type_override(
+        "/word/header1.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    pkg.add_document_relationship("word/document.xml", HEADER_REL, "header1.xml");
+    pkg.add_document_relationship("word/document.xml", CUSTOM_XML_REL, "header1.xml");
+    assert_eq!(duplicate_revision_ids(&pkg.to_zip().unwrap()), 1, "header");
+}
+
+/// Custom XML data the package's own relationships reach is data too
+/// (glm-5.3 on #1666, round 6).
+#[test]
+fn custom_xml_data_the_package_reaches_holds_no_revision_ids() {
+    let data = r#"<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="5"/><w:ins w:id="5"/></root>"#;
+    let mut pkg = PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+    pkg.set_part("customXml/item1.xml", data.as_bytes().to_vec());
+    pkg.add_content_type_override("/customXml/item1.xml", "application/xml");
+    pkg.add_package_relationship(CUSTOM_XML_REL, "customXml/item1.xml");
+    assert_eq!(duplicate_revision_ids(&pkg.to_zip().unwrap()), 0);
+}
+
+/// Repair pairs a renumbered start with its end by the key the duplicate
+/// check reads: `customXmlDelRange` ids compare case-blind, so the end
+/// `ABC` that follows the start `abc` is its end (MiniMax on #1666,
+/// round 6).
+#[test]
+fn repair_pairs_a_case_blind_range_end_with_its_start() {
+    let range = |start: &str, end: &str, text: &str| {
+        format!(
+            r#"<w:customXmlDelRangeStart w:id="{start}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>{text}</w:t></w:r><w:customXmlDelRangeEnd w:id="{end}"/>"#
+        )
+    };
+    let bytes = common::docx::docx(&format!(
+        "<w:p>{}{}</w:p>",
+        range("ABC", "abc", "a"),
+        range("abc", "ABC", "b")
+    ));
+    assert_eq!(duplicate_revision_ids(&bytes), 2);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicate_revision_ids(&repaired.docx), 0);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    let ids = |tag: &str| -> Vec<String> {
+        xml.match_indices(&format!("<w:{tag} w:id=\""))
+            .map(|(at, m)| {
+                let id = &xml[at + m.len()..];
+                id[..id.find('"').unwrap()].to_string()
+            })
+            .collect()
+    };
+    let (starts, ends) = (ids("customXmlDelRangeStart"), ids("customXmlDelRangeEnd"));
+    assert_eq!(
+        (starts[0].as_str(), ends[0].as_str()),
+        ("ABC", "abc"),
+        "{xml}"
+    );
+    assert_eq!(starts[1], ends[1], "{xml}");
+    assert!(!starts[1].eq_ignore_ascii_case("abc"), "{xml}");
+}

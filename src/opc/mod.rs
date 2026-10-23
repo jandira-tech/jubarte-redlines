@@ -311,6 +311,40 @@ pub(crate) fn is_xml_content_type(content_type: &str) -> bool {
         || content_type.eq_ignore_ascii_case("text/xml")
 }
 
+/// Transitional's and Strict's `customXml` relationship types.
+const CUSTOM_XML_RELATIONSHIPS: [&str; 2] = [
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships/customXml",
+];
+
+/// The custom XML data parts `rels` reach, each `(source part, its
+/// relationships)`, the package's own under `""`: the parts only
+/// `customXml` relationships reach, by their exact type. Such a part holds
+/// the application's own XML. A part another relationship reaches too (the
+/// main document, a header) is that part, whatever else points at it.
+pub(crate) fn custom_xml_data<'a>(
+    rels: impl IntoIterator<Item = (&'a str, &'a Relationships)>,
+) -> Vec<String> {
+    // By ASCII-lowercase name: OPC compares part names so.
+    let mut only_custom: HashMap<String, bool> = HashMap::new();
+    for (source, rels) in rels {
+        for r in rels
+            .items
+            .iter()
+            .filter(|r| r.target_mode.as_deref() != Some("External"))
+        {
+            let target = crate::xmllinq::parse::unescape_xml_text(&r.target);
+            let part = resolve_rel_target(source, &target).to_ascii_lowercase();
+            *only_custom.entry(part).or_insert(true) &=
+                CUSTOM_XML_RELATIONSHIPS.contains(&r.rel_type.as_str());
+        }
+    }
+    only_custom
+        .into_iter()
+        .filter_map(|(part, custom)| custom.then_some(part))
+        .collect()
+}
+
 /// For a reader that has not opened the package: whether the raw
 /// `[Content_Types].xml` `content_types` types part `name` as XML
 /// ([`is_xml_content_type`]). Unreadable content types type nothing.
@@ -495,7 +529,7 @@ fn part_name_to_rels_path(part_name: &str) -> String {
 /// The `_rels` segment and the `.rels` suffix match under ASCII case —
 /// `_RELS/.RELS` is the package's own relationships (Word opens it, ZIP-15
 /// probe p5) — while the owner's spelling keeps the entry's case.
-fn rels_path_to_part_name(name: &str) -> Option<String> {
+pub(crate) fn rels_path_to_part_name(name: &str) -> Option<String> {
     let name = name.strip_prefix('/').unwrap_or(name);
     let lower = name.to_ascii_lowercase();
     let file = lower.strip_suffix(".rels")?;

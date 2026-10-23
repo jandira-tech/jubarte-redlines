@@ -1490,24 +1490,18 @@ fn xml_parts(pkg: &PartFs) -> Vec<String> {
 
 /// The XML parts that hold WordprocessingML revisions: every XML part but
 /// custom XML data, which holds the application's own XML whatever its name
-/// (a `customXml` relationship's target). OpenXmlValidator checks no
-/// revision id there.
+/// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
+/// reach, the package's own included). OpenXmlValidator checks no revision
+/// id there.
 fn revision_parts(pkg: &PartFs) -> Vec<String> {
-    let data: Vec<String> = pkg
-        .parts()
-        .iter()
-        .filter_map(|source| pkg.read_rels_for(source).map(|rels| (source, rels)))
-        .flat_map(|(source, rels)| {
-            rels.items
-                .iter()
-                .filter(|r| {
-                    // Transitional's type or Strict's: the same last segment.
-                    r.rel_type.rsplit('/').next() == Some("customXml")
-                        && r.target_mode.as_deref() != Some("External")
-                })
-                .map(|r| pkg.resolve_rel_target(source, &r.target))
-        })
-        .collect();
+    let parts = pkg.parts();
+    let data =
+        crate::opc::custom_xml_data(std::iter::once(("", pkg.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                pkg.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ));
     xml_parts(pkg)
         .into_iter()
         .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
@@ -2991,11 +2985,18 @@ pub(crate) fn renumber_duplicate_revision_ids(
             "customXmlMoveToRangeStart" => Some("customXmlMoveToRangeEnd"),
             _ => None,
         };
+        // Its end is the first that follows with the start's id, by the key
+        // the duplicate check reads: `ABC` closes `abc` where ids compare
+        // case-blind (MiniMax on #1666).
         if let Some(end_local) = end_local
             && let Some(&end) = all[i + 1..].iter().find(|&&e| {
-                dom.name(e)
-                    .is_some_and(|x| x.namespace_name() == W::URI && x.local_name() == end_local)
-                    && dom.attribute(e, &id_name) == Some(id.as_str())
+                dom.name(e).is_some_and(|x| {
+                    x.namespace_name() == W::URI
+                        && x.local_name() == end_local
+                        && dom.attribute(e, &id_name).is_some_and(|own| {
+                            revision_id_key(dom, e, &x, own) == revision_id_key(dom, e, &x, &id)
+                        })
+                })
             })
         {
             renames.push((end, fresh));
