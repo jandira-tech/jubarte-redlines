@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::namespaces::{PT, W};
 use crate::util::group_adjacent;
-use crate::xmllinq::{Dom, NodeId, XNamespace};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::lcs::TaggedAtom;
 use super::{CorrelationStatus, WmlComparerSettings};
@@ -275,6 +275,409 @@ pub fn flatten_to_comparison_unit_atom_list(
         }
     }
     out
+}
+
+/// Word pairs a table cell's two final paragraph marks whatever the
+/// cell's paragraphs before them did, and moves the revision to the mark
+/// before (#1669; Word 16 oracles on the issue): a revision on a cell's
+/// final mark hangs Word's Accept All or Reject All. These shapes reach
+/// here from the LCS:
+///
+/// - an append, or a paragraph replaced by several: the original's closing
+///   mark pairs an interior revised mark, and the revised closing mark is
+///   inserted. The interior mark becomes the inserted one, and the two
+///   closing marks pair;
+/// - every paragraph deleted: the revised closing mark pairs an interior
+///   original mark, and the original's closing mark is deleted. The
+///   interior mark becomes the deleted one, and the two closing marks pair;
+/// - the revised closing mark pairs a paragraph outside the cell (a
+///   revision ending in a table pairs its last mark with the original's
+///   final paragraph), and the cell's own closing mark is deleted: the
+///   cell's two closing marks pair, and that paragraph's mark is deleted,
+///   or stays when it closes its story or a container;
+/// - a cell's tail replaced, inserted paragraphs before deleted ones (or
+///   after them): the revised closing mark is inserted and the original's
+///   deleted. As in a story (`pair_final_marks_behind_inserted_tail`), the
+///   two closing marks pair where the later one stood, and the words
+///   between join the first paragraph after them;
+/// - a cell the revision adds to a row that stays, every word in it new:
+///   there is no original mark to pair and no cell insertion to take it,
+///   so its final mark stays unrevised and only its words are inserted, as
+///   Word writes it (ff42b4a7a3).
+///
+/// Cells pair by the unid the comparer gave both sides. A row inserted or
+/// deleted whole, or one around the cell through nested tables, revises
+/// its cells' marks with it and is left alone. A re-paired mark's
+/// properties are compared again afterwards
+/// (`detect_format_changes_in_atom_list`), so the final mark records the
+/// original's when they differ.
+pub fn pair_cell_final_marks(dom: &mut Dom, flat: &mut Vec<ComparisonUnitAtom>) {
+    // An interior paragraph that gives up the original's closing mark keeps
+    // the unid it took from it, which the closing mark now claims: it takes
+    // a fresh one, or the two paragraphs are written as one.
+    for node in cell_final_marks_paired(dom, flat) {
+        dom.set_attribute_value(node, &PT::unid(), Some(&generate_unid()));
+    }
+}
+
+/// `pair_cell_final_marks`' pairing; returns the ancestors whose unids must
+/// be minted again.
+fn cell_final_marks_paired(dom: &Dom, flat: &mut Vec<ComparisonUnitAtom>) -> Vec<NodeId> {
+    let mut remint = Vec::new();
+    let tc = W::name("tc");
+    let paragraph = |atom: &ComparisonUnitAtom| -> Option<NodeId> {
+        dom.name_is(atom.content_element, &W::p_pr())
+            .then(|| {
+                atom.ancestor_elements
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&e| dom.name_is(e, &W::p()))
+            })
+            .flatten()
+    };
+    let cell = |para: NodeId| -> Option<NodeId> {
+        let mut node = dom.parent(para);
+        while let Some(n) = node {
+            if dom.name_is(n, &tc) {
+                return Some(n);
+            }
+            node = dom.parent(n);
+        }
+        None
+    };
+    // The cell `para` closes, if it closes one.
+    let closes = |para: NodeId| cell(para).filter(|&c| closing_paragraph(dom, c) == Some(para));
+    // Each mark atom's paragraph on the revised side (an equal or inserted
+    // mark) and on the original side (a deleted mark, or an equal mark's
+    // before).
+    let sides = |atom: &ComparisonUnitAtom| -> (Option<NodeId>, Option<NodeId>) {
+        let own = paragraph(atom);
+        match atom.correlation_status {
+            CorrelationStatus::Equal => (
+                own,
+                atom.comparison_unit_atom_before
+                    .as_deref()
+                    .and_then(paragraph),
+            ),
+            CorrelationStatus::Inserted => (own, None),
+            CorrelationStatus::Deleted => (None, own),
+            _ => (None, None),
+        }
+    };
+    let untouched = |atom: &ComparisonUnitAtom| {
+        atom.rev_track_element.is_none() && atom.move_group_id.is_none()
+    };
+    let mut revised_close: std::collections::HashMap<NodeId, usize> =
+        std::collections::HashMap::new();
+    let mut original_close: std::collections::HashMap<NodeId, usize> =
+        std::collections::HashMap::new();
+    for (i, atom) in flat.iter().enumerate() {
+        let (revised, original) = sides(atom);
+        if let Some(c) = revised.and_then(closes) {
+            revised_close.insert(c, i);
+        }
+        if let Some(c) = original.and_then(closes) {
+            original_close.insert(c, i);
+        }
+    }
+    for i in 0..flat.len() {
+        if flat[i].correlation_status != CorrelationStatus::Equal || !untouched(&flat[i]) {
+            continue;
+        }
+        let (Some(revised), Some(original)) = sides(&flat[i]) else {
+            continue;
+        };
+        match (closes(revised), closes(original)) {
+            // The original's closing mark pairs an interior revised mark.
+            (None, Some(_)) => {
+                let Some(&j) = cell(revised).and_then(|c| revised_close.get(&c)) else {
+                    continue;
+                };
+                if j <= i
+                    || flat[j].correlation_status != CorrelationStatus::Inserted
+                    || !untouched(&flat[j])
+                {
+                    continue;
+                }
+                remint.extend(
+                    flat[i]
+                        .ancestor_elements
+                        .iter()
+                        .filter(|e| !flat[j].ancestor_elements.contains(e))
+                        .filter(|&&e| dom.attribute(e, &PT::unid()).is_some()),
+                );
+                let before = flat[i].comparison_unit_atom_before.take();
+                let element = flat[i].content_element_before.take();
+                flat[i].correlation_status = CorrelationStatus::Inserted;
+                flat[j].correlation_status = CorrelationStatus::Equal;
+                flat[j].comparison_unit_atom_before = before;
+                flat[j].content_element_before = element;
+            }
+            // The revised closing mark pairs an interior original mark.
+            (Some(_), None) => {
+                let Some(&j) = cell(original).and_then(|c| original_close.get(&c)) else {
+                    continue;
+                };
+                if j <= i
+                    || flat[j].correlation_status != CorrelationStatus::Deleted
+                    || !untouched(&flat[j])
+                {
+                    continue;
+                }
+                let Some(interior) = flat[i].comparison_unit_atom_before.take() else {
+                    continue;
+                };
+                let closing = flat[j].clone();
+                let mut equal = flat[i].clone();
+                equal.content_element_before = Some(closing.content_element);
+                equal.comparison_unit_atom_before = Some(std::sync::Arc::new(closing));
+                let mut deleted = (*interior).clone();
+                deleted.correlation_status = CorrelationStatus::Deleted;
+                deleted.content_element_before = None;
+                deleted.comparison_unit_atom_before = None;
+                flat[i] = deleted;
+                flat[j] = equal;
+            }
+            _ => {}
+        }
+    }
+    // The revised closing mark paired with an original paragraph outside
+    // the cell, the cell's own closing mark deleted (a revision ending in a
+    // table pairs its last mark with the original's final paragraph): the
+    // cell's two closing marks pair, and that paragraph's mark is deleted,
+    // or stays when it closes its own story or container.
+    let unid = PT::unid();
+    let body_closes = |para: NodeId| {
+        dom.parent(para).is_some_and(|parent| {
+            dom.name_is(parent, &W::body())
+                && dom
+                    .elements(parent, None)
+                    .into_iter()
+                    .rev()
+                    .find(|&e| dom.name_is(e, &W::p()) || dom.name_is(e, &W::tbl()))
+                    == Some(para)
+        })
+    };
+    for i in 0..flat.len() {
+        if flat[i].correlation_status != CorrelationStatus::Equal || !untouched(&flat[i]) {
+            continue;
+        }
+        let (Some(revised), Some(original)) = sides(&flat[i]) else {
+            continue;
+        };
+        let Some(revised_cell) = closes(revised) else {
+            continue;
+        };
+        let counterpart = |c: NodeId| {
+            dom.attribute(c, &unid).is_some()
+                && dom.attribute(c, &unid) == dom.attribute(revised_cell, &unid)
+        };
+        if cell(original).is_some_and(counterpart) {
+            continue;
+        }
+        let Some(k) = (0..flat.len()).find(|&k| {
+            flat[k].correlation_status == CorrelationStatus::Deleted
+                && untouched(&flat[k])
+                && sides(&flat[k]).1.and_then(closes).is_some_and(counterpart)
+        }) else {
+            continue;
+        };
+        let Some(before) = flat[i].comparison_unit_atom_before.clone() else {
+            continue;
+        };
+        let mut equal = flat[i].clone();
+        equal.content_element_before = Some(flat[k].content_element);
+        equal.comparison_unit_atom_before = Some(std::sync::Arc::new(flat[k].clone()));
+        let mut own = (*before).clone();
+        if closes(original).is_some() || body_closes(original) {
+            own.correlation_status = CorrelationStatus::Equal;
+            own.content_element_before = Some(before.content_element);
+            own.comparison_unit_atom_before = Some(before);
+        } else {
+            own.correlation_status = CorrelationStatus::Deleted;
+            own.content_element_before = None;
+            own.comparison_unit_atom_before = None;
+        }
+        flat[k] = equal;
+        flat[i] = own;
+    }
+    // A replaced tail: the revised closing mark inserted, then deletions
+    // that reach the closing mark of the cell it stands for.
+    // The cell's row, or a row around it through nested tables, revised
+    // as `mark` says: that row's revision covers the cell.
+    let row_marked = |cell: NodeId, mark: &XName| {
+        dom.ancestors_and_self(cell, Some(&tc))
+            .into_iter()
+            .any(|c| {
+                dom.parent(c)
+                    .and_then(|row| dom.element(row, &W::tr_pr()))
+                    .is_some_and(|tr_pr| dom.element(tr_pr, mark).is_some())
+            })
+    };
+    // The cell an atom stands in, mark or word.
+    let cell_of = |atom: &ComparisonUnitAtom| {
+        atom.ancestor_elements
+            .iter()
+            .rev()
+            .copied()
+            .find(|&e| dom.name_is(e, &W::p()))
+            .and_then(cell)
+    };
+    let mut j = 0;
+    while j < flat.len() {
+        let revised_cell = (flat[j].correlation_status == CorrelationStatus::Inserted
+            && untouched(&flat[j]))
+        .then(|| sides(&flat[j]).0.and_then(closes))
+        .flatten();
+        // The original cell the comparer paired with it, whose words the
+        // deletions after it begin with.
+        let original_cell = revised_cell.and_then(|revised| {
+            let original = flat.get(j + 1).and_then(cell_of)?;
+            let paired = dom.attribute(revised, &unid).is_some()
+                && dom.attribute(revised, &unid) == dom.attribute(original, &unid);
+            paired.then_some(original)
+        });
+        let (Some(revised_cell), Some(original_cell)) = (revised_cell, original_cell) else {
+            j += 1;
+            continue;
+        };
+        let closing = (j + 1..flat.len())
+            .take_while(|&k| flat[k].correlation_status == CorrelationStatus::Deleted)
+            .find(|&k| sides(&flat[k]).1.and_then(closes) == Some(original_cell));
+        let Some(k) = closing.filter(|&k| untouched(&flat[k])) else {
+            j += 1;
+            continue;
+        };
+        if row_marked(revised_cell, &W::ins()) || row_marked(original_cell, &W::del()) {
+            j += 1;
+            continue;
+        }
+        let closing = flat[k].clone();
+        let mut equal = flat.remove(j);
+        equal.correlation_status = CorrelationStatus::Equal;
+        equal.content_element_before = Some(closing.content_element);
+        equal.comparison_unit_atom_before = Some(std::sync::Arc::new(closing));
+        flat[k - 1] = equal;
+        j = k;
+    }
+    // The same tail in the other order: the original's closing mark
+    // deleted, then only insertions up to the revised closing mark. The
+    // deleted words join the first inserted paragraph, and the two closing
+    // marks pair.
+    let mut j = 0;
+    while j < flat.len() {
+        let revised_cell = (flat[j].correlation_status == CorrelationStatus::Inserted
+            && untouched(&flat[j]))
+        .then(|| sides(&flat[j]).0.and_then(closes))
+        .flatten();
+        let Some(revised_cell) = revised_cell else {
+            j += 1;
+            continue;
+        };
+        let start = (0..j)
+            .rev()
+            .take_while(|&k| flat[k].correlation_status == CorrelationStatus::Inserted)
+            .last()
+            .unwrap_or(j);
+        let paired = start.checked_sub(1).filter(|&k| {
+            flat[k].correlation_status == CorrelationStatus::Deleted
+                && untouched(&flat[k])
+                && sides(&flat[k]).1.and_then(closes).is_some_and(|original| {
+                    dom.attribute(revised_cell, &unid).is_some()
+                        && dom.attribute(revised_cell, &unid) == dom.attribute(original, &unid)
+                        && !row_marked(original, &W::del())
+                })
+        });
+        let Some(k) = paired.filter(|_| !row_marked(revised_cell, &W::ins())) else {
+            j += 1;
+            continue;
+        };
+        let closing = flat.remove(k);
+        let equal = &mut flat[j - 1];
+        equal.correlation_status = CorrelationStatus::Equal;
+        equal.content_element_before = Some(closing.content_element);
+        equal.comparison_unit_atom_before = Some(std::sync::Arc::new(closing));
+    }
+    // A cell the revision adds to a row that stays, its every word new:
+    // nothing on the original's side to pair, and no cell insertion to
+    // take it, so its final mark stays unrevised and only the words are
+    // inserted (Word 16, ff42b4a7a3's added "Role" cell).
+    let cell_inserted = |cell: NodeId| {
+        dom.element(cell, &W::tc_pr())
+            .is_some_and(|pr| dom.element(pr, &W::name("cellIns")).is_some())
+    };
+    // The unids of the original cells some atom stands in.
+    let original_cells: std::collections::HashSet<String> = flat
+        .iter()
+        .filter_map(|atom| match atom.correlation_status {
+            CorrelationStatus::Deleted => cell_of(atom),
+            CorrelationStatus::Equal => atom
+                .comparison_unit_atom_before
+                .as_deref()
+                .and_then(cell_of),
+            _ => None,
+        })
+        .filter_map(|c| dom.attribute(c, &unid).map(str::to_string))
+        .collect();
+    let mut seen: std::collections::HashMap<NodeId, bool> = std::collections::HashMap::new();
+    for atom in flat.iter() {
+        let Some(c) = cell_of(atom) else {
+            continue;
+        };
+        let new = atom.correlation_status == CorrelationStatus::Inserted;
+        let revised = matches!(
+            atom.correlation_status,
+            CorrelationStatus::Inserted | CorrelationStatus::Equal
+        );
+        if revised {
+            *seen.entry(c).or_insert(true) &= new;
+        }
+    }
+    for atom in flat.iter_mut() {
+        let Some(revised_cell) = sides(atom).0.and_then(closes) else {
+            continue;
+        };
+        if atom.correlation_status != CorrelationStatus::Inserted
+            || !untouched(atom)
+            || seen.get(&revised_cell) != Some(&true)
+            || dom
+                .attribute(revised_cell, &unid)
+                .is_some_and(|u| original_cells.contains(u))
+            || row_marked(revised_cell, &W::ins())
+            || cell_inserted(revised_cell)
+        {
+            continue;
+        }
+        let own = atom.clone();
+        atom.correlation_status = CorrelationStatus::Equal;
+        atom.content_element_before = Some(own.content_element);
+        atom.comparison_unit_atom_before = Some(std::sync::Arc::new(own));
+    }
+    remint
+}
+
+/// The paragraph that closes `container` (a table cell, or a content
+/// control or custom XML element inside one): its last block, through the
+/// wrappers that end it; `None` when a table ends it.
+fn closing_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
+    let custom = W::name("customXml");
+    let sdt = W::name("sdt");
+    let last = dom.elements(container, None).into_iter().rev().find(|&c| {
+        dom.name_is(c, &W::p())
+            || dom.name_is(c, &W::tbl())
+            || dom.name_is(c, &sdt)
+            || dom.name_is(c, &custom)
+    })?;
+    if dom.name_is(last, &W::p()) {
+        Some(last)
+    } else if dom.name_is(last, &sdt) {
+        closing_paragraph(dom, dom.element(last, &W::sdt_content())?)
+    } else if dom.name_is(last, &custom) {
+        closing_paragraph(dom, last)
+    } else {
+        None
+    }
 }
 
 /// Authored control identifiers distinguish an existing inner control from a

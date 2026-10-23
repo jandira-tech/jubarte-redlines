@@ -172,6 +172,32 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     None
                 }
             }
+            Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+                if appended_final(tx, resolved).is_some_and(|para| {
+                    last_appended(tx, para) == Some(*op)
+                        && !tx.resolved.iter().any(|(_, r)| {
+                            matches!(r, Resolved::DeleteParagraph { para: p } if *p == para)
+                        })
+                }) =>
+            {
+                let para = appended_final(tx, resolved).expect("matched");
+                let node = tx.paragraph_nodes[para];
+                if let Some(mark) = mark_revision(dom, node, &TRACKED) {
+                    Some(named(
+                        "under keep, a paragraph cannot be added after a container's last paragraph whose mark is already tracked, since the inserted mark goes there: that mark is",
+                        mark,
+                    ))
+                } else if matches!(resolved, Resolved::InsertParagraph { .. }) {
+                    record_replaced(tx, node, *op).map(|change| {
+                        named(
+                            "under keep, a paragraph formatted otherwise cannot be added after a container's last paragraph whose formatting change is still tracked: that change is",
+                            change,
+                        )
+                    })
+                } else {
+                    None
+                }
+            }
             Resolved::MergeParagraphs { para, .. } => {
                 mark_revision(dom, tx.paragraph_nodes[*para], &TRACKED).map(|mark| {
                     named(
@@ -509,6 +535,14 @@ fn emit(
         .iter()
         .filter_map(|&para| t.final_carrier(para).map(|carrier| (para, carrier)))
         .collect();
+    // The container-final paragraphs that stay, with blocks placed after
+    // them (#1669).
+    let appended: BTreeSet<usize> = t
+        .resolved
+        .iter()
+        .filter_map(|(_, r)| appended_final(t, r))
+        .filter(|para| !finals.contains(para))
+        .collect();
     // 0. Run formatting, on source offsets (no text edit overlaps it), each
     // run's old properties in `w:rPrChange`.
     for (_, r) in &t.resolved {
@@ -749,6 +783,19 @@ fn emit(
             anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.ids);
         }
     }
+    // 2b. The last new paragraph after a container's last paragraph takes
+    // the final mark, unrevised, and the inserted mark is the one before
+    // it, as Word's Compare writes an append: a revision on a table cell's
+    // final mark hangs Word's Accept All and Reject All (#1669).
+    for para in appended {
+        let Some(&last) = last_after.get(&para) else {
+            continue;
+        };
+        let dom = &mut t.opened.dom;
+        if dom.name_is(last, &W::p()) {
+            rotate_final_mark(dom, t.paragraph_nodes[para], last, stamp);
+        }
+    }
     // 3. Paragraph formatting, with the old properties in `w:pPrChange`.
     for (_, r) in &t.resolved {
         let Resolved::FormatParagraph {
@@ -981,6 +1028,86 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
         dom.add_after_self(last, old);
     }
     dom.remove(last);
+}
+
+/// The container-final paragraph that `r` places a block after, if any.
+fn appended_final(tx: &Transaction<'_>, r: &Resolved) -> Option<usize> {
+    let (Resolved::InsertParagraph {
+        anchor,
+        side: Side::After,
+        ..
+    }
+    | Resolved::InsertTable {
+        anchor,
+        side: Side::After,
+        ..
+    }) = r
+    else {
+        return None;
+    };
+    let node = tx.paragraph_nodes[*anchor];
+    (tx.final_paragraph(node) == Some(node)).then_some(*anchor)
+}
+
+/// The operation whose block lands last after the container-final
+/// `para`: blocks placed after one paragraph follow each other in plan
+/// order.
+fn last_appended(tx: &Transaction<'_>, para: usize) -> Option<usize> {
+    tx.resolved
+        .iter()
+        .filter(|(_, r)| appended_final(tx, r) == Some(para))
+        .map(|(op, _)| *op)
+        .last()
+}
+
+/// `last`, the new paragraph placed last after the container-final `old`,
+/// takes the final mark: its inserted mark goes, and `old`'s mark is the
+/// inserted one. Rejected, `old`'s words join `last`'s mark, so that mark
+/// records `old`'s properties and mark formatting where they differ from
+/// its own; a change record `old` already holds moves to it (`check`
+/// refuses, under keep, the plans whose new paragraph that record would
+/// misdescribe).
+fn rotate_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
+    if let Some(inserted) = mark_revision(dom, last, &["ins"]) {
+        dom.remove(inserted);
+    }
+    let had = bare_properties(dom, old);
+    if let Some(change) = paragraph_format_change(dom, old) {
+        dom.remove(change);
+        let ppr = paragraph_properties(dom, last);
+        insert_ppr_child(dom, ppr, change);
+    } else if serialized(dom, &bare_properties(dom, last)) != serialized(dom, &had) {
+        let before = dom.new_element(W::p_pr());
+        for child in had {
+            let copy = dom.clone_subtree(child);
+            dom.add(before, copy);
+        }
+        let record = stamp.container(dom, W::p_pr_change());
+        dom.add(record, before);
+        let ppr = paragraph_properties(dom, last);
+        insert_ppr_child(dom, ppr, record);
+    }
+    let had = mark_formatting(dom, old);
+    let ppr = paragraph_properties(dom, old);
+    let change = dom
+        .element(ppr, &W::r_pr())
+        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()));
+    if let Some(change) = change {
+        dom.remove(change);
+        let rpr = mark_properties(dom, last);
+        dom.add(rpr, change);
+    } else if serialized(dom, &mark_formatting(dom, last)) != serialized(dom, &had) {
+        let before = dom.new_element(W::r_pr());
+        for child in had {
+            let copy = dom.clone_subtree(child);
+            dom.add(before, copy);
+        }
+        let record = stamp.container(dom, W::r_pr_change());
+        dom.add(record, before);
+        let rpr = mark_properties(dom, last);
+        dom.add(rpr, record);
+    }
+    mark(dom, old, W::ins(), stamp);
 }
 
 /// Whether `a` comes before `b` in document order.
