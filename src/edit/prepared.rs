@@ -400,7 +400,9 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     // no baseline nothing is claimed introduced (the candidate's own
     // validation below still gates what the edit produced).
     let baseline = validate::validate(source).ok();
-    let source_ids = validate::revision_id_occurrences(source).ok();
+    // Counted only when a candidate repeats an id at all: its own
+    // `DUPLICATE_REVISION_ID` reads the same parts, records and keys.
+    let mut source_ids = None;
     let mut introduced = Vec::new();
     let mut unresolved = Vec::new();
     for bytes in [&result.clean, &result.redline] {
@@ -411,7 +413,10 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
                 format!("the serialized candidate cannot be validated: {e}"),
             )
         })?;
-        if let Some(source_ids) = &source_ids {
+        if findings.iter().any(|f| f.code == "DUPLICATE_REVISION_ID")
+            && let Some(source_ids) =
+                source_ids.get_or_insert_with(|| validate::revision_id_occurrences(source).ok())
+        {
             check_revision_ids(source_ids, bytes)?;
         }
         for finding in &findings {
@@ -1349,6 +1354,59 @@ pub(crate) mod tests {
         let source = main_named(&revisions(&[("ins", 5), ("ins", 6)]), "word/main.dat");
         let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
         refused_as_duplicate(check_candidates(&source, &result_of(candidate)), "5");
+    }
+
+    fn prepared(source: &[u8], operation: &str) -> Result<PreparedEdit, EditError> {
+        let json = format!(
+            r#"{{"schema_version":1,"author":"Bob","date":"2026-10-17T12:00:00Z","existing_revisions":"keep","operations":[{operation}]}}"#
+        );
+        let plan = EditPlan::from_json(&json).unwrap();
+        prepare(source, &plan, &PrepareOptions::default())
+    }
+
+    #[test]
+    fn a_paragraph_marks_revision_id_survives_paragraph_edits() {
+        // `w:pPr/w:rPr/w:ins`: a new paragraph made like it, one split off
+        // it, and a replacement inside it publish.
+        let source = deeper_boundary_fixture::docx(
+            r#"<w:p><w:pPr><w:rPr><w:ins w:id="7" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">abcd efgh</w:t></w:r></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#,
+        );
+        for operation in [
+            r#"{"kind":"insert_paragraph","paragraph":{"index":1},"runs":[{"text":"b"}],"like":{"index":0}}"#,
+            r#"{"kind":"insert","paragraph":"p0","after":"abcd","text":"\nnew para"}"#,
+            r#"{"kind":"replace","paragraph":"p0","find":"cd","replacement":"X"}"#,
+        ] {
+            let result = prepared(&source, operation);
+            assert!(result.is_ok(), "{operation}: {:?}", result.err());
+        }
+    }
+
+    #[test]
+    fn a_run_marks_revision_id_split_in_two_is_refused() {
+        // A run's `w:rPr` holds no `w:ins` (OpenXmlValidator:
+        // `Sch_InvalidElementContentExpectingComplex`). Splitting such a run
+        // copies the mark's id: the candidate is refused, not published.
+        let source = deeper_boundary_fixture::docx(
+            r#"<w:p><w:r><w:rPr><w:ins w:id="7" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr><w:t>abcd</w:t></w:r></w:p>"#,
+        );
+        let error = prepared(
+            &source,
+            r#"{"kind":"replace","paragraph":"p0","find":"bc","replacement":"X"}"#,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert!(
+            error.message.contains("w:ins on a mark w:id 7"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_source_skips_the_duplicate_gate() {
+        let candidate = revisions(&[("ins", 5), ("ins", 5)]);
+        let result = check_candidates(b"not a zip at all", &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

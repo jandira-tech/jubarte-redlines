@@ -3964,6 +3964,8 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
+    // An original that cannot be read stops the run before any repair.
+    let before = job.original.map(read).transpose()?;
     if let Some(out) = job.repair {
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
@@ -3971,7 +3973,7 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         if !job.json {
             // A structural repair: the edits' history is a separate check.
             let history = match job.original {
-                Some(original) => format!("history checked below against {}", original.display()),
+                Some(original) => format!("history check against {} follows", original.display()),
                 None => "history not checked (--original, --author)".to_string(),
             };
             outln!(
@@ -3984,7 +3986,6 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         }
         docx = fixed.docx;
     }
-    let before = job.original.map(read).transpose()?;
     let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
     if let Some(path) = job.baseline {
         // A baseline that is no Word package is refused by its name.
