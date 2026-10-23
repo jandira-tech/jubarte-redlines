@@ -669,3 +669,49 @@ fn an_id_the_settling_removed_names_no_new_record() {
         }
     }
 }
+
+/// Bob's typed (v2) plan for `source`: the template's own binding, with
+/// `operations` aimed at its first paragraph.
+fn edit_v2(
+    source: &[u8],
+    operations: impl Fn(&Value) -> Value,
+) -> jubarte::edit::v2_apply::V2EditResult {
+    use jubarte::edit::{
+        for_edit::ForEditRequest,
+        template::{TemplateRequest, generate},
+        v2::PlanV2,
+        v2_apply,
+    };
+    let generated = generate(
+        source,
+        &TemplateRequest {
+            view: ForEditRequest::default(),
+            author: BOB.into(),
+            date: DATE.into(),
+        },
+    )
+    .unwrap();
+    let mut q: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
+    q["operations"] = operations(&q["operations"][0]["target"]);
+    let out = v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap());
+    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
+    out
+}
+
+#[test]
+fn a_typed_comment_that_splits_the_run_keeps_alices_history() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"comment","target":target,"find":"beta","text":"note"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let records = alice_records(&out.redline);
+    assert!(records.len() > 1, "the comment splits Alice's run");
+    assert_eq!(records[0].id, "5");
+    assert_eq!(covered(&records), TEXT);
+}
