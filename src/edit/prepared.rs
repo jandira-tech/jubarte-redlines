@@ -1313,12 +1313,13 @@ pub(crate) mod tests {
             )
             .is_ok()
         );
+        // Their ends repeat too, and come first by name (Codex on #1666).
         refused_as_duplicate(
             gate(
                 &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 6)],
                 &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 5)],
             ),
-            "w:customXmlInsRangeStart w:id 5",
+            "w:customXmlInsRangeEnd w:id 5",
             "word/document.xml",
         );
     }
@@ -1370,6 +1371,18 @@ pub(crate) mod tests {
             "w:ins w:id 5",
             "word/main.dat",
         );
+    }
+
+    #[test]
+    fn a_strict_main_part_without_an_xml_extension_is_read_as_transitional() {
+        // Codex on #1666: its inherited duplicates stay inherited.
+        let source = main_named(
+            &strict(&revisions(&[("ins", 5), ("ins", 5)])),
+            "word/main.dat",
+        );
+        let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
+        let result = check_candidates(&source, &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
     }
 
     fn prepared(source: &[u8], operation: &str) -> Result<PreparedEdit, EditError> {

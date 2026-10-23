@@ -565,6 +565,24 @@ fn repair_tells_structure_from_history() {
     assert_eq!(code, 1, "{out}{err}");
     assert!(!out.contains("history"), "{out}");
     assert!(!dir.path().join("d.docx").exists());
+    // So does one that is no Word package (Codex on #1666).
+    std::fs::write(dir.path().join("garbage.docx"), b"not a zip").unwrap();
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "carol.docx",
+            "--repair",
+            "e.docx",
+            "--original",
+            "garbage.docx",
+            "--author",
+            "Carol",
+        ],
+    );
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(!out.contains("history"), "{out}");
+    assert!(!dir.path().join("e.docx").exists());
     let (_, help, _) = run(dir.path(), &["validate", "--help"]);
     assert!(
         help.contains("A structural repair: it does not check the edits' history"),
