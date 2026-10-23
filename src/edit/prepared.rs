@@ -12,7 +12,7 @@
 //! validated and then swapped for the source at commit. Dry run and apply
 //! share this whole path; they differ only at publication.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
@@ -400,6 +400,7 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     // no baseline nothing is claimed introduced (the candidate's own
     // validation below still gates what the edit produced).
     let baseline = validate::validate(source).ok();
+    let source_ids = validate::revision_id_occurrences(source).ok();
     let mut introduced = Vec::new();
     let mut unresolved = Vec::new();
     for bytes in [&result.clean, &result.redline] {
@@ -410,6 +411,9 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
                 format!("the serialized candidate cannot be validated: {e}"),
             )
         })?;
+        if let Some(source_ids) = &source_ids {
+            check_revision_ids(source_ids, bytes)?;
+        }
         for finding in &findings {
             if !unresolved
                 .iter()
@@ -447,6 +451,51 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
         integrity: true,
         operation_postconditions: false,
     })
+}
+
+/// A candidate may not give a revision id a same-kind duplicate the source
+/// did not have: per part, record type and id, an id that occurs more than
+/// once may occur no more often than in the source. Inherited duplicates
+/// pass, healing one hides no collision under another, and kinds may share
+/// an id. `jubarte validate` still calls the duplicate non-fatal: Word
+/// opens it; publication refuses it.
+fn check_revision_ids(
+    source: &HashMap<(String, String), usize>,
+    candidate: &[u8],
+) -> Result<(), EditError> {
+    let occurrences = validate::revision_id_occurrences(candidate).map_err(|e| {
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!("the serialized candidate cannot be read: {e}"),
+        )
+    })?;
+    let mut introduced: Vec<_> = occurrences
+        .iter()
+        .filter(|&(key, &count)| count > 1 && count > source.get(key).copied().unwrap_or(0))
+        .collect();
+    introduced.sort();
+    let Some(((part, key), count)) = introduced.first() else {
+        return Ok(());
+    };
+    let mut fields = key.splitn(3, ':');
+    let (kind, mark, id) = (
+        fields.next().unwrap_or_default(),
+        fields.next() == Some("true"),
+        fields.next().unwrap_or_default(),
+    );
+    let mark = if mark { " on a mark" } else { "" };
+    let had = source
+        .get(&(part.clone(), key.clone()))
+        .copied()
+        .unwrap_or(0);
+    Err(err(
+        "CANDIDATE_INVALID",
+        None,
+        format!(
+            "the edit introduces a duplicate revision id: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
+        ),
+    ))
 }
 
 /// What one paragraph reads as once the plan applies, and whether symbol

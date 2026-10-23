@@ -1742,6 +1742,30 @@ fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
     format!("{}:{property_mark}:{id}", name.local_name())
 }
 
+/// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
+/// checks: part, then record type and id ([`revision_id_key`]).
+pub(crate) fn revision_id_occurrences(
+    docx: &[u8],
+) -> Result<HashMap<(String, String), usize>, ValidateError> {
+    let pkg = PartFs::open(docx)?;
+    let mut out = HashMap::new();
+    for part in xml_parts(&pkg) {
+        let Some((dom, root)) = parse_part(&pkg, &part) else {
+            continue;
+        };
+        for e in dom.descendants(root, None) {
+            if let Some(name) = dom.name(e)
+                && has_unique_revision_id(&name)
+                && let Some(id) = dom.attribute(e, &W::name("id"))
+            {
+                let key = revision_id_key(&dom, e, &name, id);
+                *out.entry((part.clone(), key)).or_default() += 1;
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn collect_ids(
     dom: &Dom,
     root: NodeId,
