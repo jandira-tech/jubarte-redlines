@@ -1222,6 +1222,9 @@ pub(crate) mod tests {
         let body: String = records
             .iter()
             .map(|&(kind, id)| match kind {
+                "customXmlInsRangeStart" => format!(
+                    r#"<w:customXmlInsRangeStart w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>w</w:t></w:r><w:customXmlInsRangeEnd w:id="{id}"/>"#
+                ),
                 "rPrChange" => format!(
                     r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>w</w:t></w:r>"#
                 ),
@@ -1282,6 +1285,70 @@ pub(crate) mod tests {
             ),
             "7",
         );
+    }
+
+    #[test]
+    fn a_custom_xml_range_start_may_not_take_a_duplicate_id() {
+        // A range start and its end share an id; two starts may not.
+        assert!(
+            gate(
+                &[("customXmlInsRangeStart", 5)],
+                &[("customXmlInsRangeStart", 5)]
+            )
+            .is_ok()
+        );
+        refused_as_duplicate(
+            gate(
+                &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 6)],
+                &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 5)],
+            ),
+            "5",
+        );
+    }
+
+    /// `bytes` with its main part's WordprocessingML namespace made Strict's.
+    fn strict(bytes: &[u8]) -> Vec<u8> {
+        let mut pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let xml = pkg.part_string("word/document.xml").unwrap().replace(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        );
+        pkg.set_part("word/document.xml", xml.into_bytes());
+        pkg.to_zip().unwrap()
+    }
+
+    #[test]
+    fn a_strict_sources_duplicates_are_inherited() {
+        // The edit writes a Strict source's revisions in Transitional.
+        let source = strict(&revisions(&[("ins", 5), ("ins", 5)]));
+        let candidate = revisions(&[("ins", 5), ("ins", 5)]);
+        let result = check_candidates(&source, &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// `bytes` with its main part at `name`, wherever its relationship
+    /// and content type point.
+    fn main_named(bytes: &[u8], name: &str) -> Vec<u8> {
+        const OFFICE_DOCUMENT: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        let mut pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let xml = pkg.part_bytes("word/document.xml").unwrap().to_vec();
+        pkg.remove_part("word/document.xml");
+        pkg.set_part(name, xml);
+        pkg.add_content_type_override(
+            &format!("/{name}"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        );
+        pkg.remove_package_relationships_by_type(OFFICE_DOCUMENT);
+        pkg.add_package_relationship(OFFICE_DOCUMENT, name);
+        pkg.to_zip().unwrap()
+    }
+
+    #[test]
+    fn a_main_part_without_an_xml_extension_is_gated_too() {
+        let source = main_named(&revisions(&[("ins", 5), ("ins", 6)]), "word/main.dat");
+        let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
+        refused_as_duplicate(check_candidates(&source, &result_of(candidate)), "5");
     }
 
     #[test]
