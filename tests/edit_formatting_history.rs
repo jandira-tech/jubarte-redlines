@@ -1089,3 +1089,66 @@ fn a_typed_deletion_of_all_of_alices_words_takes_her_record_out_of_the_clean_cop
     assert_eq!(covered(&alice_records(&out.redline)), TEXT);
     assert_eq!(accepted(&out.redline), "[]");
 }
+
+#[test]
+fn a_deletion_of_alices_first_words_after_a_split_leaves_her_id_on_the_rest() {
+    // The replacement, applied first, copies " gamma" off with a fresh id;
+    // the deletion then empties "alpha": the id moves on to Alice's words
+    // (Codex on #1664, round 5).
+    let out = edit_v2(&outside(TEXT), |target| {
+        json!([
+            {"kind":"delete","target":target,"find":"alpha"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[ B gamma]");
+}
+
+#[test]
+fn a_deletion_that_leaves_a_page_break_leaves_it_alices_record() {
+    // A page break is content the record covers; deleting the words
+    // before it does not take the record off it (Codex on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>abc</w:t><w:br w:type="page"/></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let out = apply_plan(
+        &source,
+        &plan(json!([{"kind":"delete","paragraph":"p0","find":"abc"}])),
+    )
+    .unwrap();
+    let (dom, root) = dom(&out.clean);
+    let breaks = dom.descendants(root, Some(&W::name("br")));
+    assert_eq!(breaks.len(), 1);
+    let run = dom.parent(breaks[0]).unwrap();
+    let rpr = dom
+        .element(run, &W::name("rPr"))
+        .expect("the break's run keeps its properties");
+    let record = dom.element(rpr, &W::name("rPrChange"));
+    assert!(
+        record.is_some_and(|r| dom.attribute(r, &W::id()) == Some("5")),
+        "{}",
+        dom.serialize_element(run)
+    );
+}
+
+#[test]
+fn a_handed_on_id_keeps_its_spelling() {
+    // `w:id="005"`: the id that moves on to Alice's words is the source's,
+    // as it is spelled (Codex on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="005" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{TEXT}</w:t></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    assert_eq!(formatting_records(&out.clean), pairs(&[("005", " gamma")]));
+}
