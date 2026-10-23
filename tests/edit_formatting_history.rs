@@ -723,6 +723,15 @@ fn try_edit_v2(
     source: &[u8],
     operations: impl Fn(&Value) -> Value,
 ) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
+    try_edit_v2_tracking(source, "on", operations)
+}
+
+/// [`try_edit_v2`] with the plan's `track` policy.
+fn try_edit_v2_tracking(
+    source: &[u8],
+    track: &str,
+    operations: impl Fn(&Value) -> Value,
+) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
     use jubarte::edit::{
         for_edit::ForEditRequest,
         template::{TemplateRequest, generate},
@@ -740,6 +749,7 @@ fn try_edit_v2(
     .unwrap();
     let mut q: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
     q["operations"] = operations(&q["operations"][0]["target"]);
+    q["policy"]["track"] = json!(track);
     v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap())
 }
 
@@ -1337,4 +1347,30 @@ fn a_typed_replacement_of_alices_first_words_inside_her_insertion_agrees_in_both
     assert_eq!(bob_accepted(&out.redline), clean);
     assert_eq!(covered(&alice_records(&out.clean)), "alpha  gamma");
     assert_eq!(clean[0], pairs(&[("7", "alpha ")])[0], "{clean:?}");
+}
+
+#[test]
+fn an_untracked_correction_of_ones_own_insertion_keeps_alices_record_on_the_words_it_keeps() {
+    // Bob corrects his own insertion, which holds Alice's formatted run.
+    // Untracked, the typed replacement splits word by word as the tracked
+    // replay does: ` beta ` stays Alice's, with her record, as in v1
+    // (#1662's untracked acceptance). The tracked plan is #1662 itself.
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="{BOB}" w:date="{OLD}">{}</w:ins></w:p>"#,
+        formatted_run(7, TEXT)
+    ));
+    let out = try_edit_v2_tracking(
+        &source,
+        "off",
+        |target| json!([{"kind":"replace","target":target,"find":TEXT,"text":"X beta Y"}]),
+    )
+    .unwrap();
+    assert_validates(&out.clean);
+    assert_eq!(text(&out.clean), "X beta Y");
+    assert_eq!(formatting_records(&out.clean), pairs(&[("7", " beta ")]));
+    let v1 = apply_plan(&source, &plan(replace(TEXT, "X beta Y"))).unwrap();
+    assert_eq!(
+        formatting_records(&v1.clean),
+        formatting_records(&out.clean)
+    );
 }
