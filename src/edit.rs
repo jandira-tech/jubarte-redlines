@@ -23,7 +23,7 @@
 //! documents, for dry-run checks. Recording an edit from operation flags is
 //! in [`flags`] / [`record`].
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -6073,6 +6073,13 @@ impl<'p> Transaction<'p> {
                         write_mark_run_text(&mut self.opened.dom, run, &edit.replacement);
                     }
                 } else {
+                    // The runs the edit takes words from.
+                    let reached: Vec<NodeId> = projection
+                        .segments
+                        .iter()
+                        .filter(|s| s.start < edit.end && edit.start < s.end)
+                        .map(|s| run_of(&s.piece))
+                        .collect();
                     apply_text_edit(
                         &mut self.opened.dom,
                         &projection,
@@ -6090,6 +6097,7 @@ impl<'p> Transaction<'p> {
                         edit.start + edit.replacement.len(),
                         &mut self.revision_ids,
                     );
+                    drop_emptied_records(&mut self.opened.dom, node, &reached);
                 }
                 for ins in carriers {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
@@ -7954,6 +7962,7 @@ fn clean_new_words(
         .descendants(paragraph, Some(&W::r()))
         .into_iter()
         .collect();
+    let mut stripped = Vec::new();
     for run in runs_in_range(dom, paragraph, start, end, ids) {
         let Some(mut rpr) = dom.element(run, &W::r_pr()) else {
             continue;
@@ -7970,6 +7979,64 @@ fn clean_new_words(
             dom.add_first(run, copied);
             rpr = copied;
         }
+        stripped.extend(
+            dom.elements(rpr, Some(&W::r_pr_change()))
+                .into_iter()
+                .filter_map(|record| record_id(dom, record)),
+        );
+        tracked::strip_records(dom, rpr);
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
+    }
+    hand_on_ids(dom, paragraph, &stripped, ids);
+}
+
+/// A formatting record's `w:id`, as a number.
+fn record_id(dom: &Dom, record: NodeId) -> Option<u64> {
+    dom.attribute(record, &W::id())?.parse().ok()
+}
+
+/// A record that lost all its words to new ones leaves its id to the first
+/// copy an earlier split of the transaction made of it: the id stays on
+/// the words the record still covers, as one edit over the same words
+/// leaves it (Codex on #1664).
+fn hand_on_ids(dom: &mut Dom, paragraph: NodeId, stripped: &[u64], ids: &RevisionCounter) {
+    for &id in stripped {
+        let original = ids.original(id);
+        let records = dom.descendants(paragraph, Some(&W::r_pr_change()));
+        if records
+            .iter()
+            .any(|&record| record_id(dom, record) == Some(original))
+        {
+            continue;
+        }
+        if let Some(heir) = records.into_iter().find(|&record| {
+            record_id(dom, record).is_some_and(|other| ids.original(other) == original)
+        }) {
+            dom.set_attribute_value(heir, &W::id(), Some(&original.to_string()));
+        }
+    }
+}
+
+/// Take the formatting records off the `reached` runs an edit left without
+/// content: a record goes with the last of its words (Codex on #1664).
+fn drop_emptied_records(dom: &mut Dom, paragraph: NodeId, reached: &[NodeId]) {
+    if reached.is_empty() {
+        return;
+    }
+    let projection = project_paragraph(dom, paragraph);
+    for &run in reached {
+        if projection
+            .segments
+            .iter()
+            .any(|s| s.start < s.end && run_of(&s.piece) == run)
+        {
+            continue;
+        }
+        let Some(rpr) = dom.element(run, &W::r_pr()) else {
+            continue;
+        };
         tracked::strip_records(dom, rpr);
         if dom.elements(rpr, None).is_empty() {
             dom.remove(rpr);
@@ -7992,6 +8059,8 @@ fn refresh_run_history(dom: &mut Dom, run: NodeId, ids: &mut RevisionCounter) {
 /// runs out ([`crate::revision_processor::RevisionIds`]).
 pub(super) struct RevisionCounter {
     ids: crate::revision_processor::RevisionIds,
+    /// The id of the record each copy was made from, by the copy's id.
+    copied_from: HashMap<u64, u64>,
     /// The ids of the records the edit writes: its own changes. A copy of
     /// a source record is not one.
     own: BTreeSet<u64>,
@@ -8008,6 +8077,7 @@ impl RevisionCounter {
     pub(super) fn new(used: HashSet<u64>) -> Self {
         Self {
             ids: crate::revision_processor::RevisionIds::from_used(used),
+            copied_from: HashMap::new(),
             own: BTreeSet::new(),
         }
     }
@@ -8023,11 +8093,25 @@ impl RevisionCounter {
     /// change when it copies one of the edit's own records, a copy of a
     /// source record otherwise.
     fn copy(&mut self, of: Option<u64>) -> u64 {
-        if of.is_some_and(|id| self.own.contains(&id)) {
+        let id = if of.is_some_and(|id| self.own.contains(&id)) {
             self.allocate()
         } else {
             self.ids.allocate()
+        };
+        if let Some(of) = of {
+            self.copied_from.insert(id, of);
         }
+        id
+    }
+
+    /// The record `id` is a copy of, through copies of copies; `id` itself
+    /// when it is no copy. A copy takes an id no record had, so the chain
+    /// ends.
+    fn original(&self, mut id: u64) -> u64 {
+        while let Some(&of) = self.copied_from.get(&id) {
+            id = of;
+        }
+        id
     }
 
     /// The ids of the records the edit wrote, copies of source records
