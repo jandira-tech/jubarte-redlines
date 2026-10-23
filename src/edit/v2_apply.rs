@@ -2345,10 +2345,22 @@ struct Edited {
     /// text operation touches, and every revision of a deleted paragraph.
     ids: BTreeSet<String>,
     /// Each run formatting change a text operation reaches, by short id,
-    /// with the words it keeps: its run's words outside every operation's
-    /// range. A direct edit may take words out from under such a record,
-    /// nothing else; new words never join it (#1658).
-    rewritten: BTreeMap<String, String>,
+    /// with what the operations take from its run. A direct edit may take
+    /// those words out from under such a record, nothing else; new words
+    /// never join it (#1658).
+    rewritten: BTreeMap<String, Rewrite>,
+}
+
+/// What the operations leave of a run formatting change's run.
+#[derive(Debug, Default)]
+struct Rewrite {
+    /// The run's words outside every operation's range, as its formatting
+    /// change lists them.
+    words: String,
+    /// How many of the run's characters the operations take: one per
+    /// character of text, one per atom ([`crate::changes::atom`]), as
+    /// [`Recorded::characters`] counts them.
+    taken: usize,
 }
 
 /// The revisions the resolved operations reach: only insertion content a
@@ -2433,38 +2445,61 @@ fn edited_revisions(tx: &Transaction<'_>) -> Edited {
         .filter(|(id, runs)| runs.len() == 1 && !deleted.contains(id))
         .map(|(id, runs)| {
             let (para, run) = runs[0];
-            let words = kept_words(dom, &tx.projections[para], run, &ranges[&para]);
-            (id, words)
+            let rewrite = rewrite(dom, &tx.projections[para], run, &ranges[&para]);
+            (id, rewrite)
         })
         .collect();
     Edited { ids, rewritten }
 }
 
-/// The words of `run` outside `ranges` (projection bytes): its `w:t` and
-/// `w:delText` text in document order, as its formatting change lists it.
-fn kept_words(
+/// What `ranges` (projection bytes) take from `run`: its words outside
+/// them, its `w:t` and `w:delText` text in document order as its
+/// formatting change lists it, and how many characters and atoms inside.
+fn rewrite(
     dom: &Dom,
     projection: &crate::inspect::Projection,
     run: NodeId,
     ranges: &[(usize, usize)],
-) -> String {
-    let mut words = String::new();
+) -> Rewrite {
+    use crate::inspect::Piece;
+    let inside = |at: usize| ranges.iter().any(|&(start, end)| start <= at && at < end);
+    let mut out = Rewrite::default();
     for node in dom.descendants(run, None) {
         if !dom.name_is(node, &W::t()) && !dom.name_is(node, &W::name("delText")) {
             continue;
         }
         let value = dom.value(node);
-        let piece = crate::inspect::Piece::Text { t: node, run };
+        let piece = Piece::Text { t: node, run };
         let Some(segment) = projection.segments.iter().find(|s| s.piece == piece) else {
-            words.push_str(&value);
+            out.words.push_str(&value);
             continue;
         };
-        words.extend(value.char_indices().filter_map(|(i, c)| {
-            let at = segment.start + i;
-            (!ranges.iter().any(|&(start, end)| start <= at && at < end)).then_some(c)
-        }));
+        for (i, c) in value.char_indices() {
+            if inside(segment.start + i) {
+                out.taken += 1;
+            } else {
+                out.words.push(c);
+            }
+        }
     }
-    words
+    out.taken += projection
+        .segments
+        .iter()
+        .filter(|s| inside(s.start))
+        .filter(|s| match s.piece {
+            Piece::Glyph {
+                element,
+                run: owner,
+            } => {
+                owner == run
+                    && dom
+                        .name(element)
+                        .is_some_and(|name| crate::changes::atom(&name).is_some())
+            }
+            Piece::Text { .. } => false,
+        })
+        .count();
+    out
 }
 
 /// Tracked edits retain another author's words, in order, either alive
@@ -2664,7 +2699,9 @@ fn compare_history(
                 return Err(failure());
             }
             last.text.push_str(&change.text);
-            covered.1 = end;
+            // How many characters the fragments cover; across the new
+            // words of a direct edit, not their span.
+            covered.1 += end - start;
             continue;
         }
         if ids.contains(&change.id) {
@@ -2689,14 +2726,19 @@ fn compare_history(
             .map(|(new, _)| new)
             .find(|new| new.id == c.id && new.kind == c.kind)
     };
-    before.retain_mut(|(c, _)| {
-        if let Some(words) = rewritten(c) {
-            // The record keeps the words the operations left it, and goes
-            // with the last of them.
+    before.retain_mut(|(c, record)| {
+        if let Some(rewrite) = rewritten(c) {
+            // The record keeps the words and atoms the operations left it,
+            // and goes with the last of them.
+            let covered = record.as_mut().and_then(|r| r.characters.as_mut());
+            let left = covered.map(|(start, end)| {
+                *end = *start + (*end - *start).saturating_sub(rewrite.taken);
+                *end - *start
+            });
             if kept(c).is_none() {
-                return !words.is_empty();
+                return !rewrite.words.is_empty() || left.unwrap_or(0) > 0;
             }
-            c.text.clone_from(words);
+            c.text.clone_from(&rewrite.words);
             return true;
         }
         if !edited.contains(&c.id) {
@@ -2722,12 +2764,6 @@ fn compare_history(
     // a direct one moves them with the edit, so only how many compare.
     for (c, record) in before.iter_mut().chain(after.iter_mut()) {
         c.paragraph = None;
-        if rewritten(c).is_some()
-            && let Some(record) = record.as_mut()
-        {
-            // Its words compare instead: the new words moved the rest.
-            record.characters = None;
-        }
         if !tracked && let Some((start, end)) = record.as_mut().and_then(|r| r.characters.as_mut())
         {
             (*start, *end) = (0, *end - *start);
@@ -3696,10 +3732,15 @@ mod tests {
         assert!(tx.comment_text(3).is_err());
     }
 
-    /// The reach of an operation that leaves record `id` with `words`.
-    fn rewriting(id: &str, words: &str) -> Edited {
+    /// The reach of operations that take `taken` characters from record
+    /// `id`'s run and leave it `words`.
+    fn rewriting(id: &str, words: &str, taken: usize) -> Edited {
+        let rewrite = Rewrite {
+            words: words.to_string(),
+            taken,
+        };
         Edited {
-            rewritten: BTreeMap::from([(id.to_string(), words.to_string())]),
+            rewritten: BTreeMap::from([(id.to_string(), rewrite)]),
             ..Edited::default()
         }
     }
@@ -3716,7 +3757,7 @@ mod tests {
         // Carol's direct replace of `beta` inside Alice's run r5: her new
         // word sits in a run of its own between the two fragments (#1658).
         let source = paragraph(&alice_formatted(5, "alpha beta gamma", false));
-        let edited = rewriting("r5", "alpha  gamma");
+        let edited = rewriting("r5", "alpha  gamma", 4);
         let fragments = |middle: &str, last: &str| {
             paragraph(
                 &[
@@ -3768,7 +3809,7 @@ mod tests {
     #[test]
     fn history_guard_lets_a_record_go_with_its_last_word() {
         let source = paragraph(&alice_formatted(5, "beta", false));
-        let edited = rewriting("r5", "");
+        let edited = rewriting("r5", "", 4);
         let guard = |candidate: &[u8]| {
             preserve_direct_history(&source, candidate, &edited, "Carol Diaz", &BTreeMap::new())
         };
@@ -3792,9 +3833,47 @@ mod tests {
         refused(preserve_direct_history(
             &source,
             &candidate,
-            &rewriting("r5", "foo"),
+            &rewriting("r5", "foo", 0),
             "Carol Diaz",
             &BTreeMap::new(),
         ));
+    }
+
+    /// Alice's run `text` followed, inside the run, by a tab.
+    fn alice_with_tab(id: u32, text: &str) -> String {
+        alice_formatted(id, text, false).replace("</w:t></w:r>", "</w:t><w:tab/></w:r>")
+    }
+
+    #[test]
+    fn history_guard_counts_the_atoms_a_rewritten_record_covers() {
+        // Alice's `abc`, then a plain tab: Carol's direct replace of `b`
+        // takes one character of her record, and the tab was never hers.
+        let tab = "<w:r><w:tab/></w:r>".to_string();
+        let source = paragraph(&[alice_formatted(5, "abc", false), tab.clone()].concat());
+        let edited = rewriting("r5", "ac", 1);
+        let guard = |candidate: &[u8]| {
+            preserve_direct_history(&source, candidate, &edited, "Carol Diaz", &BTreeMap::new())
+        };
+        let head = [alice_formatted(5, "a", false), plain_run("X")].concat();
+        let kept = paragraph(&[head.clone(), alice_formatted(9, "c", false), tab].concat());
+        let result = guard(&kept);
+        assert!(result.is_ok(), "{result:?}");
+        refused(guard(&paragraph(&[head, alice_with_tab(9, "c")].concat())));
+    }
+
+    #[test]
+    fn history_guard_keeps_a_record_while_an_atom_of_its_run_remains() {
+        // Carol replaces all of Alice's words; the tab of her run stays hers.
+        let source = paragraph(&alice_with_tab(5, "abc"));
+        let edited = rewriting("r5", "", 3);
+        let guard = |candidate: &[u8]| {
+            preserve_direct_history(&source, candidate, &edited, "Carol Diaz", &BTreeMap::new())
+        };
+        let tab_only = alice_with_tab(5, "").replace(r#"<w:t xml:space="preserve"></w:t>"#, "");
+        let result = guard(&paragraph(&[plain_run("X"), tab_only].concat()));
+        assert!(result.is_ok(), "{result:?}");
+        refused(guard(&paragraph(
+            &[plain_run("X"), "<w:r><w:tab/></w:r>".to_string()].concat(),
+        )));
     }
 }
