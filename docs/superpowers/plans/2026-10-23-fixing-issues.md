@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 **Architecture:** keep fixes in the Rust engine and shared preparation pipeline. Preserve existing plan schemas and machine-output formats. Rebuild consumers from the fixed source.
 
-**Planned document:** `/Users/arthrod/.codex/worktrees/dbd7/jubarte-redlines/docs/superpowers/plans/2026-10-23-jubarte-0.13-benchmark-fixes.md`.
+**Planned document:** `docs/superpowers/plans/2026-10-23-fixing-issues.md`, this file (drafted as `2026-10-23-jubarte-0.13-benchmark-fixes.md`).
 
 **GitHub deliverable:** one tracking issue titled **`[0.13][Urgent] Fix reproduced revision corruption and remaining benchmark regressions`**, labeled `bug` and `Urgent`, with the tasks and corrected evidence below. Link existing owners, including #1250 and the closed #1153 follow-up.
 
@@ -58,7 +58,7 @@ Extend the private audit representation in `src/changes.rs` and its comparison i
 
 Add negative tests for changed old properties, changed author/date, missing fragments, reordered coverage, and identical-looking records belonging to different paragraphs.
 
-**Acceptance:** allocating fresh IDs clears both the duplicate-ID finding and the false appearance of newly authored foreign history. Genuine history changes remain detectable.
+**Acceptance:** the duplicate-ID finding and the false appearance of newly authored foreign history are both cleared. Task 2's fresh IDs clear the first. Comparing by coverage and properties clears the second, because a fragment under a fresh ID is no longer new history. History that new text genuinely inherited is #1658's to remove. Genuine history changes remain detectable.
 
 ### Task 4: block newly introduced duplicate IDs before publication
 
