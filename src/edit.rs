@@ -9848,18 +9848,6 @@ mod deeper_boundary_tests {
                 "comments on a deleted paragraph",
             ),
             (
-                Resolved::InsertParagraph {
-                    anchor: 0,
-                    side: Side::Before,
-                    runs: vec![],
-                    like: 0,
-                    style: None,
-                    comment: None,
-                    toc: None,
-                },
-                "anchors a new paragraph on a deleted paragraph",
-            ),
-            (
                 Resolved::InsertTable {
                     anchor: 0,
                     side: Side::After,
@@ -9938,6 +9926,20 @@ mod deeper_boundary_tests {
             anchor: Some(0),
         };
         conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, reply]).unwrap();
+        // Nor is a paragraph inserted beside it, on either side: the deleted
+        // paragraph's place is the new one's (#1668).
+        for side in [Side::Before, Side::After] {
+            let insert = Resolved::InsertParagraph {
+                anchor: 0,
+                side,
+                runs: vec![],
+                like: 0,
+                style: None,
+                comment: None,
+                toc: None,
+            };
+            conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, insert]).unwrap();
+        }
         let e = conflicts(
             &source,
             vec![
