@@ -405,7 +405,7 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     let mut source_ids = None;
     let mut introduced = Vec::new();
     let mut unresolved = Vec::new();
-    for bytes in [&result.clean, &result.redline] {
+    for (artifact, bytes) in [("clean copy", &result.clean), ("redline", &result.redline)] {
         let findings = validate::validate(bytes).map_err(|e| {
             err(
                 "CANDIDATE_INVALID",
@@ -417,7 +417,7 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
             && let Some(source_ids) =
                 source_ids.get_or_insert_with(|| validate::revision_id_occurrences(source).ok())
         {
-            check_revision_ids(source_ids, bytes)?;
+            check_revision_ids(source_ids, artifact, bytes)?;
         }
         for finding in &findings {
             if !unresolved
@@ -463,9 +463,10 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
 /// once may occur no more often than in the source. Inherited duplicates
 /// pass, healing one hides no collision under another, and kinds may share
 /// an id. `jubarte validate` still calls the duplicate non-fatal: Word
-/// opens it; publication refuses it.
+/// opens it; publication refuses it. `artifact` names the candidate.
 fn check_revision_ids(
     source: &HashMap<(String, String), usize>,
+    artifact: &str,
     candidate: &[u8],
 ) -> Result<(), EditError> {
     let occurrences = validate::revision_id_occurrences(candidate).map_err(|e| {
@@ -498,7 +499,7 @@ fn check_revision_ids(
         "CANDIDATE_INVALID",
         None,
         format!(
-            "the edit introduces a duplicate revision id: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
+            "the edit introduces a duplicate revision id in the {artifact}: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
         ),
     ))
 }
