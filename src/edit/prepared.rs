@@ -1168,6 +1168,82 @@ pub(crate) mod tests {
         assert!(checks.baseline.is_empty());
     }
 
+    /// A paragraph of revisions: each `(kind, id)` around one word.
+    fn revisions(records: &[(&str, u32)]) -> Vec<u8> {
+        let body: String = records
+            .iter()
+            .map(|&(kind, id)| match kind {
+                "rPrChange" => format!(
+                    r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>w</w:t></w:r>"#
+                ),
+                _ => format!(
+                    r#"<w:{kind} w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"><w:r><w:{t}>w</w:{t}></w:r></w:{kind}>"#,
+                    t = if kind == "del" { "delText" } else { "t" }
+                ),
+            })
+            .collect();
+        deeper_boundary_fixture::docx(&format!("<w:p>{body}</w:p>"))
+    }
+
+    fn gate(
+        source: &[(&str, u32)],
+        candidate: &[(&str, u32)],
+    ) -> Result<CandidateChecks, EditError> {
+        check_candidates(&revisions(source), &result_of(revisions(candidate)))
+    }
+
+    fn refused_as_duplicate(result: Result<CandidateChecks, EditError>, id: &str) {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert!(
+            error.message.contains("duplicate") && error.message.contains(id),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_candidate_may_not_introduce_a_duplicate_revision_id() {
+        refused_as_duplicate(
+            gate(&[("ins", 5), ("ins", 6)], &[("ins", 5), ("ins", 5)]),
+            "5",
+        );
+        refused_as_duplicate(
+            gate(&[("rPrChange", 5)], &[("rPrChange", 5), ("rPrChange", 5)]),
+            "5",
+        );
+    }
+
+    #[test]
+    fn a_candidate_may_not_add_an_occurrence_to_an_inherited_duplicate() {
+        refused_as_duplicate(
+            gate(
+                &[("ins", 5), ("ins", 5)],
+                &[("ins", 5), ("ins", 5), ("ins", 5)],
+            ),
+            "5",
+        );
+    }
+
+    #[test]
+    fn healing_one_duplicate_revision_id_hides_no_new_one() {
+        refused_as_duplicate(
+            gate(
+                &[("ins", 5), ("ins", 5)],
+                &[("ins", 5), ("ins", 7), ("ins", 7)],
+            ),
+            "7",
+        );
+    }
+
+    #[test]
+    fn inherited_duplicates_and_ids_shared_across_kinds_publish() {
+        let inherited = [("ins", 5), ("ins", 5)];
+        assert!(gate(&inherited, &inherited).is_ok());
+        assert!(gate(&inherited, &[("ins", 5)]).is_ok());
+        let shared = [("ins", 5), ("del", 5), ("rPrChange", 5)];
+        assert!(gate(&[("ins", 5)], &shared).is_ok());
+    }
+
     #[test]
     fn verification_reports_only_completed_candidate_checks() {
         let skipped = CandidateChecks::default().verification();
