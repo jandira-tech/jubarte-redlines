@@ -158,8 +158,14 @@ pub(crate) struct AuditMarker {
 pub(crate) struct AuditChange {
     pub change: Change,
     pub owner: String,
+    /// Document positions the change covers. A run's formatting history
+    /// covers its run, so the touching fragments of one record, after an
+    /// edit split the run, cover continuous text (#1656).
     pub start: usize,
     pub end: usize,
+    /// The old properties a run formatting change recorded
+    /// ([`recorded_properties`]); `None` for every other change.
+    pub payload: Option<String>,
 }
 
 /// Read paragraph text including deletions, and document positions for the
@@ -259,12 +265,15 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
                 } else {
                     String::new()
                 };
-                let (start, end) = spans[&carrier.node];
+                let run = formatted_run(&dom, carrier.node);
+                let (start, end) = spans[&run.unwrap_or(carrier.node)];
+                let payload = run.map(|_| recorded_properties(&dom, carrier.node));
                 Some(AuditChange {
                     change,
                     owner,
                     start,
                     end,
+                    payload,
                 })
             })
             .collect();
@@ -276,6 +285,73 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
         });
     }
     Ok(stories)
+}
+
+/// The run a `w:r/w:rPr/w:rPrChange` formats; `None` for any other
+/// record, a paragraph mark's or a style's included.
+fn formatted_run(dom: &Dom, record: NodeId) -> Option<NodeId> {
+    if !dom.name_is(record, &W::r_pr_change()) {
+        return None;
+    }
+    let rpr = dom.parent(record).filter(|&n| dom.name_is(n, &W::r_pr()))?;
+    dom.parent(rpr).filter(|&n| dom.name_is(n, &W::r()))
+}
+
+/// The properties a formatting record kept, spelled without revision ids,
+/// namespace prefixes or child order: each element as `{namespace}local`,
+/// its attributes `{namespace}local=value` sorted, its children sorted.
+/// Two records with the same payload recorded the same old formatting.
+pub(crate) fn recorded_properties(dom: &Dom, record: NodeId) -> String {
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let Some(name) = dom.name(node) else {
+            return String::new();
+        };
+        let mut attributes: Vec<String> = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(attribute, _)| {
+                !dom.is_namespace_declaration(attribute) && *attribute != W::id()
+            })
+            .map(|(attribute, value)| {
+                format!(
+                    "{{{}}}{}={value}",
+                    attribute.namespace_name(),
+                    attribute.local_name()
+                )
+            })
+            .collect();
+        attributes.sort();
+        let mut children: Vec<String> = dom
+            .elements(node, None)
+            .into_iter()
+            .map(|child| canonical(dom, child))
+            .collect();
+        children.sort();
+        format!(
+            "{{{}}}{}[{}]({})",
+            name.namespace_name(),
+            name.local_name(),
+            attributes.join(","),
+            children.join(",")
+        )
+    }
+    let mut children: Vec<String> = dom
+        .elements(record, None)
+        .into_iter()
+        .map(|child| canonical(dom, child))
+        .collect();
+    children.sort();
+    children.join(",")
+}
+
+/// The old properties each run formatting change recorded, by change id
+/// ([`recorded_properties`]).
+pub(crate) fn recorded_run_properties(docx: &[u8]) -> Result<HashMap<String, String>, ChangeError> {
+    Ok(audit_stories(docx)?
+        .into_iter()
+        .flat_map(|story| story.changes)
+        .filter_map(|c| Some((c.change.id, c.payload?)))
+        .collect())
 }
 
 /// Owner paths use semantic ids where OOXML defines them, otherwise the
