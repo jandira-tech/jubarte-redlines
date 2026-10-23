@@ -8021,7 +8021,17 @@ fn hand_on_ids(
 ) {
     for (id, spelled) in stripped {
         let original = ids.original(*id);
-        let records = dom.descendants(paragraph, Some(&W::r_pr_change()));
+        // Run records only: a paragraph mark's record is no copy of a run's,
+        // whatever its id.
+        let records: Vec<NodeId> = dom
+            .descendants(paragraph, Some(&W::r_pr_change()))
+            .into_iter()
+            .filter(|&record| {
+                dom.parent(record)
+                    .and_then(|rpr| dom.parent(rpr))
+                    .is_some_and(|run| dom.name_is(run, &W::r()))
+            })
+            .collect();
         if records
             .iter()
             .any(|&record| record_id(dom, record) == Some(original))
