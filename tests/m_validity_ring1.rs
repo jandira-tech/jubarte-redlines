@@ -2549,3 +2549,135 @@ fn repair_pairs_a_case_blind_range_end_with_its_start() {
     assert_eq!(starts[1], ends[1], "{xml}");
     assert!(!starts[1].eq_ignore_ascii_case("abc"), "{xml}");
 }
+
+/// A one-row table whose two cells hold `cells`, the row's properties
+/// `tr_pr`, in a document.
+fn table_package(tr_pr: &str, cells: [&str; 2]) -> Vec<u8> {
+    let cell = |content: &str| {
+        format!(r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{content}</w:tc>"#)
+    };
+    common::docx::docx(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{tr_pr}{}{}</w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        cell(cells[0]),
+        cell(cells[1])
+    ))
+}
+
+/// A paragraph whose mark carries `revision` (`ins` or `del`, or none).
+fn marked(text: &str, revision: Option<&str>) -> String {
+    let mark = revision.map_or(String::new(), |kind| {
+        format!(
+            r#"<w:pPr><w:rPr><w:{kind} w:id="{}" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:rPr></w:pPr>"#,
+            text.bytes().map(u32::from).sum::<u32>()
+        )
+    });
+    format!("<w:p>{mark}<w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+fn cell_final_marks(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "CELL_FINAL_MARK_REVISION")
+        .collect()
+}
+
+/// Word opens a table cell whose final paragraph mark is inserted or
+/// deleted while its row is not, but Accept All or Reject All never
+/// returns (#1669: `zapk`, `z2c`, `z3c`, `zap`, Word 16, 2026-10-23).
+/// Word's own Compare never writes it: the revision goes on the mark
+/// before. An error, not Word-fatal (the file opens), not repairable.
+#[test]
+fn probe_a_revision_on_a_cells_final_mark_fails() {
+    for kind in ["ins", "del"] {
+        let bytes = table_package(
+            "",
+            [
+                &format!("{}{}", marked("Old.", None), marked("New.", Some(kind))),
+                &marked("B.", None),
+            ],
+        );
+        let found = cell_final_marks(&bytes);
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.part, "word/document.xml");
+        assert_eq!(
+            finding.location,
+            "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+        );
+        assert_eq!(finding.severity, "error", "{finding:?}");
+        assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+        assert!(
+            finding.message.contains(&format!("w:{kind}")),
+            "{finding:?}"
+        );
+        assert!(!check_word_valid_package(&bytes).ok());
+    }
+    // A cell's only paragraph, and one in a block content control.
+    let only = table_package("", [&marked("New.", Some("ins")), &marked("B.", None)]);
+    assert_eq!(cell_final_marks(&only).len(), 1);
+    let wrapped = table_package(
+        "",
+        [
+            &format!(
+                r#"{}<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
+                marked("Old.", None),
+                marked("New.", Some("del"))
+            ),
+            &marked("B.", None),
+        ],
+    );
+    assert_eq!(cell_final_marks(&wrapped).len(), 1);
+}
+
+/// Word's own shapes pass: the revision on the mark before the cell's
+/// last (an append, as Word's Compare writes it), and every mark of an
+/// inserted or deleted row revised with the row (`w:trPr/w:ins`,
+/// `w:trPr/w:del`; Word 16 Compare, 2026-10-23, #1669). The body's
+/// final mark is not a cell's: Word resolves it (#1669, `zbap`, `zbak`).
+#[test]
+fn word_shapes_of_a_cells_final_mark_pass() {
+    let append = table_package(
+        "",
+        [
+            &format!("{}{}", marked("Old.", Some("ins")), marked("New.", None)),
+            &marked("B.", None),
+        ],
+    );
+    assert_eq!(cell_final_marks(&append), []);
+    for kind in ["ins", "del"] {
+        let row = table_package(
+            &format!(
+                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
+            ),
+            [&marked("C.", Some(kind)), &marked("D.", Some(kind))],
+        );
+        assert_eq!(cell_final_marks(&row), [], "{kind}");
+        assert_word_valid_package(&row);
+    }
+    let body = common::docx::docx(&format!(
+        "{}{}",
+        marked("Alpha.", None),
+        marked("Beta.", Some("ins"))
+    ));
+    assert_eq!(cell_final_marks(&body), []);
+    // A nested table's cells in a deleted or inserted outer row: the outer
+    // row's revision covers them, whether or not the nested rows repeat it
+    // (Open-Xml-PowerTools marks only the outer row). Word 16 resolves
+    // both ways (2026-10-23, `nl`: Accept All and Reject All return the
+    // two sources).
+    for kind in ["ins", "del"] {
+        let nested = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
+            marked("Inner.", Some(kind)),
+            marked("Outer.", Some(kind))
+        );
+        let outer = table_package(
+            &format!(
+                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
+            ),
+            [&nested, &marked("D.", Some(kind))],
+        );
+        assert_eq!(cell_final_marks(&outer), [], "nested {kind}");
+        assert_word_valid_package(&outer);
+    }
+}

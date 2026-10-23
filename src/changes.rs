@@ -1369,9 +1369,14 @@ fn resolve_for_edit_or_cli(
             .filter(|c| c.change.as_ref().is_some_and(|ch| filter.matches(ch)))
             .map(|c| &c.group)
             .collect();
+        let with_rows: HashSet<NodeId> = found
+            .iter()
+            .filter(|c| selected.contains(&c.group))
+            .flat_map(|c| final_marks_of_row(dom, c.node))
+            .collect();
         let keep: Vec<NodeId> = found
             .iter()
-            .filter(|c| !selected.contains(&c.group))
+            .filter(|c| !selected.contains(&c.group) && !with_rows.contains(&c.node))
             .flat_map(|c| {
                 std::iter::once(c.node)
                     .chain(deleted_text(dom, c.node))
@@ -1408,6 +1413,50 @@ fn resolve_for_edit_or_cli(
         kept,
         comment_left,
     })
+}
+
+/// The same revision on the final marks of the cells `carrier` inserts or
+/// deletes, when it is a row's (`w:trPr/w:ins`, `w:trPr/w:del`) or a cell's
+/// (`w:cellIns`, `w:cellDel`). Word writes a cell's final mark inserted or
+/// deleted only with its row, and a row resolved without it leaves the
+/// revision on the mark, where Accept All or Reject All never returns
+/// (#1669): the two resolve together.
+fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
+    let Some(name) = dom.name(carrier) else {
+        return Vec::new();
+    };
+    let Some(parent) = dom.parent(carrier) else {
+        return Vec::new();
+    };
+    let (kind, cells) = match name.local_name() {
+        kind @ ("ins" | "del") if dom.name_is(parent, &W::name("trPr")) => {
+            let Some(row) = dom.parent(parent) else {
+                return Vec::new();
+            };
+            let cells: Vec<NodeId> = dom
+                .descendants(row, Some(&W::name("tc")))
+                .into_iter()
+                .filter(|&tc| dom.ancestors(tc, Some(&W::name("tr"))).first() == Some(&row))
+                .collect();
+            (kind, cells)
+        }
+        "cellIns" | "cellDel" if dom.name_is(parent, &W::name("tcPr")) => (
+            if name.local_name() == "cellIns" {
+                "ins"
+            } else {
+                "del"
+            },
+            dom.parent(parent).into_iter().collect(),
+        ),
+        _ => return Vec::new(),
+    };
+    cells
+        .into_iter()
+        .filter_map(|cell| crate::validate::last_block_paragraph(dom, cell))
+        .filter_map(|p| dom.element(p, &W::p_pr()))
+        .filter_map(|ppr| dom.element(ppr, &W::r_pr()))
+        .filter_map(|rpr| dom.element(rpr, &W::name(kind)))
+        .collect()
 }
 
 /// The listed changes of the comments part only (empty when the package

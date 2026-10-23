@@ -1807,3 +1807,141 @@ fn a_block_placed_before_a_deleted_final_paragraph_empties_it() {
         );
     }
 }
+
+/// #1669, as Word's Compare writes an append: the paragraph a plan adds
+/// after a container's last paragraph takes the final mark, unrevised, and
+/// the inserted mark is the one before it. A revision on a table cell's
+/// final mark hangs Word's Accept All or Reject All. In a cell, in a
+/// content control closing a cell, and in the body, once and twice.
+#[test]
+fn an_append_after_a_containers_last_paragraph_inserts_the_mark_before_it() {
+    let wrapped = format!(
+        "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
+        para("Old.")
+    );
+    for mode in MODES {
+        for (what, cell) in [
+            ("a cell", para("Old.")),
+            ("a content control", wrapped.clone()),
+        ] {
+            let source = table_with_cell(&cell);
+            let result = check_outputs(
+                &source,
+                &plan_of(mode, &[insert("p2", "after", "New.")]),
+                &["Before.", "Full.", "Old.", "New.", "After."],
+                &format!("{mode} {what}"),
+            );
+            assert_cell(
+                mode,
+                &result.redline,
+                &[("+", &["Old."]), ("", &["+New."])],
+                &format!("{mode} {what}"),
+            );
+            let result = check_outputs(
+                &source,
+                &plan_of(
+                    mode,
+                    &[insert("p2", "after", "One."), insert("p2", "after", "Two.")],
+                ),
+                &["Before.", "Full.", "Old.", "One.", "Two.", "After."],
+                &format!("{mode} {what}, twice"),
+            );
+            assert_cell(
+                mode,
+                &result.redline,
+                &[("+", &["Old."]), ("+", &["+One."]), ("", &["+Two."])],
+                &format!("{mode} {what}, twice"),
+            );
+        }
+        let body = docx(&format!("{}{}", para("Alpha."), para("Beta.")));
+        let result = check_outputs(
+            &body,
+            &plan_of(mode, &[insert("p1", "after", "New.")]),
+            &["Alpha.", "Beta.", "New."],
+            &format!("{mode} the body"),
+        );
+        assert_body(
+            mode,
+            &result.redline,
+            &[("", &["Alpha."]), ("+", &["Beta."]), ("", &["+New."])],
+            &format!("{mode} the body"),
+        );
+    }
+}
+
+/// The paragraph properties of each paragraph of `bytes`' body and cells,
+/// with their change records' ids, authors and dates left out.
+fn properties(bytes: &[u8]) -> Vec<(String, String)> {
+    let xml = normalized(&part_string(bytes, "word/document.xml").unwrap());
+    let stamp = regex::Regex::new(r#" w:(id|author|date)="[^"]*""#).unwrap();
+    paragraphs_in(&xml)
+        .iter()
+        .map(|p| {
+            let text: String = words(p).concat();
+            (text, stamp.replace_all(&ppr(p), "").into_owned())
+        })
+        .collect()
+}
+
+/// When the paragraph that takes the final mark is formatted otherwise
+/// than the container's last one, the final mark records the old
+/// formatting: Reject All gives the last paragraph its own properties and
+/// mark formatting back, and Accept All keeps both paragraphs' (#1669).
+/// Under keep only: the comparer records no change of a mark's formatting
+/// alone (#1677); `m_cell_final_marks` checks its pairing with a paragraph
+/// property changed too.
+#[test]
+fn an_appended_final_mark_records_the_last_paragraphs_formatting() {
+    let formatted = format!("<w:p>{MARK_PPR}<w:r><w:t>Old.</w:t></w:r></w:p>");
+    let mode = MODES[1];
+    let source = table_with_cell(&formatted);
+    let result = check_outputs(
+        &source,
+        &plan_of(mode, &[insert("p2", "after", "New.")]),
+        &["Before.", "Full.", "Old.", "New.", "After."],
+        mode,
+    );
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(
+        properties(&accepted),
+        properties(&result.clean),
+        "{mode}: Accept All"
+    );
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(
+        properties(&rejected),
+        properties(&source),
+        "{mode}: Reject All"
+    );
+}
+
+/// Under keep, another author's tracked formatting change on the last
+/// paragraph goes with the final mark when the new paragraph is formatted
+/// the same, so Reject All still undoes it; a revision already on that
+/// mark is refused, since the inserted mark has to go there (#1669).
+#[test]
+fn an_append_keeps_another_authors_change_on_the_final_mark() {
+    let changed = r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="90" w:author="Other" w:date="2026-01-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#;
+    let source = table_with_cell(changed);
+    let result = check_outputs(
+        &source,
+        &plan_of(MODES[1], &[insert("p2", "after", "New.")]),
+        &["Before.", "Full.", "Old.", "New.", "After."],
+        "keep",
+    );
+    let cell = cell_paragraphs(&result.redline);
+    assert!(!cell[0].contains("pPrChange"), "{cell:?}");
+    assert!(cell[1].contains(r#"w:author="Other""#), "{cell:?}");
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(
+        properties(&rejected),
+        properties(&reject_revisions(&source).unwrap())
+    );
+
+    let inserted = r#"<w:p><w:pPr><w:rPr><w:ins w:id="91" w:author="Other" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Beta.</w:t></w:r></w:p>"#;
+    let body = docx(&format!("{}{inserted}", para("Alpha.")));
+    let error = apply_plan(&body, &plan_of(MODES[1], &[insert("p1", "after", "New.")]))
+        .expect_err("refused");
+    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
+    assert!(error.message.contains("already tracked"), "{error:?}");
+}

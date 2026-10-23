@@ -55,7 +55,9 @@ pub fn introduced_findings(baseline: &[Finding], candidate: &[Finding]) -> Vec<F
 /// edit introduces it. `BOOKMARK_CROSSES_REVISION` is a protected-range
 /// regression the general validator reports as a warning; an introduced
 /// crossing is a failed invariant, never a disclosed lead.
-const BLOCKING_CODES: &[&str] = &["BOOKMARK_CROSSES_REVISION"];
+/// `CELL_FINAL_MARK_REVISION` opens in Word, but its Accept All or Reject
+/// All never returns (#1669).
+const BLOCKING_CODES: &[&str] = &["BOOKMARK_CROSSES_REVISION", "CELL_FINAL_MARK_REVISION"];
 
 /// Whether `f` blocks publication when it is newly introduced.
 fn blocking(f: &Finding) -> bool {

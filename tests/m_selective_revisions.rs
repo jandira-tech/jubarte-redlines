@@ -594,7 +594,27 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
                     || story != "body"
                         && part_string(&partial, &format!("word/{story}.xml")).is_none()
             };
-            if !left.is_subset(&expected) || expected.difference(&left).any(|id| !story_went(id)) {
+            // A cell's final mark inserted or deleted with its row goes
+            // with the row (#1669): the two resolve together.
+            let with_row = |id: &str| {
+                let Some(c) = by_id.get(id) else {
+                    return false;
+                };
+                c.target == "paragraph_mark"
+                    && c.inside
+                        .as_deref()
+                        .and_then(|h| by_id.get(h))
+                        .is_some_and(|holder| {
+                            matches!(holder.target, "table_row" | "table_cell")
+                                && holder.kind == c.kind
+                                && selected(holder)
+                        })
+            };
+            if !left.is_subset(&expected)
+                || expected
+                    .difference(&left)
+                    .any(|id| !story_went(id) && !with_row(id))
+            {
                 let mut lost: Vec<_> = expected.difference(&left).collect();
                 let mut stayed: Vec<_> = left.difference(&expected).collect();
                 lost.sort();
@@ -1228,4 +1248,63 @@ fn cli_id_selection_reports_comment_body_changes_left() {
         stderr.contains("2 tracked changes inside comments were left"),
         "{stderr}"
     );
+}
+
+/// A table whose second row the revision inserts (`inserted`) or deletes:
+/// the row's revision is `w:id="1"`, its two cells' final marks `2` and
+/// `4`, their words `3` and `5`, as Word writes a row added or removed
+/// whole.
+fn revised_row(inserted: bool) -> Vec<u8> {
+    let (kind, text) = if inserted {
+        ("ins", "t")
+    } else {
+        ("del", "delText")
+    };
+    let cell = |mark: u32, words: u32, value: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p></w:tc>"#
+        )
+    };
+    let plain = |value: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    docx(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr>{}{}</w:tr></w:tbl><w:p/>"#,
+        plain("Kept."),
+        plain("Also kept."),
+        cell(2, 3, "Left."),
+        cell(4, 5, "Right.")
+    ))
+}
+
+/// Resolving only a row's insertion or deletion so the row stays resolves
+/// the same revision on its cells' final marks, which Word writes only
+/// with the row's: left on them, Word's Accept All or Reject All never
+/// returns (#1679, #1669). The cells' words stay tracked.
+#[test]
+fn resolving_a_row_alone_takes_its_cells_final_marks_along() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let source = revised_row(inserted);
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(
+            report.ok(),
+            "{name}: {:?}\n{}",
+            report.errors,
+            part_string(&partial, "word/document.xml").unwrap()
+        );
+        let mut left = ids(&partial);
+        left.sort();
+        assert_eq!(left, ["r3", "r5"], "{name}: the words stay tracked");
+    }
 }

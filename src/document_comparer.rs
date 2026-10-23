@@ -7518,7 +7518,25 @@ fn compare_documents_impl(
                             let mark_inserted = pd
                                 .element(ppr, &W::r_pr())
                                 .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
-                            if !mark_inserted {
+                            // A container's last paragraph keeps its mark when
+                            // a paragraph is added after it, so the new words
+                            // end on the old mark, under a record of its old
+                            // properties (#1669): every word inserted, that
+                            // paragraph is B's as much as an inserted one, and
+                            // Reject All restores the record whatever is baked.
+                            let words_inserted = || {
+                                let words = pd.descendants(p, Some(&W::t()));
+                                !words.is_empty()
+                                    && pd.element(ppr, &W::name("pPrChange")).is_some()
+                                    && words.iter().all(|&t| {
+                                        pd.ancestors(t, Some(&W::ins())).first().is_some_and(
+                                            |&ins| {
+                                                pd.ancestors(ins, Some(&W::p())).first() == Some(&p)
+                                            },
+                                        )
+                                    })
+                            };
+                            if !mark_inserted && !words_inserted() {
                                 continue;
                             }
                             // EMPTY inserted paragraphs keep their bare pPr —
