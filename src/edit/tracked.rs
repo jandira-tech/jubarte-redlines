@@ -564,6 +564,13 @@ fn emit(
                     &edit.replacement,
                     edit.attach_before,
                 );
+                super::clean_new_words(
+                    dom,
+                    node,
+                    edit.start,
+                    edit.start + edit.replacement.len(),
+                    &mut stamp.ids,
+                );
             } else {
                 let pieces = if matches!(
                     t.plan.operations[edit.op].kind,
@@ -1108,6 +1115,13 @@ fn emit_text(
             &edit.replacement,
             edit.attach_before,
         );
+        super::clean_new_words(
+            dom,
+            paragraph,
+            edit.start,
+            edit.start + edit.replacement.len(),
+            &mut stamp.ids,
+        );
         if let Some(format) = &edit.format {
             super::format_range(
                 dom,
@@ -1151,6 +1165,13 @@ fn emit_text(
                 if let (Some(first), Some(last)) = (pieces.first(), pieces.last()) {
                     let text = if index == 0 { replacement } else { "" };
                     apply_text_edit(dom, &projection, first.start, last.end, text, true);
+                    super::clean_new_words(
+                        dom,
+                        paragraph,
+                        first.start,
+                        first.start + text.len(),
+                        &mut stamp.ids,
+                    );
                     if index == 0 {
                         if let Some(format) = &edit.format {
                             super::format_range(
@@ -1822,7 +1843,13 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
 /// format change or mark revisions, whose ids must stay unique.
 pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
     let copy = dom.clone_subtree(rpr);
-    for child in dom.elements(copy, None) {
+    strip_records(dom, copy);
+    copy
+}
+
+/// Remove the format change and mark revisions from `rpr`.
+pub(super) fn strip_records(dom: &mut Dom, rpr: NodeId) {
+    for child in dom.elements(rpr, None) {
         if dom.name_is(child, &W::r_pr_change())
             || dom.name_is(child, &W::ins())
             || dom.name_is(child, &W::del())
@@ -1832,7 +1859,6 @@ pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
             dom.remove(child);
         }
     }
-    copy
 }
 
 #[cfg(test)]

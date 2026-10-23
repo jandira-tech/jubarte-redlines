@@ -6086,10 +6086,19 @@ impl<'p> Transaction<'p> {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
                 }
             }
-            // Formatting of new text, in new coordinates.
+            // New words leave the formatting records of the runs they
+            // were written into, and formatting of new text, in new
+            // coordinates.
             for edit in &edits {
+                let s = new_position(&edits, edit.start, true, Some(edit.op));
+                clean_new_words(
+                    &mut self.opened.dom,
+                    node,
+                    s,
+                    s + edit.replacement.len(),
+                    &mut self.revision_ids,
+                );
                 if let Some(format) = &edit.format {
-                    let s = new_position(&edits, edit.start, true, Some(edit.op));
                     format_range(
                         &mut self.opened.dom,
                         node,
@@ -7876,6 +7885,58 @@ fn split_run_at(
     set_text(dom, clone_t, &right);
     refresh_run_history(dom, clone, ids);
     dom.add_after_self(run, clone);
+}
+
+/// Take the new words at projection offsets `[start, end)` of `paragraph`
+/// out of the formatting records of the runs they were written into: they
+/// go in runs of their own without a record, and the fragments around them
+/// keep theirs. New words are no one's earlier formatting (#1658). Runs
+/// without a record are left as they are. A record keeps its id on the
+/// words it covered: where the new words open a run, the copy split off
+/// after them takes the run's own properties.
+fn clean_new_words(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    ids: &mut RevisionCounter,
+) {
+    let recorded = |dom: &Dom, run: NodeId| {
+        dom.element(run, &W::r_pr())
+            .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+            .is_some()
+    };
+    if start >= end
+        || !project_paragraph(dom, paragraph)
+            .segments
+            .iter()
+            .any(|s| s.start < end && start < s.end && recorded(dom, run_of(&s.piece)))
+    {
+        return;
+    }
+    let originals: HashSet<NodeId> = project_paragraph(dom, paragraph)
+        .segments
+        .iter()
+        .map(|s| run_of(&s.piece))
+        .collect();
+    for run in runs_in_range(dom, paragraph, start, end, ids) {
+        let Some(mut rpr) = dom.element(run, &W::r_pr()) else {
+            continue;
+        };
+        if originals.contains(&run)
+            && let Some(rest) = dom
+                .next_element(run)
+                .filter(|&n| dom.name_is(n, &W::r()) && !originals.contains(&n))
+            && let Some(copied) = dom.element(rest, &W::r_pr())
+        {
+            dom.remove(rpr);
+            dom.remove(copied);
+            dom.add_first(rest, rpr);
+            dom.add_first(run, copied);
+            rpr = copied;
+        }
+        tracked::strip_records(dom, rpr);
+    }
 }
 
 /// Fresh ids for the formatting history in `run`'s own `w:rPr`, for a run
