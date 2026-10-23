@@ -543,43 +543,52 @@ pub(crate) struct Recorded {
 }
 
 /// Each formatting change's [`Recorded`] by id, in document order: ids may
-/// repeat. The content of a change `skip` names, and the paragraph mark it
-/// inserts, count for nothing in the characters.
-pub(crate) fn recorded_formats(
+/// repeat.
+pub(crate) type Records = HashMap<String, Vec<Recorded>>;
+
+/// [`list_changes`], and each formatting change's [`Recorded`] by id in
+/// document order (ids may repeat), from one parse of each story. The
+/// content of a change `skip` names, and the paragraph mark it inserts,
+/// count for nothing in the characters.
+pub(crate) fn changes_and_records(
     docx: &[u8],
     skip: &dyn Fn(&Change) -> bool,
-) -> Result<HashMap<String, Vec<Recorded>>, ChangeError> {
+) -> Result<(Vec<Change>, Records), ChangeError> {
     let pkg = open(docx)?;
-    let main = main_part(&pkg);
-    let mut out: HashMap<String, Vec<Recorded>> = HashMap::new();
-    for (part, _) in revision_bearing_parts(&pkg) {
-        let Some(xml) = pkg.part_string(&part) else {
-            continue;
+    let mut changes = Vec::new();
+    let mut records = Records::new();
+    for_each_story(&pkg, |dom, root, story| {
+        let found = carriers(dom, root, story);
+        let formatting = |carrier: &Carrier| {
+            carrier
+                .change
+                .as_ref()
+                .is_some_and(|c| c.kind == ChangeKind::Formatting)
         };
-        let mut dom = Dom::new();
-        let document = dom.parse_xdocument(&xml);
-        let Some(root) = dom.root(document) else {
-            continue;
-        };
-        let found = carriers(&dom, root, &story_id(&main, &part));
-        let skipped: HashSet<_> = found
-            .iter()
-            .filter(|carrier| carrier.change.as_ref().is_some_and(skip))
-            .map(|carrier| carrier.node)
-            .collect();
-        let (characters, _) = run_characters(&dom, root, &skipped);
-        for carrier in found {
-            let Some(change) = carrier.change.filter(|c| c.kind == ChangeKind::Formatting) else {
-                continue;
-            };
-            out.entry(change.id).or_default().push(Recorded {
-                payload: recorded_properties(&dom, carrier.node),
-                characters: formatted_run(&dom, carrier.node)
-                    .and_then(|run| characters.get(&run).copied()),
-            });
+        if found.iter().any(formatting) {
+            let skipped: HashSet<_> = found
+                .iter()
+                .filter(|carrier| carrier.change.as_ref().is_some_and(skip))
+                .map(|carrier| carrier.node)
+                .collect();
+            let (characters, _) = run_characters(dom, root, &skipped);
+            for carrier in found.iter().filter(|carrier| formatting(carrier)) {
+                let Some(change) = &carrier.change else {
+                    continue;
+                };
+                records
+                    .entry(change.id.clone())
+                    .or_default()
+                    .push(Recorded {
+                        payload: recorded_properties(dom, carrier.node),
+                        characters: formatted_run(dom, carrier.node)
+                            .and_then(|run| characters.get(&run).copied()),
+                    });
+            }
         }
-    }
-    Ok(out)
+        changes.extend(found.into_iter().filter_map(|c| c.change));
+    });
+    Ok((changes, records))
 }
 
 /// Owner paths use semantic ids where OOXML defines them, otherwise the

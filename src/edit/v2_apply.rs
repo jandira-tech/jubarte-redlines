@@ -2434,26 +2434,33 @@ fn compare_history(
             "candidate changed revision history retained in W",
         )
     };
+    // Each document's changes and its formatting changes' records (the old
+    // properties and, a run's, the characters covered), from one parse.
     // The comment marks a revision holds are the comments' history, not
     // the revision's: a comment added or removed beside one moves them.
-    let history = |bytes| {
-        changes(bytes).map(|listed| {
-            listed
-                .into_iter()
-                .map(|change| Change {
-                    holds_comments: Vec::new(),
-                    ..change
-                })
-                .collect::<Vec<_>>()
-        })
+    let history = |bytes, skip: &dyn Fn(&Change) -> bool| {
+        crate::changes::changes_and_records(bytes, skip)
+            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))
+            .map(|(listed, records)| {
+                let listed = listed
+                    .into_iter()
+                    .map(|change| Change {
+                        holds_comments: Vec::new(),
+                        ..change
+                    })
+                    .collect::<Vec<_>>();
+                (listed, records)
+            })
     };
-    let source = history(working)?;
+    let (source, mut old_records) = history(working, &|_| false)?;
     let ids: BTreeSet<_> = source.iter().map(|c| c.id.clone()).collect();
-    let listed = history(candidate)?;
     // The editor's own new revisions, in a tracked candidate.
     let editors = |c: &Change, kind: ChangeKind| {
         tracked && c.kind == kind && !ids.contains(&c.id) && c.author.as_deref() == Some(author)
     };
+    // A tracked candidate's characters count where the source has them:
+    // the editor's new insertions count for nothing.
+    let (listed, mut new_records) = history(candidate, &|c| editors(c, ChangeKind::Insertion))?;
     // Accepting the editor's deletion takes what it holds along, as that
     // deletion's words go: what it holds depends on what the deletion sits in.
     let deletions: BTreeMap<String, Option<String>> = listed
@@ -2470,21 +2477,8 @@ fn compare_history(
         }
         inside
     };
-    // Formatting changes: the old properties they recorded and, a run's,
-    // the characters they cover. A tracked candidate's characters count
-    // where the source has them: the editor's new insertions count for
-    // nothing. Ids may repeat, so each takes its next record in order.
-    let formats = source
-        .iter()
-        .chain(&listed)
-        .any(|c| c.kind == ChangeKind::Formatting);
-    let recorded = |bytes, skip: &dyn Fn(&Change) -> bool| {
-        if !formats {
-            return Ok(HashMap::new());
-        }
-        crate::changes::recorded_formats(bytes, skip)
-            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))
-    };
+    // Ids may repeat, so each formatting change takes its next record in
+    // order.
     let next = |records: &mut HashMap<String, Vec<Recorded>>, c: &Change| {
         (c.kind == ChangeKind::Formatting)
             .then(|| {
@@ -2495,8 +2489,6 @@ fn compare_history(
             })
             .flatten()
     };
-    let mut old_records = recorded(working, &|_| false)?;
-    let mut new_records = recorded(candidate, &|c| editors(c, ChangeKind::Insertion))?;
     let mut before: Vec<(Change, Option<Recorded>)> = source
         .into_iter()
         .map(|c| {
@@ -3406,6 +3398,56 @@ mod tests {
                 "text": "A note.",
             }),
             other => panic!("unknown plan kind {other}"),
+        }
+    }
+
+    /// A style's formatting record and a comment body's share `w:id` 3 but
+    /// not a story: removing the comment leaves the style's record its own
+    /// (Jules, #1661, one parse for listing and records).
+    #[test]
+    fn a_comment_bodys_formatting_record_stands_in_for_no_listed_change() {
+        use crate::edit::deeper_boundary_fixture::{Part, docx_with};
+        let styles = format!(
+            r#"<w:styles xmlns:w="{}"><w:style w:type="character" w:styleId="S"><w:name w:val="S"/><w:rPr><w:b/><w:rPrChange w:id="3" w:author="Ann" w:date="2026-09-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#,
+            W::URI
+        );
+        let comments = format!(
+            r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Cy"><w:p><w:r><w:rPr><w:i/><w:rPrChange w:id="3" w:author="Cy" w:date="2026-09-01T00:00:00Z"><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#,
+            W::URI
+        );
+        let styles_part = Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        };
+        let comments_part = Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        };
+        let source = docx_with(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Text</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+            &[styles_part, comments_part],
+        );
+        let styles_part = Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        };
+        let candidate = docx_with(r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#, &[styles_part]);
+        for tracked in [false, true] {
+            let result = compare_history(
+                &source,
+                &candidate,
+                &BTreeSet::new(),
+                "Bob",
+                &BTreeMap::new(),
+                tracked,
+            );
+            assert!(result.is_ok(), "tracked {tracked}: {result:?}");
         }
     }
 
