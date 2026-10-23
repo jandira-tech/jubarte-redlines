@@ -3964,8 +3964,9 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
-    // An original that cannot be read stops the run before any repair.
-    let before = job.original.map(read).transpose()?;
+    // An original that cannot be read, or is no Word package, stops the run
+    // before any repair.
+    let before = job.original.map(read_word).transpose()?;
     if let Some(out) = job.repair {
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;

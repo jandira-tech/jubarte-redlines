@@ -294,6 +294,36 @@ fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {
     Ok(rels)
 }
 
+/// Whether `name` ends with `suffix`, ASCII case-blind (OPC compares part
+/// names so).
+pub(crate) fn ends_with_ignore_case(name: &str, suffix: &str) -> bool {
+    name.len()
+        .checked_sub(suffix.len())
+        .and_then(|at| name.get(at..))
+        .is_some_and(|end| end.eq_ignore_ascii_case(suffix))
+}
+
+/// Whether a content type names XML: `…+xml`, `application/xml` or
+/// `text/xml`, ASCII case-blind.
+pub(crate) fn is_xml_content_type(content_type: &str) -> bool {
+    ends_with_ignore_case(content_type, "+xml")
+        || content_type.eq_ignore_ascii_case("application/xml")
+        || content_type.eq_ignore_ascii_case("text/xml")
+}
+
+/// For a reader that has not opened the package: whether the raw
+/// `[Content_Types].xml` `content_types` types part `name` as XML
+/// ([`is_xml_content_type`]). Unreadable content types type nothing.
+pub(crate) fn typed_as_xml(content_types: Option<&[u8]>) -> impl Fn(&str) -> bool + use<> {
+    let types = content_types.and_then(|xml| read_content_types(xml).ok());
+    move |name| {
+        types
+            .as_ref()
+            .and_then(|types| types.content_type_for(&norm(name)))
+            .is_some_and(is_xml_content_type)
+    }
+}
+
 fn read_content_types(xml: &[u8]) -> Result<ContentTypes, OpcError> {
     let mut types = ContentTypes {
         defaults: HashMap::new(),

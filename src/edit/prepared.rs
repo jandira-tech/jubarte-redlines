@@ -481,9 +481,10 @@ fn check_revision_ids(
         .filter(|&(key, &count)| count > 1 && count > source.get(key).copied().unwrap_or(0))
         .collect();
     introduced.sort();
-    let Some(((part, key), count)) = introduced.first() else {
+    let Some(&(entry, count)) = introduced.first() else {
         return Ok(());
     };
+    let (part, key) = entry;
     let mut fields = key.splitn(3, ':');
     let (kind, mark, id) = (
         fields.next().unwrap_or_default(),
@@ -491,10 +492,7 @@ fn check_revision_ids(
         fields.next().unwrap_or_default(),
     );
     let mark = if mark { " on a mark" } else { "" };
-    let had = source
-        .get(&(part.clone(), key.clone()))
-        .copied()
-        .unwrap_or(0);
+    let had = source.get(entry).copied().unwrap_or(0);
     Err(err(
         "CANDIDATE_INVALID",
         None,
