@@ -1249,11 +1249,17 @@ pub(crate) mod tests {
         check_candidates(&revisions(source), &result_of(revisions(candidate)))
     }
 
-    fn refused_as_duplicate(result: Result<CandidateChecks, EditError>, id: &str) {
+    /// `result` refuses `record` (`w:ins w:id 5`), repeated in `part` of
+    /// the clean copy.
+    fn refused_as_duplicate(result: Result<CandidateChecks, EditError>, record: &str, part: &str) {
         let error = result.unwrap_err();
         assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
         assert!(
-            error.message.contains("duplicate") && error.message.contains(id),
+            error
+                .message
+                .contains("introduces a duplicate revision id in the clean copy: ")
+                && error.message.contains(&format!(": {record} occurs "))
+                && error.message.contains(&format!(" times in {part} (")),
             "{error:?}"
         );
     }
@@ -1262,11 +1268,13 @@ pub(crate) mod tests {
     fn a_candidate_may_not_introduce_a_duplicate_revision_id() {
         refused_as_duplicate(
             gate(&[("ins", 5), ("ins", 6)], &[("ins", 5), ("ins", 5)]),
-            "5",
+            "w:ins w:id 5",
+            "word/document.xml",
         );
         refused_as_duplicate(
             gate(&[("rPrChange", 5)], &[("rPrChange", 5), ("rPrChange", 5)]),
-            "5",
+            "w:rPrChange w:id 5",
+            "word/document.xml",
         );
     }
 
@@ -1277,7 +1285,8 @@ pub(crate) mod tests {
                 &[("ins", 5), ("ins", 5)],
                 &[("ins", 5), ("ins", 5), ("ins", 5)],
             ),
-            "5",
+            "w:ins w:id 5",
+            "word/document.xml",
         );
     }
 
@@ -1288,7 +1297,8 @@ pub(crate) mod tests {
                 &[("ins", 5), ("ins", 5)],
                 &[("ins", 5), ("ins", 7), ("ins", 7)],
             ),
-            "7",
+            "w:ins w:id 7",
+            "word/document.xml",
         );
     }
 
@@ -1307,7 +1317,8 @@ pub(crate) mod tests {
                 &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 6)],
                 &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 5)],
             ),
-            "5",
+            "w:customXmlInsRangeStart w:id 5",
+            "word/document.xml",
         );
     }
 
@@ -1353,7 +1364,11 @@ pub(crate) mod tests {
     fn a_main_part_without_an_xml_extension_is_gated_too() {
         let source = main_named(&revisions(&[("ins", 5), ("ins", 6)]), "word/main.dat");
         let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
-        refused_as_duplicate(check_candidates(&source, &result_of(candidate)), "5");
+        refused_as_duplicate(
+            check_candidates(&source, &result_of(candidate)),
+            "w:ins w:id 5",
+            "word/main.dat",
+        );
     }
 
     fn prepared(source: &[u8], operation: &str) -> Result<PreparedEdit, EditError> {
@@ -1399,6 +1414,21 @@ pub(crate) mod tests {
         assert!(
             error.message.contains("w:ins on a mark w:id 7"),
             "{error:?}"
+        );
+    }
+
+    /// The KI-8 shape: the clean copy resolves the edit's insertion away
+    /// and only the redline repeats an id. The refusal names the redline.
+    #[test]
+    fn a_duplicate_only_the_redline_carries_is_refused_by_its_artifact() {
+        let source = revisions(&[("ins", 5), ("ins", 6)]);
+        let mut result = result_of(revisions(&[("ins", 5), ("ins", 6)]));
+        result.redline = revisions(&[("ins", 5), ("ins", 5)]);
+        let error = check_candidates(&source, &result).unwrap_err();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert_eq!(
+            error.message,
+            "the edit introduces a duplicate revision id in the redline: w:ins w:id 5 occurs 2 times in word/document.xml (the source has 1)"
         );
     }
 
