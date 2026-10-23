@@ -317,6 +317,21 @@ fn a_whole_word_replacement_gives_each_fragment_its_own_id() {
 }
 
 #[test]
+fn a_formatted_replacement_gives_each_fragment_its_own_id() {
+    // `format` splits the runs around the new words a second time
+    // (`format_range`).
+    let operations = json!([{"kind":"replace","paragraph":"p0","find":"beta",
+        "replacement":"new","format":{"underline":true}}]);
+    check_split(
+        &outside(TEXT),
+        "5",
+        "alpha ",
+        operations,
+        "[alpha new gamma]",
+    );
+}
+
+#[test]
 fn a_comment_that_splits_the_run_gives_each_fragment_its_own_id() {
     let operations = json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
     check_split(
