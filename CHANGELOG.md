@@ -15,6 +15,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-22
+
 ### Release
 
 - **Registries publish from CI with OIDC trusted publishing** (#1642). `release.yml` publishes crates.io (`rust-lang/crates-io-auth-action`, self-hosted runners), PyPI (`uv publish --trusted-publishing always`, the seven CI wheels plus one shared sdist, self-hosted runners) and npm (`jubarte-wasm`, then `jubarte-redlines`, on a GitHub-hosted runner because npm refuses self-hosted ones). No registry token exists. `scripts/release.sh` steps 9–11 wait for those jobs, and `--local-publish` keeps the old token path as the fallback.
@@ -4595,6 +4597,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
 [0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
 [0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
 [0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
