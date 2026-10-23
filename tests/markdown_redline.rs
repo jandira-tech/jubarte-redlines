@@ -310,3 +310,23 @@ fn a_cells_only_link_is_replaced_in_its_cell() {
     let cell = &xml[xml.find("<w:tc>").unwrap()..xml.find("</w:tc>").unwrap()];
     assert!(cell.contains("new link"), "{xml}");
 }
+
+#[test]
+fn a_paragraph_after_a_whole_replacement_follows_it() {
+    // The link's rewrite is refused, so its paragraph is replaced whole;
+    // the paragraph the Markdown adds after it stays after it (codex on
+    // #1670, round 8).
+    let source = with_link(
+        r#"<w:p><w:r><w:t>Start.</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>End.</w:t></w:r></w:p>"#,
+    );
+    let patched = apply_markdown(
+        &source,
+        "Start.\n\n[new link](https://example.com)\n\nExtra.\n\nEnd.\n",
+    )
+    .unwrap();
+    assert!(patched.warnings.is_empty(), "{:?}", patched.warnings);
+    assert_eq!(
+        texts(&patched.docx),
+        ["Start.", "new link", "Extra.", "End."]
+    );
+}

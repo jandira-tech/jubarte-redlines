@@ -154,13 +154,17 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     ))
                 } else if replacement.is_none()
                     && !emptied.contains(para)
-                    && dom.next_element(node).is_none_or(|n| !is_block(dom, n))
+                    && next_block(dom, node).is_none()
+                    // A final paragraph's carrier keeps its own mark
+                    // (`final_carrier`); this is the last paragraph of a
+                    // content control or a custom XML element.
+                    && tx.final_paragraph(node) != Some(node)
                 {
                     previous_paragraph(dom, node)
                         .and_then(|p| mark_revision(dom, p, &DELETED))
                         .map(|mark| {
                             named(
-                                "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark: that mark is",
+                                "under keep, the last paragraph of a content control or a custom XML element cannot be deleted when the paragraph before it already has a deleted mark: that mark is",
                                 mark,
                             )
                         })
@@ -860,7 +864,7 @@ fn emit(
         // mark of its own, as Word's Compare writes it. The mark of the
         // last paragraph of a container cannot go: its content joins the
         // paragraph before it, whose mark is deleted.
-        let carrier = if dom.next_element(node).is_some_and(|n| is_block(dom, n)) {
+        let carrier = if next_block(dom, node).is_some() {
             Some(node)
         } else if let Some(&carrier) = carriers.get(para) {
             Some(carrier)
@@ -963,9 +967,22 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
             dom.add(rpr, record);
         }
     }
-    dom.remove(old);
-    dom.add_after_self(last, old);
+    // `old` takes `last`'s place when `last` follows it; placed before
+    // paragraphs the plan deletes, `last` leaves `old` where it is, after
+    // them (codex on #1670, round 8).
+    if precedes(dom, old, last) {
+        dom.remove(old);
+        dom.add_after_self(last, old);
+    }
     dom.remove(last);
+}
+
+/// Whether `a` comes before `b` in document order.
+fn precedes(dom: &Dom, a: NodeId, b: NodeId) -> bool {
+    let chain = dom.ancestors_and_self(a, None);
+    dom.ancestors_and_self(b, None)
+        .into_iter()
+        .any(|up| dom.nodes_before_self(up).iter().any(|n| chain.contains(n)))
 }
 
 /// `paragraph`'s properties without the mark's own (`w:rPr`), its section
@@ -2000,21 +2017,28 @@ fn record_replaced(tx: &Transaction<'_>, paragraph: NodeId, op: usize) -> Option
             .collect();
         serialized(dom, &children)
     };
-    let same = toc.is_none()
-        && style.as_deref().or(style_of(like)) == style_of(paragraph)
-        && unstyled(like) == unstyled(paragraph);
+    // A table of contents ends on its field paragraph, which has no
+    // properties (`toc_paragraphs`).
+    let same = match toc {
+        Some(_) => style_of(paragraph).is_none() && unstyled(paragraph).is_empty(),
+        None => {
+            style.as_deref().or(style_of(like)) == style_of(paragraph)
+                && unstyled(like) == unstyled(paragraph)
+        }
+    };
     let properties = paragraph_format_change(dom, paragraph).filter(|_| !same);
     let mark = dom
         .element(paragraph, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
         .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
-        .filter(|_| toc.is_some() || !mark_formatting(dom, paragraph).is_empty());
+        .filter(|_| !mark_formatting(dom, paragraph).is_empty());
     properties.or(mark)
 }
 
 /// The first element `paragraph` holds, at the levels `delete_runs` walks,
-/// that is no WordprocessingML (an equation, `m:oMath`): the replay cannot
-/// delete it as a tracked change.
+/// that the replay cannot delete as a tracked change: one that is no
+/// WordprocessingML (an equation, `m:oMath`), or a subdocument (`w:subDoc`,
+/// crush on #1670, round 8).
 fn untrackable_content(dom: &Dom, container: NodeId) -> Option<NodeId> {
     dom.elements(container, None).into_iter().find_map(|child| {
         let name = dom.name(child)?;
@@ -2022,6 +2046,7 @@ fn untrackable_content(dom: &Dom, container: NodeId) -> Option<NodeId> {
             return Some(child);
         }
         match name.local_name() {
+            "subDoc" => Some(child),
             "hyperlink" | "smartTag" | "customXml" | "dir" | "bdo" | "fldSimple" | "ins" => {
                 untrackable_content(dom, child)
             }
@@ -2041,9 +2066,17 @@ fn moved_in(dom: &Dom, node: NodeId) -> Option<NodeId> {
         .find(|&n| is_one_of(dom, n, &["moveFrom", "moveTo"]))
 }
 
-/// Whether `node` is a paragraph or a table.
-fn is_block(dom: &Dom, node: NodeId) -> bool {
-    dom.name_is(node, &W::p()) || dom.name_is(node, &W::tbl())
+/// The block right after `node` among its siblings, past the range markers
+/// and proofing marks between: a paragraph, a table, a block content
+/// control or a custom XML element. Word's Compare deletes the mark of a
+/// paragraph deleted before any of them (codex on #1670, round 8).
+fn next_block(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    dom.nodes_after_self(node).into_iter().find(|&n| {
+        dom.name(n).is_some_and(|name| {
+            name.namespace_name() == W::URI
+                && matches!(name.local_name(), "p" | "tbl" | "sdt" | "customXml")
+        })
+    })
 }
 
 /// The paragraph right before `node` among its siblings.
