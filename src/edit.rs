@@ -5720,9 +5720,10 @@ impl<'p> Transaction<'p> {
     /// and the paragraphs the plan deletes) that the plan keeps, when its
     /// mark is not already deleted: carrying the mark past another
     /// author's deleted mark would join two paragraphs the plan keeps
-    /// (MiniMax on #1670, round 8). `None` there, and when a table, a
-    /// content control or the start of its parent comes first: nothing can
-    /// carry the mark.
+    /// (MiniMax on #1670, round 8). `None` there, when a table, a content
+    /// control or the start of its parent comes first, and when the plan
+    /// places a block in between, which the carried mark would join (glm-5.3
+    /// on #1670, round 8): nothing can carry the mark.
     pub(super) fn final_carrier(&self, para: usize) -> Option<NodeId> {
         let dom = &self.opened.dom;
         let gone: Vec<NodeId> = self
@@ -5742,14 +5743,32 @@ impl<'p> Transaction<'p> {
                         || dom.element(rpr, &W::name("moveFrom")).is_some()
                 })
         };
+        let placed = |anchor: usize, wanted: Side| {
+            self.resolved.iter().any(|(_, r)| {
+                matches!(r,
+                    Resolved::InsertParagraph { anchor: a, side, .. }
+                    | Resolved::InsertTable { anchor: a, side, .. }
+                        if *a == anchor && *side == wanted)
+            })
+        };
+        if placed(para, Side::Before) {
+            return None;
+        }
         let mut cursor = self.paragraph_nodes[para];
         loop {
             let previous = previous_block(dom, cursor)?;
             if !dom.name_is(previous, &W::p()) {
                 return None;
             }
+            let index = self.paragraph_nodes.iter().position(|&n| n == previous);
+            if index.is_some_and(|i| placed(i, Side::After)) {
+                return None;
+            }
             if !gone.contains(&previous) {
                 return (!deleted_mark(previous)).then_some(previous);
+            }
+            if index.is_some_and(|i| placed(i, Side::Before)) {
+                return None;
             }
             cursor = previous;
         }

@@ -1687,3 +1687,72 @@ fn a_deleted_subdocument_is_refused_under_keep() {
     assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
     assert!(error.message.contains("subDoc"), "{error:?}");
 }
+
+/// A paragraph the plan deletes between a table it inserts and another
+/// table stays, emptied: it is the paragraph the clean copy puts between
+/// the two tables, so Accept All does not join them (glm-5.3 on #1670,
+/// round 8). Under keep only: the comparer deletes the old table and the
+/// paragraph after it and inserts them again (#1675).
+#[test]
+fn a_paragraph_deleted_between_a_new_table_and_a_table_separates_them() {
+    let table = |p: &str, side: &str, cell: &str| {
+        format!(
+            r#"{{"kind":"insert_table","paragraph":"{p}","position":"{side}","rows":[["{cell}"]]}}"#
+        )
+    };
+    let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="1000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let before_a_table = docx(&format!("{}{}{inner}{}", para("a"), para("b"), para("z")));
+    let three = docx(&format!("{}{}{}", para("a"), para("b"), para("c")));
+    let mode = MODES[1];
+    check_outputs(
+        &before_a_table,
+        &plan_of(mode, &[table("p0", "after", "x"), delete("p1")]),
+        &["a", "x", "", "In.", "z"],
+        &format!("{mode} before a table"),
+    );
+    check_outputs(
+        &three,
+        &plan_of(
+            mode,
+            &[
+                table("p0", "after", "x"),
+                table("p2", "before", "y"),
+                delete("p1"),
+            ],
+        ),
+        &["a", "x", "", "y", "c"],
+        &format!("{mode} between new tables"),
+    );
+}
+
+/// A block the plan places between the paragraph before a deleted final
+/// one and the final one leaves nothing to carry the final mark: the final
+/// paragraph is emptied, and Accept All keeps the new blocks apart (glm-5.3
+/// on #1670, round 8). Under keep only: the comparer ends the body in the
+/// new table and drops the empty paragraph after it (#1678).
+#[test]
+fn a_block_placed_before_a_deleted_final_paragraph_empties_it() {
+    let table = |p: &str, side: &str| {
+        format!(r#"{{"kind":"insert_table","paragraph":"{p}","position":"{side}","rows":[["t"]]}}"#)
+    };
+    let source = docx(&format!("{}{}", para("a"), para("b")));
+    let mode = MODES[1];
+    for (operations, expected) in [
+        (
+            vec![
+                insert("p0", "after", "x"),
+                table("p0", "after"),
+                delete("p1"),
+            ],
+            vec!["a", "x", "t", ""],
+        ),
+        (vec![table("p0", "after"), delete("p1")], vec!["a", "t", ""]),
+    ] {
+        check_outputs(
+            &source,
+            &plan_of(mode, &operations),
+            &expected,
+            &format!("{mode} {operations:?}"),
+        );
+    }
+}
