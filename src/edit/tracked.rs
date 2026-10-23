@@ -21,9 +21,9 @@ use super::visible;
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounter,
     RevisionCounts, ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span,
-    apply_run_format, apply_text_edit, attach_segment, build_paragraph, format_paragraph,
-    insert_ppr_child, new_position, place_reply_markers, remove_comment_markers, runs_in_range,
-    set_text, split_run_at, toc_paragraphs,
+    apply_run_format, apply_text_edit, attach_segment, build_paragraph, comment_bounds,
+    format_paragraph, insert_ppr_child, new_position, place_reply_markers, remove_comment_markers,
+    runs_in_range, set_text, split_run_at, toc_paragraphs,
 };
 use crate::changes::{list_changes, list_logical_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -593,8 +593,7 @@ fn emit(
             }
         }
         for (start, end, i) in comment_ranges.remove(&para).unwrap_or_default() {
-            let s = new_position(&edits, start, true, None);
-            let e = new_position(&edits, end, false, None);
+            let (s, e) = comment_bounds(&edits, start, end, i);
             pending.push((s, e, i));
         }
         pending.sort_by_key(|&(s, _, i)| (s, i));

@@ -4574,33 +4574,12 @@ impl<'p> Transaction<'p> {
             return vec![resolved];
         };
         let (para, start, end) = (*para, *start, *end);
-        let projection = &self.projections[para];
-        let text = &projection.text;
-        let mut pieces = Vec::new();
-        for (s, e, piece) in rewrite::replace_ranges(&text[start..end], replacement) {
-            let (s, e) = (start + s, start + e);
-            let mut attach_before = text[..s]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c != '\u{FFFC}');
-            let checked = if s == e {
-                self.check_insert_either(projection, s, &mut attach_before)
-            } else {
-                self.check_range(projection, s, e)
-            };
-            if checked.is_err() {
-                return vec![resolved];
-            }
-            pieces.push(Resolved::Text {
-                para,
-                start: s,
-                end: e,
-                replacement: piece,
-                comment: None,
-                attach_before,
-                format: None,
-            });
-        }
+        let ranges = rewrite::replace_ranges(&self.projections[para].text[start..end], replacement)
+            .into_iter()
+            .map(|(s, e, piece)| (start + s, start + e, piece));
+        let Some(mut pieces) = self.checked_pieces(para, ranges) else {
+            return vec![resolved];
+        };
         if pieces.is_empty() {
             outcome.message = Some(
                 "nothing changed: the text already reads as the replacement (a look-alike such as a curly quote stays; whole: true writes the replacement as typed)"
@@ -4616,6 +4595,47 @@ impl<'p> Transaction<'p> {
             });
         }
         pieces
+    }
+
+    /// The word-level `pieces` of one replacement (paragraph offsets) as
+    /// the edits that write them, each checked where it lands: a new word
+    /// takes the side of the text before it, or the other side when that one
+    /// is refused (a hyperlink, a move, a symbol), and a changed range must be
+    /// editable. `None` when a piece has no place to go: the caller keeps the
+    /// whole edit, already checked, so the pieces' refusals are dropped.
+    fn checked_pieces(
+        &self,
+        para: usize,
+        pieces: impl IntoIterator<Item = (usize, usize, String)>,
+    ) -> Option<Vec<Resolved>> {
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let refusal = self.revision_refusal.take();
+        let checked = pieces
+            .into_iter()
+            .map(|(start, end, replacement)| {
+                let mut attach_before = text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c != '\u{FFFC}');
+                let checked = if start == end {
+                    self.check_insert_either(projection, start, &mut attach_before)
+                } else {
+                    self.check_range(projection, start, end)
+                };
+                checked.ok().map(|()| Resolved::Text {
+                    para,
+                    start,
+                    end,
+                    replacement,
+                    comment: None,
+                    attach_before,
+                    format: None,
+                })
+            })
+            .collect();
+        self.revision_refusal.replace(refusal);
+        checked
     }
 
     /// `rewrite`: the smallest word-level edits that make the paragraph read
@@ -6186,15 +6206,7 @@ impl<'p> Transaction<'p> {
                 }
             }
             for (start, end, i, text) in comment_ranges.remove(&para).unwrap_or_default() {
-                // The operation's own insertions at either end of its
-                // range are its new text: its comment holds them.
-                let own_at_end: usize = edits
-                    .iter()
-                    .filter(|x| x.op == i && x.start == end && x.end == end)
-                    .map(|x| x.replacement.len())
-                    .sum();
-                let s = new_position(&edits, start, true, Some(i));
-                let e = new_position(&edits, end, false, None) + own_at_end;
+                let (s, e) = comment_bounds(&edits, start, end, i);
                 pending.push((s, e, i, text));
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
@@ -7227,6 +7239,21 @@ fn excerpt(text: &str, max: usize) -> String {
         s.push('…');
     }
     s
+}
+
+/// Operation `op`'s comment range `start..end` after `edits` were applied.
+/// The operation's own insertions at either end of its range are its new
+/// text, so its comment holds them, in the clean copy and in the redline.
+fn comment_bounds(edits: &[ScheduledEdit], start: usize, end: usize, op: usize) -> (usize, usize) {
+    let own_at_end: usize = edits
+        .iter()
+        .filter(|x| x.op == op && x.start == end && x.end == end)
+        .map(|x| x.replacement.len())
+        .sum();
+    (
+        new_position(edits, start, true, Some(op)),
+        new_position(edits, end, false, None) + own_at_end,
+    )
 }
 
 /// Position `pos` of the source projection after `edits` were applied.
