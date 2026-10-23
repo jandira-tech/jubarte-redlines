@@ -3924,6 +3924,29 @@ mod tests {
         refused(guard(&alice_formatted(5, "bar", false)));
     }
 
+    #[test]
+    fn history_guard_refuses_a_record_left_on_no_words() {
+        // Carol deleted every word of Alice's run: the record goes with
+        // them, so a candidate that keeps it on an emptied run is refused
+        // (Codex on #1664).
+        let source = docx(&format!(
+            "<w:p>{}</w:p>",
+            alice_formatted(5, "alpha beta", false)
+        ));
+        let guard = |candidate: &str| {
+            preserve_direct_history(
+                &source,
+                &docx(&format!("<w:p>{candidate}</w:p>")),
+                &rewriting("r5", "", 10),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            )
+        };
+        refused(guard(&alice_formatted(5, "", false)));
+        let result = guard("");
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     /// Alice's run `text` followed, inside the run, by a tab.
     fn alice_with_tab(id: u32, text: &str) -> String {
         alice_formatted(id, text, false).replace("</w:t></w:r>", "</w:t><w:tab/></w:r>")

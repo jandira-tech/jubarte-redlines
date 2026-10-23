@@ -1030,3 +1030,62 @@ fn new_words_take_no_empty_properties() {
         .unwrap();
     assert!(dom.element(dom.parent(new).unwrap(), &W::r_pr()).is_none());
 }
+
+#[test]
+fn two_adjacent_replacements_of_alices_first_words_leave_her_id_on_the_rest() {
+    // Applied last to first: the second replacement leaves the id on
+    // "alpha" and copies " gamma" off with a fresh one; the first then
+    // takes "alpha" too, and the id moves on to Alice's words, as one
+    // replacement of "alpha beta" moves it (Codex on #1664).
+    let out = edit_v2(&outside(TEXT), |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[A B gamma]");
+    let operations = json!([
+        {"kind":"replace","paragraph":"p0","find":"alpha","replacement":"A"},
+        {"kind":"replace","paragraph":"p0","find":" beta","replacement":" B"}
+    ]);
+    // v1 diffs " beta" against " B": the space stays Alice's, between
+    // Bob's words, and keeps the id; " gamma" is a fragment of its own.
+    edit(&outside(TEXT), operations.clone());
+    let v1 = apply_plan(&outside(TEXT), &plan(operations)).unwrap();
+    let records = formatting_records(&v1.clean);
+    assert_eq!(records[0], pairs(&[("5", " ")])[0], "{records:?}");
+    assert_eq!(
+        records
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+        [" ", " gamma"]
+    );
+}
+
+#[test]
+fn a_typed_deletion_of_all_of_alices_words_takes_her_record_out_of_the_clean_copy() {
+    // No words left, no record: an empty run keeps no formatting history
+    // (Codex on #1664).
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"delete","target":target,"find":TEXT}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert!(
+        formatting_records(&out.clean).is_empty(),
+        "{:?}",
+        formatting_records(&out.clean)
+    );
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[]");
+}
