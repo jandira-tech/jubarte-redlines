@@ -455,7 +455,7 @@ fn properties(name: &XName) -> bool {
 
 /// One character per visible element that is not text: what a run holding
 /// a tab, a break or a drawing covers.
-fn atom(name: &XName) -> Option<char> {
+pub(crate) fn atom(name: &XName) -> Option<char> {
     if name.namespace_name() != W::URI {
         return None;
     }
