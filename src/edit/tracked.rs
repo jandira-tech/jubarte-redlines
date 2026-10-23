@@ -463,6 +463,22 @@ fn emit(
     stamp: &mut Stamp<'_>,
     array_order: bool,
 ) -> Vec<NodeId> {
+    // Read off the source's structure, before any step changes it: the
+    // container-final paragraphs whose mark stays (Word never deletes it).
+    let emptied = t.emptied_paragraphs();
+    let finals: BTreeSet<usize> = t
+        .resolved
+        .iter()
+        .filter_map(|(_, r)| match r {
+            Resolved::DeleteParagraph { para }
+                if t.final_paragraph(t.paragraph_nodes[*para])
+                    == Some(t.paragraph_nodes[*para]) =>
+            {
+                Some(*para)
+            }
+            _ => None,
+        })
+        .collect();
     // 0. Run formatting, on source offsets (no text edit overlaps it), each
     // run's old properties in `w:rPrChange`.
     for (_, r) in &t.resolved {
@@ -638,6 +654,8 @@ fn emit(
     // 2. Paragraph and table insertions: every run, row and paragraph mark
     // inserted.
     let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
+    // The new paragraphs beside each anchor, in document order.
+    let mut placed: BTreeMap<usize, (Vec<NodeId>, Vec<NodeId>)> = BTreeMap::new();
     let mut tables: Vec<NodeId> = Vec::new();
     for (i, r) in &t.resolved {
         let (anchor, side, news, commented) = match r {
@@ -682,14 +700,19 @@ fn emit(
         };
         let anchor_node = t.paragraph_nodes[anchor];
         let dom = &mut t.opened.dom;
+        let (before, after) = placed.entry(anchor).or_default();
         for &new in &news {
             match side {
                 Side::After => {
                     let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
                     dom.add_after_self(prev, new);
                     last_after.insert(anchor, new);
+                    after.push(new);
                 }
-                Side::Before => dom.add_before_self(anchor_node, new),
+                Side::Before => {
+                    dom.add_before_self(anchor_node, new);
+                    before.push(new);
+                }
             }
         }
         let new = news[news.len() - 1];
@@ -800,6 +823,18 @@ fn emit(
             anchor_comment(dom, node, 0, projection.text.len(), id, &mut stamp.ids);
         }
         delete_runs(dom, node, stamp);
+        // A container's final mark stays, as Word keeps it: emptied, or
+        // holding the new paragraphs' last (#1668).
+        if emptied.contains(para) {
+            continue;
+        }
+        if finals.contains(para)
+            && let Some((before, after)) = placed.get(para)
+            && let Some(&last) = after.last().or(before.last())
+        {
+            keep_final_mark(dom, node, last, stamp);
+            continue;
+        }
         // The mark of the last paragraph of a container cannot go: its
         // content joins the paragraph before it, whose mark is deleted.
         let carrier = if dom
@@ -837,6 +872,65 @@ fn coalesce_insertions(edits: &[ScheduledEdit]) -> Vec<ScheduledEdit> {
         }
     }
     emission
+}
+
+/// `last`, the final new paragraph beside the container-final `old`, takes
+/// `old`'s place and mark, as Word writes text typed over a final
+/// paragraph: `old` holds `last`'s inserted content before its own deleted
+/// content, and `last`'s properties, the old ones in a `w:pPrChange` when
+/// they differ. The other new paragraphs keep their inserted marks before it.
+fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
+    let content: Vec<NodeId> = dom
+        .nodes(last)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .collect();
+    let first = dom
+        .nodes(old)
+        .into_iter()
+        .find(|&c| !dom.name_is(c, &W::p_pr()));
+    for c in content {
+        dom.remove(c);
+        match first {
+            Some(first) => dom.add_before_self(first, c),
+            None => dom.add(old, c),
+        }
+    }
+    // The properties without the mark's own (`w:rPr`) or a change record;
+    // none at all reads as an empty `w:pPr`.
+    let bare = |dom: &Dom, paragraph: NodeId| -> Vec<NodeId> {
+        dom.element(paragraph, &W::p_pr())
+            .map(|ppr| dom.elements(ppr, None))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&child| {
+                !dom.name_is(child, &W::r_pr())
+                    && !dom.name_is(child, &W::sect_pr())
+                    && !dom.name_is(child, &W::p_pr_change())
+            })
+            .collect()
+    };
+    let text = |dom: &Dom, children: &[NodeId]| -> Vec<String> {
+        children.iter().map(|&c| dom.serialize_element(c)).collect()
+    };
+    let wanted = bare(dom, last);
+    if text(dom, &wanted) != text(dom, &bare(dom, old)) {
+        track_properties(dom, old, stamp, |dom| {
+            let ppr = paragraph_properties(dom, old);
+            for child in dom.elements(ppr, None) {
+                if !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &W::sect_pr()) {
+                    dom.remove(child);
+                }
+            }
+            for &child in &wanted {
+                dom.remove(child);
+                insert_ppr_child(dom, ppr, child);
+            }
+        });
+    }
+    dom.remove(old);
+    dom.add_after_self(last, old);
+    dom.remove(last);
 }
 
 /// Wrap a new paragraph's content in one `w:ins` and mark it inserted.
