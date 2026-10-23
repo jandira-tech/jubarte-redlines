@@ -1724,6 +1724,10 @@ fn resolve(tx: &mut Transaction<'_>, plan: &PlanV2, mapped: &[Mapped]) -> Result
             e.outcomes = tx.outcomes.clone();
             e
         })?;
+        let resolved = match operation {
+            v2::Operation::Replace { .. } => replacement_pieces(tx, i, resolved),
+            _ => resolved,
+        };
         if matches!(operation, v2::Operation::Rewrite { .. })
             && resolved.iter().any(|r| matches!(r, Resolved::Text { .. }))
         {
@@ -2240,6 +2244,68 @@ fn resolve_operation(
             Ok(vec![r])
         }
     }
+}
+/// A replacement inside one insertion as the word-level edits the redline
+/// replays it as ([`tracked::insertion_pieces`]): the clean copy then keeps
+/// the words the redline keeps, in their runs and with their formatting
+/// history (MiniMax on #1664). Its comment covers the whole match, and its
+/// pieces conflict as the whole match does.
+fn replacement_pieces(
+    tx: &mut Transaction<'_>,
+    i: usize,
+    resolved: Vec<Resolved>,
+) -> Vec<Resolved> {
+    let (para, start, end, replacement, attach_before, comment) = match resolved.as_slice() {
+        [
+            Resolved::Text {
+                para,
+                start,
+                end,
+                replacement,
+                attach_before,
+                comment,
+                format: None,
+            },
+        ] => (
+            *para,
+            *start,
+            *end,
+            replacement.clone(),
+            *attach_before,
+            comment.clone(),
+        ),
+        _ => return resolved,
+    };
+    let node = tx.paragraph_nodes[para];
+    let Some(pieces) = tracked::insertion_pieces(&tx.opened.dom, node, start, end, &replacement)
+    else {
+        return resolved;
+    };
+    if pieces == [(start, end, replacement)] {
+        return resolved;
+    }
+    tx.claims.insert(i, (para, start, end));
+    let mut out: Vec<Resolved> = pieces
+        .into_iter()
+        .map(|(start, end, replacement)| Resolved::Text {
+            para,
+            start,
+            end,
+            replacement,
+            attach_before,
+            comment: None,
+            format: None,
+        })
+        .collect();
+    if let Some(text) = comment {
+        out.push(Resolved::CommentRange {
+            para,
+            start,
+            end,
+            text,
+        });
+    }
+    out
 }
 fn comment_component(
     tx: &Transaction<'_>,

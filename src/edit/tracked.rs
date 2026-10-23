@@ -1012,11 +1012,36 @@ fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> 
     if edit.format.is_some() {
         return vec![edit.clone()];
     }
+    let Some(pieces) = insertion_pieces(dom, paragraph, edit.start, edit.end, &edit.replacement)
+    else {
+        return vec![edit.clone()];
+    };
+    pieces
+        .into_iter()
+        .map(|(start, end, replacement)| ScheduledEdit {
+            start,
+            end,
+            replacement,
+            ..edit.clone()
+        })
+        .collect()
+}
+
+/// The word-level edits, in projection offsets, that make `start..end`
+/// read as `replacement` when the range lies in one insertion; `None` when
+/// it reaches outside one, or the word diff cannot write it exactly.
+pub(super) fn insertion_pieces(
+    dom: &Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    replacement: &str,
+) -> Option<Vec<(usize, usize, String)>> {
     let projection = project_paragraph(dom, paragraph);
     let touched: Vec<_> = projection
         .segments
         .iter()
-        .filter(|s| s.start < edit.end && edit.start < s.end)
+        .filter(|s| s.start < end && start < s.end)
         .collect();
     let ins = touched
         .first()
@@ -1026,28 +1051,25 @@ fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> 
             .iter()
             .all(|s| super::editable_insertion(dom, &s.piece) == ins)
     {
-        return vec![edit.clone()];
+        return None;
     }
-    let old = &projection.text[edit.start..edit.end];
-    let ranges = super::rewrite::rewrite_ranges(old, &edit.replacement);
+    let old = &projection.text[start..end];
+    let ranges = super::rewrite::rewrite_ranges(old, replacement);
     let mut rewritten = old.to_string();
-    for (start, end, replacement) in ranges.iter().rev() {
-        rewritten.replace_range(*start..*end, replacement);
+    for (from, to, words) in ranges.iter().rev() {
+        rewritten.replace_range(*from..*to, words);
     }
     // The rewrite diff normalizes whitespace. An exact replacement still
     // has to write every requested byte, including whitespace-only edits.
-    if rewritten != edit.replacement {
-        return vec![edit.clone()];
+    if rewritten != replacement {
+        return None;
     }
-    ranges
-        .into_iter()
-        .map(|(start, end, replacement)| ScheduledEdit {
-            start: edit.start + start,
-            end: edit.start + end,
-            replacement,
-            ..edit.clone()
-        })
-        .collect()
+    Some(
+        ranges
+            .into_iter()
+            .map(|(from, to, words)| (start + from, start + to, words))
+            .collect(),
+    )
 }
 
 /// Emit one text edit: the range's runs in `w:del`, then the replacement in
