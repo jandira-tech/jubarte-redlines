@@ -329,10 +329,14 @@ fn redline(
             }
         }
     }
+    // The replay starts from the settled base: the source's ids, settled
+    // away or not, stay taken too.
+    let mut used = used_ids(&t.opened, &comments);
+    used.extend(&tx.used_revision_ids);
     let mut stamp = Stamp {
         author: &tx.plan.author,
         date: &tx.date,
-        ids: RevisionCounter::new(used_ids(&t.opened, &comments)),
+        ids: RevisionCounter::new(used),
         insertions,
     };
     let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);

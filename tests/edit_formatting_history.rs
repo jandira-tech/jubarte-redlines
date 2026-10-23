@@ -639,3 +639,29 @@ fn a_bookmark_at_the_top_of_words_range_does_not_push_ids_past_it() {
         assert!(id <= 2_147_483_647, "w:id {id} is past Word's range");
     }
 }
+
+#[test]
+fn an_id_the_settling_removed_names_no_new_record() {
+    // Accepting Alice's insertion r6 takes the source's highest id; the
+    // report names r6 as resolved, so no copy in the output may reuse it.
+    let source = docx(&format!(
+        r#"<w:p>{}<w:ins w:id="6" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>!</w:t></w:r></w:ins></w:p>"#,
+        formatted_run(5, TEXT)
+    ));
+    let mut request = json!({"schema_version":1,"author":BOB,"date":DATE,
+        "existing_revisions":"keep","resolve_revisions":{"accept":{"ids":["r6"]}}});
+    request["operations"] =
+        json!([{"kind":"comment","paragraph":"p0","find":"beta","text":"note"}]);
+    let out = apply_plan(&source, &EditPlan::from_json(&request.to_string()).unwrap())
+        .unwrap_or_else(|e| panic!("edit must succeed: {e:?}"));
+    for bytes in [&out.redline, &out.clean] {
+        let records = alice_records(bytes);
+        assert!(records.len() > 1, "the comment splits Alice's run");
+        for record in &records {
+            assert_ne!(
+                record.id, "6",
+                "a copy took the id the report names as resolved"
+            );
+        }
+    }
+}

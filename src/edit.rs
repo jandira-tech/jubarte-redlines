@@ -2667,6 +2667,9 @@ struct Transaction<'p> {
     /// fragments of a split run: none a source record uses, so the copy of
     /// another author's formatting history collides with nothing (#1656).
     revision_ids: RevisionCounter,
+    /// Every revision id the source and its settled base use. An id the
+    /// settling removed never names a new record in the same report.
+    used_revision_ids: HashSet<u64>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -2717,6 +2720,7 @@ impl<'p> Transaction<'p> {
         }
         let source_bytes = source;
         let source_comment_max = existing_comment_ids(&probe);
+        let mut used_revision_ids = tracked::used_ids(&probe, &[]);
         let Settled {
             mut base,
             mut opened,
@@ -2724,9 +2728,14 @@ impl<'p> Transaction<'p> {
             comment_changes,
             changed,
         } = settle(source, plan, probe)?;
+        let mut renumbered = false;
         if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
             base = normalized;
             opened = Opened::open(&base).map_err(open_error)?;
+            renumbered = true;
+        }
+        if changed || renumbered {
+            used_revision_ids.extend(tracked::used_ids(&opened, &[]));
         }
         let (removed_comments, kept_comments) = comment_changes.records(source)?;
         let base_sha256 = source_sha256(&base);
@@ -2772,7 +2781,7 @@ impl<'p> Transaction<'p> {
         let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
-        let revision_ids = RevisionCounter::new(tracked::used_ids(&opened, &[]));
+        let revision_ids = RevisionCounter::new(used_revision_ids.clone());
         Ok(Self {
             plan,
             revision_refusal: std::cell::RefCell::new(None),
@@ -2813,6 +2822,7 @@ impl<'p> Transaction<'p> {
             settings: None,
             written_stories: std::collections::BTreeSet::new(),
             revision_ids,
+            used_revision_ids,
         })
     }
 

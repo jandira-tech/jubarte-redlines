@@ -18,31 +18,31 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 **GitHub deliverable:** one tracking issue titled **`[0.13][Urgent] Fix reproduced revision corruption and remaining benchmark regressions`**, labeled `bug` and `Urgent`, with the tasks and corrected evidence below. Link existing owners, including #1250 and the closed #1153 follow-up.
 
-The document and issue have not been saved or published because Plan mode prohibits those mutations.
+The tracking issue is #1656. Each task below lands as its own pull request, stacked on the one before.
 
 ## 2. P0 — Revision identity, history preservation and publication
 
 ### Task 1: reproduce formatting-history corruption deterministically
 
-- [ ] Add `tests/edit_formatting_history.rs`, using the existing in-memory DOCX builder.
-- [ ] Construct a run containing current formatting plus Alice’s `rPrChange`, with fixed author/date and recorded old properties.
-- [ ] Cover replacement and insertion inside that run, both outside and inside Alice’s tracked insertion.
-- [ ] Include insertions exactly at run boundaries as negative controls.
-- [ ] Cover comment anchoring that splits the same run, multiple splits in one transaction, and non-ASCII text.
-- [ ] Assert unique revision IDs, preserved attribution and old properties, expected accepted text, and restoration of original history after rejecting only Bob’s edits.
+- [x] Add `tests/edit_formatting_history.rs`, using the existing in-memory DOCX builder.
+- [x] Construct a run containing current formatting plus Alice’s `rPrChange`, with fixed author/date and recorded old properties.
+- [x] Cover replacement and insertion inside that run, both outside and inside Alice’s tracked insertion.
+- [x] Include insertions exactly at run boundaries as negative controls.
+- [x] Cover comment anchoring that splits the same run, multiple splits in one transaction, and non-ASCII text.
+- [x] Assert unique revision IDs, preserved attribution and old properties, expected accepted text, and restoration of original history after rejecting only Bob’s edits.
 
-Retain the five supplied plans as integration reproductions: ops 0, 1 and 4 currently fail validation; controls 2 and 3 pass.
+Retain the five supplied plans as integration reproductions. Before task 2, ops 0, 1 and 4 failed validation with `DUPLICATE_REVISION_ID` and `FOREIGN_AUTHOR`. After task 2 only `FOREIGN_AUTHOR` remains: the history audit compares formatting records by id, so a copy's fresh id looks like new foreign history until task 3 (#1659). Controls 2 and 3 pass.
 
 ### Task 2: allocate IDs when retained runs split
 
 Change the private run-splitting helpers in `src/edit.rs` and their tracked-emission callers.
 
-- [ ] Thread a transaction-owned monotonic revision counter through helpers that retain both fragments.
-- [ ] Seed it above existing annotation IDs, using the repository’s existing allocation helpers.
-- [ ] Keep the original formatting record’s ID on the original fragment; allocate fresh IDs to formatting records copied onto retained fragments.
-- [ ] Preserve author, date and recorded property payload on those fragments.
-- [ ] Continue using cleaned run properties for newly authored text, so it cannot acquire another author’s formatting history.
-- [ ] Update all callers, including comment-range splitting and typed editing, rather than fixing only the reported replace path.
+- [x] Thread a transaction-owned monotonic revision counter through helpers that retain both fragments.
+- [x] Seed it above existing annotation IDs, using the repository’s existing allocation helpers.
+- [x] Keep the original formatting record’s ID on the original fragment; allocate fresh IDs to formatting records copied onto retained fragments.
+- [x] Preserve author, date and recorded property payload on those fragments.
+- [ ] Continue using cleaned run properties for newly authored text, so it cannot acquire another author’s formatting history. Not done by the split's fresh ids: owned by #1658.
+- [x] Update all callers, including comment-range splitting and typed editing, rather than fixing only the reported replace path.
 
 Do not settle foreign revisions, discard their history, or attribute their retained history to the reviewing author.
 
@@ -141,12 +141,12 @@ Implement in this order: **regressions → ID allocation → history comparison 
 
 For each behavioral change, demonstrate the new regression failing before the fix and passing afterward. Use in-memory fixtures for deterministic tests; filesystem and CLI probes belong in integration tests.
 
-Run Cargo commands sequentially through mbx:
+Run Cargo commands sequentially. Plain `cargo` goes through mbx's shim (AGENTS.md); the coverage run needs the nightly toolchain:
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo llvm-cov nextest --branch \
+cargo clippy --all-targets --all-features -- -D warnings
+cargo +nightly llvm-cov nextest --branch \
   --test edit_formatting_history \
   --test edit_inside_insertion \
   --test edit_empty_paragraph \
