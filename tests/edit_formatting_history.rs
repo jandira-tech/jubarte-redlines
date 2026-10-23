@@ -7,7 +7,7 @@
 //! Alice made a run bold (`w:rPrChange`, italic before). Bob's edit splits
 //! that run. Each retained fragment keeps Alice's record, under an id of
 //! its own; the first fragment keeps the original id. Bob's own text never
-//! carries Alice's history.
+//! carries Alice's history, in the redline or the clean copy (#1658).
 mod common;
 
 use common::docx::{Part, docx, docx_with_sect, part_string};
@@ -61,15 +61,16 @@ fn plan(operations: Value) -> EditPlan {
 /// Bob's edit; both outputs must hold unique revision ids, and the
 /// redline must hold Alice's history as she wrote it.
 fn edit(source: &[u8], operations: Value) -> Vec<u8> {
+    let new = new_words(&operations);
     let out = apply_plan(source, &plan(operations));
     let out = out.unwrap_or_else(|e| panic!("edit must succeed: {e:?}"));
     for bytes in [&out.redline, &out.clean] {
         assert_unique_ids(bytes);
         assert_validates(bytes);
+        assert_only_alices_words(&alice_records(bytes), &new);
     }
     let audit = audit_tracked(source, &out.redline, BOB).unwrap();
     assert!(audit.is_empty(), "the edits audit: {audit:#?}");
-    alice_records(&out.clean);
     out.redline
 }
 
@@ -128,6 +129,13 @@ fn assert_unique_ids(bytes: &[u8]) {
 }
 
 fn assert_validates(bytes: &[u8]) {
+    let (passed, report) = validate_report(bytes);
+    assert!(passed, "validate must pass: {report}");
+    assert!(!report.contains("DUPLICATE_REVISION_ID"), "{report}");
+}
+
+/// Whether `jubarte validate` passes `bytes`, and its report.
+fn validate_report(bytes: &[u8]) -> (bool, String) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("out.docx");
     std::fs::write(&path, bytes).unwrap();
@@ -141,8 +149,7 @@ fn assert_validates(bytes: &[u8]) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "validate must pass: {report}");
-    assert!(!report.contains("DUPLICATE_REVISION_ID"), "{report}");
+    (out.status.success(), report)
 }
 
 /// One formatting record: its id and the text of the run it sits on.
@@ -200,6 +207,34 @@ fn alice_records(bytes: &[u8]) -> Vec<Record> {
         });
     }
     out
+}
+
+/// The words Bob's operations write.
+fn new_words(operations: &Value) -> Vec<String> {
+    operations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|op| matches!(op["kind"].as_str(), Some("replace" | "insert")))
+        .filter_map(|op| op["replacement"].as_str().or(op["text"].as_str()))
+        .filter(|words| !words.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// None of Alice's records sits on Bob's new words, in either output
+/// (#1658).
+fn assert_only_alices_words(records: &[Record], new: &[String]) {
+    for record in records {
+        for words in new {
+            assert!(
+                !record.text.contains(words.as_str()),
+                "r{} covers Bob's {words:?}: {:?}",
+                record.id,
+                record.text
+            );
+        }
+    }
 }
 
 /// The text Alice's records sit on, in document order, deleted text
@@ -676,6 +711,27 @@ fn edit_v2(
     source: &[u8],
     operations: impl Fn(&Value) -> Value,
 ) -> jubarte::edit::v2_apply::V2EditResult {
+    let out = try_edit_v2(source, operations);
+    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
+    out
+}
+
+/// Bob's typed edit, its target the generated plan's first paragraph.
+fn try_edit_v2(
+    source: &[u8],
+    operations: impl Fn(&Value) -> Value,
+) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
+    try_edit_v2_tracking(source, "on", operations)
+}
+
+/// [`try_edit_v2`] with the plan's `track` policy.
+fn try_edit_v2_tracking(
+    source: &[u8],
+    track: &str,
+    operations: impl Fn(&Value) -> Value,
+) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
     use jubarte::edit::{
         for_edit::ForEditRequest,
         template::{TemplateRequest, generate},
@@ -693,11 +749,8 @@ fn edit_v2(
     .unwrap();
     let mut q: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
     q["operations"] = operations(&q["operations"][0]["target"]);
-    let out = v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap());
-    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
-    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
-    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
-    out
+    q["policy"]["track"] = json!(track);
+    v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap())
 }
 
 #[test]
@@ -714,4 +767,718 @@ fn a_typed_comment_that_splits_the_run_keeps_alices_history() {
     assert!(records.len() > 1, "the comment splits Alice's run");
     assert_eq!(records[0].id, "5");
     assert_eq!(covered(&records), TEXT);
+}
+
+#[test]
+fn a_typed_replacement_that_splits_the_run_keeps_alices_history() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"replace","target":target,"find":"beta","text":"new"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let records = alice_records(&out.redline);
+    assert_eq!(records[0].id, "5");
+    assert_eq!(covered(&records), TEXT);
+    assert_eq!(accepted(&out.redline), "[alpha new gamma]");
+}
+
+/// Every run formatting record's id and the text of its run, in document order.
+fn formatting_records(bytes: &[u8]) -> Vec<(String, String)> {
+    let (dom, root) = dom(bytes);
+    dom.descendants(root, Some(&W::name("rPrChange")))
+        .into_iter()
+        .filter_map(|change| {
+            // A paragraph mark's record sits in no run.
+            let run = dom
+                .ancestors(change, None)
+                .into_iter()
+                .find(|&a| dom.name_is(a, &W::r()))?;
+            let text = dom
+                .descendants(run, None)
+                .into_iter()
+                .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+                .map(|n| dom.value(n))
+                .collect();
+            Some((dom.attribute(change, &W::id()).unwrap().to_string(), text))
+        })
+        .collect()
+}
+
+#[test]
+fn editing_ones_own_insertion_keeps_new_words_out_of_alices_record() {
+    // Bob inserted the words; Alice then formatted them. Bob's replacement
+    // inside his own insertion is a correction of it, but his new word is
+    // not text Alice formatted.
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:ins w:id="6" w:author="{BOB}" w:date="{OLD}">{}</w:ins><w:r><w:t>]</w:t></w:r></w:p>"#,
+        formatted_run(7, TEXT)
+    ));
+    let out = apply_plan(&source, &plan(replace("beta", "new"))).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        let records = formatting_records(bytes);
+        assert_eq!(records[0].0, "7", "the first fragment keeps the id");
+        for (id, text) in &records {
+            assert!(
+                !text.contains("new"),
+                "r{id} covers Bob's new word: {text:?}"
+            );
+        }
+    }
+    assert_eq!(accepted(&out.redline), "[alpha new gamma]");
+}
+
+#[test]
+fn new_words_in_a_run_without_a_record_stay_in_that_run() {
+    let source = docx(
+        r#"<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">alpha beta gamma</w:t></w:r></w:p>"#,
+    );
+    let out = apply_plan(&source, &plan(insert("alpha", " new"))).unwrap();
+    let (dom, root) = dom(&out.clean);
+    let runs = dom.descendants(root, Some(&W::r()));
+    assert_eq!(runs.len(), 1, "{}", dom.serialize_element(root));
+    assert_eq!(text(&out.clean), "alpha new beta gamma");
+}
+
+/// `(id, text)` pairs, for comparing with [`formatting_records`].
+fn pairs(records: &[(&str, &str)]) -> Vec<(String, String)> {
+    records
+        .iter()
+        .map(|&(id, text)| (id.to_string(), text.to_string()))
+        .collect()
+}
+
+#[test]
+fn new_words_at_the_start_of_alices_run_leave_her_id_on_her_words() {
+    // The split leaves the original run with Bob's word and copies the
+    // rest off it: Alice's words, in the copy, keep her record's id.
+    let source = outside(TEXT);
+    edit(&source, replace("alpha", "new"));
+    let out = apply_plan(&source, &plan(replace("alpha", "new"))).unwrap();
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", " beta gamma")])
+    );
+    assert_eq!(
+        formatting_records(&out.redline)[0],
+        pairs(&[("5", "alpha")])[0]
+    );
+}
+
+#[test]
+fn a_typed_replacement_of_alices_first_words_keeps_her_history() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"replace","target":target,"find":"alpha","text":"new"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_only_alices_words(&alice_records(bytes), &["new".to_string()]);
+    }
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", " beta gamma")])
+    );
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+}
+
+#[test]
+fn a_typed_replacement_of_all_of_alices_words_takes_her_record_out_of_the_clean_copy() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"replace","target":target,"find":TEXT,"text":"new"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_only_alices_words(&alice_records(bytes), &["new".to_string()]);
+    }
+    assert!(formatting_records(&out.clean).is_empty());
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[new]");
+}
+
+#[test]
+fn a_typed_insertion_inside_alices_run_keeps_her_history() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"insert","target":target,"text":" new","after_text":"alpha"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_only_alices_words(&alice_records(bytes), &["new".to_string()]);
+    }
+    assert_eq!(covered(&alice_records(&out.clean)), TEXT);
+    assert_eq!(formatting_records(&out.clean)[0].0, "5");
+    assert_eq!(accepted(&out.redline), "[alpha new beta gamma]");
+}
+
+/// Alice's run r5 with its words in two `w:t`: `aa` and ` bb`.
+fn two_texts() -> String {
+    formatted_run(5, "aa").replace(
+        "</w:t></w:r>",
+        r#"</w:t><w:t xml:space="preserve"> bb</w:t></w:r>"#,
+    )
+}
+
+#[test]
+fn new_words_that_end_where_a_text_ends_leave_the_next_text_its_record() {
+    let source = docx(&format!("<w:p>{}</w:p>", two_texts()));
+    edit(&source, replace("aa", "XX"));
+    let out = apply_plan(&source, &plan(replace("aa", "XX"))).unwrap();
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " bb")]));
+    assert_eq!(covered(&alice_records(&out.redline)), "aa bb");
+    let typed = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"aa","text":"XX"}]),
+    );
+    assert_eq!(formatting_records(&typed.clean), pairs(&[("5", " bb")]));
+}
+
+/// Alice's run `text` (none: no `w:t`) with a tab after it, then `]`.
+fn text_and_tab(text: &str) -> Vec<u8> {
+    let run = formatted_run(5, text)
+        .replace(r#"<w:t xml:space="preserve"></w:t>"#, "")
+        .replace("</w:t></w:r>", "</w:t><w:tab/></w:r>")
+        .replace("</w:rPr></w:r>", "</w:rPr><w:tab/></w:r>");
+    docx(&format!("<w:p>{run}<w:r><w:t>]</w:t></w:r></w:p>"))
+}
+
+#[test]
+fn new_words_after_a_tab_leave_alices_record_on_her_run() {
+    // The new words go in a `w:t` of their own beside the tab, inside
+    // Alice's run: the run splits there, and only they lose the record.
+    for (words, after) in [("alpha", "alpha\t"), ("", "\t")] {
+        let source = text_and_tab(words);
+        let operations = insert(after, " new");
+        edit(&source, operations.clone());
+        let out = apply_plan(&source, &plan(operations)).unwrap();
+        assert_eq!(formatting_records(&out.clean), pairs(&[("5", words)]));
+        let typed = edit_v2(
+            &source,
+            |target| json!([{"kind":"insert","target":target,"text":" new","after_text":after}]),
+        );
+        assert_eq!(formatting_records(&typed.clean), pairs(&[("5", words)]));
+    }
+}
+
+#[test]
+fn a_correction_of_ones_own_insertion_leaves_the_next_text_its_record() {
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="{BOB}" w:date="{OLD}">{}</w:ins></w:p>"#,
+        two_texts()
+    ));
+    let out = apply_plan(&source, &plan(replace("aa", "XX"))).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(formatting_records(bytes), pairs(&[("5", " bb")]));
+    }
+}
+
+#[test]
+fn a_rewrite_of_two_words_takes_both_out_of_alices_record() {
+    // Two fragments of one operation, around a two-byte character: each
+    // is cleaned where it landed.
+    let source = docx(&format!("<w:p>{}</w:p>", formatted_run(5, "aa é bb tail")));
+    let operations = json!([{"kind":"rewrite","paragraph":"p0","text":"XXXX é YY tail"}]);
+    edit(&source, operations.clone());
+    let out = apply_plan(&source, &plan(operations)).unwrap();
+    assert_eq!(text(&out.clean), "XXXX é YY tail");
+    assert_only_alices_words(
+        &alice_records(&out.clean),
+        &["XXXX".to_string(), "YY".to_string()],
+    );
+    assert_eq!(covered(&alice_records(&out.clean)), " é  tail");
+}
+
+/// The local names of `run`'s properties.
+fn property_names(dom: &Dom, run: NodeId) -> Vec<String> {
+    dom.element(run, &W::r_pr())
+        .map(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .filter_map(|n| dom.name(n).map(|q| q.local_name().to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn new_words_beside_a_run_without_text_leave_that_run_alone() {
+    // A run holding only Word's rendered page break projects no text: it
+    // is no copy of Alice's run, and her record never moves onto it.
+    let other = r#"<w:r><w:rPr><w:sz w:val="28"/></w:rPr><w:lastRenderedPageBreak/></w:r>"#;
+    let source = docx(&format!(
+        r#"<w:p>{}{other}<w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
+        formatted_run(5, "alpha")
+    ));
+    let typed = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha","text":"new"}]),
+    );
+    let out = apply_plan(&source, &plan(replace("alpha", "new"))).unwrap();
+    for bytes in [&out.clean, &typed.clean] {
+        assert!(formatting_records(bytes).is_empty());
+        let (dom, root) = dom(bytes);
+        let br = dom.descendants(root, Some(&W::name("lastRenderedPageBreak")))[0];
+        assert_eq!(property_names(&dom, dom.parent(br).unwrap()), ["sz"]);
+        let new = dom
+            .descendants(root, Some(&W::t()))
+            .into_iter()
+            .find(|&t| dom.value(t) == "new")
+            .unwrap();
+        assert_eq!(property_names(&dom, dom.parent(new).unwrap()), ["b"]);
+    }
+}
+
+#[test]
+fn new_words_take_no_empty_properties() {
+    // Alice's record is the run's only property.
+    let source = docx(&format!(
+        "<w:p>{}</w:p>",
+        formatted_run(5, TEXT).replace("<w:b/>", "")
+    ));
+    let out = apply_plan(&source, &plan(replace("alpha", "new"))).unwrap();
+    let (dom, root) = dom(&out.clean);
+    let new = dom
+        .descendants(root, Some(&W::t()))
+        .into_iter()
+        .find(|&t| dom.value(t) == "new")
+        .unwrap();
+    assert!(dom.element(dom.parent(new).unwrap(), &W::r_pr()).is_none());
+}
+
+#[test]
+fn two_adjacent_replacements_of_alices_first_words_leave_her_id_on_the_rest() {
+    // Applied last to first: the second replacement leaves the id on
+    // "alpha" and copies " gamma" off with a fresh one; the first then
+    // takes "alpha" too, and the id moves on to Alice's words, as one
+    // replacement of "alpha beta" moves it (Codex on #1664).
+    let out = edit_v2(&outside(TEXT), |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[A B gamma]");
+    let operations = json!([
+        {"kind":"replace","paragraph":"p0","find":"alpha","replacement":"A"},
+        {"kind":"replace","paragraph":"p0","find":" beta","replacement":" B"}
+    ]);
+    // v1 diffs " beta" against " B": the space stays Alice's, between
+    // Bob's words, and keeps the id; " gamma" is a fragment of its own.
+    edit(&outside(TEXT), operations.clone());
+    let v1 = apply_plan(&outside(TEXT), &plan(operations)).unwrap();
+    let records = formatting_records(&v1.clean);
+    assert_eq!(records[0], pairs(&[("5", " ")])[0], "{records:?}");
+    assert_eq!(
+        records
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>(),
+        [" ", " gamma"]
+    );
+}
+
+#[test]
+fn a_typed_deletion_of_all_of_alices_words_takes_her_record_out_of_the_clean_copy() {
+    // No words left, no record: an empty run keeps no formatting history
+    // (Codex on #1664).
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"delete","target":target,"find":TEXT}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert!(
+        formatting_records(&out.clean).is_empty(),
+        "{:?}",
+        formatting_records(&out.clean)
+    );
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[]");
+}
+
+#[test]
+fn a_deletion_of_alices_first_words_after_a_split_leaves_her_id_on_the_rest() {
+    // The replacement, applied first, copies " gamma" off with a fresh id;
+    // the deletion then empties "alpha": the id moves on to Alice's words
+    // (Codex on #1664, round 5).
+    let out = edit_v2(&outside(TEXT), |target| {
+        json!([
+            {"kind":"delete","target":target,"find":"alpha"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
+    assert_eq!(covered(&alice_records(&out.redline)), TEXT);
+    assert_eq!(accepted(&out.redline), "[ B gamma]");
+}
+
+#[test]
+fn a_deletion_that_leaves_a_page_break_leaves_it_alices_record() {
+    // A page break is content the record covers; deleting the words
+    // before it does not take the record off it (Codex on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>abc</w:t><w:br w:type="page"/></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let out = apply_plan(
+        &source,
+        &plan(json!([{"kind":"delete","paragraph":"p0","find":"abc"}])),
+    )
+    .unwrap();
+    let (dom, root) = dom(&out.clean);
+    let breaks = dom.descendants(root, Some(&W::name("br")));
+    assert_eq!(breaks.len(), 1);
+    let run = dom.parent(breaks[0]).unwrap();
+    let rpr = dom
+        .element(run, &W::name("rPr"))
+        .expect("the break's run keeps its properties");
+    let record = dom.element(rpr, &W::name("rPrChange"));
+    assert!(
+        record.is_some_and(|r| dom.attribute(r, &W::id()) == Some("5")),
+        "{}",
+        dom.serialize_element(run)
+    );
+}
+
+#[test]
+fn a_handed_on_id_keeps_its_spelling() {
+    // `w:id="005"`: the id that moves on to Alice's words is the source's,
+    // as it is spelled (Codex on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:t>[</w:t></w:r><w:r><w:rPr><w:b/><w:rPrChange w:id="005" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{TEXT}</w:t></w:r><w:r><w:t>]</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    assert_eq!(formatting_records(&out.clean), pairs(&[("005", " gamma")]));
+}
+
+/// Alice's insertion: her formatted run `alpha beta` (record `w:id` 5) and
+/// a plain run ` gamma`.
+fn alices_two_runs() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}">{}<w:r><w:t xml:space="preserve"> gamma</w:t></w:r></w:ins></w:p>"#,
+        formatted_run(5, "alpha beta")
+    ))
+}
+
+/// Alice's formatting records once Bob's changes are accepted.
+fn bob_accepted(redline: &[u8]) -> Vec<(String, String)> {
+    let filter = ChangeFilter {
+        authors: Some(vec![BOB.to_string()]),
+        ..ChangeFilter::default()
+    };
+    formatting_records(&accept_changes(redline, &filter).unwrap())
+}
+
+/// The text between the paragraph's comment range markers.
+fn commented(bytes: &[u8]) -> String {
+    let (dom, root) = dom(bytes);
+    let mut inside = false;
+    let mut out = String::new();
+    for node in dom.descendants(root, None) {
+        if dom.name_is(node, &W::name("commentRangeStart")) {
+            inside = true;
+        } else if dom.name_is(node, &W::name("commentRangeEnd")) {
+            inside = false;
+        } else if inside && dom.name_is(node, &W::t()) {
+            out.push_str(&dom.value(node));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_typed_replacement_inside_alices_insertion_leaves_her_record_on_the_words_it_keeps() {
+    // The redline replays the replacement word by word inside Alice's
+    // insertion: `alpha beta` stays her run, with her record. The clean
+    // copy keeps the same words, and so her record (MiniMax on #1664).
+    let source = alices_two_runs();
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(bob_accepted(&out.redline), pairs(&[("5", "alpha beta")]));
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", "alpha beta")])
+    );
+    assert_eq!(text(&out.clean), "alpha beta delta");
+    let v1 = apply_plan(&source, &plan(replace(TEXT, "alpha beta delta"))).unwrap();
+    assert_eq!(formatting_records(&v1.clean), pairs(&[("5", "alpha beta")]));
+}
+
+#[test]
+fn a_typed_replacement_with_a_comment_inside_alices_insertion_comments_all_its_words() {
+    let out = edit_v2(&alices_two_runs(), |target| {
+        json!([{"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta",
+            "attached_comment":{"text":"why"}}])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(commented(&out.clean), "alpha beta delta");
+    assert_eq!(commented(&out.redline), "alpha beta delta");
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", "alpha beta")])
+    );
+    assert_eq!(bob_accepted(&out.redline), pairs(&[("5", "alpha beta")]));
+}
+
+#[test]
+fn typed_replacements_inside_one_insertion_that_overlap_still_conflict() {
+    // The first replacement writes back `alpha beta` and changes `gamma`;
+    // the second changes `beta`. Their found texts overlap.
+    let Err(error) = try_edit_v2(&alices_two_runs(), |target| {
+        json!([
+            {"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta"},
+            {"kind":"replace","target":target,"find":"beta","text":"BETA"}
+        ])
+    }) else {
+        panic!("overlapping replacements conflict");
+    };
+    assert_eq!(error.code, "CONFLICT", "{error:?}");
+}
+
+#[test]
+fn a_record_left_on_a_tab_keeps_its_id() {
+    // Alice's record covers `a` and the tab after it. Bob's new words take
+    // `a`; the tab is what the record still covers, and it keeps the id
+    // (MiniMax on #1664, round 5).
+    let source = docx(&format!(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>a</w:t><w:tab/></w:r></w:p>"#
+    ));
+    let out = apply_plan(&source, &plan(replace("a", "xy"))).unwrap();
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let (dom, root) = dom(&out.clean);
+    let tabs = dom.descendants(root, Some(&W::name("tab")));
+    let run = dom.parent(tabs[0]).unwrap();
+    let record = dom
+        .element(run, &W::r_pr())
+        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()));
+    assert!(
+        record.is_some_and(|r| dom.attribute(r, &W::id()) == Some("5")),
+        "{}",
+        dom.serialize_element(run)
+    );
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", "")]));
+}
+
+#[test]
+fn a_paragraph_marks_record_with_the_same_id_does_not_hold_alices_id_back() {
+    // The paragraph mark's record shares w:id 5 with the run's: only run
+    // records hold the run's lineage, so the id still moves on to Alice's
+    // words (glm on #1664, round 5).
+    let mark = format!(
+        r#"<w:pPr><w:rPr><w:rPrChange w:id="5" w:author="{ALICE}" w:date="{OLD}"><w:rPr/></w:rPrChange></w:rPr></w:pPr>"#
+    );
+    let source = docx(&format!(
+        r#"<w:p>{mark}<w:r><w:t>[</w:t></w:r>{}<w:r><w:t>]</w:t></w:r></w:p>"#,
+        formatted_run(5, TEXT)
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha","text":"A"},
+            {"kind":"replace","target":target,"find":" beta","text":" B"}
+        ])
+    });
+    // The mark and the run share an id in the source already: the outputs
+    // keep that duplicate and add none.
+    let duplicates = |bytes: &[u8]| {
+        validate_report(bytes)
+            .1
+            .matches("DUPLICATE_REVISION_ID")
+            .count()
+    };
+    assert_eq!(duplicates(&source), 1);
+    for bytes in [&out.redline, &out.clean] {
+        assert_eq!(duplicates(bytes), 1, "{}", validate_report(bytes).1);
+    }
+    assert_eq!(formatting_records(&out.clean), pairs(&[("5", " gamma")]));
+}
+
+#[test]
+fn a_typed_replacement_of_alices_first_words_inside_her_insertion_agrees_in_both_outputs() {
+    // One formatted run inside Alice's insertion; the replacement keeps
+    // `alpha `: the clean copy keeps her record where the accepted redline
+    // does (crush on #1664, round 5).
+    let out = edit_v2(
+        &inside(TEXT),
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"alpha new"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(text(&out.clean), "[alpha new gamma]");
+    let clean = formatting_records(&out.clean);
+    assert_eq!(bob_accepted(&out.redline), clean);
+    assert_eq!(covered(&alice_records(&out.clean)), "alpha  gamma");
+    assert_eq!(clean[0], pairs(&[("7", "alpha ")])[0], "{clean:?}");
+}
+
+#[test]
+fn an_untracked_correction_of_ones_own_insertion_keeps_alices_record_on_the_words_it_keeps() {
+    // Bob corrects his own insertion, which holds Alice's formatted run.
+    // Untracked, the typed replacement splits word by word as the tracked
+    // replay does: ` beta ` stays Alice's, with her record, as in v1
+    // (#1662's untracked acceptance). The tracked plan is #1662 itself.
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="6" w:author="{BOB}" w:date="{OLD}">{}</w:ins></w:p>"#,
+        formatted_run(7, TEXT)
+    ));
+    let out = try_edit_v2_tracking(
+        &source,
+        "off",
+        |target| json!([{"kind":"replace","target":target,"find":TEXT,"text":"X beta Y"}]),
+    )
+    .unwrap();
+    assert_validates(&out.clean);
+    assert_eq!(text(&out.clean), "X beta Y");
+    assert_eq!(formatting_records(&out.clean), pairs(&[("7", " beta ")]));
+    let v1 = apply_plan(&source, &plan(replace(TEXT, "X beta Y"))).unwrap();
+    assert_eq!(
+        formatting_records(&v1.clean),
+        formatting_records(&out.clean)
+    );
+}
+
+/// Alice's insertion `alpha beta`, after `before` (raw XML) in one paragraph.
+fn alices_insertion_after(before: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p>{before}<w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins></w:p>"#
+    ))
+}
+
+/// The text of the runs inside `ancestor` elements (`w:hyperlink`,
+/// `w:moveTo`).
+fn text_under(bytes: &[u8], ancestor: &str) -> String {
+    let (dom, root) = dom(bytes);
+    dom.descendants(root, Some(&W::t()))
+        .into_iter()
+        .filter(|&t| {
+            dom.ancestors(t, None)
+                .into_iter()
+                .any(|a| dom.name_is(a, &W::name(ancestor)))
+        })
+        .map(|t| dom.value(t))
+        .collect()
+}
+
+#[test]
+fn a_typed_replacements_comment_holds_its_new_edge_words_in_both_outputs() {
+    // The word diff leaves `new ` or ` new` as an insertion at the match's
+    // edge; the comment holds it in the redline as in the clean copy (codex,
+    // glm-5.3, MiniMax and crush on #1664, round 6).
+    for replacement in ["new alpha beta", "alpha beta new"] {
+        let out = edit_v2(&alices_insertion_after(""), |target| {
+            json!([{"kind":"replace","target":target,"find":"alpha beta","text":replacement,
+                "attached_comment":{"text":"why"}}])
+        });
+        for bytes in [&out.redline, &out.clean] {
+            assert_unique_ids(bytes);
+            assert_validates(bytes);
+        }
+        assert_eq!(commented(&out.clean), replacement);
+        assert_eq!(commented(&out.redline), replacement);
+    }
+}
+
+#[test]
+fn a_typed_replacements_new_first_words_stay_out_of_the_hyperlink_before_it() {
+    // A hyperlink ends where the match starts: the new first words go
+    // inside Alice's insertion, as v1 puts them (codex, glm-5.3 and MiniMax
+    // on #1664, round 6).
+    let source = alices_insertion_after(
+        r#"<w:bookmarkStart w:id="0" w:name="dest"/><w:bookmarkEnd w:id="0"/><w:hyperlink w:anchor="dest"><w:r><w:t>L</w:t></w:r></w:hyperlink>"#,
+    );
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"new alpha beta"}]),
+    );
+    let v1 = apply_plan(&source, &plan(replace("alpha beta", "new alpha beta"))).unwrap();
+    for bytes in [&out.redline, &out.clean, &v1.redline, &v1.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(text_under(bytes, "hyperlink"), "L");
+    }
+    assert_eq!(text(&out.clean), "Lnew alpha beta");
+    assert_eq!(accepted(&out.redline), text(&out.clean));
+}
+
+#[test]
+fn a_typed_replacements_new_first_words_stay_out_of_the_move_before_it() {
+    // Carol's moved text ends where the match starts: the new first words
+    // go inside Alice's insertion, not into Carol's move (glm-5.3 on #1664,
+    // round 6).
+    let source = docx(&format!(
+        r#"<w:p><w:moveToRangeStart w:id="1" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveTo w:id="2" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="1"/><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins></w:p><w:p><w:moveFromRangeStart w:id="3" w:author="Carol" w:date="{OLD}" w:name="move1"/><w:moveFrom w:id="4" w:author="Carol" w:date="{OLD}"><w:r><w:t>M</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="3"/><w:r><w:t>tail</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":"alpha beta","text":"new alpha beta"}]),
+    );
+    let v1 = apply_plan(&source, &plan(replace("alpha beta", "new alpha beta"))).unwrap();
+    for bytes in [&out.redline, &out.clean, &v1.redline, &v1.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+        assert_eq!(text_under(bytes, "moveTo"), "M");
+    }
+    assert_eq!(accepted(&out.redline), text(&out.clean));
+}
+
+#[test]
+fn a_split_typed_replacement_claims_its_whole_match_at_a_boundary() {
+    // The replacement keeps `alpha beta` and adds ` delta` at its end; a
+    // second operation inserts at that end, on the other side. The whole
+    // match is the first operation's claim, which the insertion only
+    // touches, as before the split (MiniMax on #1664, round 6).
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}"><w:r><w:t>alpha beta</w:t></w:r></w:ins><w:r><w:t>gamma</w:t></w:r></w:p>"#
+    ));
+    let out = edit_v2(&source, |target| {
+        json!([
+            {"kind":"replace","target":target,"find":"alpha beta","text":"alpha beta delta"},
+            {"kind":"insert","target":target,"text":"Y","before_text":"gamma"}
+        ])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(text(&out.clean), "alpha beta deltaYgamma");
+    assert_eq!(accepted(&out.redline), text(&out.clean));
 }

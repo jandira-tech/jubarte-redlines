@@ -455,7 +455,7 @@ fn properties(name: &XName) -> bool {
 
 /// One character per visible element that is not text: what a run holding
 /// a tab, a break or a drawing covers.
-fn atom(name: &XName) -> Option<char> {
+pub(crate) fn atom(name: &XName) -> Option<char> {
     if name.namespace_name() != W::URI {
         return None;
     }
@@ -470,6 +470,30 @@ fn atom(name: &XName) -> Option<char> {
         "instrText" | "delInstrText" => '\u{E001}',
         _ => return None,
     })
+}
+
+/// Whether `run` covers any character [`run_characters`] counts: text
+/// outside its properties, or an atom ([`atom`]).
+pub(crate) fn run_has_characters(dom: &Dom, run: NodeId) -> bool {
+    let (t, del_text) = (W::t(), W::del_text());
+    let mut pending: Vec<NodeId> = dom.elements(run, None);
+    while let Some(node) = pending.pop() {
+        let Some(name) = dom.name(node) else {
+            continue;
+        };
+        if properties(&name) {
+            continue;
+        }
+        if dom.name_is(node, &t) || dom.name_is(node, &del_text) {
+            if !dom.value(node).is_empty() {
+                return true;
+            }
+        } else if atom(&name).is_some() {
+            return true;
+        }
+        pending.extend(dom.elements(node, None));
+    }
+    false
 }
 
 /// What each run covers in its story paragraph: the characters of its

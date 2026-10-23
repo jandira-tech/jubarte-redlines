@@ -21,9 +21,9 @@ use super::visible;
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounter,
     RevisionCounts, ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span,
-    apply_run_format, apply_text_edit, attach_segment, build_paragraph, format_paragraph,
-    insert_ppr_child, new_position, place_reply_markers, remove_comment_markers, runs_in_range,
-    set_text, split_run_at, toc_paragraphs,
+    apply_run_format, apply_text_edit, attach_segment, build_paragraph, comment_bounds,
+    format_paragraph, insert_ppr_child, new_position, place_reply_markers, remove_comment_markers,
+    runs_in_range, set_text, split_run_at, toc_paragraphs,
 };
 use crate::changes::{list_changes, list_logical_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -564,6 +564,13 @@ fn emit(
                     &edit.replacement,
                     edit.attach_before,
                 );
+                super::clean_new_words(
+                    dom,
+                    node,
+                    edit.start,
+                    edit.start + edit.replacement.len(),
+                    &mut stamp.ids,
+                );
             } else {
                 let pieces = if matches!(
                     t.plan.operations[edit.op].kind,
@@ -586,8 +593,7 @@ fn emit(
             }
         }
         for (start, end, i) in comment_ranges.remove(&para).unwrap_or_default() {
-            let s = new_position(&edits, start, true, None);
-            let e = new_position(&edits, end, false, None);
+            let (s, e) = comment_bounds(&edits, start, end, i);
             pending.push((s, e, i));
         }
         pending.sort_by_key(|&(s, _, i)| (s, i));
@@ -1005,11 +1011,36 @@ fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> 
     if edit.format.is_some() {
         return vec![edit.clone()];
     }
+    let Some(pieces) = insertion_pieces(dom, paragraph, edit.start, edit.end, &edit.replacement)
+    else {
+        return vec![edit.clone()];
+    };
+    pieces
+        .into_iter()
+        .map(|(start, end, replacement)| ScheduledEdit {
+            start,
+            end,
+            replacement,
+            ..edit.clone()
+        })
+        .collect()
+}
+
+/// The word-level edits, in projection offsets, that make `start..end`
+/// read as `replacement` when the range lies in one insertion; `None` when
+/// it reaches outside one, or the word diff cannot write it exactly.
+pub(super) fn insertion_pieces(
+    dom: &Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    replacement: &str,
+) -> Option<Vec<(usize, usize, String)>> {
     let projection = project_paragraph(dom, paragraph);
     let touched: Vec<_> = projection
         .segments
         .iter()
-        .filter(|s| s.start < edit.end && edit.start < s.end)
+        .filter(|s| s.start < end && start < s.end)
         .collect();
     let ins = touched
         .first()
@@ -1019,28 +1050,25 @@ fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> 
             .iter()
             .all(|s| super::editable_insertion(dom, &s.piece) == ins)
     {
-        return vec![edit.clone()];
+        return None;
     }
-    let old = &projection.text[edit.start..edit.end];
-    let ranges = super::rewrite::rewrite_ranges(old, &edit.replacement);
+    let old = &projection.text[start..end];
+    let ranges = super::rewrite::rewrite_ranges(old, replacement);
     let mut rewritten = old.to_string();
-    for (start, end, replacement) in ranges.iter().rev() {
-        rewritten.replace_range(*start..*end, replacement);
+    for (from, to, words) in ranges.iter().rev() {
+        rewritten.replace_range(*from..*to, words);
     }
     // The rewrite diff normalizes whitespace. An exact replacement still
     // has to write every requested byte, including whitespace-only edits.
-    if rewritten != edit.replacement {
-        return vec![edit.clone()];
+    if rewritten != replacement {
+        return None;
     }
-    ranges
-        .into_iter()
-        .map(|(start, end, replacement)| ScheduledEdit {
-            start: edit.start + start,
-            end: edit.start + end,
-            replacement,
-            ..edit.clone()
-        })
-        .collect()
+    Some(
+        ranges
+            .into_iter()
+            .map(|(from, to, words)| (start + from, start + to, words))
+            .collect(),
+    )
 }
 
 /// Emit one text edit: the range's runs in `w:del`, then the replacement in
@@ -1108,6 +1136,13 @@ fn emit_text(
             &edit.replacement,
             edit.attach_before,
         );
+        super::clean_new_words(
+            dom,
+            paragraph,
+            edit.start,
+            edit.start + edit.replacement.len(),
+            &mut stamp.ids,
+        );
         if let Some(format) = &edit.format {
             super::format_range(
                 dom,
@@ -1151,6 +1186,13 @@ fn emit_text(
                 if let (Some(first), Some(last)) = (pieces.first(), pieces.last()) {
                     let text = if index == 0 { replacement } else { "" };
                     apply_text_edit(dom, &projection, first.start, last.end, text, true);
+                    super::clean_new_words(
+                        dom,
+                        paragraph,
+                        first.start,
+                        first.start + text.len(),
+                        &mut stamp.ids,
+                    );
                     if index == 0 {
                         if let Some(format) = &edit.format {
                             super::format_range(
@@ -1822,7 +1864,13 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
 /// format change or mark revisions, whose ids must stay unique.
 pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
     let copy = dom.clone_subtree(rpr);
-    for child in dom.elements(copy, None) {
+    strip_records(dom, copy);
+    copy
+}
+
+/// Remove the format change and mark revisions from `rpr`.
+pub(super) fn strip_records(dom: &mut Dom, rpr: NodeId) {
+    for child in dom.elements(rpr, None) {
         if dom.name_is(child, &W::r_pr_change())
             || dom.name_is(child, &W::ins())
             || dom.name_is(child, &W::del())
@@ -1832,7 +1880,6 @@ pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
             dom.remove(child);
         }
     }
-    copy
 }
 
 #[cfg(test)]
