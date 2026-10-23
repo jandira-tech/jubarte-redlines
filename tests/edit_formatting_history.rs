@@ -705,6 +705,18 @@ fn edit_v2(
     source: &[u8],
     operations: impl Fn(&Value) -> Value,
 ) -> jubarte::edit::v2_apply::V2EditResult {
+    let out = try_edit_v2(source, operations);
+    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
+    out
+}
+
+/// Bob's typed edit, its target the generated plan's first paragraph.
+fn try_edit_v2(
+    source: &[u8],
+    operations: impl Fn(&Value) -> Value,
+) -> Result<jubarte::edit::v2_apply::V2EditResult, jubarte::edit::EditError> {
     use jubarte::edit::{
         for_edit::ForEditRequest,
         template::{TemplateRequest, generate},
@@ -722,11 +734,7 @@ fn edit_v2(
     .unwrap();
     let mut q: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
     q["operations"] = operations(&q["operations"][0]["target"]);
-    let out = v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap());
-    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
-    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
-    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
-    out
+    v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap())
 }
 
 #[test]
@@ -1151,4 +1159,96 @@ fn a_handed_on_id_keeps_its_spelling() {
         ])
     });
     assert_eq!(formatting_records(&out.clean), pairs(&[("005", " gamma")]));
+}
+
+/// Alice's insertion: her formatted run `alpha beta` (record `w:id` 5) and
+/// a plain run ` gamma`.
+fn alices_two_runs() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:ins w:id="7" w:author="{ALICE}" w:date="{OLD}">{}<w:r><w:t xml:space="preserve"> gamma</w:t></w:r></w:ins></w:p>"#,
+        formatted_run(5, "alpha beta")
+    ))
+}
+
+/// Alice's formatting records once Bob's changes are accepted.
+fn bob_accepted(redline: &[u8]) -> Vec<(String, String)> {
+    let filter = ChangeFilter {
+        authors: Some(vec![BOB.to_string()]),
+        ..ChangeFilter::default()
+    };
+    formatting_records(&accept_changes(redline, &filter).unwrap())
+}
+
+/// The text between the paragraph's comment range markers.
+fn commented(bytes: &[u8]) -> String {
+    let (dom, root) = dom(bytes);
+    let mut inside = false;
+    let mut out = String::new();
+    for node in dom.descendants(root, None) {
+        if dom.name_is(node, &W::name("commentRangeStart")) {
+            inside = true;
+        } else if dom.name_is(node, &W::name("commentRangeEnd")) {
+            inside = false;
+        } else if inside && dom.name_is(node, &W::t()) {
+            out.push_str(&dom.value(node));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_typed_replacement_inside_alices_insertion_leaves_her_record_on_the_words_it_keeps() {
+    // The redline replays the replacement word by word inside Alice's
+    // insertion: `alpha beta` stays her run, with her record. The clean
+    // copy keeps the same words, and so her record (MiniMax on #1664).
+    let source = alices_two_runs();
+    let out = edit_v2(
+        &source,
+        |target| json!([{"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(bob_accepted(&out.redline), pairs(&[("5", "alpha beta")]));
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", "alpha beta")])
+    );
+    assert_eq!(text(&out.clean), "alpha beta delta");
+    let v1 = apply_plan(&source, &plan(replace(TEXT, "alpha beta delta"))).unwrap();
+    assert_eq!(formatting_records(&v1.clean), pairs(&[("5", "alpha beta")]));
+}
+
+#[test]
+fn a_typed_replacement_with_a_comment_inside_alices_insertion_comments_all_its_words() {
+    let out = edit_v2(&alices_two_runs(), |target| {
+        json!([{"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta",
+            "attached_comment":{"text":"why"}}])
+    });
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    assert_eq!(commented(&out.clean), "alpha beta delta");
+    assert_eq!(
+        formatting_records(&out.clean),
+        pairs(&[("5", "alpha beta")])
+    );
+    assert_eq!(bob_accepted(&out.redline), pairs(&[("5", "alpha beta")]));
+}
+
+#[test]
+fn typed_replacements_inside_one_insertion_that_overlap_still_conflict() {
+    // The first replacement writes back `alpha beta` and changes `gamma`;
+    // the second changes `beta`. Their found texts overlap.
+    let Err(error) = try_edit_v2(&alices_two_runs(), |target| {
+        json!([
+            {"kind":"replace","target":target,"find":TEXT,"text":"alpha beta delta"},
+            {"kind":"replace","target":target,"find":"beta","text":"BETA"}
+        ])
+    }) else {
+        panic!("overlapping replacements conflict");
+    };
+    assert_eq!(error.code, "CONFLICT", "{error:?}");
 }
