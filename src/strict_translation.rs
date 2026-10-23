@@ -805,25 +805,36 @@ pub fn strict_to_transitional_docx_within(
             return Ok(bytes.to_vec());
         }
         total = total.saturating_add(buf.len() as u64);
+        entries.push((name, buf));
+    }
 
+    // The XML parts are those named `.xml` in any case, and those the
+    // content types call XML: a main part may be `word/main.dat`.
+    let typed = crate::opc::typed_as_xml(
+        entries
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("[Content_Types].xml"))
+            .map(|(_, data)| data.as_slice()),
+    );
+    for (name, buf) in &mut entries {
+        let rels = crate::opc::ends_with_ignore_case(name, ".rels");
+        if !rels && !crate::opc::ends_with_ignore_case(name, ".xml") && !typed(name) {
+            continue;
+        }
         // Fast path: only text parts carrying the Strict marker can change.
-        if name.ends_with(".rels") || name.ends_with(".xml") {
-            let text = String::from_utf8_lossy(&buf);
-            if text.contains(STRICT_MARKER) {
-                let (table, site) = if name.ends_with(".rels") {
-                    (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)
-                } else {
-                    (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
-                };
-                let translated = translate(&text, table, site);
-                if translated != text.as_ref() {
-                    any_changed = true;
-                    buf = translated.into_bytes();
-                }
+        let text = String::from_utf8_lossy(buf);
+        if text.contains(STRICT_MARKER) {
+            let (table, site) = if rels {
+                (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)
+            } else {
+                (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
+            };
+            let translated = translate(&text, table, site);
+            if translated != text.as_ref() {
+                any_changed = true;
+                *buf = translated.into_bytes();
             }
         }
-
-        entries.push((name, buf));
     }
 
     if !any_changed {
