@@ -2535,12 +2535,7 @@ fn compare_history(
     insertion_origins: &BTreeMap<String, String>,
     tracked: bool,
 ) -> Result<(), EditError> {
-    // A tracked candidate keeps every word, deleted ones in deletions.
-    let rewritten = |c: &Change| {
-        (!tracked && c.kind == ChangeKind::Formatting)
-            .then(|| edited.rewritten.get(&c.id))
-            .flatten()
-    };
+    let rewrites = &edited.rewritten;
     let edited = &edited.ids;
     let failure = || {
         err(
@@ -2611,6 +2606,23 @@ fn compare_history(
             (c, record)
         })
         .collect();
+    // A run's formatting record, which an operation's words may leave.
+    let run_record = |c: &Change, record: Option<&Recorded>| {
+        c.kind == ChangeKind::Formatting && record.is_some_and(|r| r.characters.is_some())
+    };
+    let mut run_records = HashMap::<String, usize>::new();
+    for (c, record) in &before {
+        if run_record(c, record.as_ref()) {
+            *run_records.entry(c.id.clone()).or_default() += 1;
+        }
+    }
+    // A tracked candidate keeps every word, deleted ones in deletions. An
+    // id two run records share names neither (`DUPLICATE_REVISION_ID`).
+    let rewritten = |c: &Change, record: Option<&Recorded>| {
+        (!tracked && run_record(c, record) && run_records.get(&c.id) == Some(&1))
+            .then(|| rewrites.get(&c.id))
+            .flatten()
+    };
     let mut after: Vec<(Change, Option<Recorded>)> = Vec::new();
     let mut seen_insertions = BTreeSet::new();
     let mut insertion_text = BTreeMap::<String, String>::new();
@@ -2686,6 +2698,7 @@ fn compare_history(
             else {
                 return Err(failure());
             };
+            let reached = rewritten(last, Some(joined)).is_some();
             let Some(covered) = joined.characters.as_mut() else {
                 return Err(failure());
             };
@@ -2694,7 +2707,7 @@ fn compare_history(
                 || last.paragraph != change.paragraph
                 || last.inside != change.inside
                 || joined.payload != *payload
-                || (covered.1 != start && rewritten(last).is_none())
+                || (covered.1 != start && !reached)
             {
                 return Err(failure());
             }
@@ -2720,14 +2733,18 @@ fn compare_history(
             }
         }
     }
-    let kept = |c: &Change| {
+    let kept = |c: &Change, record: Option<&Recorded>| {
         after
             .iter()
+            .find(|(new, r)| {
+                new.id == c.id
+                    && new.kind == c.kind
+                    && run_record(new, r.as_ref()) == run_record(c, record)
+            })
             .map(|(new, _)| new)
-            .find(|new| new.id == c.id && new.kind == c.kind)
     };
     before.retain_mut(|(c, record)| {
-        if let Some(rewrite) = rewritten(c) {
+        if let Some(rewrite) = rewritten(c, record.as_ref()) {
             // The record keeps the words and atoms the operations left it,
             // and goes with the last of them.
             let covered = record.as_mut().and_then(|r| r.characters.as_mut());
@@ -2735,7 +2752,7 @@ fn compare_history(
                 *end = *start + (*end - *start).saturating_sub(rewrite.taken);
                 *end - *start
             });
-            if kept(c).is_none() {
+            if kept(c, record.as_ref()).is_none() {
                 return !rewrite.words.is_empty() || left.unwrap_or(0) > 0;
             }
             c.text.clone_from(&rewrite.words);
@@ -2745,7 +2762,7 @@ fn compare_history(
             return true;
         }
         if c.kind == ChangeKind::Insertion && c.target == "text" {
-            if let Some(new) = kept(c) {
+            if let Some(new) = kept(c, record.as_ref()) {
                 c.text.clone_from(&new.text);
             } else if c.author.as_deref() == Some(author) || !tracked {
                 // Deleting one's entire insertion removes its carrier; so
@@ -2753,7 +2770,7 @@ fn compare_history(
                 // author's (`check_dom_realized` holds the text).
                 return false;
             }
-        } else if !tracked && kept(c).is_none() {
+        } else if !tracked && kept(c, record.as_ref()).is_none() {
             // A direct paragraph deletion takes the paragraph's other
             // revisions with it; a tracked one keeps them (#1136).
             return false;
@@ -3837,6 +3854,74 @@ mod tests {
             "Carol Diaz",
             &BTreeMap::new(),
         ));
+    }
+
+    /// A paragraph of `words` whose justification Alice changed, in record `id`.
+    fn alice_justified(id: u32, words: &str) -> String {
+        format!(
+            r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:pPr/></w:pPrChange></w:pPr>{}</w:p>"#,
+            plain_run(words)
+        )
+    }
+
+    #[test]
+    fn history_guard_rewrites_only_the_run_record_an_operation_reached() {
+        // A `w:pPrChange` may share `w:id` 5 with Alice's run record: the
+        // two are told apart by type. Carol's direct edit reached the run.
+        let other = alice_justified(5, "other words");
+        let source = docx(
+            &[
+                other.clone(),
+                format!("<w:p>{}</w:p>", alice_formatted(5, "alpha beta", false)),
+            ]
+            .concat(),
+        );
+        let guard = |candidate: &str, edited: &Edited| {
+            preserve_direct_history(
+                &source,
+                &docx(&[other.clone(), format!("<w:p>{candidate}</w:p>")].concat()),
+                edited,
+                "Carol Diaz",
+                &BTreeMap::new(),
+            )
+        };
+        let replaced = [alice_formatted(5, "alpha ", false), plain_run("new")].concat();
+        let result = guard(&replaced, &rewriting("r5", "alpha ", 4));
+        assert!(result.is_ok(), "{result:?}");
+        // The run record goes with its last word; the paragraph's stays.
+        let result = guard(&plain_run("new"), &rewriting("r5", "", 10));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn history_guard_rewrites_no_run_record_whose_id_repeats() {
+        // Two run records share `w:id` 5 (`DUPLICATE_REVISION_ID`). Carol
+        // took all of the first's words: the leniency cannot tell which
+        // record the operation reached, so neither may go.
+        let source = docx(
+            &[
+                format!("<w:p>{}</w:p>", alice_formatted(5, "foo", false)),
+                format!("<w:p>{}</w:p>", alice_formatted(5, "bar", false)),
+            ]
+            .concat(),
+        );
+        let guard = |second: &str| {
+            preserve_direct_history(
+                &source,
+                &docx(
+                    &[
+                        format!("<w:p>{}</w:p>", plain_run("new")),
+                        format!("<w:p>{second}</w:p>"),
+                    ]
+                    .concat(),
+                ),
+                &rewriting("r5", "", 3),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            )
+        };
+        refused(guard(&plain_run("bar")));
+        refused(guard(&alice_formatted(5, "bar", false)));
     }
 
     /// Alice's run `text` followed, inside the run, by a tab.
