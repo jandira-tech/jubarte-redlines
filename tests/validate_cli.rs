@@ -530,7 +530,7 @@ fn repair_tells_structure_from_history() {
     assert_eq!(code, 0, "{out}");
     assert_eq!(
         out,
-        "repaired 1 finding(s), structure only; history checked below against original.docx\nno findings\n"
+        "repaired 1 finding(s), structure only; history check against original.docx follows\nno findings\n"
     );
     let (code, out, _) = run(
         dir.path(),
@@ -543,11 +543,28 @@ fn repair_tells_structure_from_history() {
     assert_eq!(code, 2, "{out}");
     assert!(
         out.starts_with(
-            "repaired 1 finding(s), structure only; history checked below against original.docx\n"
+            "repaired 1 finding(s), structure only; history check against original.docx follows\n"
         ),
         "{out}"
     );
     assert!(out.contains("Alice"), "{out}");
+    // An original that cannot be read stops the run before any repair.
+    let (code, out, err) = run(
+        dir.path(),
+        &[
+            "validate",
+            "carol.docx",
+            "--repair",
+            "d.docx",
+            "--original",
+            "missing.docx",
+            "--author",
+            "Carol",
+        ],
+    );
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(!out.contains("history"), "{out}");
+    assert!(!dir.path().join("d.docx").exists());
     let (_, help, _) = run(dir.path(), &["validate", "--help"]);
     assert!(
         help.contains("A structural repair: it does not check the edits' history"),
