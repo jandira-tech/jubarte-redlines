@@ -50,13 +50,15 @@ Do not settle foreign revisions, discard their history, or attribute their retai
 
 Extend the private audit representation in `src/changes.rs` and its comparison in `src/validate.rs`.
 
-- [ ] Represent run-formatting history with its recorded property payload and covered content interval within the aligned story/paragraph.
-- [ ] Normalize property payloads independently of revision IDs and XML prefix spelling.
-- [ ] Treat touching fragments as equivalent only when attribution, date, property payload and continuous content coverage agree.
-- [ ] Preserve boundaries around unrelated text, revisions, paragraphs and stories.
-- [ ] Use the same equivalence rules in typed-edit history checks.
+- [x] Represent run-formatting history with its recorded property payload and covered content interval within the aligned story/paragraph.
+- [x] Normalize property payloads independently of revision IDs and XML prefix spelling.
+- [x] Treat touching fragments as equivalent only when attribution, date, property payload and continuous content coverage agree.
+- [x] Preserve boundaries around unrelated text, revisions, paragraphs and stories.
+- [x] Use the same equivalence rules in typed-edit history checks.
 
 Add negative tests for changed old properties, changed author/date, missing fragments, reordered coverage, and identical-looking records belonging to different paragraphs.
+
+Done in #1661 (#1659): `tests/validate_formatting_history.rs` and the `history_guard_*` unit tests in `src/edit/v2_apply.rs`.
 
 **Acceptance:** the duplicate-ID finding and the false appearance of newly authored foreign history are both cleared. Task 2's fresh IDs clear the first. Comparing by coverage and properties clears the second, because a fragment under a fresh ID is no longer new history. History that new text genuinely inherited is #1658's to remove. Genuine history changes remain detectable.
 

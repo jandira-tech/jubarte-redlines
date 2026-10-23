@@ -2619,7 +2619,13 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, out: &mut Vec<Finding
     }
 }
 
-fn namespace_in_scope<'a>(dom: &'a Dom, element: NodeId, prefix: &str) -> Option<&'a str> {
+/// The namespace `prefix` names at `element`: the nearest `xmlns:prefix`
+/// declaration on it or an ancestor.
+pub(crate) fn namespace_in_scope<'a>(
+    dom: &'a Dom,
+    element: NodeId,
+    prefix: &str,
+) -> Option<&'a str> {
     let mut current = Some(element);
     while let Some(node) = current {
         for index in 0..dom.attr_count(node) {
@@ -3262,6 +3268,9 @@ struct ForeignKey {
     target: &'static str,
     date: Option<String>,
     move_side: Option<crate::changes::MoveSide>,
+    /// A run formatting change's recorded old properties: fragments of one
+    /// record compare equal only when they recorded the same formatting.
+    payload: Option<String>,
 }
 
 struct ForeignGroup<'a> {
@@ -3272,6 +3281,21 @@ struct ForeignGroup<'a> {
     end: usize,
     relaxed_start: usize,
     relaxed_end: usize,
+    /// The characters a run formatting change covers in its paragraph's
+    /// text. Rejecting the author's changes restores the paragraph's text,
+    /// so these compare across the two documents (#1656).
+    characters: Option<(usize, usize)>,
+}
+
+impl ForeignGroup<'_> {
+    /// What the comparison matches: the text, and for a run formatting
+    /// change also where in its paragraph the text is.
+    fn label(&self) -> String {
+        match self.characters {
+            Some((start, end)) => format!("{start}-{end}:{}", self.text),
+            None => self.text.clone(),
+        }
+    }
 }
 
 /// Story-local paragraph identities. Full text includes deleted text, so a
@@ -3330,11 +3354,56 @@ fn foreign_paragraphs(
     identities
 }
 
+/// Where each counted character of an edited paragraph sits in the
+/// original paragraph aligned with it, for the aligned paragraphs whose
+/// content differs: (original, edited) index pairs, both increasing.
+type CharacterPairs = HashMap<(String, String), (Vec<(usize, usize)>, usize)>;
+
+fn foreign_characters(
+    before: &[crate::changes::AuditStory],
+    after: &[crate::changes::AuditStory],
+    paragraphs: &HashMap<(String, String), usize>,
+) -> CharacterPairs {
+    let mut out = HashMap::new();
+    for edited in after {
+        let Some(original) = before.iter().find(|s| s.part == edited.part) else {
+            continue;
+        };
+        for ((id, _), content) in edited.paragraphs.iter().zip(&edited.contents) {
+            let key = (edited.part.clone(), id.clone());
+            let Some(old) = paragraphs.get(&key).and_then(|&i| original.contents.get(i)) else {
+                continue;
+            };
+            if old != content {
+                let a: Vec<char> = old.chars().collect();
+                let b: Vec<char> = content.chars().collect();
+                out.insert(key, (ordered_pairs(&a, &b), a.len()));
+            }
+        }
+    }
+    out
+}
+
+/// An edited paragraph's characters `start..end` in the original's
+/// positions ([`foreign_characters`]): from the first kept character at or
+/// after `start` to the last kept one before `end`.
+fn original_characters(
+    (pairs, length): &(Vec<(usize, usize)>, usize),
+    (start, end): (usize, usize),
+) -> (usize, usize) {
+    let first = pairs.partition_point(|&(_, j)| j < start);
+    let from = pairs.get(first).map_or(*length, |&(i, _)| i);
+    let last = pairs.partition_point(|&(_, j)| j < end);
+    let to = last.checked_sub(1).map_or(0, |k| pairs[k].0 + 1);
+    (from, to.max(from))
+}
+
 /// Keep each carrier for attribution. Windows may combine touching text,
 /// but an altered window must still name the carrier that actually changed.
 fn foreign_revisions<'a>(
     stories: &'a [crate::changes::AuditStory],
     paragraphs: &HashMap<(String, String), usize>,
+    characters: &CharacterPairs,
     edited: bool,
 ) -> Vec<ForeignGroup<'a>> {
     let mut out: Vec<ForeignGroup<'a>> = Vec::new();
@@ -3369,6 +3438,7 @@ fn foreign_revisions<'a>(
                 target: c.target,
                 date: c.date.clone(),
                 move_side: c.move_side,
+                payload: located.payload.clone(),
             };
             out.push(ForeignGroup {
                 key,
@@ -3378,6 +3448,17 @@ fn foreign_revisions<'a>(
                 end: located.end,
                 relaxed_start: located.start,
                 relaxed_end: located.end,
+                characters: located.characters.map(|span| {
+                    match c
+                        .paragraph
+                        .as_ref()
+                        .filter(|_| edited)
+                        .and_then(|id| characters.get(&(story.part.clone(), id.clone())))
+                    {
+                        Some(pairs) => original_characters(pairs, span),
+                        None => span,
+                    }
+                }),
             });
         }
     }
@@ -3444,22 +3525,40 @@ fn relax_foreign_boundaries(
 
 /// A comparison window may lose boundaries only where a missing separator
 /// explains them. Retain every carrier for attribution if the text differs.
+/// The fragments of a run formatting change join only where their
+/// characters touch, and the window keeps where its characters are.
 fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(Vec<usize>, String)> {
-    let mut out: Vec<(Vec<usize>, String)> = Vec::new();
+    // Carriers, joined text and, for run formatting, joined characters.
+    type Window = (Vec<usize>, String, Option<(usize, usize)>);
+    let mut windows: Vec<Window> = Vec::new();
     let mut previous = None;
     for &index in indices {
         let group = &groups[index];
-        if previous.is_some_and(|p: usize| groups[p].relaxed_end == group.relaxed_start)
-            && let Some((carriers, text)) = out.last_mut()
+        let touches = |p: usize| match (groups[p].characters, group.characters) {
+            (Some((_, end)), Some((start, _))) => end == start,
+            (None, None) => groups[p].relaxed_end == group.relaxed_start,
+            _ => false,
+        };
+        if previous.is_some_and(touches)
+            && let Some((carriers, text, characters)) = windows.last_mut()
         {
             carriers.push(index);
             text.push_str(&group.text);
+            if let (Some(window), Some((_, end))) = (characters, group.characters) {
+                window.1 = end;
+            }
         } else {
-            out.push((vec![index], group.text.clone()));
+            windows.push((vec![index], group.text.clone(), group.characters));
         }
         previous = Some(index);
     }
-    out
+    windows
+        .into_iter()
+        .map(|(carriers, text, characters)| match characters {
+            Some((start, end)) => (carriers, format!("{start}-{end}:{text}")),
+            None => (carriers, text),
+        })
+        .collect()
 }
 
 fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
@@ -3541,8 +3640,8 @@ fn report_foreign_carriers(
     new: &[usize],
     findings: &mut ForeignFindings,
 ) {
-    let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-    let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+    let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+    let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
     let (mut i, mut j) = (0, 0);
     for (x, y) in ordered_pairs(&a, &b)
         .into_iter()
@@ -3574,8 +3673,9 @@ fn check_foreign_revisions(
     let original = crate::changes::audit_stories(original)?;
     let reverted = crate::changes::audit_stories(reverted)?;
     let paragraphs = foreign_paragraphs(&original, &reverted);
-    let mut before = foreign_revisions(&original, &paragraphs, false);
-    let mut after = foreign_revisions(&reverted, &paragraphs, true);
+    let characters = foreign_characters(&original, &reverted, &paragraphs);
+    let mut before = foreign_revisions(&original, &paragraphs, &characters, false);
+    let mut after = foreign_revisions(&reverted, &paragraphs, &characters, true);
     let mut by_key: HashMap<ForeignKey, (Vec<usize>, Vec<usize>)> = HashMap::new();
     for (i, group) in before.iter().enumerate() {
         by_key.entry(group.key.clone()).or_default().0.push(i);
@@ -3586,8 +3686,8 @@ fn check_foreign_revisions(
     let mut before_present = vec![false; before.len()];
     let mut after_present = vec![false; after.len()];
     for (old, new) in by_key.values() {
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+        let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
         for (i, j) in aligned_pairs(&a, &b) {
             before_present[old[i]] = true;
             after_present[new[j]] = true;
@@ -3601,8 +3701,8 @@ fn check_foreign_revisions(
         if key.author.as_deref() == Some(author) {
             continue;
         }
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+        let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
         let (mut i, mut j) = (0, 0);
         for (x, y) in ordered_pairs(&a, &b)
             .into_iter()
