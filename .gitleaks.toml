@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The default rules, minus .scan/: the security-scan output 422162ac
+# committed by mistake (untracked since #1654, ignored). Scanning its
+# 1.4 GB in history stalled the release secret scan.
+[extend]
+useDefault = true
+
+[allowlist]
+paths = ['''^\.scan/''']
