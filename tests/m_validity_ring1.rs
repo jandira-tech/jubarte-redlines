@@ -2296,8 +2296,9 @@ fn custom_xml_range_starts_take_unique_ids() {
     };
     let unique = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(6)));
     assert_eq!(duplicates(&unique), 0);
+    // The two starts and the two ends each share an id.
     let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(5)));
-    assert_eq!(duplicates(&bytes), 1);
+    assert_eq!(duplicates(&bytes), 2);
     let repaired = jubarte::validate::repair(&bytes).unwrap();
     assert_eq!(duplicates(&repaired.docx), 0);
     let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
@@ -2313,4 +2314,102 @@ fn custom_xml_range_starts_take_unique_ids() {
     assert_eq!(starts, ends, "{xml}");
     assert_eq!(starts[0], "5", "{xml}");
     assert_ne!(starts[1], "5", "{xml}");
+}
+
+fn duplicate_revision_ids(bytes: &[u8]) -> usize {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+        .count()
+}
+
+/// Range ends of one kind take unique ids too: OpenXmlValidator refuses
+/// two `w:customXmlInsRangeEnd`, or two `w:moveFromRangeEnd`, that share
+/// one (`Sem_UniqueAttributeValue`), and lets two
+/// `w:customXmlMoveToRangeEnd` share one. Repair renames no end on its own:
+/// it cannot tell which start an end closes (Codex on #1666).
+#[test]
+fn range_ends_of_one_kind_take_unique_ids() {
+    let ends = |start: &str, end: &str| {
+        common::docx::docx(&format!(
+            r#"<w:p><w:{start} w:id="7" w:name="m" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:{end} w:id="9"/></w:p><w:p><w:{start} w:id="8" w:name="n" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>b</w:t></w:r><w:{end} w:id="9"/></w:p>"#
+        ))
+    };
+    for kind in [
+        "customXmlIns",
+        "customXmlDel",
+        "customXmlMoveFrom",
+        "moveFrom",
+        "moveTo",
+    ] {
+        let bytes = ends(&format!("{kind}RangeStart"), &format!("{kind}RangeEnd"));
+        assert_eq!(duplicate_revision_ids(&bytes), 1, "{kind}");
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+        assert_eq!(
+            xml.matches(&format!(r#"<w:{kind}RangeEnd w:id="9""#))
+                .count(),
+            2,
+            "{kind}: {xml}"
+        );
+    }
+    let bytes = ends("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd");
+    assert_eq!(duplicate_revision_ids(&bytes), 0);
+}
+
+/// OpenXmlValidator compares `w:customXmlDelRangeStart` and
+/// `w:customXmlDelRangeEnd` ids case-blind: `ABC` and `abc` repeat
+/// (Codex on #1666).
+#[test]
+fn custom_xml_deletion_ids_repeat_whatever_their_case() {
+    let range = |id: &str| {
+        format!(
+            r#"<w:customXmlDelRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:customXmlDelRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range("ABC"), range("abc")));
+    assert_eq!(duplicate_revision_ids(&bytes), 2);
+}
+
+/// A custom XML data part holds the application's XML, not
+/// WordprocessingML: OpenXmlValidator checks no revision id in it, whatever
+/// its name, and repair leaves it alone (Codex on #1666).
+#[test]
+fn custom_xml_data_holds_no_revision_ids() {
+    const CUSTOM_XML: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+    let data = r#"<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="5"/><w:ins w:id="5"/></root>"#;
+    for name in ["customXml/item1.xml", "customXml/item1.dat"] {
+        let mut pkg =
+            PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+        pkg.set_part(name, data.as_bytes().to_vec());
+        pkg.add_content_type_override(&format!("/{name}"), "application/xml");
+        pkg.add_document_relationship("word/document.xml", CUSTOM_XML, &format!("../{name}"));
+        let bytes = pkg.to_zip().unwrap();
+        assert_eq!(duplicate_revision_ids(&bytes), 0, "{name}");
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        let held = PartFs::open(&repaired.docx).unwrap();
+        assert_eq!(held.part_bytes(name), Some(data.as_bytes()), "{name}");
+    }
+}
+
+/// Repair renames the end that closes a renumbered start, not an element
+/// of another namespace that shares its local name and id (Codex on
+/// #1666).
+#[test]
+fn repair_renames_the_range_end_in_wordprocessingml() {
+    let range = |id: u32, extra: &str| {
+        format!(
+            r#"<w:customXmlInsRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r>{extra}<w:customXmlInsRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let other = r#"<x:customXmlInsRangeEnd xmlns:x="urn:example:other" w:id="5"/>"#;
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5, ""), range(5, other)));
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicate_revision_ids(&repaired.docx), 0);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<x:customXmlInsRangeEnd xmlns:x="urn:example:other" w:id="5""#),
+        "{xml}"
+    );
 }
