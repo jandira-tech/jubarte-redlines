@@ -2449,7 +2449,12 @@ fn compare_history(
     };
     let mut before = history(working)?;
     let ids: BTreeSet<_> = before.iter().map(|c| c.id.clone()).collect();
-    let mut after = Vec::new();
+    let recorded = |bytes| {
+        crate::changes::recorded_run_properties(bytes)
+            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))
+    };
+    let (old_records, new_records) = (recorded(working)?, recorded(candidate)?);
+    let mut after: Vec<Change> = Vec::new();
     let mut seen_insertions = BTreeSet::new();
     let mut insertion_text = BTreeMap::<String, String>::new();
     for mut change in history(candidate)? {
@@ -2502,6 +2507,28 @@ fn compare_history(
             if !seen_insertions.insert(origin.clone()) {
                 continue;
             }
+        }
+        // A run formatting change keeps the old properties it recorded.
+        if ids.contains(&change.id) && new_records.get(&change.id) != old_records.get(&change.id) {
+            return Err(failure());
+        }
+        // A fragment of a run formatting change the edit split, under a
+        // fresh id: it joins the fragment before it when both recorded the
+        // same author, date, paragraph and old properties. The joined text
+        // must then equal the record's original text (#1656).
+        if !ids.contains(&change.id)
+            && change.kind == ChangeKind::Formatting
+            && change.author.as_deref() != Some(author)
+            && let Some(record) = new_records.get(&change.id)
+            && let Some(last) = after.last_mut()
+            && last.kind == ChangeKind::Formatting
+            && last.author == change.author
+            && last.date == change.date
+            && last.paragraph == change.paragraph
+            && new_records.get(&last.id) == Some(record)
+        {
+            last.text.push_str(&change.text);
+            continue;
         }
         if ids.contains(&change.id) {
             after.push(change);
@@ -2696,6 +2723,90 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn history_guard_joins_the_fragments_of_a_split_formatting_record() {
+        // Alice made a run bold (italic before); Carol's edit split it. Each
+        // fragment carries Alice's record under its own id (#1656).
+        let formatted = |id: u32, author: &str, old: &str, text: &str| {
+            format!(
+                r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="{author}" w:date="2026-10-17T09:00:00Z"><w:rPr>{old}</w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+            )
+        };
+        let alice = |id: u32, text: &str| formatted(id, "Alice", "<w:i/>", text);
+        let plain = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+        let carol = r#"<w:ins w:id="20" w:author="Carol Diaz" w:date="2026-10-23T10:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+        let source = docx(&format!("<w:p>{}</w:p>", alice(5, "alpha beta gamma")));
+        for (content, valid) in [
+            (
+                format!("{}{}", alice(5, "alpha "), alice(9, "beta gamma")),
+                true,
+            ),
+            (
+                format!("{}{carol}{}", alice(5, "alpha "), alice(9, "beta gamma")),
+                true,
+            ),
+            (
+                format!(
+                    "{}{}{}",
+                    alice(5, "alpha "),
+                    alice(9, "beta"),
+                    alice(10, " gamma")
+                ),
+                true,
+            ),
+            // The fragment recorded other old properties.
+            (
+                format!(
+                    "{}{}",
+                    alice(5, "alpha "),
+                    formatted(9, "Alice", r#"<w:u w:val="single"/>"#, "beta gamma")
+                ),
+                false,
+            ),
+            // The original record's own old properties changed.
+            (
+                formatted(5, "Alice", r#"<w:u w:val="single"/>"#, "alpha beta gamma"),
+                false,
+            ),
+            // Another author's record.
+            (
+                format!(
+                    "{}{}",
+                    alice(5, "alpha "),
+                    formatted(9, "Dan", "<w:i/>", "beta gamma")
+                ),
+                false,
+            ),
+            // A fragment lost its record.
+            (
+                format!(
+                    "{}{}{}",
+                    alice(5, "alpha "),
+                    plain("beta"),
+                    alice(9, " gamma")
+                ),
+                false,
+            ),
+            // The record spread over text it never covered.
+            (
+                format!("{}{}", alice(5, "alpha beta gamma"), alice(9, " more")),
+                false,
+            ),
+        ] {
+            let result = preserve_history(
+                &source,
+                &docx(&format!("<w:p>{content}</w:p>")),
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert_eq!(result.is_ok(), valid, "{content}: {result:?}");
+            if let Err(error) = result {
+                assert_eq!(error.code, "REVISION_PRESERVATION_FAILED");
+            }
+        }
     }
 
     #[test]

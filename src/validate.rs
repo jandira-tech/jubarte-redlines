@@ -3262,6 +3262,9 @@ struct ForeignKey {
     target: &'static str,
     date: Option<String>,
     move_side: Option<crate::changes::MoveSide>,
+    /// A run formatting change's recorded old properties: fragments of one
+    /// record compare equal only when they recorded the same formatting.
+    payload: Option<String>,
 }
 
 struct ForeignGroup<'a> {
@@ -3369,6 +3372,7 @@ fn foreign_revisions<'a>(
                 target: c.target,
                 date: c.date.clone(),
                 move_side: c.move_side,
+                payload: located.payload.clone(),
             };
             out.push(ForeignGroup {
                 key,
