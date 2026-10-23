@@ -2383,10 +2383,21 @@ fn edited_revisions(tx: &Transaction<'_>) -> BTreeSet<String> {
                 .collect()
         };
         for segment in touched {
-            if let Some(ins) = super::editable_insertion(&tx.opened.dom, &segment.piece)
-                && let Some(wid) = tx.opened.dom.attribute(ins, &W::id())
+            let story = &tx.stories[tx.paragraph_story[*para].0].id;
+            if let Some(ins) = super::editable_insertion(dom, &segment.piece)
+                && let Some(wid) = dom.attribute(ins, &W::id())
             {
-                let story = &tx.stories[tx.paragraph_story[*para].0].id;
+                ids.insert(crate::ids::ChangeId::new(story, wid).short());
+            }
+            // The words under a run formatting change the operation
+            // rewrites (#1656).
+            let (crate::inspect::Piece::Text { run, .. }
+            | crate::inspect::Piece::Glyph { run, .. }) = segment.piece;
+            if let Some(record) = dom
+                .element(run, &W::r_pr())
+                .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+                && let Some(wid) = dom.attribute(record, &W::id())
+            {
                 ids.insert(crate::ids::ChangeId::new(story, wid).short());
             }
         }
@@ -2559,6 +2570,13 @@ fn compare_history(
                 // author's (`check_dom_realized` holds the text).
                 return false;
             }
+        } else if c.kind == ChangeKind::Formatting
+            && !tracked
+            && let Some(new) = after.iter().find(|new| new.id == c.id)
+        {
+            // A direct edit rewrites the words a run formatting change
+            // covers; its record stays (#1656).
+            c.text.clone_from(&new.text);
         } else if !tracked && after.iter().all(|new| new.id != c.id) {
             // A direct paragraph deletion takes the paragraph's other
             // revisions with it; a tracked one keeps them (#1136).
@@ -2806,6 +2824,54 @@ mod tests {
             if let Err(error) = result {
                 assert_eq!(error.code, "REVISION_PRESERVATION_FAILED");
             }
+        }
+    }
+
+    #[test]
+    fn a_direct_edit_may_rewrite_only_the_words_of_a_formatting_record_it_touched() {
+        // Carol's direct replace of `beta` under Alice's record r5: the
+        // words change, the record (author, date, old properties) does not.
+        let formatted = |author: &str, old: &str, text: &str| {
+            format!(
+                r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="{author}" w:date="2026-10-17T09:00:00Z"><w:rPr>{old}</w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#
+            )
+        };
+        let source = docx(&formatted("Alice", "<w:i/>", "alpha beta gamma"));
+        let edited = BTreeSet::from(["r5".to_string()]);
+        let rewritten = docx(&formatted("Alice", "<w:i/>", "alpha new gamma"));
+        let guard = |candidate: &[u8], edited: &BTreeSet<String>, tracked: bool| {
+            let check = if tracked {
+                preserve_history
+            } else {
+                preserve_direct_history
+            };
+            check(&source, candidate, edited, "Carol Diaz", &BTreeMap::new())
+        };
+        assert!(guard(&rewritten, &edited, false).is_ok());
+        // Untouched, tracked, or with another record, the words must stay.
+        for (candidate, edited, tracked) in [
+            (rewritten.clone(), BTreeSet::new(), false),
+            (rewritten.clone(), edited.clone(), true),
+            (
+                docx(&formatted("Dan", "<w:i/>", "alpha new gamma")),
+                edited.clone(),
+                false,
+            ),
+            (
+                docx(&formatted(
+                    "Alice",
+                    r#"<w:u w:val="single"/>"#,
+                    "alpha new gamma",
+                )),
+                edited.clone(),
+                false,
+            ),
+        ] {
+            let result = guard(&candidate, &edited, tracked);
+            assert_eq!(
+                result.map_err(|e| e.code).unwrap_err(),
+                "REVISION_PRESERVATION_FAILED"
+            );
         }
     }
 
