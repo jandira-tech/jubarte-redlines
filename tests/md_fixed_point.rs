@@ -404,12 +404,29 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
         Ok(out) => out,
         Err(e) => return vec![format!("  ✗ docx not compared: {e}")],
     };
+    render_verdicts(&out)
+}
+
+/// The verdicts `docx_verdicts` reports for one `debug A B --check render
+/// --full-lines` listing.
+fn render_verdicts(out: &str) -> Vec<String> {
     let mut part = String::new();
     let mut lines = Vec::new();
     // A lost line and a new line that say the same cancel each other.
     let mut lost: Vec<(String, String)> = Vec::new();
     let mut new: Vec<(String, String)> = Vec::new();
+    // jubarte counts pages with the faces it loads, so when a face differs
+    // (one the dialect does not carry: `in_dialect` drops it) the page count
+    // follows it and is no loss of its own.
+    let mut faces_differ = false;
     for line in out.lines() {
+        if let Some(rest) = line
+            .strip_prefix("-A ")
+            .or_else(|| line.strip_prefix("+B "))
+            .filter(|_| part == "(layout) ")
+        {
+            faces_differ |= rest.trim().starts_with("font ");
+        }
         if let Some(rest) = line.strip_prefix("-A ") {
             if let Some(rest) = in_dialect(&part, rest.trim()) {
                 lost.push((part.clone(), rest));
@@ -429,7 +446,13 @@ fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
             part = format!("{name} ");
         }
     }
-    let (lost, new) = unmatched(lost, new);
+    let (mut lost, mut new) = unmatched(lost, new);
+    if faces_differ {
+        let page_count =
+            |(part, rest): &(String, String)| part == "(layout) " && rest.starts_with("pages ");
+        lost.retain(|line| !page_count(line));
+        new.retain(|line| !page_count(line));
+    }
     lines.extend(
         lost.iter()
             .map(|(part, rest)| format!("  ✗ docx {part}lost: {rest}")),
@@ -1135,4 +1158,37 @@ fn a_manuscript_is_gated_on_what_it_imports_to() {
         case.want
     );
     assert!(case.docx.is_empty(), "{:?}", case.docx);
+}
+
+/// jubarte measures the page count with the faces it loads. A face the
+/// dialect does not carry (a direct run font, `fonts outside the legend`)
+/// changes the count of the docx written back, so the count is excused
+/// with it: ids-tables.md loses Arial and Times New Roman, 11 pages → 10.
+#[test]
+fn a_page_count_moved_by_a_face_outside_the_dialect_is_excused() {
+    let out = "(layout): 3 lines differ\n\
+               -A   pages 11\n\
+               -A   font \"Arial\" regular → ArialMT explicit\n\
+               +B   pages 10\n";
+    assert!(
+        render_verdicts(out).is_empty(),
+        "{:?}",
+        render_verdicts(out)
+    );
+}
+
+/// With the same faces on both sides, a page count that moves is a layout
+/// the Markdown lost (spacing, a break, a section), and it is reported.
+#[test]
+fn a_page_count_moved_with_the_same_faces_is_reported() {
+    let out = "(layout): 2 lines differ\n\
+               -A   pages 11\n\
+               +B   pages 10\n";
+    assert_eq!(
+        render_verdicts(out),
+        [
+            "  ✗ docx (layout) lost: pages 11",
+            "  ✗ docx (layout) new: pages 10"
+        ]
+    );
 }
