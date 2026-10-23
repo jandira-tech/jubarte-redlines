@@ -142,6 +142,8 @@ pub struct ChangeMember {
 pub(crate) struct AuditStory {
     pub part: String,
     pub paragraphs: Vec<(String, String)>,
+    /// What [`run_characters`] counts in each paragraph, in order.
+    pub contents: Vec<String>,
     pub changes: Vec<AuditChange>,
     pub markers: Vec<AuditMarker>,
 }
@@ -163,9 +165,12 @@ pub(crate) struct AuditChange {
     /// edit split the run, cover continuous text (#1656).
     pub start: usize,
     pub end: usize,
-    /// The old properties a run formatting change recorded
+    /// The old properties a formatting change recorded
     /// ([`recorded_properties`]); `None` for every other change.
     pub payload: Option<String>,
+    /// The characters a run formatting change's run covers in its
+    /// paragraph ([`run_characters`]); `None` for every other change.
+    pub characters: Option<(usize, usize)>,
 }
 
 /// Read paragraph text including deletions, and document positions for the
@@ -239,6 +244,7 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
             .map(|(index, node)| (crate::ids::paragraph_id(&story, index), text_of(&dom, node)))
             .collect();
         let paragraph_nodes = paragraph_index(&dom, root);
+        let (characters, contents) = run_characters(&dom, root, &HashSet::new());
         let markers = found
             .iter()
             .filter(|carrier| carrier.change.is_none())
@@ -267,19 +273,22 @@ pub(crate) fn audit_stories(docx: &[u8]) -> Result<Vec<AuditStory>, ChangeError>
                 };
                 let run = formatted_run(&dom, carrier.node);
                 let (start, end) = spans[&run.unwrap_or(carrier.node)];
-                let payload = run.map(|_| recorded_properties(&dom, carrier.node));
+                let payload = (change.kind == ChangeKind::Formatting)
+                    .then(|| recorded_properties(&dom, carrier.node));
                 Some(AuditChange {
                     change,
                     owner,
                     start,
                     end,
                     payload,
+                    characters: run.and_then(|run| characters.get(&run).copied()),
                 })
             })
             .collect();
         stories.push(AuditStory {
             part,
             paragraphs,
+            contents,
             changes,
             markers,
         });
@@ -297,12 +306,16 @@ fn formatted_run(dom: &Dom, record: NodeId) -> Option<NodeId> {
     dom.parent(rpr).filter(|&n| dom.name_is(n, &W::r()))
 }
 
-/// The properties a formatting record kept, spelled without revision ids,
-/// namespace prefixes or child order: each element as `{namespace}local`,
-/// its attributes `{namespace}local=value` sorted, its children sorted.
-/// Two records with the same payload recorded the same old formatting.
+/// The properties a formatting record kept, spelled without revision ids
+/// or namespace prefixes: its own attributes past id, author and date, then
+/// each element as `{namespace}local`, its attributes
+/// `{namespace}local="value"` sorted, its children in document order (the
+/// first matching `mc:Choice` wins) and a leaf's text. A value that lists
+/// prefixes (`Requires`, `mc:Ignorable`, …) lists their namespaces, and an
+/// on/off `w:val` is spelled one way. Two records with the same payload
+/// recorded the same old formatting.
 pub(crate) fn recorded_properties(dom: &Dom, record: NodeId) -> String {
-    fn canonical(dom: &Dom, node: NodeId) -> String {
+    fn attributes(dom: &Dom, node: NodeId, skip: &[XName]) -> String {
         let Some(name) = dom.name(node) else {
             return String::new();
         };
@@ -310,48 +323,263 @@ pub(crate) fn recorded_properties(dom: &Dom, record: NodeId) -> String {
             .attributes(node)
             .into_iter()
             .filter(|(attribute, _)| {
-                !dom.is_namespace_declaration(attribute) && *attribute != W::id()
+                !dom.is_namespace_declaration(attribute) && !skip.contains(attribute)
             })
-            .map(|(attribute, value)| {
-                format!(
-                    "{{{}}}{}={value}",
+            .filter_map(|(attribute, value)| {
+                let value =
+                    if crate::xmllinq::serialize::is_namespace_prefix_list(&name, &attribute) {
+                        value
+                            .split_whitespace()
+                            .map(|prefix| {
+                                crate::validate::namespace_in_scope(dom, node, prefix).map_or_else(
+                                    || format!("{prefix}:"),
+                                    |uri| format!("{{{uri}}}"),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    } else if attribute == W::val() && on_off(&name) {
+                        match value.as_str() {
+                            // `<w:b/>` and `<w:b w:val="true"/>` are both on.
+                            "1" | "true" | "on" => return None,
+                            "0" | "false" | "off" => "0".to_string(),
+                            _ => value,
+                        }
+                    } else {
+                        value
+                    };
+                Some(format!(
+                    "{{{}}}{}={value:?}",
                     attribute.namespace_name(),
                     attribute.local_name()
-                )
+                ))
             })
             .collect();
         attributes.sort();
-        let mut children: Vec<String> = dom
+        attributes.join(",")
+    }
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let Some(name) = dom.name(node) else {
+            return String::new();
+        };
+        let children: Vec<String> = dom
             .elements(node, None)
             .into_iter()
             .map(|child| canonical(dom, child))
             .collect();
-        children.sort();
+        let text = if children.is_empty() {
+            dom.value(node)
+        } else {
+            String::new()
+        };
         format!(
-            "{{{}}}{}[{}]({})",
+            "{{{}}}{}[{}]({}){text:?}",
             name.namespace_name(),
             name.local_name(),
-            attributes.join(","),
+            attributes(dom, node, &[W::id()]),
             children.join(",")
         )
     }
-    let mut children: Vec<String> = dom
+    let own = attributes(dom, record, &[W::id(), W::author(), W::date()]);
+    let children: Vec<String> = dom
         .elements(record, None)
         .into_iter()
         .map(|child| canonical(dom, child))
         .collect();
-    children.sort();
-    children.join(",")
+    format!("[{own}]({})", children.join(","))
 }
 
-/// The old properties each run formatting change recorded, by change id
-/// ([`recorded_properties`]).
-pub(crate) fn recorded_run_properties(docx: &[u8]) -> Result<HashMap<String, String>, ChangeError> {
-    Ok(audit_stories(docx)?
-        .into_iter()
-        .flat_map(|story| story.changes)
-        .filter_map(|c| Some((c.change.id, c.payload?)))
-        .collect())
+/// A `CT_OnOff` property: its `w:val` is on when absent.
+fn on_off(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "b" | "bCs"
+                | "i"
+                | "iCs"
+                | "caps"
+                | "smallCaps"
+                | "strike"
+                | "dstrike"
+                | "outline"
+                | "shadow"
+                | "emboss"
+                | "imprint"
+                | "noProof"
+                | "snapToGrid"
+                | "vanish"
+                | "webHidden"
+                | "specVanish"
+                | "rtl"
+                | "cs"
+                | "oMath"
+                | "keepNext"
+                | "keepLines"
+                | "pageBreakBefore"
+                | "widowControl"
+                | "suppressLineNumbers"
+                | "suppressAutoHyphens"
+                | "kinsoku"
+                | "wordWrap"
+                | "overflowPunct"
+                | "topLinePunct"
+                | "autoSpaceDE"
+                | "autoSpaceDN"
+                | "bidi"
+                | "adjustRightInd"
+                | "contextualSpacing"
+                | "mirrorIndents"
+                | "suppressOverlap"
+                | "titlePg"
+                | "rtlGutter"
+                | "noEndnote"
+                | "formProt"
+                | "bidiVisual"
+                | "hidden"
+                | "cantSplit"
+                | "tblHeader"
+                | "noWrap"
+                | "tcFitText"
+                | "hideMark"
+        )
+}
+
+/// A properties element (`w:pPr`, `w:rPr`, …): no content lives in it.
+fn properties(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "pPr" | "rPr" | "sectPr" | "tblPr" | "tblPrEx" | "tblGrid" | "trPr" | "tcPr" | "sdtPr"
+        )
+}
+
+/// One character per visible element that is not text: what a run holding
+/// a tab, a break or a drawing covers.
+fn atom(name: &XName) -> Option<char> {
+    if name.namespace_name() != W::URI {
+        return None;
+    }
+    Some(match name.local_name() {
+        "tab" | "ptab" => '\t',
+        "br" | "cr" => '\n',
+        "drawing" | "pict" | "object" => '\u{FFFC}',
+        "sym" => '\u{FFFD}',
+        "noBreakHyphen" => '\u{2011}',
+        "softHyphen" => '\u{AD}',
+        "footnoteReference" | "endnoteReference" => '\u{E000}',
+        "instrText" | "delInstrText" => '\u{E001}',
+        _ => return None,
+    })
+}
+
+/// What each run covers in its story paragraph: the characters of its
+/// `w:t` and `w:delText`, one more per tab, break, drawing or other atom
+/// ([`atom`]), a text box's runs at their place; and each paragraph's
+/// counted content, in order. Content under a `skipped` element counts for
+/// nothing, and a paragraph whose inserted mark is `skipped` continues into
+/// the next, as rejecting that mark joins them.
+fn run_characters(
+    dom: &Dom,
+    root: NodeId,
+    skipped: &HashSet<NodeId>,
+) -> (HashMap<NodeId, (usize, usize)>, Vec<String>) {
+    let (r, t, del_text) = (W::r(), W::t(), W::del_text());
+    let mut spans = HashMap::new();
+    let mut contents = Vec::new();
+    let mut cursor = 0;
+    for paragraph in crate::inspect::story_paragraph_nodes(dom, root) {
+        let mut content = String::new();
+        let mut pending = vec![(paragraph, false, false)];
+        while let Some((node, closing, skipping)) = pending.pop() {
+            if closing {
+                if let Some(span) = spans.get_mut(&node) {
+                    let (_, end): &mut (usize, usize) = span;
+                    *end = cursor;
+                }
+                continue;
+            }
+            let skipping = skipping || skipped.contains(&node);
+            // Properties hold no content (a `w:tabs/w:tab` is a tab stop).
+            if node != paragraph && dom.name(node).is_some_and(|name| properties(&name)) {
+                continue;
+            }
+            if dom.name_is(node, &r) {
+                spans.insert(node, (cursor, cursor));
+            } else if !skipping {
+                if dom.name_is(node, &t) || dom.name_is(node, &del_text) {
+                    let text = dom.value(node);
+                    cursor += text.chars().count();
+                    content.push_str(&text);
+                } else if let Some(atom) = dom.name(node).and_then(|name| atom(&name)) {
+                    cursor += 1;
+                    content.push(atom);
+                }
+            }
+            pending.push((node, true, skipping));
+            for index in (0..dom.child_count(node)).rev() {
+                pending.push((dom.child_at(node, index), false, skipping));
+            }
+        }
+        contents.push(content);
+        let joined = dom
+            .element(paragraph, &W::p_pr())
+            .and_then(|p_pr| dom.element(p_pr, &W::r_pr()))
+            .and_then(|r_pr| dom.element(r_pr, &W::ins()))
+            .is_some_and(|mark| skipped.contains(&mark));
+        if !joined {
+            cursor = 0;
+        }
+    }
+    (spans, contents)
+}
+
+/// A formatting change: the old properties it recorded
+/// ([`recorded_properties`]) and, a run's, the characters it covers
+/// ([`run_characters`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Recorded {
+    pub payload: String,
+    pub characters: Option<(usize, usize)>,
+}
+
+/// Each formatting change's [`Recorded`] by id, in document order: ids may
+/// repeat. The content of a change `skip` names, and the paragraph mark it
+/// inserts, count for nothing in the characters.
+pub(crate) fn recorded_formats(
+    docx: &[u8],
+    skip: &dyn Fn(&Change) -> bool,
+) -> Result<HashMap<String, Vec<Recorded>>, ChangeError> {
+    let pkg = open(docx)?;
+    let main = main_part(&pkg);
+    let mut out: HashMap<String, Vec<Recorded>> = HashMap::new();
+    for (part, _) in revision_bearing_parts(&pkg) {
+        let Some(xml) = pkg.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(document) else {
+            continue;
+        };
+        let found = carriers(&dom, root, &story_id(&main, &part));
+        let skipped: HashSet<_> = found
+            .iter()
+            .filter(|carrier| carrier.change.as_ref().is_some_and(skip))
+            .map(|carrier| carrier.node)
+            .collect();
+        let (characters, _) = run_characters(&dom, root, &skipped);
+        for carrier in found {
+            let Some(change) = carrier.change.filter(|c| c.kind == ChangeKind::Formatting) else {
+                continue;
+            };
+            out.entry(change.id).or_default().push(Recorded {
+                payload: recorded_properties(&dom, carrier.node),
+                characters: formatted_run(&dom, carrier.node)
+                    .and_then(|run| characters.get(&run).copied()),
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Owner paths use semantic ids where OOXML defines them, otherwise the
