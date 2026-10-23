@@ -2,17 +2,21 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Produce tracked-revision markup (M4.4). Core of
-//! `ProduceDocumentWithTrackedRevisions` for the paragraph-text case.
+//! Produce tracked-revision markup (M4.4 / E).
 //!
-//! Consumes the LCS-tagged atom stream and rebuilds a `<w:document>` where
-//! inserted content is wrapped in `<w:ins>` and deleted content in `<w:del>`
-//! (with `<w:t>` → `<w:delText>`), each carrying `w:id`/`w:author`/`w:date`.
+//! [`produce_document`] is the atom-level shortcut producer — a tagged
+//! [`super::lcs::TaggedAtom`] stream in, a `<w:document>` out. The
+//! production pipeline calls [`flatten_to_comparison_unit_atom_list`]
+//! instead, then [`assemble_ancestor_unids`] (stabilises A.4
+//! `w:sdt` boundaries), [`coalesce_recurse`] (regroup atoms on
+//! ancestor `pt:Unid` and emit WML), [`convert_outer_math_wraps_to_internal`]
+//! (Word's internal-marked-math shape), and
+//! [`produce_new_wml_markup_from_correlated_sequence`] (the top-level
+//! dispatch).
 //!
-//! NOTE: the full TS producer additionally handles inserted/deleted paragraph
-//! marks (paragraph merge/split), tables, footnotes, moves, and format changes
-//! (WmlComparer.ts:2222+, plus fixups). This core covers runs of text within
-//! paragraphs — the common case — and is the base those refinements extend.
+//! Revision ids: the faithful pipeline threads one mutable counter
+//! (`&mut id`) through its stages within a comparison; the simple
+//! [`produce_document`] wrappers draw from a process-wide atomic counter.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -50,6 +54,14 @@ fn next_rev_id() -> String {
 }
 
 /// Build the redline `<w:document>` node from the tagged atom stream.
+///
+/// A `w:pPr` atom ends a paragraph; consecutive atoms of the same status
+/// are concatenated into one run wrapped in `w:ins` / `w:del` (or emitted
+/// as a plain `w:r` for `Equal`); paragraph marks keep their own `w:pPr`.
+///
+/// Returns the new document node. Trailing content with no paragraph mark
+/// gets a synthetic `Equal`-status pilcrow so the document still closes
+/// cleanly.
 pub fn produce_document(
     dom: &mut Dom,
     tagged: &[TaggedAtom],
@@ -201,13 +213,15 @@ fn atom_has_predelete_orig(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
         .any(|&a| dom.attribute(a, &pre) == Some(crate::comparer::PREDELETE_STAMP_ORIG))
 }
 
-/// M4.E.1 — `FlattenToComparisonUnitAtomList` (:4141): nested correlated tree →
-/// flat status-tagged atom list. Equal carries content/ancestors from the AFTER
-/// atom and a link to the BEFORE atom; zip truncates to the shorter side.
+/// M4.E.1 — `FlattenToComparisonUnitAtomList` (WmlComparer.ts :4141):
+/// nested correlated tree → flat status-tagged atom list. `Equal` carries
+/// content/ancestors from the AFTER atom and a link to the BEFORE atom;
+/// zip truncates to the shorter side.
 ///
-/// M-MOVE S1 exception: when the BEFORE atom is a PreDelete-orig span, emit
-/// Deleted(before)+Inserted(after) instead of Equal so history survives even
-/// if an upstream correlation path lost the salt (m36 / fresh-p4).
+/// M-MOVE S1 exception: when the BEFORE atom is a `pt:PreDelete="orig"`
+/// span (a word-mode flattened A-only pre-existing deletion), emit
+/// `Deleted(before)+Inserted(after)` instead of `Equal` so the history
+/// survives even when an upstream correlation path lost the salt.
 pub fn flatten_to_comparison_unit_atom_list(
     dom: &Dom,
     seqs: &[CorrelatedSequence],
@@ -444,13 +458,15 @@ fn atom_in_textbox(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
-/// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly` (:3974).
-/// Three phases (see WmlComparer.ts): A copy before→after pPr ancestor Unids;
 /// PRODUCE-UNID-01: (ancestor-elements chain, its minted unid chain) memo.
 type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)>;
 
-/// B seed ancestor_unids from the paragraph mark (reverse walk, minting missing);
-/// C fix text boxes in a second reverse pass.
+/// M4.E.2 — `AssembleAncestorUnidsInOrderToRebuildXmlTreeProperly`
+/// (WmlComparer.ts :3974). Three phases: A copy before→after `pPr`
+/// ancestor unids; B seed `ancestor_unids` from the paragraph mark
+/// (reverse walk, minting missing); C fix text boxes in a second reverse
+/// pass. Aligns unmatched `w:sdt` ancestry first so a `w:sdt` whose body
+/// doesn't match stays out of every atom's ancestor chain.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
     align_content_control_ancestry(dom, atoms);
     let unid = PT::unid();
@@ -750,16 +766,15 @@ fn is_txbx_from_level(dom: &Dom, atom: &ComparisonUnitAtom, level: usize) -> boo
         .any(|&a| dom.name(a).as_ref() == Some(&txbx))
 }
 
-/// M463 — final-serialization pass: every `w:ins`/`w:del` whose element
-/// content is exactly OMML math (`m:oMath`/`m:oMathPara`) is unwrapped, and
-/// the revision state is rewritten INSIDE the math the way Word Compare
-/// writes it. Runs AFTER all mesh/finalize passes, which reason about the
-/// outer-wrapped shape.
+/// M463 — final-serialization pass: every `w:ins` / `w:del` whose element
+/// content is exactly OMML math (`m:oMath` / `m:oMathPara`) is unwrapped,
+/// and the revision state is rewritten INSIDE the math the way Word Compare
+/// writes it. Runs AFTER every mesh / finalize pass, which reason about
+/// the outer-wrapped shape.
 ///
-/// LibreOffice renders Word's internal-marked math as placeholder boxes; the
-/// outer wrap rendered the live formula instead — every formula's ink
-/// diverged from the oracle (math family n=28, mean ≈58; math_func ×
-/// math_groupchr 54.6).
+/// LibreOffice renders Word's internal-marked math as placeholder boxes;
+/// the outer wrap rendered the live formula instead, so every formula's
+/// ink diverged from the oracle.
 pub fn convert_outer_math_wraps_to_internal(
     dom: &mut Dom,
     root: NodeId,
@@ -890,8 +905,10 @@ fn mark_math_revisions_internally(
     }
 }
 
-/// M4.E.3-E.7 — `CoalesceRecurse` (:6024). Returns the constructed nodes for this
-/// level. `id_gen` is the `s_MaxId` analog (oMath revision ids).
+/// M4.E.3–E.7 — `CoalesceRecurse` (WmlComparer.ts :6024). Regroup atoms on
+/// ancestor `Unid` at `level`, rebuild each ancestor element, recurse one
+/// level deeper. Returns the constructed nodes for this level. `id_gen` is
+/// the `s_MaxId` analog used for math revision ids.
 pub fn coalesce_recurse(
     dom: &mut Dom,
     atoms: &[&ComparisonUnitAtom],
@@ -1359,6 +1376,16 @@ fn reconstruct_element(
                     dom.remove(c);
                 }
             };
+            // By value, without either side's own change record: each side's
+            // copy carries its own scratch Unids, so serialized XML would
+            // differ on every merged table.
+            let changed = |dom: &Dom, old: NodeId, new: NodeId, change: &str| {
+                children_signature(dom, old, change) != children_signature(dom, new, change)
+            };
+            // Word's compare records the old grid whenever the properties
+            // changed, even an equal grid; never a property change that
+            // changes nothing (its redlines in tests/corpus).
+            let mut pr_changed = false;
             // tblPr → tblPrChange
             if let (Some(new_pr), Some(old_pr)) = (
                 dom.element(ne, &W::tbl_pr()),
@@ -1366,7 +1393,9 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_pr);
                 strip_change(dom, old_clone, "tblPrChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_pr) {
+                pr_changed = changed(dom, old_clone, new_pr, "tblPrChange");
+                if pr_changed {
+                    strip_change(dom, new_pr, "tblPrChange");
                     let change = dom.new_element(W::name("tblPrChange"));
                     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
@@ -1393,7 +1422,8 @@ fn reconstruct_element(
             ) {
                 let old_clone = dom.clone_subtree(old_grid);
                 strip_change(dom, old_clone, "tblGridChange");
-                if dom.serialize_element(old_clone) != dom.serialize_element(new_grid) {
+                if pr_changed || changed(dom, old_clone, new_grid, "tblGridChange") {
+                    strip_change(dom, new_grid, "tblGridChange");
                     let change = dom.new_element(W::name("tblGridChange"));
                     // w:id ONLY. CT_TblGridChange is the one revision-history
                     // element that does not extend CT_TrackChange, so it
@@ -1542,15 +1572,22 @@ fn record_revised_row_cell_props(
 /// A property element's name, sorted attributes and children, recursively:
 /// the comparer's scratch `pt14:*` ids and rsids are no properties, so two
 /// clones of the same `w:tcW` compare equal whatever Unid each carries.
+/// Names keep their namespace and each attribute is delimited, so no two
+/// different property sets share a signature.
 fn props_signature(dom: &Dom, n: NodeId) -> String {
     let Some(name) = dom.name(n) else {
         return String::new();
     };
     let mut attrs: Vec<String> = dom
-        .attributes(n)
-        .into_iter()
+        .attributes_iter(n)
         .filter(|(k, _)| k.namespace_name() != PT::URI && !k.local_name().starts_with("rsid"))
-        .map(|(k, v)| format!("{}={v}", k.local_name()))
+        .map(|(k, v)| {
+            format!(
+                "\u{1}{{{}}}{}=\u{2}{v}\u{2}",
+                k.namespace_name(),
+                k.local_name()
+            )
+        })
         .collect();
     attrs.sort();
     let kids: String = dom
@@ -1558,7 +1595,21 @@ fn props_signature(dom: &Dom, n: NodeId) -> String {
         .into_iter()
         .map(|c| props_signature(dom, c))
         .collect();
-    format!("<{}{}>{kids}</>", name.local_name(), attrs.join(" "))
+    format!(
+        "<{{{}}}{}{}>{kids}</>",
+        name.namespace_name(),
+        name.local_name(),
+        attrs.concat()
+    )
+}
+
+/// The signatures of `n`'s children but its own `w:{change}` record.
+fn children_signature(dom: &Dom, n: NodeId, change: &str) -> String {
+    dom.elements(n, None)
+        .into_iter()
+        .filter(|&c| dom.name(c).is_none_or(|nm| nm.local_name() != change))
+        .map(|c| props_signature(dom, c))
+        .collect()
 }
 /// Put a row's `trPr` after its `tblPrEx`, a cell's `tcPr` first.
 fn place_row_cell_props(dom: &mut Dom, container: NodeId, pr: NodeId) {
@@ -1710,8 +1761,10 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     }
 }
 
-/// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (:5926): reset the id
-/// counter and coalesce at level 0.
+/// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (WmlComparer.ts
+/// :5926): coalesce at level 0 and return the top-level children of the
+/// rebuilt `<w:body>`. `id_gen` is the shared `s_MaxId`-style counter
+/// (math revision ids minted here).
 pub fn produce_new_wml_markup_from_correlated_sequence(
     dom: &mut Dom,
     atoms: &[ComparisonUnitAtom],
@@ -1724,7 +1777,7 @@ pub fn produce_new_wml_markup_from_correlated_sequence(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod opaque_text_tests {
     //! Direct coverage for `delete_text_in_opaque` (private). Pins the
     //! status→text-kind contract — in particular that `MovedSource` renames `w:t`
@@ -1822,7 +1875,7 @@ mod opaque_text_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tblpr_order_tests {
     //! Word-validity regression: a synthesized `w:tblW` must land in its
     //! `CT_TblPrBase` schema slot (after tblpPr/bidiVisual/...), not pinned
@@ -1857,7 +1910,7 @@ mod tblpr_order_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod content_control_source_order_regressions {
     use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
     use crate::namespaces::W;
@@ -1978,7 +2031,7 @@ mod content_control_source_order_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod run_format_history_regressions {
     use super::*;
     use crate::comparer::atoms::FormatChangeInfo;
@@ -2215,7 +2268,7 @@ mod run_format_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_control_identity_regressions {
     use super::same_authored_control;
     use crate::namespaces::W;
@@ -2261,7 +2314,7 @@ mod authored_control_identity_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod repeated_control_tag_regressions {
     use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
     use crate::namespaces::W;
@@ -2358,7 +2411,7 @@ mod repeated_control_tag_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod reordered_retained_control_identity_regression {
     use super::*;
     use std::sync::Arc;
@@ -2443,7 +2496,7 @@ mod reordered_retained_control_identity_regression {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_ruby_math_ownership {
     use super::*;
     use crate::namespaces::M;
@@ -2453,8 +2506,7 @@ mod coverage_ruby_math_ownership {
             return format!("text:{:?}", dom.text_value(node));
         };
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| {
                 name.namespace_name() != PT::URI
                     && name.namespace_name() != "http://www.w3.org/2000/xmlns/"
@@ -2595,7 +2647,7 @@ mod coverage_ruby_math_ownership {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod nontext_run_format_history_tests {
     use super::*;
     use crate::comparer::atoms::FormatChangeInfo;
@@ -2605,8 +2657,7 @@ mod nontext_run_format_history_tests {
 
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();

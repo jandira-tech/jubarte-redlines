@@ -2,16 +2,26 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.G — move detection. Port of DetectMovesInAtomList (:4711),
-//! GroupConsecutiveAtomsByStatus (:4776), ExtractTextFromAtomBlock (:4805),
-//! CalculateJaccardSimilarity (:4664), TokenizeForComparison/CountWords/splitByChars.
-//! NOTE: settings.detect_moves defaults to FALSE.
+//! Move detection (M4.G).
 //!
-//! Word-visual extensions (M117/M118):
-//! - split consecutive del/ins runs on `w:pPr` so each paragraph matches independently
-//! - collapse whitespace for Jaccard (stamp re-spacing ≠ move)
-//! - M117: length ratio ≥0.90 and thr ≥0.97
-//! - M118: thrash-drop expansions (pending≥12, near_exact≥8, size_ratio≥2)
+//! Port of `DetectMovesInAtomList` (:4711), `GroupConsecutiveAtomsByStatus`
+//! (:4776), `ExtractTextFromAtomBlock` (:4805), `CalculateJaccardSimilarity`
+//! (:4664), `TokenizeForComparison` / `CountWords` / `splitByChars`.
+//! On by default: [`WmlComparerSettings::detect_moves`] is `true` for the
+//! Word preset and `false` for [`WmlComparerSettings::powertools_faithful`].
+//!
+//! Word-visual extensions on top of the C# / TS algorithm:
+//! - split consecutive del/ins runs on `w:pPr` so each paragraph matches
+//!   independently;
+//! - collapse whitespace before Jaccard (a stamp re-spacing is not a move);
+//! - M117: length ratio ≥ 0.90 and Jaccard threshold ≥ 0.97;
+//! - M118: drop expansion thrash (≥ 12 pending, ≥ 8 near-exact pairs,
+//!   size ratio ≥ 2).
+//!
+//! [`detect_moves_in_atom_list`] is the public entry the compare pipeline
+//! calls once; [`promote_skip_ahead_equals`] / `promote_skip_ahead_equals_with_source`
+//! rearrange LCS so a `moveTo`-before-gap / `moveFrom`-after-gap shape is
+//! possible before the move pass runs.
 
 use std::collections::HashSet;
 
@@ -21,8 +31,13 @@ use crate::xmllinq::Dom;
 use super::atoms::{AtomBlock, ComparisonUnitAtom};
 use super::{CorrelationStatus, WmlComparerSettings};
 
-/// `splitByChars` (PtUtil) — split at any separator char; keeps empty segments
-/// (leading/trailing/adjacent) and always pushes a trailing segment.
+/// Split `text` at any character in `seps`; the resulting `Vec` keeps
+/// leading, trailing and adjacent empty segments (so the count of splits is
+/// the count of separators) and always pushes a trailing segment.
+///
+/// Used by [`tokenize`] and [`count_words`] to walk a block's text word by
+/// word without a temporary `Vec<String>` allocation when the caller only
+/// needs the count.
 pub fn split_by_chars(text: &str, seps: &[char]) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -37,7 +52,9 @@ pub fn split_by_chars(text: &str, seps: &[char]) -> Vec<String> {
     out
 }
 
-/// `TokenizeForComparison` — unique non-empty words (uppercased if case-insensitive).
+/// Unique non-empty words from `text`, split on [`WmlComparerSettings::word_separators`]
+/// and uppercased when [`WmlComparerSettings::case_insensitive`] is set.
+/// Powers the Jaccard similarity test in [`jaccard`] / `jaccard_precomputed`.
 pub fn tokenize(text: &str, settings: &WmlComparerSettings) -> HashSet<String> {
     split_by_chars(text, &settings.word_separators)
         .into_iter()
@@ -52,7 +69,9 @@ pub fn tokenize(text: &str, settings: &WmlComparerSettings) -> HashSet<String> {
         .collect()
 }
 
-/// `CountWords` — non-empty word count (NO dedup).
+/// Non-empty word count from `text` (no dedup). Powers the
+/// [`WmlComparerSettings::move_minimum_word_count`] gate in the move
+/// detector.
 pub fn count_words(text: &str, settings: &WmlComparerSettings) -> usize {
     split_by_chars(text, &settings.word_separators)
         .into_iter()
@@ -60,10 +79,11 @@ pub fn count_words(text: &str, settings: &WmlComparerSettings) -> usize {
         .count()
 }
 
-/// [`count_words`] and [`tokenize`] in one walk, without `split_by_chars`'
-/// `Vec<String>`: a maximal non-empty run between separators is one word
-/// (counted every time) and one token (deduped, uppercased when
-/// `case_insensitive`); empty segments count as neither.
+/// [`count_words`] and [`tokenize`] in one walk, without `split_by_chars`'s
+/// `Vec<String>` allocation. A maximal non-empty run between separators is
+/// one word (counted every time) and one token (deduped, uppercased when
+/// [`WmlComparerSettings::case_insensitive`] is set); empty segments count
+/// as neither.
 pub fn count_words_and_tokenize(
     text: &str,
     settings: &WmlComparerSettings,
@@ -96,11 +116,12 @@ pub fn count_words_and_tokenize(
 /// Collapse runs of whitespace so reformatted charter paragraphs (dense vs
 /// spaced) compare as the same text for move detection.
 fn collapse_ws(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(text)
 }
 
-/// `CalculateJaccardSimilarity` — |∩| / |∪| over unique word sets.
-/// Whitespace is collapsed first so pure re-spacing is not a "move".
+/// Jaccard similarity over unique word sets: `|intersection| / |union|`,
+/// with whitespace collapsed first so a pure re-spacing does not match as
+/// a move. Returns `0.0` when either side is empty.
 pub fn jaccard(text1: &str, text2: &str, settings: &WmlComparerSettings) -> f64 {
     let t1 = collapse_ws(text1);
     let t2 = collapse_ws(text2);
@@ -121,7 +142,10 @@ pub fn jaccard(text1: &str, text2: &str, settings: &WmlComparerSettings) -> f64 
     }
 }
 
-/// `GroupConsecutiveAtomsByStatus` — maximal runs of atoms with `status`.
+/// Maximal runs of atoms whose [`ComparisonUnitAtom::correlation_status`]
+/// equals `status`, each run returned with its atoms' indices and the
+/// start atom's index. Powers the deleted-and-inserted grouping the move
+/// pass matches against.
 pub fn group_consecutive_atoms_by_status(
     atoms: &[ComparisonUnitAtom],
     status: CorrelationStatus,
@@ -149,7 +173,10 @@ pub fn group_consecutive_atoms_by_status(
     blocks
 }
 
-/// `ExtractTextFromAtomBlock` — concat atom text (pPr → "\n"), no separator.
+/// Concatenate a block's atom text in document order; `w:pPr` atoms
+/// become a single `'\n'` so paragraph breaks remain visible to the word
+/// tokeniser without contributing a token. All other atoms contribute their
+/// element value verbatim.
 pub fn extract_text_from_atom_block(
     dom: &Dom,
     atoms: &[ComparisonUnitAtom],
@@ -168,13 +195,12 @@ pub fn extract_text_from_atom_block(
     s
 }
 
-/// Split a consecutive status run on paragraph marks (`w:pPr` atoms) so Word-like
-/// multi-paragraph deletions/insertions can match **per paragraph**.
+/// Split a consecutive status run on paragraph marks (`w:pPr` atoms) so
+/// multi-paragraph deletions/insertions match per paragraph, the way
+/// Word Compare pairs relocated paragraphs.
 ///
-/// PowerTools matched whole consecutive runs; Word Compare pairs relocated
-/// paragraphs (broken_ones_two `file_8_file_9`: one LCS del run of many paras
-/// vs many moveFrom/moveTo). Without this split, Jaccard on mega-blocks stays
-/// ~0.3 and no moves are emitted.
+/// PowerTools matched whole consecutive runs; without this split Jaccard
+/// on mega-blocks stays ≈ 0.3 and no moves are emitted.
 pub fn split_block_on_paragraphs(
     dom: &Dom,
     atoms: &[ComparisonUnitAtom],
@@ -216,20 +242,18 @@ pub fn split_block_on_paragraphs(
     out
 }
 
-/// When B skips ahead of pure A-only deletes (LCS: `Equal → Deleted+ → Equal+`
-/// with no inserts in the gap), Word often shows the matched continuation as a
-/// **move** to the early (B) position: `moveTo` before the gap, `moveFrom` after.
-/// Leaving equals at A's late position keeps gap deletes in the middle and
-/// shifts later pages (docx_lots_of_comments_addition_removal_redline × clean:
-/// Capability matrix lands pages later than Word).
+/// Promote a `Equal → Deleted(gap) → Equal+(matched)` LCS run so the matched
+/// continuation can be retagged as a Word move: `moveTo` before the gap,
+/// `moveFrom` after.
 ///
-/// Rewrite `… Equal, Deleted(gap), Equal+(matched) …` into
-/// `… Equal, Inserted(matched₂), Deleted(gap), Deleted(matched₁) …` so
-/// [`detect_moves_in_atom_list`] can retag the matched pair as a move.
-///
-/// The matched run is the consecutive Equals after the gap, **stopping after
-/// the first table** (or after 3 equals) so a heading alone is never moved
-/// without its following table body.
+/// When B skips ahead of pure A-only deletes, Word usually shows the
+/// matched continuation as a move to the early (B) position. Leaving
+/// equals at A's late position keeps the gap deletes in the middle and
+/// shifts later pages. The matched run is the consecutive Equals after
+/// the gap, **stopping after the first table** (or after 3 equals), and
+/// the promotion is skipped when the same original paragraph appears in
+/// both the pre-gap and post-gap equates (an alignment anchor, not a
+/// move).
 pub fn promote_skip_ahead_equals(
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
     settings: &WmlComparerSettings,
@@ -237,9 +261,12 @@ pub fn promote_skip_ahead_equals(
     promote_skip_ahead_equals_inner(None, seqs, settings);
 }
 
-/// Word producer variant: token-level Equal/Deleted sequences still carry
-/// complete original paragraph ownership in their atom ancestry. Use those
-/// immutable source owners for repeated-anchor disambiguation.
+/// Same as [`promote_skip_ahead_equals`], but for the Word producer path:
+/// token-level Equal/Deleted sequences still carry complete original
+/// paragraph ownership in their atom ancestry. The disambiguation reads
+/// those immutable source owners (an unchanged paragraph that appears in
+/// both the pre-gap and post-gap Equals stays in place; promoting it lets
+/// table coalescing pull the original row ahead of its deleted prefix).
 pub(crate) fn promote_skip_ahead_equals_with_source(
     dom: &Dom,
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
@@ -426,18 +453,20 @@ fn promote_skip_ahead_equals_inner(
     *seqs = out;
 }
 
-/// M4.G.3 — `DetectMovesInAtomList` (:4711): greedy match deleted↔inserted blocks
-/// by Jaccard ≥ threshold (min word count), retag MovedSource/MovedDestination.
+/// M4.G.3 — `DetectMovesInAtomList` (WmlComparer.ts :4711): greedy match
+/// deleted↔inserted blocks by Jaccard ≥ threshold (and the same minimum
+/// word count), retag matched atoms as `MovedSource` / `MovedDestination`
+/// with a fresh `move_group_id`.
 ///
-/// Word-visual extensions:
-/// - after consecutive-status grouping, **split on `w:pPr`** (paragraph units)
-/// - M117: length ratio ≥0.90 and thr = max(settings, 0.97)
-/// - M118: drop all pending when expansion thrash (pending≥12, near_exact≥8, size_ratio≥2)
+/// Word-visual extensions on top of the TS algorithm:
+/// - split consecutive del/ins runs on `w:pPr` so each paragraph matches
+///   independently;
+/// - M117: length ratio ≥ 0.90 and Jaccard threshold ≥ 0.97;
+/// - M118: drop all pending moves when an expansion-thrash shape fires
+///   (≥ 12 pending, ≥ 8 near-exact pairs, del/ins char size ratio ≥ 2).
 ///
-/// Dispatches to `detect_moves_memoized`, which precomputes each block's text /
-/// word count / Jaccard token-set ONCE instead of re-extracting and re-tokenizing
-/// on every (deleted × inserted) pair. Its retagging is identical to the historical
-/// `detect_moves_reference`, proven by `memoized_matches_reference`.
+/// Production dispatches to the memoized path; the per-block text features
+/// are computed once instead of re-extracted per (deleted × inserted) pair.
 pub fn detect_moves_in_atom_list(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -662,7 +691,7 @@ fn detect_moves_memoized(
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn detect_moves_reference(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -819,7 +848,7 @@ fn detect_moves_reference(
 /// obvious-move case and thousands of seeded-random sequences under several
 /// settings profiles.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod memoized_moves_tests {
     use super::*;
     use crate::xmllinq::NodeId;
@@ -1077,7 +1106,7 @@ mod memoized_moves_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod repeated_source_anchor_promotion_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1184,7 +1213,7 @@ mod repeated_source_anchor_promotion_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod source_paragraph_promotion_boundary_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1510,7 +1539,7 @@ mod source_paragraph_promotion_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_lexical_empty_move_boundary_tests {
     use super::*;
     #[test]
@@ -1540,5 +1569,84 @@ mod public_lexical_empty_move_boundary_tests {
                 assert_eq!(score, jaccard(right, left, &settings));
             }
         }
+    }
+
+    #[test]
+    fn public_jaccard_similarity_edge_cases() {
+        let settings = WmlComparerSettings::default();
+
+        // 0. Empty strings
+        assert_eq!(jaccard("", "", &settings), 0.0);
+        assert_eq!(jaccard("hello", "", &settings), 0.0);
+        assert_eq!(jaccard("", "world", &settings), 0.0);
+
+        // 1. Order invariance: {hello, world} vs {world, hello} -> 1.0
+        assert_eq!(jaccard("hello world", "world hello", &settings), 1.0);
+
+        // 2. Set uniqueness / duplication invariance: {hello, world} vs {world, hello} -> 1.0
+        assert_eq!(jaccard("hello hello world", "world hello", &settings), 1.0);
+        assert_eq!(jaccard("hello world", "world hello hello", &settings), 1.0);
+
+        // 3. Disjoint sets: {hello, world} vs {foo, bar} -> 0.0
+        assert_eq!(jaccard("hello world", "foo bar", &settings), 0.0);
+
+        // 4. Partial overlap: {hello, world} vs {hello, foo}
+        // Intersection = {hello} (1)
+        // Union = {hello, world, foo} (3)
+        // Jaccard = 1 / 3
+        assert!((jaccard("hello world", "hello foo", &settings) - 1.0 / 3.0).abs() < 1e-12);
+
+        // 5. Whitespace independence
+        assert_eq!(jaccard("hello    world", "hello\nworld", &settings), 1.0);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod split_by_chars_tests {
+    use super::*;
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(split_by_chars("", &[' ', '\t']), vec![""]);
+    }
+
+    #[test]
+    fn empty_separators() {
+        assert_eq!(split_by_chars("hello", &[]), vec!["hello"]);
+    }
+
+    #[test]
+    fn empty_input_and_empty_separators() {
+        assert_eq!(split_by_chars("", &[]), vec![""]);
+    }
+
+    #[test]
+    fn text_containing_only_separators() {
+        assert_eq!(split_by_chars(" \t ", &[' ', '\t']), vec!["", "", "", ""]);
+    }
+
+    #[test]
+    fn text_with_separators_at_edges_and_middle() {
+        assert_eq!(
+            split_by_chars(" hello world ", &[' ']),
+            vec!["", "hello", "world", ""]
+        );
+    }
+
+    #[test]
+    fn text_with_consecutive_separators() {
+        assert_eq!(
+            split_by_chars("hello  world", &[' ']),
+            vec!["hello", "", "world"]
+        );
+    }
+
+    #[test]
+    fn unicode_characters() {
+        assert_eq!(
+            split_by_chars("hello🦀world", &['🦀']),
+            vec!["hello", "world"]
+        );
     }
 }

@@ -24,6 +24,12 @@
 //! side's anchors are re-injected by character position, located by context
 //! matching (robust to content loss elsewhere); an unmappable range falls to
 //! rule 4.
+//!
+//! Public entry point:
+//! - [`carry_comments`] — orchestrator for carryover. Run after the diff
+//!   produced `result_root` but before it is serialized into `out`; the
+//!   helper does the part-union decision, anchor injection, anchor-aware
+//!   selection and orphan cleanup.
 
 use std::collections::{HashMap, HashSet};
 
@@ -119,7 +125,7 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
 }
 
 fn normalized_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(text)
 }
 
 /// Build an id-independent identity from the comment body and its anchored
@@ -1061,11 +1067,11 @@ fn preserve_cloned_namespace_context(
             used_uris.insert(name.namespace_name().to_string());
         }
         let element_name = dom.name(element);
-        for (name, value) in dom.attributes(element) {
-            if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
+        for (name, value) in dom.attributes_iter(element) {
+            if !dom.is_namespace_declaration(name) && !name.namespace_name().is_empty() {
                 used_uris.insert(name.namespace_name().to_string());
             }
-            if is_namespace_qname_list(element_name.as_ref(), &name) {
+            if is_namespace_qname_list(element_name.as_ref(), name) {
                 required_prefixes.extend(
                     value
                         .split_whitespace()
@@ -1356,7 +1362,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             d.elements(br, None)
                 .into_iter()
                 .filter_map(|e| {
-                    d.attributes(e)
+                    d.attributes_iter(e)
                         .into_iter()
                         .find(|(name, _)| name.local_name() == "durableId")
                         .map(|(_, value)| value.to_ascii_uppercase())
@@ -1436,7 +1442,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     let mut dead_para_ids: HashSet<String> = HashSet::new();
     for &c in &orphan {
         for p in dom.descendants(c, Some(&W::p())) {
-            for (n, v) in dom.attributes(p) {
+            for (n, v) in dom.attributes_iter(p) {
                 if n.local_name() == "paraId" {
                     dead_para_ids.insert(v.to_ascii_uppercase());
                 }
@@ -1548,6 +1554,32 @@ fn select_anchor_aware_comments(
 
 /// Entry point — run after the diff produced `result_root` but BEFORE it is
 /// serialized into `out` (anchors are injected into the result DOM).
+///
+/// Carries the union of both source packages' `word/comments*.xml` parts
+/// forward into `out` and re-emits `commentRangeStart`/`commentRangeEnd`/
+/// `commentReference` markers at the equivalent text position in the merged
+/// body for every comment that survives the part-union step.
+///
+/// Behaviour:
+///
+/// - **Both sides' comments present.** Either B's parts are emitted
+///   byte-identical (`B ⊇ A` by id+definition, or by anchor-identity cover
+///   when Word renumbered B's comments across sequential redline sources),
+///   or the parts become the union with A-only comments appended and their
+///   `paraId` / `durableId` keys rewritten consistently.
+/// - **Only A has comments.** `out` is expected to already be A's clone;
+///   anchors are projected onto A's text in the merged body.
+/// - **A comment whose anchors cannot be placed.** Dropped from the part
+///   family; when none survive, the entire part family is removed (no
+///   orphans).
+///
+/// `pkg1`/`main1` and `pkg2`/`main2` carry the source packages and their
+/// main-part names; `out`/`out_main` is the merge target whose
+/// `word/comments.xml` is being written. `author` is the comparer author
+/// stamped on every inserted `commentReference` run (matches the comment
+/// family's carryover policy for the `--author` CLI flag).
+///
+/// Backs the M35 part-union step and the `--keep-comments` CLI path.
 pub fn carry_comments(
     dom: &mut Dom,
     result_root: NodeId,
@@ -1660,7 +1692,7 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1786,7 +1818,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deeper_boundary_tests {
     use super::*;
 

@@ -7,3 +7,8 @@ only (AGPL-3.0-only). See LICENSE for the complete repository license.
 The texts in LICENSES/ preserve attribution notices for historical upstream
 sources. They do not alter the repository-wide AGPL-3.0-only license or grant
 a separate license for Jandira Technologies, LLC contributions.
+
+The OpenType MATH reader and math layout arithmetic are adapted from
+markdown2pdf (https://github.com/theiskaa/markdown2pdf), Copyright (c) 2023
+Ismael Shakverdiev. Its MIT notice is preserved in
+LICENSES/LicenseRef-markdown2pdf-MIT.txt.

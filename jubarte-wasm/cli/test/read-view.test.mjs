@@ -48,9 +48,10 @@ test("readView by resolves names, bare handles and prefixed handles for comment 
   const expected = read(received, { changed: true, by: "Arthur Souza Rodrigues" });
   assert.deepEqual(blockIds(expected), ["p5"]);
   assert.match(expected, /range: changed by @AS \(p5\)/);
-  assert.match(body(expected), /#c6 @AS re #c5: Disagree/);
-  // Filtering keeps the complete block, including other authors' marks.
-  assert.match(body(expected), /#3\+4 @AC/);
+  assert.match(body(expected), /c6 @AS re c5: Disagree/);
+  // Filtering keeps the complete block, including other authors' marks: a
+  // deletion followed by its insertion by the same author is a substitution.
+  assert.match(body(expected), /\{~~thirty~>forty-five~~\}\{r3\+4 @AC\}/);
   for (const by of ["AS", "@AS"]) {
     assert.equal(read(received, { changed: true, by }), expected);
   }
@@ -74,7 +75,7 @@ for (const trackChanges of ["accept", "reject"]) {
   test(`readView changed retains author metadata in the ${trackChanges} view`, () => {
     const view = read(received, { changed: true, by: "AC", trackChanges });
     assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-    assert.match(body(view), /<!-- p3 rev #0 @AC; #1\+2 @AC -->/);
+    assert.match(body(view), /<!-- p3 rev r0 @AC; r1\+2 @AC -->/);
     assert.doesNotMatch(body(view), /\{(?:\+\+|--|~~)/);
     assert.ok(body(view).includes(trackChanges === "accept" ? "Day 15" : "Day 10"));
   });
@@ -83,7 +84,7 @@ for (const trackChanges of ["accept", "reject"]) {
 test("readView changed includes hidden comment-only blocks without their text", () => {
   const view = read(received, { changed: true, comments: "none" });
   assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-  assert.match(body(view), /<!-- p18 .*comments #c11 -->/);
+  assert.match(body(view), /<!-- p18 .*comments c11 -->/);
   assert.doesNotMatch(body(view), /three-year survival|Disagree\./);
 });
 
@@ -121,16 +122,16 @@ test("shared CLI parsing applies changed conflicts to read and text aliases", ()
   }
 });
 
-test("short selectors edit the intended body and table cells and report canonical ids", () => {
+test("short selectors edit the intended body and table cells and report their short ids", () => {
   const original = wasm.markdownToDocx("Intro\n\n| Item | Due |\n|---|---|\n| Report | Friday |\n\nTail\n");
   const result = wasm.applyEditPlan(original, plan([
     { kind: "replace", paragraph: "p0", find: "Intro", replacement: "Opening" },
-    { kind: "replace", paragraph: { id: "t0.r1.c1.p0" }, find: "Friday", replacement: "Monday" },
+    { kind: "replace", paragraph: { id: "t0.row1.cell1" }, find: "Friday", replacement: "Monday" },
     { kind: "replace", paragraph: "p5", find: "Tail", replacement: "Closing" },
   ]));
   try {
     assert.equal(result.ok, true, result.json);
-    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["body:p:0", "body:p:4", "body:p:5"]);
+    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["p0", "p4", "p5"]);
     const clean = body(read(result.clean));
     assert.match(clean, /Opening/);
     assert.match(clean, /\|Report\|Monday\|/);
@@ -151,13 +152,15 @@ test("invalid short selectors return useful refusals without output documents", 
   const docx = wasm.markdownToDocx("Intro\n\n| Item | Due |\n|---|---|\n| Report | Friday |\n");
   for (const [id, message] of [
     ["p6", "paragraph index 6 does not exist in body (6 paragraphs)"],
-    ["t1.r0.c0", "t1 is not a table of this document (1 table)"],
-    ["t0.r2.c0", "t0 has 2 rows, no row 2"],
-    ["t0.r0.c2", "t0.r0 has 2 cells, no cell 2"],
-    ["t0.r1.c1.p1", "t0.r1.c1 has 1 paragraph, no p1"],
-    ["t0.r0", "t0: a table id needs a row and a cell"],
-    ["p+0", "unknown paragraph id p+0"],
-    ["header1", "headers and footers: none"],
+    ["t1.row0.cell0", "t1 is not a table of this document (1 table)"],
+    ["t0.row2.cell0", "t0 has 2 rows, no row 2"],
+    ["t0.row0.cell2", "t0.row0 has 2 cells, no cell 2"],
+    ["t0.row1.cell1.p1", "t0.row1.cell1 has 1 paragraph, no p1"],
+    ["t0", "t0: a table id needs a row and a cell, as t0.row1.cell2"],
+    // 0.12's cell form is expired: refused with its settled spelling.
+    ["t0.r1.c1", "the settled spelling is t0.row1.cell1"],
+    ["p+0", "p+0: expected a short id such as p12"],
+    ["header1", "header1 is not a story of this document (stories: body)"],
   ]) {
     const result = wasm.applyEditPlan(docx, plan([{ kind: "replace", paragraph: id, find: "Intro", replacement: "Changed" }]));
     try {

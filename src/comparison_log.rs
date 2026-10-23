@@ -3,65 +3,128 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Port of `ComparisonLog.ts` — diagnostic log emitted during comparison.
+//!
+//! A `ComparisonLog` accumulates entries at three severity levels; the
+//! module itself just stores them in insertion order, and consumers
+//! (the host, the `error_count` helper) interpret the severities.
+//! Severity is therefore purely a tag the caller chooses when it appends.
 
-/// Severity / category codes for comparison log entries.
+/// Severity / category tag of a [`ComparisonLogEntry`]. The variant has
+/// no behaviour of its own; the meaning (`Info` / `Warning` / `Error`)
+/// is whatever the host or downstream tool assigns to it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ComparisonLogCode {
-    /// Public API item.
+    /// An entry logged via [`ComparisonLog::info`].
     Info,
-    /// Public API item.
+    /// An entry logged via [`ComparisonLog::warning`].
     Warning,
-    /// Public API item.
+    /// An entry logged via [`ComparisonLog::error`].
     Error,
 }
-/// `ComparisonLogEntry`.
 
+/// One entry in a [`ComparisonLog`]: a severity tag and the message.
 #[derive(Clone, Debug)]
 pub struct ComparisonLogEntry {
-    /// `code`.
+    /// Severity / category the entry was logged at.
     pub code: ComparisonLogCode,
-    /// `message`.
+    /// Human-readable message, English, one line.
     pub message: String,
 }
 
-/// Accumulates log entries during a comparison run.
+/// Accumulates log entries during a comparison run, in insertion order.
 #[derive(Debug, Default)]
 pub struct ComparisonLog {
-    /// `entries`.
+    /// Entries in the order they were logged.
     pub entries: Vec<ComparisonLogEntry>,
 }
 
 impl ComparisonLog {
-    /// `new`.
+    /// Returns an empty log; equivalent to [`Default::default`].
     pub fn new() -> Self {
         ComparisonLog::default()
     }
-    /// `info`.
+
+    /// Appends a [`ComparisonLogCode::Info`] entry with `message`.
     pub fn info(&mut self, message: impl Into<String>) {
         self.entries.push(ComparisonLogEntry {
             code: ComparisonLogCode::Info,
             message: message.into(),
         });
     }
-    /// `warning`.
+
+    /// Appends a [`ComparisonLogCode::Warning`] entry with `message`.
     pub fn warning(&mut self, message: impl Into<String>) {
         self.entries.push(ComparisonLogEntry {
             code: ComparisonLogCode::Warning,
             message: message.into(),
         });
     }
-    /// `error`.
+
+    /// Appends a [`ComparisonLogCode::Error`] entry with `message`.
     pub fn error(&mut self, message: impl Into<String>) {
         self.entries.push(ComparisonLogEntry {
             code: ComparisonLogCode::Error,
             message: message.into(),
         });
     }
-    /// `error_count`.
+
+    /// Number of [`ComparisonLogCode::Error`] entries currently in the log.
     pub fn error_count(&self) -> usize {
         self.entries
             .iter()
             .filter(|e| e.code == ComparisonLogCode::Error)
             .count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_is_empty() {
+        let log = ComparisonLog::new();
+        assert!(log.entries.is_empty());
+    }
+
+    #[test]
+    fn test_info() {
+        let mut log = ComparisonLog::new();
+        log.info("test info message");
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].code, ComparisonLogCode::Info);
+        assert_eq!(log.entries[0].message, "test info message");
+    }
+
+    #[test]
+    fn test_warning() {
+        let mut log = ComparisonLog::new();
+        log.warning("test warning message");
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].code, ComparisonLogCode::Warning);
+        assert_eq!(log.entries[0].message, "test warning message");
+    }
+
+    #[test]
+    fn test_error() {
+        let mut log = ComparisonLog::new();
+        log.error("test error message");
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].code, ComparisonLogCode::Error);
+        assert_eq!(log.entries[0].message, "test error message");
+    }
+
+    #[test]
+    fn test_error_count() {
+        let mut log = ComparisonLog::new();
+        assert_eq!(log.error_count(), 0);
+        log.info("info");
+        assert_eq!(log.error_count(), 0);
+        log.error("error 1");
+        assert_eq!(log.error_count(), 1);
+        log.warning("warning");
+        assert_eq!(log.error_count(), 1);
+        log.error("error 2");
+        assert_eq!(log.error_count(), 2);
     }
 }

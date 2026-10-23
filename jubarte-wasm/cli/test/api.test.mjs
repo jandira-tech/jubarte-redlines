@@ -25,6 +25,9 @@ test("default context, labels, empty patches and existing tracked marks", () => 
   const old = wasm.markdownToDocx("Due in {~~30~>45~~} days.\n");
   const next = wasm.markdownToDocx("Due in {~~30~>60~~} days.\n");
   const tracked = wasm.diffDocumentsUnified(old, next);
+  // The Markdown writer emits `{~~old~>new~~}` deletion first, and a mark
+  // already in a document keeps its order; only a replacement compare makes
+  // reads insertion first.
   assert.ok(tracked.includes("[-30-]{+45+}") && tracked.includes("[-30-]{+60+}"), tracked);
   assert.equal(wasm.diffDocumentsUnified(old, old), "");
 });
@@ -120,7 +123,7 @@ test("view JSON strictly validates all typed options and explicit sides", () => 
 });
 
 test("shared parser emits adapter format metadata and new view switches", () => {
-  for (const [suffix, expected] of [["txt", "md"], ["mdown", "md"], ["unknown", null]]) {
+  for (const [suffix, expected] of [["txt", "md"], ["mdown", "md"], ["unknown", "md"]]) {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(["diff", "a.txt", "b.markdown", "-o", `out.${suffix}`])));
     assert.equal(parsed.args.old_format, "md");
     assert.equal(parsed.args.new_format, "md");
@@ -152,14 +155,20 @@ test("agent shorthand forwards every view option and preserves explicit compare"
     assert.deepEqual(single, explicit);
     const pair = parse(["a.docx", "b.docx", ...flags]);
     assert.equal(pair.exit_code, 0, JSON.stringify(pair));
-    const { file, ...view } = explicit.args;
+    // -q is the whole command's, and read's own -o goes with read: the view
+    // takes only the read options.
+    const { file, quiet, output, force, output_format, ...view } = explicit.args;
+    assert.equal(quiet, false);
     assert.equal(file, "a.docx");
+    assert.deepEqual([output, force, output_format], [null, false, null]);
     assert.deepEqual(pair.args.view, view);
   }
+  // compare A B is the shorthand A B: the same view without -o.
   for (const task of ["compare", "redline"]) {
     const result = parse([task, "-b", "a.docx", "-m", "b.docx"]);
     assert.equal(result.exit_code, 0, JSON.stringify(result));
-    assert.equal(Object.hasOwn(result.args, "view"), false);
+    assert.deepEqual(result.args.view, parse(["-b", "a.docx", "-m", "b.docx"]).args.view);
+    assert.equal(Object.hasOwn(parse([task, "a.docx", "b.docx", "-o", "r.docx"]).args, "view"), false);
     assert.equal(parse([task, "-b", "a.docx"]).exit_code, 2);
   }
 });
@@ -169,7 +178,7 @@ test("agent shorthand rejects all read flags with output including explicit defa
     const result = JSON.parse(wasm.parseCli(JSON.stringify(["a.docx", "b.docx", "-o", "out.docx", ...flags])));
     assert.equal(result.exit_code, 2, flags.join(" "));
     assert.equal(result.stream, "stderr");
-    assert.match(result.text, /drop -o/);
+    assert.match(result.text, /read options shape the view: print it \(no -o\) or write it \(-o FILE\.md\)/);
   }
   assert.equal(JSON.parse(wasm.parseCli('["a.docx","b.docx","-o","out.docx"]')).exit_code, 0);
 });

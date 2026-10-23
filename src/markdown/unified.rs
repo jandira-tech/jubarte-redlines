@@ -36,19 +36,24 @@ use super::{MarkdownError, MarkdownOptions, docx_to_markdown};
 use crate::document_comparer::{accept_revisions, reject_revisions};
 use crate::inspect;
 
-/// The width [`Patch`] wraps to when displayed.
+/// The column width the [`Patch`] display formatter wraps to; passed to
+/// [`Patch::render`] as `columns` to change it.
 pub const DEFAULT_COLUMNS: usize = 72;
 
-/// Who made a change or comment, and when (`YYYY-MM-DDTHH:MM:SSZ`).
+/// The author and date of a change or comment, in the form Word writes and
+/// jubarte's Markdown edit path encodes (`YYYY-MM-DDTHH:MM:SSZ`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attribution {
     /// The name Word shows.
     pub author: String,
-    /// `YYYY-MM-DDTHH:MM:SSZ`.
+    /// `YYYY-MM-DDTHH:MM:SSZ` (ISO 8601 down to the second, UTC offset
+    /// `Z` by default).
     pub date: String,
 }
 
-/// The names on the `---` and `+++` lines and the document owner.
+/// The names written on the patch's `---` and `+++` header lines, and
+/// the document owner (the author and date of every change and comment
+/// that names none).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatchOptions {
     /// The old document's name, after `--- a/`.
@@ -65,7 +70,7 @@ pub enum Locator {
     /// The 1-based line of a Markdown document.
     Line(usize),
     /// A paragraph of a Word document by the id an edit plan names it by:
-    /// `body:p:3`, `footnotes:p:0`.
+    /// `p3`, `footnotes.p1` ([`crate::ids::paragraph_id`]).
     Paragraph {
         /// `body`, or the part a header, footer or note is in
         /// (`header1`, `footnotes`).
@@ -79,7 +84,9 @@ impl fmt::Display for Locator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Line(line) => write!(f, "line:{line}"),
-            Self::Paragraph { story, index } => write!(f, "{story}:p:{index}"),
+            Self::Paragraph { story, index } => {
+                f.write_str(&crate::ids::paragraph_id(story, *index))
+            }
         }
     }
 }
@@ -87,32 +94,41 @@ impl fmt::Display for Locator {
 /// A comment, on a change, on highlighted text, or at a point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
-    /// Who wrote it.
+    /// The author name (Word's `w:author`).
     pub author: String,
-    /// When.
+    /// `YYYY-MM-DDTHH:MM:SSZ`, the date Word writes.
     pub date: String,
-    /// What it says.
+    /// The comment text: everything after `Name (date):`, or empty for an
+    /// attribution alone (`{>>Name (date)<<}`).
     pub text: String,
-    /// The highlighted text the comment is on, if any.
+    /// The highlighted text the comment is on (when the comment was on a
+    /// `{==…==}` highlight), or `None` for a comment on a tracked change
+    /// or a free-standing comment.
     pub on: Option<String>,
 }
 
-/// Text deleted, inserted, or both (a replacement).
+/// One tracked change (or self-contained substitution), with its author
+/// and date. `old` and `new` are both nonempty for a substitution, only
+/// `old` for a deletion, only `new` for an insertion.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     /// The text deleted (empty for an insertion).
     pub old: String,
     /// The text inserted (empty for a deletion).
     pub new: String,
-    /// Who made the change.
+    /// Who made the change (the change's own author, when it names one;
+    /// otherwise the [`PatchOptions::owner`]).
     pub author: String,
-    /// When.
+    /// When the change was made.
     pub date: String,
-    /// The comment written right after the change.
+    /// The comment written right after the change, if any.
     pub comment: Option<Comment>,
 }
 
-/// One changed paragraph.
+/// One changed paragraph: its [`Locator`] (where it is in the old or new
+/// document), whether it is removed (a paragraph only in the old
+/// version), its rendered text with markup intact, its changes in order,
+/// and any comments that were not written right after a change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hunk {
     /// The paragraph in the new version, or in the old one when `removed`.
@@ -127,8 +143,9 @@ pub struct Hunk {
     pub comments: Vec<Comment>,
 }
 
-/// The changed paragraphs of a document. Displayed, it is
-/// [`render`](Self::render)ed at [`DEFAULT_COLUMNS`].
+/// The changed paragraphs of a document, as a `git diff --word-diff`
+/// patch. Displayed, it is [`render`](Self::render)ed at
+/// [`DEFAULT_COLUMNS`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Patch {
     /// The old document's name.
@@ -142,8 +159,8 @@ pub struct Patch {
 }
 
 impl Patch {
-    /// The patch as text, wrapped at `columns` (`0`: not wrapped). Empty
-    /// when nothing changed.
+    /// Renders the patch as text, wrapped at `columns` (`0` does not
+    /// wrap). Returns an empty string when nothing changed.
     pub fn render(&self, columns: usize) -> String {
         if self.hunks.is_empty() {
             return String::new();
@@ -180,8 +197,13 @@ fn path_name(name: &str) -> &str {
     name.trim_start_matches('/')
 }
 
-/// The changes from `old` to `new`, two Markdown documents, as a patch whose
-/// changes are the owner's.
+/// Diffs two Markdown documents (`old`, `new`) as a single [`Patch`]
+/// whose changes are attributed to the [`PatchOptions::owner`]. Each
+/// hunk lives at the line its paragraph starts on in the document
+/// itself.
+///
+/// Backs `jubarte diff old.md new.md` (`--format critic`, or the unified
+/// patch `--format`/`patch` when both inputs are Markdown).
 ///
 /// ```
 /// use jubarte::markdown::{Attribution, PatchOptions, patch_markdown};
@@ -241,17 +263,24 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
     patch
 }
 
-/// A Markdown document whose CriticMarkup holds the changes (as
-/// [`diff_markdown`] or [`docx_to_markdown`] write
-/// it) as a patch. `{>>Name (date)<<}` right after a change is that change's
-/// author and date; `{>>Name (date): text<<}` is a comment by `Name`; any
-/// other comment, and every change without an author, is the owner's.
+/// Builds a [`Patch`] from a Markdown document whose CriticMarkup holds
+/// the changes (as [`diff_markdown`] or [`docx_to_markdown`] write it).
+///
+/// # Attribution rules
+///
+/// - `{r1 Name (date)}` immediately after a change is its author and date.
+///   A substitution tag names its deletion then insertion. `¶{r1 Name}`
+///   attributes the following inserted paragraph separator.
+/// - `{>>Name (date): text<<}` is a comment by `Name`, attached to the
+///   preceding change (or to a highlight, depending on the context).
+/// - Every other comment, and every change without an author, is the
+///   [`PatchOptions::owner`]'s.
 pub fn patch_critic(critic: &str, options: &PatchOptions) -> Patch {
     build(critic, options).0
 }
 
 /// A Word redline's tracked changes and comments as a patch, each hunk at
-/// the id ([`body:p:N`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its
+/// the id ([`pN`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its
 /// paragraph once every change is accepted (or rejected, for a removed
 /// paragraph): the id an edit plan names it by. A change in a text box is
 /// at the paragraph that holds the box. Every comment is shown.
@@ -259,13 +288,23 @@ pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, Markd
     let package = |error: crate::opc::OpcError| MarkdownError::Package(error.to_string());
     let old = reject_revisions(docx).map_err(package)?;
     let new = accept_revisions(docx).map_err(package)?;
-    patch_word(docx, &old, &new, None, options)
+    patch_word(docx, &old, &new, None, options, &MarkdownOptions::default())
 }
 
-/// [`patch_redline`] for the owner's own changes: every change by another
-/// author, or by the owner on another date, is accepted first, so it reads
-/// as unchanged text. An edit plan with `existing_revisions: "keep"` writes
+/// [`patch_redline`] for the owner's own changes: every change by
+/// another author, or by the owner on another date, is accepted first,
+/// so the patch reads as only the changes still attributed to the
+/// owner. An edit plan with
+/// [`existing_revisions: "keep"`](crate::edit::ExistingRevisions) writes
 /// its patch this way, beside the other party's tracked changes.
+///
+/// # Errors
+///
+/// - [`MarkdownError::Docx`] when the package's tracked changes cannot
+///   be listed (admission refusal, package read failure, or malformed
+///   part).
+/// - [`MarkdownError::Package`] when accepting the other-party
+///   revisions or accepting / rejecting every revision afterward fails.
 pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, MarkdownError> {
     let changes = crate::changes::list_changes(docx)
         .map_err(|error| MarkdownError::Docx(error.to_string()))?;
@@ -284,14 +323,14 @@ pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, M
         ids: Some(others),
         ..crate::changes::ChangeFilter::default()
     };
-    let own = crate::changes::accept_changes(docx, &filter)
+    let own = crate::changes::accept_elements(docx, &filter)
         .map_err(|error| MarkdownError::Package(error.to_string()))?;
     patch_redline(&own, options)
 }
 
 /// The changes from `old` to `new` as a patch. Two Markdown documents give
 /// [`patch_markdown`]'s patch, at lines; otherwise the documents are
-/// compared as [`redline`] compares them and each hunk is at a `body:p:N`
+/// compared as [`redline`] compares them and each hunk is at a `pN`
 /// of the Word document on its side (of the redline, accepted or rejected,
 /// where that side is Markdown). The comparer's changes are the owner's;
 /// a comment the old document has too is not a change.
@@ -317,14 +356,18 @@ pub fn patch_documents(
         Source::Docx(docx) => docx.to_vec(),
         Source::Markdown(_) => accept_revisions(&docx).map_err(package)?,
     };
-    let known = segments(&docx_to_markdown(&old, &MarkdownOptions::default())?.markdown)
+    let markdown_options = MarkdownOptions {
+        input_limits: compared.settings.input_limits,
+        ..MarkdownOptions::default()
+    };
+    let known = segments(&docx_to_markdown(&old, &markdown_options)?.markdown)
         .into_iter()
         .filter_map(|segment| match segment {
-            Segment::Note(note) => Some(note),
+            Segment::Note(note, _) => Some(note),
             _ => None,
         })
         .collect();
-    patch_word(&docx, &old, &new, Some(&known), options)
+    patch_word(&docx, &old, &new, Some(&known), options, &markdown_options)
 }
 
 /// The redline's patch with each hunk at the paragraph of `old` or `new`
@@ -335,10 +378,14 @@ fn patch_word(
     new: &[u8],
     known: Option<&HashSet<String>>,
     options: &PatchOptions,
+    markdown_options: &MarkdownOptions,
 ) -> Result<Patch, MarkdownError> {
-    let critic = docx_to_markdown(docx, &MarkdownOptions::default())?.markdown;
+    let critic = docx_to_markdown(docx, markdown_options)?.markdown;
     let (mut patch, texts) = build_with(&critic, options, known);
-    let (old, new) = (word_paragraphs(old)?, word_paragraphs(new)?);
+    let (old, new) = (
+        word_paragraphs(old, markdown_options.input_limits)?,
+        word_paragraphs(new, markdown_options.input_limits)?,
+    );
     // Every paragraph is looked for, changed or not, so the search follows
     // the document; text found in no paragraph is in a text box, and goes
     // to the paragraph found last, the one that holds the box.
@@ -399,10 +446,12 @@ impl<'a> Search<'a> {
 
 /// The body's paragraphs, then the headers', footers' and notes', as
 /// `jubarte text` lists them.
-fn word_paragraphs(docx: &[u8]) -> Result<Vec<WordParagraph>, MarkdownError> {
+fn word_paragraphs(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<Vec<WordParagraph>, MarkdownError> {
     let error = |error: inspect::InspectError| MarkdownError::Docx(error.to_string());
-    let body = inspect::paragraphs(docx).map_err(error)?;
-    let stories = inspect::stories(docx).map_err(error)?;
+    let (body, stories) = inspect::paragraphs_and_stories_within(docx, limits).map_err(error)?;
     let all = body.into_iter().map(|p| ("body".to_string(), p)).chain(
         stories
             .into_iter()
@@ -486,7 +535,7 @@ fn build_with(
     known: Option<&HashSet<String>>,
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
-    let blocks = blocks(detach_breaks(attribute(segments(&critic))));
+    let blocks = blocks(detach_breaks(join_marks(attribute(segments(&critic)))));
     let owner = &options.owner;
     let mut hunks = Vec::new();
     let mut texts = Vec::new();
@@ -549,6 +598,9 @@ struct Edit {
     old_marked: String,
     new_marked: String,
     by: Option<(String, String)>,
+    /// The insertion's own author and date, when a substitution's sides
+    /// were made by two authors (the view names them old then new).
+    new_by: Option<(String, String)>,
 }
 
 impl Edit {
@@ -571,7 +623,7 @@ enum Segment {
     HighlightStart,
     HighlightEnd,
     /// A comment's text, as written.
-    Note(String),
+    Note(String, bool),
 }
 
 /// The document as text, changes, highlight delimiters and comments.
@@ -580,10 +632,40 @@ fn segments(critic: &str) -> Vec<Segment> {
     let mut edit: Option<Edit> = None;
     let mut side = Side::New;
     let mut note: Option<String> = None;
+    let mut attribution = false;
+    let mut paragraph_note = false;
+    // A ¶ tag attributes the next paragraph separator, not the preceding text.
+    let mut paragraph_break: Option<(String, String)> = None;
     // Comments that end inside a change, written after it.
     let mut held: Vec<String> = Vec::new();
     critic::Pieces::default().feed(&critic::encode_spans_only(critic), |piece| match piece {
-        Piece::Text(text) => {
+        Piece::Text(mut text) => {
+            if let Some((tag, mut separator)) = paragraph_break.take() {
+                while separator.bytes().filter(|&b| b == b'\n').count() < 2 {
+                    let width = if text.starts_with("\r\n") {
+                        2
+                    } else if text.starts_with('\n') {
+                        1
+                    } else {
+                        break;
+                    };
+                    separator.push_str(&text[..width]);
+                    text = &text[width..];
+                }
+                if separator.bytes().filter(|&b| b == b'\n').count() == 2 {
+                    let mut boundary = Edit::default();
+                    boundary.push(Side::New, &separator, true);
+                    out.push(Segment::Edit(boundary));
+                    out.push(Segment::Note(tag, true));
+                } else if text.is_empty() {
+                    paragraph_break = Some((tag, separator));
+                } else {
+                    push_same(&mut out, &separator);
+                }
+                if text.is_empty() {
+                    return;
+                }
+            }
             if let Some(note) = &mut note {
                 note.push_str(text);
             } else if let Some(edit) = &mut edit {
@@ -595,6 +677,21 @@ fn segments(critic: &str) -> Vec<Segment> {
             }
         }
         Piece::Token(token) => match token {
+            // A highlight run or a field is Markdown text, not a change.
+            Token::MarkStart
+            | Token::MarkEnd
+            | Token::FieldStart
+            | Token::FieldSeparator
+            | Token::FieldEnd => {
+                let text = critic::delimiter(token);
+                if let Some(note) = &mut note {
+                    note.push_str(text);
+                } else if let Some(edit) = &mut edit {
+                    edit.push(side, text, false);
+                } else {
+                    push_same(&mut out, text);
+                }
+            }
             Token::InsertStart | Token::DeleteStart | Token::SubstituteStart => {
                 edit = Some(Edit::default());
                 side = if token == Token::InsertStart {
@@ -608,7 +705,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                 if let Some(edit) = edit.take() {
                     out.push(Segment::Edit(edit));
                 }
-                out.extend(held.drain(..).map(Segment::Note));
+                out.extend(held.drain(..).map(|text| Segment::Note(text, false)));
             }
             Token::HighlightStart | Token::HighlightEnd => {
                 let start = token == Token::HighlightStart;
@@ -618,34 +715,146 @@ fn segments(critic: &str) -> Vec<Segment> {
                     None => out.push(Segment::HighlightEnd),
                 }
             }
-            Token::CommentStart => note = Some(String::new()),
-            Token::CommentEnd => {
+            Token::CommentStart | Token::AttributionStart | Token::ParagraphInsertion => {
+                attribution = token != Token::CommentStart;
+                paragraph_note = token == Token::ParagraphInsertion;
+                note = Some(String::new());
+            }
+            // A comment paragraph break, inside a note or in dropped
+            // text.
+            Token::CommentBreak => {
+                if let Some(note) = &mut note {
+                    note.push_str("\n\n");
+                }
+            }
+            Token::CommentEnd | Token::AttributionEnd => {
                 let text = note.take().unwrap_or_default();
+                if std::mem::take(&mut paragraph_note) {
+                    paragraph_break = Some((text, String::new()));
+                    return;
+                }
                 if edit.is_some() {
                     held.push(text);
                 } else {
-                    out.push(Segment::Note(text));
+                    out.push(Segment::Note(text, attribution));
                 }
             }
         },
     });
+    if let Some((_, separator)) = paragraph_break {
+        push_same(&mut out, &separator);
+    }
     out
 }
 
 /// `Name (date)` in the comment right after a change, or after the
-/// comments that follow it, becomes the change's author and date.
+/// comments that follow it, becomes the change's author and date; so does
+/// the plain view's numbered note (`r3 Name (date)`), whose number says it
+/// names the change. A number alone names no one: the owner made it.
+/// A substitution whose sides two authors made is followed by two such
+/// notes, the deletion's then the insertion's.
 fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
+    // Whether the last edit has taken its (first) note.
+    let mut named_edit = false;
     for segment in segments {
-        if let Segment::Note(text) = &segment
+        if let Segment::Note(text, true) = &segment
             && let Some(Segment::Edit(edit)) = out
                 .iter_mut()
                 .rev()
-                .find(|s| !matches!(s, Segment::Note(_)))
-            && edit.by.is_none()
-            && let Some((Some(author), date, "")) = named(text.trim())
+                .find(|s| !matches!(s, Segment::Note(..)))
         {
-            edit.by = Some((author, date.to_string()));
+            if let Some(parts) = super::view_notes::plain_revisions(text.trim())
+                && parts.len() == 2
+                && !edit.old_marked.is_empty()
+                && !edit.new_marked.is_empty()
+            {
+                let by = |part: &super::view_notes::PlainRevision| {
+                    (!part.author.is_empty() || !part.date.is_empty())
+                        .then(|| (part.author.clone(), part.date.clone()))
+                };
+                edit.by = by(&parts[0]);
+                edit.new_by = by(&parts[1]);
+                named_edit = true;
+                continue;
+            }
+            let by = if let Some(plain) = super::view_notes::plain_revision(text.trim()) {
+                Some(
+                    (!plain.author.is_empty() || !plain.date.is_empty())
+                        .then_some((plain.author, plain.date)),
+                )
+            } else if let Some((Some(author), date, "")) = named(text.trim()) {
+                Some(Some((author, date.to_string())))
+            } else {
+                None
+            };
+            if let Some(by) = by {
+                let both_sides = !edit.old_marked.is_empty() && !edit.new_marked.is_empty();
+                // A note that names no one (`r3`) leaves a one-sided change
+                // to the next note that does.
+                if !named_edit || (!both_sides && edit.by.is_none()) {
+                    edit.by = by;
+                    named_edit = true;
+                    continue;
+                }
+                if both_sides && edit.new_by.is_none() && by.is_some() {
+                    edit.new_by = by;
+                    continue;
+                }
+            }
+        }
+        if matches!(segment, Segment::Edit(_)) {
+            named_edit = false;
+        }
+        out.push(segment);
+    }
+    out
+}
+
+/// The side a one-sided change is on, and whether it is only paragraph
+/// marks.
+fn one_side(edit: &Edit) -> Option<(Side, bool)> {
+    match (edit.old.is_empty(), edit.new.is_empty()) {
+        (false, true) => Some((Side::Old, edit.old.trim().is_empty())),
+        (true, false) => Some((Side::New, edit.new.trim().is_empty())),
+        _ => None,
+    }
+}
+
+/// The view writes a paragraph mark's change apart from the text beside
+/// it, each with its own id (#1135). Word made them as one, so the patch
+/// reads them as one: a change on the same side by the same author, with
+/// only comments between, joins the change before it when either is the
+/// mark. A paragraph deleted whole is then one change ending in its mark,
+/// and a deletion across paragraphs one change through the mark.
+fn join_marks(segments: Vec<Segment>) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
+    for segment in segments {
+        if let Segment::Edit(edit) = &segment
+            && let Some((side, mark)) = one_side(edit)
+            && let Some(Segment::Edit(before)) = out
+                .iter_mut()
+                .rev()
+                .find(|s| !matches!(s, Segment::Note(..)))
+            && let Some((before_side, _)) = one_side(before)
+            && before_side == side
+            && before.by == edit.by
+            && (mark
+                || match side {
+                    Side::Old => before.old.ends_with('\n'),
+                    Side::New => before.new.ends_with('\n'),
+                })
+        {
+            match side {
+                Side::Old => {
+                    before.old.push_str(&edit.old);
+                    before.old_marked.push_str(&edit.old_marked);
+                }
+                Side::New => {
+                    before.new.push_str(&edit.new);
+                    before.new_marked.push_str(&edit.new_marked);
+                }
+            }
             continue;
         }
         out.push(segment);
@@ -657,7 +866,12 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
 /// with the paragraph break (or, for the last paragraph, starts with the
 /// one before it). That break moves out of the change, after its comments,
 /// so the paragraph is a block of its own. A change that is only a break
-/// joins or splits paragraphs and stays as it is.
+/// joins or splits paragraphs and stays as it is, unless it leads a
+/// paragraph the same side changes whole: the view writes a story's last
+/// paragraph and the mark before it as two changes (`{--\n\n--}{r1
+/// @C}{--Last.--}{r2 @C}`), and the paragraph is still a hunk of its own.
+/// A change that starts inside a paragraph stays as it is too: its break
+/// joins that paragraph to the next.
 fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     fn same(out: &mut Vec<Segment>, text: &str) {
         match out.last_mut() {
@@ -665,10 +879,27 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
             _ => out.push(Segment::Same(text.to_string())),
         }
     }
+    // Whether the next change starts its paragraph: nothing but a list,
+    // quote or heading marker before it on its line.
+    fn starts_paragraph(out: &[Segment]) -> bool {
+        for segment in out.iter().rev() {
+            match segment {
+                Segment::Same(text) => match text.rsplit_once('\n') {
+                    Some((_, line)) => return !visible(line),
+                    None if visible(text) => return false,
+                    None => {}
+                },
+                Segment::Edit(_) => return false,
+                _ => {}
+            }
+        }
+        true
+    }
+    let leads = leading_breaks(&segments);
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     let mut after: Option<String> = None;
-    for segment in segments {
-        if !matches!(segment, Segment::Note(_))
+    for (at, segment) in segments.into_iter().enumerate() {
+        if !matches!(segment, Segment::Note(..))
             && let Some(text) = after.take()
         {
             same(&mut out, &text);
@@ -694,9 +925,14 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
         };
         let trailing = plain.len() - plain.trim_end_matches('\n').len();
         let leading = plain.len() - plain.trim_start_matches('\n').len();
-        if plain.trim().is_empty() {
+        if leads.contains(&at) {
+            same(&mut out, plain);
+        } else if plain.trim().is_empty() {
             out.push(Segment::Edit(edit));
-        } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
+        } else if trailing >= 2
+            && marked.ends_with(&plain[plain.len() - trailing..])
+            && starts_paragraph(&out)
+        {
             let text = plain.split_off(plain.len() - trailing);
             marked.truncate(marked.len() - trailing);
             out.push(Segment::Edit(edit));
@@ -712,6 +948,71 @@ fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
     }
     if let Some(text) = after {
         same(&mut out, &text);
+    }
+    out
+}
+
+/// The changes [`detach_breaks`] moves out as a paragraph's leading
+/// break, by position: a change that is only a break, followed (comments
+/// between) by the same side's changes of a paragraph's whole text, which
+/// ends the story or a break follows. Word often splits that text into
+/// several changes, and a line break in it is the view's hard break (`\`
+/// before the newline). Text after the paragraph's changes, a paragraph
+/// break in them, or another author's mark means the break joins
+/// paragraphs (accepting it alone joins them), and it stays a change.
+fn leading_breaks(segments: &[Segment]) -> HashSet<usize> {
+    // The side a one-sided change makes, its text, and who made it.
+    fn one_side(segment: &Segment) -> Option<(Side, &str, Option<&str>)> {
+        let Segment::Edit(edit) = segment else {
+            return None;
+        };
+        let author = edit.by.as_ref().map(|(author, _)| author.as_str());
+        match (edit.old.is_empty(), edit.new.is_empty()) {
+            (false, true) => Some((Side::Old, edit.old.as_str(), author)),
+            (true, false) => Some((Side::New, edit.new.as_str(), author)),
+            _ => None,
+        }
+    }
+    // Text within one paragraph: every newline is a hard break.
+    fn in_paragraph(text: &str) -> bool {
+        text.match_indices('\n')
+            .all(|(at, _)| text[..at].ends_with('\\'))
+    }
+    // The first segment from `from` on that is no comment.
+    let next =
+        |from: usize| (from..segments.len()).find(|&i| !matches!(segments[i], Segment::Note(..)));
+    let mut out = HashSet::new();
+    for (at, segment) in segments.iter().enumerate() {
+        let Some((side, plain, author)) = one_side(segment) else {
+            continue;
+        };
+        if !plain.trim().is_empty() || !plain.contains("\n\n") {
+            continue;
+        }
+        let mut cursor = next(at + 1);
+        let mut text = false;
+        while let Some(piece) = cursor
+            && let Some((piece_side, piece_text, piece_author)) = one_side(&segments[piece])
+            && piece_side == side
+            && piece_author == author
+            && in_paragraph(piece_text)
+        {
+            text |= !piece_text.trim().is_empty();
+            cursor = next(piece + 1);
+        }
+        if !text {
+            continue;
+        }
+        let ends = match cursor.map(|i| &segments[i]) {
+            None => true,
+            Some(Segment::Same(after)) => after.starts_with('\n'),
+            Some(after) => {
+                one_side(after).is_some_and(|(s, t, _)| s == side && t.starts_with("\n\n"))
+            }
+        };
+        if ends {
+            out.insert(at);
+        }
     }
     out
 }
@@ -746,7 +1047,7 @@ impl Block {
         self.segments.iter().any(|s| match (s, known) {
             (Segment::Same(_), _) => false,
             (Segment::Edit(_), _) | (_, None) => true,
-            (Segment::Note(note), Some(known)) => !known.contains(note),
+            (Segment::Note(note, _), Some(known)) => !known.contains(note),
             (_, Some(_)) => false,
         })
     }
@@ -880,13 +1181,9 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 }
             }
             Segment::Edit(edit) => {
-                if !edit.old_marked.is_empty() {
-                    text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
-                }
-                if !edit.new_marked.is_empty() {
-                    text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
-                }
-                let (author, date) = match &edit.by {
+                // The note after a change names its author unless the
+                // owner made it then.
+                let named = |text: &mut String, by: &Option<(String, String)>| match by {
                     Some((author, date)) => {
                         if author != &owner.author || date != &owner.date {
                             text.push_str(&format!("{{>>{author} ({date})<<}}"));
@@ -895,16 +1192,44 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                     }
                     None => (owner.author.clone(), owner.date.clone()),
                 };
+                let mut sides = Vec::with_capacity(2);
+                match &edit.new_by {
+                    // Two authors: the deletion and the insertion are
+                    // changes of their own, each named after itself.
+                    Some(_) => {
+                        text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
+                        sides.push((edit.old.clone(), String::new(), named(&mut text, &edit.by)));
+                        text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
+                        sides.push((
+                            String::new(),
+                            edit.new.clone(),
+                            named(&mut text, &edit.new_by),
+                        ));
+                    }
+                    None => {
+                        if !edit.old_marked.is_empty() {
+                            text.push_str(&format!("[-{}-]", escape(&edit.old_marked)));
+                        }
+                        if !edit.new_marked.is_empty() {
+                            text.push_str(&format!("{{+{}+}}", escape(&edit.new_marked)));
+                        }
+                        sides.push((
+                            edit.old.clone(),
+                            edit.new.clone(),
+                            named(&mut text, &edit.by),
+                        ));
+                    }
+                }
                 if let Some(h) = &mut highlight {
                     h.push_str(&edit.new);
                 }
-                changes.push(Change {
-                    old: edit.old.clone(),
-                    new: edit.new.clone(),
+                changes.extend(sides.into_iter().map(|(old, new, (author, date))| Change {
+                    old,
+                    new,
                     author,
                     date,
                     comment: None,
-                });
+                }));
             }
             Segment::HighlightStart => {
                 text.push_str("{==");
@@ -914,7 +1239,7 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 text.push_str("==}");
                 highlighted = highlight.take();
             }
-            Segment::Note(note) => {
+            Segment::Note(note, _) => {
                 let on = match previous {
                     Some(Segment::HighlightEnd) => highlighted.take(),
                     _ => None,
@@ -927,10 +1252,11 @@ fn hunk(block: &Block, at: Locator, removed: bool, owner: &Attribution) -> Hunk 
                 match (previous, changes.last_mut()) {
                     (Some(Segment::Edit(edit)), Some(change))
                         if change.comment.is_none()
-                            && (edit.by.is_none()
-                                || edit.by.as_ref().is_some_and(|(a, d)| {
-                                    a == &owner.author && d == &owner.date
-                                })) =>
+                            && edit
+                                .new_by
+                                .as_ref()
+                                .or(edit.by.as_ref())
+                                .is_none_or(|(a, d)| a == &owner.author && d == &owner.date) =>
                     {
                         change.comment = Some(comment);
                     }
@@ -1129,7 +1455,7 @@ fn starts_block(text: &str) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1173,6 +1499,42 @@ mod tests {
     }
 
     #[test]
+    fn a_numbered_note_after_a_change_names_its_author_never_a_comment() {
+        let by = |critic: &str| {
+            attribute(segments(critic))
+                .into_iter()
+                .map(|segment| match segment {
+                    Segment::Edit(edit) => format!("edit {:?}", edit.by),
+                    Segment::Note(note, _) => format!("note {note}"),
+                    _ => String::new(),
+                })
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        };
+        let ana = Some(("Ana Lima".to_string(), "2026-09-30T14:05:00Z".to_string()));
+        assert_eq!(
+            by("a {++b++}{r3 Ana Lima (2026-09-30T14:05:00Z)} c"),
+            [format!("edit {ana:?}")]
+        );
+        assert_eq!(
+            by("a {++b++}{footnotes.r3+4 Ana Lima (2026-09-30T14:05:00Z)}"),
+            [format!("edit {ana:?}")]
+        );
+        // The old note without a number still names the author.
+        assert_eq!(
+            by("a {++b++}{noid Ana Lima (2026-09-30T14:05:00Z)}"),
+            [format!("edit {ana:?}")]
+        );
+        // A number alone names the change and no one: the owner made it.
+        assert_eq!(by("a {++b++}{r3}"), ["edit None"]);
+        // A comment is still a comment.
+        assert_eq!(
+            by("a {++b++}{>>Ana Lima (2026-09-30T14:05:00Z): why<<}"),
+            ["edit None", "note Ana Lima (2026-09-30T14:05:00Z): why"]
+        );
+    }
+
+    #[test]
     fn plain_text_drops_markers_targets_note_references_and_tags() {
         assert_eq!(plain("- a<u>b</u>c [d](e)[^1] x < y"), "abc [d] x < y");
     }
@@ -1192,7 +1554,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod literal_wrapping_boundary_tests {
     use super::*;
 
@@ -1277,5 +1639,23 @@ mod literal_wrapping_boundary_tests {
             wrap(fenced, 3),
             "~~~rust\nowned very long source\n~~~\na b\nc"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn review_paragraph_tag_keeps_an_incomplete_trailing_separator() {
+        let text = segments("A¶{r1 Alice}\n")
+            .into_iter()
+            .filter_map(|segment| match segment {
+                Segment::Same(text) => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, "A\n");
     }
 }

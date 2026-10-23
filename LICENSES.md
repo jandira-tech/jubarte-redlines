@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-Bench-Fixtures
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -24,6 +24,15 @@ did not author:
   crate. `tests/fixtures/from-docx/equations.docx` came to anymd from
   Microsoft's markitdown tests (MIT, Copyright (c) Microsoft Corporation;
   the same terms as `LICENSES/LicenseRef-anymd-MIT.txt`).
+- `LICENSES/LicenseRef-markdown2pdf-MIT.txt` — the preserved MIT notice
+  from [markdown2pdf](https://github.com/theiskaa/markdown2pdf), Copyright
+  (c) 2023 Ismael Shakverdiev. The MATH font reader and layout arithmetic
+  in `src/convert/math_font.rs` and `src/convert/math_layout.rs` are adapted
+  from its `src/lib/render/math/` modules.
+- `LICENSES/LicenseRef-docen-MIT.txt` — the MIT notice of
+  [docen](https://github.com/DemoMacro/docen), Copyright (c) 2025 Demo Macro.
+  `tests/fixtures/md-roundtrip/demo.docx` is docen's feature showcase as
+  Arthur supplied it (its `docProps/core.xml` dates it 2026-10-15).
 - `LICENSES/LicenseRef-Bench-Fixtures.txt` — provenance and the docx-corpus
   ODC-By attribution for the test fixtures copied from neurotic_docx_bench
   (`tests/corpus/neurotic_docx_bench/` and
@@ -32,6 +41,11 @@ did not author:
 - `LICENSES/Apache-2.0.txt` — Apache License 2.0 text for the Roboto
   Condensed fonts (`assets/fonts/extra/RobotoCondensed-*.ttf`, (c) 2011
   Google Inc.), the exact files Word draws from its cloud-font cache.
+- `LICENSES/MIT.txt`, `LICENSES/MPL-2.0.txt` and `LICENSES/Apache-2.0.txt`
+  — the terms of the Office Math fixtures in `tests/fixtures/math/`: Word's
+  own documents from the test data of Docling, LibreOffice, docx4j,
+  Open-Xml-PowerTools, the Open XML SDK, Apache POI and docx-equation.
+  `tests/fixtures/math/SOURCES.md` names each file's URL and license.
 - `LICENSES/OFL-1.1.txt` — SIL Open Font License 1.1 text for the bundled
   metric-compatible fonts: Carlito ((c) 2010-2013 tyPoland Lukasz Dziedzic)
   and Liberation ((c) 2010 Google Corporation, 2012 Red Hat, Inc.) under

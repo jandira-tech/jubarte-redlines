@@ -1,0 +1,16 @@
+Word's built-in table styles (src/markdown/word_table_styles.tsv)
+
+The file holds the definitions of Microsoft Word's built-in Grid Table and
+List Table styles (1 to 7, plain and Accent 1 to 6): borders, shading,
+theme colours and tints, as Word writes them into a document that uses
+them. scripts/table_styles_asset.py extracted them on 2026-10-14 from a
+Word-written test fixture
+(tests/corpus/neurotic_docx_bench/grok_run/fixtures_500/
+00f45b1b7812db57f5a024f116de6c6f0cfab5b79c9bc33657a6be57657d181d.docx),
+replacing each resolved colour with a placeholder the writer resolves from
+the written document's theme.
+
+The style definitions are Microsoft's, not Jandira Technologies, LLC's,
+and are not covered by this repository's AGPL-3.0-only license. They are
+reproduced so a document that names one of these styles keeps the look
+Word gives it.

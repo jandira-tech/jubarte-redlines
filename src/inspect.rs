@@ -19,18 +19,26 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::namespaces::{MC, W, W14, W15};
+use crate::namespaces::{MC, W, W14, W15, WNE};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
 mod tables;
+pub(crate) use tables::top_level_table_nodes;
 
-pub use tables::{Table, TableCell};
+pub use tables::{NestedTable, Table, TableCell};
 
-/// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
+/// Wire schema version of legacy [`crate::edit`] plans and reports.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The story every document has; its paragraph ids are `body:p:N`, and a
+/// Snapshot wire schema. Version 2 numbers top-level tables only and nests
+/// cell tables recursively, with a parent cell path rather than an index.
+/// Version 3 lists logical changes (plan 11): a change Word wrote as
+/// several marks is one entry with `members`, and kind `replacement`
+/// exists.
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+
+/// The story every document has; its paragraph ids are `pN`, and a
 /// selector without a `story` searches it.
 pub(crate) const BODY_STORY: &str = "body";
 
@@ -48,8 +56,8 @@ pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endn
 pub struct Paragraph {
     /// Zero-based order in its story, table-cell paragraphs included.
     pub index: usize,
-    /// `body:p:{index}` (or `header1:p:{index}`, ...); the edit plan's
-    /// paragraph selector.
+    /// `p{index}` (or `header1`, `header1.p{index}`, ...:
+    /// [`crate::ids::paragraph_id`]); the edit plan's paragraph selector.
     pub id: String,
     /// Visible text (see module docs for the projection rules).
     pub text: String,
@@ -93,7 +101,7 @@ pub struct Span {
 pub struct Summary {
     /// Body paragraphs, table cells included.
     pub paragraphs: usize,
-    /// Body tables, nested included.
+    /// Top-level body tables, numbered as the view's `tN`.
     pub tables: usize,
     /// `w:fldSimple` plus complex-field `begin` markers in the body.
     pub fields: usize,
@@ -101,7 +109,9 @@ pub struct Summary {
     pub sections: usize,
     /// Comment definitions in the related comments part.
     pub comments: usize,
-    /// Raw revision carrier elements across XML parts, not coalesced changes.
+    /// Tracked changes, as `jubarte changes` lists them: the body, headers,
+    /// footers, notes and styles, a move's sides and a text box's two copies
+    /// counted once each, and a change Word wrote as several marks once.
     pub revisions: usize,
     /// Footnotes excluding separators.
     pub footnotes: usize,
@@ -117,29 +127,99 @@ pub struct Summary {
     pub list_numbering: bool,
     /// Settings enable tracking of new revisions.
     pub track_changes: bool,
+    /// The input's own validity findings, which `read --json` reports here
+    /// (#1309); absent where nothing validated the input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_validity: Option<crate::validate::InputValidity>,
 }
 
-/// Snapshot serialized by [`inspect_json`].
+/// Snapshot of a package as it stood at inspection time, serialized by
+/// [`inspect_json`] and consumed by [`crate::edit::apply_plan_json`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
     /// Wire schema version.
     pub schema_version: u32,
     /// SHA-256 of the inspected bytes.
     pub source_sha256: String,
+    /// The choice [`settled_snapshot`] read the text under; absent from a
+    /// plain snapshot, whose text is the accepted one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_changes: Option<Settle>,
     /// Package facts.
     pub summary: Summary,
     /// Body paragraphs.
     pub paragraphs: Vec<Paragraph>,
     /// Header, footer and note stories, each with its own paragraphs.
     pub stories: Vec<Story>,
-    /// Body tables as grids of cells, nested tables included.
+    /// Top-level body tables as grids, with nested tables under their cells.
     pub tables: Vec<Table>,
     /// Content controls (`w:sdt`) in the body, in document order.
     pub controls: Vec<ContentControl>,
+    /// Tracked changes, as [`crate::changes::list_logical_changes`] lists
+    /// them.
+    pub changes: Vec<crate::changes::Change>,
+    /// Comments, as [`crate::comments::list_comments`] lists them.
+    pub comments: Vec<crate::comments::CommentRecord>,
+}
+
+/// How [`settled_snapshot`] settles the tracked changes before it reads
+/// the text (`read --json --track-changes`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Settle {
+    /// Every change accepted: the text a plain snapshot reads.
+    Accept,
+    /// Every change rejected, as Word's Reject All leaves the text:
+    /// insertions gone, deletions back.
+    Reject,
+}
+
+impl Snapshot {
+    /// Keep the body paragraphs numbered in `body_paragraphs` (`N` of
+    /// `pN`), and the changes and comments sitting in one of them; a
+    /// comment whose range spans a kept paragraph counts. `summary`,
+    /// `stories`, `tables` and `controls` stay whole.
+    pub fn retain(&mut self, body_paragraphs: &[usize]) {
+        self.retain_with(body_paragraphs, &[]);
+    }
+
+    /// [`Snapshot::retain`], keeping too the changes and comments in
+    /// `stories` (`header1`, `footnotes`): those a `--changed` selection
+    /// changed.
+    pub(crate) fn retain_with(&mut self, body_paragraphs: &[usize], stories: &[String]) {
+        let kept: BTreeSet<usize> = body_paragraphs.iter().copied().collect();
+        self.paragraphs
+            .retain(|p| body_index(Some(&p.id)).is_some_and(|n| kept.contains(&n)));
+        let in_story = |paragraph: Option<&String>| {
+            paragraph
+                .and_then(|p| crate::ids::paragraph_place(p))
+                .is_some_and(|(story, _)| stories.contains(&story))
+        };
+        self.changes.retain(|c| {
+            body_index(c.paragraph.as_ref()).is_some_and(|n| kept.contains(&n))
+                || in_story(c.paragraph.as_ref())
+        });
+        self.comments.retain(|c| {
+            let first = body_index(c.paragraph.as_ref());
+            let last = body_index(c.last_paragraph.as_ref()).or(first);
+            match (first, last) {
+                (Some(a), Some(z)) => kept.range(a..=z.max(a)).next().is_some(),
+                _ => in_story(c.paragraph.as_ref()),
+            }
+        });
+    }
+}
+
+/// `N` of a body paragraph's id `pN`.
+fn body_index(id: Option<&String>) -> Option<usize> {
+    crate::ids::paragraph_place(id?)
+        .filter(|(story, _)| story == "body")
+        .map(|(_, n)| n)
 }
 
 /// A header, footer or notes part an edit plan can address. Its paragraph
-/// ids are `{id}:p:{index}`.
+/// ids are `{id}` for the first and `{id}.p{index}` after it
+/// ([`crate::ids::paragraph_id`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Story {
     /// The part's file stem: `header1`, `footer2`, `footnotes`, `endnotes`.
@@ -156,7 +236,7 @@ pub struct Story {
 /// inside text boxes are not listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ContentControl {
-    /// `body:sdt:N`.
+    /// `ccN` for a block control, `pN.ccK` for one in paragraph `pN`.
     pub id: String,
     /// `w:tag`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,7 +251,7 @@ pub struct ContentControl {
     pub kind: String,
     /// Visible text of the control's content; paragraphs joined by `\n`.
     pub text: String,
-    /// Paragraphs the control spans (`body:p:N`); a run-level control lists
+    /// Paragraphs the control spans (`pN`); a run-level control lists
     /// the paragraph that holds it.
     pub paragraph_ids: Vec<String>,
     /// `w:lock` is `contentLocked` or `sdtContentLocked`.
@@ -223,12 +303,39 @@ pub fn source_sha256(bytes: &[u8]) -> String {
 }
 
 /// Body paragraphs in body order.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn paragraphs(docx: &[u8]) -> Result<Vec<Paragraph>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(body_paragraphs(&opened.dom, opened.body))
 }
 
+/// Paragraph locations for a comparison rendered under its active budget.
+/// One admitted open serves both the body and its related stories.
+pub(crate) fn paragraphs_and_stories_within(
+    docx: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<(Vec<Paragraph>, Vec<Story>), InspectError> {
+    let opened = Opened::open_within(docx, limits)?;
+    Ok((
+        body_paragraphs(&opened.dom, opened.body),
+        opened.stories_within(limits, false)?,
+    ))
+}
+
 /// Package facts, following OPC relationships for related parts.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when a part cannot be read;
+/// [`InspectError::Invalid`] for a malformed XML part or an invalid setting
+/// value; [`InspectError::MissingDocument`] when no main document part is
+/// found.
 pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
     let opened = Opened::open(docx)?;
     opened.summary()
@@ -236,19 +343,32 @@ pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
 
 /// Header, footer and note stories in a stable order (headers, footers,
 /// footnotes, endnotes).
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::Invalid`] for a malformed part;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn stories(docx: &[u8]) -> Result<Vec<Story>, InspectError> {
     Opened::open(docx)?.stories()
 }
 
 /// Content controls (`w:sdt`) in the body, in document order.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn controls(docx: &[u8]) -> Result<Vec<ContentControl>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(collect_controls(&opened.dom, opened.body))
 }
 
 /// Paragraphs prefixed with their ids and direct formatting as Markdown
-/// marks: `[body:p:12 Heading1] (a) **Confidentiality.** You will ...`.
-/// Story paragraphs (`[header1:p:0] ...`) follow the body's.
+/// marks: `[p12 Heading1] (a) **Confidentiality.** You will ...`.
+/// Story paragraphs (`[header1] ...`, `[header1.p1] ...`) follow the body's.
 pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
     let opened = Opened::open(docx)?;
     let mut all = body_paragraphs(&opened.dom, opened.body);
@@ -260,25 +380,257 @@ pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
 
 /// Body tables as grids: each cell's text and paragraph ids, the header
 /// rows and the grid widths.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package cannot be read;
+/// [`InspectError::MissingDocument`] when no main document part is found.
 pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
     let opened = Opened::open(docx)?;
     Ok(tables::body_tables(&opened.dom, opened.body))
 }
 
-/// The full snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-/// `paragraphs`, `stories`, `tables`, `controls`).
-pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
-    let opened = Opened::open(docx)?;
-    let snapshot = Snapshot {
-        schema_version: SCHEMA_VERSION,
+/// The full snapshot: `schema_version`, `source_sha256`, `summary`,
+/// `paragraphs`, `stories`, `tables`, `controls`, `changes` and `comments`.
+///
+/// # Errors
+///
+/// [`InspectError::Admission`] when the input is refused by admission;
+/// [`InspectError::Package`] when the package or comments part cannot be
+/// read; [`InspectError::Invalid`] for a malformed part;
+/// [`InspectError::MissingDocument`] when no main document part is found.
+pub fn snapshot(docx: &[u8]) -> Result<Snapshot, InspectError> {
+    // One open serves every field; the comment scan marks up the body's
+    // DOM, so it runs last.
+    let mut opened = Opened::open(docx)?;
+    let summary = opened.summary()?;
+    let paragraphs = body_paragraphs(&opened.dom, opened.body);
+    let stories = opened.stories()?;
+    let tables = tables::body_tables(&opened.dom, opened.body);
+    let controls = collect_controls(&opened.dom, opened.body);
+    let changes = crate::changes::logical_changes_in(&opened.pkg);
+    let comments = crate::comments::comments_in(&mut opened).map_err(|e| match e {
+        crate::comments::CommentError::Admission(refused) => InspectError::Admission(refused),
+        crate::comments::CommentError::Package(m) => InspectError::Package(m),
+    })?;
+    Ok(Snapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
         source_sha256: source_sha256(docx),
-        summary: opened.summary()?,
-        paragraphs: body_paragraphs(&opened.dom, opened.body),
-        stories: opened.stories()?,
-        tables: tables::body_tables(&opened.dom, opened.body),
-        controls: collect_controls(&opened.dom, opened.body),
-    };
-    serde_json::to_string(&snapshot).map_err(|e| InspectError::Invalid(e.to_string()))
+        track_changes: None,
+        summary,
+        paragraphs,
+        stories,
+        tables,
+        controls,
+        changes,
+        comments,
+    })
+}
+
+/// [`snapshot`] with every tracked change settled by `settle`, and
+/// `track_changes` saying how. The paragraphs, cells and controls of the
+/// body and of every story read the settled text and keep their ids: the
+/// paragraphs, rows and cells a choice would remove stay, with the text it
+/// leaves them (often none). `summary`, `changes` and `comments` describe
+/// the file as stored, every revision still listed: the facts of what
+/// `track_changes` settles.
+///
+/// # Errors
+///
+/// As [`snapshot`].
+pub fn settled_snapshot(docx: &[u8], settle: Settle) -> Result<Snapshot, InspectError> {
+    let mut snapshot = snapshot(docx)?;
+    snapshot.track_changes = Some(settle);
+    if settle == Settle::Reject {
+        // The comment scan marks up the DOM it reads, so the rejected text
+        // comes from a second open of its own.
+        let mut opened = Opened::open(docx)?;
+        reject_text(&mut opened.dom, opened.body);
+        snapshot.paragraphs = body_paragraphs(&opened.dom, opened.body);
+        snapshot.tables = tables::body_tables(&opened.dom, opened.body);
+        snapshot.controls = collect_controls(&opened.dom, opened.body);
+        snapshot.stories = opened.stories_within(crate::admission::InputLimits::default(), true)?;
+    }
+    Ok(snapshot)
+}
+
+/// [`tables()`], with every change rejected when `settle` says so, each
+/// beside the number of its table in `read`'s view: the `tN` of the table
+/// outside every cell that is it or holds it, as `read -p tN` picks it.
+///
+/// # Errors
+///
+/// As [`tables()`].
+pub fn view_tables(
+    docx: &[u8],
+    settle: Option<Settle>,
+) -> Result<Vec<(usize, Table)>, InspectError> {
+    let mut opened = Opened::open(docx)?;
+    if settle == Some(Settle::Reject) {
+        reject_text(&mut opened.dom, opened.body);
+    }
+    // `body_tables` lists the tables the view numbers, each under its `tN`.
+    Ok(tables::body_tables(&opened.dom, opened.body)
+        .into_iter()
+        .map(|table| (table.index, table))
+        .collect())
+}
+
+/// Word's Reject All on the text under `root`, in place: inserted and
+/// moved-to runs go, deleted and moved-from runs come back, their
+/// `w:delText` read as `w:t`, and a formatting change gives back the
+/// properties it replaced. Paragraph marks, rows and cells stay (their
+/// own revisions hold no text), so every paragraph keeps its id.
+fn reject_text(dom: &mut Dom, root: NodeId) {
+    // A paragraph's old base properties are in its `w:pPrChange`; its
+    // mark's `w:rPr` and its `w:sectPr` are not, and stay. A run's (or a
+    // mark's) old properties are the whole `w:rPr` of its `w:rPrChange`.
+    for (change, kept) in [
+        ("pPrChange", &["rPr", "sectPr"][..]),
+        ("rPrChange", &[][..]),
+    ] {
+        for node in dom.descendants(root, Some(&W::name(change))) {
+            let Some(properties) = dom.parent(node) else {
+                continue;
+            };
+            let old = dom
+                .elements(node, None)
+                .first()
+                .map(|&old| {
+                    let kids = dom.nodes(old);
+                    dom.remove_nodes(old);
+                    kids
+                })
+                .unwrap_or_default();
+            let stay: Vec<NodeId> = dom
+                .elements(properties, None)
+                .into_iter()
+                .filter(|&e| kept.iter().any(|k| dom.name_is(e, &W::name(k))))
+                .collect();
+            dom.remove_nodes(properties);
+            for kid in old.into_iter().chain(stay) {
+                dom.add(properties, kid);
+            }
+        }
+    }
+    for local in ["ins", "moveTo"] {
+        for node in dom.descendants(root, Some(&W::name(local))) {
+            dom.remove(node);
+        }
+    }
+    for local in ["del", "moveFrom"] {
+        for node in dom.descendants(root, Some(&W::name(local))) {
+            let kids = dom.nodes(node);
+            dom.remove_nodes(node);
+            dom.replace_with(node, &kids);
+        }
+    }
+    for (from, to) in [("delText", "t"), ("delInstrText", "instrText")] {
+        for node in dom.descendants(root, Some(&W::name(from))) {
+            dom.set_name(node, W::name(to));
+        }
+    }
+}
+
+/// [`snapshot`] as JSON.
+///
+/// # Errors
+///
+/// As [`snapshot`]; [`InspectError::Invalid`] when the snapshot cannot be
+/// serialized.
+pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
+    serde_json::to_string(&snapshot(docx)?).map_err(|e| InspectError::Invalid(e.to_string()))
+}
+
+/// Tables as `read --tables` prints them: a `table N: RxC header_rows=H
+/// widths=W` line per table, then a line per row of tab-separated
+/// `ids=text` cells (`-` for a cell with no paragraph; `\`, newlines and
+/// tabs escaped), or `no tables`. Cell ids are short paragraph ids (`p1`),
+/// via [`crate::ids::short_paragraph`]; a cell of several paragraphs joins
+/// them with commas (`p3,p4`), a spelling only this listing prints. Every line
+/// ends with a newline. Nested tables follow their containing cell row,
+/// indented two spaces per level and labelled `nested in CELL_PATH`.
+pub fn tables_text(tables: &[Table]) -> String {
+    let mut out = String::new();
+    if tables.is_empty() {
+        out.push_str("no tables\n");
+    }
+    for table in tables {
+        render_grid(
+            &mut out,
+            &format!("table {}", table.index),
+            &table.rows,
+            table.header_rows,
+            &table.widths_dxa,
+            &table.nested,
+            0,
+        );
+    }
+    out
+}
+
+fn render_grid(
+    out: &mut String,
+    label: &str,
+    rows: &[Vec<TableCell>],
+    header_rows: usize,
+    widths_dxa: &[u32],
+    nested: &[NestedTable],
+    depth: usize,
+) {
+    use std::fmt::Write as _;
+    let indent = "  ".repeat(depth);
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<String> = widths_dxa.iter().map(u32::to_string).collect();
+    let _ = writeln!(
+        out,
+        "{indent}{label}: {}x{columns} header_rows={header_rows} widths={}",
+        rows.len(),
+        widths.join(",")
+    );
+    for (r, row) in rows.iter().enumerate() {
+        let cells: Vec<String> = row
+            .iter()
+            .map(|cell| {
+                let ids = if cell.paragraph_ids.is_empty() {
+                    "-".to_string()
+                } else {
+                    cell.paragraph_ids
+                        .iter()
+                        .map(|id| crate::ids::short_paragraph(id))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                let text = cell
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace('\n', "\\n")
+                    .replace('\t', "\\t");
+                format!("{ids}={text}")
+            })
+            .collect();
+        let _ = writeln!(out, "{indent}{}", cells.join("\t"));
+        // The final row/cell segment is this table's own cell, even at
+        // several nesting levels. Emit its children directly below the row.
+        let row_prefix = format!("{r}.cell");
+        for child in nested.iter().filter(|child| {
+            child
+                .parent
+                .rsplit_once(".row")
+                .is_some_and(|(_, tail)| tail.starts_with(&row_prefix))
+        }) {
+            render_grid(
+                out,
+                &format!("nested in {}", child.parent),
+                &child.rows,
+                child.header_rows,
+                &child.widths_dxa,
+                &child.nested,
+                depth + 1,
+            );
+        }
+    }
 }
 
 /// Markdown rendering of already inspected paragraphs.
@@ -346,6 +698,30 @@ fn emphasize(piece: &str, span: &Span) -> String {
     format!("{lead}{open}{core}{close}{trail}")
 }
 
+// Documents this thread has reopened through `Opened::open` since the last
+// `reset_reopened_packages`. Tests that must not pay for a reparse of bytes
+// they already hold reset the counter, run the phase under test, and read
+// it back.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REOPENED_PACKAGES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Add one to this thread's [`REOPENED_PACKAGES`].
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+fn bump_reopened_packages() {
+    REOPENED_PACKAGES.with(|count| count.set(count.get() + 1));
+}
+
+/// Zero this thread's [`REOPENED_PACKAGES`].
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+pub(crate) fn reset_reopened_packages() {
+    REOPENED_PACKAGES.with(|count| count.set(0));
+}
+
 /// A parsed main document part plus its package.
 pub(crate) struct Opened {
     pub(crate) pkg: PartFs,
@@ -357,13 +733,23 @@ pub(crate) struct Opened {
 
 impl Opened {
     pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
-        crate::admission::admit(bytes, crate::admission::InputLimits::default())
-            .map_err(InspectError::Admission)?;
-        let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
-        let pkg =
-            PartFs::open(&normalized).map_err(|error| InspectError::Package(error.to_string()))?;
+        Self::open_within(bytes, crate::admission::InputLimits::default())
+    }
+
+    fn open_within(
+        bytes: &[u8],
+        limits: crate::admission::InputLimits,
+    ) -> Result<Self, InspectError> {
+        #[cfg(test)]
+        bump_reopened_packages();
+        crate::admission::admit(bytes, limits).map_err(InspectError::Admission)?;
+        let normalized =
+            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits)
+                .map_err(|error| InspectError::Package(error.to_string()))?;
+        let pkg = PartFs::open_within(&normalized, limits)
+            .map_err(|error| InspectError::Package(error.to_string()))?;
         let main = main_part(&pkg)?;
-        let (dom, document, root) = parse_part(&pkg, &main)?;
+        let (dom, document, root) = parse_part_within(&pkg, &main, limits)?;
         let body = dom
             .element(root, &W::body())
             .ok_or(InspectError::MissingDocument)?;
@@ -380,7 +766,7 @@ impl Opened {
         let (dom, body, pkg) = (&self.dom, self.body, &self.pkg);
         let mut summary = Summary {
             paragraphs: body_paragraphs(dom, body).len(),
-            tables: dom.descendants(body, Some(&W::tbl())).len(),
+            tables: tables::top_level_table_nodes(dom, body).len(),
             fields: dom.descendants(body, Some(&W::fld_simple())).len()
                 + dom
                     .descendants(body, Some(&W::fld_char()))
@@ -404,18 +790,17 @@ impl Opened {
             if mime.is_some_and(|mime| mime.starts_with("image/")) {
                 summary.images += 1;
             }
-            // Revisions live only in WordprocessingML parts; custom XML items
-            // and vendor parts are not read, so the checked reader cannot
+            // The checked reader refuses a malformed WordprocessingML part;
+            // custom XML items and vendor parts are not read, so it cannot
             // refuse the document over them.
             let wordprocessing = mime.is_some_and(|mime| {
                 mime.starts_with("application/vnd.openxmlformats-officedocument.wordprocessingml.")
             });
             if wordprocessing && name != self.main {
-                let (part_dom, _, part_root) = parse_part(pkg, &name)?;
-                summary.revisions += revision_count(&part_dom, part_root);
+                parse_part(pkg, &name)?;
             }
         }
-        summary.revisions += revision_count(dom, self.body);
+        summary.revisions = crate::changes::logical_changes_in(pkg).len();
         for (kind, targets) in [
             ("header", self.related("header")),
             ("footer", self.related("footer")),
@@ -479,19 +864,30 @@ impl Opened {
             let mut parts: Vec<String> = self.related(kind).into_iter().collect();
             parts.sort_by_key(|part| (part.len(), part.clone()));
             for part in parts {
-                let stem = part.rsplit('/').next().unwrap_or(&part);
-                let id = stem.strip_suffix(".xml").unwrap_or(stem).to_string();
-                out.push((id, kind, part));
+                out.push((crate::ids::part_story(&part), kind, part));
             }
         }
         out
     }
 
     fn stories(&self) -> Result<Vec<Story>, InspectError> {
+        self.stories_within(crate::admission::InputLimits::default(), false)
+    }
+
+    /// [`Self::stories`] under `limits`, every change rejected when
+    /// `reject` is set.
+    fn stories_within(
+        &self,
+        limits: crate::admission::InputLimits,
+        reject: bool,
+    ) -> Result<Vec<Story>, InspectError> {
         self.story_parts()
             .into_iter()
             .map(|(id, kind, part)| {
-                let (dom, _, root) = parse_part(&self.pkg, &part)?;
+                let (mut dom, _, root) = parse_part_within(&self.pkg, &part, limits)?;
+                if reject {
+                    reject_text(&mut dom, root);
+                }
                 let paragraphs = paragraphs_of(&dom, story_paragraph_nodes(&dom, root), &id);
                 Ok(Story {
                     id,
@@ -528,12 +924,20 @@ fn main_part(pkg: &PartFs) -> Result<String, InspectError> {
 
 /// Parse one XML part through the checked reader: `(dom, document, root)`.
 pub(crate) fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeId), InspectError> {
+    parse_part_within(pkg, name, crate::admission::InputLimits::default())
+}
+
+fn parse_part_within(
+    pkg: &PartFs,
+    name: &str,
+    limits: crate::admission::InputLimits,
+) -> Result<(Dom, NodeId, NodeId), InspectError> {
     let bytes = pkg
         .part_bytes(name)
         .ok_or_else(|| InspectError::Invalid(format!("missing related part {name}")))?;
     let xml = std::str::from_utf8(bytes)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
-    crate::xmllinq::parse::validate_xml(xml)
+    crate::xmllinq::parse::validate_xml_with_limits(xml, limits)
         .map_err(|error| InspectError::Invalid(format!("{name}: {error}")))?;
     let mut dom = Dom::new();
     let document = dom.parse_xdocument(xml);
@@ -545,6 +949,27 @@ pub(crate) fn parse_part(pkg: &PartFs, name: &str) -> Result<(Dom, NodeId, NodeI
 
 fn has_ancestor(dom: &Dom, node: NodeId, name: &XName) -> bool {
     !dom.ancestors(node, Some(name)).is_empty()
+}
+
+/// The two names a text box's content goes by: `w:txbxContent`, and the
+/// `wne:txbxContent` a Strict package's shapes hold (the agent view skips
+/// both by local name, so every id walk must too).
+pub(crate) fn text_box_names() -> [XName; 2] {
+    [W::txbx_content(), WNE::name("txbxContent")]
+}
+
+/// Whether `node` sits inside a text box.
+pub(crate) fn in_text_box(dom: &Dom, node: NodeId) -> bool {
+    text_box_names()
+        .iter()
+        .any(|name| has_ancestor(dom, node, name))
+}
+
+/// Whether `node` holds a text box.
+fn holds_text_box(dom: &Dom, node: NodeId) -> bool {
+    text_box_names()
+        .iter()
+        .any(|name| !dom.descendants(node, Some(name)).is_empty())
 }
 
 fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
@@ -559,50 +984,20 @@ fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
         .count()
 }
 
-const REVISION_CARRIERS: &[&str] = &[
-    "ins",
-    "del",
-    "moveFrom",
-    "moveTo",
-    "rPrChange",
-    "pPrChange",
-    "sectPrChange",
-    "tblPrChange",
-    "tblGridChange",
-    "trPrChange",
-    "tcPrChange",
-    "numberingChange",
-    "cellIns",
-    "cellDel",
-    "cellMerge",
-];
-
-/// Raw revision carrier elements under `root` (self included).
-pub(crate) fn revision_count(dom: &Dom, root: NodeId) -> usize {
-    dom.descendants_and_self(root, None)
-        .iter()
-        .filter(|&&node| {
-            dom.name(node).is_some_and(|name| {
-                name.namespace_name() == W::URI && REVISION_CARRIERS.contains(&name.local_name())
-            })
-        })
-        .count()
-}
-
 /// The body paragraphs (`w:p` outside text boxes) in document order.
 pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::p()))
         .into_iter()
-        .filter(|&p| !has_ancestor(dom, p, &W::txbx_content()))
+        .filter(|&p| !in_text_box(dom, p))
         .collect()
 }
 
 /// The body's content controls (`w:sdt` outside text boxes) in document
-/// order; index N is `body:sdt:N`.
+/// order, the order [`collect_controls`] numbers them in.
 pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
     dom.descendants(body, Some(&W::sdt()))
         .into_iter()
-        .filter(|&sdt| !has_ancestor(dom, sdt, &W::txbx_content()))
+        .filter(|&sdt| !in_text_box(dom, sdt))
         .collect()
 }
 
@@ -614,17 +1009,37 @@ pub(crate) fn collect_controls(dom: &Dom, body: NodeId) -> Vec<ContentControl> {
         .enumerate()
         .map(|(i, &p)| (p, i))
         .collect();
+    // A block control is `ccN`, counting the body's block controls; one in
+    // a paragraph is `pN.ccK`, counting that paragraph's controls.
+    let mut blocks = 0usize;
+    let mut inline: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     body_control_nodes(dom, body)
         .into_iter()
-        .enumerate()
-        .map(|(n, sdt)| control_record(dom, sdt, n, &index))
+        .map(|sdt| {
+            let owner = dom
+                .ancestors(sdt, Some(&W::p()))
+                .first()
+                .and_then(|p| index.get(p).copied());
+            let id = match owner {
+                Some(i) => {
+                    let k = inline.entry(i).or_default();
+                    *k += 1;
+                    format!("{}.cc{}", crate::ids::paragraph_id("body", i), *k - 1)
+                }
+                None => {
+                    blocks += 1;
+                    format!("cc{}", blocks - 1)
+                }
+            };
+            control_record(dom, sdt, id, &index)
+        })
         .collect()
 }
 
 fn control_record(
     dom: &Dom,
     sdt: NodeId,
-    n: usize,
+    id: String,
     index: &std::collections::HashMap<NodeId, usize>,
 ) -> ContentControl {
     let pr = dom.element(sdt, &W::sdt_pr());
@@ -682,14 +1097,14 @@ fn control_record(
         (None, None) => (Vec::new(), String::new()),
     };
     ContentControl {
-        id: format!("body:sdt:{n}"),
+        id,
         tag: val(&W::name("tag")),
         alias: val(&W::name("alias")),
         kind: kind.to_string(),
         text,
         paragraph_ids: paragraph_ids
             .into_iter()
-            .map(|i| format!("body:p:{i}"))
+            .map(|i| crate::ids::paragraph_id("body", i))
             .collect(),
         locked,
         choices,
@@ -793,7 +1208,7 @@ fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
             let numbered = ppr.is_some_and(|ppr| dom.element(ppr, &W::num_pr()).is_some());
             Paragraph {
                 index,
-                id: format!("{story}:p:{index}"),
+                id: crate::ids::paragraph_id(story, index),
                 text: projection.text,
                 style,
                 numbered,
@@ -961,6 +1376,21 @@ fn walk_run(
         let Some(name) = dom.name(child) else {
             continue;
         };
+        // Word's text boxes and shapes sit in a run as `mc:AlternateContent`:
+        // the same construct `walk_container` names.
+        if name.namespace_name() == MC::URI {
+            out.limitations.insert("alternate_content".into());
+            if ["drawing", "pict", "object"]
+                .iter()
+                .any(|local| !dom.descendants(child, Some(&W::name(local))).is_empty())
+            {
+                out.limitations.insert("drawing".into());
+            }
+            if holds_text_box(dom, child) {
+                out.limitations.insert("text_box_omitted".into());
+            }
+            continue;
+        }
         if name.namespace_name() != W::URI {
             out.limitations
                 .insert(format!("unknown:{}", name.local_name()));
@@ -1018,7 +1448,7 @@ fn walk_run(
             }
             "drawing" | "pict" | "object" => {
                 out.limitations.insert("drawing".into());
-                if !dom.descendants(child, Some(&W::txbx_content())).is_empty() {
+                if holds_text_box(dom, child) {
                     out.limitations.insert("text_box_omitted".into());
                 }
             }
@@ -1104,7 +1534,7 @@ fn merge_spans(text: &str, formats: Vec<(usize, usize, Format)>) -> Vec<Span> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1150,11 +1580,8 @@ mod tests {
             runs: Vec::new(),
             limitations: Vec::new(),
         };
-        let md = render_markdown(&[
-            p("body:p:0", "Scope", Some("Heading1")),
-            p("body:p:1", "", None),
-        ]);
-        assert_eq!(md, "[body:p:0 Heading1] Scope\n\n[body:p:1]\n");
+        let md = render_markdown(&[p("p0", "Scope", Some("Heading1")), p("p1", "", None)]);
+        assert_eq!(md, "[p0 Heading1] Scope\n\n[p1]\n");
         assert_eq!(render_markdown(&[]), "");
     }
 

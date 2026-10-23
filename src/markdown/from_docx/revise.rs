@@ -20,6 +20,19 @@ use super::ooxml::{Element, Node};
 pub(crate) fn resolve(element: &Element, accept: bool) -> Element {
     let mut out = element.clone();
     resolve_in(&mut out, accept);
+    // Captured settled box templates must use ordinary text slots too.
+    fn box_text(element: &mut Element, in_box: bool) {
+        let in_box = in_box || element.is("txbxContent");
+        if in_box && element.is("delText") {
+            element.name = "w:t".to_string();
+        }
+        for child in &mut element.children {
+            if let Node::Element(child) = child {
+                box_text(child, in_box);
+            }
+        }
+    }
+    box_text(&mut out, false);
     out
 }
 
@@ -77,6 +90,11 @@ fn resolve_in(element: &mut Element, accept: bool) {
             _ => removed(&local, accept),
         };
         if gone {
+            // A comment range's ends are no content: they stay where the
+            // text went, as Word keeps them.
+            if !matches!(local.as_str(), "tr" | "tc") {
+                range_ends(&child, &mut children);
+            }
             continue;
         }
         if local == "p" && marked_removed(child.path(&["pPr", "rPr"]), accept) {
@@ -90,6 +108,16 @@ fn resolve_in(element: &mut Element, accept: bool) {
         }
     }
     element.children = join_paragraphs(children);
+}
+
+/// The comment range starts and ends inside `element`, in order.
+fn range_ends(element: &Element, out: &mut Vec<Node>) {
+    for child in element.elements() {
+        match child.local() {
+            "commentRangeStart" | "commentRangeEnd" => out.push(Node::Element(child.clone())),
+            _ => range_ends(child, out),
+        }
+    }
 }
 
 /// On reject, puts back the properties a formatting change replaced. A

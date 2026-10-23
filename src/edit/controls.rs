@@ -7,9 +7,14 @@
 //! (only `w:showingPlcHdr` goes, as when a person types into it) and its
 //! `w:sdtContent` is replaced by one run, or one paragraph for a block-level
 //! control.
+//!
+//! Backs the `fill_control` plan operation: [`ControlSelector`] is its
+//! `control` field, and exactly one of `text`, `choice`, `checked`, `date`
+//! names the value.
 
 use serde::{Deserialize, Serialize};
 
+use super::tracked::{COMMENT_RANGE_END, RANGE_ENDS, RANGE_STARTS};
 use super::{
     EditError, EditOutcome, ExistingRevisions, Resolution, Resolved, Transaction, check_text, err,
     excerpt,
@@ -18,24 +23,25 @@ use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 /// Which content control to fill; every form must match exactly one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
-    /// `"body:sdt:3"`, the same as `{"id": "body:sdt:3"}`.
+    /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
     Name(String),
-    /// `{"id": "body:sdt:3"}`.
+    /// `{"id": "p3.cc0"}`.
     Id {
-        /// `body:sdt:N` from `inspect`'s `controls`.
+        /// `ccN` (a block control) or `pN.ccK` (one in paragraph `pN`)
+        /// from `inspect`'s `controls`.
         id: String,
     },
     /// `{"tag": "Name"}`: the control's `w:tag`.
     Tag {
-        /// Exact tag.
+        /// The tag, matched exactly.
         tag: String,
     },
     /// `{"alias": "Full name"}`: the control's `w:alias` (its title).
     Alias {
-        /// Exact alias.
+        /// The alias, matched exactly.
         alias: String,
     },
 }
@@ -81,6 +87,7 @@ impl Transaction<'_> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
+            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -181,7 +188,7 @@ impl Transaction<'_> {
                     && record
                         .paragraph_ids
                         .iter()
-                        .any(|p| p == &format!("body:p:{local}"))
+                        .any(|p| p == &crate::ids::paragraph_id("body", local))
             })
             .map(|(g, _)| g)
             .collect();
@@ -202,22 +209,59 @@ impl Transaction<'_> {
         selector: &ControlSelector,
     ) -> Result<usize, (&'static str, String, usize)> {
         let records = &self.control_records;
+        let origin = self.origin.as_ref();
+        // Ids are the source's: once the plan's revisions are settled, a
+        // control id names the source control the author read.
+        let ids: Vec<&str> = match origin {
+            Some(origin) => origin.control_ids().iter().map(String::as_str).collect(),
+            None => records.iter().map(|r| r.id.as_str()).collect(),
+        };
+        let name_of = |n: usize| -> &str {
+            origin
+                .and_then(|o| o.control_source(n))
+                .unwrap_or(records[n].id.as_str())
+        };
         let (what, hits): (String, Vec<usize>) = match selector {
-            ControlSelector::Name(id) | ControlSelector::Id { id } => {
-                let n = id
+            ControlSelector::Name(given) | ControlSelector::Id { id: given } => {
+                if let Some(refused) = super::origin::source_only(given) {
+                    return Err(("ANCHOR_NOT_FOUND", refused, 0));
+                }
+                // The spec's cell spelling `t0.row1.cell2.cc0` names a
+                // control of the cell's first paragraph, `p40.cc0`.
+                let spelled = self.cell_control(given);
+                let id = spelled.as_ref().unwrap_or(given);
+                match origin {
+                    Some(origin) => match origin.control(id) {
+                        Some(Ok(n)) => return Ok(n),
+                        Some(Err(gone)) => return Err(("ANCHOR_NOT_FOUND", gone, 0)),
+                        None => {}
+                    },
+                    None => {
+                        if let Some(n) = ids.iter().position(|c| c == id) {
+                            return Ok(n);
+                        }
+                    }
+                }
+                // The expired `body:sdt:N` names the Nth control: refused,
+                // with the id it now has.
+                let settled = id
                     .strip_prefix("body:sdt:")
                     .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|&n| n < records.len());
-                return n.ok_or_else(|| {
-                    (
-                        "ANCHOR_NOT_FOUND",
-                        format!(
-                            "no content control {id:?}; the body has {} (body:sdt:0 to body:sdt:N)",
-                            records.len()
-                        ),
-                        0,
-                    )
-                });
+                    .and_then(|n| ids.get(n))
+                    .map(|c| format!("; the settled spelling is {c}"))
+                    .unwrap_or_default();
+                let known = match ids.as_slice() {
+                    [] => "the body has none".to_string(),
+                    [only] => format!("the body has {only}"),
+                    [first, .., last] => {
+                        format!("the body has {} (first {first}, last {last})", ids.len())
+                    }
+                };
+                return Err((
+                    "ANCHOR_NOT_FOUND",
+                    format!("no content control {given:?}; {known}{settled}"),
+                    0,
+                ));
             }
             ControlSelector::Tag { tag } => (
                 format!("tag {tag:?}"),
@@ -245,13 +289,29 @@ impl Transaction<'_> {
                     "{} content controls have {what}: {}; select one by id",
                     many.len(),
                     many.iter()
-                        .map(|&n| records[n].id.as_str())
+                        .map(|&n| name_of(n))
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
                 many.len(),
             )),
         }
+    }
+
+    /// `t0.row1.cell2[.pK].ccN` as the `pM.ccN` of the paragraph its
+    /// cell spelling names; `None` for any other id.
+    fn cell_control(&self, id: &str) -> Option<String> {
+        let (paragraph, n) = id.rsplit_once(".cc")?;
+        n.parse::<usize>().ok()?;
+        if !paragraph.starts_with('t') {
+            return None;
+        }
+        let ids = match &self.origin {
+            Some(origin) => origin.ids(),
+            None => self.ids(),
+        };
+        let p = ids.paragraph_id(paragraph)?.ok()?;
+        Some(format!("{p}.cc{n}"))
     }
 
     /// Check the value form against the control and compute what to write.
@@ -499,13 +559,10 @@ fn fill(dom: &mut Dom, sdt: NodeId, block: bool, value: &FillValue) {
     write_content(dom, content, block, rpr, &text);
 }
 
-/// Range markers a fill carries over: starts go before the new run, ends
-/// after it, so bookmarks, comment ranges and permissions keep both halves.
-const RANGE_STARTS: &[&str] = &["bookmarkStart", "commentRangeStart", "permStart"];
-const RANGE_ENDS: &[&str] = &["bookmarkEnd", "commentRangeEnd", "permEnd"];
-
 /// The range markers under `content`, detached: `(starts, ends)` in
-/// document order.
+/// document order. A fill puts the starts before its new run and the ends
+/// after it, so bookmarks, comment ranges, permissions and move ranges keep
+/// both halves: the markers an insertion beside them reads (#1156).
 fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
     let (mut starts, mut ends) = (Vec::new(), Vec::new());
     for node in dom.descendants(content, None) {
@@ -515,7 +572,8 @@ fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeI
         }
         if RANGE_STARTS.contains(&name.local_name()) {
             starts.push(node);
-        } else if RANGE_ENDS.contains(&name.local_name()) {
+        } else if RANGE_ENDS.contains(&name.local_name()) || name.local_name() == COMMENT_RANGE_END
+        {
             ends.push(node);
         }
     }
@@ -707,7 +765,7 @@ fn format_date(pattern: &str, y: i32, m: u32, d: u32) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -743,7 +801,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod control_source_boundary_tests {
     use super::*;
     use crate::edit::{EditPlan, apply_plan, preview_plan};

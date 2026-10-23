@@ -252,8 +252,7 @@ fn slot_value(dom: &Dom, prop: NodeId, slot: &Slot, attrs: Vec<(String, String)>
 /// for the same property whatever the attribute or child order (tabs).
 fn signature(dom: &Dom, e: NodeId) -> String {
     let mut attrs: Vec<String> = dom
-        .attributes(e)
-        .into_iter()
+        .attributes_iter(e)
         .filter(|(a, _)| !dom.is_namespace_declaration(a))
         .map(|(a, v)| format!("{}={v}", a.local_name()))
         .collect();
@@ -401,6 +400,7 @@ pub(super) fn restore_against_built_ins(
     styles_root: NodeId,
     restored: &[(String, &'static str)],
     levels: &Levels,
+    next_id: &mut super::RevisionIds,
 ) {
     let by_id: HashMap<String, NodeId> = dom
         .elements(styles_root, Some(&W::name("style")))
@@ -430,7 +430,7 @@ pub(super) fn restore_against_built_ins(
     for (_, style, block) in order {
         resolve(dom, styles_root, &by_id, levels, style, block);
     }
-    resync_linked_character_styles(dom, styles_root, &by_id, &recorded_rpr);
+    resync_linked_character_styles(dom, styles_root, &by_id, &recorded_rpr, next_id);
 }
 
 /// Give the old `block_local` record `old` every slot the original's style
@@ -545,6 +545,7 @@ fn resync_linked_character_styles(
     styles_root: NodeId,
     by_id: &HashMap<String, NodeId>,
     recorded: &[NodeId],
+    next_id: &mut super::RevisionIds,
 ) {
     let mut pending: Vec<(NodeId, NodeId)> = recorded
         .iter()
@@ -556,7 +557,7 @@ fn resync_linked_character_styles(
             continue;
         }
         done.push(chr);
-        let rpr = effective_rpr(dom, styles_root, by_id, para);
+        let rpr = effective_rpr(dom, styles_root, by_id, para, next_id);
         if let Some(own) = dom.element(chr, &W::name("rPr")) {
             dom.remove(own);
         }
@@ -586,6 +587,7 @@ fn effective_rpr(
     styles_root: NodeId,
     by_id: &HashMap<String, NodeId>,
     style: NodeId,
+    next_id: &mut super::RevisionIds,
 ) -> NodeId {
     let out = dom.new_element(W::name("rPr"));
     let mut chain = ancestors(dom, by_id, style);
@@ -599,7 +601,7 @@ fn effective_rpr(
             for (slot, attrs) in prop_slots(dom, prop) {
                 drop_slot(dom, out, &slot);
                 if slot.group.is_empty() {
-                    let copy = dom.clone_subtree(prop);
+                    let copy = super::clone_with_fresh_property_ids(dom, prop, next_id);
                     insert_in_order(dom, out, copy, RPR_ORDER);
                 } else {
                     let attrs: Vec<(&str, &str)> = attrs
@@ -772,7 +774,7 @@ fn drop_slot(dom: &mut Dom, block: NodeId, slot: &Slot) {
             dom.set_attribute_value(prop, &a, None);
         }
     }
-    if dom.attributes(prop).is_empty() {
+    if !dom.has_attributes(prop) {
         dom.remove(prop);
     }
 }

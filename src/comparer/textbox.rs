@@ -17,12 +17,19 @@ use crate::namespaces::{MC, W};
 use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
 use crate::xmllinq::{Dom, NodeId};
 
-/// Replace each deleted shape that sits among insertions beside an inserted
-/// shape differing from it only in text-box text with the inserted shape,
-/// each of its text boxes holding a compare of the old story against the new
-/// one. A shape with no text box pairs only with an identical copy, which the
-/// diff deleted and inserted again beside a changed box; Word leaves it
-/// alone.
+/// Replace each deleted shape that sits beside an inserted shape differing
+/// from it only in text-box text with the inserted shape, each of its text
+/// boxes holding a compare of the old story against the new one.
+///
+/// The diff treats a text box as one opaque run child (an
+/// `mc:AlternateContent`, `w:drawing` or `w:pict`), so any text change comes
+/// out as "delete old box, insert new box". Word's Compare keeps the one
+/// box and marks the changed words inside it; this re-diff restores that.
+/// Gated on `settings.merge_replaced_paragraphs` — only Word-visual mode
+/// wants it. Shapes that are identical, contain different non-text content,
+/// or sit under different carrier shapes are left intact. Call near the end
+/// of the comparer pipeline, after [`super::finalize`] has produced the
+/// `w:ins`/`w:del` wrappers and before id renumbering.
 pub fn diff_inside_replaced_text_boxes(
     dom: &mut Dom,
     root: NodeId,
@@ -158,7 +165,7 @@ fn lift_run(dom: &mut Dom, run: NodeId) {
 /// per copy left out (shape and drawing ids, and a VML shape's `#id`
 /// reference to its shapetype), so two boxes that differ only in text
 /// compare equal.
-fn shell(dom: &mut Dom, shape: NodeId) -> String {
+pub(crate) fn shell(dom: &mut Dom, shape: NodeId) -> String {
     let copy = dom.clone_subtree(shape);
     for b in dom.descendants(copy, Some(&W::name("txbxContent"))) {
         for c in dom.nodes(b) {
@@ -241,7 +248,7 @@ fn redline_boxes(dom: &mut Dom, old: NodeId, new: NodeId, settings: &WmlComparer
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_shape_revision_contract_tests {
     use super::*;
     fn document(source: &str) -> (Dom, NodeId) {

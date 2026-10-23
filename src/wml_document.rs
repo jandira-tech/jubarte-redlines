@@ -12,11 +12,20 @@ use crate::admission::{InputLimits, admit};
 use crate::opc::{OpcError, PartFs, refused};
 use crate::xmllinq::{Dom, NodeId};
 
-/// A WordprocessingML document (bytes + lazily-parsed main document part).
+/// A WordprocessingML document held as its package bytes plus the main
+/// document part parsed on demand. Mirrors the C# `WmlDocument`
+/// (`DocumentByteArray` + lazy `MainDocumentPart`) used by the
+/// [`crate::comparer`] pipeline.
+///
+/// Constructed with [`Self::from_bytes`] (which admits under
+/// [`InputLimits::compare`](crate::admission::InputLimits::compare));
+/// reads and edits go through [`Self::dom`] / [`Self::dom_mut`] and
+/// [`Self::part_fs`] / [`Self::part_fs_mut`].
 pub struct WmlDocument {
     /// `DocumentByteArray`: the bytes the document was opened from.
     document_byte_array: Vec<u8>,
-    /// `FileName` — mirrors the inherited property (consumers read it for metrics).
+    /// `FileName` — the inherited `WmlDocument` property, kept as a free
+    /// string for callers that gather metrics or build paths from it.
     pub file_name: String,
     part_fs: PartFs,
     dom: Dom,
@@ -24,14 +33,20 @@ pub struct WmlDocument {
 }
 
 impl WmlDocument {
-    /// `new WmlDocument(bytes)`.
+    /// Opens `bytes` as a `.docx`, admits it under
+    /// [`InputLimits::compare`](crate::admission::InputLimits::compare),
+    /// and lazily parses the main document part on the first
+    /// [`Self::main_document`] call.
     ///
     /// # Errors
     ///
-    /// The package is admitted under [`InputLimits::compare`] first (see
-    /// [`crate::admission`]); a refusal is an `OpcError::Io(InvalidData)`
-    /// carrying the [`AdmissionError`](crate::admission::AdmissionError) as
-    /// its source. Then whatever [`PartFs::open`] reports.
+    /// - `OpcError::Io` wrapping
+    ///   [`crate::admission::AdmissionError`] when admission refuses the
+    ///   bytes (a budget, a duplicate or unsafe part name, an encrypted
+    ///   package, an `.doc` or RTF that is not a `.docx`, or an XML part
+    ///   too deep or malformed).
+    /// - Any error [`PartFs::open`] reports (the standard OPC errors:
+    ///   [`OpcError::Zip`], [`OpcError::PartNotFound`], etc.).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError> {
         admit(bytes, InputLimits::compare()).map_err(refused)?;
         Ok(WmlDocument {
@@ -43,24 +58,30 @@ impl WmlDocument {
         })
     }
 
-    /// `DocumentByteArray`: the bytes the document was opened from. Edits
-    /// through [`Self::part_fs_mut`] or [`Self::dom_mut`] do not show here.
+    /// The bytes the document was opened from. Edits through
+    /// [`Self::part_fs_mut`] or [`Self::dom_mut`] do not show here;
+    /// repack through [`crate::opc::PartFs::to_zip`] to get the new bytes.
     pub fn bytes(&self) -> &[u8] {
         &self.document_byte_array
     }
 
-    /// The main document part name (e.g. `word/document.xml`).
+    /// The main document part name (`word/document.xml` unless OPC
+    /// relationships name otherwise). The string always returned even
+    /// when the part is absent.
     pub fn main_document_part_name(&self) -> String {
         self.part_fs
             .main_document_part()
             .unwrap_or_else(|| "word/document.xml".to_string())
     }
 
-    /// `MainDocumentPart` — parse (once) the main document and return its
-    /// Document node. Subsequent calls return the cached node.
+    /// Parses the main document part (once) and returns its document
+    /// node. Subsequent calls return the cached node.
     ///
-    /// Returns [`OpcError::PartNotFound`] when the package has no main document
-    /// part (fallible input surface — never panics on missing user content).
+    /// # Errors
+    ///
+    /// [`OpcError::PartNotFound`] when the package has no part at
+    /// [`Self::main_document_part_name`] (the body the comparer would
+    /// diff into is missing).
     pub fn main_document(&mut self) -> Result<NodeId, OpcError> {
         if let Some(id) = self.main_doc {
             return Ok(id);
@@ -76,6 +97,11 @@ impl WmlDocument {
     }
 
     /// The root element (`<w:document>`) of the main document part.
+    ///
+    /// # Errors
+    ///
+    /// [`OpcError::PartNotFound`] when the part is absent, or the parsed
+    /// XML has no root element.
     pub fn main_document_root(&mut self) -> Result<NodeId, OpcError> {
         let doc = self.main_document()?;
         let name = self.main_document_part_name();
@@ -84,19 +110,22 @@ impl WmlDocument {
             .ok_or_else(|| OpcError::PartNotFound(format!("{name}: no root element")))
     }
 
-    /// Borrow the arena DOM (read).
+    /// The arena DOM (read-only). Empty until a successful
+    /// [`Self::main_document`] parses the part into it.
     pub fn dom(&self) -> &Dom {
         &self.dom
     }
-    /// Borrow the arena DOM (mutate).
+    /// The arena DOM (mutable). The comparer mutates this DOM while it
+    /// produces the body diff.
     pub fn dom_mut(&mut self) -> &mut Dom {
         &mut self.dom
     }
-    /// Borrow the OPC package (read).
+    /// The opened OPC package (read-only), by which every other part and
+    /// relationship is read.
     pub fn part_fs(&self) -> &PartFs {
         &self.part_fs
     }
-    /// Borrow the OPC package (mutate).
+    /// The opened OPC package (mutable).
     pub fn part_fs_mut(&mut self) -> &mut PartFs {
         &mut self.part_fs
     }

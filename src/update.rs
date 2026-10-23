@@ -2,14 +2,20 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `jubarte self-update`: replace this binary with a GitHub release, only when
-//! the user runs the command (docs/SELF_UPDATE.md).
+//! `jubarte self-update`: replace this binary with a GitHub release when the
+//! user runs `jubarte self-update` (docs/SELF_UPDATE.md).
 //!
 //! The release lookup, SHA-256 check against `SHA256SUMS.txt`, zipsign
-//! signature check, archive extraction and binary swap are the `self_update`
-//! crate's. This module decides what to install, when to ask, and when a
-//! signature is required, and keeps those decisions free of I/O so they are
-//! unit-tested.
+//! signature check, archive extraction and binary swap are the
+//! [`self_update`](https://docs.rs/self_update) crate's. This module builds
+//! the call the binary makes: it picks the release archive for this platform
+//! (`asset_target`), decides whether the target is newer
+//! (`plan`) and refuses to ask on a non-interactive stdin
+//! (`preflight`). The signature rule lives in `signature_required`,
+//! split out so it is unit-tested without I/O.
+//!
+//! Entry points: `run` for the command itself, `plan` / `step` /
+//! `preflight` / `signature_required` for the decisions.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -41,21 +47,26 @@ const RELEASE_KEYS: &[self_update::VerifyingKey] = &[];
 /// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
 const FIRST_SIGNED_RELEASE: Option<&str> = None;
 
-/// What the user asked for.
+/// The flags `jubarte self-update` accepts, resolved from the CLI before
+/// [`run`] sees them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Options {
-    /// Print the installed and latest versions; install nothing.
+    /// Print the installed and the latest version and install nothing
+    /// (`--check`).
     pub check: bool,
-    /// Install without asking.
+    /// Install without the interactive prompt (`--yes`).
     pub yes: bool,
-    /// Install this release (`0.10.0` or `v0.10.0`), older ones included.
+    /// Install this release (`0.10.0` or `v0.10.0`; `--version`). A
+    /// request may downgrade; the installed version itself is up to date
+    /// and is not installed again.
     pub version: Option<String>,
 }
 
-/// What to do once the target release is known.
+/// The decision [`plan`] returns, once the target release is known.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Plan {
-    /// The installed version is the target (or newer, without `--version`).
+    /// The installed version is the target (or already newer, when no
+    /// `--version` was asked for): nothing to do.
     UpToDate {
         /// The installed version.
         current: String,
@@ -69,9 +80,9 @@ pub enum Plan {
     },
 }
 
-/// Release archive suffix for this machine (`macos-aarch64`, ...), matching
-/// the names `.github/workflows/release.yml` publishes; `None` where no
-/// archive is built.
+/// The release archive suffix this binary will look up (`macos-aarch64`,
+/// `linux-x86_64`, …), matching the names `release.yml` publishes. `None`
+/// for an OS / arch pair no archive is built for.
 #[must_use]
 pub fn asset_target() -> Option<&'static str> {
     asset_target_for(std::env::consts::OS, std::env::consts::ARCH)
@@ -97,13 +108,15 @@ fn bin_path_in_archive(target: &str) -> String {
     )
 }
 
-/// Refuse before any network access when the command would have to ask and
-/// there is no terminal to ask on.
+/// Refuse to start when the command would have to prompt and the stdin
+/// channel is not a terminal. None of the operation is touched, not even a
+/// network lookup.
 ///
 /// # Errors
 ///
-/// A message when neither `--check` nor `--yes` is given and stdin is not a
-/// terminal.
+/// A message when neither [`Options::check`] nor [`Options::yes`] is set
+/// and `interactive` is `false`: passing `--check` or `--yes`, or being on a
+/// terminal, lets the run continue.
 pub fn preflight(opts: &Options, interactive: bool) -> Result<(), String> {
     if opts.check || opts.yes || interactive {
         Ok(())
@@ -117,8 +130,13 @@ fn bare(version: &str) -> &str {
     version.strip_prefix('v').unwrap_or(version)
 }
 
-/// Decide between staying and installing. Without a requested version only a
-/// newer release installs; a requested version installs whenever it differs.
+/// Decide between staying and installing for a given installed version and
+/// the version `self_update` resolved on GitHub.
+///
+/// Without a requested version only a strictly newer release installs; a
+/// requested version installs whenever it differs from the installed one
+/// (downgrades included); the installed version is [`Plan::UpToDate`]. A leading `v` is stripped, so
+/// `v0.10.0` and `0.10.0` name the same release.
 ///
 /// # Errors
 ///
@@ -143,15 +161,67 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
     })
 }
 
-/// Run `jubarte self-update`. Writes progress to stdout, the question to
-/// stderr, and reads the answer from stdin.
+/// What `run` does once the release is resolved: report and stop, or ask
+/// (unless `--yes`) and install. Pure, so the "`--check` never installs"
+/// rule is unit-tested without the network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Print `text` and stop. Nothing is downloaded or replaced.
+    Report {
+        /// The line to print.
+        text: String,
+    },
+    /// Confirm unless `opts.yes`, then replace the running binary.
+    Install {
+        /// The installed version.
+        from: String,
+        /// The release to install.
+        to: String,
+    },
+}
+
+/// `decision` is [`plan`]'s answer; `resolved` is the bare release version
+/// the lookup returned (the up-to-date message quotes it).
+#[must_use]
+pub fn step(opts: &Options, decision: &Plan, resolved: &str) -> Step {
+    match decision {
+        Plan::UpToDate { current } => Step::Report {
+            text: format!("jubarte {current} is up to date (latest release {resolved})."),
+        },
+        Plan::Install { from, to } if opts.check => Step::Report {
+            text: format!(
+                "jubarte {from} is installed; {to} is available. Run `jubarte self-update` to install it."
+            ),
+        },
+        Plan::Install { from, to } => Step::Install {
+            from: from.clone(),
+            to: to.clone(),
+        },
+    }
+}
+
+/// `jubarte self-update`. `Ok` means the run finished without error: the
+/// binary is replaced only when an install completes, and `--check`, an
+/// up-to-date release or a declined prompt leave it as it was. On failure
+/// the installed binary is unchanged. Writes progress to
+/// stdout, the prompt to stderr, and reads the answer from stdin.
+///
+/// The flow is: [`preflight`] → resolve the release for this platform
+/// ([`asset_target`]) → decide ([`plan`]) → act ([`step`]) → optional prompt
+/// → optional signature rule ([`signature_required`]) → `self_update`
+/// install. A prompt `y` / `Y` / `yes` confirms; anything else is "no".
 ///
 /// # Errors
 ///
-/// A message for an unsupported platform, a refused preflight, a network or
-/// GitHub failure, a missing or mismatched checksum, a missing or invalid
-/// signature where one is required ([`signature_required`]), or a failed
-/// swap.
+/// A message for one of:
+/// - the platform has no published archive ([`asset_target`] is `None`);
+/// - the [`preflight`] check refused the run;
+/// - the GitHub release lookup failed or returned no release;
+/// - the network or GitHub error inside the `self_update` installer;
+/// - the checksum download or verification did not match;
+/// - a signature was required but missing or did not verify against
+///   [`signature_required`];
+/// - the binary swap step failed.
 pub fn run(opts: &Options) -> Result<(), String> {
     let interactive = std::io::stdin().is_terminal();
     preflight(opts, interactive)?;
@@ -172,6 +242,7 @@ pub fn run(opts: &Options) -> Result<(), String> {
         .target(target)
         .current_version(current)
         .bin_path_in_archive(bin_path_in_archive(target))
+        .verify_binary(extracted_binary_is_regular_file)
         .checksum_from_asset(SUMS_ASSET)
         .show_output(false)
         .show_download_progress(interactive)
@@ -189,22 +260,13 @@ pub fn run(opts: &Options) -> Result<(), String> {
     .ok_or("GitHub lists no release")?;
 
     let decision = plan(current, release.version(), opts.version.is_some())?;
-    let (from, to) = match decision {
-        Plan::UpToDate { current } => {
-            println!(
-                "jubarte {current} is up to date (latest release {}).",
-                bare(release.version())
-            );
+    let (from, to) = match step(opts, &decision, bare(release.version())) {
+        Step::Report { text } => {
+            println!("{text}");
             return Ok(());
         }
-        Plan::Install { from, to } => (from, to),
+        Step::Install { from, to } => (from, to),
     };
-    if opts.check {
-        println!(
-            "jubarte {from} is installed; {to} is available. Run `jubarte self-update` to install it."
-        );
-        return Ok(());
-    }
     if !opts.yes && !confirm(&from, &to)? {
         println!("Nothing changed.");
         return Ok(());
@@ -227,17 +289,18 @@ pub fn run(opts: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether installing `target_version` must pass a zipsign signature check
-/// against the trusted keys.
+/// Whether installing `target_version` must pass a zipsign signature check.
 ///
-/// True only when keys are trusted and the target is `first_signed` or later:
-/// releases published before signing began carry no signature, so a
-/// `--version` downgrade to one of them is checked by its SHA-256 alone.
+/// True only when `keys_present` and the release sorts at or after
+/// `first_signed`: releases published before signing began carry no
+/// signature, so a `--version` downgrade to one of them is checked by its
+/// SHA-256 alone. A `v` prefix on either version is stripped before the
+/// comparison.
 ///
 /// # Errors
 ///
-/// A message when keys are trusted, a first signed release is set, and either
-/// version is not semver.
+/// A message when `keys_present` and `first_signed` are both set but either
+/// side is not semver.
 pub fn signature_required(
     target_version: &str,
     first_signed: Option<&str>,
@@ -263,8 +326,33 @@ fn confirm(from: &str, to: &str) -> Result<bool, String> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES"))
 }
 
+/// The `verify_binary` hook `run` registers (ZIP-16/#639): refuse the
+/// extracted binary when it is anything but a regular file. `self_update`
+/// already refuses a symlink *zip* entry in its single-file path, but its
+/// tar path delegates to `tar`'s `unpack_in`, which restores a symlink
+/// entry as a real link whose target is not confined to the staging
+/// directory — a crafted release archive could then install any path's
+/// contents as the new binary. `symlink_metadata`, not `metadata`, sees
+/// the entry itself rather than its target.
+fn extracted_binary_is_regular_file(path: &std::path::Path) -> self_update::Result<()> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| {
+        self_update::Error::verification_rejected(format!(
+            "the extracted binary {} cannot be inspected: {e}",
+            path.display()
+        ))
+    })?;
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(self_update::Error::verification_rejected(format!(
+            "the extracted binary {} is not a regular file",
+            path.display()
+        )))
+    }
+}
+
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -318,6 +406,62 @@ mod tests {
             ..Options::default()
         };
         assert!(preflight(&pinned, false).is_err());
+    }
+
+    #[test]
+    fn check_reports_and_never_installs() {
+        let install = Plan::Install {
+            from: "0.10.0".into(),
+            to: "0.11.0".into(),
+        };
+        // --check turns an install decision into a report: Step::Install is
+        // unreachable with check set, so nothing is ever downloaded or replaced.
+        let look = Options {
+            check: true,
+            ..Options::default()
+        };
+        assert_eq!(
+            step(&look, &install, "0.11.0"),
+            Step::Report {
+                text: "jubarte 0.10.0 is installed; 0.11.0 is available. Run `jubarte self-update` to install it.".into()
+            }
+        );
+        // --check wins over --yes too: an explicit look never installs.
+        let look_yes = Options {
+            check: true,
+            yes: true,
+            ..Options::default()
+        };
+        assert!(matches!(
+            step(&look_yes, &install, "0.11.0"),
+            Step::Report { .. }
+        ));
+        // Without --check the same decision installs.
+        assert_eq!(
+            step(&Options::default(), &install, "0.11.0"),
+            Step::Install {
+                from: "0.10.0".into(),
+                to: "0.11.0".into()
+            }
+        );
+        // An up-to-date binary reports and stops whatever the flags say.
+        let up_to_date = Plan::UpToDate {
+            current: "0.11.0".into(),
+        };
+        for opts in [
+            look,
+            look_yes,
+            Options {
+                yes: true,
+                ..Options::default()
+            },
+            Options::default(),
+        ] {
+            assert!(matches!(
+                step(&opts, &up_to_date, "0.11.0"),
+                Step::Report { .. }
+            ));
+        }
     }
 
     #[test]
@@ -433,6 +577,34 @@ mod tests {
             // compared with this build's version.
             assert!(!first.starts_with('v'), "write {first} without the v");
             assert_eq!(signature_required(first, Some(first), true), Ok(true));
+        }
+    }
+
+    /// ZIP-16 (#639): the binary swap must never install a link or a
+    /// special file. `self_update`'s zip path refuses a symlink entry, but
+    /// its tar path hands the entry to `tar`'s `unpack_in`, which restores
+    /// a symlink as a real link whose target the crate does not confine to
+    /// the staging dir — a crafted release could install any path as the
+    /// new binary. The extracted path is checked with `symlink_metadata`
+    /// (not `metadata`, which follows the link).
+    #[test]
+    fn a_special_extracted_binary_is_refused_before_the_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let regular = dir.path().join("jubarte");
+        std::fs::write(&regular, b"binary").unwrap();
+        extracted_binary_is_regular_file(&regular).expect("a regular file installs");
+        extracted_binary_is_regular_file(dir.path())
+            .expect_err("a directory at the extracted path must be refused");
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("linked");
+            std::os::unix::fs::symlink(&regular, &link).unwrap();
+            extracted_binary_is_regular_file(&link)
+                .expect_err("a symlink at the extracted path must be refused");
+            let dangling = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("no-such-target"), &dangling).unwrap();
+            extracted_binary_is_regular_file(&dangling)
+                .expect_err("a dangling symlink must be refused too");
         }
     }
 }

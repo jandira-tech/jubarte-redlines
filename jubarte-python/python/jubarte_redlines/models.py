@@ -96,7 +96,8 @@ class PdfOptions:
 
     ``move_comments`` lists the comments after the last page instead of in
     balloons beside the text; ``changed_only`` keeps only the pages a tracked
-    change touches. Both mirror the binary's flags and apply to PDF and PNG
+    change touches, the pages a comment is anchored on, and the first page of
+    each section on which a revised header or footer paints. Both mirror the binary's flags and apply to PDF and PNG
     output; ``diff_render`` ignores them.
     """
 
@@ -187,20 +188,47 @@ def _decode_revisions(payload: str) -> tuple[Revision, ...]:
     )
 
 
-ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
+ChangeKind = Literal["insertion", "deletion", "move", "formatting", "replacement"]
+
+#: The kinds a change filter selects by: an element's own. ``replacement``
+#: is listed (an author's deletion and their insertion right after it) but
+#: no single element has it, so the engine refuses it in a filter.
+FilterKind = Literal["insertion", "deletion", "move", "formatting"]
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeMember:
+    """One mark of a change Word wrote as several: its own ``id`` (``r7``),
+    ``kind`` (``insertion`` or ``deletion``), ``target`` (``text`` or
+    ``paragraph_mark``), ``date`` and ``text``."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: str | None
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
 class Change:
     """One tracked change with the id ``Document.accept`` / ``reject`` select by.
 
-    ``id`` is ``{story}:rev:{w:id}`` (``body:rev:12``, ``header1:rev:3``);
-    resolving some changes never renumbers the rest. ``target`` is what the
+    ``id`` is the change's short id (``r12``, ``header1.r3``), built from
+    its ``w:id``, so resolving some changes never renumbers the rest. ``target`` is what the
     change applies to (``text``, ``paragraph_mark``, ``table_row``,
     ``table_cell``, ``properties``). Both sides of a move share
     ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
     ``inside`` names the change whose content holds this one: resolving that
-    one so its content goes takes this one along.
+    one so its content goes takes this one along. ``ref`` equals ``id``: the
+    short id the CLI prints and ``-p``/``--id`` take;
+    ``paragraph`` is the id of the paragraph the change is in (``p3``).
+    ``holds_comments`` names the comments (``c4``, a reply's ``c5``) whose
+    reference mark the change holds: resolving it so its content goes
+    removes their threads, as Word does. A change Word wrote as several
+    marks (one typed insertion split by session, or a deletion with the
+    insertion that replaces it, kind ``replacement``) has the composite id
+    ``r7+8+9+10`` and lists its marks in ``members``; selecting only some of
+    them is refused.
     """
 
     id: str
@@ -212,6 +240,20 @@ class Change:
     move_name: str | None
     move_side: Literal["from", "to"] | None
     inside: str | None
+    ref: str | None = None
+    paragraph: str | None = None
+    holds_comments: tuple[str, ...] = ()
+    members: tuple[ChangeMember, ...] = ()
+
+
+class _MemberRow(TypedDict):
+    """One ``members`` entry of the native ``changes`` JSON."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    date: NotRequired[str]
+    text: str
 
 
 class _ChangeRow(TypedDict):
@@ -226,10 +268,17 @@ class _ChangeRow(TypedDict):
     move_name: NotRequired[str]
     move_side: NotRequired[Literal["from", "to"]]
     inside: NotRequired[str]
+    ref: NotRequired[str]
+    paragraph: NotRequired[str]
+    holds_comments: NotRequired[list[str]]
+    members: NotRequired[list[_MemberRow]]
 
 
 def _decode_changes(payload: str) -> tuple[Change, ...]:
-    rows: list[_ChangeRow] = json.loads(payload)
+    return _changes_of(json.loads(payload))
+
+
+def _changes_of(rows: list[_ChangeRow]) -> tuple[Change, ...]:
     return tuple(
         Change(
             id=row["id"],
@@ -241,6 +290,19 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
             move_name=row.get("move_name"),
             move_side=row.get("move_side"),
             inside=row.get("inside"),
+            ref=row.get("ref"),
+            paragraph=row.get("paragraph"),
+            holds_comments=tuple(row.get("holds_comments", ())),
+            members=tuple(
+                ChangeMember(
+                    id=m["id"],
+                    kind=m["kind"],
+                    target=m["target"],
+                    date=m.get("date"),
+                    text=m["text"],
+                )
+                for m in row.get("members", ())
+            ),
         )
         for row in rows
     )
@@ -254,9 +316,11 @@ class Comment:
     ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
     ``parent`` is the id of the comment it replies to (Word threads are one
     level deep); ``done`` is set when the thread is resolved. ``paragraph``
-    is the paragraph id where the range starts (``body:p:12``);
+    is the paragraph id where the range starts (``p12``), and
+    ``last_paragraph`` the one where it ends when that is a later one;
     ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
-    up to 80 characters ``before`` and ``after`` it.
+    up to 80 characters ``before`` and ``after`` it. ``ref`` is the short id
+    the CLI prints and ``-p`` takes (``c5``).
     """
 
     id: int
@@ -270,6 +334,8 @@ class Comment:
     anchor_text: str
     before: str
     after: str
+    ref: str | None = None
+    last_paragraph: str | None = None
 
 
 class _CommentRow(TypedDict):
@@ -286,10 +352,15 @@ class _CommentRow(TypedDict):
     anchor_text: str
     before: str
     after: str
+    ref: NotRequired[str]
+    last_paragraph: NotRequired[str]
 
 
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
-    rows: list[_CommentRow] = json.loads(payload)
+    return _comments_of(json.loads(payload))
+
+
+def _comments_of(rows: list[_CommentRow]) -> tuple[Comment, ...]:
     return tuple(
         Comment(
             id=row["id"],
@@ -303,6 +374,8 @@ def _decode_comments(payload: str) -> tuple[Comment, ...]:
             anchor_text=row["anchor_text"],
             before=row["before"],
             after=row["after"],
+            ref=row.get("ref"),
+            last_paragraph=row.get("last_paragraph"),
         )
         for row in rows
     )
@@ -311,7 +384,7 @@ def _decode_comments(payload: str) -> tuple[Comment, ...]:
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
-    kinds: Sequence[ChangeKind] | None = None,
+    kinds: Sequence[FilterKind] | None = None,
 ) -> str:
     """The engine's change filter as JSON: a change is selected when it
     matches every list given; ``None`` leaves that list out (any), an empty
@@ -327,7 +400,7 @@ def change_filter(
 
 
 # ---------------------------------------------------------------------------
-# Inspection snapshot (jubarte inspect --json)
+# Inspection snapshot (jubarte read --json)
 # ---------------------------------------------------------------------------
 
 
@@ -345,7 +418,7 @@ class Span:
 
 @dataclass(frozen=True, slots=True)
 class Paragraph:
-    """One paragraph (``body:p:N``, ``header1:p:N``...); ``index``/``id`` are valid for this snapshot only."""
+    """One paragraph (``p12``, ``header1``, ``header1.p2``...); ``index``/``id`` are valid for this snapshot only."""
 
     index: int
     id: str
@@ -421,22 +494,32 @@ class TableCell:
 
 @dataclass(frozen=True, slots=True)
 class Table:
-    """A body table as a grid; nested tables are separate entries.
+    """A table grid. Top-level ``index`` matches the view's ``tN``.
+
+    Nested tables have ``index=None`` and a ``parent`` cell path, and live
+    recursively in ``nested``. Only top-level tables count in ``Summary.tables``.
 
     ``rows`` holds the cells as the XML has them (a merged cell is one cell),
     ``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
     the grid column widths in twentieths of a point (0 when unreadable).
     """
 
-    index: int
+    index: int | None
     rows: tuple[tuple[TableCell, ...], ...]
     header_rows: int
     widths_dxa: tuple[int, ...]
+    parent: str | None = None
+    nested: tuple[Table, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Snapshot:
-    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
+    """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses.
+
+    ``changes`` and ``comments`` are the tracked changes and comments, as
+    ``Document.changes()`` and ``comments()`` list them and ``read --json``
+    prints them.
+    """
 
     schema_version: int
     source_sha256: str
@@ -445,9 +528,11 @@ class Snapshot:
     stories: tuple[Story, ...] = ()
     tables: tuple[Table, ...] = ()
     controls: tuple[ContentControl, ...] = ()
+    changes: tuple[Change, ...] = ()
+    comments: tuple[Comment, ...] = ()
 
     def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
-        """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
+        """The one control with this id (``p3.cc0``, ``cc1``), tag or alias; give exactly one."""
         given = [(k, v) for k, v in (("id", id), ("tag", tag), ("alias", alias)) if v is not None]
         if len(given) != 1:
             raise ValueError("give exactly one of id, tag or alias")
@@ -458,7 +543,7 @@ class Snapshot:
         return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
-        """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
+        """The paragraph with this id (``p12``, ``header1``, ``header1.p2``) or body index."""
         for p in self.paragraphs:
             if p.id == id_or_index or p.index == id_or_index:
                 return p
@@ -523,6 +608,20 @@ def _decode_paragraph(p: _ParagraphRow) -> Paragraph:
     )
 
 
+def _decode_table(table: dict) -> Table:
+    return Table(
+        index=table.get("index"),
+        rows=tuple(
+            tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
+            for row in table["rows"]
+        ),
+        header_rows=table["header_rows"],
+        widths_dxa=tuple(table["widths_dxa"]),
+        parent=table.get("parent"),
+        nested=tuple(_decode_table(child) for child in table.get("nested", ())),
+    )
+
+
 def _decode_snapshot(payload: str) -> Snapshot:
     data = json.loads(payload)
     return Snapshot(
@@ -539,18 +638,7 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for s in data.get("stories", ())
         ),
-        tables=tuple(
-            Table(
-                index=t["index"],
-                rows=tuple(
-                    tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
-                    for row in t["rows"]
-                ),
-                header_rows=t["header_rows"],
-                widths_dxa=tuple(t["widths_dxa"]),
-            )
-            for t in data.get("tables", ())
-        ),
+        tables=tuple(_decode_table(t) for t in data.get("tables", ())),
         controls=tuple(
             ContentControl(
                 id=c["id"],
@@ -566,6 +654,8 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for c in data.get("controls", ())
         ),
+        changes=_changes_of(data.get("changes", [])),
+        comments=_comments_of(data.get("comments", [])),
     )
 
 
@@ -574,7 +664,7 @@ def _decode_snapshot(payload: str) -> Snapshot:
 # ---------------------------------------------------------------------------
 
 Selector = str | int | dict[str, str | int]
-"""A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
+"""A paragraph id (``p12``, ``header1``, ``header1.p2``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
@@ -585,7 +675,7 @@ _PROTECTIONS = ("none", "readOnly", "comments", "trackedChanges", "forms")
 tracked and add the plan's edits as new revisions beside them."""
 
 ControlSelector = str | dict[str, str]
-"""A control id (``body:sdt:N``) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
+"""A control id (``p3.cc0`` inline, ``cc1`` block) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
 
 
 def _control_selector(value: ControlSelector) -> str | dict[str, str]:
@@ -595,7 +685,7 @@ def _control_selector(value: ControlSelector) -> str | dict[str, str]:
         key, inner = next(iter(value.items()))
         if key in ("id", "tag", "alias") and isinstance(inner, str):
             return {key: inner}
-    raise TypeError('control selector must be an id ("body:sdt:N") or one of {id|tag|alias: ...}')
+    raise TypeError('control selector must be an id ("p3.cc0", "cc1") or one of {id|tag|alias: ...}')
 
 
 def _selector(value: Selector) -> dict[str, str | int]:
@@ -676,12 +766,18 @@ class EditPlan:
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
     update_fields: bool = False
+    #: Let ``edit_comment`` change another author's comment; it keeps their
+    #: name. Without it that is refused (``COMMENT_NOT_YOURS``): one author
+    #: answers another with ``reply_comment``.
+    rewrite_others_comments: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
         if not isinstance(self.update_fields, bool):
             raise TypeError("update_fields must be a bool")
+        if not isinstance(self.rewrite_others_comments, bool):
+            raise TypeError("rewrite_others_comments must be a bool")
         if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
             raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
@@ -957,7 +1053,11 @@ class EditPlan:
         return self._with(_with_optional(op, id=id))
 
     def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
-        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        """Replace the text of comment ``comment_id``; its author, date and thread stay.
+
+        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+        plan sets ``rewrite_others_comments``.
+        """
         op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
         return self._with(_with_optional(op, id=id))
 
@@ -1181,6 +1281,8 @@ class EditPlan:
         wire["operations"] = [dict(op) for op in self.operations]
         if self.update_fields:
             wire["update_fields"] = True
+        if self.rewrite_others_comments:
+            wire["rewrite_others_comments"] = True
         return wire
 
     def to_json(self) -> str:
@@ -1209,9 +1311,7 @@ def _set_occurrence(op: dict[str, object], occurrence: int | None) -> None:
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
-    for key, value in extra.items():
-        if value is not None:
-            op[key] = value
+    op.update({key: value for key, value in extra.items() if value is not None})
     if "id" in op:
         # Keep the id first for readable plans.
         op = {"id": op.pop("id"), **op}
@@ -1250,13 +1350,18 @@ class EditOutcome:
 
 @dataclass(frozen=True, slots=True)
 class RevisionCounts:
-    """Comparer revision records in the redline."""
+    """The redline's changes by kind, as ``changes`` lists them.
+
+    ``replaced`` counts replacements: a deletion and the insertion that
+    replaces it, listed as one change. ``total`` is the sum of the others.
+    """
 
     inserted: int
     deleted: int
     moved: int
     format_changed: int
     total: int
+    replaced: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1293,6 +1398,9 @@ class EditReport:
     revisions: RevisionCounts
     resolved_revisions: ResolvedRevisions = ResolvedRevisions()
     fields: tuple[FieldUpdate, ...] = ()
+    notes: tuple[str, ...] = ()
+    """What the plan said that jubarte read another way (field ``anchor``
+    read as ``find``, ...): the CLI prints each as a ``note:`` line."""
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -1342,6 +1450,7 @@ def _decode_report(payload: str) -> EditReport:
             rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
         ),
         fields=_decode_field_updates(data.get("fields", ())),
+        notes=tuple(data.get("notes", ())),
         _json=payload,
     )
 
@@ -1397,9 +1506,14 @@ class FontResolution:
 
 @dataclass(frozen=True, slots=True)
 class PageText:
-    """Text painted on one page, one line per baseline."""
+    """Text painted on one page, one line per baseline.
+
+    ``index`` counts the report's pages from zero; ``number`` is the page's
+    number in the document, which differs once ``changed_only`` drops pages.
+    """
 
     index: int
+    number: int
     text: str
 
 
@@ -1410,6 +1524,9 @@ class RenderReport:
     page_count: int
     pages: tuple[PageText, ...]
     fonts: tuple[FontResolution, ...]
+    #: The document's pages (every page laid out, plus a moved-comment
+    #: listing), whichever were written.
+    document_pages: int = 0
 
     @property
     def substitutions(self) -> tuple[FontResolution, ...]:
@@ -1432,6 +1549,7 @@ def _decode_render_report(payload: str) -> RenderReport:
         page_count=data["page_count"],
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
+        document_pages=data.get("document_pages", data["page_count"]),
     )
 
 
@@ -1493,8 +1611,8 @@ def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
 class Hunk:
     """One changed paragraph of a ``Diff``.
 
-    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
-    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``at`` is where it is: ``p12`` (or a header's, footer's or note's
+    ``header1``, ``header1.p2``, ``footnotes.p3``...) in a Word document, as
     ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
     Markdown; in the new version, or the old one when ``removed``. ``text``
     is the paragraph with its changes, unwrapped.
@@ -1510,7 +1628,9 @@ class Diff:
     """The changes between two documents, as ``git diff --word-diff`` shows
     them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
     for the changes and CriticMarkup ``{==highlights==}`` and
-    ``{>>comments<<}``.
+    ``{>>comments<<}``. When a side is a Word document, a replacement
+    inside a paragraph reads insertion first, ``{+new+}[-old-]``, as Word
+    Compare writes it.
 
     ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
     ``hunks`` are the changed paragraphs (none for ``format="critic"``).
@@ -1539,19 +1659,25 @@ class Finding:
     """One thing wrong with a package, from ``Document.validate``.
 
     ``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
-    ``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
-    element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
-    package-level finding). ``word_fatal`` is true when Word refuses or
-    repairs the file for it, ``repairable`` when ``Document.repair`` fixes
-    it.
+    ``UNTRACKED_EDIT``, ...); ``set`` is its rule set (``word``, ``edits``,
+    ``a11y``, ``style``, ``structure``) and ``severity`` ``error``,
+    ``warning`` or ``info``. ``part`` is the package part and ``location``
+    the element chain inside it (``w:body[0]/w:p[3]/w:r[2]``), a paragraph
+    id (``p3``), or empty for a package-level finding. ``ref`` is the
+    short id the CLI prints for ``location`` (``p3`` for ``p3``).
+    ``word_fatal`` is true when Word refuses or repairs the file for it,
+    ``repairable`` when ``Document.repair`` fixes it.
     """
 
     code: str
+    set: str
+    severity: str
     part: str
-    path: str
+    location: str
     message: str
     word_fatal: bool
     repairable: bool
+    ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1568,22 +1694,28 @@ class _FindingRow(TypedDict):
     """One row of the native validate/repair/audit-tracked JSON."""
 
     code: str
+    set: str
+    severity: str
     part: str
-    path: str
+    location: str
     message: str
     word_fatal: bool
     repairable: bool
+    ref: NotRequired[str]
 
 
 def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
     return tuple(
         Finding(
             code=row["code"],
+            set=row["set"],
+            severity=row["severity"],
             part=row["part"],
-            path=row["path"],
+            location=row["location"],
             message=row["message"],
             word_fatal=bool(row["word_fatal"]),
             repairable=bool(row["repairable"]),
+            ref=row.get("ref"),
         )
         for row in rows
     )
@@ -1600,7 +1732,7 @@ class AuditFinding:
     ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
     ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
     ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
-    (``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+    (``p12``, ``footer1``, ``footer1.p2``...) an edit plan targets, or a part name
     for a document-wide finding.
     """
 

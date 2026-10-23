@@ -27,6 +27,11 @@ Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
 
 ## Command line
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 The wheel installs a `jubarte-redlines` command; `uvx` runs it without
 installing anything:
 
@@ -34,23 +39,26 @@ installing anything:
 uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
 uvx jubarte-redlines changes redline.docx
 uvx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
-uvx jubarte-redlines reject redline.docx -o original-again.docx --id body:rev:12
+uvx jubarte-redlines reject redline.docx -o original-again.docx --id r12
 uvx jubarte-redlines convert redline.docx --revisions word
-uvx jubarte-redlines inspect contract.docx --json
-uvx jubarte-redlines text contract.docx
+uvx jubarte-redlines read contract.docx
+uvx jubarte-redlines read contract.docx --json
+uvx jubarte-redlines edit contract.docx -p p12 --anchor "thirty" --content "sixty"
 uvx jubarte-redlines edit contract.docx --plan plan.json --out-dir review --pdf
-uvx jubarte-redlines capabilities --json
+uvx jubarte-redlines capabilities
 uvx jubarte-redlines --help
 ```
 
 `redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
-commands. `revisions` and `changes` list what a document tracks (`--json` for
-one object per line); `accept` and `reject` take repeatable `--id`, `--author`
-and `--kind` to resolve a selection and keep the rest tracked, or everything
-when none is given; `text` prints the Markdown with the `[body:p:N]` ids edit
-plans use, `inspect` the paragraph/package snapshot; `edit` applies an edit plan
-to `--out-dir` (clean copy, redline, `patch.diff`, `report.jsonl`, optional
-PDF/PNG pages); `capabilities` reports what the build can do. Exit codes: 0
+commands. `changes` lists what a document tracks, one change per line with
+its short id (`r12`; `--json` for one object per line); `accept` and `reject`
+take repeatable `--id` (`r12`, `r1+2`, `header1.r1`),
+`--author` and `--kind` to resolve a selection and keep the rest tracked, or
+everything when none is given; `read` prints the agent view with the
+`<!-- p12 -->` ids edits use (`--json` the snapshot); `edit` and `add` write
+`FILE_modified.docx`, or with `--out-dir` the bundle (clean copy, redline,
+`patch.diff`, `report.jsonl`, optional PDF/PNG pages); `capabilities`
+reports what the build can do (`--json` the manifest). Exit codes: 0
 success, 1 error, 2 usage, 3 edit plan refused. Inputs are `.docx`: save a Word
 97-2003 `.doc` as `.docx` first.
 
@@ -73,7 +81,7 @@ modified = Path("modified.docx").read_bytes()
 redline = compare_documents(original, modified, author="Reviewer")
 Path("redline.docx").write_bytes(redline)
 
-# List revisions (same shape as the CLI `jubarte revisions --json`)
+# List revisions (the library's own records; `jubarte changes --json` is the CLI's listing)
 for rev in get_revisions(redline):
     print(rev["type"], rev["author"], repr(rev.get("text")))
 
@@ -85,7 +93,7 @@ base = reject_revisions(redline)    # ≙ original content
 Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 ```
 
-`compare_documents(original, modified, author="jubarte", date=None)` stamps
+`compare_documents(original, modified, author="Redline", date=None)` stamps
 revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
 `jubarte_redlines.JubarteError`.
@@ -107,14 +115,28 @@ operation mutating it or writing files:
 from jubarte_redlines import read, EditPlan, diff
 
 doc = read("contract.docx")
-doc.markdown()    # body and every header/footer/notes story, [body:p:N] ids
+doc.markdown()    # body and every header/footer/notes story, <!-- pN --> id lines
 doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations) + tables
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change, with the id accept/reject and plans take
-doc.accept(ids=["body:rev:12"])   # or reject(...): resolve a selection,
+doc.accept(ids=["r12"])           # or reject(...): resolve a selection,
                                   # keep the rest tracked (no selection = all)
 result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 ```
+
+The snapshot uses `schema_version: 3`. `changes` lists logical changes:
+a change Word wrote as several marks is one entry with its `members`,
+and a deletion and an insertion by one author that touch, in either
+order, are one `replacement`.
+`summary.tables` and `tables[]`
+count top-level body tables only; each `index` is the view's `tN`.
+Every table has a `nested` array (empty for a leaf), containing its cell tables.
+A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
+A deeper parent includes the cell-local table ordinal, for example
+`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
+
+Python nested grids are `Table(index=None, parent=CELL_PATH, nested=(...))`;
+top-level grids retain integer indices.
 
 `doc.compare(other, author=...)` is `compare_documents`; `doc.to_pdf()` and
 `doc.to_png(dpi=...)` are the one-shot renderers.
@@ -128,9 +150,9 @@ failed operation, every operation's outcome) and produces nothing.
 plan = (
     EditPlan(author="Reviewer")
     .for_document(doc)             # bind to this snapshot; STALE_SOURCE if it changed
-    .replace("body:p:3", find="30 days", replacement="45 days", format={"bold": True})
-    .comment("body:p:3", text="Check with the client", find="45 days")
-    .insert_paragraph("body:p:3", runs=["New sentence."], like="body:p:3")
+    .replace("p3", find="30 days", replacement="45 days", format={"bold": True})
+    .comment("p3", text="Check with the client", find="45 days")
+    .insert_paragraph("p3", runs=["New sentence."], like="p3")
 )
 out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 ```
@@ -147,7 +169,9 @@ tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` shows the
 changed paragraphs between two documents — or a document and Markdown text —
-as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup):
+as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup). When a side
+is a Word document, the comparer writes the changes, and a replacement inside
+a paragraph keeps Word Compare's order, the insertion first: `{+new+}[-old-]`.
 
 ```python
 print(diff(read("v1.docx"), read("v2.docx")))
@@ -175,7 +199,12 @@ doc.update_fields()   # PAGEREF, REF, NUMPAGES, SEQ and TOC results from jubarte
 `from_markdown(text, author=..., track_changes="all")` writes Markdown as a
 Word document, CriticMarkup becoming tracked changes and comments, as
 `jubarte convert draft.md` does; `reference=` lends a document's styles and
-page setup. `diff_render(a, b, dpi=100)` says which pages of two documents
+page setup. A change or comment that names no author or date takes `author`
+and `date` when you pass them, else the front matter's `author:` and
+`last_modified:`/`modified:`/`date:`/`created:`, else `Redline` and the fixed
+epoch, so the same Markdown writes the same bytes (the CLI falls back to
+`--reference-doc`'s creator and creation time, then `Redline` and now).
+`diff_render(a, b, dpi=100)` says which pages of two documents
 look different, pixel for pixel, with magenta overlays on the changed pages.
 
 `Document.from_bytes(data)` holds bytes you already have and `to_bytes()`

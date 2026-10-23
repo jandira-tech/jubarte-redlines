@@ -9,9 +9,13 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::sync::Arc;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
+
+use crate::admission::InputLimits;
+use crate::xmllinq::parse::TagPolicy;
 
 use super::ConvertError;
 use super::critic::{self, Change};
@@ -22,7 +26,7 @@ pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest number of entries a container may declare.
 pub(crate) const MAX_ENTRIES: usize = 10_000;
 /// Deepest XML nesting we accept; deeper input is treated as hostile.
-const MAX_DEPTH: usize = 512;
+const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH;
 
 pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
     ConvertError::Invalid(message.to_string())
@@ -32,15 +36,54 @@ pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
 pub(crate) struct Package<'a> {
     archive: zip::ZipArchive<Cursor<&'a [u8]>>,
     names: Vec<String>,
+    pub(crate) input_limits: InputLimits,
 }
 
 impl<'a> Package<'a> {
     pub(crate) fn open(bytes: &'a [u8], kind: &str) -> Result<Self, ConvertError> {
-        let archive = zip::ZipArchive::new(Cursor::new(bytes))
+        let archive = crate::opc::open_archive(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         check_limits(&archive)?;
-        let names = archive.file_names().map(str::to_string).collect();
-        Ok(Self { archive, names })
+        let names = archive
+            .file_names()
+            .map(|name| name.map(|name| name.into_owned()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(invalid)?;
+        Ok(Self {
+            archive,
+            names,
+            input_limits: InputLimits::default(),
+        })
+    }
+
+    /// Policy refusals are fatal even for auxiliary parts the renderer would
+    /// silently skip. Syntax failures keep the existing best-effort behavior.
+    pub(crate) fn check_tag_policy(&mut self) -> Result<(), ConvertError> {
+        for name in self.names.clone() {
+            if !name.ends_with(".xml") && !name.ends_with(".rels") {
+                continue;
+            }
+            let Some(bytes) = self.read(&name)? else {
+                continue;
+            };
+            let text = decode(&bytes);
+            let mut reader = Reader::from_str(&text);
+            let mut policy = TagPolicy::tolerant(self.input_limits);
+            loop {
+                let result = match reader.read_event() {
+                    Ok(Event::Start(tag)) => policy.open(&tag),
+                    Ok(Event::Empty(tag)) => policy.empty(&tag),
+                    Ok(Event::End(_)) => {
+                        policy.close();
+                        Ok(())
+                    }
+                    Ok(Event::Eof) | Err(_) => break,
+                    Ok(_) => Ok(()),
+                };
+                result.map_err(|why| invalid(format!("INVALID_XML: {name}: {why}")))?;
+            }
+        }
+        Ok(())
     }
 
     fn resolve_name(&self, name: &str) -> Option<String> {
@@ -88,7 +131,7 @@ impl<'a> Package<'a> {
     /// Read and parse an XML entry, or `None` when it does not exist.
     pub(crate) fn xml(&mut self, name: &str) -> Result<Option<Element>, ConvertError> {
         match self.read(name)? {
-            Some(bytes) => parse_xml(&bytes)
+            Some(bytes) => parse_xml_with_limits(&bytes, self.input_limits)
                 .map(Some)
                 .map_err(|e| invalid(format!("{name}: {e}"))),
             None => Ok(None),
@@ -221,11 +264,33 @@ impl Rels {
             .collect()
     }
 
+    /// How many relationships the part holds.
+    pub(crate) fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    /// Whether the part holds no relationships.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
     /// A hyperlink target for a relationship id: external URLs only.
     pub(crate) fn link(&self, id: &str) -> Option<String> {
         self.get(id)
             .filter(|r| r.external && !r.target.is_empty())
             .map(|r| r.target.clone())
+    }
+}
+
+/// Between a link's destination and its title where the two travel as one
+/// string; the link is written `[t](url "title")`.
+pub(crate) const TITLE: char = '\u{1f}';
+
+/// A link destination carrying `title` (a tooltip), if it has one.
+pub(crate) fn titled(url: &str, title: Option<&str>) -> String {
+    match title.filter(|t| !t.is_empty()) {
+        Some(title) => format!("{url}{TITLE}{title}"),
+        None => url.to_string(),
     }
 }
 
@@ -235,6 +300,8 @@ pub(crate) struct Element {
     pub name: String,
     pub attrs: Vec<(String, String)>,
     pub children: Vec<Node>,
+    /// Namespace bindings shared by elements in the same scope.
+    pub namespaces: Arc<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +329,36 @@ impl Element {
             .iter()
             .find(|(k, _)| local(k) == name)
             .map(|(_, v)| v.as_str())
+    }
+
+    /// Attribute by namespace URI and local name.
+    fn attr_ns(&self, namespace: &str, name: &str) -> Option<&str> {
+        self.attrs.iter().find_map(|(key, value)| {
+            let (prefix, local) = key.split_once(':')?;
+            (local == name
+                && self
+                    .namespaces
+                    .get(prefix)
+                    .is_some_and(|ns| ns == namespace))
+            .then_some(value.as_str())
+        })
+    }
+
+    /// A reporting-only stamp supplied by the linked comment family.
+    pub(crate) const COMMENT_DATE: &str = "\u{E000}jubarteCommentDate";
+
+    pub(crate) fn comment_date(&self) -> Option<&str> {
+        self.attr(Self::COMMENT_DATE).or_else(|| self.attr("date"))
+    }
+
+    pub(crate) fn revision_date(&self) -> Option<String> {
+        crate::changes::revision_date(|ns, local| {
+            if ns == crate::namespaces::W::URI {
+                self.attr(local)
+            } else {
+                self.attr_ns(ns, local)
+            }
+        })
     }
 
     /// A relationship reference (`r:id`, `r:embed`): a prefixed attribute with this local name.
@@ -338,7 +435,14 @@ impl Element {
 }
 
 /// Parse XML bytes into an element tree (the document element).
+/// Internal fragments use the default budgets; package parts use the active
+/// limits through `parse_xml_with_limits`.
 pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
+    parse_xml_with_limits(bytes, InputLimits::default())
+}
+
+pub(crate) fn parse_xml_with_limits(bytes: &[u8], limits: InputLimits) -> Result<Element, String> {
+    let mut policy = TagPolicy::new(limits);
     let text = decode(bytes);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(false);
@@ -349,16 +453,27 @@ pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
             .map_err(|e| format!("malformed XML at byte {}: {e}", reader.buffer_position()))?;
         match event {
             Event::Start(start) => {
+                policy
+                    .open(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
-                stack.push(element_from(&start)?);
+                stack.push(element_from(
+                    &start,
+                    &stack.last().expect("document scope").namespaces,
+                )?);
             }
             Event::Empty(start) => {
-                let element = element_from(&start)?;
+                policy
+                    .empty(&start)
+                    .map_err(|why| format!("INVALID_XML: {why}"))?;
+                let element =
+                    element_from(&start, &stack.last().expect("document scope").namespaces)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
+                policy.close();
                 if stack.len() <= 1 {
                     return Err("unbalanced end tag".into());
                 }
@@ -432,7 +547,12 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn element_from(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, String> {
+/// An element, childless, from its start tag: its name, its attributes
+/// as the parser normalizes them, and the namespaces in scope.
+pub(crate) fn element_from(
+    start: &quick_xml::events::BytesStart<'_>,
+    inherited: &Arc<HashMap<String, String>>,
+) -> Result<Element, String> {
     let name = start.name().as_ref().to_string();
     let mut attrs = Vec::new();
     for attr in start.attributes().with_checks(false) {
@@ -444,10 +564,17 @@ fn element_from(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, St
         };
         attrs.push((key, value));
     }
+    let mut namespaces = Arc::clone(inherited);
+    for (key, value) in &attrs {
+        if let Some(prefix) = key.strip_prefix("xmlns:") {
+            Arc::make_mut(&mut namespaces).insert(prefix.to_string(), value.clone());
+        }
+    }
     Ok(Element {
         name,
         attrs,
         children: Vec::new(),
+        namespaces,
     })
 }
 
@@ -471,17 +598,33 @@ fn push_text(stack: &mut [Element], text: &str) {
 }
 
 pub(crate) fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::util::collapse_whitespace(s)
+}
+
+/// How a stretch of inline text is set: the marks printed around it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Marks {
+    pub bold: bool,
+    pub italic: bool,
+    /// Agent view only, as the two below: `<u>…</u>`.
+    pub underline: bool,
+    /// `<mark>…</mark>`: a highlight of any colour. `None` when the
+    /// colour is the default yellow; the view grammar omits the class.
+    /// Word's `w:highlight` lists 16 named colours (`yellow`, `green`,
+    /// `cyan`, `red`, `blue`, `magenta`, `darkYellow`, and their `dark…`,
+    /// `lightGray`, `black`, `white`).
+    pub highlight: Option<&'static str>,
+    /// `~~…~~`.
+    pub strike: bool,
+    /// `` `…` ``: a `VerbatimChar` run.
+    pub code: bool,
 }
 
 /// One formatted stretch of inline text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Span {
     pub text: String,
-    pub bold: bool,
-    pub italic: bool,
-    /// Agent view only: `<u>…</u>`, innermost.
-    pub underline: bool,
+    pub marks: Marks,
     pub link: Option<String>,
 }
 
@@ -491,6 +634,8 @@ pub(crate) struct Inline {
     spans: Vec<Span>,
     /// Agent view: runs of spaces are not collapsed.
     keep_spaces: bool,
+    /// A code block: a line's leading spaces stay too.
+    verbatim: bool,
 }
 
 impl Inline {
@@ -499,7 +644,34 @@ impl Inline {
         self.keep_spaces = true;
     }
 
-    /// Whether the text starts and ends with a space, which rendering trims.
+    /// A code block: keeps every space, a line's indent included.
+    pub(crate) fn verbatim(&mut self) {
+        self.keep_spaces = true;
+        self.verbatim = true;
+    }
+
+    /// A code block's paragraph: every mark dropped, for a fence's
+    /// content is literal and formatting printed inside it would come
+    /// back as text.
+    pub(crate) fn render_code(&self) -> String {
+        let unmarked = Inline {
+            spans: self
+                .spans
+                .iter()
+                .map(|s| Span {
+                    text: s.text.clone(),
+                    marks: Marks::default(),
+                    link: s.link.clone(),
+                })
+                .collect(),
+            keep_spaces: self.keep_spaces,
+            verbatim: self.verbatim,
+        };
+        unmarked.render(false)
+    }
+
+    /// Whether the text starts and ends with a space. Rendering trims both,
+    /// except a leading space in the agent view, which it writes as `&#32;`.
     pub(crate) fn edges(&self) -> (bool, bool) {
         let spaced = |c: char| matches!(c, ' ' | '\u{a0}' | '\t');
         let mut texts = self
@@ -517,21 +689,14 @@ impl Inline {
         (leading, trailing)
     }
 
-    /// Appends text with its bold, italic and underline (underline only in
-    /// the agent view), merging into the last span when they all match.
-    pub(crate) fn push_styled(
-        &mut self,
-        text: &str,
-        (bold, italic, underline): (bool, bool, bool),
-        link: Option<&str>,
-    ) {
+    /// Appends text with its marks, merging into the last span when they
+    /// and the link match.
+    pub(crate) fn push_styled(&mut self, text: &str, marks: Marks, link: Option<&str>) {
         if text.is_empty() {
             return;
         }
         if let Some(last) = self.spans.last_mut()
-            && last.bold == bold
-            && last.italic == italic
-            && last.underline == underline
+            && last.marks == marks
             && last.link.as_deref() == link
         {
             last.text.push_str(text);
@@ -539,14 +704,14 @@ impl Inline {
         }
         self.spans.push(Span {
             text: text.to_string(),
-            bold,
-            italic,
-            underline,
+            marks,
             link: link.map(str::to_string),
         });
     }
 
-    /// Render to Markdown. `emphasis` false drops bold/italic (headings).
+    /// Render to Markdown. `emphasis` false drops bold and italic only
+    /// (headings, whose own style carries them); the other marks are the
+    /// run's and print inside the heading as in a body paragraph.
     pub(crate) fn render(&self, emphasis: bool) -> String {
         let mut out = String::new();
         let mut index = 0;
@@ -558,75 +723,222 @@ impl Inline {
             }
             let group = &self.spans[index..end];
             match link {
-                Some(url) if !group.iter().all(|s| s.text.trim().is_empty()) => {
+                Some(link) if !group.iter().all(|s| s.text.trim().is_empty()) => {
                     let inner = render_emphasis(group, emphasis);
                     let (lead, core, trail) = split_ws(&inner);
                     let label = core.replace('[', "\\[").replace(']', "\\]");
-                    let url = url.replace(' ', "%20").replace(')', "%29");
-                    if label == url
-                        || (label.contains('@')
-                            && label.trim_start_matches("mailto:")
-                                == url.trim_start_matches("mailto:"))
-                    {
+                    let (url, title) = link.split_once(TITLE).unwrap_or((&link, ""));
+                    let destination = link_destination(url);
+                    if !title.is_empty() {
+                        let title = title.replace('\\', "\\\\").replace('"', "\\\"");
+                        out.push_str(&format!(
+                            "{lead}[{label}]({destination} \"{title}\"){trail}"
+                        ));
+                    } else if label == url {
                         out.push_str(&format!("{lead}<{url}>{trail}"));
+                    } else if url.strip_prefix("mailto:") == Some(label.as_str())
+                        && email_autolink(&label)
+                    {
+                        // `<addr>` comes back as the address. `<mailto:addr>`
+                        // is a URI autolink, so the text gains `mailto:`.
+                        out.push_str(&format!("{lead}<{label}>{trail}"));
                     } else {
-                        out.push_str(&format!("{lead}[{label}]({url}){trail}"));
+                        out.push_str(&format!("{lead}[{label}]({destination}){trail}"));
                     }
                 }
                 _ => out.push_str(&render_emphasis(group, emphasis)),
             }
             index = end;
         }
-        tidy_inline(&out, self.keep_spaces)
+        tidy_inline(&out, self.keep_spaces, self.verbatim)
     }
+}
+
+/// Spaces become `%20`. A destination that holds `(` or `)` is wrapped in
+/// angle brackets: a bare destination ends at an unmatched `)`, and
+/// percent-encoding `)` leaves `(` with nothing to balance, so the link
+/// comes back as literal text.
+fn link_destination(url: &str) -> String {
+    let url = url.replace(' ', "%20");
+    if url.contains('(') || url.contains(')') {
+        let inner = url
+            .replace('\\', "\\\\")
+            .replace('<', "\\<")
+            .replace('>', "\\>");
+        format!("<{inner}>")
+    } else {
+        url
+    }
+}
+
+/// Whether `address` is the inside of a CommonMark email autolink, the
+/// addresses pulldown-cmark reads (`<local@domain>`). The view prints
+/// `<address>` only then, so the text comes back as the address.
+fn email_autolink(address: &str) -> bool {
+    let bytes = address.as_bytes();
+    let Some(at) = bytes.iter().position(|b| *b == b'@') else {
+        return false;
+    };
+    at > 0 && local_part(&bytes[..at]) && domain(&bytes[at + 1..])
+}
+
+fn local_part(bytes: &[u8]) -> bool {
+    // CommonMark's email local part, besides ASCII alphanumerics.
+    const MARKS: &[u8] = b".!#$%&'*+/=?^_`{|}~-";
+    !bytes.is_empty()
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || MARKS.contains(b))
+}
+
+fn domain(bytes: &[u8]) -> bool {
+    !bytes.is_empty()
+        && bytes.split(|b| *b == b'.').all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with(b"-")
+                && !label.ends_with(b"-")
+                && label
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+        })
 }
 
 fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     let mut out = String::new();
-    // Merge neighbours with identical emphasis (links already grouped).
-    let mut merged: Vec<(bool, bool, bool, String)> = Vec::new();
+    // Merge neighbours with identical marks (links already grouped).
+    let mut merged: Vec<(Marks, String)> = Vec::new();
     for span in spans {
         let style = if emphasis {
-            (span.bold, span.italic, span.underline)
+            span.marks
         } else {
-            (false, false, false)
+            // Headings drop bold and italic only: underline, highlight,
+            // strike and code are marks of their own, and they print in
+            // a heading as they do in a body paragraph.
+            Marks {
+                bold: false,
+                italic: false,
+                ..span.marks
+            }
         };
-        // Whitespace-only spans inherit the previous formatting so markers do not split.
-        let (bold, italic, underline) = if span.text.trim().is_empty() {
-            merged
-                .last()
-                .map(|(b, i, u, _)| (*b, *i, *u))
-                .unwrap_or(style)
+        // Whitespace-only spans inherit the previous bold and italic so
+        // markers do not split; underline, highlight and strike show on a
+        // space, so a space keeps its own. A plain space does not become
+        // code either: `a` `b` is two spans, and folding the space in would
+        // make one.
+        let marks = if span.text.trim().is_empty() {
+            merged.last().map_or(style, |(m, _)| Marks {
+                underline: style.underline,
+                highlight: style.highlight,
+                strike: style.strike,
+                code: style.code,
+                ..*m
+            })
         } else {
             style
         };
         match merged.last_mut() {
-            Some((b, i, u, text)) if *b == bold && *i == italic && *u == underline => {
-                text.push_str(&span.text);
-            }
-            _ => merged.push((bold, italic, underline, span.text.clone())),
+            Some((m, text)) if *m == marks => text.push_str(&span.text),
+            _ => merged.push((marks, span.text.clone())),
         }
     }
-    for (bold, italic, underline, text) in merged {
-        let (lead, core, trail) = split_ws(&text);
-        if core.is_empty() || (!bold && !italic && !underline) {
+    // What each stretch prints first: a stretch with marks opens with
+    // one (punctuation), unless spaces stay outside it.
+    let firsts: Vec<Option<char>> = merged
+        .iter()
+        .map(|(marks, text)| {
+            let (lead, core, _) = edges(*marks, text);
+            if core.is_empty() || *marks == Marks::default() {
+                text.chars().next()
+            } else {
+                lead.chars().next().or(Some('<'))
+            }
+        })
+        .collect();
+    for (k, (marks, text)) in merged.into_iter().enumerate() {
+        let (lead, core, trail) = edges(marks, &text);
+        let core = core.as_ref();
+        if core.is_empty() || marks == Marks::default() {
             out.push_str(&text);
             continue;
         }
-        let (emphasis_open, emphasis_close) = match (bold, italic) {
-            (true, true) => ("**_", "_**"),
-            (true, false) => ("**", "**"),
-            (false, true) => ("_", "_"),
-            (false, false) => ("", ""),
+        let before = if lead.is_empty() {
+            out.chars().last()
+        } else {
+            Some(' ')
         };
-        let (u_open, u_close) = if underline { ("<u>", "</u>") } else { ("", "") };
-        let open = format!("{emphasis_open}{u_open}");
-        let close = format!("{u_close}{emphasis_close}");
+        let after = if trail.is_empty() {
+            firsts.get(k + 1).copied().flatten()
+        } else {
+            Some(' ')
+        };
+        let pair = |on: bool, open: &'static str, close: &'static str| {
+            if on { (open, close) } else { ("", "") }
+        };
+        let (u_open, u_close) = pair(marks.underline, "<u>", "</u>");
+        // `<mark>`, not `==`: `{==…==}` is a comment's scope, and `==`
+        // beside it or beside a text `=` reads as neither. The default
+        // yellow highlight prints as bare `<mark>`; every other colour
+        // names it in `class="hl-<colour>"` so the round-trip keeps it.
+        let (h_open, h_close): (String, String) = match marks.highlight {
+            None => (String::new(), String::new()),
+            Some("yellow") => ("<mark>".to_string(), "</mark>".to_string()),
+            Some(colour) => (
+                format!("<mark class=\"hl-{colour}\">"),
+                "</mark>".to_string(),
+            ),
+        };
+        let beside = marks.bold || marks.italic || marks.underline || marks.highlight.is_some();
+        let (s_open, s_close) = match (
+            marks.strike,
+            beside || delimiters_read(before, core, after, false),
+        ) {
+            (false, _) => ("", ""),
+            (true, true) => ("~~", "~~"),
+            (true, false) => ("<s>", "</s>"),
+        };
+        // `**`/`_` read only where CommonMark lets them open and close
+        // (`0.081**\***` is text); elsewhere `<b>`/`<i>` say the same.
+        let inner = format!("{u_open}{h_open}{s_open}{core}{s_close}{h_close}{u_close}");
+        // Line by line, a line's inner edges are its own: only the first
+        // opening and the last closing meet the text around.
+        // `**_…_**`: the `_` always reads beside the `*`; the `**` meets
+        // the text around with `_` inside it.
+        let mut reads = if marks.bold && marks.italic {
+            delimiters_read(before, &format!("_{inner}_"), after, false)
+        } else {
+            delimiters_read(before, &inner, after, marks.italic)
+        };
+        // `_**` closed against `**` is emphasis around nothing (`****`),
+        // which the writer reads back as the marks. HTML says the same.
+        let markdown_open = match (marks.bold, marks.italic) {
+            (true, true) => "**_",
+            (true, false) => "**",
+            (false, true) => "_",
+            (false, false) => "",
+        };
+        if reads && lead.is_empty() && opens_empty_emphasis(&out, markdown_open) {
+            reads = false;
+        }
+        let (emphasis_open, emphasis_close) = match (marks.bold, marks.italic, reads) {
+            (true, true, true) => ("**_", "_**"),
+            (true, false, true) => ("**", "**"),
+            (false, true, true) => ("_", "_"),
+            (true, true, false) => ("<b><i>", "</i></b>"),
+            (true, false, false) => ("<b>", "</b>"),
+            (false, true, false) => ("<i>", "</i>"),
+            (false, false, _) => ("", ""),
+        };
+        let open = format!("{emphasis_open}{u_open}{h_open}{s_open}");
+        let close = format!("{s_close}{h_close}{u_close}{emphasis_close}");
         out.push_str(lead);
         // Markers cannot wrap line breaks; apply them per line.
         let lines: Vec<String> = core
             .split('\n')
             .map(|line| {
+                if marks.code && !line.is_empty() {
+                    let (fence_open, fence_close) = code_fence(line);
+                    return format!("{open}{fence_open}{line}{fence_close}{close}");
+                }
                 let (l, c, t) = split_ws(line);
                 if c.is_empty() {
                     line.to_string()
@@ -641,30 +953,144 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
     out
 }
 
+/// `text` as a stretch with `marks` prints it: the spaces before, the
+/// text inside the marks, the spaces after. Underline, highlight and
+/// strike show on a space, so the spaces at the stretch's edges stay
+/// inside its marks, each `&#32;` so the marks still touch text.
+fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
+    if marks.code {
+        return ("", std::borrow::Cow::Borrowed(text), "");
+    }
+    let (lead, core, trail) = split_ws(text);
+    let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
+    let plain = |c: char| c == ' ';
+    if spaced && !marks.code && lead.chars().all(plain) && trail.chars().all(plain) {
+        let space = |s: &str| "&#32;".repeat(s.len());
+        let inside = format!("{}{core}{}", space(lead), space(trail));
+        ("", std::borrow::Cow::Owned(inside), "")
+    } else {
+        (lead, std::borrow::Cow::Borrowed(core), trail)
+    }
+}
+
+/// `open` (`**`, `_`, `**_`) against the marks `out` already ends with.
+/// Four or more of one mark (`_**` then `**`) are emphasis around nothing.
+fn opens_empty_emphasis(out: &str, open: &str) -> bool {
+    let Some(mark) = open.chars().next() else {
+        return false;
+    };
+    if mark != '*' && mark != '_' {
+        return false;
+    }
+    let right = open.chars().take_while(|&c| c == mark).count();
+    let left = out.chars().rev().take_while(|&c| c == mark).count();
+    left > 0 && right > 0 && left + right >= 4
+}
+
+/// Whether emphasis delimiters around `inner`, between `before` and
+/// `after` (None: the line's edge), open and close as CommonMark reads
+/// them: an opener before punctuation needs space or punctuation before
+/// it, a closer after punctuation the same after it; `_` (`underscore`)
+/// also opens or closes nowhere inside a word.
+fn delimiters_read(
+    before: Option<char>,
+    inner: &str,
+    after: Option<char>,
+    underscore: bool,
+) -> bool {
+    let punctuation =
+        |c: char| c.is_ascii_punctuation() || !(c.is_alphanumeric() || c.is_whitespace());
+    let open_side = |c: Option<char>| c.is_none_or(|c| c.is_whitespace() || punctuation(c));
+    let (Some(first), Some(last)) = (inner.chars().next(), inner.chars().last()) else {
+        return false;
+    };
+    let opens = !first.is_whitespace() && (!punctuation(first) || open_side(before));
+    let closes = !last.is_whitespace() && (!punctuation(last) || open_side(after));
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    opens && closes && !(underscore && (word(before) || word(after)))
+}
+
+/// The backticks around a code span's text: one more than its longest run
+/// of backticks, padded when an edge backtick or space needs protecting.
+/// CommonMark removes one space at both ends except in an all-space span.
+pub(crate) fn code_fence(text: &str) -> (String, String) {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`')
+        || text.ends_with('`')
+        || ((text.starts_with(' ') || text.ends_with(' ')) && !text.chars().all(|c| c == ' '))
+    {
+        " "
+    } else {
+        ""
+    };
+    (format!("{fence}{pad}"), format!("{pad}{fence}"))
+}
+
 fn split_ws(s: &str) -> (&str, &str, &str) {
     let start = s.len() - s.trim_start().len();
     let end = s.trim_end().len().max(start);
     (&s[..start], &s[start..end], &s[end..])
 }
 
-/// Collapse runs of spaces, trim line ends, and drop empty lines inside a paragraph.
-fn tidy_inline(s: &str, keep_spaces: bool) -> String {
+/// Collapse runs of spaces and trim each line. A blank line at either end goes.
+///
+/// The agent view (`keep_spaces`) keeps a line's leading spaces. Markdown
+/// drops a literal one, so each is `&#32;`, which the writer reads back as
+/// a space. A line of spaces only stays empty. A code block (`verbatim`)
+/// keeps its indent and only loses trailing spaces.
+fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     let mut lines = Vec::new();
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
         let mut prev_space = false;
-        for c in line.chars() {
-            let is_space = c == ' ' || c == '\u{a0}';
-            if is_space {
-                if keep_spaces || !prev_space {
-                    out.push(' ');
+        // Parse code once per line, with the reader's options so backticks
+        // inside math stay in the equation. The agent and code-block paths
+        // already keep spaces and retain their existing normalization.
+        let code: Vec<_> = if keep_spaces || verbatim || !line.contains('`') {
+            Vec::new()
+        } else {
+            pulldown_cmark::Parser::new_ext(line, super::super::write::parser_options())
+                .into_offset_iter()
+                .filter_map(|(event, range)| {
+                    matches!(event, pulldown_cmark::Event::Code(_)).then_some(range)
+                })
+                .collect()
+        };
+        let mut at = 0;
+        for range in code
+            .into_iter()
+            .chain(std::iter::once(line.len()..line.len()))
+        {
+            let mut rest = &line[at..range.start];
+            while !rest.is_empty() {
+                // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
+                // spaces are the equation's, and Word draws each one.
+                let (text, math, next) = equation_split(rest);
+                for c in text.chars() {
+                    let is_space = c == ' ' || c == '\u{a0}';
+                    if is_space {
+                        if keep_spaces || !prev_space {
+                            out.push(' ');
+                        }
+                    } else {
+                        out.push(c);
+                    }
+                    prev_space = is_space;
                 }
-            } else {
-                out.push(c);
+                if !math.is_empty() {
+                    out.push_str(math);
+                    prev_space = false;
+                }
+                rest = next;
             }
-            prev_space = is_space;
+            if !range.is_empty() {
+                out.push_str(&line[range.clone()]);
+                prev_space = false;
+            }
+            at = range.end;
         }
-        lines.push(out.trim().to_string());
+        lines.push(finish_line(&out, keep_spaces, verbatim));
     }
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
@@ -673,6 +1099,49 @@ fn tidy_inline(s: &str, keep_spaces: bool) -> String {
         lines.remove(0);
     }
     lines.join("\n")
+}
+
+/// `line` as the text before its first closed equation, the equation with
+/// its fences, and the rest; all text when it holds none.
+fn equation_split(line: &str) -> (&str, &str, &str) {
+    let Some(start) = super::unescaped_dollar(line) else {
+        return (line, "", "");
+    };
+    let fence = if line[start..].starts_with("$$") {
+        "$$"
+    } else {
+        "$"
+    };
+    let body = start + fence.len();
+    match super::math_body(&line[body..], fence) {
+        Some(len) => {
+            let end = body + len + fence.len();
+            (&line[..start], &line[start..end], &line[end..])
+        }
+        None => (line, "", ""),
+    }
+}
+
+/// One line of [`tidy_inline`].
+fn finish_line(line: &str, keep_spaces: bool, verbatim: bool) -> String {
+    if verbatim {
+        return line.trim_end().to_string();
+    }
+    if !keep_spaces {
+        return line.trim().to_string();
+    }
+    let end = line.trim_end();
+    let spaces = end.chars().take_while(|c| *c == ' ').count();
+    let rest = end[spaces..].trim_start();
+    if spaces == 0 || rest.is_empty() {
+        return rest.to_string();
+    }
+    let mut kept = String::with_capacity(rest.len() + spaces * 5);
+    for _ in 0..spaces {
+        kept.push_str("&#32;");
+    }
+    kept.push_str(rest);
+    kept
 }
 
 /// Markdown for an image with alt text; images without alt text are dropped.
@@ -745,6 +1214,13 @@ impl Media {
             extracted: Some(extracted),
             files,
         }
+    }
+
+    /// Markdown only when the picture's raster is extracted to a file;
+    /// `None` when pictures are not extracted or this one is no raster.
+    pub(crate) fn extracted_markdown(&mut self, alt: &str, target: Option<&str>) -> Option<String> {
+        let bytes = target.and_then(|target| self.files.get(target))?;
+        self.extracted.as_mut()?.add(bytes, alt)
     }
 
     /// Markdown for a picture: the extracted file when pictures are
@@ -854,6 +1330,18 @@ impl Blocks {
         self.trailing_space = trailing;
     }
 
+    /// Keeps an untracked empty paragraph after an explicitly inserted
+    /// paragraph mark. Its extra separator survives rejecting that mark.
+    pub(crate) fn empty_paragraph(&mut self) {
+        let previous = self.out.trim_end();
+        let inserted = previous.rsplit_once('¶').is_some_and(|(_, tag)| {
+            crate::markdown::critic::attribution_tag(tag).is_some_and(|(_, len)| len == tag.len())
+        });
+        if inserted && !self.last_was_list {
+            self.out.push_str("\n\n");
+        }
+    }
+
     /// Records that the paragraph mark ending the last block was inserted or
     /// deleted (`None` clears it).
     pub(crate) fn set_separator(&mut self, change: Option<Change>) {
@@ -868,7 +1356,10 @@ impl Blocks {
 /// Tracks list marker widths so nested items indent under their parent's content.
 #[derive(Default)]
 pub(crate) struct ListIndent {
-    widths: Vec<usize>,
+    /// Each open level's width, and whether an item holds it. A skipped
+    /// level takes no width: four columns past an item's content would
+    /// start a code block, and the id line names the level instead.
+    widths: Vec<(usize, bool)>,
 }
 
 impl ListIndent {
@@ -876,28 +1367,46 @@ impl ListIndent {
         self.widths.clear();
     }
 
+    /// Where an item at `level` goes: its indentation, and the level that
+    /// indentation says (the items it nests under; less than `level` when
+    /// a level between is skipped).
+    pub(crate) fn place(&self, level: usize) -> (usize, usize) {
+        let level = level.min(8);
+        let kept = &self.widths[..level.min(self.widths.len())];
+        let indent = kept.iter().map(|(width, _)| width).sum::<usize>();
+        (indent, kept.iter().filter(|(_, item)| *item).count())
+    }
+
     /// Format an item at `level` with `marker` (e.g. "-", "3.").
     pub(crate) fn item(&mut self, level: usize, marker: &str, text: &str) -> String {
         let level = level.min(8);
         self.widths.truncate(level);
         while self.widths.len() < level {
-            self.widths.push(2);
+            self.widths.push((0, false));
         }
-        let indent = " ".repeat(self.widths.iter().sum());
-        self.widths.push(marker.chars().count() + 1);
-        let continuation = format!("\n{}", " ".repeat(self.widths.iter().sum()));
+        let indent = " ".repeat(self.widths.iter().map(|(width, _)| width).sum());
+        self.widths.push((marker.chars().count() + 1, true));
+        let continuation = format!(
+            "\n{}",
+            " ".repeat(self.widths.iter().map(|(width, _)| width).sum())
+        );
         format!("{indent}{marker} {}", text.replace('\n', &continuation))
     }
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
     impl Inline {
         pub(crate) fn push(&mut self, text: &str, bold: bool, italic: bool, link: Option<&str>) {
-            self.push_styled(text, (bold, italic, false), link);
+            let marks = Marks {
+                bold,
+                italic,
+                ..Marks::default()
+            };
+            self.push_styled(text, marks, link);
         }
     }
 
@@ -910,6 +1419,63 @@ mod tests {
         assert_eq!(resolve_target("word", "media/a.png"), "word/media/a.png");
         assert_eq!(resolve_target("word", "/word/x.xml"), "word/x.xml");
         assert_eq!(resolve_target("", "word/document.xml"), "word/document.xml");
+    }
+
+    #[test]
+    fn inline_code_keeps_spaces_while_surrounding_text_collapses() {
+        for (source, expected) in [
+            ("a  `  x `  b", "a `  x ` b"),
+            ("a  `` `a  b` ``  b", "a `` `a  b` `` b"),
+            ("a  `a  $ b`  $x  y$  b", "a `a  $ b` $x  y$ b"),
+            ("a  $a`b`  c$  `x  y`", "a $a`b`  c$ `x  y`"),
+            (r"a  \`x  y", r"a \`x y"),
+            ("a  `x  y", "a `x y"),
+        ] {
+            assert_eq!(tidy_inline(source, false, false), expected, "{source}");
+            assert_eq!(tidy_inline(source, true, false), source, "{source}");
+        }
+    }
+
+    #[test]
+    fn an_equation_keeps_its_spaces_where_text_collapses() {
+        // `=  λ` is two spaces in the equation; Word draws both.
+        assert_eq!(
+            tidy_inline("a  $x  =  y$  b", false, false),
+            "a $x  =  y$ b"
+        );
+        assert_eq!(tidy_inline("$$a   b$$", false, false), "$$a   b$$");
+        // An escaped or unclosed dollar is text.
+        assert_eq!(tidy_inline(r"\$  a  \$", false, false), r"\$ a \$");
+        assert_eq!(
+            tidy_inline("cost $5  and  more", false, false),
+            "cost $5 and more"
+        );
+    }
+
+    #[test]
+    fn bold_closed_against_bold_is_not_empty_emphasis() {
+        let mut inline = Inline::default();
+        inline.push(
+            "Monthly distribution of fishing effort and common dolphin (",
+            true,
+            false,
+            None,
+        );
+        inline.push("Delphinus delphis", true, true, None);
+        inline.push(") captures.", true, false, None);
+        assert_eq!(
+            inline.render(true),
+            "**Monthly distribution of fishing effort and common dolphin (**<b><i>Delphinus delphis</i></b>**) captures.**"
+        );
+        // A different mark, or a space, is not emphasis around nothing.
+        let mut inline = Inline::default();
+        inline.push("bold", true, false, None);
+        inline.push("it", false, true, None);
+        assert_eq!(inline.render(true), "**bold**_it_");
+        let mut inline = Inline::default();
+        inline.push("word ", true, false, None);
+        inline.push("em", true, true, None);
+        assert_eq!(inline.render(true), "**word** **_em_**");
     }
 
     #[test]
@@ -928,6 +1494,60 @@ mod tests {
     }
 
     #[test]
+    fn issue650_converter_tree_preserves_attribute_width_with_raised_limits() {
+        for count in [1024, 1025, 2000] {
+            let attrs: String = (0..count).map(|i| format!(" a{i}='v{i}'")).collect();
+            let xml = format!("<r{attrs}/>");
+            let parsed = parse_xml_with_limits(
+                xml.as_bytes(),
+                InputLimits {
+                    max_element_attributes: 4096,
+                    ..InputLimits::default()
+                },
+            );
+            assert!(
+                parsed.is_ok(),
+                "converter must preserve count {count}: {parsed:?}"
+            );
+            let root = parsed.unwrap();
+            assert_eq!(root.attrs.len(), count);
+            for (i, (name, value)) in root.attrs.iter().enumerate() {
+                assert_eq!(name, &format!("a{i}"));
+                assert_eq!(value, &format!("v{i}"));
+            }
+        }
+    }
+
+    #[test]
+    fn issue650_converter_tree_preserves_long_names_with_raised_limits() {
+        let name = "n".repeat(1025);
+        let xml = format!("<r {name}='Alice'/>");
+        let parsed = parse_xml_with_limits(
+            xml.as_bytes(),
+            InputLimits {
+                max_attribute_name_bytes: 4096,
+                ..InputLimits::default()
+            },
+        );
+        assert!(
+            parsed.is_ok(),
+            "converter must preserve long names: {parsed:?}"
+        );
+        assert_eq!(parsed.unwrap().attrs, [(name, "Alice".to_string())]);
+    }
+
+    #[test]
+    fn issue650_converter_tree_refuses_aliased_duplicate() {
+        let parsed = parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>");
+        assert!(
+            parsed.is_err(),
+            "converter must refuse aliased duplicate: {parsed:?}"
+        );
+        assert!(parsed.unwrap_err().contains("expanded name"));
+        assert!(parse_xml(b"<r xmlns:a='urn:x' x='1' a:x='2'/>").is_ok());
+    }
+
+    #[test]
     fn xml_entities_and_depth() {
         let root = parse_xml(b"<a x=\"1&amp;2\">x &lt; y &#x41;<![CDATA[<z>]]></a>").unwrap();
         assert_eq!(root.attr("x"), Some("1&2"));
@@ -943,10 +1563,18 @@ mod tests {
         assert_eq!(list.item(0, "10.", "a"), "10. a");
         assert_eq!(list.item(1, "-", "b"), "    - b");
         assert_eq!(list.item(0, "11.", "c\nd"), "11. c\n    d");
+        // A skipped level takes no width, and the level said is the items
+        // nested under, so the id line names the level the indent cannot.
+        assert_eq!(list.place(1), (4, 1));
+        assert_eq!(list.place(3), (4, 1));
+        assert_eq!(list.item(3, "-", "e"), "    - e");
+        assert_eq!(list.place(4), (6, 2));
+        list.reset();
+        assert_eq!(list.place(2), (0, 0));
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod ooxml_package_boundary_tests {
     use super::*;
     use std::io::Write as _;
@@ -1080,7 +1708,7 @@ mod ooxml_package_boundary_tests {
             (
                 "ada@example.invalid",
                 "mailto:ada@example.invalid",
-                "<mailto:ada@example.invalid>",
+                "<ada@example.invalid>",
             ),
             (
                 "other@example.invalid",
@@ -1090,8 +1718,13 @@ mod ooxml_package_boundary_tests {
             ("   ", "https://example.invalid", ""),
             (
                 "label",
+                "https://example.invalid/a b",
+                "[label](https://example.invalid/a%20b)",
+            ),
+            (
+                "label",
                 "https://example.invalid/a b)",
-                "[label](https://example.invalid/a%20b%29)",
+                "[label](<https://example.invalid/a%20b)>)",
             ),
         ] {
             let mut inline = Inline::default();
@@ -1101,12 +1734,51 @@ mod ooxml_package_boundary_tests {
             assert_eq!(inline.render(false), expected);
         }
         let mut list = ListIndent::default();
-        assert_eq!(
-            list.item(3, "10.", "one\ntwo"),
-            "      10. one\n          two"
-        );
+        assert_eq!(list.item(3, "10.", "one\ntwo"), "10. one\n    two");
         list.reset();
         assert_eq!(list.item(0, "-", "next"), "- next");
+    }
+
+    #[test]
+    fn an_agent_line_keeps_its_leading_spaces_as_character_references() {
+        let mut inline = Inline::default();
+        inline.keep_spaces();
+        inline.push("  but", false, false, None);
+        assert_eq!(inline.render(true), "&#32;&#32;but");
+        let mut broken = Inline::default();
+        broken.keep_spaces();
+        broken.push("alpha\n but", false, false, None);
+        assert_eq!(broken.render(true), "alpha\n&#32;but");
+        let mut blank = Inline::default();
+        blank.keep_spaces();
+        blank.push("   ", false, false, None);
+        assert_eq!(blank.render(true), "");
+        let mut code = Inline::default();
+        code.verbatim();
+        code.push("  but", false, false, None);
+        assert_eq!(code.render(true), "  but");
+        let mut plain = Inline::default();
+        plain.push("  but", false, false, None);
+        assert_eq!(plain.render(true), "but");
+    }
+
+    #[test]
+    fn a_plain_space_between_code_spans_stays_between_them() {
+        let mut inline = Inline::default();
+        let code = Marks {
+            code: true,
+            ..Marks::default()
+        };
+        inline.push_styled("docProps/app.xml", code, None);
+        inline.push_styled(" ", Marks::default(), None);
+        inline.push_styled("Application", code, None);
+        assert_eq!(inline.render(true), "`docProps/app.xml` `Application`");
+
+        let mut joined = Inline::default();
+        joined.push_styled("hello", code, None);
+        joined.push_styled(" ", code, None);
+        joined.push_styled("world", code, None);
+        assert_eq!(joined.render(true), "`hello world`");
     }
 
     #[test]

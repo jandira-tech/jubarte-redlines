@@ -34,13 +34,27 @@ const SHORT_KEY_CHARS: usize = 12;
 /// a field whose result differs) keeps the page of the block before it.
 const SEARCH_WINDOW: usize = 20_000;
 
-/// `markdown` with a `<!-- page N of M -->` line before the first block that
-/// starts on each page, and `<!-- page 1 of M -->` first. `pages` holds the
-/// text painted on each page, in order (`convert::RenderReport::pages`).
-/// Markers go only before a block (a line after a blank line), never inside
-/// a table, a list (tight or loose) or a code fence, so a page that starts
-/// mid-block is named at the next block. With no pages, `markdown` is
-/// returned as it is.
+/// Returns `markdown` with a `<!-- page N of M -->` HTML comment line
+/// before the first block that starts on each page, plus a
+/// `<!-- page 1 of M -->` line at the start.
+///
+/// # Inputs
+///
+/// - `markdown` — the agent-view Markdown
+///   ([`super::read`], [`super::docx_to_markdown`], or anything with the
+///   same id and table lines).
+/// - `pages` — text painted on each page, in order, as
+///   [`crate::convert::RenderReport::pages`] reports them. The CLIs and
+///   agents build this with the layout pass.
+///
+/// # Behaviour
+///
+/// Markers appear only before a block (a non-empty line after a blank
+/// line), never inside a table, a tight or loose list, or a fenced code
+/// block; a page that starts mid-block is named at the next block, never
+/// inside it. Agent-view id and table lines (`<!-- pN -->`, `<!-- tN -->`)
+/// at a block's start are held above the marker so the marker lands ahead
+/// of them. Without `pages`, `markdown` is returned unchanged.
 #[must_use]
 pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     let total = pages.len();
@@ -220,7 +234,8 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 /// keeps its text, which the page paints.
 fn visible_text(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
-    let mut rest = line;
+    let line = super::critic::without_attributions(line);
+    let mut rest = line.as_str();
     while let Some(ch) = rest.chars().next() {
         let skip = if rest.starts_with("](") {
             out.push(']');
@@ -379,7 +394,7 @@ fn mask(line: &str, offset: usize, unpainted: &[std::ops::Range<usize>]) -> Stri
 
 /// The labels the document's link reference definitions define.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn definitions(markdown: &str) -> Vec<String> {
     let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
     let mut labels: Vec<String> = parser
@@ -393,7 +408,7 @@ fn definitions(markdown: &str) -> Vec<String> {
 
 /// The page text of `markdown`'s first line, as `paginate` keys it.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn line_text(markdown: &str) -> String {
     let line = markdown.split_inclusive('\n').next().unwrap_or("");
     visible_text(mask(line, 0, &unpainted(markdown)).trim_end_matches('\n'))
@@ -450,7 +465,7 @@ fn find(stream: &[(char, usize)], from: usize, key: &[char]) -> Option<usize> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -773,7 +788,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod source_autolink_boundary_tests {
     use super::*;
 

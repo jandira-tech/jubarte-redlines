@@ -4,15 +4,18 @@
 
 //! Comments after Accept All / Reject All, as Word saves them.
 //!
-//! A comment whose `w:commentReference` went with the accepted deletion (or
-//! the rejected insertion) is gone: its range markers, its `comments.xml`
+//! A nonempty comment range whose characters all go with accepted deletions
+//! (or rejected insertions) is removed before resolving the story, even when
+//! its reference would survive. Originally empty and partially surviving ranges
+//! stay. A comment whose reference goes is also gone: its range markers, its `comments.xml`
 //! entry and its `commentsExtended` / `commentsIds` / `commentsExtensible`
 //! entries; with none left, the comment parts are not written. The comments
-//! left are renumbered with the bookmarks ([`super::annotation_ids`]). `people.xml` keeps the
-//! authors of the comments left (no revision survives Accept or Reject All),
-//! and goes when it keeps nobody.
+//! left keep their ids, as their bookmarks do: Word's save numbers them
+//! afresh, but an id is what a later reply or edit names (#1264).
+//! `people.xml` keeps the authors of the comments left (no revision
+//! survives Accept or Reject All), and goes when it keeps nobody.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::comparer::comments::FAMILY;
 use crate::namespaces::{W, W14, W15};
@@ -61,14 +64,372 @@ impl Parsed {
     }
 }
 
-/// Drop the comments Accept / Reject All left without a reference, prune the
-/// comment family and `people.xml` (module docs).
-pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
-    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+/// Remove every comment range whose entire content is deleted, including
+/// its reference run. Replies have their own ranges beside the parent's in
+/// Word's shape; they go with the same content. Package pruning removes all
+/// corresponding definitions and metadata after story resolution.
+pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
+    let dropped = super::bookmarks::wholly_deleted_ranges(
+        dom,
+        root,
+        &W::name("commentRangeStart"),
+        &W::name("commentRangeEnd"),
+    );
+    if dropped.is_empty() {
+        return;
+    }
+    for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+        for marker in dom.descendants(root, Some(&W::name(local))) {
+            if dom
+                .attribute(marker, &W::id())
+                .is_some_and(|id| dropped.contains(id))
+            {
+                remove_marker(dom, marker);
+            }
+        }
+    }
+}
+
+/// Collapse wholly removed ranges at their original position before deletion.
+/// The scan also serves rejection, after its revisions have been reversed.
+/// Partial ranges are deliberately left to the ordinary settlement rules.
+pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<String> {
+    let dropped = super::bookmarks::wholly_deleted_ranges(
+        dom,
+        root,
+        &W::name("commentRangeStart"),
+        &W::name("commentRangeEnd"),
+    );
+    let order = dom.descendants(root, None);
+    let mut groups: Vec<(NodeId, Vec<String>)> = Vec::new();
+    let mut destinations = Vec::new();
+    for start in dom.descendants(root, Some(&W::name("commentRangeStart"))) {
+        let Some(id) = dom
+            .attribute(start, &W::id())
+            .filter(|id| dropped.contains(*id))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        // Place the empty range among paragraph children, outside every
+        // revision/hyperlink wrapper that is about to disappear.
+        let at = order
+            .iter()
+            .position(|&n| n == start)
+            .expect("range start in story");
+        let first_character = order[at + 1..]
+            .iter()
+            .copied()
+            .take_while(|&n| {
+                !(dom.name(n) == Some(W::name("commentRangeEnd"))
+                    && dom.attribute(n, &W::id()) == Some(id.as_str()))
+            })
+            .find(|&n| {
+                dom.name(n)
+                    .is_some_and(|name| super::bookmarks::is_character(dom, n, &name))
+            });
+        let mut boundary = first_character.unwrap_or(start);
+        while let Some(parent) = dom.parent(boundary) {
+            if dom.name(parent) == Some(W::p()) {
+                break;
+            }
+            boundary = parent;
+        }
+        // A matched move range later discards plain runs between its markers.
+        // Put the rescued range before that range too, so the same empty
+        // anchor survives both the wrapper deletion (`moveFrom`) and the
+        // plain-run deletion the range marks. (#1279)
+        let character_at = order
+            .iter()
+            .position(|&n| n == boundary)
+            .expect("character in story");
+        if let Some(range_start) = order[..character_at]
+            .iter()
+            .enumerate()
+            .find_map(|(i, &n)| {
+                if dom.name(n) != Some(W::move_from_range_start()) {
+                    return None;
+                }
+                let id = dom.attribute(n, &W::id())?;
+                let end = order[i + 1..].iter().position(|&e| {
+                    dom.name(e) == Some(W::move_from_range_end())
+                        && dom.attribute(e, &W::id()) == Some(id)
+                })? + i
+                    + 1;
+                (end > character_at).then_some(n)
+            })
+        {
+            boundary = range_start;
+        }
+        let Some(paragraph) = dom.parent(boundary) else {
+            continue;
+        };
+        // A row/table is dropped before its children are visited, and a
+        // deleted cell may be dropped or merged. Rescue outside the outermost
+        // such container, never into another paragraph that is going too.
+        let destination = removed_container(dom, paragraph).and_then(|container| {
+            let at = order.iter().position(|&n| n == container)?;
+            let survives =
+                |n: NodeId| dom.name(n) == Some(W::p()) && removed_container(dom, n).is_none();
+            order[..at]
+                .iter()
+                .rev()
+                .copied()
+                .find(|&n| survives(n))
+                .map(|p| (p, false))
+                .or_else(|| {
+                    order[at + 1..]
+                        .iter()
+                        .copied()
+                        .find(|&n| survives(n))
+                        .map(|p| (p, true))
+                })
+        });
+        if removed_container(dom, paragraph).is_some() && destination.is_none() {
+            continue;
+        }
+        if let Some((paragraph, at_start)) = destination {
+            // A temporary paragraph child provides the same insertion point
+            // used by an in-paragraph collapse. pPr must remain first.
+            if let Some((_, point)) = destinations
+                .iter()
+                .find(|(key, _)| *key == (paragraph, at_start))
+            {
+                boundary = *point;
+            } else {
+                let point = dom.new_element(W::r());
+                if at_start
+                    && let Some(first) = dom
+                        .elements(paragraph, None)
+                        .into_iter()
+                        .find(|&n| dom.name(n) != Some(W::p_pr()))
+                {
+                    dom.add_before_self(first, point);
+                } else {
+                    dom.add(paragraph, point);
+                }
+                destinations.push(((paragraph, at_start), point));
+                boundary = point;
+            }
+        }
+        if let Some((_, ids)) = groups.iter_mut().find(|(at, _)| *at == boundary) {
+            ids.push(id);
+        } else {
+            groups.push((boundary, vec![id]));
+        }
+    }
+    let mut kept = Vec::new();
+    for (boundary, ids) in groups {
+        // A temporary sibling survives removing a boundary that is itself a
+        // marker; it is removed after all starts, ends and references move.
+        let point = dom.new_element(W::r());
+        dom.add_before_self(boundary, point);
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for marker in dom.descendants(root, Some(&W::name(local))) {
+                if !dom
+                    .attribute(marker, &W::id())
+                    .is_some_and(|id| ids.iter().any(|i| i == id))
+                {
+                    continue;
+                }
+                if local == "commentReference" {
+                    // Copy just the reference and its run properties: a
+                    // shared text run must never carry deleted text along.
+                    let run = dom.new_element(W::r());
+                    if let Some(parent) = dom.parent(marker)
+                        && let Some(pr) = dom.element(parent, &W::r_pr())
+                    {
+                        let pr = dom.clone_subtree(pr);
+                        dom.add(run, pr);
+                    }
+                    let reference = dom.clone_subtree(marker);
+                    dom.add(run, reference);
+                    remove_marker(dom, marker);
+                    dom.add_before_self(point, run);
+                } else {
+                    dom.remove(marker);
+                    dom.add_before_self(point, marker);
+                }
+            }
+        }
+        dom.remove(point);
+        kept.extend(ids);
+    }
+    for (_, point) in destinations {
+        dom.remove(point);
+    }
+    kept
+}
+
+/// The outermost container removed by the trailing accept pass. Rejection
+/// reverses ins/del (including row and cell marks) before this scan.
+fn removed_container(dom: &Dom, node: NodeId) -> Option<NodeId> {
+    let mut removed = None;
+    let mut at = Some(node);
+    while let Some(n) = at {
+        let name = dom.name(n);
+        if (name == Some(W::tr()) && super::has_path(dom, n, &W::tr_pr(), &W::del()))
+            || (name == Some(W::tc()) && super::has_path(dom, n, &W::tc_pr(), &W::cell_del()))
+            || (name == Some(W::tbl()) && super::table_rows_all_deleted(dom, n))
+        {
+            removed = Some(n);
+        }
+        at = dom.parent(n);
+    }
+    removed
+}
+
+/// A reference-only run goes with its marker; a run containing other content
+/// keeps that content. Range markers normally are siblings of runs.
+fn remove_marker(dom: &mut Dom, marker: NodeId) {
+    let run = dom.parent(marker).filter(|&p| dom.name(p) == Some(W::r()));
+    dom.remove(marker);
+    if let Some(run) = run
+        && dom
+            .elements(run, None)
+            .into_iter()
+            .all(|e| dom.name(e) == Some(W::r_pr()))
+    {
+        dom.remove(run);
+    }
+}
+
+/// Publish the rescued threads (`kept`, source `w:id`s) on the lowest free
+/// comment ids, so a `kept c8` receipt's document shows `c0` (#1279).
+/// Survivors keep their ids, as every settlement keeps them (#1264); a
+/// rescued thread keeps its source id only when it is still the lowest
+/// free one. Skipped while any revision is pending: surviving annotations
+/// still name the changes that hold them.
+pub(crate) fn renumber_rescued_comments(pkg: &mut PartFs, kept: &[String]) {
+    if kept.is_empty() {
+        return;
+    }
+    let kept_ids: HashSet<String> = kept.iter().cloned().collect();
+    let mut story_parts: Vec<String> = super::revision_bearing_parts(pkg)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    story_parts.sort();
+    story_parts.dedup();
+    // Story order decides: the first-seen rescued id gets the lowest free
+    // published id, so a thread's root keeps a lower id than its reply.
+    let mut used: HashSet<u32> = HashSet::new();
+    let mut story_order: Vec<u32> = Vec::new();
+    for part in &story_parts {
+        let Some(story) = Parsed::load(pkg, part) else {
+            continue;
+        };
+        if super::element_has_tracked_revisions(&story.dom, story.root) {
+            return;
+        }
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for m in story.w(local) {
+                let Some(id_str) = story.dom.attribute(m, &W::id()) else {
+                    continue;
+                };
+                let Ok(id) = id_str.parse::<u32>() else {
+                    continue;
+                };
+                used.insert(id);
+                if kept_ids.contains(id_str) && !story_order.contains(&id) {
+                    story_order.push(id);
+                }
+            }
+        }
+    }
+    if story_order.is_empty() {
+        return;
+    }
+    let Some(mut comments_xml) = Parsed::load(pkg, FAMILY[0].0) else {
         return;
     };
+    for c in comments_xml.w("comment") {
+        let Some(id_str) = comments_xml.dom.attribute(c, &W::id()) else {
+            continue;
+        };
+        let Ok(id) = id_str.parse::<u32>() else {
+            continue;
+        };
+        if !story_order.contains(&id) {
+            used.insert(id);
+        }
+    }
+    // A rescued thread may keep its own source id even though `used` holds
+    // it; every other id in `used` is reserved.
+    let mut rename: HashMap<u32, u32> = HashMap::new();
+    for source in &story_order {
+        let mut next = 0u32;
+        while next != *source && used.contains(&next) {
+            next += 1;
+        }
+        if next != *source {
+            rename.insert(*source, next);
+        }
+        used.insert(next);
+    }
+    if rename.is_empty() {
+        return;
+    }
+    // Apply the rename to stories and comments.xml.
+    for part in &story_parts {
+        let Some(mut story) = Parsed::load(pkg, part) else {
+            continue;
+        };
+        let mut changed = false;
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for m in story.w(local) {
+                let Some(value) = story.dom.attribute(m, &W::id()) else {
+                    continue;
+                };
+                let Ok(value) = value.parse::<u32>() else {
+                    continue;
+                };
+                if let Some(&new) = rename.get(&value) {
+                    story
+                        .dom
+                        .set_attribute_value(m, &W::id(), Some(&new.to_string()));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            story.store(pkg);
+        }
+    }
+    let mut comments_changed = false;
+    for c in comments_xml.w("comment") {
+        let Some(value) = comments_xml.dom.attribute(c, &W::id()) else {
+            continue;
+        };
+        let Ok(value) = value.parse::<u32>() else {
+            continue;
+        };
+        if let Some(&new) = rename.get(&value) {
+            comments_xml
+                .dom
+                .set_attribute_value(c, &W::id(), Some(&new.to_string()));
+            comments_changed = true;
+        }
+    }
+    if comments_changed {
+        comments_xml.store(pkg);
+    }
+}
+
+/// Drop the comments Accept / Reject All left without a reference, prune the
+/// comment family and `people.xml` (module docs). Return their ids, so
+/// callers can report precisely what went.
+pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) -> Vec<String> {
+    let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
+        return Vec::new();
+    };
+    // The comments part itself is not an anchor story: a `commentReference`
+    // inside a comment body keeps no comment alive, and pruning this Parsed
+    // copy would race the `comments` one. Marker fix-ups reach it through
+    // `word_save::tidy` instead.
     let stories: Vec<Parsed> = story_parts
         .iter()
+        .filter(|p| p.as_str() != FAMILY[0].0)
         .filter_map(|p| Parsed::load(pkg, p))
         .collect();
     let id = W::id();
@@ -84,6 +445,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
 
     let mut kept: HashSet<String> = HashSet::new();
     let mut dropped = false;
+    let mut removed = Vec::new();
     let mut dropped_paras: HashSet<String> = HashSet::new();
     let mut authors: HashSet<String> = HashSet::new();
     let para_id = W14::name("paraId");
@@ -95,6 +457,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
                 authors.insert(a.to_string());
             }
         } else {
+            removed.push(cid);
             for p in comments.dom.descendants(c, Some(&W::p())) {
                 if let Some(pid) = comments.dom.attribute(p, &para_id) {
                     dropped_paras.insert(pid.to_string());
@@ -111,7 +474,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             for m in s.w(local) {
                 if !s.dom.attribute(m, &id).is_some_and(|v| kept.contains(v)) {
-                    s.dom.remove(m);
+                    remove_marker(&mut s.dom, m);
                     changed = true;
                 }
             }
@@ -135,6 +498,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         prune_by_para(pkg, &dropped_paras);
     }
     prune_people(pkg, &main, &authors);
+    removed
 }
 
 /// A comment whose reference stayed while resolved content took one end of

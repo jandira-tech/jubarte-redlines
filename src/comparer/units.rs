@@ -2,12 +2,19 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Comparison-unit builder (M4.2). Port of `GetComparisonUnitList`,
-//! `GetHierarchicalComparisonUnits`, and `hierarchicalGroupingKey`.
+//! Comparison-unit builder (M4.2).
 //!
-//! Segments the atom stream into words (by separators / CJK / word-break
-//! elements), then nests words into paragraph/table/row/cell/textbox groups via
-//! the hierarchical grouping key.
+//! Port of `GetComparisonUnitList`, `GetHierarchicalComparisonUnits`, and
+//! `hierarchicalGroupingKey`. Segments the atom stream into words (by
+//! separators / CJK / word-break elements / Word-mode per-character classes)
+//! and nests words into paragraph/table/row/cell/textbox groups via the
+//! hierarchical grouping key. The output drives [`super::lcs`] and
+//! [`super::produce`].
+//!
+//! [`COMPARISON_GROUPING_ELEMENTS`] and [`WORD_BREAK_ELEMENTS`] are the
+//! shared M4.A.1 tables from [`super::tables`]; the per-character Word
+//! classes are local to this module and pinned by Word 16's own probes
+//! (`tests/fixtures/word_probes/tokens/classes_*`).
 
 use crate::namespaces::{MC, PT, W};
 use crate::util::group_adjacent;
@@ -17,7 +24,10 @@ use super::atoms::{ComparisonUnit, ComparisonUnitAtom, ComparisonUnitGroup, Comp
 use super::tables::{COMPARISON_GROUPING_ELEMENTS, WORD_BREAK_ELEMENTS};
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerSettings};
 
-/// `hierarchicalGroupingKey(element)` = `"{localName}:{Unid or ''}"`.
+/// The hierarchical grouping key for an element: `"{localName}:{pt:Unid}"`,
+/// with the unid empty string when the element carries no `pt:Unid`. The
+/// local name disambiguates paragraphs from tables that happen to share a
+/// unid; the unid keeps the same authored element from being counted twice.
 pub fn hierarchical_grouping_key(dom: &Dom, element: NodeId) -> String {
     let local = dom
         .name(element)
@@ -116,7 +126,17 @@ fn word_class(c: char) -> WordClass {
     }
 }
 
-/// Port of `GetComparisonUnitList`.
+/// Segment the atom stream into comparison units (Words plus
+/// Paragraph/Table/Row/Cell/Textbox groups) for the LCS and produce steps.
+///
+/// Word-visual (`settings.merge_replaced_paragraphs`) splits on the same
+/// per-character Word classes Word 16 uses (letter/sign/script), so the file's
+/// `Ab１` against `Ab２` and `1.5` against `1,5` change only the differing
+/// token. PowerTools-faithful keeps `1.5` and `snake_a` whole (a `.` or
+/// `,` adjacent to a digit stays inside the number word; otherwise each is
+/// its own word). Fields (`w:fldChar`) and `mc:AlternateContent` wrappers
+/// always split in Word mode so a result-side change does not steal its
+/// neighbours into the same replaced word.
 pub fn get_comparison_unit_list(
     dom: &Dom,
     atoms: &[ComparisonUnitAtom],
@@ -253,7 +273,10 @@ pub fn get_comparison_unit_list(
 
 type WordWithKeys = (Vec<String>, Vec<NodeId>, ComparisonUnitWord);
 
-/// Port of `GetHierarchicalComparisonUnits`.
+/// Internal — the recursive half of [`get_comparison_unit_list`]. Group the
+/// words at `level` by their grouping key, emit a [`ComparisonUnitGroup`] per
+/// key, and recurse one level deeper. Bare words at this level come out as
+/// plain [`ComparisonUnit::Word`].
 fn get_hierarchical_comparison_units(
     dom: &Dom,
     input: Vec<WordWithKeys>,

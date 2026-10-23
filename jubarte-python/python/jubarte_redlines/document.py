@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,13 +19,13 @@ from .models import (
     AuditFinding,
     Change,
     Comment,
-    ChangeKind,
     CompareOptions,
     Diff,
     EditOutcome,
     EditPlan,
     EditReport,
     FieldUpdate,
+    FilterKind,
     Finding,
     PdfOptions,
     RenderDiff,
@@ -186,7 +185,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[ChangeKind] | None = None,
+        kinds: Sequence[FilterKind] | None = None,
     ) -> Document:
         """Return a new document accepting tracked changes, as Word does.
 
@@ -231,7 +230,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[ChangeKind] | None = None,
+        kinds: Sequence[FilterKind] | None = None,
     ) -> Document:
         """Return a new document rejecting tracked changes (selection as in
         ``accept``; none rejects every change)."""
@@ -280,7 +279,7 @@ class Document:
         return _decode_snapshot(_native.inspect_json(self._data))
 
     def markdown(self) -> str:
-        """The body as Markdown with a ``[body:p:N]`` id before each paragraph."""
+        """The body as Markdown with a ``[pN]`` id before each paragraph."""
         return _native.markdown(self._data)
 
     def edit(self, plan: EditPlan | dict[str, object] | str) -> EditResult:
@@ -384,8 +383,9 @@ class Document:
     ) -> Rendered:
         """One layout pass: optional PDF, optional PNG pages, and the page report.
 
-        ``pages`` (counted from 1) rasterizes only those pages; the report
-        still covers every page. A page past the end raises ``JubarteError``.
+        ``pages`` (document pages, counted from 1) writes only those pages:
+        the PDF, the PNGs and the report. A page ``changed_only`` dropped, or
+        one past the end, raises ``JubarteError``.
         """
         options = _pdf_options(options)
         pdf_bytes, pngs, report = _native.render(
@@ -429,9 +429,23 @@ class Document:
         """Every text change against ``original`` must be a revision by ``author``.
 
         Rejecting that author's changes must give ``original``'s text back;
-        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
-        another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
-        means every edit is tracked.
+        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding.
+        A foreign revision added, changed or removed against ``original`` is a
+        ``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
+        paragraphs align by full text, including deleted text, within each story.
+        An untracked paragraph merge or split around another author's revisions
+        reports those revisions as new and gone alongside ``UNTRACKED_EDIT``.
+        Groups with the same author, kind, target, date and move side are compared
+        in document order within the aligned paragraph or non-paragraph owner
+        (for example, a style id). Revision ids do not define identity. Split
+        carriers combine only when they touch, with no visible content or
+        still-present revision between them. A boundary explained solely by a
+        missing separator revision adds no finding beyond that separator. Changed
+        revisions say ``differs from the original``; new revisions say ``is new``.
+        These messages name ids and authors, never revision text. A permission
+        endpoint of ``original`` that the edit lost, in any story, is a
+        ``PERMISSION_RANGE_DROPPED`` finding.
+        An empty tuple means every edit is tracked.
         """
         before = original.to_bytes() if isinstance(original, Document) else original
         return _decode_findings_json(_native.audit_tracked_json(before, self._data, author))
@@ -478,7 +492,7 @@ class Document:
         """Accessibility, style and structure findings, each located by
         paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
         ``structure``) or codes, as a sequence or a comma-separated string;
-        ``None`` runs every rule. ``jubarte audit --help`` lists the codes."""
+        ``None`` runs every rule. ``jubarte validate --help`` lists the codes."""
         if rules is None:
             selected = None
         else:
@@ -576,13 +590,15 @@ def diff(
     full_lines: bool = False,
 ) -> Diff:
     """The changes from ``old`` to ``new``: the changed paragraphs, each at
-    its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
-    ``[-old-]{+new+}`` changes and CriticMarkup comments.
+    its ``pN`` id in a Word document or ``line:N`` in Markdown, with
+    ``[-old-]{+new+}`` changes and CriticMarkup comments. When a side is a
+    Word document, a replacement inside a paragraph reads insertion first,
+    ``{+new+}[-old-]``, as Word Compare writes it.
 
     Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
     or a path (``.md``/``.markdown`` read as Markdown, anything else as
     Word). ``author`` and ``date`` own the changes, shown once in the
-    header [default: ``git config user.name``, else Redline; now].
+    header [default: Redline; now].
     ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
     whole document as CriticMarkup instead, as ``jubarte diff --format
     critic`` does. ``github`` (aliases ``unified`` and ``text``) gives a Git
@@ -610,7 +626,7 @@ def diff(
             new_side,
             old_name=old_name,
             new_name=new_name,
-            author=author if author is not None else _default_author(),
+            author=author if author is not None else "Redline",
             date=date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             columns=columns,
             critic=format == "critic",
@@ -634,22 +650,14 @@ def _side(side: object, default: str) -> tuple[bytes | str, str]:
     raise TypeError("each side must be a Document, bytes, Markdown text or a path")
 
 
-def _default_author() -> str:
-    """``git config user.name``, else Redline: as ``jubarte diff``."""
-    try:
-        out = subprocess.run(
-            ["git", "config", "user.name"], capture_output=True, text=True, check=False, timeout=5
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "Redline"
-    name = out.stdout.strip()
-    return name if out.returncode == 0 and name else "Redline"
-
-
-def capabilities() -> dict[str, object]:
-    """What this build can do (``runtime: "python"``), as a plain dict."""
+def capabilities(
+    *, operation: str | None = None, field: str | None = None, matrix: bool = False
+) -> dict[str, object]:
+    """Task manifest, focused edit syntax, or support matrix for this Python build."""
     import json
 
+    if matrix or operation is not None or field is not None:
+        return json.loads(_native.capability_query(operation, field))
     return json.loads(_native.capabilities_json())
 
 
@@ -663,32 +671,44 @@ def from_markdown(
     *,
     reference: Document | bytes | None = None,
     page: Literal["letter", "a4"] = "letter",
-    author: str = "Redline",
+    author: str | None = None,
     date: str | None = None,
     critic: bool = True,
     track_changes: Literal["all", "accept", "reject"] = "all",
+    tracking: bool | None = None,
+    scholar: bool = False,
 ) -> Document:
     """Write Markdown as a Word document, as ``jubarte convert draft.md``.
 
     CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
-    becomes tracked changes and comments by ``author`` at ``date`` (the
-    engine's fixed epoch by default), unless ``critic`` is false.
+    becomes tracked changes and comments, unless ``critic`` is false. One
+    that names no author or date takes ``author`` and ``date`` when given,
+    else the front matter's (``author:``; ``last_modified:``,
+    ``modified:``, ``date:``, ``created:``), else ``Redline`` and the
+    engine's fixed epoch (the CLI dates them now instead).
     ``track_changes`` keeps them (``all``) or writes the document with each
     accepted or rejected. ``reference`` lends its styles and page setup;
     without it ``page`` picks US Letter or A4, both with one-inch margins.
+    ``tracking`` turns Word's Track Changes on or off in the document,
+    whatever the front matter's ``track_changes:`` says (``None`` follows
+    it). ``scholar`` sets the document as LaTeX's article class does (Latin
+    Modern Roman 10pt, justified, bold headings) and numbers its pages from
+    page 2, as ``--scholar``; the front matter's own styles and footers win.
     Engine warnings, such as a ``page`` the reference overrides, are raised
     as ``UserWarning``. Images are written as their alt text.
     """
     if isinstance(reference, Document):
         reference = reference.to_bytes()
-    return Document.from_bytes(
-        _native.markdown_to_docx(
-            text,
-            reference=reference,
-            page=page,
-            author=author,
-            date=date,
-            critic=critic,
-            track_changes=track_changes,
-        )
-    )
+    options: dict[str, object] = {
+        "page": page,
+        "critic": critic,
+        "track_changes": track_changes,
+        "scholar": scholar,
+    }
+    if author is not None:
+        options["author"] = author
+    if date is not None:
+        options["date"] = date
+    if tracking is not None:
+        options["tracking"] = tracking
+    return Document.from_bytes(_native.markdown_to_docx(text, json.dumps(options), reference))

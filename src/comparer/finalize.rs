@@ -2,12 +2,23 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.F — markup finalization: turn the pt:Status-tagged tree into real
-//! `w:ins`/`w:del`/`w:rPrChange`/move markup, conjoin paragraph marks, renumber
-//! revision ids, and strip scratch markup. Port of MarkContentAsDeletedOrInserted
-//! (WmlComparer.cs:2568), ConjoinDeletedInsertedParagraphMarks (:2515),
-//! FixUpRevisionIds (:2769), IgnorePt14Namespace (:2912),
-//! RemovePowerToolsScratchMarkup (CleanPartTransform :1165).
+//! M4.F — markup finalization: turn the `pt:Status`-tagged tree into real
+//! `w:ins` / `w:del` / `w:rPrChange` / move markup, conjoin paragraph
+//! marks, renumber revision ids, and strip scratch markup. Port of
+//! `MarkContentAsDeletedOrInserted` (WmlComparer.cs:2568),
+//! `ConjoinDeletedInsertedParagraphMarks` (:2515), `FixUpRevisionIds`
+//! (:2769), `IgnorePt14Namespace` (:2912), `RemovePowerToolsScratchMarkup`
+//! (`CleanPartTransform` :1165).
+//!
+//! Public surface: more than a hundred small passes — the ones the
+//! `compare_bodies_faithful_with_notes` pipeline runs are the load-bearing
+//! ones (e.g. [`mark_content_as_deleted_or_inserted`],
+//! [`conjoin_paragraph_marks`], [`fix_up_revision_ids`], [`ignore_pt14_namespace`],
+//! [`remove_powertools_scratch_markup`]). The bulk of the file is the
+//! Word-mode `M4.F` peel ladder the pipeline runs after
+//! `merge_replaced_paragraphs_in`; each peel has its own public entry
+//! point so the `--keep-fidelity`/`-pgNumType/` tests can call individual
+//! passes.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -27,16 +38,22 @@ thread_local! {
     static MIXED_CACHE: RefCell<Option<HashMap<NodeId, bool>>> = const { RefCell::new(None) };
 }
 
-/// Enable empty para revision classification caches. Peels fill them on first
-/// touch (lazy). Call [`end_para_classification_cache`] after peels finish.
-/// Do **not** eagerly classify every body para — that costs ~O(n_p) pure-del
-/// walks and dominated redline×5lb when most paras are never queried.
+/// Enable the per-paragraph pure-del / mixed classification caches the
+/// `M4.F` peels share.
+///
+/// Peels fill them lazily on first touch (cached key per paragraph); call
+/// [`end_para_classification_cache`] after the peels finish so a stale
+/// cache does not leak into the next document run. Do **not** eagerly
+/// classify every body paragraph — that costs `O(n_p)` pure-del walks
+/// and dominated `redline × 5lb` when most paragraphs are never queried.
 pub fn begin_para_classification_cache() {
     PURE_DEL_CACHE.with(|c| *c.borrow_mut() = Some(HashMap::new()));
     MIXED_CACHE.with(|c| *c.borrow_mut() = Some(HashMap::new()));
 }
 
-/// Drop the thread-local pure-del / mixed para classification caches.
+/// Drop the thread-local pure-del / mixed paragraph classification
+/// caches; called by the pipeline at the end of the peel ladder so the
+/// next document run starts with empty caches.
 pub fn end_para_classification_cache() {
     PURE_DEL_CACHE.with(|c| *c.borrow_mut() = None);
     MIXED_CACHE.with(|c| *c.borrow_mut() = None);
@@ -159,7 +176,19 @@ fn rebuild_run(
     r
 }
 
-/// M4.F.1/F.2/F.3 — `MarkContentAsDeletedOrInsertedTransform` (WmlComparer.cs:2568).
+/// `MarkContentAsDeletedOrInsertedTransform` (WmlComparer.cs:2568) — the
+/// recursive body of `M4.F.1/F.2/F.3`.
+///
+/// Walks `node` and rewrites each `w:r` / `w:pPr` / `w:fldSimple` /
+/// `w:AlternateContent` whose `pt:Status` says inserted, deleted, moved or
+/// format-changed into the corresponding `w:ins` / `w:del` / move range
+/// pair / `w:rPrChange` / `w:pPrChange` wrappers. Other elements are
+/// rebuilt verbatim. `id_gen` mints fresh revision ids as wrappers are
+/// emitted; the caller is responsible for renumbering the final tree via
+/// [`fix_up_revision_ids`].
+///
+/// This is the lower-level hook used by [`mark_content_as_deleted_or_inserted`];
+/// callers normally want that wrapper, not this entry point.
 pub fn mark_content_transform(
     dom: &mut Dom,
     node: NodeId,
@@ -477,7 +506,14 @@ fn parse_ppr(dom: &mut Dom, s: Option<&str>) -> NodeId {
     dom.new_element(W::p_pr())
 }
 
-/// M4.F — apply MarkContent to a root, returning the new root.
+/// M4.F — run [`mark_content_transform`] over `root` and return the new
+/// root.
+///
+/// Each `w:r` / `w:pPr` with a `pt:Status` is wrapped in the matching
+/// `w:ins` / `w:del` / `w:moveFrom` / `w:moveTo` / `w:rPrChange` /
+/// `w:pPrChange` carrier. Revision ids are minted from `id_gen`; renumber
+/// the whole tree through [`fix_up_revision_ids`] afterwards so ids are
+/// sequential `1..n` and disjoint from any comment ids.
 pub fn mark_content_as_deleted_or_inserted(
     dom: &mut Dom,
     root: NodeId,
@@ -485,9 +521,52 @@ pub fn mark_content_as_deleted_or_inserted(
     id_gen: &mut u32,
 ) -> NodeId {
     let v = mark_content_transform(dom, root, settings, id_gen);
-    v.into_iter()
+    let root = v
+        .into_iter()
         .next()
-        .expect("root transform yields one node")
+        .expect("root transform yields one node");
+    join_move_ranges(dom, root);
+    root
+}
+
+/// Marking emits a triple per run (and empty field), but a move names one
+/// range on each side. Word's Reject All duplicates text when the run splits
+/// give the sides different range counts (#1214). Keep every move wrapper and
+/// intervening endpoint in place; retain only the outer range boundaries.
+fn join_move_ranges(dom: &mut Dom, root: NodeId) {
+    for side in ["moveFrom", "moveTo"] {
+        let starts = dom.descendants(root, Some(&W::name(&format!("{side}RangeStart"))));
+        if starts.len() < 2 {
+            continue;
+        }
+        let ends: HashMap<String, NodeId> = dom
+            .descendants(root, Some(&W::name(&format!("{side}RangeEnd"))))
+            .into_iter()
+            .filter_map(|end| dom.attribute(end, &W::id()).map(|id| (id.to_string(), end)))
+            .collect();
+        let mut ranges: HashMap<String, (NodeId, NodeId)> = HashMap::new();
+        for start in starts {
+            let Some(name) = dom.attribute(start, &W::name("name")).map(str::to_string) else {
+                continue;
+            };
+            let Some(end) = dom
+                .attribute(start, &W::id())
+                .and_then(|id| ends.get(id))
+                .copied()
+            else {
+                continue;
+            };
+            if let Some((first, last)) = ranges.get_mut(&name) {
+                let id = dom.attribute(*first, &W::id()).unwrap().to_string();
+                dom.remove(start);
+                dom.remove(*last);
+                dom.set_attribute_value(end, &W::id(), Some(&id));
+                *last = end;
+            } else {
+                ranges.insert(name, (start, end));
+            }
+        }
+    }
 }
 
 /// True when pPr carries structural body props (pStyle/numPr/spacing/jc/ind/…).
@@ -655,7 +734,14 @@ fn conjoin_transform(dom: &mut Dom, node: NodeId, author: &str, date: &str) -> N
     ne
 }
 
-/// M4.F.4 — apply Conjoin to a root, returning the new root.
+/// M4.F.4 — apply the Conjoin transform to `root`.
+///
+/// A `w:p` carrying two or more `w:pPr` (Inserted + Deleted variants) is
+/// collapsed to one clean `pPr` plus the live runs; the dropped `pPr` is
+/// either recorded in `w:pPrChange` (M78) or kept live as a delete mark
+/// (M81b), per the rule baked into the `crate::comparer::conjoin_transform`
+/// helper. Pass the comparer `author_for_revisions` and
+/// `date_time_for_revisions` via `settings`.
 pub fn conjoin_paragraph_marks(
     dom: &mut Dom,
     root: NodeId,
@@ -669,9 +755,16 @@ pub fn conjoin_paragraph_marks(
     )
 }
 
-/// M4.F.5 — `FixUpRevisionIds` (WmlComparer.cs:2769): renumber `w:id` of all revision elements
-/// across the given roots (main, then footnotes, then endnotes) from 1; range
-/// start/end pairs share an id.
+/// M4.F.5 — `FixUpRevisionIds` (WmlComparer.cs:2769): renumber every
+/// `w:id` of every revision element under each `root` from `1`.
+///
+/// `w:moveFromRangeStart` / `w:moveToRangeStart` allocate a fresh id;
+/// their matching `*RangeEnd` shares the same id. Comment ids
+/// (`commentRangeStart` / `commentRangeEnd` / `commentReference`) are
+/// reserved so revision renumbering never reuses them — Word keeps them
+/// disjoint. Re-run this after any later pass that mints ids
+/// (`convert_stamped_*`, `wrap_bare_del_text_runs`, `mark_fully_revised_rows`,
+/// etc.); the pipeline runs it twice for that reason.
 pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     // Every tracked-change / move / property-change carrier that uses w:id.
     // Missing any of these lets renumbered move ranges collide with e.g.
@@ -760,8 +853,12 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     }
 }
 
-/// M4.F.7 — `IgnorePt14Namespace` (WmlComparer.cs:2912): declare `xmlns:pt14` + add `pt14` to
-/// `mc:Ignorable` (idempotent).
+/// M4.F.7 — `IgnorePt14Namespace` (WmlComparer.cs:2912): declare
+/// `xmlns:pt14` on `root` and add `pt14` to `mc:Ignorable` (idempotent).
+///
+/// Word treats the PowerTools scratch namespace as ignorable; this keeps
+/// the redline's root in the same shape Word expects. Safe to call
+/// multiple times.
 pub fn ignore_pt14_namespace(dom: &mut Dom, root: NodeId) {
     let pt14 = XNamespace::xmlns().name("pt14");
     if dom.attribute(root, &pt14).is_none() {
@@ -829,6 +926,19 @@ const WORD_IGNORABLE_NAMESPACES: [(&str, &str); 10] = [
 /// part gets its prefix bound on the root and listed in `mc:Ignorable`, the
 /// way Word writes its own parts. Only Word's own list qualifies: namespaces
 /// such as `wps` live inside `mc:Choice` and must never be ignorable.
+/// Make every Word-2010+ extension namespace that the part uses
+/// ignorable on `root`.
+///
+/// Elements merged in from the other document (B's numbering
+/// definitions, styles, notes) keep their Word 2010+ extension
+/// attributes but not the source root's `mc:Ignorable` contract, so the
+/// part claims markup it never declared ignorable
+/// (`w15:restartNumberingAfterBreak`, `w16cid:durableId`, …). For each
+/// Word extension namespace the part actually uses, this binds its
+/// prefix on the root and lists it in `mc:Ignorable`, the way Word writes
+/// its own parts. Only Word's own namespace list qualifies; namespaces
+/// such as `wps` (gated by an MC prefix list inside `mc:Choice`) must
+/// never be marked ignorable.
 pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
     let xmlns = XNamespace::xmlns();
     let mut used = [false; WORD_IGNORABLE_NAMESPACES.len()];
@@ -844,8 +954,8 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
         if let Some(n) = dom.name(el) {
             mark(&mut used, n.namespace_name());
         }
-        for (a, _) in dom.attributes(el) {
-            if !dom.is_namespace_declaration(&a) {
+        for (a, _) in dom.attributes_iter(el) {
+            if !dom.is_namespace_declaration(a) {
                 mark(&mut used, a.namespace_name());
             }
         }
@@ -900,6 +1010,19 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
 /// binding goes on the part root, where Word writes it; a prefix the root
 /// already binds is in scope everywhere, so none is overwritten. A prefix
 /// with no conventional namespace is left alone.
+/// Bind every prefix a Markup-Compatibility prefix-list
+/// (`mc:Choice/@Requires`, `mc:Ignorable`, `mc:ProcessContent`, …) names
+/// but `root` has not bound.
+///
+/// Content grafted from the other document's part leaves that part's
+/// root declarations behind — a B header's connector under
+/// `<mc:Choice Requires="wps">` lands in A's header, whose root never
+/// bound `wps`, and the serializer declares it only on the shape inside
+/// the Choice. Word then offers to repair the file
+/// (`redlines_en_500`, `baf3657261` vs `8e835e4a58`). Bind the prefix on
+/// the part root, where Word writes it; a prefix the root already binds
+/// is in scope everywhere, so nothing is overwritten. Prefixes with no
+/// conventional namespace are left alone.
 pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
     use crate::xmllinq::serialize::{is_namespace_prefix_list, well_known_namespace};
     let xmlns = XNamespace::xmlns();
@@ -908,8 +1031,7 @@ pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
             continue;
         };
         let lists: Vec<String> = dom
-            .attributes(el)
-            .into_iter()
+            .attributes_iter(el)
             .filter(|(name, _)| is_namespace_prefix_list(&element, name))
             .map(|(_, value)| value.to_string())
             .collect();
@@ -928,8 +1050,13 @@ pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M4.F.7 — `RemovePowerToolsScratchMarkup` (CleanPartTransform, WmlComparer.cs:1165):
-/// strip every `pt:*` attribute across `root` and descendants.
+/// Strip every `pt:*` attribute across `root` and its descendants.
+///
+/// Port of `RemovePowerToolsScratchMarkup` (`CleanPartTransform` at
+/// WmlComparer.cs:1165). Call this **after** every stamping pass that
+/// uses `pt:*` for its bookkeeping (the pre-diff flattening, the
+/// `convert_stamped_predeletes` / `convert_stamped_preins` passes), so the
+/// redline serialized into `Out` carries no scratch marks. Idempotent.
 pub fn remove_powertools_scratch_markup(dom: &mut Dom, root: NodeId) {
     for el in dom.descendants_and_self(root, None) {
         let pts: Vec<XName> = dom
@@ -1076,7 +1203,22 @@ fn run_text_concat(dom: &Dom, r: NodeId) -> String {
     s
 }
 
-/// `CoalesceAdjacentRunsWithIdenticalFormatting` on one run container.
+/// Merge adjacent `w:r` and `w:del` runs of identical text + formatting
+/// into one — port of `CoalesceAdjacentRunsWithIdenticalFormatting`
+/// (PtOpenXmlUtil.ts:4458).
+///
+/// A run holding only `w:t` (or `w:instrText`) whose `w:rPr` matches the
+/// previous run's is merged by appending its text and removing the
+/// wrapper. Adjacent `w:del` wrappers with one `w:delText` child also
+/// merge when their author/date match; run- and `w:del`-level stamps
+/// (`PreIns` / `PreDelete` / `*Author` / `*Date`) segregate the key so
+/// pending-deletion runs are not silently merged away. Returns the
+/// rebuilt container; caller replaces the original via assignment.
+///
+/// Used both during preprocessing (on the inputs, so source fragmentation
+/// does not inflate the diff) and as the final produce-side coalescer
+/// that merges adjacent `w:del`. `w:ins` runs keep distinct ids and are
+/// not merged.
 pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
     let cname = dom.name(container).unwrap();
     let children = dom.elements(container, None);
@@ -1143,14 +1285,19 @@ pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
     nc
 }
 
-/// Word's compare RESOLVES feature-gating `mc:AlternateContent` (replaces it with
-/// its `mc:Choice` content) but KEEPS drawing/VML fallbacks (DrawingML Choice +
-/// VML Fallback). We previously kept ALL AltContent as opaque atoms
-/// (atomize.rs:256, produce.rs:557), so run-level feature-gating AltContent got
-/// hoisted to invalid block positions → Word "unreadable content" repair, and
-/// `ooxmlsdk` rejects them (`UnexpectedTag { ty: TableCell, found:
-/// AlternateContent }`). Validated against the 100-pair corpus: Word retains 7
-/// drawing/VML AltContent and 0 text-only ones. Run on BOTH inputs before diffing.
+/// Resolve feature-gating `mc:AlternateContent` against the
+/// MCE rule (ISO/IEC 29500-3 §10.1.2).
+///
+/// Word's Compare RESOLVES feature-gating `mc:AlternateContent`
+/// (replaces it with its `mc:Choice` content) but KEEPS drawing/VML
+/// fallbacks (DrawingML `Choice` + VML `Fallback`). Opaque run-children
+/// (`mc:AlternateContent`, `w:pict`, `w:object`) atomize as a single
+/// unit and so are kept verbatim. The MCE rule picks the first
+/// `mc:Choice` whose `@Requires` namespaces the document actually
+/// declares, falling back to `mc:Fallback`.
+///
+/// Run on both inputs before diffing so an AltContent run-child on one
+/// side does not become a "unreadable content" repair target.
 pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
     for ac in dom.descendants_and_self(root, Some(&MC::name("AlternateContent"))) {
         // A nested AltContent inside a discarded Fallback may already be detached.
@@ -1197,11 +1344,13 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Strip non-standard `w:`-namespace children from `<w:sdtPr>`. Agreement/form
-/// tools emit `<w:fieldType>`/`<w:fieldColor>`/… inside sdtPr in the w: namespace
-/// — not valid CT_SdtPr content; real Word reports "unreadable content" and
-/// recovers by dropping them (and produces a clean redline GT). We match so the
-/// output is Word-valid. Extension-namespace children (w14:/w15:/…) are untouched.
+/// Strip non-standard `w:`-namespace children from `<w:sdtPr>`.
+///
+/// Agreement/form tools emit `<w:fieldType>` / `<w:fieldColor>` / …
+/// inside `sdtPr` in the `w:` namespace — not valid `CT_SdtPr` content;
+/// real Word reports "unreadable content" and recovers by dropping
+/// them. This pass matches so the redline is Word-valid.
+/// Extension-namespace children (`w14:…` / `w15:…`) are untouched.
 pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
     // Valid CT_SdtPr w: children (ECMA-376).
     const VALID: &[&str] = &[
@@ -1239,14 +1388,15 @@ pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M390 (missing_sectpr×fields_test −16.3): Word Compare flattens content
-/// controls (`w:sdt`) inside pure-I/pure-D residual to their `sdtContent`
-/// children — Word redline has **0** SDTs on that pair; we kept 9 and LO thrash
-/// pagefair. Do **not** preprocess-unwrap all SDTs (fields_attrs1×sample Word
-/// keeps 4 equal content controls). Call
-/// [`unwrap_content_controls_in_pure_revisions`] after produce/merge.
+/// Unwrap every `w:sdt` under `root` to its `sdtContent` children,
+/// deepest first.
 ///
-/// Unwraps deepest first, like [`unwrap_hyperlinks_to_styled_runs`].
+/// M390 (`missing_sectpr × fields_test`): Word Compare flattens content
+/// controls (`w:sdt`) inside pure-I / pure-D residual paragraphs but
+/// keeps equal-form-field controls on unchanged paragraphs. This is the
+/// unconditional variant; prefer
+/// [`unwrap_content_controls_in_pure_revisions`] after the produce /
+/// merge step to scope the unwrap to residual paragraphs.
 pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
     loop {
         let sdts: Vec<NodeId> = dom.descendants(root, Some(&W::sdt()));
@@ -1294,8 +1444,13 @@ pub fn unwrap_content_controls(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M390 — unwrap content controls only under pure-I / pure-D / MIX residual
-/// paragraphs (not under EQ form-field matches). See [`unwrap_content_controls`].
+/// M390 — [`unwrap_content_controls`], but only under pure-I / pure-D
+/// / MIX residual paragraphs.
+///
+/// `EQ` form-field matches keep their `w:sdt` (the corpus document
+/// `fields_attrs1 × sample` keeps four equal content controls). Run
+/// after the produce / merge step so the unwrap sees the final
+/// revision status on every paragraph.
 pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -1340,7 +1495,11 @@ fn prefix_in_scope(dom: &Dom, node: NodeId, prefix: &str) -> bool {
     })
 }
 
-/// Apply CoalesceAdjacentRuns to every `w:p` in `root` (in place).
+/// Apply [`coalesce_adjacent_runs`] to every `w:p` under `root`.
+///
+/// Each paragraph's runs are merged per the gating rules in
+/// [`coalesce_adjacent_runs`]; non-run children (`w:pPr`, etc.) stay
+/// where they are. Mutates `root` in place; nothing to return.
 pub fn coalesce_all_paragraphs(dom: &mut Dom, root: NodeId) {
     let paras = dom.descendants(root, Some(&W::p()));
     for p in paras {
@@ -1354,14 +1513,16 @@ pub fn coalesce_all_paragraphs(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Enforce OOXML child order for paragraph-mark revision markers. When a paragraph
-/// mark is inserted/deleted the marker lands in the paragraph's paraRPr; OOXML
-/// requires (a) `ins`/`del`/`moveFrom`/`moveTo` to be the FIRST children of that
-/// `<w:rPr>` (CT_ParaRPr sequence), and (b) the `<w:rPr>` to follow the paragraph's
-/// content properties (pStyle, …) — i.e. sit just before `sectPr`/`pPrChange` (or
-/// last). We otherwise appended the marker after `<w:lang>`/etc. and/or placed the
-/// paraRPr before `pStyle`, which ooxmlsdk tolerates but real Word rejects as
-/// "unreadable content" (contract-acc / hyperlink / NumberingImplicitNumId / nda).
+/// Enforce the OOXML child order for paragraph-mark revision markers.
+///
+/// OOXML requires (a) `ins` / `del` / `moveFrom` / `moveTo` to be the
+/// FIRST children of the paragraph's `w:rPr` (`CT_ParaRPr` sequence), and
+/// (b) the `w:rPr` itself to follow the paragraph's content properties
+/// (`pStyle`, …) and sit just before `w:sectPr` / `w:pPrChange` (or last
+/// when neither is present). Re-assembly otherwise leaves the marker
+/// after `w:lang` / … or places paraRPr before `pStyle`; ooxmlsdk
+/// tolerates the mis-order, real Word rejects it as "unreadable content"
+/// (contract-acc, hyperlink, NumberingImplicitNumId, nda).
 pub fn fix_paragraph_mark_revision_order(dom: &mut Dom, root: NodeId) {
     let is_marker = |dom: &Dom, c: NodeId| {
         matches!(
@@ -1395,10 +1556,13 @@ pub fn fix_paragraph_mark_revision_order(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// `w:pPr` must be the FIRST child of `w:p` (OOXML schema). Our reassembly emits
-/// the paragraph mark (pPr) LAST, so Word/LibreOffice silently ignore ALL
-/// paragraph formatting — `w:jc` (centering), spacing, indentation, numbering.
-/// Move each paragraph's `w:pPr` to the front. Recurses through the whole tree.
+/// Move every paragraph's `w:pPr` to the FIRST child position (OOXML
+/// schema requires `w:pPr` first under `w:p`).
+///
+/// Re-assembly places the paragraph mark (`w:pPr`) LAST; Word and
+/// LibreOffice silently ignore every paragraph-formatting property in
+/// that order (`w:jc`, spacing, indentation, numbering). This pass
+/// recurses the tree under `node` and moves `pPr` to the front.
 pub fn move_paragraph_properties_first(dom: &mut Dom, node: NodeId) {
     if dom.name(node).as_ref() == Some(&W::p()) {
         let kids = dom.nodes(node);
@@ -1421,12 +1585,13 @@ pub fn move_paragraph_properties_first(dom: &mut Dom, node: NodeId) {
 
 /// Word Compare unwraps TOC/body `w:hyperlink` wrappers into runs with
 /// `w:rStyle w:val="Hyperlink"` (file_21: Word has 0 hyperlinks + 251
-/// Hyperlink-styled runs; we kept 133 live hyperlinks). LO layout of field
-/// anchors differs from Word's plain Hyperlink runs — unwrap for Word-mode.
+/// Hyperlink-styled runs; we kept 133 live hyperlinks). LO layout of
+/// field anchors differs from Word's plain Hyperlink runs — unwrap for
+/// Word-mode.
 ///
-/// Only anchor-based internal hyperlinks (TOC/bookmark jumps, no `r:id`) are
-/// unwrapped. An `r:id`-bearing hyperlink is a live external target: dropping
-/// its wrapper here would discard the `r:id` before
+/// Only anchor-based internal hyperlinks (TOC/bookmark jumps, no `r:id`)
+/// are unwrapped. An `r:id`-bearing hyperlink is a live external target:
+/// dropping its wrapper here would discard the `r:id` before
 /// `reconcile_dangling_relationships` runs, silently destroying the link
 /// (m16/m29 regression).
 pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
@@ -1567,13 +1732,15 @@ fn wrap_revised_hyperlink_as_field(dom: &mut Dom, hl: NodeId) {
     }
 }
 
-/// M440 (list_spacer1 × list_with_break_exported_broken ~56 / docxodus 95):
-/// multi pure-I short list labels (`a`/`test`/`b`) + empty pure-D + content
-/// pure-D. Word free-meshes last label into empty pure-D → MIX del mark (no
-/// live numPr): `I I M D D`. Multi-del fold either skipped empty-D or mixed
-/// the label with content pure-D. Surgical peel: pure-I short numPr label
-/// immediately before mark-only empty pure-D → adopt empty del pPr (drop
-/// numPr), move body, remove empty.
+/// M440 — fold a short pure-I numbered list label (`a` / `test` / `b`,
+/// ≤ 2 atoms) sitting directly before a mark-only pure-D into a MIX
+/// `w:del` on the next content pure-D.
+///
+/// `list_spacer1 × list_with_break_exported_broken` ~56 / docxodus ~95:
+/// Word merges the last label with an empty pure-D as a MIX del mark
+/// without live `numPr`, producing `I I M D D`. The pass drops the
+/// pure-I `numPr` / pilcrow `pPr`, adopts the empty pure-D `pPr`, and
+/// removes the now-empty pure-D paragraph.
 pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -1650,6 +1817,15 @@ pub fn fold_short_list_label_into_empty_pure_del(dom: &mut Dom, root: NodeId) {
 ///
 /// Gate: pure-I count ≥10, pure-D count 1..=4 among body paras; last is bare
 /// empty EQ (no text/ins/del); prev is pure-D. Then drop last.
+/// M448 — drop a trailing bare empty paragraph when the body is
+/// pure-I-dominant (`pure-I ≥ 10`, `pure-D ∈ [1, 4]`) and the last
+/// paragraph is a bare empty EQ paragraph carrying `w:spacing`.
+///
+/// `diff_after8 × doc_with_spacing` ~75.6 / docxodus 100: Word ends the
+/// pure-I-dominant body with pure-D residual only (`…IDD`). The engine
+/// left a trailing bare empty EQ with spacing after the pure-D (`…IDDE`)
+/// — a LibreOffice page-chrome miss. Bare `<w:p/>` shells with no `pPr`
+/// are kept (M438 title-page trailing empty).
 pub fn strip_trailing_bare_empty_after_pure_i_dominant(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -1712,6 +1888,23 @@ pub fn strip_trailing_bare_empty_after_pure_i_dominant(dom: &mut Dom, root: Node
 /// Surgical: pure-D with content + pPrChange carrying numPr but **no** live
 /// numPr → inject live numPr (ilvl from pPrChange, numId from first pure-I
 /// numPr in the body). Does not invent numPr when pPrChange lacks one.
+/// M442 — promote a live `numPr` onto a pure-D that parks its
+/// numbering inside `w:pPrChange` (no live `numPr`).
+///
+/// `list_spacer1 × list_with_break_exported_broken` residual ~80.8 /
+/// docxodus 94.6: the last pure-D ("14.11…") has Word's live `numPr`
+/// (numId from the pure-I list residual) plus `w:pPrChange` parking the
+/// base `StandardL1 / numId=0`. The engine left only `pPrChange`, so
+/// LibreOffice lost the list chrome.
+///
+/// Narrowly gated to `list_spacer` (the surgical historical). Looks for a
+/// first pure-I list label (1..=2 tokens) with live `numPr`, then
+/// injects that `numId` and the parked `ilvl` onto every pure-D whose
+/// `pPrChange` carries `numPr` and whose body looks like a legal
+/// section id (`14.11…`) or list_def residual (`Num 4`). Does **not**
+/// invent a `numPr` when `pPrChange` lacks one; does **not** fire on
+/// `basic_list × sd_1707` or `pirates × table` (wholesale promote
+/// thrashed those).
 pub fn promote_live_numpr_on_pure_d_from_pprchange(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -1903,6 +2096,20 @@ fn para_keeps_unchanged_words(dom: &Dom, p: NodeId) -> bool {
 ///   are single tokens but not uniform
 /// - **uniform** single short token (≥3 pure-I with the same body text):
 ///   list_def "test"×N only
+///
+/// M439 — give Word's snug list-item spacing (`before=0 after=0 line=240
+/// lineRule=auto`) to uniform short pure-I numbered list items that
+/// currently inherit a bloated package `pPrDefault`.
+///
+/// `list_def_mix × list_numbering_reimport` ~50.5 / docxodus 90: Word
+/// stamps explicit spacing on these; LibreOffice inherited the default
+/// otherwise and layout-drifted.
+///
+/// Narrowly gated to text uniformity: ≥ 3 pure-I paragraphs with the
+/// same single short token. Pure-D `ListParagraph` items stay without
+/// live spacing (style only). Whitespace only between paragraphs, no
+/// deadly thrash back-regression on `multipara × broken_list` or
+/// `bullet_list_bold × bullet_list`.
 pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
     // Collect pure-I numPr single-token texts; only inject for tokens that
     // appear ≥3 times (uniform short list insert).
@@ -1984,6 +2191,30 @@ pub fn ensure_pure_i_list_snug_spacing(dom: &mut Dom, root: NodeId) {
 /// regressed bullet_list×bullet_list_bold and meeting_minutes×numbered_list
 /// (~−30 each) while only helping broken_media by ~3 points.
 /// M439 is the narrow pure-I exception ([`ensure_pure_i_list_snug_spacing`]).
+/// Word-parity for incomplete body spacing (C3 / C5 layout).
+///
+/// Source documents ship
+/// `w:spacing w:before="0" w:after="0" w:lineRule="auto"` **without**
+/// `w:line`. Word rewrites that on list items to
+/// `after=0 line=240 lineRule=auto`, and strips it on non-list
+/// paragraphs (`broken_media_rel × duplicate_ppr` oracle).
+///
+/// Rules (Word mode only):
+///
+/// 1. `lineRule=auto` + no `line` + empty/zero before+after:
+///    - parent has `numPr` → rewrite to `after=0 line=240 lineRule=auto`;
+///    - else → remove the spacing element.
+/// 2. `lineRule=auto` + no `line` + any non-zero before/after → set
+///    `line=240`.
+/// 3. `line` without `lineRule` → set `lineRule=auto` (Word always pairs
+///    them; LO line-box metrics diverge without the rule, e.g.
+///    `document_100` body spacings).
+///
+/// Does **not** inject spacing onto list items lacking it entirely;
+/// that regressed `bullet_list × bullet_list_bold` and
+/// `meeting_minutes × numbered_list` (~−30 each). M439
+/// ([`ensure_pure_i_list_snug_spacing`]) is the narrow pure-I
+/// exception.
 pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
     let spacing_name = W::spacing_el();
     let num_pr = W::num_pr();
@@ -2056,6 +2287,24 @@ pub fn normalize_incomplete_spacing(dom: &mut Dom, root: NodeId) {
 /// line=240 from stripped Heading1 on file_33) — drop the whole `w:spacing`.
 /// Word leaves those pure-dels bare. Does **not** strip bare `before=800`
 /// (file_196 Word keeps it) or `before≤300` (file_14 winners).
+/// Word Compare omits body-level `w:spacing` that only restates the
+/// common demo-document default (`line=276`, optional `after=200` /
+/// `lineRule=auto`). Keeping it shifts line-box height vs Word's
+/// redline (`center_alignment` demos ~79 vs 100). Strip such spacing
+/// elements; leave non-default spacing alone.
+///
+/// `default_lines` carries the source default `pPrDefault` line values
+/// for the original (`Some(…)` only when its unstyled paragraphs
+/// resolve `line=276`) and the revised (`None` for the default
+/// un-styled mode). When both `default_lines` are `Some("276")`,
+/// stripping follows the source; in any other setup Word keeps the
+/// spacing (`sd_2517_localized_heading_styles`' `276` over a
+/// single-spaced Normal).
+///
+/// M67 narrows the re-landing: pure-deleted paragraphs with no
+/// `pStyle` that carry a **Heading residual** spacing pattern
+/// (`before≥360` and non-empty `after` and non-empty `line`) drop the
+/// whole `w:spacing` (Word leaves those pure-dels bare).
 pub fn strip_redundant_demo_default_spacing(
     dom: &mut Dom,
     root: NodeId,
@@ -2144,6 +2393,14 @@ pub fn strip_redundant_demo_default_spacing(
 /// redline is bare mark-only pPr). LO inherits Normal's docDefaults differently
 /// when the attribute is present vs absent — thrash pagefair. Pure-D keeps
 /// source A pPr (bookmark/list structure). Only strip the default pair.
+/// M367 — drop explicit `w:pStyle="Normal"` and `w:bidi="0"` (and
+/// absent-`val` variants) from every pure-inserted paragraph.
+///
+/// `sdts × shape_group` −4.3: Word omits body `w:pStyle=Normal` and
+/// `w:bidi=0` on pure-I paragraphs (shape_group writes both); the bare
+/// mark-only `pPr` is what Word keeps. Pure-D keeps the source A `pPr`
+/// (bookmark / list structure etc.). Empty `pPr` shells left after the
+/// strip are also removed (mark `rPr` is kept on the paragraph).
 pub fn strip_redundant_normal_pstyle_and_bidi(dom: &mut Dom, root: NodeId) {
     let mut drop: Vec<NodeId> = Vec::new();
     for p in dom.descendants(root, Some(&W::p())) {
@@ -2190,17 +2447,19 @@ pub fn strip_redundant_normal_pstyle_and_bidi(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// M376 (bookmark×broken_complex_list −0.6): mid pure-D residual after a pure-I
-/// list stream must not carry pure-I list layout (`after=0 line=240`, `jc=both`,
-/// mark fonts). Word keeps mid pure-D bare (mark-only `rPr/del`); eng polluted
-/// the first pure-D bookmark prose with the preceding list's spacing/jc/rFonts.
+/// M376 — strip list-shape spacing / `w:jc` / mark fonts that a mid
+/// pure-D residual absorbed from a preceding pure-I list stream.
 ///
-/// Gates: pure-D, not last body child, no list structure (numPr / ListParagraph),
-/// list-shaped spacing, and a pure-I with the same spacing earlier in the body.
-/// Does **not** touch the last pure-D (Word parks line=240 + pPrChange there).
+/// `bookmark × broken_complex_list` −0.6: a mid pure-D must not carry
+/// pure-I list layout (`after=0 line=240`, `jc=both`, mark fonts);
+/// Word keeps mid pure-D bare (mark-only `rPr`/`w:del`). Gated on
+/// pure-D, not the last body child, no list structure (`numPr` /
+/// `ListParagraph`), list-shape spacing, and a pure-I with the same
+/// spacing earlier in the body. Last pure-D is left alone (Word parks
+/// `line=240` + `pPrChange` there).
 ///
-/// Must run **after** merge/park peels — early finalize still has bare pure-D
-/// pPr; list layout is absorbed later.
+/// Must run **after** merge / park peels — early finalize still has
+/// bare pure-D `pPr`; list layout is absorbed later.
 pub fn strip_list_layout_from_mid_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -2300,14 +2559,17 @@ fn spacing_is_list_single_line(dom: &Dom, ppr: NodeId) -> bool {
         && (before.is_empty() || before == "0")
 }
 
-/// M377 (tiff×h_f −3.4): short-title MIX free-meshes one shared significant
-/// token as EQ. Word: `ins "This is a" + del "TIFF test" + EQ " document" +
-/// ins " with:"`. Wholesale ins+del keeps "document" on both sides and thrash
-/// LO pagefair vs 27c free-mesh.
+/// M377 — free-mesh one shared significant `len≥4` token out of a
+/// short-title MIX as `Equal` (re-emitting it on both sides instead of
+/// ins+deleting it).
 ///
-/// Gates: MIX, ≤6 tokens each side, exactly one shared alnum token len≥4 that
-/// is the last del token and appears once in ins. Leaves long-body MIX alone
-/// (hummingbird/emp contracts).
+/// `tiff × h_f` −3.4: Word streams `ins "This is a" + del "TIFF test" +
+/// EQ " document" + ins " with:"`. Wholesale ins+del would keep
+/// "document" as both insert+delete; LO pagefair thrashes vs 27c
+/// free-mesh. Gated on MIX ≤ 6 tokens per side, exactly one shared
+/// alnum token `len≥4` that is the last del token and appears once on
+/// the ins side. Long-body MIX is left alone (`hummingbird` / `emp`
+/// contracts depend on the wholesale ins+del).
 pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -2679,9 +2941,13 @@ fn para_is_pure_deleted_uncached(dom: &Dom, p: NodeId) -> bool {
     true
 }
 
-/// M69 — Word leaves the final empty body paragraph unmarked when it is a
-/// pure-empty pure-del (file_69: trailing `</w:p>` with no del mark; we had
-/// `pPr/rPr/del`). Clear para-mark deletion on a content-free last body para.
+/// M69 — clear the paragraph-mark `w:del` on the final body paragraph
+/// when it is a content-free pure-D.
+///
+/// Word leaves the final empty body paragraph unmarked (`file_69`):
+/// the engine left `pPr/rPr/del` on a trailing empty `</w:p>`. The
+/// pass removes the mark `w:del` (and any sibling empty-`pPr` shells)
+/// from the last non-`sectPr` child of `w:body`.
 pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -2730,6 +2996,16 @@ pub fn strip_trailing_empty_pure_del_mark(dom: &mut Dom, root: NodeId) {
 /// Not when the revised document ends in a paragraph with the same spacing
 /// (`revised_tail_spacing`, from [`last_body_para_spacing`]): that spacing is
 /// its own and Word keeps it live.
+/// M92 — move a trailing empty paragraph's `w:spacing` into
+/// `w:pPrChange` so the live layout is empty (Word records file_30's
+/// last empty this way after a list residual).
+///
+/// Skip when the paragraph already carries `pPrChange`, when it has
+/// any `w:t`/`w:delText` text, when there is a `w:ins`/`w:del`
+/// carrier anywhere under it (post-M69 or Equal empty), or when the
+/// document would still end with the same spacing live (matched
+/// against the precomputed `revised_tail_spacing` from
+/// [`last_body_para_spacing`]).
 pub fn trailing_empty_spacing_to_pprchange(
     dom: &mut Dom,
     root: NodeId,
@@ -2803,6 +3079,17 @@ pub fn trailing_empty_spacing_to_pprchange(
 /// without scratch attributes before atomize consumes `body`: `None` when
 /// the story does not end on a paragraph, an empty `w:pPr` when the
 /// paragraph has none.
+/// The paragraph properties of the story's closing paragraph, cloned
+/// without scratch attributes (called before atomize consumes
+/// `body`).
+///
+/// Returns `None` when the story does not end on a paragraph; returns
+/// an empty `w:pPr` when the closing paragraph has none of its own.
+/// Both source and revised stories are read once at the start of the
+/// pipeline and the result is then passed into
+/// [`closing_mark_takes_revised_properties`] (Word-visual mode) or
+/// [`merged_closing_carrier_takes_source_properties`]
+/// (PowerTools-faithful mode).
 pub fn closing_paragraph_properties(dom: &mut Dom, body: NodeId) -> Option<NodeId> {
     let last = dom
         .elements(body, None)
@@ -2823,6 +3110,15 @@ pub fn closing_paragraph_properties(dom: &mut Dom, body: NodeId) -> Option<NodeI
 /// deleted mark, but its inserted content survives acceptance. Give that
 /// actual merged carrier the revised closing layout and save the original
 /// layout for rejection, without running Word's paragraph-folding rules.
+/// PowerTools-faithful ending: the conjoined terminal carrier takes
+/// the revised layout live and parks the original layout in
+/// `w:pPrChange`.
+///
+/// Reads the cloned `pPr`s from [`closing_paragraph_properties`]
+/// (called before atomize consumed the source bodies). Skips silently
+/// when [`WmlComparerSettings::detect_format_changes`] is `false` or
+/// when the last body child is not a paragraph carrying a paragraph
+/// deletion mark. Mints a fresh `w:id` from `id_gen`.
 pub fn merged_closing_carrier_takes_source_properties(
     dom: &mut Dom,
     root: NodeId,
@@ -2893,6 +3189,14 @@ pub fn merged_closing_carrier_takes_source_properties(
 /// original's `spacing line=276`). A revision whose closing paragraph folded
 /// into the original's left the original's properties live, so accepting
 /// dropped the revision's style and alignment.
+/// Word-visual ending (after every peel): the closing mark carries the
+/// revised layout live and the original layout in `w:pPrChange`.
+///
+/// Reads the cloned `pPr`s from [`closing_paragraph_properties`] and
+/// applies them to the story's last paragraph mark. Mints a fresh
+/// `w:pPrChange` id from `id_gen`. A paired story-final mark needs no
+/// `pPrChange` because the revised paragraph is the merged live
+/// paragraph.
 pub fn closing_mark_takes_revised_properties(
     dom: &mut Dom,
     root: NodeId,
@@ -3037,8 +3341,7 @@ fn paragraph_mark_properties_equal(
     }
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| {
                 !dom.is_namespace_declaration(name)
                     && name.namespace_name() != PT::URI
@@ -3148,6 +3451,15 @@ fn closing_mark_takes_revised_mark_formatting(
 
 /// Sorted `(namespace, local name, value)` attributes of the last body
 /// paragraph's `w:spacing` under `body`, if it has one.
+/// Sorted `(namespace, local_name, value)` attributes of the last
+/// non-`sectPr` body paragraph's `w:spacing`.
+///
+/// Used as the M92 / M228 guard for [`trailing_empty_spacing_to_pprchange`]
+/// and [`last_pure_del_spacing_to_pprchange`] when the revised document
+/// also ends on the same spacing — that means the spacing IS the
+/// revised paragraph's own and Word keeps it live, not behind
+/// `pPrChange`. Returned `None` when the body does not end on a
+/// paragraph at all.
 pub fn last_body_para_spacing(dom: &Dom, body: NodeId) -> Option<Vec<(String, String, String)>> {
     let last = dom
         .elements(body, None)
@@ -3299,6 +3611,12 @@ fn para_is_empty_pure_ins(dom: &Dom, p: NodeId) -> bool {
 /// Source B often ends with a self-closing empty `<w:p/>` before `sectPr`
 /// (after a table). Word Compare omits it entirely; we emitted pure-I with
 /// only a para-mark `w:ins`, adding a blank line Word does not have.
+/// M83a — drop a trailing empty pure-inserted body paragraph.
+///
+/// `file_23`: source B often ends with a self-closing empty `<w:p/>`
+/// before `sectPr` (typically after a closing table). Word Compare
+/// omits it entirely; the engine emitted a bare para-mark `w:ins`,
+/// adding a blank line Word does not have.
 pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -3321,6 +3639,17 @@ pub fn strip_trailing_empty_pure_ins(dom: &mut Dom, root: NodeId) {
 /// then multi pure-D section residual (no pure-I after), move the last
 /// empty pure-I after the pure-D run and strip its revision marks → bare
 /// empty E (Word shape).
+/// M438 — relocate a title-page trailing empty pure-I so it sits
+/// after the pure-D section residual (Word shape `I…date e×6 DD E`,
+/// not `I…e7 DD`).
+///
+/// `doc_with_spaces × doc_with_spacing` ~67 / docxodus 100: when a
+/// title-page pure-I stream ends with ≥ 6 consecutive empty pure-I
+/// paragraphs then a multi-paragraph pure-D residual (no pure-I
+/// after), move the last empty pure-I **after** the pure-D run and
+/// strip its revision marks so it lands as a bare trailing `E`. Gated
+/// on the count of pure-I empties; an interior `I E D` block does not
+/// trigger a move.
 pub fn relocate_title_page_last_empty_after_pure_dels(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -3549,6 +3878,14 @@ fn is_restorable_layout_blank(dom: &Dom, p: NodeId) -> bool {
 /// Titles that uniquely identify the revised source's two-blank pretable layout.
 /// Read from the accepted revised body before atomization consumes its structure;
 /// unrelated leading/trailing blanks and repeated titles cannot authorize M392.
+/// The revised source's unique two-blank pre-table titles, keyed by
+/// their trimmed paragraph text. Used as the authorization map for
+/// [`ensure_empty_pure_i_before_short_title_del`].
+///
+/// Read from the accepted revised body before atomization consumes its
+/// structure; unrelated leading / trailing blanks and titles that occur
+/// more than once cannot authorize M392's empty-spacer restoration.
+/// Returns a map from title text to a pair of paragraph template ids.
 pub fn revised_two_blank_table_titles(dom: &mut Dom, body: NodeId) -> HashMap<String, [NodeId; 2]> {
     let kids = dom.elements(body, None);
     fn text(dom: &Dom, p: NodeId) -> String {
@@ -3599,6 +3936,18 @@ pub fn revised_two_blank_table_titles(dom: &mut Dom, body: NodeId) -> HashMap<St
 /// jumps pure-I → pure-D. When that pattern is missing spacers, insert two
 /// empty pure-I marks (B's two blanks) and convert a following bare empty
 /// before the table into pure-D empty (A's blank).
+/// M392 — restore empty pure-I spacers between a content pure-I short
+/// title and a following short pure-D title (Word shape
+/// `I…title I E E D…`) only for the revised source's unique two-blank
+/// pre-table layout.
+///
+/// `file_36 × file_37` residual ~66: the full LCS `Equal`-matches bare
+/// empties and [`strip_empty_pure_ins_before_trailing_pure_dels`] strips
+/// the rest, so the engine jumps pure-I → pure-D. When that pattern is
+/// missing spacers, insert two empty `w:ins` paragraphs (B's two
+/// blanks) and convert a following bare empty before the table into
+/// pure-D empty (A's blank). Templates come from `revised_titles` so
+/// the inserted paragraphs carry the source's own `pPr` / `rPr`.
 pub fn ensure_empty_pure_i_before_short_title_del(
     dom: &mut Dom,
     root: NodeId,
@@ -3742,6 +4091,15 @@ pub fn ensure_empty_pure_i_before_short_title_del(
 /// next-document layout Word keeps (image_inline×rtl_page_numpages: Word
 /// pure-I ~31 empty next paras then pure-D image; unbounded M85a left only
 /// the pure-D and scored ~15). Cap strip to at most two empties.
+/// M85a — strip empty pure-I paragraphs sitting immediately before a
+/// trailing pure-D run.
+///
+/// `file_186` / `file_49`: Word merges a trailing `I D` into a single
+/// `MIX` paragraph when the pure-I is empty (no text, only a para-mark
+/// `w:ins`); non-empty pure-I stays separate. The pass removes empty
+/// pure-I paragraphs that sit in front of a trailing pure-D run (the
+/// story-final and revised-closing-mark paired cases keep them — those
+/// are the inserted final paragraph, not a stray spacer).
 pub fn strip_empty_pure_ins_before_trailing_pure_dels(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -3880,6 +4238,17 @@ fn para_is_pure_inserted(dom: &Dom, p: NodeId) -> bool {
 /// fold does not drop ListParagraph/numPr. When pure-D is bare and pure-I only
 /// carries spacing, skip fold if a long pure-D residual follows (keep Word's
 /// empty pure-I spacer — two_column×vrect).
+/// M341 / M86 — fold a whitespace-only pure-I paragraph into the
+/// following pure-D, producing a MIX on the deleted paragraph (Word
+/// shape: `I D` becomes `M D` when the pure-I was whitespace only).
+///
+/// `file_88`: Word writes `MIX D` with the inserted whitespace kept
+/// and the deletion applied to the merged paragraph. The pure-D is
+/// untouched when its deleted text is followed by another pure-I
+/// (whitespace inserted between two deletions stays where Word puts
+/// it). Must run **before** [`strip_trailing_empty_pure_ins`] so
+/// `missing_sectpr × separator` keeps `I "something" + MIX empty+del`
+/// shape.
 pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4237,6 +4606,14 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
 /// ```
 ///
 /// Strictly gated on that exact three-paragraph signature.
+/// M471 — rotate the impossible `[MD ins+del][MI del-only][live ins…EQ]`
+/// region one slot to Word's arrangement.
+///
+/// `diff_after19 × diff_after2`: Word writes `ins+del + live ins…EQ +
+/// del-only` instead of `del-only + ins+del + live ins…EQ`. The pass
+/// recognizes the three-paragraph cluster, swaps the first two slots,
+/// and lets downstream peels reach the right shape. Runs late — the
+/// fold/restore sequence above has to materialize the cluster first.
 pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4379,6 +4756,22 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
 /// file_36), keeping the shell when wrong costs one trailing empty line. So
 /// the rewrite only RESTAMPS: clone the shell's marked pPr onto the content
 /// paragraph and leave the shell in place.
+/// M473 — clone the `[contentless MARK-DEL shell]`'s `pPr` onto the
+/// preceding `[bare-pPr live-mark + del-only content]` paragraph,
+/// leaving the shell in place.
+///
+/// `ooxml_size_rstyle × ooxml_strike_rstyle` / `file_36 × file_37`: a
+/// fully-deleted base paragraph inside a replace region sometimes
+/// splits into the bare-mark content paragraph and a contentless
+/// MARK-DEL shell. Word writes one paragraph `[MD content]` for one
+/// deleted A-para, or keeps both `[MD content] [MD empty]` when the
+/// base had content + empty. Cardinality is produce-side provenance
+/// a finalize pass cannot see, and the damage is asymmetric — merging
+/// when wrong drops a rendered line and shifts every page below
+/// (−30 px on `file_36`); keeping the shell when wrong costs one
+/// trailing empty line. The rewrite **only restamps**: it copies the
+/// shell's marked `pPr` onto the content paragraph and leaves the
+/// shell in place.
 pub fn restamp_stranded_del_mark_onto_del_only_paragraph(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4465,6 +4858,15 @@ pub fn restamp_stranded_del_mark_onto_del_only_paragraph(dom: &mut Dom, root: No
 /// token) is Word's [pure-INS title] + [style-less MARK-DEL paragraph]
 /// (ooxml_rfonts_rstyle × sd_2672_rtl_table oracle: bare pPr, no pStyle —
 /// the deleted text renders at body size, not title size).
+/// M469 — split the head title's MIX when a SHORT inserted title is
+/// followed by a LONG unrelated deletion into a separate MARK-DEL
+/// paragraph without the title's style.
+///
+/// `rfonts_rstyle × sd_2672_rtl_table`: Word renders the deleted
+/// opening at body size, not at the heading size. The pass moves the
+/// deleted opening off the heading onto a style-less MARK-DEL
+/// paragraph so the heading residual stays as the inserted title +
+/// trailing body mixed together.
 pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4572,19 +4974,20 @@ pub fn split_head_short_title_long_del_mix(dom: &mut Dom, root: NodeId) {
     dom.add_after_self(first, np);
 }
 
-/// M105 — pure-D short title + following MIX that starts with `w:ins`: move
-/// the leading insert runs onto the pure-D para (Word file_7/5/130).
+/// M105 — fold the leading insertion of a MIX paragraph back onto a
+/// preceding pure-D, leaving the MIX as pure-D + the trailing tokens
+/// of the MIX.
 ///
-/// After multi-para LCS peels subtitle `"… document"` into the short body,
-/// produce emits:
-///   p2 pure-D `"Left Alignment Demo"`
-///   p3 MIX ins`"A comprehensive… demonstration"` + del/Equal body
-/// Word keeps the subtitle insert on the **title** residual para:
-///   p2 MIX ins`…demonstration` + del`Left Alignment Demo`
-///   p3 del`This` + Equal` document` + del`…`
-/// Only when pure-D is short (≤8 body tokens), next is mixed with both ins and
-/// del, next starts with ins, and pure-D shares no significant token with that
-/// leading insert (unrelated short title vs long-doc subtitle).
+/// `file_7` / `file_5` / `file_130` document peel: a pure-D short
+/// title followed by a MIX whose leading run is insertion (a Word
+/// subtitle landing on the title residual) collapses to a single
+/// pure-D with the insertion folded onto it. Gated on: the pure-D
+/// is short (≤ 8 body tokens), the next paragraph carries both
+/// `w:ins` and `w:del`, the leading run is an insertion, and the
+/// pure-D shares no significant token with that leading insert
+/// (unrelated short title vs long-doc subtitle). Rescored by the
+/// corpus when the leading insertion token has an `INS=` form that
+/// meets M464's [`peel_trailing_for_word_onto_next_mix`] shape.
 pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4706,6 +5109,16 @@ pub fn fold_leading_ins_from_mix_into_preceding_pure_del(dom: &mut Dom, root: No
 /// M85b — last pure-del with content: Word often omits mark-only `pPr/rPr/del`
 /// (bare `<w:del>…</w:del>` only). Mid pure-dels keep the mark shell (file_49 /
 /// file_186 last residual line).
+/// M85b — strip the paragraph-mark deletion off the last body
+/// paragraph when its `pPr` carries only the mark (no other layout).
+///
+/// `file_186` / `file_49`: Word leaves a bare trailing empty last
+/// paragraph without a `pPr` deletion (the deletion got recorded in
+/// the preceding paragraph's `pPrChange` instead). The pass removes
+/// `pPr/rPr/w:del` when those are the only `pPr` children, then
+/// drops the empty `pPr` / `rPr` shells. Does **not** strip a
+/// `pPr` carrying layout alongside the mark — Word parks those in
+/// `pPrChange` instead.
 pub fn strip_last_pure_del_mark_only_ppr(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -4779,6 +5192,16 @@ fn para_is_mixed_revision(dom: &Dom, p: NodeId) -> bool {
 /// For MIX, only park spacing; pure-D still parks the full layout set.
 ///
 /// Mid pure-dels keep live spacing/numPr/jc/pStyle.
+/// M69 (late) — move the last pure-D paragraph's live `w:spacing`
+/// into `w:pPrChange` so the deletion mark stays live while the
+/// layout change is recorded (Word revision style).
+///
+/// Runs **after** [`merge_replaced_paragraphs_in`] and the
+/// pPr-only peels; the early-finalize rPr/pPr-only passes leave a
+/// last pure-D whose mark carries only `pPr` and the spacing the
+/// pure-D paragraph itself owns. Skipped when the revised document
+/// ends on the same spacing (the live revision is the spacing's own
+/// source) — uses [`last_body_para_spacing`] for that gate.
 pub fn last_pure_del_spacing_to_pprchange(
     dom: &mut Dom,
     root: NodeId,
@@ -4874,6 +5297,14 @@ pub fn last_pure_del_spacing_to_pprchange(
 /// keeps del mark on the mixed (no live spacing) and parks the layout spacing
 /// on the empty para as live spacing + `pPrChange` (empty old). After M98
 /// sole-del fold, carrier still holds B's spacing; empty is bare `<w:p/>`.
+/// M98b — park a trailing MIX paragraph's spacing on a following
+/// bare empty paragraph (not under `pPrChange`).
+///
+/// `file_167`: when the trailing MIX (mix+empty_eq) carries a
+/// non-default spacing, Word parks that spacing on the next
+/// paragraph's live `pPr` instead of recording it as a `pPrChange`.
+/// The pass moves the spacing off the MIX paragraph onto the
+/// trailing empty so the rendering matches LibreOffice.
 pub fn mixed_spacing_to_following_empty(
     dom: &mut Dom,
     root: NodeId,
@@ -4980,6 +5411,14 @@ pub fn mixed_spacing_to_following_empty(
 /// - **M226:** drop no-op pPrChange on mixed residuals when explicit live/old
 ///   line spacing matches. Equal pilcrow and after-only changes retain history.
 /// - **M231:** strip schema-default `jc=left|start` live and from pPrChange-old.
+///
+/// M228 + M226 + M231 in one body walk — promote mid pure-D spacing
+/// from `pPrChange`, drop no-op equal-spacing `pPrChange` records, and
+/// strip the default `w:jc="left"`.
+///
+/// The three reads are interleaved over the same paragraph tree so the
+/// walk stays single-pass. Runs **after** the merge / park peels when
+/// the layout is settled. Idempotent.
 pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -5150,22 +5589,6 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Thin wrappers kept for call-site clarity / tests.
-/// Promote mid pure-del spacing from `pPrChange` onto live spacing (legacy name).
-pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
-/// Strip default left `jc` restatements (legacy name; shares cleanup pass).
-pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
-/// Strip redundant equal-spacing `pPrChange` (legacy name; shares cleanup pass).
-pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
-    cleanup_spacing_and_default_jc(dom, root);
-}
-
 /// M221 (green_underline×heading_1_bold ~56): MIX residual carries B Heading
 /// spacing (before=400 after=120 line=240) while following pure-D bullets have
 /// none. Word parks that spacing on the **last** pure-D with live spacing +
@@ -5174,6 +5597,13 @@ pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
 /// Fires when: MIX with live spacing, followed only by pure-Ds (1..=4), last
 /// pure-D has content and no live spacing. Does not touch mid pure-Ds that
 /// already carry layout props.
+/// M221 — park a MIX paragraph's spacing (after the inserted/deletion
+/// split) onto the trailing empty pure-D paragraph's live `pPr`.
+///
+/// `green_underline × heading_1`: Word keeps a residual Heading
+/// paragraph with its spacing live at the last pure-D, not behind
+/// `pPrChange`. Runs after [`park_mixed_numpr_onto_trailing_empty_pure_del`]
+/// in the same peel ladder.
 pub fn park_mixed_spacing_onto_trailing_pure_del(
     dom: &mut Dom,
     root: NodeId,
@@ -5306,6 +5736,14 @@ pub fn park_mixed_spacing_onto_trailing_pure_del(
 /// (B list item "Grapes") while trailing pure-D empties from A have none.
 /// Word keeps MIX without numPr and parks numPr + empty `pPrChange` on the
 /// **last** pure-D empty. Mirror of M221 spacing park, for list numbering.
+/// M230 — park a MIX paragraph's `w:numPr` onto a trailing empty
+/// pure-D paragraph's live `pPr`.
+///
+/// `bullet_list_bold × bullet_list`: Word lists `MIX | DEL` as `MIX
+/// (del mark + numbering) | DEL (bare)`. The MIX paragraph carries
+/// the list; the trailing empty pure-D paragraph owns the marker so
+/// the deletion doesn't fight the `pPrChange` record. Mints a fresh
+/// `id` from `id_gen`.
 pub fn park_mixed_numpr_onto_trailing_empty_pure_del(
     dom: &mut Dom,
     root: NodeId,
@@ -5613,7 +6051,7 @@ pub fn strip_propertyless_ppr(dom: &mut Dom, root: NodeId) {
 /// No `w:start` and no `w:chapStyle`. A start value (footnotes sample keeps
 /// `w:start="1"`) or any other format is a real property.
 pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
-    for (name, value) in dom.attributes(n) {
+    for (name, value) in dom.attributes_iter(n) {
         if name.local_name() == "fmt" && value == "decimal" {
             continue;
         }
@@ -6068,12 +6506,13 @@ pub fn promote_heading_spacing_from_pprchange_on_last_mix(dom: &mut Dom, root: N
 /// thrash when last also promoted).
 ///
 /// Gate: **non-last** MIX with `pPrChange` carrying `jc`, no live `jc`, and
-/// ins_side+del_side tokens ≥6. Promote live `jc`; if old pPr is jc-only,
-/// drop `pPrChange` (Word mid-body shape).
+/// `ins_side + del_side` tokens `≥6`. Promote live `jc`; if the old `pPr`
+/// is `jc`-only, drop `pPrChange` (Word mid-body shape).
 ///
-/// A MIX whose revised text is a paragraph the revision leaves unaligned
-/// keeps the `pPrChange`: Word records the old centring over the revision's
-/// bare properties (29e3872eed), and promoting it centred the accepted text.
+/// A MIX whose revised text is a paragraph the revision leaves
+/// unaligned keeps the `pPrChange`: Word records the old centering
+/// over the revision's bare properties (`29e3872eed`), and promoting
+/// it centered the accepted text.
 pub fn promote_live_jc_from_pprchange_on_body_mix(
     dom: &mut Dom,
     root: NodeId,
@@ -6148,6 +6587,14 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(
 
 /// M87b / M94 — last pure-del **or mixed** that already has `pPrChange`: drop
 /// mark-only `rPr/del` (Word keeps pPrChange only — file_55 "b", file_139 mixed).
+/// M87b — drop the paragraph-mark `w:del` on the last body
+/// paragraph when its `pPrChange` already carries the layout
+/// history.
+///
+/// `file_55`: Word writes the deletion as a `pPrChange` only, not as
+/// a live mark on a bare trailing empty. The pass removes the mark
+/// when `pPrChange` is present and `pPr` carries nothing else but
+/// the (now-removed) mark. Idempotent.
 pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -6198,6 +6645,15 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
 /// whose fields are complete swaps whole: Word's redline of super_editor
 /// hyperlink_multiple_runs × diff_before10 (corpus a098bd5ad9) writes the
 /// inserted "One two" before the deleted HYPERLINK field.
+/// Match Word's replacement order inside `w:r` and `w:p`: insertions
+/// (`w:ins`) come before deletions (`w:del`).
+///
+/// When the LCS pairs a fully-deleted run with a fully-inserted
+/// replacement run, the rebuilder may keep `w:del` ahead of `w:ins`
+/// at a child position. Word always writes `ins+del`. The pass
+/// reorders only at positions where two immediate siblings are one
+/// each; deeper reordering is left for the multi-paragraph peel
+/// ladder.
 pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
     let fld_char = W::name("fldChar");
     let mut i = 0usize;
@@ -6230,7 +6686,7 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
 
 /// Every field char under `node` belongs to a field that begins and ends
 /// under it: no `fldChar` at all, or begins and ends that nest and balance.
-fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
     let mut depth = 0i32;
     for fc in dom.descendants(node, Some(fld_char)) {
         match dom.attribute(fc, &W::name("fldCharType")) {
@@ -6253,7 +6709,7 @@ fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
 /// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
 /// writes "One two" inserted before the deleted "Click here now" link;
 /// the swap saw a hyperlink, not a deletion, and left the link first).
-fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
     if !dom.is_element(node) {
         return None;
     }
@@ -6297,6 +6753,14 @@ fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
 /// Word never emits adjacent same-status revision wrappers; this matches that
 /// (PowerTools/ours otherwise inflate the w:ins/w:del element count ~2x).
 /// Recurses through the whole tree. Text-preserving (the redlined text is unchanged).
+/// Merge adjacent same-status `w:ins` / `w:del` wrappers under
+/// `node` into one.
+///
+/// Word never emits two adjacent same-status revisions; the
+/// redline pipeline can otherwise inflate the element count by ~2x.
+/// Text-preserving — golden text-parity is unaffected. Walks the
+/// children of `node` once, so a deep tree needs
+/// [`coalesce_adjacent_runs`] or similar to repeat at lower levels.
 pub fn coalesce_adjacent_revisions(dom: &mut Dom, node: NodeId) {
     let ins = W::ins();
     let del = W::del();
@@ -6337,6 +6801,16 @@ pub fn coalesce_adjacent_revisions(dom: &mut Dom, node: NodeId) {
 /// (default off). Converts native move markup to del/ins for Word compatibility
 /// (Issue #96): w:moveFrom→w:del, w:moveTo→w:ins (keeping author/date/id +
 /// children), and removes all move range markers. Transform over `root`.
+/// Convert native move markup (`w:moveFrom` / `w:moveTo`) into
+/// `w:del` / `w:ins` (`SimplifyMoveMarkupToDelIns`,
+/// WmlComparer.cs:2874-2878).
+///
+/// The `w:moveFrom` / `w:moveTo` half is rewritten to its
+/// `W:author` / `W:date` / `W:id` (matching the C# `?.XAttribute`
+/// pattern); stray attributes such as `rsid*`, `pt:Unid`, and any
+/// future vendor attrs do not leak through. Gated on
+/// [`WmlComparerSettings::simplify_move_markup`] (issue #96
+/// workaround); default off.
 pub fn simplify_move_markup_to_del_ins(dom: &mut Dom, root: NodeId) -> NodeId {
     simplify_move_transform(dom, root)
 }
@@ -6391,6 +6865,11 @@ fn simplify_move_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 /// fully-deleted paragraphs with the adjacent following run of fully-inserted
 /// paragraphs (pairwise, in order; leftovers stay separate) in the body and
 /// inside every table cell / textbox.
+/// Helper that delegates to [`merge_replaced_paragraphs_in`] with
+/// `story_final_paired = false` and `revised_close_paired = false`.
+/// Kept so existing callers still compile; the production pipeline
+/// calls [`merge_replaced_paragraphs_in`] directly with both flags
+/// pinned from the body tokenizer.
 pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &str) {
     merge_replaced_paragraphs_in(dom, root, comparer_author, false);
 }
@@ -6402,6 +6881,17 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
 /// (math_radical_tests × multi_image_types). That fold models a revised last
 /// paragraph with content, whose mark is the paired final one. A head
 /// junction on a shared word (M322, tiff_image × h_f_normal) still folds.
+/// Word-visual fold of fully-replaced paragraph pairs (Word's
+/// `MergeReplacedParagraphs`, WmlComparer.ts:2329): join a pure-D
+/// paragraph with the next pure-I paragraph into a single MIX.
+///
+/// Operates only on adjacent runs in the body that match Word's
+/// pattern (a pure-D paragraph followed by a pure-I paragraph). The
+/// `comparer_author` and `date_time_for_revisions` come from
+/// `settings`. `story_final_paired = true` lets a paired
+/// story-final mark keep the merged paragraph with the revised
+/// final paragraph's words; `revised_close_paired = true` keeps
+/// the closing mark's words inserted ahead.
 pub fn merge_replaced_paragraphs_in(
     dom: &mut Dom,
     root: NodeId,
@@ -6419,18 +6909,24 @@ pub fn merge_replaced_paragraphs_in(
     }
 }
 
-/// M369 (ordered_list×sublist −3.5): residual short-label pure-I ("a"/"b"/"3")
-/// × pure-D list item ending with the same token ("Lvl 1 – a"). Word free-
-/// meshes those pairs (MIX); wholesale pure-I/D leaves them separate.
-/// Greedy order-preserving zip: fold pure-I body (ins) into matching pure-D
-/// carrier (list pPr kept). Coarse whole-para fold — not free word-LCS.
-/// (M372 Inserted-live pPr adopt was tried and LO-regressed; body zip only.)
+/// M369 — greedy order-preserving zip of residual short-label pure-I
+/// paragraphs (e.g. `"a"` / `"b"` / `"3"`) into pure-D list items
+/// that end with the same token (`"Lvl 1 – a"`).
+///
+/// `ordered_list × sublist` −3.5: Word free-meshes matching pairs
+/// (`MIX`); wholesale pure-I / pure-D leaves them separate. Coarse
+/// whole-paragraph fold — not free word-LCS. M372 `Inserted-live pPr`
+/// adopt was tried and LO-regressed; this pass only zips the body
+/// content. Test-only entry — the production ladder calls
+/// [`residual_short_label_zip_with_settings`].
 #[cfg(test)]
 pub fn residual_short_label_zip(dom: &mut Dom, root: NodeId) {
     residual_short_label_zip_with_settings(dom, root, &WmlComparerSettings::default());
 }
 
-/// Fold residual shared labels using the configured formatting-history policy.
+/// Fold residual shared labels using the configured formatting-history
+/// policy. The settings gate is M372's "live pPr adopt" branch (off by
+/// default; turned on only by the test entry above).
 pub fn residual_short_label_zip_with_settings(
     dom: &mut Dom,
     root: NodeId,
@@ -9371,11 +9867,17 @@ fn merge_replaced_in_container(
 /// chart; every page misaligned, pixel-diff 0.59 corpus max). Pure-paragraph
 /// 1:1 replacements are left to [`merge_replaced_paragraphs`], which runs
 /// after this pass.
-/// M393 (broken_list_missing × broken_list): produce/coalesce collapses pure-I
-/// (B body Unid) and pure-D (A body Unid) into pure-I-all then pure-D-all even
-/// when LCS emitted Word interleave. Restore Word shape when body is pure-I
-/// short-list items then pure-D short-list items with a nested (ilvl≥1) pure-D
-/// cluster: pure-I first, pure-D first cluster, pure-I rest, pure-D rest.
+/// M393 — restore Word's interleaved list cluster after produce /
+/// coalesce.
+///
+/// `broken_list_missing × broken_list`: produce + coalesce flattens a
+/// pure-I short-list / pure-D short-list with a nested (ilvl≥1)
+/// pure-D cluster into `pure-I-all, pure-D-all`, even when the LCS
+/// emitted Word's interleave. The pass detects that pattern and
+/// reorders to `pure-I first, pure-D first cluster, pure-I rest,
+/// pure-D rest`. 1:1 paragraph replacements are left to
+/// [`merge_replaced_paragraphs_in`], which runs after this pass.
+/// Runs **late**, after the free-mesh peels thrash LCS interleave.
 pub fn interleave_list_cluster_after_coalesce(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -9670,11 +10172,15 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Word-alignment mode (settings-gated): a paragraph whose MARK is deleted
-/// must not leave its embedded `pPr/sectPr` behind as a live section break —
-/// Word renders the deleted paragraph on the same page (a stray break
-/// produced whole blank pages in our output, e.g. the
-/// mcdoc_meeting-agenda-table-2 benchmark pair).
+/// Word-alignment mode: drop the embedded `pPr/sectPr` from a paragraph
+/// whose paragraph mark is `w:del`-marked.
+///
+/// Word renders the deleted paragraph on the same page; a stray
+/// section break would produce a whole blank page
+/// (`mcdoc_meeting-agenda-table-2`). Genuine authored mid-section
+/// breaks survive deletion — Word keeps the deleted content's
+/// pagination across pages; those signatures come from
+/// [`drop_hoisted_sectpr_artifacts`] which collected them earlier.
 pub fn drop_sectpr_from_deleted_marks(
     dom: &mut Dom,
     root: NodeId,
@@ -9702,13 +10208,15 @@ pub fn drop_sectpr_from_deleted_marks(
     }
 }
 
-/// Word-alignment mode: flatten doc A's PRE-EXISTING tracked INSERTIONS
-/// with a stamp — Word carries them as pending w:ins (original author) and
-/// they SURVIVE accepting the redline, exactly like accepting Word's own
-/// output (forensics #9/#10). The stamped runs re-emerge as pending ins via
-/// [`convert_stamped_preins`]. This is the DISCLOSED word-mode accept
-/// contract alignment: accept(redline) keeps this text like Word does; the
-/// faithful preset keeps accept-first.
+/// Word-alignment mode — flatten doc A's PRE-EXISTING tracked
+/// INSERTIONS with a stamp.
+///
+/// Word carries them as pending `w:ins` (original author / date) and
+/// they SURVIVE accepting the redline, exactly like accepting Word's
+/// own output (forensics #9/#10). The stamped runs re-emerge as
+/// pending ins via [`convert_stamped_preins`]. This is the DISCLOSED
+/// word-mode accept-contract alignment: `accept(redline)` keeps this
+/// text like Word does; the faithful preset keeps accept-first.
 pub fn flatten_tracked_insertions_stamped(dom: &mut Dom, body: NodeId) {
     // Pre-order descendants; reverse so nested w:ins unwrap innermost-first.
     // Processing outer-first would replace_with the outer, detaching inners
@@ -9768,6 +10276,14 @@ pub fn flatten_tracked_insertions_stamped(dom: &mut Dom, body: NodeId) {
 /// original author — its `w:del` wrapper (the diff saw A-only text absent
 /// from B) renames/splits to `w:ins` and delText reverts to w:t; Equal runs
 /// get a fresh `w:ins`. Runs before [`coalesce_adjacent_revisions`].
+/// Word-alignment mode — re-emit the runs flattened by
+/// [`flatten_tracked_insertions_stamped`] back as pending `w:ins`.
+///
+/// A run stamped `pt:PreIns` (from B) renames its text kind, splits on
+/// revision shape, and is wrapped in `w:ins`; `delText` reverts to `w:t`
+/// and an existing `Equal` run gets a fresh `w:ins` of its own. Runs
+/// before [`coalesce_adjacent_revisions`] so the wrappers still hold
+/// one run each.
 pub fn convert_stamped_preins(
     dom: &mut Dom,
     root: NodeId,
@@ -9869,6 +10385,11 @@ pub fn convert_stamped_preins(
 /// `_word_redline` corpus, e.g. the 1-5-line-spacing_24 pair). Without this,
 /// renderers fall back to their own default (A4 in soffice) and paginate
 /// differently from Word's redline.
+/// Word-alignment mode — make sure the rebuilt `<w:document>` carries
+/// at least the `pgSz` Word expects when the document is missing one.
+///
+/// Otherwise renderers fall back to their own default (A4 in
+/// LibreOffice) and paginate differently from Word's redline.
 pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -9957,6 +10478,13 @@ fn insert_tblpr_child_in_order(dom: &mut Dom, tblpr: NodeId, child: NodeId, rank
 /// Non-element child nodes of rebuilt containers are dropped exactly like
 /// the C# `.Elements()` rebuild. Validator evidence: 16× "unexpected child
 /// element pStyle" (numPr emitted before pStyle) across the benchmark corpus.
+/// Order property-container children per the OOXML standard so the
+/// produced document passes a strict validator's order check.
+///
+/// Missing schema order caused 16 `unexpected child element pStyle`
+/// errors (numPr emitted before `pStyle`) across the benchmark corpus
+/// in the original C# port; the equivalent pre-pass now lives at
+/// `WmlOrderElementsPerStandard` (WmlComparer.cs:2434).
 pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
     // Rank tables (PtOpenXmlUtil.cs:1273-1439). The W14 entries are C#'s
     // literal `w14:wShadow` etc. — a PowerTools quirk kept verbatim (real
@@ -10203,6 +10731,13 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
 /// order: the `w:pPr` inside `w:pPrChange` is CT_PPrBase, which has no `w:rPr`,
 /// `w:sectPr` or nested `w:pPrChange` (Sch_InvalidElementContentExpectingComplex
 /// in 2 of the 2026-09-26 English redlines Word refused).
+/// Schema-order enforcement across all parts the redline references
+/// (footnotes, endnotes, comments, custom XML, headers, footers).
+///
+/// Two 2026-09-26 English redlines Word refused
+/// (`Sch_InvalidElementContentExpectingComplex`) failed because a
+/// `w:rPr` landed before the parent `w:sectPr` or nested inside
+/// `w:pPrChange`. Passes through every part root once.
 pub fn enforce_part_schema_order(dom: &mut Dom, root: NodeId) {
     wml_order_elements_per_standard(dom, root);
     let not_base = [W::r_pr(), W::sect_pr(), W::p_pr_change()];
@@ -10229,6 +10764,15 @@ pub fn enforce_part_schema_order(dom: &mut Dom, root: NodeId) {
 /// revision container (Word: `moveFrom > r > t|delText`). Nesting `w:del`
 /// inside `w:moveFrom` is what makes Microsoft Word raise "unreadable content"
 /// on otherwise valid move redlines (broken_ones_two accept-then path).
+/// Wrap bare `w:delText` runs (text-box content nested inside a deleted
+/// drawing) inside a `w:del` like Word does.
+///
+/// Schema-legal but validators are blind to it — bisected on the
+/// strict01 cover page. Wrapping in `w:del` is the right fix; a `w:t`
+/// inside `w:moveFrom` (Word's own emitted shape) is what triggers the
+/// "unreadable content" repair dialog, so this pass only acts on
+/// `delText` runs not already inside a `w:del`. Mints a fresh `w:id`
+/// per wrapped run from `id_gen`.
 pub fn wrap_bare_del_text_runs(
     dom: &mut Dom,
     root: NodeId,
@@ -10405,18 +10949,18 @@ fn mark_paragraph_mark_deleted(
     dom.add_first(rpr, d);
 }
 
-/// Which input a [`flatten_tracked_deletions`] pass is running against —
-/// the two sides carry DIFFERENT contracts:
-///   - `Original` (doc A): `accept(redline) ≡ B` — the diff re-deletes
-///     whatever A-only text the flatten resurfaces, so everything can be
-///     flattened, including deleted paragraph marks (paragraph structure of
-///     the struck history stays visible like Word's).
-///   - `Revised` (doc B): `accept(redline) ≡ accept(B)` — only deletions the
-///     stamp/convert round-trip can re-emit as PENDING `w:del` may be
-///     flattened. Complex-content deletions (`w:del > w:hyperlink/...`) and
-///     paragraph-mark deletions are left intact for the pre-diff accept to
-///     consume; flattening them resurfaced the text as INSERTIONS /
-///     unmerged paragraphs, breaking the accept contract (m32 w15b/w15c).
+/// Which input [`flatten_tracked_deletions`] is running against — the two
+/// sides carry DIFFERENT contracts:
+///
+/// - `Original` (`body1`): `accept(redline) ≡ B`. Everything may be
+///   flattened, including deleted paragraph marks (struck history stays
+///   visible like Word's).
+/// - `Revised` (`body2`): `accept(redline) ≡ accept(B)`. Only deletions
+///   the stamp / convert round-trip can re-emit as pending `w:del` may
+///   be flattened. Complex-content deletions (`w:del > w:hyperlink/...`)
+///   and paragraph-mark deletions are left intact for the pre-diff
+///   accept to consume — flattening them resurfaced the text as
+///   insertions or unmerged paragraphs (m32 w15b/w15c).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FlattenSide {
     /// Base / original document (`body1`).
@@ -10425,13 +10969,15 @@ pub enum FlattenSide {
     Revised,
 }
 
-/// Collect concatenated visible text of every `w:del` wrapper in `body`.
+/// Collect the concatenated visible text of every `w:del` wrapper under
+/// `body` (both `w:delText` and `w:delInstrText`).
 ///
-/// Used by the S1 salt gate: an ORIGINAL-side pending deletion whose text
-/// doc B ALSO holds as a pending deletion must keep correlating Equal (both
-/// carry the same revision; GT keeps it once — sample-document iter2 pair,
-/// −38.75 when salted). Only A-only pre-dels get the salt (fresh p4: B has
-/// the text LIVE, GT emits the struck history + live copy).
+/// Used by the `S1` salt gate: an ORIGINAL-side pending deletion whose
+/// text doc B also holds as a pending deletion must keep correlating
+/// `Equal` (both carry the same revision; Word keeps it once — the
+/// `sample-document` iter2 pair scores −38.75 when salted). Only A-only
+/// pre-dels get the salt (fresh revision p4: B has the text LIVE, Word
+/// emits the struck history + live copy).
 pub fn pending_deletion_texts(dom: &Dom, body: NodeId) -> std::collections::HashSet<String> {
     let mut out = std::collections::HashSet::new();
     for d in dom.descendants(body, Some(&W::del())) {
@@ -10472,6 +11018,20 @@ fn pending_deletion_fingerprint(dom: &Dom, del: NodeId) -> String {
 /// Every unwrapped run is stamped `pt:PreDelete` (+ original author/date) so
 /// [`convert_stamped_predeletes`] can restore attribution and, on the
 /// Revised side, re-emit the span as a pending deletion.
+/// Word-alignment mode — flatten pre-existing tracked deletions
+/// before diffing.
+///
+/// Unwraps `w:del` and converts `w:delText` / `w:delInstrText` back to
+/// `w:t` / `w:instrText`, so the old text re-enters the diff and comes
+/// out marked deleted (struck through) like Word's redline, instead of
+/// vanishing via accept-before-diff. Every unwrapped run is stamped
+/// `pt:PreDelete` (plus the original author / date) so
+/// [`convert_stamped_predeletes`] can restore attribution and, on the
+/// REVISED side, re-emit the span as a pending `w:del`. `side`
+/// selects between the Original (everything flattenable) and the
+/// Revised (only stamp / convertible) contract; `other_side_pending`
+/// is the corpus lookup against [`pending_deletion_texts`] that
+/// gates the S1 salt for A-only pre-dels.
 pub fn flatten_tracked_deletions(
     dom: &mut Dom,
     body: NodeId,
@@ -10569,6 +11129,15 @@ pub fn flatten_tracked_deletions(
 /// deletions render struck through like Word's ground truth while
 /// accept(redline) ≡ accept(B) holds. MUST run before
 /// [`coalesce_adjacent_revisions`] (wrappers still hold a single run).
+/// Word-alignment mode — re-emit the runs flattened by
+/// [`flatten_tracked_deletions`] back as pending `w:del`.
+///
+/// The stamped `pt:PreDelete` runs split on author / date and rewrap
+/// in a fresh `w:del`. Pure-equal runs (no other revision inside them)
+/// keep their equality when the carrier was an Insertion; corpora
+/// like missing_sectpr × missing_sectpr depend on it. Must run before
+/// [`coalesce_adjacent_revisions`] (the wrappers still hold one run
+/// each) so a `accept(redline) ≡ accept(B)` holds for the round trip.
 pub fn convert_stamped_predeletes(
     dom: &mut Dom,
     root: NodeId,
@@ -10675,6 +11244,13 @@ pub fn convert_stamped_predeletes(
 /// a `TableNormal` default stay bare. `default_table_styles` says whether the
 /// (original, revised) documents define one. A wholly deleted table comes from
 /// the original and any other table from the revised document.
+/// Synthesize `tcMar` margins on table cells that lack them, matching
+/// whatever default the two source documents define.
+///
+/// A wholly deleted table inherits from the ORIGINAL; any other table
+/// inherits from the REVISED document. Without this pass, tables with
+/// no authored `tcMar` pick up LibreOffice / Word defaults that differ
+/// from either input and shift every cell width.
 pub fn synthesize_table_cell_margins(
     dom: &mut Dom,
     root: NodeId,
@@ -10739,6 +11315,14 @@ pub fn synthesize_table_cell_margins(
 ///   - `w14:paraId`/`w14:textId` values ≥ 0x80000000 (the corpus's
 ///     deliberate `id-paraid-overflow` passthrough) → attribute stripped;
 ///     Word regenerates its own on save and never emits out-of-range ids.
+///
+/// Fix Word-strict-out-of-range validity issues that did NOT trip
+/// the C# schema validator but DO trip Word's repair dialog.
+///
+/// Examples: `w:id` that exceeds the half-open `[0, 2147483648)` range,
+/// `w:viewMergedAttrs` outside the OOXML truth table. Stripped on
+/// encountering; Word regenerates its own on save and never emits
+/// out-of-range ids.
 pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
     const CNF_FLAGS: [&str; 12] = [
         "firstRow",
@@ -10896,11 +11480,30 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
 /// tolerates the universal form but other renderers diverge (LibreOffice
 /// mis-paginates the strict01 pairs). Whitelist-driven so half-point /
 /// eighth-point attributes (`w:sz` etc.) are never touched.
+/// Canonicalize Strict-style universal measures (`"612pt"` instead of
+/// `"12240"`) into twips on layout attributes.
+///
+/// Runs after the sectPr reinstatement so the saved geometry is
+/// normalized too. Whitelist-driven so half-point / eighth-point
+/// attributes (`w:sz`, …) are never touched (LO mis-paginates the
+/// `strict01` pairs).
 pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
+    normalize_measures(dom, root, true);
+}
+
+/// [`normalize_universal_measures`] without the fractional-plain-value
+/// rounding: only unit-bearing spellings ("612pt") are rewritten. The
+/// render diagnostic reports a plain value (gdocs-style `1440.4`) as the
+/// file spells it — a diagnostic does not repair what it describes.
+pub fn normalize_unit_measures(dom: &mut Dom, root: NodeId) {
+    normalize_measures(dom, root, false);
+}
+
+fn normalize_measures(dom: &mut Dom, root: NodeId, round_plain_fractional: bool) {
     // Cell-margin children (w:tcMar / w:tblCellMar) carry @w:w in twips; the
     // like-named border elements carry @w:sz (eighth-points) and never @w:w,
     // so keying on (element local, attr) stays safe.
-    const TWIPS_ATTRS: [(&str, &[&str]); 18] = [
+    const TWIPS_ATTRS: [(&str, &[&str]); 22] = [
         ("pgSz", &["w", "h"]),
         ("gridCol", &["w"]),
         (
@@ -10913,7 +11516,7 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
             "ind",
             &["left", "right", "hanging", "firstLine", "start", "end"],
         ),
-        ("spacing", &["before", "after", "line"]),
+        ("spacing", &["before", "after", "line", "val"]),
         ("tab", &["pos"]),
         ("defaultTabStop", &["val"]),
         ("tblW", &["w"]),
@@ -10921,6 +11524,20 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
         ("tblInd", &["w"]),
         ("tblCellSpacing", &["w"]),
         ("trHeight", &["val"]),
+        ("cols", &["space"]),
+        ("col", &["w", "space"]),
+        (
+            "tblpPr",
+            &[
+                "leftFromText",
+                "rightFromText",
+                "topFromText",
+                "bottomFromText",
+                "tblpX",
+                "tblpY",
+            ],
+        ),
+        ("framePr", &["w", "h", "x", "y"]),
         ("top", &["w"]),
         ("bottom", &["w"]),
         ("left", &["w"]),
@@ -10928,26 +11545,17 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
         ("start", &["w"]),
         ("end", &["w"]),
     ];
-    fn to_twips(v: &str) -> Option<i64> {
-        let t = v.trim();
-        for (suf, factor) in [
-            ("pt", 20.0),
-            ("in", 1440.0),
-            ("cm", 1440.0 / 2.54),
-            ("mm", 1440.0 / 25.4), // 1in = 25.4mm → ~56.693 twips per mm
-            ("pc", 240.0),
-            ("pi", 240.0),
-        ] {
-            if let Some(n) = t.strip_suffix(suf) {
-                return n
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .map(|f| (f * factor).round() as i64);
-            }
+    fn to_twips(v: &str, round_plain_fractional: bool) -> Option<i64> {
+        if let Some(tw) = crate::util::universal_measure_twips(v) {
+            return Some(tw.round() as i64);
         }
         // fractional plain values ("100.0") on integer-typed attributes →
-        // rounded (gdocs-exported styles carry them; validator: Int16 fail)
+        // rounded (gdocs-exported styles carry them; validator: Int16 fail).
+        // Output-side repair only: the render diagnostic keeps the literal.
+        if !round_plain_fractional {
+            return None;
+        }
+        let t = v.trim();
         if t.contains('.') {
             return t.parse::<f64>().ok().map(|f| f.round() as i64);
         }
@@ -10969,7 +11577,10 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
             let an = W::name(a);
             // and_then keeps this allocation-free for the common untouched
             // case — the i64 releases the dom borrow before the mutation
-            if let Some(tw) = dom.attribute(el, &an).and_then(to_twips) {
+            if let Some(tw) = dom
+                .attribute(el, &an)
+                .and_then(|v| to_twips(v, round_plain_fractional))
+            {
                 dom.set_attribute_value(el, &an, Some(&tw.to_string()));
             }
         }
@@ -10985,6 +11596,16 @@ pub fn normalize_universal_measures(dom: &mut Dom, root: NodeId) {
 /// Any of these made every comparison fail, deleting GENUINE mid-section
 /// breaks (strict01/sd-2517 multi-section evidence; pt-unit variant caught on
 /// the strict01 probe after w11 landed).
+/// Canonical, equality-friendly serialized form of a `w:sectPr`.
+///
+/// Used to recognize a section identity across two inputs (or the
+/// original and the rebuilt live section) so the Word-mode lodgers
+/// ([`drop_sectpr_from_deleted_marks`], `genuine_mid_sectprs`)
+/// keep genuinely authored mid-section breaks and drop only the
+/// hoisted-final-sectPr artifacts. XML attribute order is normalized
+/// first; default-implicit `type=nextPage` / `cols equalWidth=1` /
+/// single-column-at-720 are dropped so sections that merely spell
+/// out the defaults do not read as changed.
 pub fn sectpr_identity(dom: &mut Dom, sp: NodeId) -> String {
     let c = dom.clone_subtree(sp);
     remove_powertools_scratch_markup(dom, c);
@@ -11009,6 +11630,15 @@ pub fn sectpr_identity(dom: &mut Dom, sp: NodeId) -> String {
 /// sectPr into its last paragraph — that hoist artifact must not become a
 /// mid-document page break; evidence: 1-5-line-spacing_24 rendered 2 pages
 /// vs Word's 1). Identities are compared pt-attribute-free on BOTH sides.
+/// After the live section is reinstated, drop relocated final-section
+/// `w:sectPr` copies that carry the `pt:BodySectPrHoist` stamp
+/// (placed there during the pipeline so [`drop_sectpr_from_deleted_marks`]
+/// can tell them apart from genuine authored breaks).
+///
+/// Identified by the stamp attribute regardless of geometry or last
+/// descendant position. Genuine authored mid-section breaks and their
+/// `sectPrChange` history remain untouched, including ones whose
+/// geometry is identical.
 pub fn drop_hoisted_sectpr_artifacts(
     dom: &mut Dom,
     root: NodeId,
@@ -11031,6 +11661,13 @@ pub fn drop_hoisted_sectpr_artifacts(
 /// produce path deletes cell CONTENT only, leaving a ghost empty table after
 /// acceptance (meeting-agenda/employee-directory benchmark evidence; the C#
 /// oracle instead drops the table structure entirely — further from Word).
+/// Stamp `w:trPr/w:ins` on every row whose cells all carry an
+/// inserted run (`fullyRevisedRow` in the C# port).
+///
+/// The `revision_id` shared with the `sectPrChange` is stamped at
+/// [`fix_up_revision_ids`] time; this pass only decides which rows
+/// qualify (every cell is fully revised or empty) and wires up the
+/// carrier.
 pub fn mark_fully_revised_rows(
     dom: &mut Dom,
     root: NodeId,
@@ -11155,6 +11792,14 @@ pub fn mark_fully_revised_rows(
 /// document_100 (45→40) — LO page geometry prefers the mid-body placement that
 /// results when D…D I…I reordering follows the early splice. Keep a single
 /// pre-merge splice only.
+/// Short pure-D base trailing after `insert-all-next` → splice the
+/// pure-D row mid-stream near where a TOC / tip would jump to it.
+///
+/// `document_100 × comments`: Word nests the original on page 2 of
+/// the redline (`…comments … insert-new … ORIGINAL small body`),
+/// not at the very end. The pass detects a short trailing pure-D
+/// after a wholesale insert run and moves it to the next anchor
+/// position inside a TOC / section break / heading paragraph.
 pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -11303,6 +11948,14 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
 /// title body (1_5_line_spacing×24): Word keeps pure-I "24" then pure-D title
 /// as separate paragraphs. Produce/LCS nests them into one MIX ("241.5 Line…").
 /// Split: pure-I digits para, pure-D remainder.
+/// M147 — split digits-only pure-I + pure-D title from a MIX title
+/// into a separate paragraph (Word title-only-on-MIX shape).
+///
+/// `1_5 × 24` Word shape: a title line with purely-numeric MIX is
+/// split into the title paragraph (MIX with non-digit tokens) and a
+/// separate digits-only MIX paragraph. The split paragraph carries
+/// the section-heading-style digits as MIX so the section heading
+/// Word redline keeps its visual chunking.
 pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -11381,6 +12034,15 @@ pub fn split_digits_ins_from_mixed_title(dom: &mut Dom, root: NodeId) {
 /// simple word interleave (Word: del prefix + Equal` for ` + ins phrase +
 /// del rest). Without this, residual LCS parks the whole next phrase on the
 /// first body MIX and leaves pure-D last (~64 score).
+/// M143 — peel a trailing insertion off a MIX paragraph onto the
+/// following pure-D body when they share a token.
+///
+/// `italic × justified` "for a formal document look": Word streams
+/// the insertion's trailing token onto the following pure-D as a
+/// leading equality (`pure-D body … for a formal document look`),
+/// leaving the MIX paragraph as pure-D with its remaining tokens.
+/// Different from M144 (trailing `del`) and the M460 shared-sig
+/// free-mesh.
 pub fn peel_trailing_ins_from_mix_into_following_pure_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -11513,6 +12175,13 @@ pub fn peel_trailing_ins_from_mix_into_following_pure_del(dom: &mut Dom, root: N
 /// and they sit after a MIX title: `… MIX | INS | DEL | MIX …` →
 /// `… MIX | DEL | INS | MIX …`. Heading 3×MIX zip never leaves pure I/D pairs,
 /// so it is unaffected.
+/// M159 — restore the order `short pure-D before long pure-I` after
+/// the merge-replaced paragraphs reorder.
+///
+/// `text_highlight × times`: after the paragraph merge reorders
+/// runs, a short trailing pure-D should appear again before the
+/// longer pure-I (`short-del | long-ins`). The pass recognizes that
+/// shape and moves the deleted paragraph back to its original place.
 pub fn restore_short_del_before_long_ins(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -11588,6 +12257,12 @@ pub fn restore_short_del_before_long_ins(dom: &mut Dom, root: NodeId) {
 /// pure-I body — peel the del into the pure-I so both become MIX. Word moves
 /// "with underline formatting for a formal document look" onto the next
 /// residual body (ours left pure-I ~64.8). Mirror of M144 (ins→pure-D).
+/// M154 — peel a trailing deletion off a MIX paragraph onto the
+/// following pure-I paragraph when they share a token.
+///
+/// `justified_underline × justify_2`: the MIX trailing deletion
+/// (`"underline"` here) is re-streamed as a leading deletion onto
+/// the following pure-I so the underlined paragraph reads cleanly.
 pub fn peel_trailing_del_from_mix_into_following_pure_ins(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -11876,13 +12551,19 @@ fn final_peel_has_identical_closing_properties(
     dom.serialize_element(old) == dom.serialize_element(new)
 }
 
-/// M143 — mid-stream pure-D short Demo title among pure-I body of a long next
-/// doc (double_spacing×eigenpal): Word folds the deleted title into the first
-/// numbered heading (`1. What this is` + del`Double Spacing Bold Demo`), not
-/// as a free pure-D between intro paragraphs. Peel the pure-D after that
-/// heading and fold body into it (bare mixed p, no para-mark revision).
+/// M143 — fold a mid-stream pure-D short "Demo" title among the
+/// pure-I body of a long revised document into the first numbered
+/// heading instead of leaving it as a free pure-D.
+///
+/// `double_spacing × eigenpal`: Word writes `1. What this is + del
+/// "Double Spacing Bold Demo"` rather than an unpaired pure-D
+/// between the intro paragraphs. The pass peels the pure-D right
+/// after the heading and folds the deleted body into it (bare mixed
+/// paragraph, no paragraph-mark revision). Test-only entry — the
+/// production pipeline calls
+/// [`fold_midstream_demo_title_into_numbered_heading_with_settings`].
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: NodeId) {
     let mut id = max_numeric_id(dom, root).saturating_add(1);
     fold_midstream_demo_title_into_numbered_heading_with_settings(
@@ -11893,9 +12574,13 @@ fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: NodeId) 
     );
 }
 
-/// Preserve authored deleted-title properties before Word's live layout
-/// normalization removes demo-default spacing. Snapshots never reach output
-/// except as schema-valid paragraph/mark history for an actual title fold.
+/// Snapshot every pure-deleted paragraph that looks like a "Demo"
+/// title's `w:pPr` BEFORE [`strip_redundant_demo_default_spacing`]
+/// runs, so M143's fold can re-attach authored Heading properties
+/// inside `w:pPrChange`.
+///
+/// Snapshots never reach the output except as schema-valid
+/// paragraph / mark history for an actual title fold.
 pub(crate) fn capture_deleted_demo_title_properties(
     dom: &mut Dom,
     root: NodeId,
@@ -11913,7 +12598,7 @@ pub(crate) fn capture_deleted_demo_title_properties(
     properties
 }
 
-/// Fold a deleted demo title while preserving its tracked paragraph properties.
+/// M143 with explicit settings and id-gen — production entry point.
 pub fn fold_midstream_demo_title_into_numbered_heading_with_settings(
     dom: &mut Dom,
     root: NodeId,
@@ -11929,7 +12614,13 @@ pub fn fold_midstream_demo_title_into_numbered_heading_with_settings(
     );
 }
 
-/// Fold a deleted demo title using captured authored properties for formatting history.
+/// M143 fold that re-attaches captured authored Heading properties
+/// inside `w:pPrChange` so the deleted-title's formatting history
+/// survives the merge.
+///
+/// `source_properties` is the snapshot from
+/// `capture_deleted_demo_title_properties`; an empty map keeps the
+/// demo-default live spacing instead.
 pub fn fold_midstream_demo_title_into_numbered_heading_with_source_properties(
     dom: &mut Dom,
     root: NodeId,
@@ -12134,16 +12825,17 @@ pub fn fold_midstream_demo_title_into_numbered_heading_with_source_properties(
     }
 }
 
-/// A sentence-final equal `.` belongs to both inputs. When the next paragraph
-/// continues exactly one side (a leading space or a lowercase letter, and that
-/// side does not already end in `.!?`), the period cannot stay equal: it would
-/// sit in the middle of the continued sentence and be missing from the end.
-/// Move it onto the side that already finished its sentence, and append `.` to
-/// the continuation, so both reconstructions keep a period.
+/// Move a paragraph-final `.` whose shared equal segment is genuinely
+/// shared (the next paragraph starts with equal text) onto the side
+/// that already finished its sentence, and append a `.` to the
+/// continuation.
 ///
-/// The following paragraph must not itself start with equal text — that period
-/// is the previous sentence's shared stop (`font color` p1 `.` before
-/// `This text`), and the continuation's own period is still ahead of it.
+/// `font color` p1 `.` → `This text`: without the fix the period sits
+/// in the middle of the next sentence on one side and is missing
+/// from the end of the previous sentence on the other. The pass
+/// detects that shape (the next paragraph must NOT itself start with
+/// equal text — that `.` was the previous sentence's shared stop) and
+/// re-emits a fresh `w:id` from `id_gen`.
 pub fn repair_borrowed_sentence_period(
     dom: &mut Dom,
     root: NodeId,
@@ -12281,6 +12973,14 @@ fn append_period(dom: &mut Dom, p: NodeId, side: &str) {
 /// their order is the original's order: the section, then the table's own
 /// deleted rows. When the deleted run repeats the inserted heading, move the
 /// run back in front of that heading.
+/// Re-anchor a deleted heading that the diff echoes just before the
+/// table it belongs to.
+///
+/// `lots-of-comments`: Word keeps the deleted section's heading
+/// before the table (original order); the diff leaves it after the
+/// heading's inserted replacement. This pass recognizes an inserted
+/// heading that is echoed by an immediate pure-D after it and moves
+/// the deletion back before the table.
 pub fn restore_echoed_heading_deletions_before_table(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -12390,19 +13090,71 @@ fn paragraph_texts(dom: &Dom, block: NodeId) -> Vec<String> {
         .collect()
 }
 
-/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
-/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
-/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
-/// and thrash'd right_align/center_bold. Park-only matches Word.
-///
-/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
-/// pPrChange, and a later body para has live `jc` (source value).
+/// Paragraph-owned properties captured before atomization and layout peels.
+/// Text identifies a source paragraph only when it occurs exactly once on
+/// that side; ambiguous or merged paragraphs cannot supply formatting history.
+#[derive(Default)]
+pub struct ParagraphPropertySources {
+    original: HashMap<String, Vec<NodeId>>,
+    revised: HashMap<String, Vec<NodeId>>,
+}
+
+impl ParagraphPropertySources {
+    /// Save each input paragraph's own comparable properties, including an
+    /// empty `w:pPr` for a paragraph that has none.
+    pub fn capture(dom: &mut Dom, original: NodeId, revised: NodeId) -> Self {
+        let mut capture = |body| {
+            let mut by_text: HashMap<String, Vec<NodeId>> = HashMap::new();
+            for p in dom.descendants(body, Some(&W::p())) {
+                let text = revised_text(dom, p).trim().to_string();
+                let properties = match dom.element(p, &W::p_pr()) {
+                    Some(ppr) => formatchg::project_para_properties_for_change(dom, ppr),
+                    None => dom.new_element(W::p_pr()),
+                };
+                by_text.entry(text).or_default().push(properties);
+            }
+            by_text
+        };
+        Self {
+            original: capture(original),
+            revised: capture(revised),
+        }
+    }
+
+    fn for_mix(&self, dom: &Dom, p: NodeId) -> Option<(NodeId, NodeId)> {
+        let text = |excluded| {
+            text_leaves(dom, p)
+                .into_iter()
+                .filter(|&t| text_side(dom, t, p) != excluded)
+                .map(|t| dom.value(t))
+                .collect::<String>()
+                .trim()
+                .to_string()
+        };
+        let [old] = self.original.get(&text("ins"))?.as_slice() else {
+            return None;
+        };
+        let [new] = self.revised.get(&text("del"))?.as_slice() else {
+            return None;
+        };
+        Some((*old, *new))
+    }
+}
+
+/// M452: a short title MIX can lose its old alignment during layout peels.
+/// Record it only when its own original and revised properties differ.
+/// A text-only edit must not borrow alignment from another body paragraph
+/// (#1149); the history carries the source paragraph's complete comparable pPr.
 pub fn park_jc_on_first_short_title_mix_from_body(
     dom: &mut Dom,
     root: NodeId,
+    sources: &ParagraphPropertySources,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
+    if !settings.detect_format_changes {
+        return;
+    }
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -12433,59 +13185,32 @@ pub fn park_jc_on_first_short_title_mix_from_body(
     if ins_w + del_w == 0 || ins_w + del_w > 5 {
         return;
     }
+    let Some((old, new)) = sources.for_mix(dom, p) else {
+        return;
+    };
+    if formatchg::normalize_para_properties(dom, old)
+        == formatchg::normalize_para_properties(dom, new)
+    {
+        return;
+    }
+    let Some(jc) = dom.element(old, &W::jc_el()) else {
+        return;
+    };
+    if !matches!(dom.attribute(jc, &W::val()), Some("right" | "center")) {
+        return;
+    }
     let ppr = match dom.element(p, &W::p_pr()) {
         Some(ppr) => ppr,
         None => {
             let ppr = dom.new_element(W::p_pr());
-            // pPr must be first child of p for Word validity.
-            if let Some(first) = dom.elements(p, None).first().copied() {
-                dom.add_before_self(first, ppr);
-            } else {
-                dom.add(p, ppr);
-            }
+            dom.add_first(p, ppr);
             ppr
         }
     };
-    // Already live jc or any pPrChange — leave alone (right_align_bold title
-    // has live jc; center_bold title already park-only after other peels).
-    if dom.element(ppr, &W::jc_el()).is_some() {
+    if dom.element(ppr, &W::jc_el()).is_some() || dom.element(ppr, &W::p_pr_change()).is_some() {
         return;
     }
-    if dom.element(ppr, &W::p_pr_change()).is_some() {
-        return;
-    }
-    // Source live jc from a later body residual.
-    let mut jc_val: Option<String> = None;
-    for &k in &kids {
-        if k == p || !dom.name_is(k, &W::p()) {
-            continue;
-        }
-        let Some(kppr) = dom.element(k, &W::p_pr()) else {
-            continue;
-        };
-        let Some(jc) = dom.element(kppr, &W::jc_el()) else {
-            continue;
-        };
-        if let Some(v) = dom.attribute(jc, &W::val())
-            && !v.is_empty()
-        {
-            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
-            // Word title park-only shapes are right/center free-mesh demos.
-            if v != "right" && v != "center" {
-                continue;
-            }
-            jc_val = Some(v.to_string());
-            break;
-        }
-    }
-    let Some(val) = jc_val else {
-        return;
-    };
-    // Park-only pPrChange(old jc).
-    let old_inner = dom.new_element(W::p_pr());
-    let old_jc = dom.new_element(W::jc_el());
-    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
-    dom.add(old_inner, old_jc);
+    let old_inner = dom.clone_subtree(old);
     let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
@@ -12502,6 +13227,13 @@ pub fn park_jc_on_first_short_title_mix_from_body(
 ///
 /// Does **not** touch MIX with live `jc` (M451 deliberately strips empty
 /// shells there — center_alignment_2 mid shape).
+/// M453 — synthesize a layout-only `w:pPrChange` shell under a mid
+/// MIX paragraph that has live Heading residual spacing but no
+/// `pPrChange`.
+///
+/// `calibri` mid residual: Word still records the layout history even
+/// when nothing else changes. Skips MIX paragraphs that also carry
+/// live `w:jc` (M451 owns those).
 pub fn ensure_empty_pprchange_on_live_heading_spacing(
     dom: &mut Dom,
     root: NodeId,
@@ -12592,6 +13324,15 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
 }
 
 /// The text of each paragraph that sets no `w:jc`.
+/// The trimmed text of every REVISED paragraph that does NOT set its
+/// own `w:jc`.
+///
+/// Used as the M449 gate (`promote_live_jc_from_pprchange_on_body_mix`):
+/// if a MIX paragraph's revised text is in this set, the MIX
+/// paragraph's `pPrChange` is preserved (Word records the old
+/// centering over the revision's bare properties), and the live `jc`
+/// stays out of `pPr`. Returned body is `body2` (the revised input)
+/// before atomize consumes it.
 pub fn unaligned_paragraph_texts(dom: &Dom, body: NodeId) -> HashSet<String> {
     dom.descendants(body, Some(&W::p()))
         .into_iter()
@@ -12640,6 +13381,13 @@ fn revised_text(dom: &Dom, p: NodeId) -> String {
 }
 
 /// Each paragraph's text and `w:jc` value, for paragraphs with a `w:jc`.
+/// `(paragraph_text, w:jc_val)` for every ORIGINAL paragraph that
+/// sets an explicit `w:jc`.
+///
+/// Used as the M454 gate ([`ensure_empty_pprchange_on_eq_with_live_jc`]):
+/// an `Equal` paragraph with live `jc` whose source-original text
+/// was `jc`-set gets the empty `pPrChange` shell — Word keeps the
+/// history even when accept would produce nothing different.
 pub fn paragraph_alignments(dom: &Dom, body: NodeId) -> HashSet<(String, String)> {
     dom.descendants(body, Some(&W::p()))
         .into_iter()
@@ -12664,6 +13412,16 @@ pub fn paragraph_alignments(dom: &Dom, body: NodeId) -> HashSet<(String, String)
 ///
 /// Gate: **EQ only** (no ins/del content or marks) — pure-I empty shells
 /// thrash'd comments subset (−6). No MIX (M451). No rPr mark.
+/// M454 — synthesize a layout-only `w:pPrChange` shell under an
+/// `Equal` paragraph with live `w:jc` whose ORIGINAL paragraph also
+/// set `jc`.
+///
+/// `center2 title` → 100: the Equal paragraph reads `jc` live but
+/// the original revision history should still exist in
+/// `pPrChange`. Pure-I empty `pPrChange` shells thrashed the
+/// comments subset, so this pass is restricted to `EQ` paragraphs
+/// only and gates on [`paragraph_alignments`] for the original
+/// `jc` provenance.
 pub fn ensure_empty_pprchange_on_eq_with_live_jc(
     dom: &mut Dom,
     root: NodeId,
@@ -12735,6 +13493,13 @@ pub fn ensure_empty_pprchange_on_eq_with_live_jc(
 /// "All") that Word does not show. Surgical: if previous para is pure-I
 /// starting with the same first alnum token, drop the first short del among
 /// the first three content children when it only echoes that token.
+/// M458 — strip a leading `w:del` echo on a body MIX paragraph when
+/// its text equals the previous pure-I paragraph's text.
+///
+/// M151 sometimes leaves a pure-I B1 + A1×B2 trailing run on a pure-I
+/// followed by a MIX whose leading run deletes "This" (a sentence
+/// Word keeps as `Equal` on the body). Strip the orphan leading del;
+/// the trailing ins has the same `This` as Equal already.
 pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -12856,6 +13621,15 @@ fn holds_only_text(dom: &Dom, node: NodeId) -> bool {
 /// Gates: one ins + one del (optional trailing bare punct), each side 5..=40
 /// alnum tokens, filtered LCS ≥ 2 with ≥1 sig LCS anchor, and
 /// `shared_sig / min(ins_sig, del_sig) ≥ 0.35`.
+/// M462 — coverage-gated wholesale body MIX free-mesh.
+///
+/// M459's wholesale body MIX thrash is guarded by `shared_sig` /
+/// `min_sig ≥ 0.35` plus eligible-token LCS. M461 — which turned a
+/// pure-I paragraph's `"This"` / `"text"` into kept text while the
+/// next paragraph still deleted them — is gone (rejecting it gave
+/// `"This text This document …"`). The cross-paragraph stream keeps
+/// those words where Word does; this pass only fires on the M462
+/// shape (a wholesale body MIX with significant shared tokens).
 pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -13016,16 +13790,18 @@ fn split_words_preserve(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
+fn word_lcs_indices(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
     let n = a.len();
     let m = b.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in 0..n {
-        for j in 0..m {
-            if a[i] == b[j] {
-                dp[i + 1][j + 1] = dp[i][j] + 1;
+    let mut dp = vec![0u32; (n + 1) * (m + 1)];
+    for (i, a_i) in a.iter().enumerate() {
+        let row_offset = i * (m + 1);
+        let next_row_offset = (i + 1) * (m + 1);
+        for (j, b_j) in b.iter().enumerate() {
+            if a_i == b_j {
+                dp[next_row_offset + j + 1] = dp[row_offset + j] + 1;
             } else {
-                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
+                dp[next_row_offset + j + 1] = dp[next_row_offset + j].max(dp[row_offset + j + 1]);
             }
         }
     }
@@ -13037,10 +13813,14 @@ fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
             out.push((i - 1, j - 1));
             i -= 1;
             j -= 1;
-        } else if dp[i - 1][j] >= dp[i][j - 1] {
-            i -= 1;
         } else {
-            j -= 1;
+            let row_offset = (i - 1) * (m + 1);
+            let next_row_offset = i * (m + 1);
+            if dp[row_offset + j] >= dp[next_row_offset + j - 1] {
+                i -= 1;
+            } else {
+                j -= 1;
+            }
         }
     }
     out.reverse();
@@ -13063,12 +13843,86 @@ fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec
     if a_idx.is_empty() || b_idx.is_empty() {
         return Vec::new();
     }
-    let a_f: Vec<String> = a_idx.iter().map(|&i| a[i].clone()).collect();
-    let b_f: Vec<String> = b_idx.iter().map(|&j| b[j].clone()).collect();
+    let a_f: Vec<&str> = a_idx.iter().map(|&i| a[i].as_str()).collect();
+    let b_f: Vec<&str> = b_idx.iter().map(|&j| b[j].as_str()).collect();
     word_lcs_indices(&a_f, &b_f)
         .into_iter()
         .map(|(i, j)| (a_idx[i], b_idx[j]))
         .collect()
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod word_lcs_tests {
+    use super::*;
+
+    #[test]
+    fn a_tie_drops_the_first_sides_word() {
+        assert_eq!(
+            word_lcs_indices(&["a", "b", "c"], &["b", "a", "c"]),
+            [(0, 1), (2, 2)]
+        );
+    }
+
+    #[test]
+    fn empty_and_disjoint_sides_match_nothing() {
+        assert!(word_lcs_indices(&[], &["a"]).is_empty());
+        assert!(word_lcs_indices(&["a"], &["b"]).is_empty());
+    }
+
+    #[test]
+    fn boilerplate_and_short_words_are_skipped_and_indices_map_back() {
+        let a: Vec<String> = ["the", "limits", "is", "clear"].map(String::from).into();
+        let b: Vec<String> = ["the", "bounds", "is", "clear"].map(String::from).into();
+        assert_eq!(word_lcs_indices_eligible(&a, &b, &["clear"]), [(2, 2)]);
+    }
+
+    /// The table as two-dimensional `usize` rows, as before the flat `u32`
+    /// table: the same recurrence and the same tie-break.
+    fn reference(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+        let (n, m) = (a.len(), b.len());
+        let mut dp = vec![vec![0usize; m + 1]; n + 1];
+        for i in 0..n {
+            for j in 0..m {
+                dp[i + 1][j + 1] = if a[i] == b[j] {
+                    dp[i][j] + 1
+                } else {
+                    dp[i + 1][j].max(dp[i][j + 1])
+                };
+            }
+        }
+        let (mut i, mut j, mut out) = (n, m, Vec::new());
+        while i > 0 && j > 0 {
+            if a[i - 1] == b[j - 1] {
+                out.push((i - 1, j - 1));
+                i -= 1;
+                j -= 1;
+            } else if dp[i - 1][j] >= dp[i][j - 1] {
+                i -= 1;
+            } else {
+                j -= 1;
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    #[test]
+    fn the_flat_table_matches_the_two_dimensional_one() {
+        const WORDS: [&str; 4] = ["a", "b", "c", "d"];
+        let mut seed = 0x2545_f491_u64;
+        let mut next = |bound: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % bound as u64) as usize
+        };
+        for _ in 0..2000 {
+            let a: Vec<&str> = (0..next(9)).map(|_| WORDS[next(4)]).collect();
+            let b: Vec<&str> = (0..next(9)).map(|_| WORDS[next(4)]).collect();
+            assert_eq!(word_lcs_indices(&a, &b), reference(&a, &b), "{a:?} {b:?}");
+        }
+    }
 }
 
 /// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
@@ -13288,6 +14142,14 @@ fn rebuild_body_free_mesh_lcs(
 /// 4..=40 alnum toks, exactly one shared non-boiler len≥4 token that appears
 /// once on each side (whole-word; hyphen is a boundary so `right-aligned` →
 /// EQ `right` + INS `-aligned…`).
+/// M460 — bookended MIX free-mesh.
+///
+/// `right_align_bold` "right": free-mesh a shared significant token
+/// as `Equal` inside the ins+del pair of a single bookended MIX
+/// (`MIX | DEL | MIX` or `INS | MIX | DEL | MIX | INS`). The token
+/// appears once in the leading ins and once in the trailing ins;
+/// this pass moves it onto both sides as `Equal` so the surrounding
+/// trailing `Equal` paragraph finishes the sentence Word keeps.
 pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -13590,6 +14452,12 @@ fn m460_push_rev_text(
 ///
 /// Gates: consecutive MIX paras; last body `w:ins` on p ends with ` for <word>`;
 /// first body `w:del` on next ends with ` for` (no trailing alnum after for).
+/// M464 — peel a trailing `" for <word>"` from a MIX insertion onto
+/// the next MIX as `Equal` `for` + `INS` `<word>`.
+///
+/// `center_bold` p2/p3 residual: a closing " for consistency" the
+/// insertion owns needs to land as `EQ for` + `INS consistency` on
+/// the next paragraph so the kept word crosses the mark cleanly.
 pub fn peel_trailing_for_word_onto_next_mix(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -13817,6 +14685,14 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// correct standalone — on the main body the later `fix_up_revision_ids` renumbers
 /// everything anyway, but the package-level validity sweep runs this over parts
 /// (headers, footers) that never reach that pass.
+/// Move `w:hyperlink` out of `w:ins` / `w:del` wrappers.
+///
+/// Validity, not parity: OOXML forbids a `w:hyperlink` inside
+/// `w:ins` / `w:del`. The deleted-whole-header / footer pass
+/// swallowed a source hyperlink into `w:del` and Word refused to
+/// open the result. Unconditional and last (catches whichever pass
+/// above produced the bad shape) and runs before the renumber below
+/// fixes up duplicate `w:id`s the split leaves behind.
 pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
     let rev_names = [W::name("ins"), W::name("del")];
     let wrappers = [W::hyperlink(), W::name("fldSimple")];
@@ -13982,6 +14858,14 @@ fn complex_field_runs(dom: &mut Dom, field: NodeId, deleted: bool) -> Vec<NodeId
 /// 3. **`w:highlight` under `w:lvl/w:rPr`.** The numbering symbol's run properties
 ///    do not accept it. Sources carry `<w:highlight w:val="none"/>` there, which
 ///    asserts nothing, so dropping it costs no formatting.
+///
+/// Repair source-inherited validity issues that the redline carries
+/// verbatim from the inputs.
+///
+/// Fixes OOXML shapes that Word silently tolerates (or repairs on
+/// open) but strict validators (ooxmlsdk, OOXML SDK) reject with
+/// `UnexpectedTag` / `Sch_InvalidElementContent*`. Each fix targets
+/// one shape; the pass mutates `root` in place.
 pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     for el in dom.descendants_and_self(root, None) {
         let Some(name) = dom.name(el) else { continue };
@@ -14041,6 +14925,14 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
 /// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t` inside it
 /// (see `convert_run_text_to_del_text`'s callers), so "renaming" there would
 /// introduce the very mismatch this pass exists to remove.
+/// Rename `w:t` / `w:instrText` under `w:del` to `w:delText` /
+/// `w:delInstrText`.
+///
+/// Validity, not parity: OOXML schema forbids `w:t` and
+/// `w:instrText` (field instructions) inside `w:del`; the schema
+/// validator cannot see this so it has to be enforced structurally
+/// rather than caught by Ring 2. Word's redlines always emit
+/// `delText` / `delInstrText` themselves.
 pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     fn walk(dom: &mut Dom, node: NodeId) {
         for c in dom.nodes(node) {
@@ -14066,26 +14958,33 @@ pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// Source main parts from before accept-before-diff. The revised part still
-/// has the insertion boundary, the direct spacing, and the list numbering
-/// that Word's redline keeps and a post-accept package does not.
+/// Source main parts from before accept-before-diff.
+///
+/// The revised part still has the insertion boundary, the direct spacing,
+/// and the list numbering that Word's redline keeps (a post-accept
+/// package does not).
 pub struct LadderSources<'a> {
-    /// `word/document.xml` of the original package, after strict-to-transitional
-    /// and before accept-before-diff.
+    /// `word/document.xml` of the original package, after
+    /// strict-to-transitional and before accept-before-diff.
     pub original_xml: &'a str,
     /// `word/document.xml` of the revised package at the same moment.
     pub revised_xml: &'a str,
-    /// Revision author, date, and id source for marks this pass synthesizes.
+    /// Revision author, date, and id source for marks this pass
+    /// synthesizes.
     pub settings: &'a WmlComparerSettings,
 }
 
-/// Six output shapes the parity ladder still counted after the operation
-/// sequence already matched. Each predicate is the narrow one that cleared
-/// that shape on the corpus without opening a new key: a trailing revised
-/// insertion split out of the comparison insertion, a deleted pilcrow on a
+/// Match the six output shapes the parity ladder still counted after the
+/// operation sequence already matched — a trailing revised insertion
+/// split out of the comparison insertion, a deleted pilcrow on a
 /// tab-joined swallowed title, a commented list item unmerged from the
-/// deletion, a duplicated Normal-styled deletion, spacing that left its mixed
-/// paragraph, and numbering on a trailing empty Normal paragraph.
+/// deletion, a duplicated Normal-styled deletion, spacing that left its
+/// mixed paragraph, and numbering on a trailing empty Normal paragraph.
+///
+/// Each predicate is the narrow one that cleared its shape on the
+/// corpus without opening a new key. Called at the very end of the
+/// Word-mode ladder; the `LadderSources` carry the pre-accept source
+/// XMLs that the predicates compare against `root`.
 pub fn align_remaining_ladder_rungs(dom: &mut Dom, root: NodeId, sources: &LadderSources<'_>) {
     let original_doc = dom.parse_xdocument(sources.original_xml);
     let revised_doc = dom.parse_xdocument(sources.revised_xml);
@@ -14695,7 +15594,7 @@ fn stamp_trailing_numbering(
     append_empty_ppr_change(dom, ppr, settings, id_gen);
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_tests {
     use super::*;
 
@@ -15947,7 +16846,7 @@ mod coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -17373,7 +18272,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -18524,7 +19423,7 @@ mod coverage_round_three_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_next_tests {
     use super::*;
 
@@ -19906,7 +20805,7 @@ mod coverage_round_next_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod fragmented_label_regression_tests {
     use super::*;
 
@@ -20063,7 +20962,7 @@ mod fragmented_label_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deep_production_path_tests {
     use super::*;
 
@@ -22712,7 +23611,7 @@ mod deep_production_path_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod row_move_ownership_regressions {
     use super::mark_fully_revised_rows;
     use crate::comparer::WmlComparerSettings;
@@ -22790,7 +23689,7 @@ mod row_move_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod parked_paragraph_history_regressions {
     use super::*;
 
@@ -22852,7 +23751,7 @@ mod parked_paragraph_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod closing_layout_history_regressions {
     use super::*;
 
@@ -22925,7 +23824,7 @@ mod closing_layout_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod split_paragraph_boundary_regressions {
     use super::*;
 
@@ -22989,7 +23888,7 @@ mod split_paragraph_boundary_regressions {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod row_nontext_ownership_regressions {
     use super::*;
 
@@ -23134,7 +24033,7 @@ mod row_nontext_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod short_label_format_history_tests {
     use super::*;
 
@@ -23429,7 +24328,7 @@ mod short_label_format_history_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_final_batch_finalize_tests {
     use super::*;
 
@@ -23881,7 +24780,7 @@ mod coverage_final_batch_finalize_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_real_revision_merge_matrix_tests {
     use super::*;
 
@@ -24003,7 +24902,7 @@ mod coverage_real_revision_merge_matrix_tests {
         // no semantic formatting, unlike any actual property child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(root, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                     dom.remove(n);
                 }
             }
@@ -24806,8 +25705,7 @@ mod coverage_real_revision_merge_matrix_tests {
     ) -> String {
         fn semantic(dom: &Dom, node: NodeId) -> String {
             let mut attrs = dom
-                .attributes(node)
-                .into_iter()
+                .attributes_iter(node)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .collect::<Vec<_>>();
             attrs.sort_by(|a, b| {
@@ -24819,7 +25717,7 @@ mod coverage_real_revision_merge_matrix_tests {
                 .into_iter()
                 .filter(|&child| {
                     !((dom.name_is(child, &W::r_pr()) || dom.name_is(child, &W::p_pr()))
-                        && dom.attributes(child).is_empty()
+                        && !dom.has_attributes(child)
                         && dom.nodes(child).is_empty())
                 })
                 .map(|child| semantic(dom, child))
@@ -25342,7 +26240,7 @@ mod coverage_real_revision_merge_matrix_tests {
                         dom.name(node)
                             .is_none_or(|name| name.namespace_name() != PT::URI)
                             && dom
-                                .attributes(node)
+                                .attributes_iter(node)
                                 .into_iter()
                                 .all(|(name, _)| name.namespace_name() != PT::URI)
                     }),
@@ -27552,7 +28450,7 @@ mod coverage_real_revision_merge_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod consecutive_block_splice_tests {
     use super::*;
 
@@ -27578,8 +28476,7 @@ mod consecutive_block_splice_tests {
     // text node and child position instead of comparing xmlns placement.
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -27670,7 +28567,7 @@ mod consecutive_block_splice_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod demo_title_pilcrow_history_tests {
     use super::*;
     const DATE: &str = "2001-02-03T04:05:06Z";
@@ -27716,7 +28613,7 @@ mod demo_title_pilcrow_history_tests {
             crate::revision_processor::reject_revisions_document(dom, copy)
         };
         for n in dom.descendants(copy, Some(&W::r_pr())) {
-            if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
+            if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
                 dom.remove(n);
             }
         }
@@ -27810,8 +28707,7 @@ mod demo_title_pilcrow_history_tests {
     fn effect_projection(dom: &mut Dom, root: NodeId, accept: bool) -> Vec<(String, String)> {
         fn canonical(dom: &Dom, n: NodeId) -> String {
             let mut attrs = dom
-                .attributes(n)
-                .into_iter()
+                .attributes_iter(n)
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .map(|(name, value)| {
                     (
@@ -28046,14 +28942,13 @@ mod demo_title_pilcrow_history_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod paired_row_mark_ownership_tests {
     use super::*;
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(n, _)| !dom.is_namespace_declaration(n))
             .map(|(n, v)| {
                 (
@@ -28330,7 +29225,7 @@ mod paired_row_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod closing_authored_section_boundary_tests {
     use super::*;
 
@@ -28352,8 +29247,7 @@ mod closing_authored_section_boundary_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attributes = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attributes.sort_by(|a, b| {
@@ -28628,7 +29522,7 @@ mod closing_authored_section_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_distinct_boundary_contract_tests {
     use super::*;
 
@@ -28653,8 +29547,7 @@ mod finalizer_distinct_boundary_contract_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -29869,7 +30762,7 @@ mod finalizer_distinct_boundary_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_remaining_source_boundary_tests {
     use super::*;
 
@@ -29894,8 +30787,7 @@ mod finalizer_remaining_source_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -30616,7 +31508,7 @@ mod finalizer_remaining_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_merge_source_guard_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -30636,8 +31528,7 @@ mod finalizer_merge_source_guard_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31049,7 +31940,7 @@ mod finalizer_merge_source_guard_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod finalizer_reached_predicate_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31073,8 +31964,7 @@ mod finalizer_reached_predicate_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31416,7 +32306,7 @@ mod finalizer_reached_predicate_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_body_heuristic_story_scope_tests {
     use super::*;
 
@@ -31425,8 +32315,7 @@ mod public_body_heuristic_story_scope_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31447,13 +32336,12 @@ mod public_body_heuristic_story_scope_tests {
         )
     }
 
-    // These are valid header/footer part roots accepted by the public DOM
-    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
-    // heuristics must not reinterpret their independent story boundaries.
-    #[test]
-    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
-        type BodyHeuristic = fn(&mut Dom, NodeId);
-        let simple: &[(&str, BodyHeuristic)] = &[
+    type BodyHeuristic = fn(&mut Dom, NodeId);
+    type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
+
+    /// The public body passes that take only the DOM and a root.
+    fn body_heuristics() -> Vec<(&'static str, BodyHeuristic)> {
+        vec![
             (
                 "unwrap_content_controls_in_pure_revisions",
                 unwrap_content_controls_in_pure_revisions,
@@ -31582,9 +32470,12 @@ mod public_body_heuristic_story_scope_tests {
                 "peel_trailing_for_word_onto_next_mix",
                 peel_trailing_for_word_onto_next_mix,
             ),
-        ];
-        type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
-        let configured: &[(&str, Configured)] = &[
+        ]
+    }
+
+    /// The public body passes that also take settings and an id counter.
+    fn configured_heuristics() -> Vec<(&'static str, Configured)> {
+        vec![
             ("trailing_empty_spacing_to_pprchange", |d, r, s, id| {
                 trailing_empty_spacing_to_pprchange(d, r, None, s, id);
             }),
@@ -31647,7 +32538,15 @@ mod public_body_heuristic_story_scope_tests {
             ),
             (
                 "park_jc_on_first_short_title_mix_from_body",
-                park_jc_on_first_short_title_mix_from_body,
+                |d, r, s, id| {
+                    park_jc_on_first_short_title_mix_from_body(
+                        d,
+                        r,
+                        &ParagraphPropertySources::default(),
+                        s,
+                        id,
+                    );
+                },
             ),
             (
                 "ensure_empty_pprchange_on_live_heading_spacing",
@@ -31659,7 +32558,16 @@ mod public_body_heuristic_story_scope_tests {
                     ensure_empty_pprchange_on_eq_with_live_jc(d, r, &HashSet::new(), s, id);
                 },
             ),
-        ];
+        ]
+    }
+
+    // These are valid header/footer part roots accepted by the public DOM
+    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
+    // heuristics must not reinterpret their independent story boundaries.
+    #[test]
+    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
+        let simple = body_heuristics();
+        let configured = configured_heuristics();
         const FORMAT: &str = "<w:rPr><w:rFonts w:ascii='Georgia' w:hAnsi='Georgia'/><w:b/><w:color w:val='123456'/><w:sz w:val='20'/><w:lang w:val='en-US'/></w:rPr>";
         for story in ["hdr", "ftr"] {
             for tracked_formats in [false, true] {
@@ -31698,7 +32606,7 @@ mod public_body_heuristic_story_scope_tests {
                 let root = dom.root(document).unwrap();
                 let before = canonical(&dom, root);
                 let count = dom.node_count();
-                for (name, operation) in simple {
+                for (name, operation) in &simple {
                     operation(&mut dom, root);
                     assert_eq!(
                         canonical(&dom, root),
@@ -31718,7 +32626,7 @@ mod public_body_heuristic_story_scope_tests {
                     ..WmlComparerSettings::default()
                 };
                 let mut id = 100;
-                for (name, operation) in configured {
+                for (name, operation) in &configured {
                     operation(&mut dom, root, &settings, &mut id);
                     assert_eq!(
                         canonical(&dom, root),
@@ -31738,10 +32646,188 @@ mod public_body_heuristic_story_scope_tests {
             }
         }
     }
+
+    /// One element or text node per line, indented by depth, attributes
+    /// sorted: the form the pass snapshots diff.
+    fn outline(dom: &Dom, node: NodeId, depth: usize, out: &mut String) {
+        let indent = "  ".repeat(depth);
+        if !dom.is_element(node) {
+            out.push_str(&format!("{indent}{:?}\n", dom.text_value(node)));
+            return;
+        }
+        let short = |name: &XName| {
+            if name.namespace_name() == W::URI {
+                format!("w:{}", name.local_name())
+            } else if name.namespace_name().is_empty() {
+                name.local_name().to_string()
+            } else {
+                format!("{{{}}}{}", name.namespace_name(), name.local_name())
+            }
+        };
+        let mut attrs = dom
+            .attributes_iter(node)
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| format!("{}={value:?}", short(name)))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let name = dom.name(node).map(|n| short(&n)).unwrap_or_default();
+        out.push_str(&format!("{indent}{name} {}\n", attrs.join(" ")));
+        for child in dom.nodes(node) {
+            outline(dom, child, depth + 1, out);
+        }
+    }
+
+    /// A body with the revision shapes the passes look for: pure inserted and
+    /// pure deleted titles, a mixed paragraph with a recorded property change,
+    /// a field, a table and trailing empty paragraphs.
+    fn synthetic_body() -> String {
+        let date = "2026-01-02T03:04:05Z";
+        let run = |kind: &str, text: &str, id: u32| {
+            let tag = if kind == "del" { "delText" } else { "t" };
+            format!(
+                "<w:{kind} w:id='{id}' w:author='Editor' w:date='{date}'><w:r><w:rPr><w:b/></w:rPr><w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r></w:{kind}>"
+            )
+        };
+        let props = "<w:pStyle w:val='Heading1'/><w:spacing w:before='240' w:after='120' w:line='276'/><w:jc w:val='left'/>";
+        format!(
+            "<w:document xmlns:w='{}'><w:body>\
+             <w:p><w:pPr>{props}<w:rPr><w:ins w:id='1' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p><w:pPr>{props}<w:rPr><w:del w:id='2' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p><w:pPr><w:spacing w:after='200'/><w:pPrChange w:id='3' w:author='Prior' w:date='{date}'><w:pPr><w:spacing w:after='200'/><w:jc w:val='center'/></w:pPr></w:pPrChange></w:pPr><w:r><w:t xml:space='preserve'>Kept text, </w:t></w:r>{}{}</w:p>\
+             <w:p><w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr><w:r><w:t>List item</w:t></w:r>{}</w:p>\
+             <w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>\
+             <w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl>\
+             <w:p><w:pPr><w:spacing w:after='240'/><w:rPr><w:ins w:id='9' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:rPr><w:del w:id='10' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
+             <w:p/><w:sectPr><w:pgSz w:w='11906' w:h='16838'/></w:sectPr>\
+             </w:body></w:document>",
+            W::URI,
+            run("ins", "Revised title", 4),
+            run("del", "Original title", 5),
+            run("ins", "added words", 6),
+            run("del", "removed words", 7),
+            run("ins", " grows", 8),
+            run("del", "Cell text", 11),
+            run("del", "Closing words", 12),
+        )
+    }
+
+    /// The main document part of a fixture package, as XML text.
+    fn document_xml(docx: &[u8]) -> String {
+        let pkg = crate::opc::PartFs::open(docx).expect("fixture opens");
+        let main = pkg.main_document_part().expect("fixture has a main part");
+        pkg.part_string(&main).expect("main part is text")
+    }
+
+    /// What every public body pass does to `xml`: `unchanged`, or a unified
+    /// diff of the outline before and after it (and the ids it took).
+    fn pass_report(xml: &str) -> String {
+        let settings = WmlComparerSettings {
+            author_for_revisions: "Snapshot".to_string(),
+            date_time_for_revisions: "2026-01-02T03:04:05Z".to_string(),
+            ..WmlComparerSettings::default()
+        };
+        let parsed = || {
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(xml);
+            let root = dom.root(document).expect("document element");
+            (dom, root)
+        };
+        let before = {
+            let (dom, root) = parsed();
+            let mut out = String::new();
+            outline(&dom, root, 0, &mut out);
+            out
+        };
+        let mut report = String::new();
+        let mut record = |name: &str, dom: &Dom, root: NodeId, ids: Option<(u32, u32)>| {
+            let mut after = String::new();
+            outline(dom, root, 0, &mut after);
+            report.push_str(&format!("## {name}\n"));
+            if let Some((from, to)) = ids.filter(|(from, to)| from != to) {
+                report.push_str(&format!("ids {from} -> {to}\n"));
+            }
+            if after == before {
+                report.push_str("unchanged\n");
+            } else {
+                let diff = similar::TextDiff::from_lines(&before, &after);
+                report.push_str(
+                    &diff
+                        .unified_diff()
+                        .context_radius(1)
+                        .header("before", "after")
+                        .to_string(),
+                );
+            }
+        };
+        for (name, pass) in body_heuristics() {
+            let (mut dom, root) = parsed();
+            pass(&mut dom, root);
+            record(name, &dom, root, None);
+        }
+        for (name, pass) in configured_heuristics() {
+            let (mut dom, root) = parsed();
+            let mut id = 1000;
+            pass(&mut dom, root, &settings, &mut id);
+            record(name, &dom, root, Some((1000, id)));
+        }
+        report
+    }
+
+    /// Snapshot of every public body pass on a small corpus: two of Word's
+    /// own redlines and a synthetic body. A pass whose output changes fails
+    /// here until the new snapshot is reviewed and blessed with
+    /// `JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'`.
+    #[test]
+    fn finalize_pass_snapshots() {
+        let corpus = [
+            (
+                "f1-word-redline",
+                document_xml(include_bytes!("../../tests/fixtures/f1/word-redline.docx")),
+            ),
+            (
+                "f4-word-redline",
+                document_xml(include_bytes!("../../tests/fixtures/f4/word-redline.docx")),
+            ),
+            ("synthetic-body", synthetic_body()),
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/finalize-snapshots");
+        let bless = std::env::var_os("JUBARTE_BLESS").is_some();
+        for (name, xml) in corpus {
+            let actual = format!(
+                "# Every public comparer::finalize body pass on {name}: `unchanged`, or the\n\
+                 # outline diff it makes. Regenerate after review with\n\
+                 # JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'\n{}",
+                pass_report(&xml)
+            );
+            let path = dir.join(format!("{name}.txt"));
+            if bless {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &actual).unwrap();
+                continue;
+            }
+            let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                panic!("{} is missing; run with JUBARTE_BLESS=1", path.display())
+            });
+            if expected != actual {
+                let diff = similar::TextDiff::from_lines(&expected, &actual)
+                    .unified_diff()
+                    .context_radius(2)
+                    .header("blessed", "now")
+                    .to_string();
+                let shown: String = diff.chars().take(6000).collect();
+                panic!(
+                    "{name}: a finalize pass changed its output. Review, then bless with \
+                     JUBARTE_BLESS=1.\n{shown}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod default_source_property_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31764,8 +32850,7 @@ mod default_source_property_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31924,7 +33009,7 @@ mod default_source_property_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod existing_mark_layout_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31947,8 +33032,7 @@ mod existing_mark_layout_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32255,7 +33339,7 @@ mod existing_mark_layout_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod interleave_terminal_source_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32275,8 +33359,7 @@ mod interleave_terminal_source_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32474,7 +33557,7 @@ mod interleave_terminal_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod whitespace_source_mark_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32494,8 +33577,7 @@ mod whitespace_source_mark_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32638,7 +33720,7 @@ mod whitespace_source_mark_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod fragmented_source_label_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32664,8 +33746,7 @@ mod fragmented_source_label_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33146,7 +34227,7 @@ mod fragmented_source_label_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod nested_deleted_text_source_ownership_tests {
     use super::*;
 
@@ -33259,7 +34340,7 @@ mod nested_deleted_text_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod ladder_suffix_source_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33397,7 +34478,7 @@ mod ladder_suffix_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod reached_word_document_policy_tests {
     use super::*;
     struct PolicyCase {
@@ -33590,7 +34671,7 @@ mod reached_word_document_policy_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod mid_list_optional_source_property_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33686,7 +34767,7 @@ mod mid_list_optional_source_property_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod live_opaque_row_source_boundary_tests {
     use super::*;
 
@@ -33774,7 +34855,7 @@ mod live_opaque_row_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deleted_carrier_echo_source_owner_tests {
     use super::*;
     const DATE: &str = "1970-01-01T00:00:00Z";
@@ -33794,15 +34875,14 @@ mod deleted_carrier_echo_source_owner_tests {
     }
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                value.clone(),
+                *value,
             )
         });
         if attrs.is_empty()

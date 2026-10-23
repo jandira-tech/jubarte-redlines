@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! `jubarte audit`: accessibility, style and structure findings with the
-//! paragraph id an agent can act on.
+//! `jubarte validate --rules a11y,style,structure`: accessibility, style and
+//! structure findings with the paragraph id an agent can act on.
 //!
 //! Every rule reads the admitted package through [`crate::inspect`]'s read
-//! model, so a finding's `location` is the same `body:p:N` (or story
-//! paragraph id) that `jubarte inspect` prints and an edit plan targets.
+//! model, so a finding's `location` is the same paragraph id (`p12`,
+//! `header1.p1`) that `jubarte read --json` prints and an edit plan targets.
 //! When a finding has no paragraph (a document-wide setting), the location
 //! is the part name.
 //!
@@ -46,8 +46,9 @@ pub const RULES: &[(&str, &str, &str)] = &[
     ("FONT_SUBSTITUTED", "structure", "info"),
 ];
 
-/// The rule sets [`RULES`] groups codes into.
-const RULE_SETS: &[&str] = &["a11y", "style", "structure"];
+/// The rule sets [`RULES`] groups codes into: the last three of
+/// [`crate::validate::RULE_SETS`].
+const RULE_SETS: &[&str] = crate::validate::RULE_SETS.split_at(2).1;
 
 /// Characters typed as list markers instead of using Word numbering.
 const LITERAL_MARKERS: &[char] = &['•', '◦', '▪', '-', '*', '·'];
@@ -61,7 +62,7 @@ pub struct AuditFinding {
     pub rule_set: String,
     /// `error`, `warning` or `info`.
     pub severity: String,
-    /// `body:p:N`, a story paragraph id, or a part name.
+    /// A paragraph id (`p12`, `header1.p1`) or a part name.
     pub location: String,
     /// What was found, in one sentence.
     pub message: String,
@@ -117,20 +118,43 @@ impl From<InspectError> for AuditError {
 }
 
 /// Audit `docx` with `rules` (rule sets or codes; empty selects every rule).
+///
+/// # Errors
+///
+/// [`AuditError::UnknownRule`] when a rule is neither a known set nor a
+/// known code; [`AuditError::Layout`] when the layout pass fails;
+/// [`AuditError::Inspect`] when the package cannot be admitted or read.
 pub fn audit(docx: &[u8], rules: &[&str]) -> Result<Vec<AuditFinding>, AuditError> {
     Ok(audit_report(docx, rules)?.findings)
 }
 
 /// [`audit`] plus the codes that ran and whether a layout pass ran.
+///
+/// # Errors
+///
+/// As [`audit`].
 pub fn audit_report(docx: &[u8], rules: &[&str]) -> Result<AuditReport, AuditError> {
-    let mut word_layout = |docx: &[u8]| {
-        let options = PdfOptions {
-            revisions: RevisionStyle::Word,
-            ..PdfOptions::default()
-        };
-        docx_render_report(docx, options).map_err(|error| AuditError::Layout(error.to_string()))
-    };
     audit_report_with(docx, rules, Some(&mut word_layout))
+}
+
+/// The native layout pass: the document laid out in
+/// [`RevisionStyle::Word`], whose page count the `NUMPAGES` cache is
+/// checked against.
+///
+/// # Errors
+///
+/// [`AuditError::Layout`] when the renderer fails.
+pub fn word_layout(docx: &[u8]) -> Result<RenderReport, AuditError> {
+    let options = PdfOptions {
+        revisions: RevisionStyle::Word,
+        ..PdfOptions::default()
+    };
+    docx_render_report(docx, options).map_err(|error| AuditError::Layout(error.to_string()))
+}
+
+/// True when `rule` is one of the audit's rule sets or codes.
+pub(crate) fn is_rule(rule: &str) -> bool {
+    RULE_SETS.contains(&rule) || RULES.iter().any(|known| known.0 == rule)
 }
 
 /// A layout pass [`audit_report_with`] calls at most once.
@@ -143,6 +167,13 @@ pub type LayoutPass<'a> = &'a mut dyn FnMut(&[u8]) -> Result<RenderReport, Audit
 /// selection and asking for it is [`AuditError::Layout`];
 /// `STALE_FIELD_CACHE` still reports empty TOC and `NUMPAGES` caches but
 /// cannot compare a cached page count with a layout.
+///
+/// # Errors
+///
+/// [`AuditError::UnknownRule`] when a rule is neither a known set nor a
+/// known code; [`AuditError::Layout`] when the supplied layout pass fails
+/// or when `FONT_SUBSTITUTED` is requested without a layout pass;
+/// [`AuditError::Inspect`] when the package cannot be admitted or read.
 pub fn audit_report_with(
     docx: &[u8],
     rules: &[&str],
@@ -291,7 +322,7 @@ impl Story {
     }
 
     fn paragraph_id(&self, index: usize) -> String {
-        format!("{}:p:{index}", self.id)
+        crate::ids::paragraph_id(&self.id, index)
     }
 }
 
@@ -670,8 +701,8 @@ impl Package {
                         story.paragraph_id(index),
                         format!(
                             "{count} consecutive empty paragraphs ({} to {}) are used as vertical space",
-                            story.paragraph_id(index),
-                            story.paragraph_id(end - 1)
+                            crate::ids::short_paragraph(&story.paragraph_id(index)),
+                            crate::ids::short_paragraph(&story.paragraph_id(end - 1))
                         ),
                     ));
                 }
@@ -925,7 +956,7 @@ fn under_fallback(dom: &Dom, node: NodeId) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_spacer_ownership_tests {
     use super::*;
     use crate::opc::PartFs;
@@ -994,14 +1025,16 @@ mod public_memory_spacer_ownership_tests {
                     rule_set: "style".into(),
                     severity: "info".into(),
                     location: if label == "section carrier precedes two independent blanks" {
-                        "body:p:1".into()
+                        "p1".into()
                     } else {
-                        "body:p:0".into()
+                        "p0".into()
                     },
                     message: if label == "section carrier precedes two independent blanks" {
-                        "2 consecutive empty paragraphs (body:p:1 to body:p:2) are used as vertical space".into()
+                        "2 consecutive empty paragraphs (p1 to p2) are used as vertical space"
+                            .into()
                     } else {
-                        "2 consecutive empty paragraphs (body:p:0 to body:p:1) are used as vertical space".into()
+                        "2 consecutive empty paragraphs (p0 to p1) are used as vertical space"
+                            .into()
                     },
                 }]
             } else {

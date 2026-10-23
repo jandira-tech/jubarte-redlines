@@ -2,9 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Bundled metric-compatible faces (Carlito = Calibri, Liberation Sans/Serif =
-//! Arial/Times, Liberation Mono = Courier) plus glyph advances for wrap and
-//! PDF embedding.
+//! Bundled metric-compatible faces (Carlito = Calibri, Liberation Sans =
+//! Arial, Liberation Serif = Times New Roman, Liberation Mono = Courier
+//! New) plus glyph advances for wrap and PDF embedding.
+//!
+//! The public surface is the conversion's font report: the
+//! [`FontStep`] a face was reached from, one [`FontReportEntry`] per
+//! distinct family + style the run used, and a JSON dump
+//! ([`font_report_json`]). The bundled catalogue itself is internal.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -264,7 +269,9 @@ fn record_font_resolution(entry: FontReportEntry) {
     });
 }
 
-/// Which resolve step produced the physical face (plan Step 2f).
+/// How the conversion resolved the physical face for a run (plan Step
+/// 2f). Determines whether [`FontReportEntry::substituted`] reports a
+/// substitution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FontStep {
     /// Document-embedded `.odttf` for this family + style.
@@ -287,7 +294,9 @@ pub enum FontStep {
 }
 
 impl FontStep {
-    /// Stable JSON / CLI token for this step.
+    /// The stable token this step uses in JSON and CLI output (`"embedded"`,
+    /// `"explicit"`, `"altName"`, `"theme"`, `"word_substitution"`,
+    /// `"open_fallback"`, `"generic"`, `"unknown"`).
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -309,20 +318,24 @@ impl fmt::Display for FontStep {
     }
 }
 
-/// One distinct requested family + style from a conversion (plan Step 2f).
+/// One distinct requested family + style from a conversion (plan Step
+/// 2f). One entry per `(requested, bold, italic)` the layout saw, not per
+/// run: every run asking for the same triple shares one entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FontReportEntry {
-    /// Family string the run asked for (opaque; quotes/commas preserved).
+    /// Family string the run asked for (opaque; quotes and commas
+    /// preserved).
     pub requested: String,
     /// Which resolve step selected the physical face.
     pub step: FontStep,
-    /// Physical face actually used (PDF PostScript name).
+    /// Physical face actually used (its PDF PostScript name).
     pub physical: String,
     /// Requested bold.
     pub bold: bool,
     /// Requested italic.
     pub italic: bool,
-    /// True when the physical face does not provide the requested style.
+    /// True when the physical face does not provide the requested style
+    /// and the writer faked it (synthesized bold or italic).
     pub synthetic: bool,
 }
 
@@ -357,7 +370,9 @@ impl FontReportEntry {
     }
 
     /// One JSON object matching
-    /// `{requested, step, physical, bold, italic, synthetic, substituted}`.
+    /// `{requested, step, physical, bold, italic, synthetic, substituted}`:
+    /// one JSON object with every public field and the resolved
+    /// `substituted` flag.
     #[must_use]
     pub fn to_json(&self) -> String {
         format!(
@@ -373,7 +388,8 @@ impl FontReportEntry {
     }
 }
 
-/// JSON array of [`FontReportEntry::to_json`] objects.
+/// The entries as a JSON array of [`FontReportEntry::to_json`] objects,
+/// joined with `,` between objects. The empty input returns `"[]"`.
 #[must_use]
 pub fn font_report_json(entries: &[FontReportEntry]) -> String {
     let mut out = String::from("[");
@@ -937,7 +953,7 @@ impl<'a> Face<'a> {
 
     /// The slot's bundled face, whatever this machine has installed.
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     pub(crate) fn bundled(id: FaceId) -> Self {
         Self::load(id)
     }
@@ -1679,7 +1695,7 @@ impl<'a> Fonts<'a> {
 
     /// The unremembered lookup `catalogue_slot` must agree with.
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     pub(crate) fn get_key(&self, key: &FaceKey) -> &Face<'a> {
         if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
             return self
@@ -1773,7 +1789,7 @@ impl<'a> Fonts<'a> {
     /// then the entry's generic. Unknown names use the evidence table's
     /// Cambria row (plan Step 2d).
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     pub(crate) fn resolve_in(
         &self,
         family: &str,
@@ -1785,7 +1801,7 @@ impl<'a> Fonts<'a> {
     }
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     fn resolve_in_step(
         &self,
         family: &str,
@@ -3659,7 +3675,7 @@ fn sanitize_pdf_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -5461,7 +5477,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod pure_font_boundary_tests {
     use super::*;
 
@@ -5707,7 +5723,7 @@ mod pure_font_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deeper_boundary_tests {
     use super::*;
 
@@ -6562,7 +6578,7 @@ mod deeper_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod residual_embedded_style_contract_tests {
     use super::*;
 
@@ -6685,7 +6701,7 @@ mod residual_embedded_style_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod memory_discovery_policy_contract_tests {
     use super::*;
     use std::cell::RefCell;
@@ -7073,7 +7089,7 @@ mod memory_discovery_policy_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod cloud_font_memory_owner_tests {
     use super::*;
     use std::cell::RefCell;
@@ -7257,7 +7273,7 @@ mod cloud_font_memory_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod cjk_memory_discovery_source_contract_tests {
     use super::*;
 

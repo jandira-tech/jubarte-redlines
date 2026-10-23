@@ -2,14 +2,19 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Document settings an edit plan writes (`word/settings.xml`): Track
-//! Changes on or off, update fields on open, and editing restrictions.
+//! Document settings an edit plan writes into `word/settings.xml`: Track
+//! Changes on or off, `updateFields` on open, and editing restrictions.
 //!
-//! Every element goes where `CT_Settings` puts it ([`SETTINGS_ORDER`], the
-//! schema sequence; `tests/schema_consistency.rs` holds it to
-//! `tests/data/wml_main_schema.json`), so Word reads the part. A package
-//! without a settings part gets one, with its relationship and content
-//! type.
+//! Every element lands in `CT_Settings` sequence ([`SETTINGS_ORDER`], the
+//! schema order held by `tests/schema_consistency.rs` against
+//! `tests/data/wml_main_schema.json`), so Word reads the part back. A
+//! package without a settings part gets one, with its relationship and
+//! content type, the first time a request is applied.
+//!
+//! Entry points: [`apply_settings`] to write into an open [`PartFs`] given
+//! the main part's name, and [`apply_settings_to_docx`] for the byte-for-byte
+//! form an edit plan returns. [`SettingsRequest`] is what an operation
+//! builds; [`Protection`] and [`ProtectionEdit`] cover `documentProtection`.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,8 +28,9 @@ const SETTINGS_REL: &str =
 const SETTINGS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
 
-/// The children of `w:settings` in `CT_Settings` sequence order, as
-/// `(namespace URI, local name)`.
+/// The children of `w:settings` in `CT_Settings` sequence, as
+/// `(namespace URI, local name)`. New settings go in the position the schema
+/// expects; [`set_child`] refuses to leave an unknown name in the middle.
 pub const SETTINGS_ORDER: &[(&str, &str)] = &[
     (W::URI, "writeProtection"),
     (W::URI, "view"),
@@ -131,9 +137,12 @@ pub const SETTINGS_ORDER: &[(&str, &str)] = &[
     (W15::URI, "docId"),
 ];
 
-/// What `w:documentProtection` allows (`ST_DocProtect`); `none` removes
-/// the restriction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What `w:documentProtection` allows (`ST_DocProtect`).
+///
+/// [`Self::None`] removes the element entirely: the document is unrestricted.
+/// The other variants are the four values Word's Restrict Editing pane lets
+/// you pick (`readOnly`, `comments`, `trackedChanges`, `forms`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ProtectionEdit {
     /// No restriction: the element is removed.
@@ -149,6 +158,9 @@ pub enum ProtectionEdit {
 }
 
 impl ProtectionEdit {
+    /// The exact `w:edit` value Word writes on the wire
+    /// (`"none"`, `"readOnly"`, `"comments"`, `"trackedChanges"`,
+    /// `"forms"`).
     fn value(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -164,22 +176,28 @@ fn default_true() -> bool {
     true
 }
 
-/// An editing restriction. Without a password, as Word's "enforce without
-/// password": any user can turn it off in Word.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// An editing restriction. Without a password this is what Word's
+/// Restrict Editing pane calls "No password (just this single user can
+/// remove the restriction)": the restriction is checked but any user can
+/// turn it off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Protection {
-    /// What the restriction allows.
+    /// What the restriction allows (`ST_DocProtect`).
     pub edit: ProtectionEdit,
     #[serde(default = "default_true")]
-    /// Enforce it (`w:enforcement="1"`); false records it unenforced.
+    /// `w:enforcement="1"` when true. False records the element
+    /// unenforced; Word shows it greyed out in the Restrict Editing pane.
     pub enforcement: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Refused: Word's legacy password hash is not written.
+    /// Word's legacy password hash. Always refused: a hashed password is
+    /// never written, because the matcher has nothing to compare against.
     pub password: Option<String>,
 }
 
-/// The settings one plan operation writes; `None` leaves a setting as it is.
+/// The settings one plan operation writes. `None` on a field leaves the
+/// existing value on the wire; `Some(true)` adds the element,
+/// `Some(false)` removes it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SettingsRequest {
     /// `w:trackRevisions`: present when true, removed when false.
@@ -191,7 +209,9 @@ pub struct SettingsRequest {
 }
 
 impl SettingsRequest {
-    /// What the request writes, for a report line.
+    /// A short human-readable description of what this request writes,
+    /// for a report line: never the password; protection prints its edit
+    /// value and whether it is enforced.
     #[must_use]
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
@@ -221,8 +241,10 @@ fn rank(dom: &Dom, node: NodeId) -> Option<usize> {
         .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
 }
 
-/// Put `<w:local attrs/>` under `root` in schema order, replacing any
-/// existing element of that name.
+/// Insert or replace `<w:local attrs/>` under `root`, ordered against the
+/// children already there by the `CT_Settings` sequence
+/// ([`SETTINGS_ORDER`]). Elements that are schema-incorrect (an unknown
+/// local, the wrong namespace) stay where their position lets them.
 pub fn set_child(dom: &mut Dom, root: NodeId, local: &str, attrs: &[(&str, &str)]) -> NodeId {
     remove_child(dom, root, local);
     let ours = SETTINGS_ORDER
@@ -244,7 +266,8 @@ pub fn set_child(dom: &mut Dom, root: NodeId, local: &str, attrs: &[(&str, &str)
     node
 }
 
-/// Remove every `<w:local>` child of `root`.
+/// Remove every `<w:local>` child of `root` (none or many). No-op when the
+/// element is absent.
 pub fn remove_child(dom: &mut Dom, root: NodeId, local: &str) {
     let name: XName = W::name(local);
     for child in dom.elements(root, Some(&name)) {
@@ -313,7 +336,14 @@ fn settings_part(pkg: &mut PartFs, main: &str) -> String {
     part
 }
 
-/// Write `request` into the package's settings part.
+/// Apply `request` into the package's settings part, creating it with its
+/// relationship and content type when the package has none.
+///
+/// # Errors
+///
+/// A message when the part the main document rels name is not a
+/// `w:settings` part (the package is corrupt or the part has been edited
+/// out of shape).
 pub fn apply_settings(
     pkg: &mut PartFs,
     main: &str,
@@ -332,6 +362,64 @@ pub fn apply_settings(
     Ok(())
 }
 
+/// The children of `w:compat` that come before `w:doNotExpandShiftReturn`
+/// in `CT_Compat`.
+const BEFORE_SHIFT_RETURN: [&str; 10] = [
+    "useSingleBorderforContiguousCells",
+    "wpJustification",
+    "noTabHangInd",
+    "noLeading",
+    "spaceForUL",
+    "noColumnBalance",
+    "balanceSingleByteDoubleByteWidth",
+    "noExtraLineSpacing",
+    "doNotLeaveBackslashAlone",
+    "ulTrailSpace",
+];
+
+/// Word's "Don't justify lines ending in soft line break"
+/// (`w:compat/w:doNotExpandShiftReturn`, ECMA-376 17.15.3.10) turned on
+/// under the settings `root`, in schema order.
+fn do_not_expand_shift_return(dom: &mut Dom, root: NodeId) {
+    let compat = match dom.elements(root, Some(&W::name("compat"))).first() {
+        Some(&compat) => compat,
+        None => set_child(dom, root, "compat", &[]),
+    };
+    for old in dom.elements(compat, Some(&W::name("doNotExpandShiftReturn"))) {
+        dom.remove(old);
+    }
+    let node = dom.new_element(W::name("doNotExpandShiftReturn"));
+    let next = dom.elements(compat, None).into_iter().find(|&child| {
+        !dom.name(child).is_some_and(|name| {
+            name.namespace_name() == W::URI && BEFORE_SHIFT_RETURN.contains(&name.local_name())
+        })
+    });
+    match next {
+        Some(next) => dom.add_before_self(next, node),
+        None => dom.add(compat, node),
+    }
+}
+
+/// [`do_not_expand_shift_return`] on a whole package: a justified line
+/// that ends in a line break is not stretched to the margin.
+pub(crate) fn no_stretched_line_breaks(docx: &[u8]) -> Result<Vec<u8>, String> {
+    let mut pkg = PartFs::open(docx).map_err(|e| e.to_string())?;
+    let main = pkg
+        .main_document_part()
+        .ok_or("the package has no main document part")?;
+    let part = settings_part(&mut pkg, &main);
+    let xml = pkg.part_string(&part).unwrap_or_default();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom
+        .root(doc)
+        .filter(|&r| dom.name_is(r, &W::name("settings")))
+        .ok_or_else(|| format!("{part} is not a w:settings part"))?;
+    do_not_expand_shift_return(&mut dom, root);
+    pkg.set_part(&part, dom.serialize_document(doc).into_bytes());
+    pkg.to_zip().map_err(|e| e.to_string())
+}
+
 /// [`apply_settings`] on a whole package.
 pub fn apply_settings_to_docx(docx: &[u8], request: &SettingsRequest) -> Result<Vec<u8>, String> {
     let mut pkg = PartFs::open(docx).map_err(|e| e.to_string())?;
@@ -343,7 +431,7 @@ pub fn apply_settings_to_docx(docx: &[u8], request: &SettingsRequest) -> Result<
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -369,6 +457,29 @@ mod tests {
             let wire = serde_json::to_string(&edit).unwrap();
             assert_eq!(wire, format!("\"{}\"", edit.value()), "{edit:?}");
             assert_eq!(serde_json::from_str::<ProtectionEdit>(&wire).unwrap(), edit);
+        }
+    }
+
+    #[test]
+    fn a_shift_return_flag_lands_in_compat_in_schema_order() {
+        for (compat, expected) in [
+            (
+                r#"<w:compat><w:ulTrailSpace/><w:spacingInWholePoints/><w:compatSetting w:name="x" w:uri="u" w:val="1"/></w:compat>"#,
+                r#"<w:compat><w:ulTrailSpace /><w:doNotExpandShiftReturn /><w:spacingInWholePoints /><w:compatSetting"#,
+            ),
+            (
+                r#"<w:compat><w:doNotExpandShiftReturn w:val="0"/></w:compat>"#,
+                "<w:compat><w:doNotExpandShiftReturn /></w:compat>",
+            ),
+            (
+                r#"<w:zoom w:percent="90"/><w:rsids/>"#,
+                r#"<w:zoom w:percent="90" /><w:compat><w:doNotExpandShiftReturn /></w:compat><w:rsids />"#,
+            ),
+        ] {
+            let (mut dom, doc, root) = settings(compat);
+            do_not_expand_shift_return(&mut dom, root);
+            let xml = dom.serialize_document(doc);
+            assert!(xml.contains(expected), "{xml}");
         }
     }
 

@@ -2,8 +2,16 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M4.D — table/row/cell LCS: `ApplyLcsToTableRows` (:8241),
-//! `DoLcsAlgorithmForTable` (:8348), `MarkRowsAsDeletedOrInserted` (:4216).
+//! M4.D — table / row / cell LCS and row revision marking.
+//!
+//! Port of `ApplyLcsToTableRows` (:8241), `DoLcsAlgorithmForTable` (:8348),
+//! `MarkRowsAsDeletedOrInserted` (:4216), and the
+//! `rows_preserving_horizontal_partitions` family that fixes Word's
+//! horizontal-partition / cell-mesh shape. The classic DP LCS over rows
+//! keyed on `sha1()` produces Deleted/Inserted/Unknown sequences; the row
+//! marker pass turns those into `w:ins`/`w:del` children of each affected
+//! row's `w:trPr`, keeping `w:trPrChange` last in `CT_TrPr` order so the
+//! output survives Word's PDF-save path.
 
 use super::atoms::{ComparisonUnit, ComparisonUnitGroup, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerSettings};
@@ -34,8 +42,12 @@ fn ancestor_named(
         .find(|&a| dom.name(a).as_ref() == Some(name))
 }
 
-/// M4.D.1 — `ApplyLcsToTableRows` (:8241): classic DP LCS over rows keyed on
-/// `sha1`, emitting Deleted/Inserted/Unknown in document order.
+/// M4.D.1 — `ApplyLcsToTableRows` (WmlComparer.ts :8241): classic DP LCS
+/// over rows keyed on [`ComparisonUnit::sha1`], emitting
+/// Deleted/Inserted/Unknown sequences in document order. The match list is
+/// reversed so the output is forward order; an inconsistency between the
+/// matched/deleted/inserted vectors and the row indexes is a `unreachable!`
+/// bug rather than silent data loss.
 pub fn apply_lcs_to_table_rows(
     rows1: &[ComparisonUnit],
     rows2: &[ComparisonUnit],
@@ -115,6 +127,161 @@ pub fn apply_lcs_to_table_rows(
         );
     }
     result
+}
+
+/// One row operation from Word's shared-word alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WordRowOp {
+    Pair(usize, usize),
+    Delete(usize),
+    Insert(usize),
+}
+
+/// M4.D.5 — Word's row alignment for paired tables with no identical rows
+/// (Task 22, redline `3d4318d7e9`): `score(i, j)` is the number of shared
+/// case-insensitive alphanumeric word tokens; global max-weight monotone
+/// matching with gap cost 0; the backtrack deletes an old row on a tie,
+/// inserts a new row on a tie, and pairs only when strictly better than
+/// both; gaps between positive-score anchors fill positionally (pair, then
+/// deleted rest, then inserted rest).
+pub(crate) fn align_rows_by_shared_words(
+    old: &[std::collections::HashSet<String>],
+    new: &[std::collections::HashSet<String>],
+) -> Vec<WordRowOp> {
+    let (m, n) = (old.len(), new.len());
+    let score = |i: usize, j: usize| old[i].intersection(&new[j]).count();
+    let mut best = vec![vec![0usize; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            best[i][j] = best[i - 1][j]
+                .max(best[i][j - 1])
+                .max(best[i - 1][j - 1] + score(i - 1, j - 1));
+        }
+    }
+    // Backtrack: a tied deletion or insertion wins over pairing, so a pair
+    // is an anchor only when strictly better than both one-sided moves.
+    // (A zero-score diagonal can never be strictly better: it would need
+    // `best[i-1][j-1] > best[i-1][j]`, against the table's monotonicity.)
+    let mut anchors = Vec::new();
+    let (mut i, mut j) = (m, n);
+    while i > 0 && j > 0 {
+        if best[i - 1][j] == best[i][j] {
+            i -= 1;
+        } else if best[i][j - 1] == best[i][j] {
+            j -= 1;
+        } else {
+            debug_assert_eq!(best[i - 1][j - 1] + score(i - 1, j - 1), best[i][j]);
+            if score(i - 1, j - 1) > 0 {
+                anchors.push((i - 1, j - 1));
+            }
+            i -= 1;
+            j -= 1;
+        }
+    }
+    anchors.sort_unstable();
+    // Positional gap fill between anchors (and around them).
+    let mut ops = Vec::new();
+    let (mut taken_old, mut taken_new) = (0usize, 0usize);
+    for (a, b) in anchors.iter().copied().chain([(m, n)]) {
+        let (gap_old, gap_new) = (a - taken_old, b - taken_new);
+        let paired = gap_old.min(gap_new);
+        for t in 0..paired {
+            ops.push(WordRowOp::Pair(taken_old + t, taken_new + t));
+        }
+        for t in paired..gap_old {
+            ops.push(WordRowOp::Delete(taken_old + t));
+        }
+        for t in paired..gap_new {
+            ops.push(WordRowOp::Insert(taken_new + t));
+        }
+        if (a, b) != (m, n) {
+            ops.push(WordRowOp::Pair(a, b));
+        }
+        (taken_old, taken_new) = (a + 1, b + 1);
+    }
+    ops
+}
+
+/// The joined `w:t` text of a row as lowercase alphanumeric word tokens.
+fn row_word_tokens(dom: &Dom, row: &ComparisonUnit) -> std::collections::HashSet<String> {
+    let mut text = String::new();
+    let mut previous_paragraph = None;
+    for atom in row.descendant_atoms() {
+        if dom.name_is(atom.content_element, &W::t()) {
+            let paragraph = atom
+                .ancestor_elements
+                .iter()
+                .rev()
+                .copied()
+                .find(|&node| dom.name_is(node, &W::p()));
+            if previous_paragraph.is_some() && previous_paragraph != paragraph {
+                text.push(' ');
+            }
+            text.push_str(&dom.value_str(atom.content_element));
+            previous_paragraph = paragraph;
+        } else if dom.name_is(atom.content_element, &W::name("tab"))
+            || dom.name_is(atom.content_element, &W::name("br"))
+            || dom.name_is(atom.content_element, &W::name("cr"))
+        {
+            text.push(' ');
+        }
+    }
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+fn table_has_merges(dom: &Dom, rows: &[ComparisonUnit]) -> bool {
+    let tbl_name = W::name("tbl");
+    rows.iter()
+        .filter_map(as_group)
+        .find_map(|g| ancestor_named(dom, g, &tbl_name))
+        .is_some_and(|t| contains_merged(dom, t))
+}
+
+/// Word's shared-word row alignment owns this table pair when Word mode is
+/// on, both sides have rows, no row is identical (the `sha1` LCS owns that
+/// case), and neither table uses merges (those keep their dedicated
+/// positional routes).
+pub(crate) fn shared_word_row_sequences(
+    dom: &Dom,
+    rows1: &[ComparisonUnit],
+    rows2: &[ComparisonUnit],
+) -> Option<Vec<CorrelatedSequence>> {
+    if rows1.is_empty() || rows2.is_empty() {
+        return None;
+    }
+    if table_has_merges(dom, rows1) || table_has_merges(dom, rows2) {
+        return None;
+    }
+    if rows1
+        .iter()
+        .any(|r1| rows2.iter().any(|r2| r1.sha1() == r2.sha1()))
+    {
+        return None;
+    }
+    let old: Vec<_> = rows1.iter().map(|r| row_word_tokens(dom, r)).collect();
+    let new: Vec<_> = rows2.iter().map(|r| row_word_tokens(dom, r)).collect();
+    // Content-free rows carry no signal to score: decline (the historical
+    // contract) rather than pairing emptiness positionally.
+    if !old.iter().any(|t| !t.is_empty()) || !new.iter().any(|t| !t.is_empty()) {
+        return None;
+    }
+    Some(
+        align_rows_by_shared_words(&old, &new)
+            .into_iter()
+            .map(|op| match op {
+                WordRowOp::Pair(a, b) => CorrelatedSequence::paired(
+                    CorrelationStatus::Unknown,
+                    vec![rows1[a].clone()],
+                    vec![rows2[b].clone()],
+                ),
+                WordRowOp::Delete(a) => CorrelatedSequence::deleted(vec![rows1[a].clone()]),
+                WordRowOp::Insert(b) => CorrelatedSequence::inserted(vec![rows2[b].clone()]),
+            })
+            .collect(),
+    )
 }
 
 fn contains_merged(dom: &Dom, tbl: NodeId) -> bool {
@@ -451,7 +618,11 @@ fn rows_preserving_horizontal_partitions_inner(
     Some(out)
 }
 
-/// M4.D.2/D.3 — `DoLcsAlgorithmForTable` (:8348): single-table-vs-single-table.
+/// M4.D.2/D.3 — `DoLcsAlgorithmForTable` (WmlComparer.ts :8348):
+/// single-table-vs-single-table dispatch. Tries horizontal-partition
+/// preservation first, then a row-level LCS on same-row-count content
+/// differences, then a merged-cell / structure-hash fallback. `None` means
+/// "the caller should fall back to whole-table del+ins".
 pub fn do_lcs_algorithm_for_table(
     dom: &Dom,
     cul1: &[ComparisonUnit],
@@ -462,6 +633,13 @@ pub fn do_lcs_algorithm_for_table(
     let g2 = as_group(cul2.first()?)?;
     let rows1 = &g1.contents;
     let rows2 = &g2.contents;
+    // M4.D.5 — Word's shared-word row alignment owns pairs with no identical
+    // rows in Word mode; every other shape keeps its route below.
+    if settings.merge_replaced_paragraphs
+        && let Some(rows) = shared_word_row_sequences(dom, rows1, rows2)
+    {
+        return Some(rows);
+    }
     if let Some(rows) =
         rows_preserving_horizontal_partitions_with_word_context(dom, rows1, rows2, settings)
     {
@@ -605,7 +783,7 @@ pub(crate) fn add_row_mark(dom: &mut Dom, trpr: NodeId, rev: NodeId) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod row_mark_tests {
     use super::*;
 
@@ -639,7 +817,7 @@ mod row_mark_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod horizontal_partition_tests {
     use super::*;
 
@@ -684,8 +862,7 @@ mod horizontal_partition_tests {
     }
     fn prop(dom: &Dom, n: NodeId) -> String {
         let mut attrs: Vec<_> = dom
-            .attributes(n)
-            .into_iter()
+            .attributes_iter(n)
             .map(|(k, v)| format!("{}={v}", k.local_name()))
             .collect();
         attrs.sort();
@@ -1228,7 +1405,7 @@ mod horizontal_partition_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod nested_lifecycle_owner_regressions {
     use super::*;
 
@@ -1314,7 +1491,7 @@ mod nested_lifecycle_owner_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod m42_word_context_boundaries {
     use super::*;
 
@@ -1435,7 +1612,7 @@ mod m42_word_context_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod deterministic_table_dispatch_tests {
     use super::*;
     use crate::namespaces::PT;
@@ -1694,5 +1871,119 @@ mod deterministic_table_dispatch_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod shared_word_alignment_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn toks(words: &[&str]) -> HashSet<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    fn rows(lists: &[&[&str]]) -> Vec<HashSet<String>> {
+        lists.iter().map(|words| toks(words)).collect()
+    }
+
+    use WordRowOp::{Delete, Insert, Pair};
+
+    /// Task 22 first table: 3 old rows against 21 new, anchors at new 0/3/7
+    /// (here 0/3/7 of 8). Gaps fill positionally around the anchors.
+    #[test]
+    fn anchors_win_over_positional_heads_with_inserted_gap_rows() {
+        let old = rows(&[&["rhythmia"], &["left", "atrium"], &["right", "atrium"]]);
+        let new = rows(&[
+            &["motivation"],
+            &["contribution"],
+            &["post"],
+            &["atrium", "skills"],
+            &["post"],
+            &["build"],
+            &["post"],
+            &["atrium", "range"],
+        ]);
+        // `atrium` is the only shared token: old row 1 anchors new 3, old
+        // row 2 anchors new 7; the header pair comes from gap fill.
+        assert_eq!(
+            align_rows_by_shared_words(&old, &new),
+            vec![
+                Pair(0, 0),
+                Insert(1),
+                Insert(2),
+                Pair(1, 3),
+                Insert(4),
+                Insert(5),
+                Insert(6),
+                Pair(2, 7),
+            ]
+        );
+    }
+
+    /// No shared token at all: heads pair positionally, the rest inserts.
+    #[test]
+    fn zero_score_tables_pair_heads_positionally() {
+        let old = rows(&[&["february"], &["sat"]]);
+        let new = rows(&[&["nev"], &["beosztas"], &["mobilitas"]]);
+        assert_eq!(
+            align_rows_by_shared_words(&old, &new),
+            vec![Pair(0, 0), Pair(1, 1), Insert(2)]
+        );
+    }
+
+    /// Deleting the old row beats pairing it when both reach the optimum
+    /// (Task 22 second table tail: A18 stays deleted, B9 keeps A14).
+    #[test]
+    fn deletion_wins_ties_against_pairing() {
+        let old = rows(&[&["m"], &["n"], &["n"]]);
+        let new = rows(&[&["m"], &["n"]]);
+        assert_eq!(
+            align_rows_by_shared_words(&old, &new),
+            vec![Pair(0, 0), Pair(1, 1), Delete(2)]
+        );
+    }
+
+    /// Symmetric inference (no direct Word case): inserting the new row
+    /// beats pairing it on a tie.
+    #[test]
+    fn insertion_wins_ties_against_pairing() {
+        let old = rows(&[&["m"], &["n"]]);
+        let new = rows(&[&["m"], &["n"], &["n"]]);
+        assert_eq!(
+            align_rows_by_shared_words(&old, &new),
+            vec![Pair(0, 0), Pair(1, 1), Insert(2)]
+        );
+    }
+
+    /// A higher-weight anchor pulls the alignment even when an earlier
+    /// single-share pairing is available (Task 22: A10 takes B5 for 2).
+    #[test]
+    fn heavier_anchor_pull_beats_earlier_single() {
+        let old = rows(&[&["a", "solo"], &["solo", "double", "trouble"]]);
+        let new = rows(&[&["solo"], &["double", "trouble"]]);
+        assert_eq!(
+            align_rows_by_shared_words(&old, &new),
+            vec![Pair(0, 0), Pair(1, 1)]
+        );
+    }
+    #[test]
+    fn row_tokens_keep_cell_paragraph_and_tab_boundaries_but_join_run_fragments() {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}"><w:body><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Al</w:t></w:r><w:r><w:t>pha</w:t></w:r></w:p><w:p><w:r><w:t>Beta</w:t><w:tab/><w:t>Gamma</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Delta</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#, W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let settings = WmlComparerSettings::default();
+        let atoms =
+            super::super::atomize::create_comparison_unit_atom_list(&mut dom, body, &settings);
+        let units = super::super::units::get_comparison_unit_list(&dom, &atoms, &settings);
+        let table = as_group(&units[0]).unwrap();
+        assert_eq!(
+            row_word_tokens(&dom, &table.contents[0]),
+            toks(&["alpha", "beta", "gamma", "delta"])
+        );
     }
 }

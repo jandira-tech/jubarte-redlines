@@ -16,7 +16,6 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 
 const require = createRequire(import.meta.url);
 const wasm = require("jubarte-wasm");
@@ -27,25 +26,38 @@ const EXIT_ERROR = 1;
 const EXIT_USAGE = 2;
 const EXIT_PLAN_REFUSED = 3;
 
-// The first bytes of an OLE compound file: a Word 97-2003 .doc, or a
-// password-encrypted document of any Word version.
-const OLE_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-
 /** A user-facing failure; printed as `error: ...`, exit 1. */
 class CliError extends Error {}
 
 /** A host capability mismatch; rejected before file I/O, exit 2. */
 class UsageError extends Error {}
 
+/** An engine refusal that exits 3, as `read --for-edit`'s. */
+class RefusalError extends Error {}
+
+// strerror's text for the errors a file task meets, so an I/O error reads
+// as the binary's: `No such file or directory (os error 2)`.
+const STRERROR = {
+  ENOENT: "No such file or directory", EACCES: "Permission denied", EPERM: "Operation not permitted",
+  EISDIR: "Is a directory", ENOTDIR: "Not a directory", EEXIST: "File exists", ENOSPC: "No space left on device",
+  EROFS: "Read-only file system", ENAMETOOLONG: "File name too long", ELOOP: "Too many levels of symbolic links",
+};
+
+/** An I/O error as Rust words it; Node's own message where it has no errno. */
+function osError(e) {
+  const text = STRERROR[e?.code];
+  return text && Number.isInteger(e.errno) && process.platform !== "win32" ? `${text} (os error ${-e.errno})` : e.message;
+}
+
+/** An error's message without the engine's `jubarte-wasm: ` prefix. */
+const messageOf = (e) => String(e instanceof Error ? e.message : e).replace(/^jubarte-wasm: /, "");
+
 function read(file, forceKind) {
   let bytes;
   try {
     bytes = fs.readFileSync(file);
   } catch (e) {
-    throw new CliError(`reading ${file}: ${e.message}`);
-  }
-  if (bytes.subarray(0, OLE_MAGIC.length).equals(OLE_MAGIC)) {
-    throw new CliError(`${file} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password`);
+    throw new CliError(`reading ${file}: ${osError(e)}`);
   }
   // Ask the same clap parser for declared input metadata on other commands.
   // Its format grammar stays in the core; unknown suffixes use ZIP sniffing.
@@ -53,13 +65,33 @@ function read(file, forceKind) {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(["diff", "--", file, file])));
     forceKind = parsed.args.old_format;
   }
-  if (forceKind === "docx" && !bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
-    throw new CliError(`reading ${file}: invalid DOCX (expected a ZIP package)`);
-  }
-  if (forceKind !== "docx" && bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
+  const word = (forceKind ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md")) === "docx";
+  // The binary's line for what no task reads: a .doc or RTF file, or Word
+  // that is no ZIP package (`CODE: FILE is …`).
+  const refused = wasm.refusedInput(file, bytes, word);
+  if (refused) throw new CliError(refused);
+  if (!word && bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
     return bytes.subarray(3);
   }
   return bytes;
+}
+
+/** The JSON reads report the input's validity findings in their output,
+ * not on stderr (#1309). (A binding older than that has no
+ * inputValidityLine; its JSON reads keep the stderr line.) */
+const jsonValidity = typeof wasm.inputValidityLine === "function";
+
+/** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
+ * says how many validity findings the input has, as the binary's does,
+ * but for a JSON read (`json`), which carries them. (A binding older than
+ * #1256 has no inputNotice and says nothing.) */
+function readInput(file, o, json = false) {
+  const docx = read(file);
+  if (!o.quiet && !(json && jsonValidity) && wasm.inputNotice) {
+    const notice = wasm.inputNotice(docx, file);
+    if (notice) console.error(notice);
+  }
+  return docx;
 }
 
 function ensureWritable(file, force) {
@@ -82,7 +114,6 @@ function kindOf(file, bytes, declared) {
 
 /** Word output from convert is a Markdown conversion. */
 const convertsToDocx = (o) => o.to === "docx" || (o.to == null && path.extname(o.output ?? "").toLowerCase() === ".docx");
-const docxNeedsMarkdown = () => new UsageError("--to docx requires Markdown input in the npm CLI");
 
 /** Markdown bytes as text; malformed UTF-8 is refused, never replaced. */
 function markdownText(file, bytes) {
@@ -93,27 +124,91 @@ function markdownText(file, bytes) {
   }
 }
 
-/** Markdown output is CriticMarkup of two Markdown documents. */
-function markdownNeedsBoth(sides) {
-  const word = sides.find(([, kind]) => kind !== "md");
-  if (word) {
-    throw new CliError(`Markdown output needs both documents in Markdown (${word[0]} is Word): write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead`);
-  }
-}
-
 function write(file, data) {
   try {
     fs.writeFileSync(file, data);
   } catch (e) {
-    throw new CliError(`writing ${file}: ${e.message}`);
+    throw new CliError(`writing ${file}: ${osError(e)}`);
   }
 }
 
-function jsonLines(json) {
-  for (const row of JSON.parse(json)) console.log(JSON.stringify(row));
+/** A value with every object's keys sorted, as the binary's JSON prints them. */
+function sortedKeys(value) {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortedKeys(value[key])]));
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** One JSON line as the binary prints it: compact, keys sorted. */
+const jsonl = (row) => JSON.stringify(sortedKeys(row));
+
+/** The engine's `wrote` line on stderr, unless `-q`. */
+function wrote(o, file, format, size, pages) {
+  if (!o.quiet) console.error(wasm.wroteLine(file, format, size, pages));
+}
+
+/** `readJson`'s `validityFile` for FILE as typed, when the binding takes it. */
+function validity(file) {
+  return file != null && jsonValidity ? { validityFile: file } : {};
+}
+
+/** The read options that select paragraphs, and the text --track-changes
+ * settles, as `readJson` takes them. */
+function selection(o = {}) {
+  return { trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
+}
+
+/** `read --for-edit`'s working-document JSON, from the flags the shared
+ * parser stored; `validityFile` is FILE as typed. Usage failures are
+ * `jubarte-wasm: USAGE: …`, refusals `jubarte-wasm: CODE: …`. */
+function forEditJson(docx, o, validityFile) {
+  try {
+    return wasm.forEdit(docx, JSON.stringify({
+      paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined,
+      find: o.find ?? undefined, regex: o.regex ?? undefined, ignoreCase: Boolean(o.ignore_case),
+      changed: Boolean(o.changed), by: o.by ?? undefined,
+      context: o.context ?? undefined, limit: o.limit ?? undefined, maxChars: o.max_chars ?? undefined,
+      all: Boolean(o.all), cursor: o.cursor ?? undefined,
+      acceptChange: o.accept_change?.length ? o.accept_change : undefined,
+      rejectChange: o.reject_change?.length ? o.reject_change : undefined,
+      existingRevisions: o.existing_revisions ?? undefined, track: o.track ?? undefined,
+      validityFile,
+    }));
+  } catch (e) {
+    const usage = messageOf(e);
+    if (usage.startsWith("USAGE: ")) throw new UsageError(usage.slice("USAGE: ".length));
+    throw new RefusalError(usage);
+  }
+}
+
+/** `-o` in the format its extension names, as the binary's writer: the Word
+ * package, its agent view (.md, headed `source`), its snapshot (.json) or
+ * its PDF. `view` is read's options; the defaults elsewhere. `validityFile`
+ * puts the input's validity in a snapshot's summary, as `read --json`
+ * prints it. */
+function writeResult(o, docx, source, view, validityFile) {
+  const output = o.output, kind = o.output_format ?? "docx";
+  if (kind === "pdf") return renderTo(o, docx, output);
+  ensureWritable(output, o.force);
+  const data = kind === "md" ? viewText(docx, view ?? {}, source)
+    : kind === "json" && view?.for_edit ? forEditJson(docx, view, validityFile)
+    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify({ ...selection(view), ...validity(validityFile) }))}\n`
+    : docx;
+  write(output, data);
+  wrote(o, output, kind, typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length);
+}
+
+/** `docx` drawn as the PDF `output`, with the task's render flags. */
+function renderTo(o, docx, output) {
+  ensureWritable(output, o.force);
+  const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions ?? undefined, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_pages));
+  write(output, pdf);
+  wrote(o, output, "pdf", pdf.length, wasm.pdfPageCount(pdf));
+}
+
+/** The name a task's .md view gives the Word file it did not write: -o as
+ * typed, with .docx for its extension. */
+const notWritten = (output) => `${output.slice(0, output.length - path.extname(output).length)}.docx (not written)`;
 
 // -- commands -----------------------------------------------------------------
 
@@ -122,155 +217,243 @@ const COMMANDS = {
     run(name, [original, modified], o) {
       const fallback = path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
       const [a, b] = [read(original, o.old_format), read(modified, o.new_format)];
-      // The shorthand `A B` without -o prints the redline's agent view.
-      if (o.output == null && o.view != null) {
-        return void printView(wasm.redlineDocuments(a, b, o.author, o.date), o.view, `${fallback} (not written; -o keeps it)`);
+      // Without -o, compare (and the shorthand `A B`) prints the redline's
+      // agent view.
+      if (o.output == null) {
+        return void printView(wasm.redlineDocuments(a, b, o.author, o.datetime), o.view, `${fallback} (not written; -o keeps it)`);
       }
-      const output = o.output ?? fallback;
-      if (o.output_format === "md") markdownNeedsBoth([[original, kindOf(original, a, o.old_format)], [modified, kindOf(modified, b, o.new_format)]]);
+      const output = o.output;
+      // A .md of two Markdown documents is CriticMarkup; of anything else,
+      // the redline's view.
+      if (o.output_format === "md" && kindOf(original, a, o.old_format) === "md" && kindOf(modified, b, o.new_format) === "md") {
+        if (o.view_given) throw new UsageError("read options shape the view; two Markdown documents write CriticMarkup to a .md");
+        ensureWritable(output, o.force);
+        const critic = wasm.diffDocumentsCritic(a, b, o.author, o.datetime);
+        write(output, critic);
+        return void wrote(o, output, "md", Buffer.byteLength(critic, "utf8"));
+      }
       ensureWritable(output, o.force);
-      const redline = o.output_format === "md"
-        ? wasm.diffDocumentsCritic(a, b, o.author, o.date)
-        : wasm.redlineDocuments(a, b, o.author, o.date);
-      write(output, redline);
-      if (!o.quiet) console.log(`wrote ${output} (${Buffer.byteLength(redline)} bytes)`);
+      writeResult(o, wasm.redlineDocuments(a, b, o.author, o.datetime), `${fallback} (not written; -o keeps it)`, o.view);
     },
   },
   diff: {
+    // Text only, as natively: the patch, a text view, or (two Markdown
+    // documents) CriticMarkup, on stdout or in -o's file.
     run(_, [old, next], o) {
-      const view = ["github", "word", "normal", "context", "side-by-side"].includes(o.format);
+      // An existing output is refused before any work.
+      if (o.output != null) ensureWritable(o.output, o.force);
       const a = read(old, o.old_format), b = read(next, o.new_format);
       const kind = (declared, bytes) => declared ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
       const oldFormat = kind(o.old_format, a), newFormat = kind(o.new_format, b);
       // A side read as Markdown must be text, whichever engine call follows.
       if (oldFormat === "md") markdownText(old, a);
       if (newFormat === "md") markdownText(next, b);
-      let output = o.output;
-      const to = o.to ?? o.output_format ?? (oldFormat === "md" && newFormat === "md" ? "md" : "docx");
-      if (!view && output == null && to !== "md") output = path.join(path.dirname(old), `${stem(old)}_v_${stem(next)}.${to}`);
-      if (!view && output != null && to === "md") markdownNeedsBoth([[old, oldFormat], [next, newFormat]]);
-      if (output != null) ensureWritable(output, o.force);
-      if (view) {
-        const text = wasm.diffDocumentsView(a, b, JSON.stringify({
+      let text;
+      if (["github", "word", "normal", "context", "side-by-side"].includes(o.format)) {
+        text = wasm.diffDocumentsView(a, b, JSON.stringify({
           format: o.format, oldName: old, newName: next, context: o.context,
           acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
         }));
-        if (output != null) {
-          write(output, text);
-          console.error(`wrote ${output} (${Buffer.byteLength(text, "utf8")} bytes)`);
-        } else process.stdout.write(text);
-        return;
+      } else {
+        const date = o.datetime; // the shared parser dated the run (D17)
+        if (o.format === "critic") {
+          if (oldFormat !== "md" || newFormat !== "md") {
+            throw new CliError("--format critic needs both documents in Markdown; `jubarte compare OLD NEW` prints their redline as the agent view");
+          }
+          text = wasm.diffDocumentsCritic(a, b, o.author, date);
+        } else text = JSON.parse(wasm.diffDocuments(a, b, o.author, date, o.columns, old, next)).text;
       }
-      const author = o.author ?? defaultAuthor();
-      const date = o.date ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-      const text = o.format === "critic" ? wasm.diffDocumentsCritic(a, b, author, date)
-        : JSON.parse(wasm.diffDocuments(a, b, author, date, o.columns, path.basename(old), path.basename(next))).text;
-      if (output != null) {
-        let data = text;
-        if (to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
-        if (["docx", "pdf"].includes(to)) {
-          data = wasm.redlineDocuments(a, b, author, date);
-          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_only));
-        }
-        write(output, data);
-        // As natively: critic says only what it wrote; a patch keeps stdout.
-        const wrote = `wrote ${output} (${typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length} bytes)`;
-        if (o.format === "critic") return void console.log(wrote);
-        console.error(wrote);
-      }
-      process.stdout.write(text);
+      if (o.output == null) return void process.stdout.write(text);
+      write(o.output, text);
+      if (!o.quiet) console.error(`wrote ${o.output} (md, ${Buffer.byteLength(text, "utf8")} bytes)`);
     },
   },
   changes: {
     run(_, [file], o) {
-      const changes = JSON.parse(wasm.listChanges(read(file)));
-      for (const change of changes) {
-        if (o.json) {
-          console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
-          continue;
-        }
-        const inside = change.inside ? `\tinside ${change.inside}` : "";
-        console.log(`${change.id}\t${change.kind}\t${change.target}\t${change.author || "-"}\t${JSON.stringify([...change.text].slice(0, 60).join(""))}${inside}`);
+      const docx = readInput(file, o, o.json);
+      if (!o.json) return void process.stdout.write(wasm.changesText(docx));
+      for (const change of JSON.parse(wasm.listChanges(docx))) {
+        console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
-      if (!o.json) console.log(`${changes.length} change(s)`);
+      if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
     },
   },
   accept: resolution(true),
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      printView(read(file), o, path.basename(file));
-    },
-  },
-  inspect: {
-    run(_, [file], o) {
-      const json = wasm.inspectDocument(read(file));
-      if (o.json) return console.log(json);
-      const snap = JSON.parse(json);
-      const s = snap.summary;
-      console.log(`sha256: ${snap.source_sha256}`);
-      console.log(
-        `paragraphs: ${s.paragraphs}  tables: ${s.tables}  fields: ${s.fields}  sections: ${s.sections}  ` +
-          `comments: ${s.comments}  revisions: ${s.revisions}  footnotes: ${s.footnotes}  endnotes: ${s.endnotes}  ` +
-          `headers: ${s.headers}  footers: ${s.footers}  images: ${s.images}  numbering: ${s.list_numbering}  ` +
-          `track_changes: ${s.track_changes}`,
-      );
-      for (const p of snap.paragraphs) {
-        const flags = [p.style, p.numbered && "numbered", p.in_table && "table", p.page_break && "page-break", ...p.limitations].filter(Boolean);
-        const chars = [...p.text];
-        console.log(`${p.id}\t[${flags.join(",")}]\t${chars.slice(0, 80).join("")}${chars.length > 80 ? "…" : ""}`);
+      const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
+      if (o.for_edit) {
+        if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+        return void process.stdout.write(forEditJson(docx, o, file));
       }
+      if (o.tables) {
+        // (A binding older than #1255 has no tablesView; its parser
+        // refuses -p and --track-changes here.)
+        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
+        // With -p, the grids of the tables it reaches, then its view; a
+        // pick that reaches no table is a usage error.
+        let view;
+        try {
+          view = JSON.parse(wasm.tablesView(docx, JSON.stringify({
+            trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
+            pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
+          })));
+        } catch (e) {
+          const usage = /^jubarte-wasm: USAGE: (.*)$/s.exec(String(e?.message ?? e));
+          if (usage) throw new UsageError(usage[1]);
+          throw e;
+        }
+        for (const warning of view.warnings) console.error(`warning: ${warning}`);
+        return void process.stdout.write(view.markdown);
+      }
+      if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
+      if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));
+      printView(docx, o, path.basename(file));
     },
   },
   convert: {
     run(_, [file], o) {
-      const palette = paletteOf(o);
       let docx = read(file);
       if (kindOf(file, docx) === "md") {
-        docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
-        if (!o.pdf && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
-          if (o.move_comments || o.changed_only) {
-            throw new CliError("--move-comments / --changed-only applies to PDF or PNG output only");
+        const text = markdownText(file, docx);
+        const reference = o.reference_doc == null ? undefined : read(o.reference_doc);
+        // What names no one: the flags, else the front matter, else the
+        // reference's creator and creation time, else Redline and now.
+        let author = o.author;
+        let date = o.datetime;
+        if (author == null || date == null) {
+          const [stampAuthor, stampDate] = JSON.parse(wasm.markdownStamp(text, reference));
+          author ??= stampAuthor ?? "Redline";
+          date ??= stampDate ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+        }
+        docx = wasm.markdownToDocx(text, JSON.stringify({ page: o.page, author, date, critic: !o.no_critic, track_changes: o.track_changes, tracking: o.tracking == null ? undefined : o.tracking === "on", scholar: Boolean(o.scholar) }), reference);
+        if (!o.pdf && o.output_format !== "json" && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
+          if (o.move_comments || o.changed_pages) {
+            throw new CliError("--move-comments / --changed-pages applies to PDF or PNG output only");
           }
           const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.docx`);
           ensureWritable(output, o.force);
           write(output, docx);
-          console.log(`wrote ${output} (${docx.length} bytes)`);
-          return;
+          return void wrote(o, output, "docx", docx.length);
         }
       } else if (convertsToDocx(o)) {
-        // A name that said nothing; its bytes are Word.
-        throw docxNeedsMarkdown();
+        return void wordToWord(file, docx, o);
+      } else if (o.to === "md" || (o.to == null && o.output_format === "md")) {
+        return void wordToMarkdown(docx, o);
       } else if (o.track_changes === "accept") {
         docx = wasm.acceptRevisions(docx);
       } else if (o.track_changes === "reject") {
         docx = wasm.rejectRevisions(docx);
       }
-      const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.pdf`);
-      ensureWritable(output, o.force);
-      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette, Boolean(o.move_comments), Boolean(o.changed_only));
-      write(output, pdf);
-      console.log(`wrote ${output} (${pdf.length} bytes, ${plural(wasm.pdfPageCount(pdf), "page")})`);
+      if (o.output_format === "json") return void writeResult(o, docx, path.basename(file));
+      renderTo(o, docx, o.output ?? path.join(path.dirname(file), `${stem(file)}.pdf`));
     },
   },
   edit: { run: (name, [file], o) => runEdit("edit", file, o) },
   add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
-    run() {
-      console.log(JSON.stringify(JSON.parse(wasm.capabilities()), null, 2));
+    run(_, __, o) {
+      if (o.matrix || o.operation != null || o.field != null) {
+        if (o.json) return console.log(JSON.stringify(JSON.parse(wasm.capabilityQuery(o.operation, o.field)), null, 2));
+        return process.stdout.write(wasm.capabilityQueryText(o.operation, o.field));
+      }
+      const manifest = cliManifest();
+      if (o.json) return console.log(JSON.stringify(manifest, null, 2));
+      process.stdout.write(wasm.capabilitiesText(JSON.stringify(manifest)));
     },
   },
 };
 
-/** `--plan`'s text, or the plan the operation flags describe, and its notes. */
-function editPlan(verb, docx, o) {
-  if (o.plan != null) {
-    try {
-      return { plan: fs.readFileSync(o.plan, "utf8"), notes: [] };
-    } catch (e) {
-      throw new CliError(`reading ${o.plan}: ${e.message}`);
-    }
+/** The engine's manifest narrowed to this CLI: the tasks it has, and no
+ * operation it refuses (PNG, page ranges, append, scrub, validate, repair,
+ * audit, comments, visual diffs). */
+function cliManifest() {
+  const manifest = JSON.parse(wasm.capabilities());
+  for (const op of ["append", "scrub", "validate", "repair", "audit", "comments", "diff_render", "page_ranges", "png"]) {
+    manifest.operations[op] = false;
   }
+  for (const task of Object.keys(manifest.formats)) if (!(task in COMMANDS)) delete manifest.formats[task];
+  return manifest;
+}
+
+/** `convert` of Word to Word, as the binary: the changes accepted or
+ * rejected, the field results refreshed, or both. */
+function wordToWord(file, docx, o) {
+  const resolve = o.track_changes === "accept" ? wasm.acceptRevisions : o.track_changes === "reject" ? wasm.rejectRevisions : null;
+  if (!resolve && !o.update_fields) {
+    throw new CliError(`${file} is already Word: give --track-changes accept or reject, --update-fields, or another --to`);
+  }
+  if (o.output == null) throw new CliError("--output is required to write Word from Word");
+  if (o.report != null) ensureWritable(o.report, o.force);
+  ensureWritable(o.output, o.force);
+  let out = resolve ? resolve(docx) : docx;
+  if (o.update_fields) {
+    const updated = wasm.updateFields(out);
+    const report = JSON.parse(updated.json);
+    for (const field of report.fields) {
+      console.log(`${field.paragraph}\t${field.kind}\t${JSON.stringify(field.old)} -> ${JSON.stringify(field.new)}`);
+    }
+    console.error(`${report.fields.length} field(s) written; ${report.page_count} page(s)`);
+    if (o.report != null) write(o.report, updated.json);
+    out = updated.docx;
+  }
+  write(o.output, out);
+  wrote(o, o.output, "docx", out.length);
+}
+
+/** `convert` of Word to Markdown, as the binary: the paged view (page
+ * markers unless --no-page-markers), on stdout without -o. */
+function wordToMarkdown(docx, o) {
+  const { markdown, warning } = JSON.parse(wasm.convertMarkdown(docx, o.track_changes ?? "all", !o.no_page_markers, o.revisions ?? undefined, paletteOf(o)));
+  if (warning) console.error(`warning: ${warning}`);
+  if (o.output == null) return void process.stdout.write(markdown);
+  ensureWritable(o.output, o.force);
+  write(o.output, markdown);
+  wrote(o, o.output, "md", Buffer.byteLength(markdown, "utf8"));
+}
+
+/** An edited document's PDF and its page facts, as `edit --pdf` draws it. */
+function editPdf(docx, o) {
+  const rendered = wasm.renderPdf(docx, o.revisions ?? undefined, paletteOf(o));
+  return { pdf: rendered.pdf, ...JSON.parse(rendered.json) };
+}
+
+/** PLAN.json's text, strictly UTF-8 as the binary reads it; `undefined`
+ * when there is no such file and `missing` allows it. */
+function readPlanText(plan, missing = false) {
+  let bytes;
+  try {
+    bytes = fs.readFileSync(plan);
+  } catch (e) {
+    if (missing && e.code === "ENOENT") return undefined;
+    throw new CliError(`reading ${plan}: ${osError(e)}`);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new CliError(`reading ${plan}: stream did not contain valid UTF-8`);
+  }
+}
+
+/** `--plan`'s text, or the plan the operation flags describe, and its
+ * notes; `--rewrite-others-comments` sets the plan's field. */
+function editPlan(verb, docx, o) {
+  const given = editPlanAsGiven(verb, docx, o);
+  if (!o.rewrite_others_comments) return given;
+  let parsed;
+  try {
+    parsed = JSON.parse(given.plan);
+  } catch {
+    return given; // reported as INVALID_PLAN when applied
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
+  parsed.rewrite_others_comments = true;
+  return { plan: JSON.stringify(parsed), notes: given.notes };
+}
+
+function editPlanAsGiven(verb, docx, o) {
+  if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
     return JSON.parse(wasm.flagPlan(verb, JSON.stringify(o.operations ?? []), docx, JSON.stringify(options)));
@@ -281,78 +464,255 @@ function editPlan(verb, docx, o) {
 
 /** Whether the plan keeps the source's revisions; a plan that is not a JSON
  * object answers no, and the engine then reports it as INVALID_PLAN. */
-function planKeepsRevisions(plan) {
-  try {
-    return JSON.parse(plan)?.existing_revisions === "keep";
-  } catch {
-    return false;
+/** A refused plan's per-operation report on stdout, the error on stderr. */
+function printRefusal(result) {
+  const error = JSON.parse(result.json);
+  (error.outcomes ?? []).forEach((outcome, i) => {
+    const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
+    for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
+      if (outcome[field] != null) row[key] = outcome[field];
+    }
+    console.log(jsonl(row));
+  });
+  console.log(jsonl({ ev: "summary", status: "failed", code: error.code, operation: error.operation ?? null, message: error.message }));
+  console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
+  return EXIT_PLAN_REFUSED;
+}
+
+/** `--plan PLAN.json` with operation flags: record them into the plan,
+ * checked against FILE first; a refusal leaves PLAN.json as it was. The
+ * shared parser has refused the flags that do not go with `--plan`. */
+function recordPlan(verb, file, docx, o) {
+  const held = readPlanText(o.plan, true);
+  const options = {
+    author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
+    file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
+    rewriteOthersComments: Boolean(o.rewrite_others_comments),
+  };
+  const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
+  if (!answer.ok) {
+    if (answer.usage) throw new UsageError(answer.message);
+    console.error(`error: ${o.plan}: ${answer.message}`);
+    return EXIT_PLAN_REFUSED;
   }
+  const { recorded } = answer;
+  const preview = wasm.previewEditPlan(docx, recorded.plan);
+  if (!preview.ok) return printRefusal(preview);
+  if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
+  if (!o.dry_run) {
+    // Through a symbolic link to the file it names, written yet or not; via a hidden partial
+    // file named for this process, removed if the write fails.
+    let target = o.plan;
+    try {
+      target = fs.realpathSync(o.plan);
+    } catch {
+      // A link to a plan not written yet names where it goes.
+      try {
+        target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));
+      } catch {}
+    }
+    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);
+    try {
+      fs.writeFileSync(partial, recorded.json);
+      fs.renameSync(partial, target);
+    } catch (e) {
+      fs.rmSync(partial, { force: true });
+      throw new CliError(`writing ${o.plan}: ${osError(e)}`);
+    }
+  }
+  if (!o.quiet) console.log(recorded.summary);
+  return EXIT_OK;
+}
+
+// lstat refuses links even where O_NOFOLLOW is unavailable; compare the
+// opened file with the name using bigint identities to avoid rounding inos.
+function planIdentityMatches(fd, name) {
+  const opened = fs.fstatSync(fd, { bigint: true });
+  const named = fs.lstatSync(name, { bigint: true });
+  if (named.isSymbolicLink()) throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
+  return (opened.ino === 0n && named.ino === 0n) || (opened.dev === named.dev && opened.ino === named.ino);
 }
 
 function runEdit(verb, file, o) {
   const docx = read(file);
-  const { plan, notes } = editPlan(verb, docx, o);
-  const editing = Boolean(o.editing_mode);
-  if (editing && planKeepsRevisions(plan)) {
-    throw new UsageError("--editing-mode needs a document without tracked changes; it has some, so pass --existing-revisions accept or reject");
-  }
-  const outDir = o.out_dir ?? path.join(path.dirname(file), `${stem(file)}.edit`);
-  if (!o.dry_run) {
-    if (fs.existsSync(outDir) && !o.force) {
-      throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
-    }
-    if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
-      throw new CliError("--out-dir must not be the input's own directory");
-    }
-  }
-  const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan);
-  if (!result.ok) {
-    const error = JSON.parse(result.json);
-    (error.outcomes ?? []).forEach((outcome, i) => {
-      const row = { ev: "op", i: i + 1, id: outcome.id, op: outcome.kind, status: outcome.status, matches: outcome.matches };
-      for (const [key, field] of [["at", "paragraph"], ["ctx", "context"], ["code", "code"], ["message", "message"]]) {
-        if (outcome[field] != null) row[key] = outcome[field];
+  if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
+  // What --consume deletes once the edit is written: the plan file as it
+  // was read, never a link to it or an output written over it. Open once
+  // and read the handle, so `plan` names this file — not another placed on
+  // the name between a check and the read; O_NOFOLLOW makes the open itself
+  // refuse a symbolic link.
+  let planFd, consumed;
+  if (o.consume && !o.dry_run) {
+    try {
+      planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
+      if (!planIdentityMatches(planFd, o.plan)) {
+        throw new Error("the plan name changed while it was being read");
       }
-      console.log(JSON.stringify(row));
-    });
-    console.log(JSON.stringify({ ev: "summary", status: "failed", code: error.code, operation: error.operation, message: error.message }));
-    console.error(`error: plan refused: ${error.code}${error.operation ? ` (${error.operation})` : ""}: ${error.message}`);
+      consumed = fs.readFileSync(planFd);
+    } catch (e) {
+      if (planFd !== undefined) try { fs.closeSync(planFd); } catch {}
+      if (e?.code === "ELOOP") {
+        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+      }
+      throw new CliError(`reading ${o.plan}: ${osError(e)}`);
+    }
+  }
+  try {
+    const code = applyEdit(verb, file, docx, o);
+    if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+      const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+      let unchanged = false;
+      try {
+        // The original read advanced the fd: reread positionally, including
+        // one extra byte so an append cannot compare equal to the plan.
+        const current = Buffer.alloc(consumed.length + 1);
+        let length = 0;
+        while (length < current.length) {
+          const read = fs.readSync(planFd, current, length, current.length - length, length);
+          if (read === 0) break;
+          length += read;
+        }
+        unchanged = current.subarray(0, length).equals(consumed) && planIdentityMatches(planFd, o.plan);
+      } catch {}
+      if (!unchanged) throw kept("it no longer holds the plan (an output was written over it?)");
+      // Unavoidable race window between the last lstat and unlinkSync:
+      // Node has no unlink-by-handle API.
+      try {
+        fs.unlinkSync(o.plan);
+      } catch (e) {
+        throw kept(osError(e));
+      }
+    }
+    return code;
+  } finally {
+    if (planFd !== undefined) fs.closeSync(planFd);
+  }
+}
+
+function applyEdit(verb, file, docx, o) {
+  const { plan, notes } = editPlan(verb, docx, o);
+  // A plan that does not read is one line, as the binary prints it; no
+  // report, and nothing is written.
+  const invalid = o.plan != null ? wasm.planError(plan) : undefined;
+  if (invalid) {
+    console.error(`error: ${invalid}`);
     return EXIT_PLAN_REFUSED;
   }
-  const jsonl = wasm.editReportJsonl(result.json);
-  if (o.dry_run) return void process.stdout.write(jsonl);
-  const lines = jsonl.trimEnd().split("\n");
+  const editing = Boolean(o.editing_mode);
+  // Changes the plan itself accepts or rejects (-p r12 --accept) do not count.
+  const conflict = editing ? wasm.editingModeConflict(plan, docx) : undefined;
+  if (conflict) throw new UsageError(conflict);
+  // The plan first: a refused plan prints its whole report, whatever the
+  // outputs (D15).
+  const result = o.dry_run ? wasm.previewEditPlan(docx, plan) : wasm.applyEditPlan(docx, plan, path.basename(file));
+  if (!result.ok) return printRefusal(result);
+  const report = wasm.editReportJsonl(result.json);
+  if (o.dry_run) return void process.stdout.write(report);
+  // The shared parser resolved the target: `output` for the one document
+  // (FILE_modified.docx by default), `out_dir` for the bundle.
+  const outDir = o.out_dir;
+  if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
+  if (fs.existsSync(outDir) && !o.force) {
+    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+  }
+  if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
+    throw new CliError("--out-dir must not be the input's own directory");
+  }
+  const lines = report.trimEnd().split("\n");
   const summary = lines.pop();
+  // Render before creating the directory, so a failed render leaves no
+  // partial bundle; the `render` line goes before the summary.
+  const renders = o.pdf ? (editing ? [["clean", result.clean]] : [["redline", result.redline], ["clean", result.clean]]).map(([name, doc]) => [name, editPdf(doc, o)]) : [];
+  if (renders.length) {
+    lines.push(jsonl({
+      ev: "render", engine: `jubarte ${JSON.parse(wasm.capabilities()).engine_version}`,
+      pages: Object.fromEntries(renders.map(([name, r]) => [name, r.page_count])),
+      page_starts: Object.fromEntries(renders.map(([name, r]) => [name, r.page_starts])),
+    }));
+  }
   const outputs = [["clean.docx", result.clean]];
   if (!editing) {
     outputs.push(["redline.docx", result.redline]);
     // jubarte-wasm 0.10.1 has no patch; later builds carry it.
     if (typeof result.patch === "string") outputs.push(["patch.diff", Buffer.from(result.patch, "utf8")]);
   }
+  for (const [name, r] of renders) outputs.push([`${name}.pdf`, Buffer.from(r.pdf)]);
   fs.mkdirSync(outDir, { recursive: true });
   const saved = outputs.map(([name, data]) => {
     write(path.join(outDir, name), data);
     return { f: name, bytes: data.length, sha256: wasm.sourceSha256(data) };
   });
-  lines.push(JSON.stringify({ ev: "save", dir: outDir, outputs: saved }), summary);
+  lines.push(jsonl({ ev: "save", dir: outDir, outputs: saved }), summary);
   write(path.join(outDir, "report.jsonl"), `${lines.join("\n")}\n`);
   if (o.quiet) return;
+  // A pure accept/reject prints the resolved lines on stdout, nothing
+  // else; the bundle's report.jsonl still holds the summary.
+  if (isPureResolution(plan, result.json)) {
+    try {
+      const resolved = JSON.parse(result.json).resolved_revisions ?? {};
+      const text = wasm.resolutionText(docx, JSON.stringify({ accepted: resolved.accepted ?? [], rejected: resolved.rejected ?? [] }));
+      const names = [...outputs.map(([n]) => n), "report.jsonl"];
+      console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+      for (const note of editNotes(notes, result)) console.error(note);
+      process.stdout.write(text);
+      return;
+    } catch {}
+  }
   console.log(summary);
   const names = [...outputs.map(([n]) => n), "report.jsonl"];
-  console.log(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
-  for (const note of notes) console.log(`note: ${note}`);
+  // The status lines on stderr (D6); the summary and the view are data.
+  console.error(`wrote ${outDir} (${names.length} files: ${names.join(", ")})`);
+  for (const note of editNotes(notes, result)) console.error(note);
+  printResolutionOrView(docx, plan, result, editing, path.join(outDir, editing ? "clean.docx" : "redline.docx"));
+}
+
+/** Whether the plan resolved only revisions with some resolved: a pure
+ * `--accept`/`--reject` prints the resolved lines, not the view. */
+function isPureResolution(planJson, reportJson) {
+  try {
+    const plan = JSON.parse(planJson);
+    if (!Array.isArray(plan.operations) || plan.operations.length !== 0) return false;
+    if (plan.resolve_revisions == null) return false;
+    const resolved = JSON.parse(reportJson).resolved_revisions ?? {};
+    return Boolean((resolved.accepted?.length ?? 0) + (resolved.rejected?.length ?? 0));
+  } catch {
+    return false;
+  }
+}
+
+/** The resolved lines for a pure accept/reject, or the changed view
+ * otherwise. Failures fall back to the view, as the binary does. */
+function printResolutionOrView(docx, planJson, result, editing, shown) {
+  if (isPureResolution(planJson, result.json)) {
+    try {
+      const resolved = JSON.parse(result.json).resolved_revisions ?? {};
+      const text = wasm.resolutionText(docx, JSON.stringify({ accepted: resolved.accepted ?? [], rejected: resolved.rejected ?? [] }));
+      process.stdout.write(text);
+      return;
+    } catch {}
+  }
+  printChangedView(result, editing, shown);
+}
+
+/** The `note:` lines of an applied edit: the flags' notes, the plan's (a field
+ * read as another), then each anchor read without its Markdown marks. */
+function editNotes(notes, result) {
   const report = JSON.parse(result.json);
+  const lines = [...notes, ...(report.notes ?? [])].map((note) => `note: ${note}`);
   for (const outcome of report.operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
-      console.log(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
+      lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
     }
   }
-  const shown = path.join(outDir, editing ? "clean.docx" : "redline.docx");
-  // The files are written and report.jsonl says so: a view that cannot be
-  // read back is a warning, not a failed edit.
+  return lines;
+}
+
+/** The changed blocks' view of the written `shown`. The files are written:
+ * a view that cannot be read back is a warning, not a failed edit. */
+function printChangedView(result, editing, shown) {
   let view;
   try {
-    view = wasm.changedView(result.redline, report.author, editing, shown);
+    view = wasm.changedView(result.redline, JSON.parse(result.json).author, editing, shown);
   } catch (error) {
     console.error(`warning: the changed blocks cannot be shown: ${error.message ?? error}`);
     return;
@@ -360,8 +720,43 @@ function runEdit(verb, file, o) {
   process.stdout.write(view);
 }
 
+/** `edit` and `add` without --out-dir, as the binary: the redline (in
+ * editing mode, the result) as one .docx at `output`, the `wrote` line and
+ * notes on stderr, the changed blocks' view of that file on stdout (a pure
+ * accept/reject prints the resolved lines). */
+function writeEdited(output, result, notes, o, docx, plan) {
+  const editing = Boolean(o.editing_mode);
+  const document = editing ? result.clean : result.redline;
+  // FILE itself (X_modified.docx edited again, or -o FILE) exists, so it is
+  // replaced only with --force (D15).
+  const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
+  for (const taken of [output, pdfPath]) {
+    if (taken != null && fs.existsSync(taken) && !o.force) {
+      throw new UsageError(`output '${taken}' already exists (use --force to overwrite)`);
+    }
+  }
+  // Render before writing, so a failed render writes nothing.
+  const rendered = o.pdf ? editPdf(document, o) : null;
+  write(output, document);
+  if (rendered) write(pdfPath, rendered.pdf);
+  if (o.quiet) return;
+  console.error(`wrote ${output} (docx, ${document.length} bytes)`);
+  if (rendered) console.error(wasm.wroteLine(pdfPath, "pdf", rendered.pdf.length, rendered.page_count));
+  for (const note of editNotes(notes, result)) console.error(note);
+  if (docx != null && plan != null) {
+    printResolutionOrView(docx, plan, result, editing, output);
+    return;
+  }
+  printChangedView(result, editing, output);
+}
+
 /** The agent view of `docx` with the read options `o`; `source` is its header name. */
 function printView(docx, o, source) {
+  process.stdout.write(viewText(docx, o, source));
+}
+
+/** `printView`'s Markdown, its warnings said on stderr. */
+function viewText(docx, o, source) {
   const view = JSON.parse(wasm.readView(docx, JSON.stringify({
     trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
     pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined,
@@ -369,7 +764,7 @@ function printView(docx, o, source) {
     changed: o.changed || undefined, by: o.by ?? undefined, source,
   })));
   for (const warning of view.warnings) console.error(`warning: ${warning}`);
-  process.stdout.write(view.markdown);
+  return view.markdown;
 }
 
 function resolution(accept) {
@@ -377,11 +772,24 @@ function resolution(accept) {
     run(name, [file], o) {
       const filter = {};
       for (const key of ["ids", "authors", "kinds"]) if (o[key]?.length) filter[key] = o[key];
-      const docx = read(file);
+      // An id that is no change id is a usage error, before any I/O.
+      try {
+        wasm.changeFilter(JSON.stringify(filter));
+      } catch (e) {
+        throw new UsageError(messageOf(e));
+      }
       ensureWritable(o.output, o.force);
-      const out = (accept ? wasm.acceptChanges : wasm.rejectChanges)(docx, JSON.stringify(filter));
-      write(o.output, out);
-      console.log(`wrote ${o.output} (${out.length} bytes)`);
+      const docx = read(file);
+      let out;
+      try {
+        out = (accept ? wasm.acceptChanges : wasm.rejectChanges)(docx, JSON.stringify(filter));
+      } catch (e) {
+        // An id that names two changes (a duplicate w:id) is one too.
+        const message = messageOf(e);
+        if (/^\S+ names \d+ changes/.test(message)) throw new UsageError(message);
+        throw new CliError(`${name} failed: ${message}`);
+      }
+      writeResult(o, out, notWritten(o.output));
     },
   };
 }
@@ -394,26 +802,23 @@ function stem(file) {
   return path.basename(file, path.extname(file));
 }
 
-function defaultAuthor() {
-  try {
-    return execFileSync("git", ["config", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "Redline";
-  } catch {
-    return "Redline";
-  }
-}
-
 // -- shared clap parser and host capabilities --------------------------------
 
 function validateHost(name, o) {
   const reject = (flag) => { throw new UsageError(`--${flag.replaceAll("_", "-")} is not supported by the npm CLI`); };
-  if (["compare", "diff"].includes(name)) {
+  if (name === "compare") {
     if ((o.mode ?? "word") !== "word" || o.powertools_faithful) reject("mode powertools");
     if (o.detail_threshold != null) reject("detail_threshold");
     if (o.no_paragraph_merge) reject("no_paragraph_merge");
   }
-  if (name === "inspect" && o.tables) reject("tables");
-  if (["convert", "diff"].includes(name)) {
-    for (const flag of [...(name === "convert" ? ["from"] : []), "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
+  // PNG pages and --pages need the native renderer (D14).
+  if (name !== "edit" && name !== "convert" && o.output_format === "png") {
+    throw new UsageError("-o FILE.png is not supported by the npm CLI: PNG pages need the Python or Rust build (uvx jubarte-redlines)");
+  }
+  if (name !== "convert" && o.pages != null) reject("pages");
+  if (name === "compare") for (const flag of ["reference_doc", "critic", "resource_path"]) if (o[flag] != null && o[flag] !== false) reject(flag);
+  if (name === "convert") {
+    for (const flag of ["from", "resource_path", "timeout", "fail_on_substitution"]) {
       if (o[flag] != null && o[flag] !== false) reject(flag);
     }
     if (o.png || o.to === "png" || path.extname(o.output ?? "").toLowerCase() === ".png") {
@@ -421,45 +826,51 @@ function validateHost(name, o) {
     }
   }
   if (name === "convert") {
-    if (o.update_fields) reject("update_fields");
-    for (const flag of ["dpi", "pages", "report", "font_report"]) {
+    for (const flag of ["dpi", "pages"]) {
       if (flag === "dpi" ? o.dpi !== 96 : o[flag] != null) reject(flag);
     }
-    const extension = path.extname(o.output ?? "").toLowerCase();
-    if (o.to === "md" || (o.to == null && [".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn"].includes(extension))) {
-      throw new UsageError("Markdown output with page markers is not supported by the npm CLI; `read FILE` prints the agent text view");
+  }
+  if (name === "convert") {
+    if (o.font_report != null) reject("font_report");
+    if (o.report != null && !o.update_fields) reject("report");
+    // Markdown to Markdown resolves CriticMarkup natively; this CLI has no
+    // such engine call.
+    const markdownOut = o.to === "md" || (o.to == null && o.output_format === "md");
+    if (markdownOut && namedKind(o.file) === "md") {
+      throw new UsageError("Markdown to Markdown is not supported by the npm CLI: `uvx jubarte-redlines convert` resolves CriticMarkup");
     }
-    // A Word name fails before any read; a name that says nothing is
-    // sniffed like every other input, in `convert`.
-    if (convertsToDocx(o) && namedKind(o.file) === "docx") throw docxNeedsMarkdown();
   }
   if (name === "edit") {
-    for (const flag of ["pdf", "png"]) if (o[flag]) reject(flag);
-    if (o.dpi !== 96) reject("dpi");
-    if (o.revisions !== "conventional" || o.revision_palette != null) reject("revisions");
+    if (o.png) reject("png");
   }
   if (name === "diff") {
-    for (const flag of ["reference_doc", "critic"]) if (o[flag] != null && o[flag] !== false) reject(flag);
     if (!Number.isInteger(o.context) || o.context < 0 || o.context > 0xffffffff) {
       throw new UsageError("--context must be in the u32 range (0..4294967295)");
     }
   }
 }
 
+/** `--json` before any `--`: an error prints on stdout as JSON too. */
 function main(argv) {
   try {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(argv), PROG, JSON.stringify(Object.keys(COMMANDS))));
     if ("text" in parsed) {
+      for (const note of parsed.notes ?? []) console.error(note);
+      if (parsed.json != null) process.stdout.write(parsed.json);
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }
+    for (const note of parsed.notes ?? []) console.error(note);
     const name = parsed.command, o = parsed.args;
     validateHost(name, o);
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];
     return COMMANDS[name].run(name, positionals, o) ?? EXIT_OK;
   } catch (e) {
-    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
-    return e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
+    const code = e instanceof UsageError ? EXIT_USAGE : e instanceof RefusalError ? EXIT_PLAN_REFUSED : EXIT_ERROR;
+    // A binding older than #1255 has no runtimeJsonError: stdout stays empty.
+    if (wasm.runtimeJsonError && wasm.wantsJson(argv)) process.stdout.write(wasm.runtimeJsonError(messageOf(e), code));
+    console.error(`error: ${messageOf(e)}`);
+    return code;
   }
 }
 

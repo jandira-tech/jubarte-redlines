@@ -44,12 +44,17 @@ const SENTINEL: u32 = 0x10_0000;
 pub struct CommentRecord {
     /// `w:id` of the comment.
     pub id: u32,
+    /// The id the view and `jubarte comments` print: `c{id}`.
+    #[serde(default, rename = "ref")]
+    pub r#ref: String,
     /// `w:author`.
     pub author: String,
     /// `w:initials`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initials: Option<String>,
-    /// `w:date`.
+    /// The linked UTC instant, written in the author's local offset when both
+    /// times record a whole-minute difference within ±14:00; otherwise `Z`.
+    /// Without a valid `w16cex:dateUtc`, `w:date` as stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     /// Comment text, paragraphs (and line breaks) joined by `\n`.
@@ -59,10 +64,14 @@ pub struct CommentRecord {
     pub parent: Option<u32>,
     /// `w15:done`: the thread is resolved.
     pub done: bool,
-    /// Story and paragraph id of the range start (`body:p:12`), or of the
+    /// Story and paragraph id of the range start (`p12`), or of the
     /// reference when the comment has no range.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paragraph: Option<String>,
+    /// Story and paragraph id of the range end (`p14`) when the range
+    /// ends in a later paragraph than it starts; `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_paragraph: Option<String>,
     /// The anchored text, exact; paragraphs joined by `\n`.
     pub anchor_text: String,
     /// Up to 80 characters before the anchor in its first paragraph.
@@ -81,7 +90,8 @@ pub enum CommentError {
 }
 
 impl CommentError {
-    /// Stable error code, as the edit API reports it.
+    /// Stable error code, as the edit API reports it: the admission code, or
+    /// `INVALID_DOCUMENT` for an unreadable package.
     pub fn code(&self) -> &'static str {
         match self {
             CommentError::Admission(refused) => refused.code(),
@@ -111,9 +121,21 @@ impl From<crate::inspect::InspectError> for CommentError {
 }
 
 /// Every comment in `comments.xml` order, with its thread, resolution and
-/// anchor. A document without comments lists none.
+/// anchor. Backs `jubarte comments`. A document without comments lists none.
+/// Nothing is written.
+///
+/// # Errors
+///
+/// [`CommentError::Admission`] when the bytes are refused before parsing;
+/// [`CommentError::Package`] when the package or one of its parts cannot be
+/// read.
 pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
-    let mut opened = Opened::open(docx)?;
+    comments_in(&mut Opened::open(docx)?)
+}
+
+/// [`list_comments`] of a package already open. The scan marks up the
+/// body's DOM, so read what else `opened` holds first.
+pub(crate) fn comments_in(opened: &mut Opened) -> Result<Vec<CommentRecord>, CommentError> {
     let family = CommentFamily::load(&opened.pkg, &opened.main).map_err(CommentError::Package)?;
     if family.is_empty() {
         return Ok(Vec::new());
@@ -133,6 +155,33 @@ pub fn list_comments(docx: &[u8]) -> Result<Vec<CommentRecord>, CommentError> {
             record
         })
         .collect())
+}
+
+/// `jubarte comments`' listing: one line per comment, `c{id}\t{paragraph}
+/// \t{author}\t{text}\ton {anchor}[\treply to c{parent}][\tresolved]`
+/// (`-` for an absent paragraph; text and anchor quoted, their first 60 and
+/// 40 characters), then `{n} comment(s)`.
+pub fn comments_text(comments: &[CommentRecord]) -> String {
+    let mut out = String::new();
+    for c in comments {
+        let text: String = c.text.chars().take(60).collect();
+        let anchor: String = c.anchor_text.chars().take(40).collect();
+        let paragraph = c
+            .paragraph
+            .as_deref()
+            .map_or_else(|| "-".to_string(), crate::ids::short_paragraph);
+        let thread = c
+            .parent
+            .map(|p| format!("\treply to c{p}"))
+            .unwrap_or_default();
+        let done = if c.done { "\tresolved" } else { "" };
+        out.push_str(&format!(
+            "c{}\t{paragraph}\t{}\t{text:?}\ton {anchor:?}{thread}{done}\n",
+            c.id, c.author
+        ));
+    }
+    out.push_str(&format!("{} comment(s)\n", comments.len()));
+    out
 }
 
 /// Filter a listing: `author` keeps that author's comments (exact match);
@@ -165,7 +214,15 @@ pub fn select_comments(
         let root = root_of(record.id);
         match threads.iter_mut().find(|(r, _)| *r == root) {
             Some((_, best)) => {
-                if record.date >= best.date {
+                if record
+                    .date
+                    .as_deref()
+                    .and_then(crate::convert::timestamp_order_key)
+                    >= best
+                        .date
+                        .as_deref()
+                        .and_then(crate::convert::timestamp_order_key)
+                {
                     *best = record;
                 }
             }
@@ -297,13 +354,32 @@ impl Anchors {
         let start = self.starts.get(&id).copied();
         let end = self.ends.get(&id).copied();
         let paragraph_id =
-            |story: usize, para: usize| format!("{}:p:{para}", self.stories[story].0);
+            |story: usize, para: usize| crate::ids::paragraph_id(&self.stories[story].0, para);
         match (start, end) {
-            (Some((story, first, s)), Some((end_story, last, e)))
-                if story == end_story && (first, s) <= (last, e) =>
-            {
+            (Some((story, first, s)), Some((end_story, last, e))) if story != end_story => {
+                // A range cannot cross parts in OOXML, so this malformed
+                // input is still recorded as a range: both endpoints are
+                // real marks and neither may be dropped.
+                record.paragraph = Some(paragraph_id(story, first));
+                record.last_paragraph = Some(paragraph_id(end_story, last));
+                record.anchor_text = self.stories[story].1[first][s..].to_string();
+                record.before = tail(&self.stories[story].1[first][..s], CONTEXT);
+                record.after = self.stories[end_story].1[last][e..]
+                    .chars()
+                    .take(CONTEXT)
+                    .collect();
+            }
+            (Some((story, first, s)), Some((end_story, last, e))) if story == end_story => {
+                // A malformed input may name the end before the start; the
+                // range still spans its paragraphs, start to end.
+                let (first, s, last, e) = if (first, s) <= (last, e) {
+                    (first, s, last, e)
+                } else {
+                    (last, e, first, s)
+                };
                 let texts = &self.stories[story].1;
                 record.paragraph = Some(paragraph_id(story, first));
+                record.last_paragraph = (last > first).then(|| paragraph_id(story, last));
                 if first == last {
                     record.anchor_text = texts[first][s..e].to_string();
                 } else {
@@ -482,6 +558,12 @@ impl CommentFamily {
         self.meta.contains_key(&id)
     }
 
+    /// The `w:author` comment `id` is recorded under, when it names one.
+    pub(crate) fn author(&self, id: u32) -> Option<&str> {
+        let meta = self.meta.get(&id)?;
+        self.dom.attribute(meta.node, &W::name("author"))
+    }
+
     /// Comment ids in `comments.xml` order.
     pub(crate) fn order(&self) -> Vec<u32> {
         let Some(comments) = &self.parts[0] else {
@@ -536,17 +618,29 @@ impl CommentFamily {
         };
         CommentRecord {
             id,
+            r#ref: format!("c{id}"),
             author: attr("author").unwrap_or_default(),
             initials: attr("initials"),
-            date: attr("date"),
+            date: self.reported_date(id),
             text: comment_text(&self.dom, meta.node),
             parent: meta.parent,
             done: meta.done,
             paragraph: None,
+            last_paragraph: None,
             anchor_text: String::new(),
             before: String::new(),
             after: String::new(),
         }
+    }
+
+    /// The comment instant, sharing the revision reader's offset and fallback rule.
+    pub(crate) fn reported_date(&self, id: u32) -> Option<String> {
+        let meta = self.meta.get(&id)?;
+        crate::changes::reported_date(
+            self.dom.attribute(meta.node, &W::date()),
+            meta.cex_row
+                .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX))),
+        )
     }
 
     /// Add a comment; a reply goes right after the last comment of its
@@ -628,6 +722,18 @@ impl CommentFamily {
         Some((meta.parent, meta.done, date))
     }
 
+    /// Set a linked UTC date before storing the existing comment family.
+    pub(crate) fn set_date_utc(&mut self, id: u32, date: &str) {
+        let Some(meta) = self.meta.get_mut(&id) else {
+            return;
+        };
+        let row = *meta
+            .cex_row
+            .get_or_insert_with(|| self.dom.new_element(XName::get("commentExtensible", CEX)));
+        self.dom
+            .set_attribute_value(row, &XName::get("dateUtc", CEX), Some(date));
+    }
+
     /// Add a comment copied whole from another package (its formatting,
     /// line breaks and links stay): `xml` is its `w:comment` element with
     /// the namespaces it uses declared on it. It takes id `id`, loses its
@@ -705,6 +811,19 @@ impl CommentFamily {
         }
         fill_comment_paragraph(dom, keep, text);
         dom.add(comment, keep);
+    }
+
+    /// Set comment `id`'s thread: the comment it replies to (it hangs off
+    /// that comment's thread root, Word threads being one level deep) and
+    /// whether it is resolved. A parent the family lacks is ignored.
+    pub(crate) fn set_thread(&mut self, id: u32, parent: Option<u32>, done: bool) {
+        let parent = parent
+            .filter(|p| *p != id && self.meta.contains_key(p))
+            .map(|p| self.thread_root(p));
+        if let Some(meta) = self.meta.get_mut(&id) {
+            meta.parent = parent.filter(|&p| p != id);
+            meta.done = done;
+        }
     }
 
     /// Mark `id` and its replies resolved (or open again).
@@ -1098,7 +1217,7 @@ fn declare_ignorable(dom: &mut Dom, root: NodeId, prefix: &str, uri: &str) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -1133,7 +1252,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod people_and_text_boundary_tests {
     use super::*;
 
@@ -1277,7 +1396,7 @@ mod people_and_text_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_memory_anchor_boundary_tests {
     use super::*;
 
@@ -1317,7 +1436,7 @@ mod public_memory_anchor_boundary_tests {
                 "First ação\nMiddle café\nLast τέλος",
                 "",
                 "",
-                "body:p:0",
+                "p0",
             ),
             (
                 format!(
@@ -1326,7 +1445,7 @@ mod public_memory_anchor_boundary_tests {
                 "Middle café",
                 "",
                 "",
-                "body:p:1",
+                "p1",
             ),
             (
                 format!(
@@ -1335,7 +1454,7 @@ mod public_memory_anchor_boundary_tests {
                 "ação\nMiddle café\nτέλος",
                 "Before ",
                 " after",
-                "body:p:1",
+                "p1",
             ),
             (
                 format!(
@@ -1344,7 +1463,7 @@ mod public_memory_anchor_boundary_tests {
                 "",
                 "",
                 "",
-                "body:p:1",
+                "p1",
             ),
         ];
         for (body, anchor, before, after, paragraph) in cases {
@@ -1361,8 +1480,13 @@ mod public_memory_anchor_boundary_tests {
             );
             let source = snapshot(&pkg);
             let bytes = pkg.to_zip().unwrap();
+            // A range over several paragraphs names its last one too.
+            let start: usize = paragraph["p".len()..].parse().unwrap();
+            let lines = anchor.matches('\n').count();
+            let last_paragraph = (lines > 0).then(|| format!("p{}", start + lines));
             let expected = vec![CommentRecord {
                 id: 7,
+                r#ref: "c7".into(),
                 author: "Source reviewer".into(),
                 initials: Some("SR".into()),
                 date: Some("2025-02-03T04:05:06Z".into()),
@@ -1370,6 +1494,7 @@ mod public_memory_anchor_boundary_tests {
                 parent: None,
                 done: false,
                 paragraph: Some(paragraph.into()),
+                last_paragraph,
                 anchor_text: anchor.into(),
                 before: before.into(),
                 after: after.into(),
@@ -1388,16 +1513,43 @@ mod public_memory_anchor_boundary_tests {
         }
     }
     #[test]
+    fn reversed_ranges_record_both_endpoints() {
+        let body = format!(
+            "<w:p><w:r><w:t>AA</w:t></w:r><w:commentRangeEnd w:id='7'/><w:r><w:t>BB</w:t></w:r></w:p>{}<w:p><w:r><w:t>CC</w:t></w:r><w:commentRangeStart w:id='7'/><w:r><w:t>DD</w:t></w:r></w:p>",
+            paragraph("middle")
+        );
+        let mut pkg = package(&body);
+        pkg.set_part("word/comments.xml",format!("<w:comments xmlns:w='{}'><w:comment w:id='7' w:author='Source reviewer' w:initials='SR' w:date='2025-02-03T04:05:06Z'><w:p><w:r><w:t>Review</w:t></w:r></w:p></w:comment></w:comments>",W::URI).into_bytes());
+        pkg.add_content_type_override(
+            "/word/comments.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        );
+        pkg.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            "comments.xml",
+        );
+        let bytes = pkg.to_zip().unwrap();
+        let record = &list_comments(&bytes).unwrap()[0];
+        assert_eq!(record.paragraph.as_deref(), Some("p0"));
+        assert_eq!(record.last_paragraph.as_deref(), Some("p2"));
+        assert_eq!(record.anchor_text, "BB\nmiddle\nCC");
+        assert_eq!(record.before, "AA");
+        assert_eq!(record.after, "DD");
+    }
+    #[test]
     fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {
         let record = |id, parent, author: &str, date: &str| CommentRecord {
             id,
+            r#ref: format!("c{id}"),
             parent,
             author: author.into(),
             initials: Some("SR".into()),
             date: Some(date.into()),
             text: format!("Source comment {id}"),
             done: false,
-            paragraph: Some(format!("body:p:{id}")),
+            paragraph: Some(format!("p{id}")),
+            last_paragraph: None,
             anchor_text: format!("Owned anchor {id}"),
             before: "before".into(),
             after: "after".into(),
@@ -1426,7 +1578,7 @@ mod public_memory_anchor_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod authored_thread_reference_contract_tests {
     use super::*;
 

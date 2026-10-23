@@ -52,6 +52,11 @@ impl Default for DiffOptions {
 /// order, so a rewritten paragraph still meets the one it replaced. Each
 /// matched element is a list of lines (property items, run segments), and
 /// a hunk prints the lines not every file holds.
+///
+/// # Errors
+///
+/// `debug diff needs at least two files` when `files` holds fewer than
+/// two; otherwise a message naming which file is not a readable zip.
 pub fn diff(files: &[(&str, &[u8])], opts: &DiffOptions) -> Result<String, String> {
     if files.len() < 2 {
         return Err("debug diff needs at least two files".to_string());
@@ -1576,7 +1581,7 @@ fn lcs_ops(a: &[&str], b: &[&str]) -> Vec<(Option<usize>, Option<usize>)> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};
@@ -2233,7 +2238,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod boundary_coverage_tests {
     use super::*;
 
@@ -2497,7 +2502,7 @@ mod boundary_coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod raw_source_projection_contract_tests {
     use super::*;
 

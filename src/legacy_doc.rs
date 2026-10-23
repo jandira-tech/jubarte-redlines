@@ -10,41 +10,44 @@
     deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
 )]
 
-//! Word 97-2003 (`.doc`) to `.docx`: the text, paragraphs, headings and
-//! tables of the main document.
+//! Word 97-2003 (`.doc`) to text, paragraphs, headings, lists and tables:
+//! the main story, no headers or footers.
 //!
 //! A `.doc` is an OLE compound file holding a `WordDocument` stream, whose
 //! File Information Block (FIB) points at the piece table (`Clx`) in the
 //! `0Table` or `1Table` stream ([MS-DOC] 2.5, 2.9.38). The piece table
 //! names where each run of characters lives and whether it is stored as
-//! UTF-16 or as 8-bit (Windows-1252) text. Paragraph properties come from
-//! the PAPX formatted disk pages (2.9.177): the style (`istd`, mapped to a
-//! heading level through the style sheet), the table marks
-//! (`sprmPFInTable`, `sprmPFTtp`) that turn cell and row ends into a table,
-//! and the list override and level (`sprmPIlfo`, `sprmPIlvl`) whose number
-//! format (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number.
-//! Bold and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`),
+//! UTF-16 or as Windows-1252. Paragraph properties come from the PAPX
+//! formatted disk pages (2.9.177): the style (`istd`, mapped through the
+//! style sheet to a heading level), the table marks (`sprmPFInTable`,
+//! `sprmPFTtp`) that turn cell and row ends into a table, and the list
+//! override and level (`sprmPIlfo`, `sprmPIlvl`) whose number format
+//! (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number. Bold
+//! and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`),
 //! then from each piece's property modifier (a `Prm0`, or a `Prm1` naming
-//! one of the Clx's `Prc`s), which [MS-DOC] 2.4.6.2 applies after the CHPX.
+//! one of the Clx's `Prc`s) per [MS-DOC] 2.4.6.2.
 //!
-//! What is read: the main story's text, its paragraphs (empty ones too),
+//! Read: the main story text, its paragraphs (empty ones too),
 //! Heading 1-9 and Title styles, bulleted and numbered lists with their
-//! levels, bold and italic, tables (one level; nested tables are
-//! flattened, cell text is plain) and which leading rows repeat as a
-//! header (`sprmTTableHeader`), field results (codes dropped), line
-//! breaks. What is not: other
-//! character formatting (font, size, colour, underline), list start
-//! numbers and number styles beyond "numbered", headers and footers, notes,
-//! comments, tracked changes, pictures, page setup (the output is US
-//! Letter), Word 6/95 files (`nFib` below 193) and encrypted or obfuscated
-//! files, which are refused with `LEGACY_DOC`. `docs/adoption/plans.md`
+//! levels, bold and italic, one-level tables whose cell text is plain,
+//! the leading rows that repeat as a header (`sprmTTableHeader`), field
+//! results (codes dropped) and line breaks. Not read: other character
+//! formatting (font, size, colour, underline), list start numbers and
+//! custom number styles beyond `decimal`, headers and footers, notes,
+//! comments, tracked changes, pictures, page setup (the `.docx` is US
+//! Letter), Word 6/95 files (`nFib` below 193) and encrypted or
+//! obfuscated files — refused with `LEGACY_DOC`. `docs/adoption/plans.md`
 //! lists the steps past this minimum.
 //!
-//! The text becomes escaped Markdown, and [`crate::markdown::markdown_to_docx`]
-//! writes the package, so the `.docx` is the same Word-valid output that
-//! `jubarte convert draft.md` writes. What Markdown cannot say is put back
-//! in the package afterwards: Title and Heading 7-9, empty paragraphs, and
-//! tables whose rows do not repeat as a header.
+//! The text becomes escaped Markdown, and
+//! [`crate::markdown::markdown_to_docx`] writes the package, so the `.docx`
+//! is the same Word-valid output that `jubarte convert draft.md` writes.
+//! What Markdown cannot say is put back afterwards: Title and Heading
+//! 7-9, empty paragraphs, and which rows repeat as a header.
+//!
+//! Entry points: [`is_compound_file`] for the cheap check; [`read`] for
+//! the structured [`LegacyDocument`]; [`doc_to_markdown`] and
+//! [`doc_to_docx`] for the two written outputs.
 
 use std::fmt;
 
@@ -63,7 +66,7 @@ const END_OF_CHAIN: u32 = 0xFFFF_FFFE;
 /// No sector, or no directory entry.
 const NO_STREAM: u32 = 0xFFFF_FFFF;
 
-/// Why a `.doc` could not be read.
+/// Why a `.doc` could not be read, formatted as `LEGACY_DOC: …` on the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LegacyDocError {
     message: String,
@@ -99,10 +102,10 @@ pub enum Block {
 /// A table of the main story.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Table {
-    /// Rows of cells, each cell's paragraphs as plain text joined by
-    /// spaces.
+    /// Rows of cells; each cell's paragraphs are joined by a single space.
+    /// Cell text is plain (no bold/italic split, no nested tables).
     pub rows: Vec<Vec<String>>,
-    /// How many leading rows Word repeats as a header on each page
+    /// Leading rows Word repeats as a header on each page
     /// (`sprmTTableHeader`); 0 when the first row is data.
     pub header_rows: usize,
 }
@@ -111,16 +114,19 @@ pub struct Table {
 /// empty paragraph Word keeps, often to space the text out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Paragraph {
-    /// 1-9 for Heading 1-9, 0 for Title.
+    /// `Some(1..=9)` for Heading 1-9, `Some(0)` for Title, `None` for a
+    /// non-heading paragraph.
     pub heading: Option<u8>,
     /// The list level, when the paragraph is numbered or bulleted.
     pub list: Option<ListItem>,
-    /// The text in runs of one formatting; `\n` is a line break.
+    /// Runs of text, one (bold, italic) pair each. A literal `\n` is a line
+    /// break (`w:br` / `0x0B`).
     pub spans: Vec<Span>,
 }
 
 impl Paragraph {
-    /// The paragraph's text, without formatting.
+    /// The paragraph's text, without formatting: the spans concatenated in
+    /// order, including line breaks.
     #[must_use]
     pub fn text(&self) -> String {
         self.spans.iter().map(|span| span.text.as_str()).collect()
@@ -147,15 +153,15 @@ pub struct ListItem {
     pub level: u8,
 }
 
-/// The main story of a `.doc`.
+/// The main story of a `.doc`, the only place this module reads from.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LegacyDocument {
-    /// Paragraphs and tables, in order.
+    /// Paragraphs and tables, in document order.
     pub blocks: Vec<Block>,
 }
 
-/// Whether `bytes` start like an OLE compound file (`.doc`, or an encrypted
-/// document of any Word version).
+/// Whether `bytes` start with the OLE compound-file magic (`.doc`, or an
+/// encrypted document of any Word version).
 #[must_use]
 pub fn is_compound_file(bytes: &[u8]) -> bool {
     bytes.starts_with(OLE_MAGIC)
@@ -165,12 +171,12 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// [`LegacyDocError`] when the file is not a compound file, holds no
-/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predates
-/// Word 97, is encrypted, or its tables point outside their streams (the
-/// piece table, the style sheet, the property bin tables and their pages,
-/// the list tables, the section table) or contradict themselves (pieces
-/// that do not cover the main story or run backwards).
+/// [`LegacyDocError`] when the bytes are not a compound file, hold no
+/// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
+/// Word 97, are encrypted, or whose tables point outside their streams
+/// (the piece table, the style sheet, the property bin tables and their
+/// pages, the list tables, the section table) or contradict themselves
+/// (pieces that do not cover the main story, or that run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
@@ -224,7 +230,8 @@ pub fn doc_to_markdown(bytes: &[u8]) -> Result<String> {
 ///
 /// # Errors
 ///
-/// As [`read`], or when the package cannot be written.
+/// As [`read`], or when the rewritten package cannot be
+/// serialized to bytes.
 pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {
     document_to_docx(&read(bytes)?)
 }
@@ -672,6 +679,40 @@ impl<'a> CompoundFile<'a> {
         let difat_sectors = u32_at(bytes, 0x48).ok_or_else(bad)?;
 
         let max_sectors = bytes.len().checked_div(sector_size).unwrap_or(0);
+        let fat = Self::read_fat(
+            bytes,
+            sector_size,
+            fat_sectors,
+            first_difat,
+            difat_sectors,
+            max_sectors,
+        )?;
+
+        let mut file = Self {
+            bytes,
+            sector_size,
+            mini_sector_size,
+            mini_cutoff,
+            fat,
+            mini_fat: Vec::new(),
+            entries: Vec::new(),
+            mini_stream: Vec::new(),
+        };
+        file.load_directory(first_dir, max_sectors, v4)?;
+        file.load_mini_fat(first_mini_fat, max_sectors)?;
+        file.load_mini_stream(max_sectors)?;
+        Ok(file)
+    }
+
+    fn read_fat(
+        bytes: &[u8],
+        sector_size: usize,
+        fat_sectors: u32,
+        first_difat: u32,
+        difat_sectors: u32,
+        max_sectors: usize,
+    ) -> Result<Vec<u32>> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
         let mut fat_locations: Vec<u32> = (0..109)
             .filter_map(|i: usize| u32_at(bytes, 0x4C_usize.checked_add(i.checked_mul(4)?)?))
             .filter(|&s| s != NO_STREAM)
@@ -713,46 +754,50 @@ impl<'a> CompoundFile<'a> {
                     .map(|c| u32::from_le_bytes(*c)),
             );
         }
+        Ok(fat)
+    }
 
-        let mut file = Self {
-            bytes,
-            sector_size,
-            mini_sector_size,
-            mini_cutoff,
-            fat,
-            mini_fat: Vec::new(),
-            entries: Vec::new(),
-            mini_stream: Vec::new(),
-        };
-        let directory = file.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
-        file.entries = directory
+    fn load_directory(&mut self, first_dir: u32, max_sectors: usize, v4: bool) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
+        let directory = self.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
+        self.entries = directory
             .as_chunks::<128>()
             .0
             .iter()
             .filter_map(|raw| DirEntry::parse(raw, v4))
             .collect();
+        Ok(())
+    }
+
+    fn load_mini_fat(&mut self, first_mini_fat: u32, max_sectors: usize) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
         if first_mini_fat != END_OF_CHAIN && first_mini_fat != NO_STREAM {
-            let table = file
+            let table = self
                 .chain(first_mini_fat, None, max_sectors)
                 .ok_or_else(bad)?;
-            file.mini_fat = table
+            self.mini_fat = table
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|c| u32::from_le_bytes(*c))
                 .collect();
         }
-        let root = file.entries.first().ok_or_else(bad)?;
+        Ok(())
+    }
+
+    fn load_mini_stream(&mut self, max_sectors: usize) -> Result<()> {
+        let bad = || LegacyDocError::new("not a readable OLE compound file");
+        let root = self.entries.first().ok_or_else(bad)?;
         if root.kind != 5 {
             return Err(bad());
         }
         let (root_start, root_size) = (root.start, root.size);
         if root_start != END_OF_CHAIN && root_start != NO_STREAM {
-            file.mini_stream = file
+            self.mini_stream = self
                 .chain(root_start, Some(root_size), max_sectors)
                 .ok_or_else(bad)?;
         }
-        Ok(file)
+        Ok(())
     }
 
     /// Follow a regular-sector chain, stopping after `limit` sectors (a
@@ -1714,9 +1759,30 @@ fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<(Vec<String>, bool)>, row: &
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_compound_file_returns_true_for_ole_magic() {
+        // The OLE signature, spelled out apart from `OLE_MAGIC`.
+        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        assert_eq!(bytes, OLE_MAGIC);
+        bytes.push(0x42);
+        assert!(is_compound_file(&bytes));
+    }
+
+    #[test]
+    fn is_compound_file_returns_false_for_invalid_magic() {
+        let bytes = b"PK\x03\x04\x14\x00\x06\x00";
+        assert!(!is_compound_file(bytes));
+    }
+
+    #[test]
+    fn is_compound_file_handles_short_input() {
+        let bytes = b"\xD0\xCF\x11";
+        assert!(!is_compound_file(bytes));
+    }
 
     #[test]
     fn escapes_markdown_significant_text() {
@@ -1735,6 +1801,26 @@ mod tests {
         assert_eq!(cp1252(0x80), '\u{20AC}');
         assert_eq!(cp1252(b'A'), 'A');
         assert_eq!(cp1252(0xE9), 'é');
+    }
+
+    #[test]
+    fn read_rejects_missing_word_document() {
+        let mut bytes = include_bytes!("../tests/fixtures/legacy/services.doc").to_vec();
+        // Modify the "WordDocument" directory entry to "NordDocument"
+        let word_doc_utf16: Vec<u8> = "WordDocument"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        for i in 0..(bytes.len() - word_doc_utf16.len()) {
+            if &bytes[i..i + word_doc_utf16.len()] == word_doc_utf16.as_slice() {
+                bytes[i] = b'N';
+            }
+        }
+        let error = read(&bytes).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "LEGACY_DOC: no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password"
+        );
     }
 
     #[test]
@@ -2662,7 +2748,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod legacy_byte_source_boundary_tests {
     use super::*;
     const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
@@ -2863,7 +2949,7 @@ mod legacy_byte_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod legacy_regular_sector_source_owners {
     use super::*;
     const SOURCE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");

@@ -41,7 +41,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::LazyLock;
 
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
 
 use crate::admission::InputLimits;
 
@@ -510,10 +510,146 @@ static RELATIONSHIP_SORTED: LazyLock<Vec<(&'static str, &'static str)>> = LazyLo
     v
 });
 
-/// Apply a (strict → transitional) table to `text` via sequential
-/// `str::replace`, longest key first. `text` is assumed to already contain
+/// Where in a part a Strict URI may be rewritten. `.xml` parts carry them
+/// in namespace declarations; `.rels` parts carry them in relationship
+/// `Type` attribute values. Anywhere else the bytes are the document's
+/// own — `w:t`/`w:instrText`/`w:delText` prose, hyperlink `Target`s,
+/// comments — and a document that *quotes* a Strict URI keeps it
+/// verbatim (#531).
+#[derive(Clone, Copy)]
+enum UriSite {
+    /// `xmlns="…"` / `xmlns:p="…"` attribute values of an `.xml` part, and
+    /// every other attribute whose whole value is a Strict namespace URI
+    /// (`a:graphicData/@uri`).
+    NamespaceDeclaration,
+    /// `Type="…"` attribute values of a `.rels` part.
+    RelationshipType,
+}
+
+impl UriSite {
+    /// Whether an attribute named `attr` carrying `value` is a URI of this
+    /// site. Beside the declarations, any attribute whose value is wholly
+    /// a Strict namespace URI carries one: `a:graphicData/@uri` names the
+    /// grammar of the graphic it wraps.
+    fn carries(self, attr: &str, value: &str, table: &[(&str, &str)]) -> bool {
+        match self {
+            UriSite::NamespaceDeclaration => {
+                attr == "xmlns"
+                    || attr.starts_with("xmlns:")
+                    || table.iter().any(|&(from, _)| value == from)
+            }
+            UriSite::RelationshipType => attr == "Type",
+        }
+    }
+}
+
+/// Apply a (strict → transitional) table to the URI-bearing attribute
+/// values of `text` — namespace declarations, a `.rels` part's `Type`, and
+/// attributes whose whole value is a Strict namespace URI — leaving every
+/// other byte: element and attribute names, text content, comments, as
+/// the file spells them. `text` is assumed to already contain
 /// `STRICT_MARKER` (callers gate on that for the fast path).
-fn translate(text: &str, table: &[(&str, &str)]) -> String {
+fn translate(text: &str, table: &[(&str, &str)], site: UriSite) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(lt) = rest.find('<') {
+        let (before, from_lt) = rest.split_at(lt);
+        out.push_str(before);
+        if let Some((verbatim, after)) = split_opaque_markup(from_lt) {
+            // Comments, CDATA, the XML declaration: no attributes inside.
+            out.push_str(verbatim);
+            rest = after;
+        } else if let Some((tag, after)) = split_tag(from_lt) {
+            rewrite_tag(tag, table, site, &mut out);
+            rest = after;
+        } else {
+            // Unterminated tag (malformed part): keep the rest verbatim.
+            out.push_str(from_lt);
+            return out;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Comments (`<!--…-->`), CDATA (`<![CDATA[…]]>`), processing instructions
+/// (`<?…?>`) and the DOCTYPE (`<!…>`): returned with the text after them.
+fn split_opaque_markup(s: &str) -> Option<(&str, &str)> {
+    for (open, close) in [("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")] {
+        if let Some(body) = s.strip_prefix(open) {
+            let end = body
+                .find(close)
+                .map(|i| open.len().saturating_add(i).saturating_add(close.len()))?;
+            return Some(s.split_at(end));
+        }
+    }
+    if s.starts_with("<!") {
+        s.find('>').map(|i| s.split_at(i.saturating_add(1)))
+    } else {
+        None
+    }
+}
+
+/// A start or end tag: from its `<` to the first `>` outside quoted
+/// attribute values (a `>` inside a value is legal XML).
+fn split_tag(s: &str) -> Option<(&str, &str)> {
+    let mut quote: Option<char> = None;
+    for (i, c) in s.char_indices().skip(1) {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '>' => return Some(s.split_at(i.saturating_add(1))),
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// Copy `tag` to `out`, rewriting only the values of the attributes that
+/// carry URIs of `site`.
+fn rewrite_tag(tag: &str, table: &[(&str, &str)], site: UriSite, out: &mut String) {
+    let mut rest = tag;
+    while let Some(open) = rest.find(['"', '\'']) {
+        let (before, from_open) = rest.split_at(open);
+        let quote = from_open.chars().next().expect("find hit a quote");
+        let Some(after_open) = from_open.strip_prefix(quote) else {
+            break;
+        };
+        let Some(rel) = after_open.find(quote) else {
+            // Unterminated value: keep the rest verbatim.
+            out.push_str(rest);
+            return;
+        };
+        let (value, from_close) = after_open.split_at(rel);
+        out.push_str(before);
+        out.push(quote);
+        if site.carries(attr_name(before), value, table) {
+            out.push_str(&replace_all(value, table));
+        } else {
+            out.push_str(value);
+        }
+        out.push(quote);
+        rest = from_close.strip_prefix(quote).unwrap_or(from_close);
+    }
+    out.push_str(rest);
+}
+
+/// The attribute name ending `before` — the token after the last
+/// whitespace, `=` stripped: `… <w:p xmlns:w=` → `xmlns:w`.
+fn attr_name(before: &str) -> &str {
+    let name = before.trim_end();
+    let name = name.strip_suffix('=').unwrap_or(name).trim_end();
+    match name.rsplit_once(char::is_whitespace) {
+        Some((_, n)) => n,
+        None => name.strip_prefix('<').unwrap_or(name),
+    }
+}
+
+/// The old whole-string substitution, now scoped to one attribute value.
+fn replace_all(text: &str, table: &[(&str, &str)]) -> String {
     let mut out = text.to_string();
     for &(from, to) in table {
         if out.contains(from) {
@@ -521,6 +657,74 @@ fn translate(text: &str, table: &[(&str, &str)]) -> String {
         }
     }
     out
+}
+
+/// The Strict wordprocessingml main namespace — the URI that makes a main
+/// part Strict rather than Transitional.
+const STRICT_MAIN: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+
+/// Whether the package's main document part (`word/document.xml`) is ISO
+/// Strict — decided by the namespace its root element declares, the same
+/// fact Word reads the dialect from. A Transitional package that merely
+/// *quotes* a Strict URI in its text is not a Strict package (#531).
+pub fn main_part_is_strict(bytes: &[u8]) -> bool {
+    let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
+        return false;
+    };
+    let Ok(mut part) = archive.by_name("word/document.xml") else {
+        return false;
+    };
+    // The root element's opening tag follows whatever preamble the part
+    // carries — a comment, a DOCTYPE — however long: read until it
+    // appears, bounded by the part's own size, not by a window a long
+    // preamble can push the root past (#561). Only the tail since the
+    // last `<` can still hold the tag, so the head stays small.
+    let mut head: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 16 * 1024];
+    loop {
+        let Ok(read) = part.read(&mut chunk) else {
+            return false;
+        };
+        if read == 0 {
+            break;
+        }
+        head.extend(chunk.iter().copied().take(read));
+        let window = String::from_utf8_lossy(&head);
+        if let Some((start, _)) = root_open(&window)
+            && window.split_at(start).1.contains('>')
+        {
+            break;
+        }
+        match head.iter().rposition(|&b| b == b'<') {
+            Some(lt) => {
+                head.drain(..lt);
+            }
+            None => head.clear(),
+        }
+    }
+    let head = String::from_utf8_lossy(&head);
+    let Some((start, _)) = root_open(&head) else {
+        return false;
+    };
+    let decl = head.split_at(start).1;
+    let decl = match decl.find('>') {
+        Some(end) => decl.split_at(end).0,
+        // Truncated by the end of the part: the declarations it holds
+        // still decide.
+        None => decl,
+    };
+    decl.contains(STRICT_MAIN)
+}
+
+/// Where `head` opens its root element: the first `<` an element name
+/// follows (a comment, PI or DOCTYPE `<!`/`<?` opens none).
+fn root_open(head: &str) -> Option<(usize, char)> {
+    head.char_indices().find(|&(i, c)| {
+        c == '<'
+            && head
+                .get(i.saturating_add(1)..)
+                .is_some_and(|rest| rest.starts_with(char::is_alphabetic))
+    })
 }
 
 /// Normalize an ISO/IEC 29500 **Strict** `.docx` to **Transitional**.
@@ -536,7 +740,13 @@ fn translate(text: &str, table: &[(&str, &str)]) -> String {
 ///
 /// Entries inflate under [`InputLimits::compare`]; see
 /// [`strict_to_transitional_docx_within`] for the budget semantics.
-pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
+///
+/// # Errors
+///
+/// A [`crate::opc::Zip32Limit`] (`OUTPUT_LIMIT`) when the rewritten package
+/// could not stay inside ZIP32 — unreachable under the compare budget, which
+/// caps the output far below the boundary, but refused rather than written.
+pub fn strict_to_transitional_docx(bytes: &[u8]) -> Result<Vec<u8>, crate::opc::Zip32Limit> {
     strict_to_transitional_docx_within(bytes, InputLimits::compare())
 }
 
@@ -549,11 +759,21 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
 /// entry that inflates past its cap ends the scan and `bytes` come back
 /// unchanged, the same answer an unreadable archive gets; a caller that wants
 /// a typed refusal admits the package first with [`crate::admission::admit`].
-pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> Vec<u8> {
+///
+/// # Errors
+///
+/// A [`crate::opc::Zip32Limit`] (`OUTPUT_LIMIT`) when the entries about to be
+/// written cannot fit a ZIP32 package (ZIP-10/#604): jubarte writes no ZIP64,
+/// so the plan refuses before `ZipWriter::new` instead of handing back the
+/// untranslated Strict bytes, which a caller could mistake for output.
+pub fn strict_to_transitional_docx_within(
+    bytes: &[u8],
+    limits: InputLimits,
+) -> Result<Vec<u8>, crate::opc::Zip32Limit> {
     // Not a readable zip — leave untouched (PartFs::open reports the real
     // error downstream).
-    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
-        return bytes.to_vec();
+    let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
+        return Ok(bytes.to_vec());
     };
 
     let n = archive.len();
@@ -564,12 +784,15 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
     let mut total: u64 = 0;
     for i in 0..n {
         let Ok(mut f) = archive.by_index(i) else {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         };
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_string();
+        let Ok(name) = f.name() else {
+            return Ok(bytes.to_vec());
+        };
+        let name = name.into_owned();
         let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let mut buf = Vec::new();
@@ -579,7 +802,7 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
             .is_err()
             || buf.len() as u64 > cap
         {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
         total = total.saturating_add(buf.len() as u64);
 
@@ -587,12 +810,12 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
         if name.ends_with(".rels") || name.ends_with(".xml") {
             let text = String::from_utf8_lossy(&buf);
             if text.contains(STRICT_MARKER) {
-                let table = if name.ends_with(".rels") {
-                    &*RELATIONSHIP_SORTED
+                let (table, site) = if name.ends_with(".rels") {
+                    (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)
                 } else {
-                    &*NAMESPACE_SORTED
+                    (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
                 };
-                let translated = translate(&text, table);
+                let translated = translate(&text, table, site);
                 if translated != text.as_ref() {
                     any_changed = true;
                     buf = translated.into_bytes();
@@ -605,8 +828,16 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
 
     if !any_changed {
         // Already Transitional: byte-identical round-trip.
-        return bytes.to_vec();
+        return Ok(bytes.to_vec());
     }
+
+    // jubarte writes ZIP32 only (ZIP-10/#604): a rebuild that would need
+    // ZIP64 is a typed refusal, not the untranslated input back.
+    let plan: Vec<(&str, u64)> = entries
+        .iter()
+        .map(|(name, data)| (name.as_str(), data.len() as u64))
+        .collect();
+    crate::opc::zip32_plan(&plan)?;
 
     // Rebuild the package with translated parts, dated as `PartFs::to_zip`
     // dates its entries (no wall-clock time).
@@ -616,22 +847,141 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
         .last_modified_time(zip::DateTime::default());
     for (name, data) in &entries {
         if writer.start_file(name, options).is_err() {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
         if writer.write_all(data).is_err() {
-            return bytes.to_vec();
+            return Ok(bytes.to_vec());
         }
     }
     match writer.finish() {
-        Ok(c) => c.into_inner(),
-        Err(_) => bytes.to_vec(),
+        Ok(c) => Ok(c.into_inner()),
+        Err(_) => Ok(bytes.to_vec()),
     }
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+    use zip::ZipArchive;
+
+    /// A Strict document whose *text* quotes a Strict URI: the namespace
+    /// declaration is rewritten, the `w:t` keeps the bytes the file's own
+    /// text carries (#531 review defect 2 — a whole-part `str::replace`
+    /// rewrote the document's prose as well).
+    #[test]
+    fn text_quoting_a_strict_uri_keeps_it() {
+        let strict = concat!(
+            r#"<?xml version="1.0"?>"#,
+            r#"<w:document "#,
+            r#"xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main">"#,
+            r#"<w:body><w:p><w:r>"#,
+            r#"<w:t>See http://purl.oclc.org/ooxml/wordprocessingml/main for the strict namespace.</w:t>"#,
+            r#"</w:r></w:p></w:body></w:document>"#,
+        );
+        let out = translate(strict, &NAMESPACE_SORTED, UriSite::NamespaceDeclaration);
+        assert!(
+            out.contains(
+                r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#
+            ),
+            "the namespace declaration is translated: {out}"
+        );
+        assert!(
+            out.contains(
+                "See http://purl.oclc.org/ooxml/wordprocessingml/main for the strict namespace."
+            ),
+            "the document's own text stays verbatim: {out}"
+        );
+    }
+
+    /// A Strict `.rels` whose hyperlink `Target` is itself a Strict URI: the
+    /// relationship `Type` is translated, the target the author linked to
+    /// stays verbatim.
+    #[test]
+    fn relationship_targets_keep_their_strict_uri() {
+        let strict_rels = concat!(
+            r#"<?xml version="1.0"?>"#,
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+            r#"<Relationship Id="rId1" "#,
+            r#"Type="http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink" "#,
+            r#"Target="http://purl.oclc.org/ooxml/wordprocessingml/main" "#,
+            r#"TargetMode="External"/>"#,
+            r#"</Relationships>"#,
+        );
+        let out = translate(strict_rels, &RELATIONSHIP_SORTED, UriSite::RelationshipType);
+        assert!(
+            out.contains(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+            ),
+            "the relationship type is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"Target="http://purl.oclc.org/ooxml/wordprocessingml/main""#),
+            "the hyperlink target stays verbatim: {out}"
+        );
+    }
+
+    /// A Transitional package whose text merely mentions a Strict URI is
+    /// handed back byte-for-byte: the marker in prose no longer counts as
+    /// a Strict package (#531 review defect 2).
+    #[test]
+    fn transitional_package_quoting_a_strict_uri_stays_untouched() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer.start_file("word/document.xml", options).unwrap();
+        writer
+            .write_all(
+                concat!(
+                    "<?xml version=\"1.0\"?>\n",
+                    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+                    "<w:body><w:p><w:r><w:t>See http://purl.oclc.org/ooxml/wordprocessingml/main</w:t></w:r></w:p></w:body>",
+                    "</w:document>",
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let pkg = writer.finish().unwrap().into_inner();
+
+        assert_eq!(
+            strict_to_transitional_docx(&pkg).unwrap(),
+            pkg,
+            "a Transitional package quoting a Strict URI must round-trip byte-identical"
+        );
+    }
+
+    /// A Strict package whose `w:instrText` quotes a Strict URI keeps the
+    /// instruction's bytes while its namespaces are translated end to end.
+    #[test]
+    fn strict_package_keeps_field_text_quoting_a_strict_uri() {
+        let strict_doc = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<w:document xmlns:w=\"http://purl.oclc.org/ooxml/wordprocessingml/main\">",
+            "<w:body><w:p><w:r><w:instrText> REF http://purl.oclc.org/ooxml/wordprocessingml/main \\h </w:instrText></w:r></w:p></w:body>",
+            "</w:document>",
+        );
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(strict_doc.as_bytes()).unwrap();
+        let strict_pkg = writer.finish().unwrap().into_inner();
+
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
+        let mut reread = ZipArchive::new(Cursor::new(&out)).unwrap();
+        let doc = {
+            let mut f = reread.by_name("word/document.xml").unwrap();
+            let mut s = String::new();
+            f.read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(
+            doc.contains(" REF http://purl.oclc.org/ooxml/wordprocessingml/main \\h "),
+            "the field instruction stays verbatim: {doc}"
+        );
+        assert!(
+            doc.contains("http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
+            "the namespaces are translated: {doc}"
+        );
+    }
 
     /// A Strict `document.xml` snippet: the `w`, `r`, and `m` namespaces flip
     /// to their Transitional URIs, and no `purl.oclc.org` survives.
@@ -645,7 +995,7 @@ mod tests {
             r#"xmlns:m="http://purl.oclc.org/ooxml/officeDocument/math">"#,
             r#"<w:body/></w:document>"#,
         );
-        let out = translate(strict, &NAMESPACE_SORTED);
+        let out = translate(strict, &NAMESPACE_SORTED, UriSite::NamespaceDeclaration);
         assert!(
             out.contains("http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
             "w namespace not transitional: {out}"
@@ -657,6 +1007,46 @@ mod tests {
         assert!(
             out.contains("http://schemas.openxmlformats.org/officeDocument/2006/math"),
             "m namespace not transitional: {out}"
+        );
+        assert!(!out.contains(STRICT_MARKER), "strict marker leaked: {out}");
+    }
+
+    /// A Strict `a:graphicData/@uri` — an attribute whose whole value is a
+    /// namespace URI, not a declaration — is translated with the
+    /// namespaces, while `mc:Ignorable`, which names prefixes rather than
+    /// URIs, stays as the file spells it (#561 review defect 1).
+    #[test]
+    fn graphic_data_uri_attributes_are_translated() {
+        let strict = concat!(
+            r#"<?xml version="1.0"?>"#,
+            r#"<w:document "#,
+            r#"xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main" "#,
+            r#"xmlns:a="http://purl.oclc.org/ooxml/drawingml/main" "#,
+            r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" "#,
+            r#"mc:Ignorable="w14">"#,
+            r#"<w:r><w:drawing><a:graphic>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/chart"/>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/picture"/>"#,
+            r#"<a:graphicData uri="http://purl.oclc.org/ooxml/drawingml/diagram"/>"#,
+            r#"</a:graphic></w:drawing></w:r>"#,
+            r#"</w:document>"#,
+        );
+        let out = translate(strict, &NAMESPACE_SORTED, UriSite::NamespaceDeclaration);
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/chart""#),
+            "the chart uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/picture""#),
+            "the picture uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"uri="http://schemas.openxmlformats.org/drawingml/2006/diagram""#),
+            "the diagram uri is translated: {out}"
+        );
+        assert!(
+            out.contains(r#"mc:Ignorable="w14""#),
+            "Ignorable names prefixes, not URIs: {out}"
         );
         assert!(!out.contains(STRICT_MARKER), "strict marker leaked: {out}");
     }
@@ -678,7 +1068,7 @@ mod tests {
             r#"Target="word/styles.xml"/>"#,
             r#"</Relationships>"#,
         );
-        let out = translate(strict_rels, &RELATIONSHIP_SORTED);
+        let out = translate(strict_rels, &RELATIONSHIP_SORTED, UriSite::RelationshipType);
         assert!(
             out.contains("http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties"),
             "extendedProperties not hyphenated: {out}"
@@ -715,7 +1105,7 @@ mod tests {
             ..crate::admission::InputLimits::compare()
         };
         assert_eq!(
-            strict_to_transitional_docx_within(&strict_pkg, small),
+            strict_to_transitional_docx_within(&strict_pkg, small).unwrap(),
             strict_pkg,
             "a part past the budget stops the rewrite and returns the input"
         );
@@ -724,15 +1114,40 @@ mod tests {
             ..crate::admission::InputLimits::compare()
         };
         assert_eq!(
-            strict_to_transitional_docx_within(&strict_pkg, total_only),
+            strict_to_transitional_docx_within(&strict_pkg, total_only).unwrap(),
             strict_pkg,
             "the package budget is honoured as well"
         );
-        let out = strict_to_transitional_docx(&strict_pkg);
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
         assert_ne!(
             out, strict_pkg,
             "within the default budget the Strict package is rewritten"
         );
+    }
+
+    /// A preamble longer than the old 64 KiB window no longer hides the
+    /// Strict root: the dialect is read from the root's own opening tag,
+    /// wherever in the part it lies (#561 review defect 2).
+    #[test]
+    fn a_long_preamble_does_not_hide_a_strict_root() {
+        let comment = format!("<!--{}-->", "x".repeat(100 * 1024));
+        let package = |uri: &str| {
+            let doc = format!(
+                "<?xml version=\"1.0\"?>\n{comment}<w:document xmlns:w=\"{uri}\"><w:body/></w:document>",
+            );
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            writer.start_file("word/document.xml", options).unwrap();
+            writer.write_all(doc.as_bytes()).unwrap();
+            writer.finish().unwrap().into_inner()
+        };
+        assert!(main_part_is_strict(&package(
+            "http://purl.oclc.org/ooxml/wordprocessingml/main"
+        )));
+        assert!(!main_part_is_strict(&package(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        )));
     }
 
     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).
@@ -756,7 +1171,7 @@ mod tests {
             .unwrap();
         let pkg = writer.finish().unwrap().into_inner();
 
-        let out = strict_to_transitional_docx(&pkg);
+        let out = strict_to_transitional_docx(&pkg).unwrap();
         assert_eq!(
             out, pkg,
             "transitional package must round-trip byte-identical"
@@ -788,7 +1203,7 @@ mod tests {
         writer.write_all(strict_doc.as_bytes()).unwrap();
         let strict_pkg = writer.finish().unwrap().into_inner();
 
-        let out = strict_to_transitional_docx(&strict_pkg);
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
         assert_ne!(out, strict_pkg, "strict package must be rewritten");
         assert!(
             out.windows(4).any(|w| w == b"PK\x03\x04"),
@@ -820,8 +1235,54 @@ mod tests {
                 entry.last_modified(),
                 Some(zip::DateTime::default()),
                 "{} carries no wall-clock time",
-                entry.name()
+                entry.name().expect("decode ZIP fixture name")
             );
         }
+    }
+
+    /// A non-ZIP byte array is returned byte-identical because it cannot be parsed.
+    #[test]
+    fn invalid_zip_is_returned_untouched() {
+        let invalid_bytes = b"not a zip file";
+        let out = strict_to_transitional_docx(invalid_bytes).unwrap();
+        assert_eq!(
+            out, invalid_bytes,
+            "an invalid zip should be returned untouched"
+        );
+    }
+
+    /// Directory entries are skipped and not included in the rebuilt archive,
+    /// while valid strict parts are translated.
+    #[test]
+    fn directory_entries_are_skipped() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+
+        // Add a directory entry
+        writer.add_directory("word/", options).unwrap();
+
+        let strict_doc = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<w:document xmlns:w=\"http://purl.oclc.org/ooxml/wordprocessingml/main\">",
+            "<w:body/></w:document>",
+        );
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(strict_doc.as_bytes()).unwrap();
+
+        let strict_pkg = writer.finish().unwrap().into_inner();
+
+        let out = strict_to_transitional_docx(&strict_pkg).unwrap();
+
+        assert_ne!(
+            out, strict_pkg,
+            "the valid strict part should cause a rewrite"
+        );
+
+        let mut reread = ZipArchive::new(Cursor::new(out)).unwrap();
+
+        // The directory should have been skipped, leaving only the file.
+        assert_eq!(reread.len(), 1, "directory entry should have been skipped");
+        let file = reread.by_index(0).unwrap();
+        assert_eq!(file.name().unwrap(), "word/document.xml");
     }
 }

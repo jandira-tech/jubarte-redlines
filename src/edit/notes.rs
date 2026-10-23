@@ -70,9 +70,8 @@ impl Transaction<'_> {
             .dom
             .root(document)
             .ok_or_else(|| err("INVALID_DOCUMENT", None, format!("{part}: no XML root")))?;
-        let stem = part.rsplit('/').next().unwrap_or(&part);
         self.stories.push(StoryPart {
-            id: stem.strip_suffix(".xml").unwrap_or(stem).to_string(),
+            id: crate::ids::part_story(&part),
             part,
             document,
             root,

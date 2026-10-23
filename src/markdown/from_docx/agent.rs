@@ -5,14 +5,16 @@
 //! tags, author handles and timestamps, comment threads, id lines, table
 //! lines and block selection.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use super::ooxml::{Element, Node};
 use crate::markdown::{Pick, Select};
 
 // The stamps start with U+E000, which no XML name can hold, so a file
 // cannot forge them.
-/// Attribute stamped on every numbered `w:p`: its `body:p:N` index.
+/// Attribute stamped on every numbered `w:p`: its `pN` index.
 pub(crate) const INDEX: &str = "\u{E000}jubarteIndex";
 /// Attribute stamped on every top-level `w:tbl`: its `t{N}` number.
 pub(crate) const TABLE: &str = "\u{E000}jubarteTable";
@@ -27,10 +29,22 @@ pub(crate) struct Handles {
     /// Author name as stored → handle (`Ann Counsel` → `AC`).
     pub by_author: HashMap<String, String>,
     /// Authors in first-appearance order: revision authors in document
-    /// order, then comment-only authors in part order.
+    /// order, then comment-only authors in part order, then authors only the
+    /// styles' changes name.
     pub order: Vec<String>,
-    /// Author → every `w:date` on their marks and comments.
+    /// Author → every timestamp on their marks and comments.
     pub dates: HashMap<String, BTreeSet<String>>,
+    /// Authors with at least one undated mark or comment: no header date
+    /// may stand in for their individual timestamps.
+    undated: HashSet<String>,
+    /// Comment ids whose ranges the view prints (`{==…==}`) and bookmark
+    /// names it prints (`<a id>`): either one between two marks keeps them
+    /// apart, as the text shows them.
+    pub shown_ranges: HashSet<String>,
+    pub shown_bookmarks: HashSet<String>,
+    /// Character styles whose runs are hidden (`w:vanish`): such a run
+    /// prints nothing, as a directly hidden one.
+    pub hidden_styles: HashSet<String>,
 }
 
 impl Handles {
@@ -42,31 +56,50 @@ impl Handles {
 
     /// The one timestamp all of the author's marks and comments share.
     pub(crate) fn unique_date(&self, author: &str) -> Option<&str> {
+        if self.undated.contains(author) {
+            return None;
+        }
         let dates = self.dates.get(author)?;
-        (dates.len() == 1)
-            .then(|| dates.iter().next().map(String::as_str))
+        let first = dates.iter().next()?;
+        dates
+            .iter()
+            .all(|date| {
+                date == first
+                    || crate::convert::timestamp_order_key(date)
+                        .is_some_and(|key| Some(key) == crate::convert::timestamp_order_key(first))
+            })
+            .then_some(first.as_str())
+    }
+
+    /// The latest whole timestamp of an author with several timestamps.
+    pub(crate) fn latest_date(&self, author: &str) -> Option<&str> {
+        if self.undated.contains(author) {
+            return None;
+        }
+        let dates = self.dates.get(author)?;
+        (self.unique_date(author).is_none())
+            .then(|| {
+                dates
+                    .iter()
+                    .max_by_key(|date| crate::convert::timestamp_order_key(date))
+                    .map(String::as_str)
+            })
             .flatten()
     }
 
-    /// `first..last` days of an author with several timestamps.
-    pub(crate) fn date_range(&self, author: &str) -> Option<String> {
-        let dates = self.dates.get(author)?;
-        let day = |d: &String| d.get(..10).unwrap_or(d).to_string();
-        match (dates.iter().next(), dates.iter().next_back()) {
-            (Some(first), Some(last)) if dates.len() > 1 => {
-                Some(format!("{}..{}", day(first), day(last)))
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether a note of this author needs its timestamp inline (`--dates`).
-    pub(crate) fn needs_date(&self, author: Option<&str>) -> bool {
-        author.is_some_and(|a| self.dates.get(a).is_some_and(|d| d.len() > 1))
+    /// Undated marks make each dated note's timestamp necessary even without
+    /// `--dates`: an absent timestamp must keep meaning undated on writeback.
+    pub(crate) fn needs_date(&self, author: Option<&str>, dates: bool) -> bool {
+        // A shared instant can have different local offsets or precision.
+        // Its individual spellings still belong in --dates notes.
+        author.is_some_and(|a| {
+            self.undated.contains(a)
+                || (dates && self.dates.get(a).is_some_and(|dates| dates.len() > 1))
+        })
     }
 }
 
-/// One logical revision as the id line and the header count it.
+/// One logical revision as the paragraph id line groups it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevTag {
     /// `ins`, `del`, `sub`, `mark` (paragraph mark), `row`, `cell`.
@@ -92,12 +125,147 @@ fn kind_of(local: &str) -> Option<&'static str> {
     }
 }
 
+/// A change mark that holds no text (`<w:ins/>`, or runs of formatting
+/// only): the view shows nothing for it, so it neither joins nor splits.
+fn hollow(e: &Element) -> bool {
+    kind_of(e.local()).is_some()
+        && e.elements()
+            .all(|r| r.local() == "r" && r.elements().all(|c| c.local() == "rPr"))
+}
+
+/// A run the text prints nothing for: vanished, or holding only empty
+/// text and page breaks (the page break is the paragraph's id line). It
+/// keeps no two marks apart, as in the text.
+fn silent_run(e: &Element, handles: &Handles) -> bool {
+    if e.local() != "r" {
+        return false;
+    }
+    if hidden_run(e.child("rPr"), &handles.hidden_styles) {
+        return true;
+    }
+    e.elements().all(|c| match c.local() {
+        // The text prints no soft hyphen and no symbol font's glyph.
+        "rPr" | "lastRenderedPageBreak" | "softHyphen" | "sym" => true,
+        "t" | "delText" => c.text().is_empty(),
+        "br" | "cr" => c.attr("type") == Some("page"),
+        _ => false,
+    })
+}
+
+/// Whether a run of properties `rpr` is hidden: its own `w:vanish`, else
+/// its character style's (one of `hidden`).
+pub(crate) fn hidden_run(rpr: Option<&Element>, hidden: &HashSet<String>) -> bool {
+    rpr.and_then(|r| r.toggle("vanish")).unwrap_or_else(|| {
+        rpr.and_then(|r| r.child("rStyle"))
+            .and_then(|s| s.attr("val"))
+            .is_some_and(|id| hidden.contains(id))
+    })
+}
+
+/// Whether `mark` holds the start of a shown comment range that ends past
+/// it, and the end of one that starts before it.
+fn half_ranges(mark: &Element, handles: &Handles) -> (bool, bool) {
+    fn walk(e: &Element, handles: &Handles, starts: &mut Vec<String>, ends: &mut Vec<String>) {
+        for child in e.elements() {
+            let shown = || {
+                child
+                    .attr("id")
+                    .filter(|id| handles.shown_ranges.contains(*id))
+                    .map(str::to_string)
+            };
+            match child.local() {
+                "commentRangeStart" => starts.extend(shown()),
+                "commentRangeEnd" => ends.extend(shown()),
+                _ => walk(child, handles, starts, ends),
+            }
+        }
+    }
+    let (mut starts, mut ends) = (Vec::new(), Vec::new());
+    walk(mark, handles, &mut starts, &mut ends);
+    (
+        starts.iter().any(|id| !ends.contains(id)),
+        ends.iter().any(|id| !starts.contains(id)),
+    )
+}
+
 /// `12@AC`: the element's `w:id` and its author's handle (`??` for an
-/// author the legend does not know, which only a malformed file produces).
+/// author the legend does not know: a malformed file, or Word's
+/// `w:tblGridChange`, which has no author).
 pub(crate) fn tag_of(element: &Element, handles: &Handles) -> String {
-    let id = element.attr("id").unwrap_or("?");
+    let id = element.attr("id").map_or_else(|| "?".to_string(), tag_id);
     let handle = handles.of(element.attr("author")).unwrap_or("??");
     format!("{id}@{handle}")
+}
+
+/// A tag being printed rather than stamped internally. When an author's
+/// undated marks forbid a header timestamp, keep this mark's date on its note.
+pub(crate) fn required_date_tag_of(element: &Element, handles: &Handles) -> String {
+    let mut tag = tag_of(element, handles);
+    if handles.needs_date(element.attr("author"), false)
+        && let Some(date) = element.revision_date()
+    {
+        tag.push(' ');
+        tag.push_str(&date);
+    }
+    tag
+}
+
+/// `12@Ana%20Lima%20(2026-…)` for the plain view: the element's `w:id` and
+/// its `Author (date)` note in place of a handle, spelled ([`tag_id`],
+/// spaces too) so that tags split on none of it.
+pub(crate) fn plain_tag_of(element: &Element, note: &str) -> String {
+    let id = element.attr("id").map_or_else(|| "?".to_string(), tag_id);
+    format!("{id}@{}", tag_id(note).replace(' ', "%20"))
+}
+
+/// A `w:id` as an internal tag holds it: the characters tags join and
+/// split on (`+`, `|`, `@`, `#`, `?`) and `%` itself spelled `%XX`, so a
+/// malformed id such as `1+2` stays one id. [`untag_id`] reverses it.
+fn tag_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for c in id.chars() {
+        if matches!(c, '+' | '|' | '@' | '#' | '?' | '%') {
+            out.push_str(&format!("%{:02X}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The `w:id` one piece of an internal tag spells ([`tag_id`]).
+fn untag_id(piece: &str) -> String {
+    let mut out = String::with_capacity(piece.len());
+    let mut rest = piece;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        match rest
+            .get(at + 1..at + 3)
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            Some(byte) => {
+                out.push(char::from(byte));
+                rest = &rest[at + 3..];
+            }
+            None => {
+                out.push('%');
+                rest = &rest[at + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// One internal tag's parts: `header1#1+2@AC` → (`Some("header1")`,
+/// `1+2`, `AC`). The story is absent in the body's tags. Internal only:
+/// [`format_tag`] prints it.
+pub(crate) fn split_tag(one: &str) -> (Option<&str>, &str, &str) {
+    let (head, handle) = one.rsplit_once('@').unwrap_or((one, "??"));
+    match head.split_once('#') {
+        Some((story, ids)) => (Some(story), ids, handle),
+        None => (None, head, handle),
+    }
 }
 
 /// The handle of a one-author tag (`1+2@AC` → `AC`); `None` for several.
@@ -105,39 +273,280 @@ pub(crate) fn handle_of(tag: &str) -> Option<&str> {
     if tag.contains('|') {
         return None;
     }
-    tag.rsplit_once('@').map(|(_, h)| h)
+    Some(split_tag(tag).2)
 }
 
 /// Joins the tags of one logical change: `1@AC` + `2@AC` is `1+2@AC`,
-/// `1@AC` + `2@JD` is `1@AC|2@JD`, `1+2@AC` + `3@AC` is `1+2+3@AC`.
+/// `1@AC` + `2@JD` is `1@AC|2@JD`, `1+2@AC` + `3@AC` is `1+2+3@AC`. Tags
+/// join only within one story and one handle.
 pub(crate) fn join_tags(parts: &[String]) -> String {
     if parts.is_empty() {
         return String::new();
     }
-    let handles: Vec<Option<&str>> = parts.iter().map(|p| handle_of(p)).collect();
-    if handles.iter().all(|h| h.is_some() && *h == handles[0]) {
-        let ids: Vec<&str> = parts
-            .iter()
-            .map(|p| p.rsplit_once('@').map_or(p.as_str(), |(ids, _)| ids))
-            .collect();
-        format!("{}@{}", ids.join("+"), handles[0].unwrap_or("??"))
-    } else {
-        parts.join("|")
+    let keys: Vec<Option<(Option<&str>, &str)>> = parts
+        .iter()
+        .map(|p| {
+            (!p.contains('|')).then(|| {
+                let (story, _, handle) = split_tag(p);
+                (story, handle)
+            })
+        })
+        .collect();
+    match keys[0] {
+        Some((story, handle)) if keys.iter().all(|k| *k == keys[0]) => {
+            let ids: Vec<&str> = parts.iter().map(|p| split_tag(p).1).collect();
+            let story = story.map_or(String::new(), |s| format!("{s}#"));
+            format!("{story}{}@{handle}", ids.join("+"))
+        }
+        _ => parts.join("|"),
     }
 }
 
-/// `0@AC` → `#0 @AC`; `1+2@AC` → `#1+2 @AC`; `1@AC|2@JD` → `#1 @AC; #2 @JD`.
+/// `0@AC` → `r0 @AC`; `1+2@AC` → `r1+2 @AC`; `header1#2@JD` →
+/// `header1.r2 @JD`; `1@AC|2@JD` → `r1 @AC; r2 @JD`. An id the short form
+/// cannot spell prints its long id, one per id: every printed id is one
+/// `accept --id` takes. A mark without a `w:id` (only a malformed file has
+/// one) prints `noid`: it names no change, and no id parser reads it.
 pub(crate) fn format_tag(tag: &str) -> String {
+    format_tag_by(tag, |handle| format!(" @{handle}"))
+}
+
+/// Whether two internal tags print the same ids: two marks of one
+/// logical change do (`3@B` and `4@B` both print `r3+4`).
+pub(crate) fn same_change(a: &str, b: &str) -> bool {
+    let ids = |tag: &str| format_tag_by(tag, |_| String::new());
+    ids(a) == ids(b)
+}
+
+/// Whether a deletion and the insertion after it are one replacement, as
+/// `changes` lists it: they print the same ids, a joined one among them
+/// (`r3+4`). The same single id on both is a file repeating a `w:id`:
+/// `changes` lists two changes, so the view prints two.
+pub(crate) fn one_replacement(del: &str, ins: &str) -> bool {
+    let ids = |tag: &str| format_tag_by(tag, |_| String::new());
+    let (a, b) = (ids(del), ids(ins));
+    a == b && a.split("; ").any(|id| id.contains('+'))
+}
+
+/// A plain-view tag ([`plain_tag_of`]) as its note prints it: the ids,
+/// then the `Author (date)` note when there is one (`r1+2 Ana Lima
+/// (2026-09-29T14:05:00Z)`, `r7`).
+pub(crate) fn format_plain_tag(tag: &str) -> String {
+    format_tag_by(tag, |note| match untag_id(note) {
+        note if note.is_empty() => note,
+        note => format!(" {note}"),
+    })
+}
+
+/// [`format_tag`] with `by` spelling what follows the ids.
+fn format_tag_by(tag: &str, by: impl Fn(&str) -> String) -> String {
     tag.split('|')
-        .map(|one| match one.rsplit_once('@') {
-            Some((ids, handle)) => format!("#{ids} @{handle}"),
-            None => format!("#{one}"),
+        .map(|one| {
+            let (story, ids, handle) = split_tag(one);
+            if ids.split('+').any(|w| w == "?") {
+                let story = story.map_or(String::new(), |s| format!("{s}."));
+                return format!("{story}noid{}", by(handle));
+            }
+            whole_changes(
+                ids.split('+')
+                    .map(|w| crate::ids::ChangeId::new(story.unwrap_or("body"), untag_id(w)))
+                    .collect(),
+            )
+            .iter()
+            .map(|changes| {
+                let short: Vec<String> = changes.iter().map(crate::ids::ChangeId::short).collect();
+                if short.iter().all(|s| !s.contains(":rev:")) {
+                    let numbers: Vec<&str> = changes.iter().map(|c| c.wid.as_str()).collect();
+                    let head = short[0]
+                        .strip_suffix(changes[0].wid.as_str())
+                        .unwrap_or("r");
+                    format!("{head}{}{}", numbers.join("+"), by(handle))
+                } else {
+                    short
+                        .iter()
+                        .map(|s| format!("{s}{}", by(handle)))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
         })
         .collect::<Vec<_>>()
         .join("; ")
 }
 
-/// A list of tags for an id line: `#0 @AC; #1+2 @AC`.
+// Each mark's logical change while a view prints (#1261): the marks Word
+// wrote for one edit print the whole change's id. Set for the length of
+// one conversion ([`with_wholes`]), so every tag the view prints, in
+// notes, on id lines and in the header, names what `changes` lists.
+thread_local! {
+    static WHOLES: RefCell<Rc<Wholes>> = RefCell::new(Rc::default());
+    // The logical changes themselves, for the header's count; `None` when
+    // the listing could not read the package.
+    static LOGICAL: RefCell<Rc<Option<Vec<crate::changes::Change>>>> =
+        RefCell::new(Rc::default());
+}
+
+/// Runs `print` with `changes` as the logical changes the header counts
+/// ([`shown_changes`]).
+pub(crate) fn with_logical<T>(
+    changes: Option<Vec<crate::changes::Change>>,
+    print: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Rc<Option<Vec<crate::changes::Change>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = std::mem::take(&mut self.0);
+            LOGICAL.with(|logical| *logical.borrow_mut() = previous);
+        }
+    }
+    let previous = LOGICAL.with(|l| l.replace(Rc::new(changes)));
+    let _restore = Restore(previous);
+    print()
+}
+
+/// What the view shows its body's changes as: one entry per change
+/// `jubarte changes` lists for the body, by the kind it gives it (#1356).
+/// So a change printed only as a parent (`re r7 @B`) counts, a single id
+/// printed in every cell of an inserted row counts once, as that row, and
+/// a change the header lists (`unplaced:`) counts too. A view of some
+/// blocks (`whole` false) counts the changes whose ids its blocks print.
+/// Without the listing, the count reads the printed tags
+/// ([`collect_revisions`]).
+pub(crate) fn shown_changes(shown: &str, whole: bool) -> Vec<&'static str> {
+    use crate::changes::ChangeKind;
+    let logical = LOGICAL.with(|logical| Rc::clone(&logical.borrow()));
+    let Some(changes) = logical.as_ref() else {
+        return collect_revisions(shown);
+    };
+    let printed = if whole {
+        HashSet::new()
+    } else {
+        printed_change_ids("", shown)
+    };
+    changes
+        .iter()
+        .filter(|c| {
+            c.kind != ChangeKind::Formatting
+                && crate::ids::parse_change_ids(&c.id).map_or(!c.id.contains('.'), |ids| {
+                    ids.iter().all(|id| id.story == "body")
+                })
+        })
+        .filter(|c| {
+            whole
+                || if c.members.is_empty() {
+                    printed.contains(&c.id)
+                } else {
+                    c.members.iter().any(|m| printed.contains(&m.id))
+                }
+        })
+        .map(|c| match (c.target, c.kind) {
+            ("paragraph_mark", _) => "mark",
+            ("table_row", _) => "row",
+            ("table_cell", _) => "cell",
+            (_, ChangeKind::Insertion) => "ins",
+            (_, ChangeKind::Deletion) => "del",
+            (_, ChangeKind::Move) => "move",
+            (_, ChangeKind::Formatting) => "fmt",
+            (_, ChangeKind::Replacement) => "sub",
+        })
+        .collect()
+}
+
+/// How many changes each story other than the body and `styles` holds,
+/// as `jubarte changes` lists them (#1353 review): a header's
+/// `header1.r2+3` counts once. `None` without the listing.
+pub(crate) fn story_changes() -> Option<HashMap<String, usize>> {
+    let logical = LOGICAL.with(|logical| Rc::clone(&logical.borrow()));
+    let changes = logical.as_ref().as_ref()?;
+    let mut counts = HashMap::new();
+    for c in changes {
+        let story = crate::ids::parse_change_ids(&c.id)
+            .ok()
+            .and_then(|ids| ids.into_iter().next())
+            .map_or_else(|| "body".to_string(), |id| id.story);
+        if !matches!(story.as_str(), "body" | "styles") {
+            *counts.entry(story).or_default() += 1;
+        }
+    }
+    Some(counts)
+}
+
+/// The marks of each logical change of several marks: by a mark's short
+/// id (`r8`, `header1.r2`), the `w:id`s of all its change's marks in
+/// reading order (`7 8 9 10`).
+pub(crate) type Wholes = HashMap<String, Vec<String>>;
+
+/// Restores the logical changes an enclosing conversion set.
+struct Restore(Rc<Wholes>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.0);
+        WHOLES.with(|wholes| *wholes.borrow_mut() = previous);
+    }
+}
+
+/// Runs `print` with `wholes` as the logical changes the tags it prints
+/// name ([`format_tag`]).
+pub(crate) fn with_wholes<T>(wholes: Wholes, print: impl FnOnce() -> T) -> T {
+    let previous = WHOLES.with(|w| w.replace(Rc::new(wholes)));
+    let _restore = Restore(previous);
+    print()
+}
+
+/// The logical changes of a package, as [`with_wholes`] takes them.
+pub(crate) fn wholes_of(changes: &[crate::changes::Change]) -> Wholes {
+    let mut out = Wholes::new();
+    for change in changes.iter().filter(|c| !c.members.is_empty()) {
+        let wids: Vec<String> = change
+            .members
+            .iter()
+            .filter_map(|m| crate::ids::change_id(&m.id).map(|id| id.wid))
+            .collect();
+        for member in &change.members {
+            out.insert(member.id.clone(), wids.clone());
+        }
+    }
+    out
+}
+
+/// `changes` as the logical changes they are marks of, each a tag of its
+/// own: a mark of a change of several marks stands for the whole change,
+/// named once (the substitution `4+1` of the replacement `r3+4+1+2` prints
+/// `r3+4+1+2`), and a mark of none keeps its own id. Marks of no such
+/// change stay one tag, repeats too (`r43+43`).
+fn whole_changes(changes: Vec<crate::ids::ChangeId>) -> Vec<Vec<crate::ids::ChangeId>> {
+    WHOLES.with(|wholes| {
+        let wholes = wholes.borrow();
+        if !changes
+            .iter()
+            .any(|change| wholes.contains_key(&change.short()))
+        {
+            return vec![changes];
+        }
+        let mut out = Vec::new();
+        let mut named: Vec<&Vec<String>> = Vec::new();
+        for change in changes {
+            match wholes.get(&change.short()) {
+                Some(wids) if named.contains(&wids) => {}
+                Some(wids) => {
+                    named.push(wids);
+                    out.push(
+                        wids.iter()
+                            .map(|wid| crate::ids::ChangeId::new(change.story.clone(), wid.clone()))
+                            .collect(),
+                    );
+                }
+                None => out.push(vec![change]),
+            }
+        }
+        out
+    })
+}
+
+/// A list of tags for an id line: `r0 @AC; r1+2 @AC`.
 pub(crate) fn format_tags(tags: &[String]) -> String {
     tags.iter()
         .map(|t| format_tag(t))
@@ -145,12 +554,12 @@ pub(crate) fn format_tags(tags: &[String]) -> String {
         .join("; ")
 }
 
-/// The revisions among a paragraph's direct children, in order, as the
-/// renderer shows them: neighbouring marks of one kind by one author join
-/// (`7+8@AC`), then a deletion directly followed by an insertion (or the
-/// reverse) pairs as a substitution, greedily left to right. Bookmarks,
-/// proofing marks and comment markers do not break adjacency; a run does.
-/// Revisions inside links, content controls and simple fields count.
+/// The revisions among a paragraph's direct children, in order. Distinct
+/// ids remain separate. Only a deletion followed by a live insertion of
+/// one change pairs as a substitution, greedily left to right (#1363).
+/// A run, comment range or printed bookmark breaks adjacency; proofing
+/// markers, unprinted bookmarks and empty runs do not. Revisions inside
+/// links, content controls and simple fields count.
 pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     // One slot per child: a revision, or `None` for anything else that
     // breaks adjacency.
@@ -176,6 +585,20 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
     flatten(p, &mut children);
     let mut slots: Vec<Option<RevTag>> = Vec::new();
     for e in children {
+        // A range or a bookmark the text prints sits between the marks.
+        let shown = match e.local() {
+            "commentRangeStart" | "commentRangeEnd" => e
+                .attr("id")
+                .is_some_and(|id| handles.shown_ranges.contains(id)),
+            "bookmarkStart" => e
+                .attr("name")
+                .is_some_and(|name| handles.shown_bookmarks.contains(name)),
+            _ => false,
+        };
+        if shown {
+            slots.push(None);
+            continue;
+        }
         if matches!(
             e.local(),
             "bookmarkStart"
@@ -197,29 +620,35 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
                 | "customXmlMoveFromRangeEnd"
                 | "customXmlMoveToRangeStart"
                 | "customXmlMoveToRangeEnd"
-        ) {
+        ) || hollow(e)
+            || silent_run(e, handles)
+        {
             continue;
+        }
+        // A mark holding one end of a shown comment range: the text
+        // prints the range across its edge, which parts it from the mark
+        // on that side.
+        let (opens, closes) = if kind_of(e.local()).is_some() {
+            half_ranges(e, handles)
+        } else {
+            (false, false)
+        };
+        if closes {
+            slots.push(None);
         }
         slots.push(kind_of(e.local()).map(|kind| RevTag {
             kind,
             tag: tag_of(e, handles),
             author: e.attr("author").map(str::to_string),
-            date: e.attr("date").map(str::to_string),
+            date: e.revision_date(),
         }));
-    }
-    // 1. Join neighbours of one kind by one author.
-    let mut joined: Vec<Option<RevTag>> = Vec::new();
-    for slot in slots {
-        match (joined.last_mut(), slot) {
-            (Some(Some(last)), Some(next))
-                if last.kind == next.kind && last.author == next.author =>
-            {
-                last.tag = join_tags(&[last.tag.clone(), next.tag]);
-            }
-            (_, slot) => joined.push(slot),
+        if opens {
+            slots.push(None);
         }
     }
-    // 2. Pair a deletion with the insertion beside it.
+    // Each XML carrier keeps its own mark, even when its id repeats.
+    let mut joined = slots;
+    // 2. Pair a deletion with the insertion after it.
     let mut out = Vec::new();
     let mut i = 0;
     while i < joined.len() {
@@ -228,10 +657,14 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
             continue;
         };
         let next_kind = joined.get(i + 1).and_then(|n| n.as_ref()).map(|n| n.kind);
-        let pair = matches!(
-            (current.kind, next_kind),
-            ("del", Some("ins")) | ("ins", Some("del"))
-        );
+        // The replacement spelling follows source order: deletion, then
+        // insertion of one change (#1363). The reverse order stays separate.
+        let pair = matches!((current.kind, next_kind), ("del", Some("ins")))
+            && joined[i + 1].as_ref().is_some_and(|next| {
+                current.author == next.author
+                    && current.date == next.date
+                    && one_replacement(&current.tag, &next.tag)
+            });
         if pair {
             let next = joined[i + 1].take().expect("checked above");
             let (old, new) = if current.kind == "del" {
@@ -256,13 +689,21 @@ pub(crate) fn revision_tags(p: &Element, handles: &Handles) -> Vec<RevTag> {
 
 /// Tracked paragraph mark: the `w:ins` / `w:del` under `w:pPr/w:rPr`.
 pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<String>) {
+    mark_tags_by(p, handles, tag_of)
+}
+
+fn mark_tags_by(
+    p: &Element,
+    handles: &Handles,
+    tag: fn(&Element, &Handles) -> String,
+) -> (Vec<String>, Vec<String>) {
     let mut ins = Vec::new();
     let mut del = Vec::new();
     if let Some(rpr) = p.path(&["pPr", "rPr"]) {
         for e in rpr.elements() {
             match kind_of(e.local()) {
-                Some("ins") => ins.push(tag_of(e, handles)),
-                Some("del") => del.push(tag_of(e, handles)),
+                Some("ins") => ins.push(tag(e, handles)),
+                Some("del") => del.push(tag(e, handles)),
                 _ => {}
             }
         }
@@ -270,20 +711,34 @@ pub(crate) fn mark_tags(p: &Element, handles: &Handles) -> (Vec<String>, Vec<Str
     (ins, del)
 }
 
-/// Tags of the formatting changes recorded in a paragraph, a text box Word
-/// stores twice read once.
+/// Tags of the formatting changes recorded in a paragraph (its runs' and
+/// its own properties, its list number), a text box Word stores twice read
+/// once.
 pub(crate) fn format_change_tags(p: &Element, handles: &Handles) -> Vec<String> {
-    fn walk(e: &Element, handles: &Handles, out: &mut Vec<String>) {
+    format_change_tags_by(p, handles, tag_of)
+}
+
+fn format_change_tags_by(
+    p: &Element,
+    handles: &Handles,
+    tag: fn(&Element, &Handles) -> String,
+) -> Vec<String> {
+    fn walk(
+        e: &Element,
+        handles: &Handles,
+        tag: fn(&Element, &Handles) -> String,
+        out: &mut Vec<String>,
+    ) {
         for child in shown_children(e) {
-            if child.is("rPrChange") || child.is("pPrChange") {
-                out.push(tag_of(child, handles));
+            if child.is("rPrChange") || child.is("pPrChange") || child.is("numberingChange") {
+                out.push(tag(child, handles));
             } else {
-                walk(child, handles, out);
+                walk(child, handles, tag, out);
             }
         }
     }
     let mut found = Vec::new();
-    walk(p, handles, &mut found);
+    walk(p, handles, tag, &mut found);
     found
 }
 
@@ -344,7 +799,9 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
         element.attrs.push((TABLE.to_string(), c.t.to_string()));
         c.t += 1;
     }
-    let in_cell = in_cell || element.is("tc");
+    // AC's raw tables are not rendered as blocks. Keep numbering their
+    // paragraphs, but do not consume a tN in either compatibility branch.
+    let in_cell = in_cell || element.is("tc") || element.is("AlternateContent");
     for child in element.children.iter_mut() {
         if let Node::Element(child) = child {
             if child.is("txbxContent") {
@@ -353,6 +810,24 @@ fn stamp_in(element: &mut Element, c: &mut Counter, handles: &Handles, in_cell: 
             stamp_in(child, c, handles, in_cell);
         }
     }
+}
+
+/// The tags a resolved view's id line names for `p`'s marks: each mark
+/// prints its change's id, so a change of several marks is named once
+/// (#1261).
+fn resolved_tags(p: &Element) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for (_, tag) in stamped_revs(p) {
+        let tag = format_tag(&tag);
+        let joined = tag
+            .split_whitespace()
+            .next()
+            .is_some_and(|id| id.contains('+'));
+        if !(joined && tags.contains(&tag)) {
+            tags.push(tag);
+        }
+    }
+    tags
 }
 
 /// The `kind:tag` entries stamped on a paragraph, row or cell, as (kind,
@@ -405,7 +880,7 @@ pub(crate) fn comment_anchors(e: &Element, out: &mut HashSet<String>) {
 /// The children of `e` the view renders: of an `mc:AlternateContent`, only
 /// the `mc:Choice` (else the `mc:Fallback`), so a text box Word stores twice
 /// counts once.
-fn shown_children(e: &Element) -> Vec<&Element> {
+pub(super) fn shown_children(e: &Element) -> Vec<&Element> {
     if e.is("AlternateContent") {
         e.child("Choice")
             .or_else(|| e.child("Fallback"))
@@ -416,43 +891,92 @@ fn shown_children(e: &Element) -> Vec<&Element> {
     }
 }
 
+/// Whether `e` holds text the view shows: Word's Fallback copy of a text
+/// box is not shown.
+/// Whether a row's cells hold text inside changes of their own: Word's
+/// shape for a row it inserts or deletes, the row's mark and each run's.
+/// The row's mark then goes on the table line (`rev r80 @AL in t0.row1`)
+/// and the text keeps its own tags; a row whose text has none lends it the
+/// row's tag instead.
+pub(crate) fn row_text_marked(tr: &Element) -> bool {
+    super::row_cells(tr).any(text_marked)
+}
+
+/// Whether a cell's own text (not a nested table's) is inside changes of
+/// its own: a cell's insertion or deletion then stays on the table line,
+/// as a row's does.
+pub(crate) fn text_marked(e: &Element) -> bool {
+    e.elements().any(|c| {
+        (is_revision(c.local()) && shows_text(c)) || (c.local() != "tbl" && text_marked(c))
+    })
+}
+
+/// Whether `e` holds a tracked change inside a tracked change: CriticMarkup
+/// cannot nest one, so a container's mark merged into the nest's outer
+/// change would lose it — the text keeps its own marks instead, as the
+/// agent view's marked text does.
+pub(crate) fn nested_marked(e: &Element) -> bool {
+    e.elements().any(|c| {
+        (is_revision(c.local()) && any_revision(c)) || (c.local() != "tbl" && nested_marked(c))
+    })
+}
+
+/// Whether any element below `e` is a tracked change.
+fn any_revision(e: &Element) -> bool {
+    e.elements()
+        .any(|c| is_revision(c.local()) || any_revision(c))
+}
+
+fn shows_text(e: &Element) -> bool {
+    shown_children(e).into_iter().any(|c| {
+        matches!(c.local(), "t" | "delText" | "instrText" | "delInstrText") || shows_text(c)
+    })
+}
+
 fn walk_revision_authors(
     e: &Element,
     out: &mut Vec<String>,
     dates: &mut HashMap<String, BTreeSet<String>>,
+    undated: &mut HashSet<String>,
 ) {
-    if (is_revision(e.local()) || e.local().ends_with("PrChange"))
+    // Every kind `jubarte changes` lists: marks, cell merges, and
+    // formatting (`*PrChange`, `numberingChange`, `tblGridChange`).
+    if (is_revision(e.local()) || e.local() == "cellMerge" || e.local().ends_with("Change"))
         && let Some(author) = e.attr("author")
     {
         if !out.iter().any(|a| a == author) {
             out.push(author.to_string());
         }
-        if let Some(date) = e.attr("date") {
-            dates
-                .entry(author.to_string())
-                .or_default()
-                .insert(date.to_string());
+        if let Some(date) = e.revision_date() {
+            dates.entry(author.to_string()).or_default().insert(date);
+        } else {
+            undated.insert(author.to_string());
         }
     }
-    for child in shown_children(e) {
-        walk_revision_authors(child, out, dates);
+    // Every child, a text box's `mc:Fallback` copy too: `jubarte changes`
+    // lists a change only the Fallback holds, so its author needs a handle.
+    // A Fallback twin repeats the Choice's authors, already in `out`.
+    for child in e.elements() {
+        walk_revision_authors(child, out, dates, undated);
     }
 }
 
 /// Authors of revisions (document order, then the other stories: footnotes,
-/// endnotes, headers and footers) then of comments (comment order),
-/// each with a handle: the comment `w:initials` that author wrote, else the
+/// endnotes, headers and footers) then of comments (comment order), then of
+/// the styles' changes, each with a handle: the comment `w:initials` that author wrote, else the
 /// uppercase initials of the name's words; a collision appends 2, 3, ….
 pub(crate) fn handles(
     document: &Element,
     stories: &[&Element],
     comments: Option<&Element>,
+    styles: Option<&Element>,
 ) -> Handles {
     let mut order = Vec::new();
     let mut dates: HashMap<String, BTreeSet<String>> = HashMap::new();
-    walk_revision_authors(document, &mut order, &mut dates);
+    let mut undated = HashSet::new();
+    walk_revision_authors(document, &mut order, &mut dates, &mut undated);
     for root in stories {
-        walk_revision_authors(root, &mut order, &mut dates);
+        walk_revision_authors(root, &mut order, &mut dates, &mut undated);
     }
     let mut initials: HashMap<String, String> = HashMap::new();
     if let Some(comments) = comments {
@@ -463,11 +987,13 @@ pub(crate) fn handles(
             if !order.iter().any(|a| a == author) {
                 order.push(author.to_string());
             }
-            if let Some(date) = c.attr("date") {
+            if let Some(date) = c.comment_date() {
                 dates
                     .entry(author.to_string())
                     .or_default()
                     .insert(date.to_string());
+            } else {
+                undated.insert(author.to_string());
             }
             if let Some(i) = c.attr("initials").map(str::trim).filter(|i| !i.is_empty()) {
                 initials
@@ -475,6 +1001,9 @@ pub(crate) fn handles(
                     .or_insert_with(|| i.to_string());
             }
         }
+    }
+    if let Some(styles) = styles {
+        walk_revision_authors(styles, &mut order, &mut dates, &mut undated);
     }
     let mut by_author = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
@@ -512,6 +1041,10 @@ pub(crate) fn handles(
         by_author,
         order,
         dates,
+        undated,
+        shown_ranges: HashSet::new(),
+        shown_bookmarks: HashSet::new(),
+        hidden_styles: HashSet::new(),
     }
 }
 
@@ -531,27 +1064,489 @@ pub(crate) fn runs(indices: &[usize]) -> Vec<(usize, usize)> {
 pub(crate) struct LineFacts<'a> {
     pub index: usize,
     pub style: Option<&'a str>,
-    pub default_style: Option<&'a str>,
     pub heading: Option<usize>,
     /// The list marker the converter computed (`1.`, `(a)`, `-`).
     pub marker: Option<&'a str>,
+    /// The list level Word gives the paragraph (`ilvl`): `level 1`. The
+    /// view prints no list indentation, since each id line ends the
+    /// Markdown list.
+    pub level: usize,
+    /// The paragraph's own `w:outlineLvl`, when no style carries the
+    /// level (`outline 2`): the `#` count alone would give the writer's
+    /// `HeadingN`. Levels 7-9, which no `#` reaches, are carried by the
+    /// clause alone.
+    pub outline: Option<usize>,
     pub page_break: bool,
     /// Accept-all or reject-all view: print the `rev` tags.
     pub resolved: bool,
     /// Comment ids to list (comments hidden).
     pub comments: &'a [String],
     /// Comment threads whose range runs on past this paragraph, inline or
-    /// hidden: `in #c5`.
+    /// hidden: `in c5`.
     pub spans: &'a [String],
     /// The paragraph has no text but keeps its own line for its marks,
-    /// revisions or comments: `<!-- p4 empty, break-ins #3 @AC -->`.
+    /// revisions or comments: `<!-- p4 -->` followed by `¶{r3 @AC}`.
     pub empty: bool,
+    /// Tracked view: the printed tags of the paragraph's changes its text
+    /// prints no tag for, `true` for an insertion (see [`unshown_tags`]).
+    pub unshown: &'a [(bool, String)],
+    /// The text size the paragraph states and its style does not give
+    /// (`size 9pt`), in half-points: see [`own_size`].
+    pub size: Option<u32>,
+}
+
+/// The one `w:sz` every shown run of paragraph `p` states (#1474), or,
+/// with none, its mark's, in half-points: `None` when a run states none or
+/// another. A shown run holds text, a tab or a line break, all of which
+/// the writer gives the clause's size; a hidden run (`hidden` names the
+/// hidden character styles) prints nothing. A run whose `w:szCs` differs
+/// from its `w:sz` states no one size: the writer gives both the clause's.
+/// A text box sits inside a run, and Word's Fallback copy and math hold
+/// runs of their own.
+pub(crate) fn own_size(p: &Element, hidden: &HashSet<String>) -> Option<u32> {
+    fn half_points(value: &str) -> Option<u32> {
+        let half = value
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_half_points(value))?
+            .round();
+        // `as` cannot truncate: the range is checked first.
+        (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
+    }
+    fn size(rpr: Option<&Element>) -> Option<u32> {
+        let rpr = rpr?;
+        let sz = half_points(rpr.child("sz")?.attr("val")?)?;
+        match rpr.child("szCs").and_then(|cs| cs.attr("val")) {
+            Some(cs) if half_points(cs) != Some(sz) => None,
+            _ => Some(sz),
+        }
+    }
+    fn shown(run: &Element) -> bool {
+        run.elements().any(|c| match c.local() {
+            "t" | "delText" | "tab" | "noBreakHyphen" => true,
+            // A page break is the paragraph's id line, not a line.
+            "br" | "cr" => c.attr("type") != Some("page"),
+            _ => false,
+        })
+    }
+    fn walk(element: &Element, hidden: &HashSet<String>, sizes: &mut Vec<Option<u32>>) {
+        for child in element.elements() {
+            match child.local() {
+                "pPr" | "Fallback" | "oMath" | "oMathPara" => {}
+                "r" => {
+                    if shown(child) && !hidden_run(child.child("rPr"), hidden) {
+                        sizes.push(size(child.child("rPr")));
+                    }
+                }
+                _ => walk(child, hidden, sizes),
+            }
+        }
+    }
+    let mut sizes = Vec::new();
+    walk(p, hidden, &mut sizes);
+    match sizes.split_first() {
+        None => size(p.path(&["pPr", "rPr"])),
+        Some((first, rest)) => first.filter(|_| rest.iter().all(|s| s == first)),
+    }
+}
+
+/// `size 9pt`, `size 10.5pt`: the clause of a text size in half-points.
+pub(crate) fn size_clause(half_points: u32) -> String {
+    match half_points % 2 {
+        0 => format!("size {}pt", half_points / 2),
+        _ => format!("size {}.5pt", half_points / 2),
+    }
+}
+
+/// The tags of the insertions, deletions and moves in paragraph `p` whose
+/// id no note in `shown` (the paragraph's rendered text) prints: a deleted
+/// object, break, field character or empty mark has no text to wrap. The
+/// tracked view's id line names them (`rev r12 @AC`, a deletion `rev-del
+/// r13 @AC`), so every change reads from the view. The paragraph mark's
+/// own changes (`¶{rN @X}`, `break-del`) and formatting (`fmt`) have
+/// their own clauses; a text box renders its own blocks, and Word's
+/// Fallback copy is the Choice's twin. Each entry is a printed tag
+/// ([`unshown_sides`]), its `bool` saying the mark inserts (`ins`,
+/// `moveTo`) rather than deletes (`del`, `moveFrom`).
+pub(crate) fn unshown_tags(p: &Element, shown: &str, handles: &Handles) -> Vec<(bool, String)> {
+    fn walk(e: &Element, handles: &Handles, out: &mut Vec<(bool, String, String)>) {
+        for child in shown_children(e) {
+            match child.local() {
+                "pPr" | "txbxContent" => {}
+                // A formatting change's own history (`w:rPrChange/w:rPr/w:del`)
+                // is no change `jubarte changes` lists.
+                local if local.ends_with("PrChange") => {}
+                local @ ("ins" | "del" | "moveFrom" | "moveTo") => {
+                    if let Some(id) = child.attr("id") {
+                        let inserted = matches!(local, "ins" | "moveTo");
+                        out.push((
+                            inserted,
+                            id.to_string(),
+                            required_date_tag_of(child, handles),
+                        ));
+                    }
+                    walk(child, handles, out);
+                }
+                _ => walk(child, handles, out),
+            }
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(p, handles, &mut carriers);
+    if carriers.is_empty() {
+        return Vec::new();
+    }
+    let printed = printed_wids(shown, "body");
+    unshown_sides(
+        carriers
+            .into_iter()
+            .filter(|(_, id, _)| !printed.contains(id))
+            .map(|(inserted, _, tag)| (inserted, tag)),
+    )
+}
+
+/// The printed tags of the unshown marks `carriers` (each its side, `true`
+/// inserting, and internal tag), one per side of each change, in reading
+/// order. The marks of one joined change print its tag (`r3+4`) once,
+/// unless neither side has text to wrap: a field deleted and another put
+/// in its place. Then each side names its own marks (`rev r4 @D, rev-del
+/// r3 @D`), so the writer brings each back on its side, and `accept --id`
+/// settles either side alone (#1353 review).
+fn unshown_sides(carriers: impl IntoIterator<Item = (bool, String)>) -> Vec<(bool, String)> {
+    let mut sides: Vec<(bool, String, Vec<String>)> = Vec::new();
+    for (inserted, tag) in carriers {
+        let whole = format_tag(&tag);
+        match sides
+            .iter_mut()
+            .find(|(side, named, _)| *side == inserted && *named == whole)
+        {
+            Some((_, _, own)) => own.push(tag),
+            None => sides.push((inserted, whole, vec![tag])),
+        }
+    }
+    sides
+        .iter()
+        .map(|(inserted, whole, own)| {
+            let both = sides
+                .iter()
+                .any(|(side, named, _)| side != inserted && named == whole);
+            let tag = if both {
+                // Its own marks, not their whole change's.
+                with_wholes(Wholes::new(), || format_tag(&join_tags(own)))
+            } else {
+                whole.clone()
+            };
+            (*inserted, tag)
+        })
+        .collect()
+}
+
+/// The `w:id`s of `story`'s changes the tag notes in `shown` print
+/// (`{r12 @AC}`, `{header1.r1+2 @AC}`); a comment's note holds the
+/// author's words and no tag.
+fn printed_wids(shown: &str, story: &str) -> HashSet<String> {
+    let mut printed = HashSet::new();
+    for (_, note) in crate::markdown::critic::attributed_notes(shown) {
+        for tag in note.split(" re ").flat_map(|part| part.split("; ")) {
+            let token = tag.split(' ').next().unwrap_or("");
+            if let Ok(ids) = crate::ids::parse_change_ids(token) {
+                printed.extend(
+                    ids.into_iter()
+                        .filter(|id| id.story == story)
+                        .map(|id| id.wid),
+                );
+            }
+        }
+    }
+    printed
+}
+
+/// The ids (`r12`, `header1.r1`) of every change the view prints a tag for:
+/// an id, or ids joined by `+`, followed by an `@` handle. Only where the
+/// writer prints tags: the body's attribution braces (not a comment's note, which
+/// holds the author's words) and `<!-- … -->` lines, and the header without
+/// its headers' and footers' `text:` values. Document text that reads like
+/// a tag (`ping r5 @ops`) prints no change.
+pub(crate) fn printed_change_ids(head: &str, body: &str) -> HashSet<String> {
+    let mut spans: Vec<String> = Vec::new();
+    tag_spans(body, true, &mut spans);
+    let mut authors = false;
+    for line in head.lines() {
+        // The author legend, the title, the source path and the owner are
+        // free text: a name or title that reads like a tag prints nothing.
+        if line == "authors:" {
+            authors = true;
+            continue;
+        }
+        if authors && line.starts_with("  ") {
+            continue;
+        }
+        authors = false;
+        if line.starts_with("source: ") || line.starts_with("title: ") {
+            continue;
+        }
+        let (rest, texts) = split_story_text(line);
+        spans.extend(tag_fields(&rest));
+        for text in texts {
+            tag_spans(&text, false, &mut spans);
+        }
+    }
+    let mut printed = HashSet::new();
+    for span in &spans {
+        let words: Vec<&str> = span
+            .split(|c: char| c.is_whitespace() || ",;{}<>()[]\"".contains(c))
+            .filter(|w| !w.is_empty())
+            .collect();
+        printed.extend(
+            words
+                .windows(2)
+                .filter(|pair| pair[1].len() > 1 && pair[1].starts_with('@'))
+                .filter_map(|pair| crate::ids::parse_change_ids(pair[0]).ok())
+                .flatten()
+                .map(|id| id.short()),
+        );
+    }
+    printed
+}
+
+/// The values of a header line's tag fields: the `style_changes:` map
+/// whole, else each `rev:` and `fmt:` value and a page's `; fmt` tail. A
+/// quoted value runs to its closing quote, a plain one to the next `,` or
+/// `}`, the page's tail to the line's end.
+fn tag_fields(line: &str) -> Vec<String> {
+    if let Some(map) = line.strip_prefix("style_changes: ") {
+        return vec![map.to_string()];
+    }
+    let mut out = Vec::new();
+    if let Some((_, tail)) = line.split_once("; fmt ") {
+        out.push(tail.to_string());
+    }
+    for key in ["rev: ", "fmt: "] {
+        let mut rest = line;
+        while let Some(at) = rest.find(key) {
+            let value = &rest[at + key.len()..];
+            let end = match value.strip_prefix('"') {
+                Some(quoted) => 1 + quoted.find('"').map_or(quoted.len(), |i| i + 1),
+                None => value.find([',', '}']).unwrap_or(value.len()),
+            };
+            out.push(value[..end].to_string());
+            rest = &value[end..];
+        }
+    }
+    out
+}
+
+/// The attribution braces (`{r5 @AC}`, comments skipped) in `text`, and with
+/// `lines` its `<!-- … -->` lines' contents.
+fn tag_spans(text: &str, lines: bool, out: &mut Vec<String>) {
+    out.extend(
+        crate::markdown::critic::attributed_notes(text)
+            .into_iter()
+            .map(|(_, note)| note),
+    );
+    if lines {
+        let mut rest = text;
+        while let Some(at) = rest.find("<!-- ") {
+            let after = &rest[at + 5..];
+            let end = after.find(" -->").unwrap_or(after.len());
+            out.push(after[..end].to_string());
+            rest = &after[end..];
+        }
+    }
+}
+
+/// A header line without its `text: …` values (a header's or footer's own
+/// words, which keep their tag notes), and those values: a plain value runs
+/// to the next `,` or `}`, a quoted one to its closing quote, a list (a
+/// story of several paragraphs) to its `]` outside quotes.
+fn split_story_text(line: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(line.len());
+    let mut texts = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find("text: ") {
+        out.push_str(&rest[..at]);
+        let value = &rest[at + "text: ".len()..];
+        // The end of the quoted values in `s`, scanning past them, at the
+        // first `stop` outside quotes.
+        let past_quotes = |s: &str, stop: char| {
+            let (mut quoted, mut escaped) = (false, false);
+            s.char_indices()
+                .find(|&(_, c)| {
+                    let done = c == stop && !quoted;
+                    if quoted {
+                        quoted = c != '"' || escaped;
+                        escaped = c == '\\' && !escaped;
+                    } else {
+                        quoted = c == '"';
+                    }
+                    done
+                })
+                .map_or(s.len(), |(i, _)| i + 1)
+        };
+        let end = if let Some(quoted) = value.strip_prefix('"') {
+            let mut escaped = false;
+            let close = quoted
+                .char_indices()
+                .find(|&(_, c)| {
+                    let done = c == '"' && !escaped;
+                    escaped = c == '\\' && !escaped;
+                    done
+                })
+                .map_or(quoted.len(), |(i, _)| i + 1);
+            1 + close
+        } else if let Some(list) = value.strip_prefix('[') {
+            1 + past_quotes(list, ']')
+        } else {
+            value.find([',', '}']).unwrap_or(value.len())
+        };
+        texts.push(value[..end].to_string());
+        rest = &value[end..];
+    }
+    out.push_str(rest);
+    (out, texts)
+}
+
+/// A change on the header's `unplaced:` line: `del r3 @AC in p0`, the
+/// kind first so the writer gives the mark the same (`ins` by omission).
+pub(crate) fn unplaced_entry(change: &crate::changes::Change, handles: &Handles) -> String {
+    let handle = handles.of(change.author.as_deref()).unwrap_or("??");
+    let date = change
+        .date
+        .as_deref()
+        .filter(|_| handles.needs_date(change.author.as_deref(), false))
+        .map_or(String::new(), |date| format!(" {date}"));
+    let kind = match change.kind {
+        crate::changes::ChangeKind::Deletion => "del ",
+        crate::changes::ChangeKind::Move
+            if change.move_side == Some(crate::changes::MoveSide::From) =>
+        {
+            "del "
+        }
+        crate::changes::ChangeKind::Formatting => "fmt ",
+        _ => "ins ",
+    };
+    match change.paragraph.as_deref() {
+        Some(p) => format!(
+            "{kind}{} @{handle}{date} in {}",
+            change.r#ref,
+            crate::ids::short_paragraph(p)
+        ),
+        None => format!("{kind}{} @{handle}{date}", change.r#ref),
+    }
+}
+
+/// A whole story part's changes (a header, a footer, one note) whose id
+/// `shown` prints no tag for, as printed tags: insertions, deletions and
+/// moves, each `true` for an insertion (`rev`/`rev-del`), then formatting
+/// (`fmt`), each with its paragraph when one holds it (`in footer1.p1`).
+/// The view shows a header by one paragraph and a note by its text, so
+/// these name the rest.
+/// A change `story_unshown` names: whether it inserts, and its tag.
+pub(crate) type StoryRev = (bool, String);
+/// A formatting change `story_unshown` names: its paragraph when one
+/// holds it, and its tag.
+pub(crate) type StoryFmt = (Option<usize>, String);
+
+pub(crate) fn story_unshown(
+    root: &Element,
+    story: &str,
+    shown: &str,
+    skip: &HashSet<String>,
+    handles: &Handles,
+) -> (Vec<StoryRev>, Vec<StoryFmt>) {
+    // `at` is the carrier's paragraph, counted as [`paragraphs`] does, so a
+    // formatting change lands on the paragraph it is in (`in footer1.p1`).
+    fn walk<'e>(
+        e: &'e Element,
+        at: Option<usize>,
+        counted: bool,
+        next: &mut usize,
+        out: &mut Vec<(Option<usize>, bool, bool, &'e Element)>,
+    ) {
+        for child in shown_children(e) {
+            let local = child.local();
+            if local == "p" && counted {
+                let index = *next;
+                *next += 1;
+                walk(child, Some(index), counted, next, out);
+                continue;
+            }
+            if matches!(local, "ins" | "del" | "moveFrom" | "moveTo") {
+                out.push((at, false, matches!(local, "ins" | "moveTo"), child));
+            } else if local.ends_with("PrChange")
+                || matches!(local, "tblGridChange" | "numberingChange")
+            {
+                out.push((at, true, true, child));
+                continue;
+            } else if matches!(local, "cellIns" | "cellDel" | "cellMerge") {
+                out.push((at, false, local == "cellIns", child));
+            }
+            walk(child, at, counted && local != "txbxContent", next, out);
+        }
+    }
+    let mut carriers = Vec::new();
+    walk(root, None, true, &mut 0, &mut carriers);
+    let printed = printed_wids(shown, story);
+    let (mut rev, mut fmt) = (Vec::new(), Vec::new());
+    for (at, formatting, inserted, carrier) in carriers {
+        let Some(id) = carrier.attr("id") else {
+            continue;
+        };
+        if printed.contains(id) || skip.contains(id) {
+            continue;
+        }
+        let tag = format!("{story}#{}", required_date_tag_of(carrier, handles));
+        if formatting {
+            let tag = format_tag(&tag);
+            if !fmt.iter().any(|(_, t)| *t == tag) {
+                fmt.push((at, tag));
+            }
+        } else {
+            rev.push((inserted, tag));
+        }
+    }
+    (unshown_sides(rev), fmt)
+}
+
+/// A header's or footer's paragraph marks that are tracked: `break-del
+/// footer1.r25 @BC in footer1.p1` each, and their `w:id`s.
+pub(crate) fn story_paragraph_marks(
+    root: &Element,
+    story: &str,
+    handles: &Handles,
+) -> (Vec<String>, HashSet<String>) {
+    let mut entries = Vec::new();
+    let mut ids = HashSet::new();
+    for (index, p) in paragraphs(root).into_iter().enumerate() {
+        for mark in p
+            .path(&["pPr", "rPr"])
+            .into_iter()
+            .flat_map(Element::elements)
+        {
+            let word = match mark.local() {
+                "ins" => {
+                    if let Some(id) = mark.attr("id") {
+                        ids.insert(id.to_string());
+                    }
+                    continue;
+                }
+                "del" => "break-del",
+                _ => continue,
+            };
+            let Some(id) = mark.attr("id") else { continue };
+            ids.insert(id.to_string());
+            let tag = format_tag(&format!("{story}#{}", required_date_tag_of(mark, handles)));
+            let at = crate::ids::short_paragraph(&format!("{story}:p:{index}"));
+            entries.push(format!("{word} {tag} in {at}"));
+        }
+    }
+    (entries, ids)
 }
 
 /// An empty paragraph that still says something the `pN empty` run would
 /// lose: a tracked mark, a formatting change or, resolved, a revision.
 pub(crate) fn holds_revision_facts(p: &Element, resolved: bool, handles: &Handles) -> bool {
-    let (ins, del) = mark_tags(p, handles);
+    let (ins, del) = mark_tags_by(p, handles, required_date_tag_of);
     !ins.is_empty()
         || !del.is_empty()
         || !format_change_tags(p, handles).is_empty()
@@ -579,9 +1574,105 @@ pub(crate) fn comment_ids(p: &Element) -> Vec<String> {
     out
 }
 
-/// Twips as inches with up to two decimals: `720` → `0.5in`, `1440` → `1in`.
+/// A paragraph's own indent (`w:ind`), one clause per side in the id
+/// lines' order: `first-line`, `hanging`, `left`, `right`, each in inches.
+/// The strict `start`/`end` count only when the transitional `left`/`right`
+/// is absent, as the layout reads them.
+pub(crate) fn indent_clauses(ind: &Element) -> Vec<(&'static str, String)> {
+    [
+        (&["firstLine"][..], "first-line"),
+        (&["hanging"][..], "hanging"),
+        (&["left", "start"][..], "left"),
+        (&["right", "end"][..], "right"),
+    ]
+    .into_iter()
+    .filter_map(|(attrs, name)| {
+        let v = attrs.iter().find_map(|attr| ind.attr(attr))?;
+        let twips = v
+            .parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))?;
+        Some((name, inches(twips)))
+    })
+    .collect()
+}
+
+/// A paragraph's own spacing (`w:spacing`, #1473) in the styles legend's
+/// words, each value exact: `before 6pt`, `after 10.05pt`, `line 1.5` (a
+/// multiple of a single line) or `line 8.65pt exact` / `atLeast`. A Strict
+/// package's universal measures (`12.95pt`) read as the nearest twip, as
+/// Word stores them. `before auto` is Word's automatic space
+/// (`w:beforeAutospacing`), which Word puts in place of `w:before`.
+pub(crate) fn spacing_clauses(spacing: &Element) -> Vec<String> {
+    let twips = |attr: &str| {
+        let v = spacing.attr(attr)?;
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+            .filter(|t| t.is_finite() && *t >= 0.0)
+    };
+    let mut out = Vec::new();
+    for word in ["before", "after"] {
+        let auto = spacing
+            .attr(&format!("{word}Autospacing"))
+            .is_some_and(|v| matches!(v, "1" | "true" | "on"));
+        if auto {
+            out.push(format!("{word} auto"));
+        } else if let Some(t) = twips(word) {
+            out.push(format!("{word} {}", exact_points(t)));
+        }
+    }
+    if let Some(line) = twips("line") {
+        match spacing.attr("lineRule").unwrap_or("auto") {
+            rule @ ("exact" | "atLeast") => {
+                out.push(format!("line {} {rule}", exact_points(line)));
+            }
+            _ => out.push(format!("line {}", line_ratio(line))),
+        }
+    }
+    out
+}
+
+/// Twips as points with no more decimals than they need (`120` → `6pt`,
+/// `173` → `8.65pt`): a twip is a twentieth of a point, so two are always
+/// enough.
+fn exact_points(twips: f64) -> String {
+    let value = format!("{:.2}", twips.round() / 20.0);
+    let value = value.trim_end_matches('0').trim_end_matches('.');
+    format!("{value}pt")
+}
+
+/// An `auto` line (240ths of a line) as a multiple of a line with the
+/// fewest decimals (two at least, four at most) that read back to it:
+/// `360` → `1.5`, `249` → `1.038`.
+fn line_ratio(line: f64) -> String {
+    let ratio = line / 240.0;
+    let value = (2..=4)
+        .map(|places| format!("{ratio:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 240.0).round() == line.round())
+        })
+        .unwrap_or_else(|| format!("{ratio:.4}"));
+    value
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
+}
+
+/// Twips as inches with the fewest decimals (two at least, four at most)
+/// that read back to the same twips: `720` → `0.5in`, `1440` → `1in`,
+/// `1134` (2cm) → `0.7875in`. Four decimals are always enough: they are off
+/// by 0.072 twips at most.
 pub(crate) fn inches(twips: f64) -> String {
-    let value = format!("{:.2}", twips / 1440.0);
+    let inches = twips / 1440.0;
+    let value = (2..=4)
+        .map(|places| format!("{inches:.places$}"))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|v| (v * 1440.0).round() == twips.round())
+        })
+        .unwrap_or_else(|| format!("{inches:.4}"));
     let value = value.trim_end_matches('0').trim_end_matches('.');
     format!("{value}in")
 }
@@ -599,6 +1690,34 @@ fn count(e: &Element, hit: &dyn Fn(&Element) -> bool) -> usize {
         .filter(|c| !c.is("txbxContent"))
         .map(|c| usize::from(hit(c)) + count(c, hit))
         .sum()
+}
+
+/// The first page break of `p` inside an insertion or deletion: the
+/// change's kind (`ins`, `del`; a move as its side) and tag.
+fn tracked_page_break(p: &Element, handles: &Handles) -> Option<(&'static str, String)> {
+    fn walk(
+        e: &Element,
+        within: Option<(&'static str, &Element)>,
+        handles: &Handles,
+    ) -> Option<(&'static str, String)> {
+        for child in shown_children(e) {
+            if child.is("pPr") || child.is("txbxContent") || child.local().ends_with("PrChange") {
+                continue;
+            }
+            if is_page_break(child) {
+                if let Some((kind, change)) = within {
+                    return Some((kind, required_date_tag_of(change, handles)));
+                }
+                continue;
+            }
+            let within = kind_of(child.local()).map_or(within, |kind| Some((kind, child)));
+            if let Some(found) = walk(child, within, handles) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    walk(p, None, handles)
 }
 
 fn is_page_break(e: &Element) -> bool {
@@ -627,8 +1746,8 @@ pub(crate) fn rendered_page_breaks(p: &Element) -> usize {
 /// Backslash-escapes the characters CommonMark would act on inside a run of
 /// document text, so literal `*`, `` ` ``, `~~`, `==`, `\`, `[^` and
 /// tag-like `<` read back as themselves. `_` is escaped only at a word edge
-/// (`a_b` stays; `_x_` becomes `\_x\_`); `~` and `=` only beside their
-/// twin. CriticMarkup delimiters are `critic::escape`'s job, after this.
+/// (`a_b` stays; `_x_` becomes `\_x\_`); `=` only beside its twin; `~`
+/// and `^` beside their twin or at a word edge (`H~2~O` stays). CriticMarkup delimiters are `critic::escape`'s job, after this.
 pub(crate) fn escape_markdown(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let at = |i: usize| chars.get(i).copied();
@@ -642,9 +1761,26 @@ pub(crate) fn escape_markdown(text: &str) -> String {
                 !(before(i).is_some_and(char::is_alphanumeric)
                     && next.is_some_and(char::is_alphanumeric))
             }
-            '~' | '=' => before(i) == Some(c) || next == Some(c),
+            '=' => before(i) == Some(c) || next == Some(c),
+            // One `~` or `^` marks subscript or superscript at a word
+            // edge; inside a word, or between spaces, it opens nothing.
+            '~' | '^' if before(i) == Some('[') => false,
+            '~' | '^' => {
+                let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+                let space = |c: Option<char>| c.is_none_or(char::is_whitespace);
+                before(i) == Some(c)
+                    || next == Some(c)
+                    || !((word(before(i)) && word(next)) || (space(before(i)) && space(next)))
+            }
             '<' => next.is_some_and(|n| n.is_ascii_alphabetic() || n == '/' || n == '!'),
             '[' => next == Some('^'),
+            // A `]` before `(`, `[` or `:` would close a link, an image, a
+            // reference or a reference definition.
+            ']' => matches!(next, Some('(' | '[' | ':')),
+            '&' => entity_follows(&chars[i + 1..]),
+            // A literal `{/}`, or `{` before a field code and `}`, would
+            // read back as a field.
+            '{' => field_follows(&chars[i + 1..]),
             _ => false,
         };
         if escape {
@@ -653,6 +1789,57 @@ pub(crate) fn escape_markdown(text: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Whether `rest` (the text after a `{`) is `/}` or a field code then `}`,
+/// which the writer reads as a body field.
+fn field_follows(rest: &[char]) -> bool {
+    use crate::markdown::critic::{field_code_close, is_field_code};
+    field_code_close(rest.iter().copied().enumerate()).is_some_and(|close| {
+        let code: String = rest[..close].iter().collect();
+        code == "/" || is_field_code(&code)
+    })
+}
+
+/// Whether `rest` (the text after a `&`) reads as an entity or character
+/// reference (`copy;`, `#35;`, `#x23;`), which would decode on the way back.
+/// A name HTML does not define (`foo;`) is text to CommonMark: the parser
+/// itself says which names decode.
+fn entity_follows(rest: &[char]) -> bool {
+    let numeric = rest.first() == Some(&'#');
+    let body = if numeric { &rest[1..] } else { rest };
+    let name = body
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count();
+    if name == 0 || body.get(name) != Some(&';') {
+        return false;
+    }
+    if numeric {
+        return true;
+    }
+    let reference: String = std::iter::once('&')
+        .chain(body[..=name].iter().copied())
+        .collect();
+    let read: String = pulldown_cmark::Parser::new(&reference)
+        .filter_map(|event| match event {
+            pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+            _ => None,
+        })
+        .collect();
+    read != reference
+}
+
+/// A heading's text with a trailing run of `#` escaped: CommonMark reads a
+/// run of `#` at the end of an ATX heading, after a space or alone, as a
+/// closing sequence and drops it.
+pub(crate) fn escape_closing_hashes(text: &str) -> String {
+    let trimmed = text.trim_end();
+    let body = trimmed.trim_end_matches('#');
+    if body.len() == trimmed.len() || !(body.is_empty() || body.ends_with([' ', '\t'])) {
+        return text.to_string();
+    }
+    format!("{body}\\{}", &text[body.len()..])
 }
 
 /// Escapes a block-opening mark at the start of one line of a paragraph:
@@ -699,26 +1886,13 @@ pub(crate) fn escape_line_starts(text: &str) -> String {
         .join("\n")
 }
 
-/// The authors of the formatting changes (`*PrChange`) under `e` in document
-/// order, text boxes included once, as `count_marks` counts them.
-pub(crate) fn format_change_authors(e: &Element) -> Vec<Option<String>> {
-    fn walk(e: &Element, out: &mut Vec<Option<String>>) {
-        for c in shown_children(e) {
-            if c.local().ends_with("PrChange") {
-                out.push(c.attr("author").map(str::to_string));
-            }
-            walk(c, out);
-        }
-    }
-    let mut out = Vec::new();
-    walk(e, &mut out);
-    out
-}
-
 /// The tables under `e` in document order, text boxes excluded.
 pub(crate) fn tables(e: &Element) -> Vec<&Element> {
     fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
-        for c in e.elements().filter(|c| !c.is("txbxContent")) {
+        for c in e
+            .elements()
+            .filter(|c| !c.is("txbxContent") && !c.is("AlternateContent"))
+        {
             if c.is("tbl") {
                 out.push(c);
             }
@@ -740,6 +1914,22 @@ pub(crate) fn paragraphs(e: &Element) -> Vec<&Element> {
             if !c.is("txbxContent") {
                 walk(c, out);
             }
+        }
+    }
+    let mut out = Vec::new();
+    walk(e, &mut out);
+    out
+}
+
+/// Every paragraph under `e` in document order, a text box's too: a
+/// paragraph, then the paragraphs of the boxes it anchors.
+pub(crate) fn paragraphs_and_boxes(e: &Element) -> Vec<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
+        for c in e.elements() {
+            if c.is("p") {
+                out.push(c);
+            }
+            walk(c, out);
         }
     }
     let mut out = Vec::new();
@@ -796,21 +1986,27 @@ pub(crate) fn line(head: &str, clauses: &[String]) -> String {
     }
 }
 
-/// `<!-- p3 justify, first-line 0.5in, comments #c5 -->` (the plan's grammar).
+/// `<!-- p3 justify, first-line 0.5in, comments c5 -->` (the plan's grammar).
+/// A paragraph that states a style names it, the default too: the statement
+/// is the document's own, not the view's to drop (#528). A heading's own
+/// `HeadingN` with text needs no name, the `#` count says it; an empty
+/// paragraph has no `#`, so even that one is named.
 pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
     let mut head = format!("p{}", f.index);
     if let Some(style) = f.style {
-        let implied = match f.heading {
-            Some(level) => style == format!("Heading{level}"),
-            None => Some(style) == f.default_style || style == "Normal",
-        };
+        let implied = !f.empty
+            && f.heading
+                .is_some_and(|level| style == format!("Heading{level}"));
         if !implied {
             head.push(' ');
-            head.push_str(style);
+            head.push_str(&crate::markdown::view_notes::style_token(style));
         }
     }
     let ppr = p.child("pPr");
     let mut clauses: Vec<String> = Vec::new();
+    if let Some(outline) = f.outline {
+        clauses.push(format!("outline {outline}"));
+    }
     if f.empty {
         clauses.push("empty".to_string());
     }
@@ -829,22 +2025,15 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         );
     }
     if let Some(ind) = ppr.and_then(|pr| pr.child("ind")) {
-        // One clause per side: the strict `start`/`end` only when the
-        // transitional `left`/`right` is absent, as the layout reads them.
-        for (attrs, name) in [
-            (&["firstLine"][..], "first-line"),
-            (&["hanging"][..], "hanging"),
-            (&["left", "start"][..], "left"),
-            (&["right", "end"][..], "right"),
-        ] {
-            if let Some(v) = attrs
-                .iter()
-                .find_map(|attr| ind.attr(attr))
-                .and_then(|v| v.parse::<f64>().ok())
-            {
-                clauses.push(format!("{name} {}", inches(v)));
-            }
+        for (name, value) in indent_clauses(ind) {
+            clauses.push(format!("{name} {value}"));
         }
+    }
+    if let Some(spacing) = ppr.and_then(|pr| pr.child("spacing")) {
+        clauses.extend(spacing_clauses(spacing));
+    }
+    if let Some(size) = f.size {
+        clauses.push(size_clause(size));
     }
     match f.marker {
         Some("-") => clauses.push("bullet".to_string()),
@@ -855,35 +2044,64 @@ pub(crate) fn id_line(p: &Element, f: &LineFacts, handles: &Handles) -> String {
         )),
         None => {}
     }
-    if f.page_break {
-        clauses.push("page-break".to_string());
+    if f.marker.is_some() && f.level > 0 {
+        clauses.push(format!("level {}", f.level));
+    }
+    // A page break in a tracked change names it: `rev` would say only
+    // that some change shows no text, not that it is the break's.
+    let tracked_break = (!f.resolved && f.page_break)
+        .then(|| tracked_page_break(p, handles))
+        .flatten();
+    match &tracked_break {
+        Some((kind, tag)) => clauses.push(format!("page-break-{kind} {}", format_tag(tag))),
+        None if f.page_break => clauses.push("page-break".to_string()),
+        None => {}
     }
     if has_section_break(p) {
         clauses.push("section-break".to_string());
     }
-    let (ins, del) = mark_tags(p, handles);
-    if !ins.is_empty() {
-        clauses.push(format!("break-ins {}", format_tags(&ins)));
-    }
+    let (_, del) = mark_tags_by(p, handles, required_date_tag_of);
     if !del.is_empty() {
         clauses.push(format!("break-del {}", format_tags(&del)));
     }
-    let fmt = format_change_tags(p, handles);
+    let fmt = format_change_tags_by(p, handles, required_date_tag_of);
     if !fmt.is_empty() {
         clauses.push(format!("fmt {}", format_tags(&fmt)));
     }
+    let unshown: Vec<&(bool, String)> = f
+        .unshown
+        .iter()
+        .filter(|(_, tag)| {
+            tracked_break
+                .as_ref()
+                .is_none_or(|(_, b)| format_tag(b) != *tag)
+        })
+        .collect();
+    if !f.resolved {
+        for inserted in [true, false] {
+            let tags: Vec<&str> = unshown
+                .iter()
+                .filter(|(ins, _)| *ins == inserted)
+                .map(|(_, tag)| tag.as_str())
+                .collect();
+            if !tags.is_empty() {
+                let word = if inserted { "rev" } else { "rev-del" };
+                clauses.push(format!("{word} {}", tags.join("; ")));
+            }
+        }
+    }
     if f.resolved {
-        let tags: Vec<String> = stamped_revs(p).into_iter().map(|(_, tag)| tag).collect();
+        let tags = resolved_tags(p);
         if !tags.is_empty() {
-            clauses.push(format!("rev {}", format_tags(&tags)));
+            clauses.push(format!("rev {}", tags.join("; ")));
         }
     }
     if !f.comments.is_empty() {
-        let ids: Vec<String> = f.comments.iter().map(|c| format!("#c{c}")).collect();
+        let ids: Vec<String> = f.comments.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("comments {}", ids.join(" ")));
     }
     if !f.spans.is_empty() {
-        let ids: Vec<String> = f.spans.iter().map(|c| format!("#c{c}")).collect();
+        let ids: Vec<String> = f.spans.iter().map(|c| format!("c{c}")).collect();
         clauses.push(format!("in {}", ids.join(" ")));
     }
     line(&head, &clauses)
@@ -918,12 +2136,250 @@ pub(crate) fn page_counts(body: &Element) -> (usize, usize) {
     (rendered, hard)
 }
 
-/// `<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->`;
+/// The table line's merged cells, row by row: `t0.row0.cell1 across 2`
+/// for a cell spanning two grid columns, `t0.row0.cell0 down 3` for a
+/// vertical merge starting there and covering three rows (Word's
+/// `gridSpan` and `vMerge`). `grid` holds each row's cells as grid column,
+/// columns spanned and vertical merge.
+fn merged_cells(t: &str, grid: &[Vec<(usize, usize, Option<bool>)>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (r, cells) in grid.iter().enumerate() {
+        for (c, &(column, span, vertical)) in cells.iter().enumerate() {
+            let mut said = Vec::new();
+            if span > 1 {
+                said.push(format!("across {span}"));
+            }
+            if vertical == Some(true) {
+                let down = 1 + grid[r + 1..]
+                    .iter()
+                    .take_while(|row| {
+                        row.iter()
+                            .any(|&(at, _, v)| at == column && v == Some(false))
+                    })
+                    .count();
+                if down > 1 {
+                    said.push(format!("down {down}"));
+                }
+            }
+            if !said.is_empty() {
+                out.push(format!("t{t}.row{r}.cell{c} {}", said.join(" ")));
+            }
+        }
+    }
+    out
+}
+
+/// The sides `props` (`w:tblBorders`, `w:tcBorders`, `w:pBdr`) names among
+/// `all`, in schema order.
+pub(super) fn own_borders(
+    props: Option<&Element>,
+    all: &[&'static str],
+) -> crate::markdown::borders::Sides {
+    use crate::markdown::borders;
+    let found: Vec<_> = props
+        .into_iter()
+        .flat_map(|e| e.elements())
+        .filter_map(|side| {
+            let name = borders::side(side.local(), all)?;
+            let border = borders::Border::new(
+                side.attr("val")?,
+                side.attr("sz"),
+                side.attr("color"),
+                side.attr("space"),
+            )
+            .with_theme(
+                side.attr("themeColor"),
+                side.attr("themeTint"),
+                side.attr("themeShade"),
+            )
+            .with_effects(side.attr("shadow"), side.attr("frame"));
+            Some((name, border))
+        })
+        .collect();
+    borders::ordered(&found, all)
+}
+
+/// The borders `tbl` and its cells carry themselves, as its line prints them
+/// (`borders single 0.5pt 000000`, `cell-borders bottom single 1pt in
+/// t0.row0`): what Word passes comes back as it was.
+fn border_clauses(tbl: &Element, t: &str, rows: &[&Element]) -> Vec<String> {
+    use crate::markdown::borders::{self, CELL_SIDES, TABLE_SIDES};
+    let read = own_borders;
+    let mut clauses = Vec::new();
+    let own = read(tbl.path(&["tblPr", "tblBorders"]), &TABLE_SIDES);
+    if !own.is_empty() {
+        clauses.push(format!("borders {}", borders::describe(&own, &TABLE_SIDES)));
+    }
+    // A row's own table borders (`w:tblPrEx/w:tblBorders`), the rows that
+    // share one in one group: `row-borders top double 0.5pt in t0.row1`.
+    let mut row_groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (r, tr) in rows.iter().enumerate() {
+        let sides = read(tr.path(&["tblPrEx", "tblBorders"]), &TABLE_SIDES);
+        if sides.is_empty() {
+            continue;
+        }
+        let text = borders::describe(&sides, &TABLE_SIDES);
+        let at = format!("t{t}.row{r}");
+        match row_groups.iter_mut().find(|(g, _)| *g == text) {
+            Some((_, rows)) => rows.push(at),
+            None => row_groups.push((text, vec![at])),
+        }
+    }
+    if !row_groups.is_empty() {
+        let groups: Vec<String> = row_groups
+            .iter()
+            .map(|(text, at)| format!("{text} in {}", at.join(" ")))
+            .collect();
+        clauses.push(format!("row-borders {}", groups.join("; ")));
+    }
+    // Each cell's borders, as text, by row; the cells that share one print
+    // as one group, a whole row as the row, every cell as `all`.
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|tr| {
+            super::row_cells(tr)
+                .map(|tc| {
+                    let sides = read(tc.path(&["tcPr", "tcBorders"]), &CELL_SIDES);
+                    borders::describe(&sides, &CELL_SIDES)
+                })
+                .collect()
+        })
+        .collect();
+    let mut texts: Vec<&String> = Vec::new();
+    for text in cells.iter().flatten().filter(|t| !t.is_empty()) {
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
+    }
+    let groups: Vec<String> = texts
+        .iter()
+        .map(|text| {
+            if cells.iter().flatten().all(|c| c == *text) {
+                return format!("{text} in all");
+            }
+            let mut at = Vec::new();
+            for (r, row) in cells.iter().enumerate() {
+                if !row.is_empty() && row.iter().all(|c| c == *text) {
+                    at.push(format!("t{t}.row{r}"));
+                    continue;
+                }
+                for (c, cell) in row.iter().enumerate() {
+                    if cell == *text {
+                        at.push(format!("t{t}.row{r}.cell{c}"));
+                    }
+                }
+            }
+            format!("{text} in {}", at.join(" "))
+        })
+        .collect();
+    if !groups.is_empty() {
+        clauses.push(format!("cell-borders {}", groups.join("; ")));
+    }
+    clauses
+}
+
+/// `widths 2.1424in 0.985in`, `width auto`, `indent 0.25in`, `layout
+/// fixed`: the table's geometry where it is not what the writer writes by
+/// itself (#1472), columns that split `text_width` evenly over 100% of it,
+/// no indent and an autofit layout. A grid column with no width, or one
+/// past Word's 22in, prints no widths at all: the writer would read them
+/// as another grid.
+pub(crate) fn geometry_clauses(tbl: &Element, text_width: u32) -> Vec<String> {
+    // The reader's bounds (`xml.rs`): 22in, and 600% of the text width.
+    const MOST: f64 = 31_680.0;
+    const MOST_PERCENT: f64 = 600.0;
+    let twips = |e: &Element, attr: &str| -> Option<f64> {
+        let v = e.attr(attr)?;
+        v.parse::<f64>()
+            .ok()
+            .or_else(|| crate::util::universal_measure_twips(v))
+            .filter(|t| t.is_finite())
+    };
+    let mut out = Vec::new();
+    let widths: Option<Vec<f64>> = tbl.child("tblGrid").and_then(|grid| {
+        grid.children_named("gridCol")
+            .map(|col| twips(col, "w").filter(|w| (0.0..=MOST).contains(&w.round())))
+            .collect()
+    });
+    if let Some(widths) = widths.filter(|w| !w.is_empty()) {
+        let count = u32::try_from(widths.len()).unwrap_or(u32::MAX);
+        let even = f64::from(text_width / count.max(1));
+        if widths.iter().any(|w| w.round() != even) {
+            let listed: Vec<String> = widths.iter().map(|&w| inches(w)).collect();
+            out.push(format!("widths {}", listed.join(" ")));
+        }
+    }
+    let properties = tbl.child("tblPr");
+    // No `w:tblW`, or `nil`, is Word's auto; `w:type` left out is `dxa`.
+    let width = properties.and_then(|p| p.child("tblW"));
+    match width.and_then(|w| w.attr("type")).unwrap_or(match width {
+        Some(_) => "dxa",
+        None => "auto",
+    }) {
+        "pct" => {
+            // `5000` fiftieths of a percent, or `100%`.
+            let fiftieths =
+                width
+                    .and_then(|w| w.attr("w"))
+                    .and_then(|v| match v.strip_suffix('%') {
+                        Some(percent) => percent.parse::<f64>().ok().map(|p| p * 50.0),
+                        None => v.parse::<f64>().ok(),
+                    });
+            // No width, or 0, is no preference: Word lays the table out
+            // as auto. Past 600% the reader refuses the clause, so the
+            // view prints none (#1483 review).
+            match fiftieths.filter(|f| f.is_finite() && *f >= 0.0) {
+                None if width.and_then(|w| w.attr("w")).is_none() => {
+                    out.push("width auto".to_string());
+                }
+                Some(f) if f.round() == 0.0 => out.push("width auto".to_string()),
+                Some(f) if f.round() != 5000.0 && f.round() <= MOST_PERCENT * 50.0 => {
+                    let percent = format!("{:.2}", f.round() / 50.0);
+                    let percent = percent.trim_end_matches('0').trim_end_matches('.');
+                    out.push(format!("width {percent}%"));
+                }
+                _ => {}
+            }
+        }
+        "dxa" => match width.and_then(|w| twips(w, "w")) {
+            None if width.and_then(|w| w.attr("w")).is_none() => {
+                out.push("width auto".to_string());
+            }
+            Some(w) if w.round() == 0.0 => out.push("width auto".to_string()),
+            Some(w) if (0.0..=MOST).contains(&w.round()) => {
+                out.push(format!("width {}", inches(w)));
+            }
+            _ => {}
+        },
+        _ => out.push("width auto".to_string()),
+    }
+    if let Some(indent) = properties
+        .and_then(|p| p.child("tblInd"))
+        .filter(|i| i.attr("type").is_none_or(|t| t == "dxa"))
+        .and_then(|i| twips(i, "w"))
+        .filter(|w| w.round() != 0.0 && w.round().abs() <= MOST)
+    {
+        out.push(format!("indent {}", inches(indent)));
+    }
+    if properties
+        .and_then(|p| p.child("tblLayout"))
+        .and_then(|l| l.attr("type"))
+        == Some("fixed")
+    {
+        out.push("layout fixed".to_string());
+    }
+    out
+}
+
+/// `<!-- t0 center 3x3, cells p8-p16 by row, p9 center, header row repeats -->`
+/// (`aligned`: the cell paragraphs aligned against their column);
 /// `None` for a nested table (not numbered). With `comments` (comments
-/// hidden) the cells' comment ids print as `comments #c9 in p3`; `spans`
-/// are the comment threads whose range runs through the table (`in #c5`).
+/// hidden) the cells' comment ids print as `comments c9 in p3`; `spans`
+/// are the comment threads whose range runs through the table (`in c5`).
 pub(crate) fn table_line(
     tbl: &Element,
+    style: Option<&str>,
+    aligned: &[String],
     resolved: bool,
     comments: Option<&HashMap<String, Element>>,
     spans: &[String],
@@ -953,31 +2409,152 @@ pub(crate) fn table_line(
     let mut clauses: Vec<String> = vec![format!("{}x{}", rows.len(), cols)];
     let mut per_row: Vec<(usize, usize)> = Vec::new();
     let mut uniform = true;
-    let mut merged = false;
+    // Each row's cells: grid column, columns spanned, and vertical merge
+    // (`Some(true)` where one starts, `Some(false)` where one continues).
+    let mut grid: Vec<Vec<(usize, usize, Option<bool>)>> = Vec::new();
     let mut break_ins: Vec<String> = Vec::new();
     let mut break_del: Vec<String> = Vec::new();
     let mut revs: Vec<String> = Vec::new();
+    // A row's or cell's own deletion and a cell's merge: `rev` alone is an
+    // insertion.
+    let mut rev_del: Vec<String> = Vec::new();
+    let mut rev_merge: Vec<String> = Vec::new();
+    let mut fmt: Vec<String> = Vec::new();
     let mut held: Vec<String> = Vec::new();
     let mut held_ids: Vec<String> = Vec::new();
+    let mut gaps: Vec<String> = Vec::new();
+    // The tracked view names the table's own property changes (Word's
+    // `tblPrChange`, `tblGridChange`, `trPrChange`, `tblPrExChange`,
+    // `tcPrChange`) and its cell insertions, deletions and merges, where
+    // they sit: the cells' text shows none of them.
+    let changes_in = |props: Option<&Element>, at: &str, out: &mut Vec<String>| {
+        for change in props
+            .into_iter()
+            .flat_map(|e| e.elements())
+            .filter(|c| c.local().ends_with("Change"))
+        {
+            out.push(format!(
+                "{}{at}",
+                format_tag(&required_date_tag_of(change, handles))
+            ));
+        }
+    };
+    if !resolved {
+        changes_in(tbl.child("tblPr"), "", &mut fmt);
+        changes_in(tbl.child("tblGrid"), "", &mut fmt);
+    }
     for (r, tr) in rows.iter().enumerate() {
         let mut range: Option<(usize, usize)> = None;
         if resolved {
             revs.extend(
                 stamped_revs(tr)
                     .into_iter()
-                    .map(|(_, tag)| format!("{} in r{r}", format_tag(&tag))),
+                    .map(|(_, tag)| format!("{} in t{t}.row{r}", format_tag(&tag))),
             );
+        } else {
+            let at = format!(" in t{t}.row{r}");
+            changes_in(tr.child("trPr"), &at, &mut fmt);
+            changes_in(tr.child("tblPrEx"), &at, &mut fmt);
+            // A row's insertion or deletion tags its cells' text; a row
+            // with no text, or whose text has marks of its own, names it
+            // here.
+            if !shows_text(tr) || row_text_marked(tr) {
+                for mark in tr
+                    .child("trPr")
+                    .into_iter()
+                    .flat_map(|e| e.elements())
+                    .filter(|e| matches!(e.local(), "ins" | "del"))
+                {
+                    let tag = format!("{}{at}", format_tag(&required_date_tag_of(mark, handles)));
+                    if mark.local() == "del" {
+                        rev_del.push(tag);
+                    } else {
+                        revs.push(tag);
+                    }
+                }
+            }
         }
+        let grid_skip = |name: &str| {
+            tr.path(&["trPr", name])
+                .and_then(|g| g.attr("val"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0)
+        };
+        let mut column = grid_skip("gridBefore");
+        // Grid columns a row leaves out before or after its cells: the
+        // view prints them as empty cells, which are no cells. A row whose
+        // cells stop short of the grid without `gridAfter` leaves the rest
+        // out the same way.
+        let filled: usize = super::row_cells(tr)
+            .map(|tc| {
+                tc.path(&["tcPr", "gridSpan"])
+                    .and_then(|g| g.attr("val"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(1)
+                    .clamp(1, 64)
+            })
+            .sum();
+        let after = grid_skip("gridAfter");
+        // A row whose cells and gaps take more grid columns than the grid
+        // has, with a cell that prints nothing, holds a cell the view
+        // cannot tell from its padding: its paragraph count, per row,
+        // brings it back. Cells that all print text place themselves.
+        if column + filled + after > cols && super::row_cells(tr).any(|tc| !shows_text(tc)) {
+            uniform = false;
+        }
+        let after = after.max(cols.saturating_sub(column + filled));
+        let mut gap = Vec::new();
+        if column > 0 {
+            gap.push(format!("before {column}"));
+        }
+        if after > 0 {
+            gap.push(format!("after {after}"));
+        }
+        if !gap.is_empty() {
+            gaps.push(format!("t{t}.row{r} {}", gap.join(" ")));
+        }
+        let mut cells = Vec::new();
         for (c, tc) in super::row_cells(tr).enumerate() {
+            let span = tc
+                .path(&["tcPr", "gridSpan"])
+                .and_then(|g| g.attr("val"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1)
+                .clamp(1, 64);
+            let vertical = tc
+                .path(&["tcPr", "vMerge"])
+                .map(|v| v.attr("val") == Some("restart"));
+            cells.push((column, span, vertical));
+            column += span;
             if resolved {
                 revs.extend(
                     stamped_revs(tc)
                         .into_iter()
-                        .map(|(_, tag)| format!("{} in r{r}.c{c}", format_tag(&tag))),
+                        .map(|(_, tag)| format!("{} in t{t}.row{r}.cell{c}", format_tag(&tag))),
                 );
-            }
-            if tc.path(&["tcPr", "gridSpan"]).is_some() || tc.path(&["tcPr", "vMerge"]).is_some() {
-                merged = true;
+            } else {
+                let at = format!(" in t{t}.row{r}.cell{c}");
+                let props = tc.child("tcPr");
+                changes_in(props, &at, &mut fmt);
+                // Word's own cell mark is `w:ins`/`w:del` in `w:tcPr` as
+                // often as `w:cellIns`/`w:cellDel` (both read); a merge is
+                // `w:cellMerge`.
+                for cell_change in props.into_iter().flat_map(|e| e.elements()).filter(|e| {
+                    matches!(
+                        e.local(),
+                        "ins" | "del" | "cellIns" | "cellDel" | "cellMerge"
+                    )
+                }) {
+                    let tag = format!(
+                        "{}{at}",
+                        format_tag(&required_date_tag_of(cell_change, handles))
+                    );
+                    match cell_change.local() {
+                        "del" | "cellDel" => rev_del.push(tag),
+                        "cellMerge" => rev_merge.push(tag),
+                        _ => revs.push(tag),
+                    }
+                }
             }
             let mut ps = Vec::new();
             tc.find_all("p", &mut ps);
@@ -990,14 +2567,22 @@ pub(crate) fn table_line(
             }
             for p in &ps {
                 let Some(i) = p.attr(INDEX) else { continue };
-                let (ins, del) = mark_tags(p, handles);
+                let (ins, del) = mark_tags_by(p, handles, required_date_tag_of);
                 break_ins.extend(ins.iter().map(|t| format!("{} in p{i}", format_tag(t))));
                 break_del.extend(del.iter().map(|t| format!("{} in p{i}", format_tag(t))));
                 if resolved {
                     revs.extend(
-                        stamped_revs(p)
+                        resolved_tags(p)
                             .into_iter()
-                            .map(|(_, tag)| format!("{} in p{i}", format_tag(&tag))),
+                            .map(|tag| format!("{tag} in p{i}")),
+                    );
+                } else {
+                    // A cell's paragraph has no id line to carry its own
+                    // formatting changes.
+                    fmt.extend(
+                        format_change_tags_by(p, handles, required_date_tag_of)
+                            .iter()
+                            .map(|t| format!("{} in p{i}", format_tag(t))),
                     );
                 }
                 let ids: Vec<String> = comments.map_or_else(Vec::new, |known| {
@@ -1008,7 +2593,7 @@ pub(crate) fn table_line(
                 });
                 if !ids.is_empty() {
                     held_ids.extend(ids.iter().cloned());
-                    let ids: Vec<String> = ids.iter().map(|c| format!("#c{c}")).collect();
+                    let ids: Vec<String> = ids.iter().map(|c| format!("c{c}")).collect();
                     held.push(format!("{} in p{i}", ids.join(" ")));
                 }
             }
@@ -1022,6 +2607,7 @@ pub(crate) fn table_line(
         if let Some(r) = range {
             per_row.push(r);
         }
+        grid.push(cells);
     }
     if uniform {
         if let (Some(&(a, _)), Some(&(_, b))) = (per_row.first(), per_row.last()) {
@@ -1033,22 +2619,34 @@ pub(crate) fn table_line(
             .enumerate()
             .map(|(i, (a, b))| {
                 if a == b {
-                    format!("r{i} p{a}")
+                    format!("t{t}.row{i} p{a}")
                 } else {
-                    format!("r{i} p{a}-p{b}")
+                    format!("t{t}.row{i} p{a}-p{b}")
                 }
             })
             .collect();
         clauses.push(format!("cells {}", rows.join(" ")));
     }
+    clauses.extend(aligned.iter().cloned());
     if rows
         .first()
         .is_some_and(|tr| tr.path(&["trPr", "tblHeader"]).is_some())
     {
         clauses.push("header row repeats".to_string());
     }
-    if merged {
-        clauses.push("merged cells".to_string());
+    if let Some(style) = style {
+        clauses.push(format!(
+            "style {}",
+            crate::markdown::view_notes::style_token(style)
+        ));
+    }
+    clauses.extend(border_clauses(tbl, t, &rows));
+    let merged = merged_cells(t, &grid);
+    if !merged.is_empty() {
+        clauses.push(format!("merged {}", merged.join("; ")));
+    }
+    if !gaps.is_empty() {
+        clauses.push(format!("gaps {}", gaps.join("; ")));
     }
     if !break_ins.is_empty() {
         clauses.push(format!("break-ins {}", break_ins.join("; ")));
@@ -1059,6 +2657,15 @@ pub(crate) fn table_line(
     if !revs.is_empty() {
         clauses.push(format!("rev {}", revs.join("; ")));
     }
+    if !rev_del.is_empty() {
+        clauses.push(format!("rev-del {}", rev_del.join("; ")));
+    }
+    if !rev_merge.is_empty() {
+        clauses.push(format!("rev-merge {}", rev_merge.join("; ")));
+    }
+    if !fmt.is_empty() {
+        clauses.push(format!("fmt {}", fmt.join("; ")));
+    }
     if !held.is_empty() {
         clauses.push(format!("comments {}", held.join("; ")));
     }
@@ -1066,7 +2673,7 @@ pub(crate) fn table_line(
     let ids: Vec<String> = spans
         .iter()
         .filter(|c| !held_ids.contains(c))
-        .map(|c| format!("#c{c}"))
+        .map(|c| format!("c{c}"))
         .collect();
     if !ids.is_empty() {
         clauses.push(format!("in {}", ids.join(" ")));
@@ -1111,16 +2718,19 @@ pub(crate) fn threads(comments: Option<&Element>, extended: Option<&Element>) ->
     t
 }
 
-/// `#c5 @AC: `, `#c5 @AC resolved: `, `#c6 @AS re #c5: `, or `#c5: ` with
-/// no author. `date` is the inline timestamp, when wanted.
+/// `c5 @AC: `, `c5 @AC resolved: `, `c6 @AS re c5: `, or `c5: ` with
+/// no author. `date` is the inline timestamp, when wanted; `held`, the
+/// change whose mark holds the comment's reference when the note prints
+/// outside it (`c5 @AC in r13: `).
 pub(crate) fn comment_head(
     id: &str,
     author: Option<&str>,
     date: Option<&str>,
     handles: &Handles,
     threads: &Threads,
+    held: Option<u32>,
 ) -> String {
-    let mut head = format!("#c{id}");
+    let mut head = format!("c{id}");
     if let Some(handle) = handles.of(author) {
         head.push_str(&format!(" @{handle}"));
     }
@@ -1129,88 +2739,159 @@ pub(crate) fn comment_head(
         head.push_str(date);
     }
     if let Some(root) = threads.reply_of.get(id) {
-        head.push_str(&format!(" re #c{root}"));
+        head.push_str(&format!(" re c{root}"));
     } else if threads.done.contains(id) {
         head.push_str(" resolved");
+    }
+    if let Some(change) = held {
+        head.push_str(&format!(" in r{change}"));
     }
     head.push_str(": ");
     head
 }
 
-/// Every logical revision in the stamped body: inline tags per paragraph,
-/// tracked paragraph marks, tracked rows and cells.
-pub(crate) fn collect_revisions(body: &Element, handles: &Handles) -> Vec<RevTag> {
-    let mut out = Vec::new();
-    collect_in(body, handles, &mut out);
-    out
-}
+/// The changes the body actually prints, after nesting, neighbouring marks,
+/// substitutions and selection have been rendered. Each attributed span is
+/// one change; ids joined by `+` and parents named by `re` add no changes.
+/// Inserted paragraph marks count inline; other structural marks count
+/// where their id-line clauses print them.
+pub(crate) fn collect_revisions(shown: &str) -> Vec<&'static str> {
+    use crate::markdown::view_notes;
 
-fn collect_in(e: &Element, handles: &Handles, out: &mut Vec<RevTag>) {
-    let attribution = |m: &Element| {
-        (
-            m.attr("author").map(str::to_string),
-            m.attr("date").map(str::to_string),
-        )
+    // A change of several marks once, however many pieces print its joined
+    // id (#1261); a span of one mark counts each time it prints, but for a
+    // piece the view split from it around a change nested in it
+    // (`{++a++}{r7 @B}{--x--}{r9 @A re r7 @B}{++b++}{r7 @B}`: one
+    // insertion, as `changes` lists it).
+    let mut out: Vec<(Vec<Vec<u32>>, &'static str)> = Vec::new();
+    let mut add = |tags: &[&view_notes::Tag], kind: &'static str| {
+        let ids: Vec<Vec<u32>> = tags.iter().map(|tag| tag.ids.clone()).collect();
+        let joined = ids.iter().all(|ids| !ids.is_empty()) && ids.iter().any(|ids| ids.len() > 1);
+        match out.iter_mut().find(|(other, _)| joined && *other == ids) {
+            Some((_, was)) => *was = joined_kind(was, kind),
+            None => out.push((ids, kind)),
+        }
     };
-    if e.is("p") {
-        out.extend(revision_tags(e, handles));
-        if let Some(rpr) = e.path(&["pPr", "rPr"]) {
-            for m in rpr.elements().filter(|m| kind_of(m.local()).is_some()) {
-                let (author, date) = attribution(m);
-                out.push(RevTag {
-                    kind: "mark",
-                    tag: tag_of(m, handles),
-                    author,
-                    date,
-                });
+    // The one-mark piece read last, while the changes touching it are
+    // nested in it, and whether one has been: two pieces of one id that
+    // touch with no nest between are two marks (a file repeating an id),
+    // as `changes` lists them.
+    let mut split: Option<((Vec<u32>, &'static str), bool)> = None;
+    for (token, note, touches) in crate::markdown::critic::touching_notes(shown) {
+        let (own, parents) = note.split_once(" re ").unwrap_or((note.as_str(), ""));
+        let Some(tags) = view_notes::revision_tags(own) else {
+            split = None;
+            continue;
+        };
+        if own.split("; ").any(|tag| {
+            tag.split_whitespace().next().is_none_or(|id| {
+                id != "noid"
+                    && crate::ids::parse_change_ids(id)
+                        .map_or(true, |ids| ids.iter().any(|id| id.story != "body"))
+            })
+        }) {
+            split = None;
+            continue;
+        }
+        use crate::markdown::critic::Token;
+        // An inline paragraph mark is an inserted one: a deleted mark
+        // prints on its paragraph's id line.
+        let kind = match token {
+            Token::InsertEnd => "ins",
+            Token::DeleteEnd => "del",
+            Token::SubstituteEnd => "sub",
+            _ => INSERTED_MARK,
+        };
+        let piece = match tags.as_slice() {
+            [tag] if tag.ids.len() == 1 => Some((tag.ids.clone(), kind)),
+            _ => None,
+        };
+        let nested_in = |ids: &[u32]| {
+            parents.split(" re ").any(|parent| {
+                view_notes::revision_tags(parent)
+                    .is_some_and(|tags| tags.iter().any(|tag| tag.ids == ids))
+            })
+        };
+        match &mut split {
+            Some((was, nest)) if *nest && touches && piece.as_ref() == Some(was) => {
+                *nest = false;
+                continue;
+            }
+            Some(((ids, _), nest)) if touches && nested_in(ids) => *nest = true,
+            _ => split = piece.map(|piece| (piece, false)),
+        }
+        match (kind, tags.as_slice()) {
+            // A substitution of two tags is two changes, its deleted side's
+            // and its inserted side's (`{r3 @A; r5+6 @B}`); a joined one
+            // counts once with its other pieces (`¶{r5+6 @B}`, #1356).
+            ("sub", [old, new]) => {
+                add(&[old], "del");
+                add(&[new], "ins");
+            }
+            _ => add(&tags.iter().collect::<Vec<_>>(), kind),
+        }
+    }
+    for line in shown.lines() {
+        if let Some(p) = view_notes::id_line(line) {
+            if let Some(tag) = &p.break_ins {
+                add(&[tag], INSERTED_MARK);
+            }
+            if let Some(tag) = &p.break_del {
+                add(&[tag], DELETED_MARK);
+            }
+            if let Some((ins, tag)) = &p.page_break_change {
+                add(&[tag], if *ins { "ins" } else { "del" });
+            }
+            for (inserted, tag) in &p.rev {
+                add(&[tag], if *inserted { "ins" } else { "del" });
+            }
+        } else if let Some(t) = view_notes::table_line(line) {
+            for (inserted, tag) in t.marks.values().flatten() {
+                add(
+                    &[tag],
+                    if *inserted {
+                        INSERTED_MARK
+                    } else {
+                        DELETED_MARK
+                    },
+                );
+            }
+            for (_, tag) in t.row_marks.values() {
+                add(&[tag], "row");
+            }
+            for (_, tag) in t.cell_marks.values() {
+                add(&[tag], "cell");
             }
         }
     }
-    if e.is("tr")
-        && let Some(trpr) = e.child("trPr")
-    {
-        for m in trpr.elements().filter(|m| kind_of(m.local()).is_some()) {
-            let (author, date) = attribution(m);
-            out.push(RevTag {
-                kind: "row",
-                tag: tag_of(m, handles),
-                author,
-                date,
-            });
-        }
-    }
-    if e.is("tc")
-        && let Some(tcpr) = e.child("tcPr")
-    {
-        for m in tcpr
-            .elements()
-            .filter(|m| matches!(m.local(), "cellIns" | "cellDel"))
-        {
-            let (author, date) = attribution(m);
-            out.push(RevTag {
-                kind: "cell",
-                tag: tag_of(m, handles),
-                author,
-                date,
-            });
-        }
-    }
-    for child in shown_children(e) {
-        collect_in(child, handles, out);
-    }
+    out.into_iter()
+        .map(|(_, kind)| match kind {
+            INSERTED_MARK | DELETED_MARK => "mark",
+            kind => kind,
+        })
+        .collect()
 }
 
-/// Count of revision elements (`w:ins`, `w:del`, moves, cell marks) and of
-/// formatting changes (`*PrChange`) under `body`, text boxes included once.
-pub(crate) fn count_marks(e: &Element) -> (usize, usize) {
-    let mut marks = usize::from(is_revision(e.local()));
-    let mut formats = usize::from(e.local().ends_with("PrChange"));
-    for child in shown_children(e) {
-        let (m, f) = count_marks(child);
-        marks += m;
-        formats += f;
+/// A paragraph mark's piece of a change, by its side: alone, either counts
+/// as a paragraph mark.
+const INSERTED_MARK: &str = "mark+";
+const DELETED_MARK: &str = "mark-";
+
+/// What one change shows as when its pieces show as `was` and `kind`: a
+/// deletion with an insertion is a substitution, and so is text with a
+/// paragraph mark of the other side (#1362); a mark goes with its own
+/// side's text.
+fn joined_kind(was: &'static str, kind: &'static str) -> &'static str {
+    match (was, kind) {
+        (a, b) if a == b => a,
+        ("sub", _) | (_, "sub") | ("ins", "del") | ("del", "ins") => "sub",
+        (INSERTED_MARK, "del")
+        | ("del", INSERTED_MARK)
+        | (DELETED_MARK, "ins")
+        | ("ins", DELETED_MARK) => "sub",
+        (INSERTED_MARK | DELETED_MARK, other) | (other, INSERTED_MARK | DELETED_MARK) => other,
+        (a, _) => a,
     }
-    (marks, formats)
 }
 
 /// One block of the rendered body: its lines, the paragraph span it covers
@@ -1241,7 +2922,9 @@ fn blocks_of(body: &str) -> Vec<Block> {
     let mut blocks: Vec<Block> = Vec::new();
     let mut page: Option<String> = None;
     for chunk in body.split("\n\n").filter(|c| !c.trim().is_empty()) {
-        let first = chunk.lines().next().unwrap_or("");
+        // A nested list item's id line, and a page marker between nested
+        // items, are indented with the item.
+        let first = chunk.lines().next().unwrap_or("").trim_start();
         if first.starts_with("<!-- page ") {
             page = Some(first.to_string());
             continue;
@@ -1322,48 +3005,79 @@ fn names_handle(text: &str, handle: &str) -> bool {
     })
 }
 
+/// The id line a block opens with (`<!-- p3 … -->`, `<!-- t0 … -->`), or
+/// `""` for a block that opens with document text. A nested list item's
+/// id line is indented with its item.
+fn id_line_of(block: &str) -> &str {
+    block
+        .lines()
+        .next()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("<!-- "))
+        .unwrap_or("")
+}
+
+/// The number a comment word names: `c5`, or the 0.12 spelling `#c5`.
+fn comment_word(word: &str) -> Option<&str> {
+    let id = word.strip_prefix('#').unwrap_or(word).strip_prefix('c')?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
 /// Whether a block holds a mark of `handle`: on its id or table line, in the
-/// tag of a note (`{>>#4 @AC<<}`, `{>>#c6 @AS re #c5: …<<}`; the comment text
+/// attribution brace (`{r4 @AC}`) or comment (`{>>c6 @AS re c5: …<<}`; the comment text
 /// after the colon is the author's words, not a tag), or as the author of a
 /// hidden comment its line names. Document text never counts: the view
 /// escapes any `{>>` in it.
 fn has_handle(block: &str, handle: &str, comment_handles: &HashMap<String, String>) -> bool {
-    let first = block.lines().next().unwrap_or("");
+    let first = id_line_of(block);
     if names_handle(first, handle) {
         return true;
     }
     let hidden = first
         .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
-        .filter_map(|word| word.strip_prefix("#c"))
+        .filter_map(comment_word)
         .any(|id| comment_handles.get(id).is_some_and(|h| h == handle));
     hidden
+        || crate::markdown::critic::attributed_notes(block)
+            .iter()
+            .any(|(_, tag)| names_handle(tag, handle))
         || block.match_indices("{>>").any(|(at, _)| {
             let note = &block[at + 3..];
-            let end = note.find("<<}").unwrap_or(note.len());
+            let end = note.find("}").unwrap_or(note.len());
             let tag = note[..end].split(':').next().unwrap_or("");
             names_handle(tag, handle)
         })
 }
 
 /// Whether a block of the agent view carries a tracked change or a comment:
-/// a note in its text, or a mark clause on its id or table line (`in #c5`
-/// for a block inside a comment range whose note is elsewhere).
+/// an attribution brace or comment in its text, or a mark clause on its id
+/// or table line (`in c5` for a block inside a comment range whose note is
+/// elsewhere).
 fn is_marked(block: &str) -> bool {
-    let first = block.lines().next().unwrap_or("");
-    block.contains("{>>#")
-        || [
-            " rev #",
-            " comments #",
-            " in #",
-            " break-ins #",
-            " break-del #",
-            " fmt #",
-        ]
-        .iter()
-        .any(|key| first.contains(key))
+    !crate::markdown::critic::attributed_notes(block).is_empty()
+        || block.contains("{>>")
+        || has_mark_clause(id_line_of(block))
 }
 
-/// The selected blocks of `body` joined back, and the `range:` text. A
+/// Whether an id or table line holds a mark clause: `rev` (`rev-del`,
+/// `rev-merge`), `fmt`, `break-ins` or `break-del` followed by a tag (`r3 @AC`), or `comments`
+/// or `in` followed by a comment id (`c5`). A style or a list label that
+/// reads `rev` is not one.
+fn has_mark_clause(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    words.windows(3).any(|w| {
+        matches!(
+            w[0],
+            "rev" | "rev-del" | "rev-merge" | "fmt" | "break-ins" | "break-del"
+        ) && w[2].starts_with('@')
+    }) || words.windows(2).any(|w| {
+        matches!(w[0], "comments" | "in")
+            && comment_word(w[1].trim_end_matches([',', ';'])).is_some()
+    })
+}
+
+/// The selected blocks of `body` joined back, the `range:` text, and the
+/// body paragraphs the kept blocks span (`pN` numbers, ascending). A
 /// `Select::Changed` author arrives resolved: `@AC` for a known handle, the
 /// text as given otherwise (no block holds an unknown author's marks).
 /// `notes` (the `[^1]: …` definitions) keeps those the kept blocks cite,
@@ -1375,7 +3089,7 @@ pub(crate) fn select_blocks(
     select: &Select,
     last: Option<usize>,
     comment_handles: &HashMap<String, String>,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, Vec<usize>), String> {
     let blocks = blocks_of(body);
     let keep: Vec<bool>;
     let mut changed_notes: Vec<String> = Vec::new();
@@ -1543,13 +3257,22 @@ pub(crate) fn select_blocks(
             changed_notes.iter().any(|l| l == label) || out.contains(&format!("[^{label}]"))
         })
     });
-    Ok((out, range))
+    let mut paragraphs: Vec<usize> = blocks
+        .iter()
+        .zip(&keep)
+        .filter(|(_, keep)| **keep)
+        .filter_map(|(block, _)| block.span)
+        .flat_map(|(a, z)| a..=z)
+        .collect();
+    paragraphs.sort_unstable();
+    paragraphs.dedup();
+    Ok((out, range, paragraphs))
 }
 
 /// The label of a note definition, `1` for `[^1]: …`. A note inserted or
 /// deleted with its reference carries its label inside the mark
 /// (`{++[^1]: …++}`).
-fn note_label(note: &str) -> Option<&str> {
+pub(crate) fn note_label(note: &str) -> Option<&str> {
     let note = ["{++", "{--"]
         .into_iter()
         .find_map(|mark| note.strip_prefix(mark))
@@ -1564,13 +3287,66 @@ mod tests {
     use super::*;
     use crate::markdown::from_docx::ooxml::parse_xml;
 
+    /// empryo review of #476: a nested item's indented id line opens its
+    /// own block, and an indented page marker still attaches to the block
+    /// after it, so `-p`, `--head`, `--tail` and `--changed` see the item.
+    #[test]
+    fn an_indented_id_line_opens_its_own_block() {
+        let body = "<!-- p0 ListParagraph num \"1.\" -->\n1. One.\n\n\
+                    \x20  <!-- page 2 of 2 -->\n\n\
+                    \x20  <!-- p1 bullet -->\n   - Sub.\n\n<!-- p2 -->\nTwo.";
+        let blocks = blocks_of(body);
+        let spans: Vec<_> = blocks.iter().map(|block| block.span).collect();
+        assert_eq!(spans, [Some((0, 0)), Some((1, 1)), Some((2, 2))]);
+        assert_eq!(blocks[1].page.as_deref(), Some("<!-- page 2 of 2 -->"));
+    }
+
+    /// A nested list item's id line is indented with its item; its mark
+    /// clause and its handle still select the block.
+    #[test]
+    fn an_indented_id_line_still_marks_its_block() {
+        let block = "   <!-- p5 ListParagraph bullet, break-ins r3 @AS -->\n   - Sub.";
+        assert!(is_marked(block));
+        assert!(has_handle(block, "AS", &HashMap::new()));
+        assert!(!has_handle(block, "AC", &HashMap::new()));
+    }
+
+    /// pi review of Task 5 F4: a clause key is a mark only with its tag or
+    /// comment id after it, so a style or list label reading `rev` keeps no
+    /// block under `--changed`.
+    #[test]
+    fn mark_clauses_need_a_tag_or_a_comment_id() {
+        for marked in [
+            "<!-- p0 rev r1 @AC -->",
+            "<!-- p3 Quote, fmt r5 @AC; r6 @AC -->",
+            "<!-- p5 comments c5 c6 -->",
+            "<!-- p1 comments #c5 -->",
+            "<!-- p2 in c9 -->",
+            "<!-- p4 empty, break-ins r3 @AC -->",
+            "<!-- t0 2x2, cells p0-p3 by row, fmt r12 @AS in t0.row1 -->",
+            "<!-- t0 1x2, cells p0-p1 by row, comments c9 in p1 -->",
+        ] {
+            assert!(has_mark_clause(marked), "{marked}");
+        }
+        for plain in [
+            "<!-- p0 rev -->",
+            "<!-- p0 fmt, justify -->",
+            "<!-- p0 comments -->",
+            "<!-- p0 num \"See rev 3\" -->",
+            "<!-- p0 in -->",
+            "<!-- t0 1x1, cells p0-p0 by row -->",
+        ] {
+            assert!(!has_mark_clause(plain), "{plain}");
+        }
+    }
+
     /// CodeRabbit #392: a note inserted or deleted with its reference
     /// carries its label inside the mark.
     #[test]
     fn note_label_reads_through_the_mark_around_an_inserted_or_deleted_note() {
         assert_eq!(note_label("[^1]: text"), Some("1"));
-        assert_eq!(note_label("{++[^2]: added++}{>>#5 @AC<<}"), Some("2"));
-        assert_eq!(note_label("{--[^3]: gone--}{>>#6 @AC<<}"), Some("3"));
+        assert_eq!(note_label("{++[^2]: added++}{r5 @AC}"), Some("2"));
+        assert_eq!(note_label("{--[^3]: gone--}{r6 @AC}"), Some("3"));
         assert_eq!(note_label("text [^4]: not a definition"), None);
     }
 
@@ -1581,10 +3357,39 @@ mod tests {
             ("_x_", "\\_x\\_"),
             ("x < y <br> </u> <!--", "x < y \\<br> \\</u> \\<!--"),
             ("2*3 `t` \\", "2\\*3 \\`t\\` \\\\"),
-            ("~~a~~ ~x == y = z", "\\~\\~a\\~\\~ ~x \\=\\= y = z"),
+            ("~~a~~ ~x == y = z", "\\~\\~a\\~\\~ \\~x \\=\\= y = z"),
+            ("a ^b^ c ~d~ e", "a \\^b\\^ c \\~d\\~ e"),
+            ("H~2~O 2^10 x^2^ a ~ b ^", "H~2~O 2^10 x^2\\^ a ~ b ^"),
             ("[^1] [x]", "\\[^1] [x]"),
+            // An entity reference would decode on the way back; a name
+            // HTML does not define (`&foo;`, `AT&T;`) stays as it is.
+            (
+                "&copy; &#35; &#x23; AT&T & co &; &foo; AT&T; &amp;",
+                "\\&copy; \\&#35; \\&#x23; AT&T & co &; &foo; AT&T; \\&amp;",
+            ),
+            // A `]` right before `(`, `[` or `:` would close a link, an
+            // image, a reference or a reference definition.
+            (
+                "[a](b) ![i](p.png) [r]: /u [c][d]",
+                "[a\\](b) ![i\\](p.png) [r\\]: /u [c\\][d]",
+            ),
+            ("[sic] (a) x]", "[sic] (a) x]"),
         ] {
             assert_eq!(escape_markdown(text), escaped, "{text}");
+        }
+    }
+
+    #[test]
+    fn escape_closing_hashes_escapes_a_closing_sequence_only() {
+        for (text, escaped) in [
+            ("C #", "C \\#"),
+            ("#", "\\#"),
+            ("C ##", "C \\##"),
+            ("C#", "C#"),
+            ("C# x", "C# x"),
+            ("plain", "plain"),
+        ] {
+            assert_eq!(escape_closing_hashes(text), escaped, "{text}");
         }
     }
 
@@ -1655,6 +3460,64 @@ mod tests {
         assert_eq!(body.child("tbl").unwrap().attr(TABLE), Some("0"));
     }
 
+    /// A strict `w:ind` writes universal measures (`72pt`, `1in`) where
+    /// Transitional writes twips; the clause prints the same inches.
+    #[test]
+    fn a_universal_measure_indent_on_the_id_line_reads_as_twips() {
+        let p = body(
+            r#"<w:p><w:pPr><w:ind w:start="72pt" w:end="36pt" w:firstLine="18pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
+        );
+        let p = p.child("p").unwrap();
+        let facts = LineFacts {
+            index: 0,
+            style: None,
+            outline: None,
+            heading: None,
+            marker: None,
+            level: 0,
+            page_break: false,
+            resolved: false,
+            comments: &[],
+            spans: &[],
+            empty: false,
+            unshown: &[],
+            size: None,
+        };
+        let line = id_line(p, &facts, &Handles::default());
+        assert_eq!(line, "<!-- p0 first-line 0.25in, left 1in, right 0.5in -->");
+    }
+
+    /// A parsable-but-absurd measure is not a measure the schema spells
+    /// (`1e300pt`, `nanpt`): the clause drops, as it did before the Strict
+    /// reader, instead of printing 250-digit inches or `NaNin`
+    /// (#531 review defect 5).
+    #[test]
+    fn an_absurd_measure_indent_drops_its_clause() {
+        for start in ["1e300pt", "nanpt", "999999999999999999999999999in"] {
+            let p = body(&format!(
+                r#"<w:p><w:pPr><w:ind w:start="{start}" w:end="36pt"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#
+            ));
+            let p = p.child("p").unwrap();
+            let facts = LineFacts {
+                index: 0,
+                style: None,
+                outline: None,
+                heading: None,
+                marker: None,
+                level: 0,
+                page_break: false,
+                resolved: false,
+                comments: &[],
+                spans: &[],
+                empty: false,
+                unshown: &[],
+                size: None,
+            };
+            let line = id_line(p, &facts, &Handles::default());
+            assert_eq!(line, "<!-- p0 right 0.5in -->", "{start}: {line}");
+        }
+    }
+
     #[test]
     fn nested_tables_are_not_numbered() {
         let mut body = body(
@@ -1677,18 +3540,140 @@ mod tests {
         assert_eq!(numbered, [Some("0"), None, Some("1")]);
     }
 
+    /// A cell paragraph's mark names an insertion and a deletion at once
+    /// (`w:pPr/w:rPr` holds both `w:ins` and `w:del`), and the header
+    /// counts each mark the change list names.
     #[test]
-    fn revision_tags_join_neighbours_then_pair_a_deletion_with_the_insertion_beside_it() {
+    fn a_cell_paragraph_mark_named_twice_counts_twice() {
+        let line = "<!-- t0 1x1, cells p1-p1 by row, break-ins r3 @AC in p1, \
+                    break-del r4 @AC in p1 -->";
+        assert_eq!(collect_revisions(line), ["mark", "mark"]);
+    }
+
+    /// A mark with no `w:id` prints `noid`, so one author's inserted and
+    /// deleted unshown marks are the same tag: each keeps the kind its own
+    /// clause gave it, as two changes the header lists as one of each.
+    #[test]
+    fn anonymous_unshown_marks_keep_the_kind_their_clause_gave_them() {
+        let body = "<!-- p1 rev noid @AC, rev-del noid @AC -->";
+        assert_eq!(collect_revisions(body), ["ins", "del"]);
+    }
+
+    #[test]
+    fn review_3_revision_tags_keep_unequal_source_dates_separate() {
+        for new_date in ["", r#" w:date="2026-10-02T10:00:00Z""#] {
+            let d = doc(&format!(
+                r#"<w:p><w:del w:id="1" w:author="Alice" w:date="2026-10-01T09:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="Alice"{new_date}><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#
+            ));
+            let handles = handles(&d, &[], None, None);
+            let p = d.child("body").unwrap().child("p").unwrap();
+            let tags = revision_tags(p, &handles)
+                .into_iter()
+                .map(|tag| format!("{}:{}", tag.kind, tag.tag))
+                .collect::<Vec<_>>();
+            assert_eq!(tags, ["del:1@A", "ins:2@A"]);
+        }
+    }
+
+    #[test]
+    fn revision_tags_keep_distinct_ids_and_pair_a_deletion_with_the_insertion_after_it() {
+        // Distinct adjacent ids stay separate. A deletion followed by an
+        // insertion of one change forms a substitution (#1363): `changes`
+        // groups the touching deletion 4 and insertion 5.
         let d = doc(
-            r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:bookmarkStart w:id="9" w:name="_b"/><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:r><w:t> u </w:t></w:r><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins></w:p>"#,
+            r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>x</w:t></w:r></w:ins><w:r><w:t> t </w:t></w:r><w:ins w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:ins><w:bookmarkStart w:id="9" w:name="_b"/><w:del w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:del><w:r><w:t> u </w:t></w:r><w:ins w:id="7" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins><w:del w:id="3" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del><w:r><w:t> v </w:t></w:r><w:del w:id="4" w:author="Ann Counsel"><w:r><w:delText>f</w:delText></w:r></w:del><w:ins w:id="5" w:author="Ann Counsel"><w:r><w:t>g</w:t></w:r></w:ins></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
+        let p = d.child("body").unwrap().child("p").unwrap();
+        let tags = |wholes: Wholes| -> Vec<String> {
+            with_wholes(wholes, || {
+                revision_tags(p, &handles)
+                    .into_iter()
+                    .map(|t| format!("{}:{}", t.kind, t.tag))
+                    .collect()
+            })
+        };
+        let one = ["4", "5"].map(String::from).to_vec();
+        let pair = Wholes::from([("r4".to_string(), one.clone()), ("r5".to_string(), one)]);
+        assert_eq!(
+            tags(pair),
+            [
+                "ins:0@AC",
+                "ins:2@AC",
+                "del:1@AC",
+                "ins:7@AC",
+                "ins:8@AC",
+                "del:3@AC",
+                "sub:4+5@AC"
+            ]
+        );
+        // Two changes, as `changes` would list them with content between.
+        assert_eq!(
+            &tags(Wholes::new())[5..],
+            ["del:3@AC", "del:4@AC", "ins:5@AC"]
+        );
+    }
+
+    #[test]
+    fn revision_tags_pass_over_empty_marks_wherever_they_sit() {
+        // An empty mark shows nothing: the id line's `rev` clause names it,
+        // and it neither joins nor splits the changes around it.
+        let d = doc(
+            r#"<w:p><w:r><w:t>Empty </w:t></w:r><w:ins w:id="8" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:id="9" w:author="Ann Counsel"/><w:r><w:t> end.</w:t></w:r><w:ins w:id="10" w:author="Ann Counsel"><w:r><w:rPr><w:b/></w:rPr></w:r></w:ins><w:del w:id="11" w:author="Ann Counsel"><w:r><w:delText>b</w:delText></w:r></w:del><w:ins w:id="12" w:author="Ann Counsel"/><w:del w:id="13" w:author="Ann Counsel"><w:r><w:delText>c</w:delText></w:r></w:del></w:p>"#,
+        );
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
             .map(|t| format!("{}:{}", t.kind, t.tag))
             .collect();
-        assert_eq!(tags, ["ins:0@AC", "sub:1+2@AC", "sub:3+7+8@AC"]);
+        assert_eq!(tags, ["ins:8@AC", "del:11@AC", "del:13@AC"]);
+    }
+
+    #[test]
+    fn inches_read_back_to_the_same_twips() {
+        // 2cm margins are 1134 twips: `0.79in` came back as 1138.
+        assert_eq!(inches(1134.0), "0.7875in");
+        assert_eq!(inches(1417.0), "0.984in");
+        assert_eq!(inches(720.0), "0.5in");
+        assert_eq!(inches(1440.0), "1in");
+        for twips in 0..=31_680u32 {
+            let text = inches(f64::from(twips));
+            let back: f64 = text.strip_suffix("in").unwrap().parse().unwrap();
+            assert_eq!((back * 1440.0).round(), f64::from(twips), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_shown_range_or_bookmark_between_marks_keeps_them_apart() {
+        // The text prints `{++a++}{=={--b--}==}{>>c0<<}`: two changes, not
+        // a substitution, and `{++a++}<a id="m"></a>{++b++}` two insertions.
+        // A range or bookmark the view does not print joins as before.
+        let d = doc(
+            r#"<w:p><w:ins w:id="1" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:commentRangeStart w:id="0"/><w:del w:id="2" w:author="Ann Counsel"><w:r><w:delText>b</w:delText></w:r></w:del><w:commentRangeEnd w:id="0"/><w:r><w:t> </w:t></w:r><w:ins w:id="3" w:author="Ann Counsel"><w:r><w:t>c</w:t></w:r></w:ins><w:bookmarkStart w:id="0" w:name="m"/><w:ins w:id="4" w:author="Ann Counsel"><w:r><w:t>d</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:ins w:id="5" w:author="Ann Counsel"><w:r><w:t>e</w:t></w:r></w:ins><w:commentRangeStart w:id="7"/><w:bookmarkStart w:id="1" w:name="n"/><w:del w:id="6" w:author="Ann Counsel"><w:r><w:delText>f</w:delText></w:r></w:del></w:p>"#,
+        );
+        let mut handles = handles(&d, &[], None, None);
+        let p = d.child("body").unwrap().child("p").unwrap();
+        let tags = |handles: &Handles| -> Vec<String> {
+            revision_tags(p, handles)
+                .into_iter()
+                .map(|t| format!("{}:{}", t.kind, t.tag))
+                .collect()
+        };
+        assert_eq!(
+            tags(&handles),
+            [
+                "ins:1@AC", "del:2@AC", "ins:3@AC", "ins:4@AC", "ins:5@AC", "del:6@AC"
+            ]
+        );
+        handles.shown_ranges.insert("0".into());
+        handles.shown_bookmarks.insert("m".into());
+        assert_eq!(
+            tags(&handles),
+            [
+                "ins:1@AC", "del:2@AC", "ins:3@AC", "ins:4@AC", "ins:5@AC", "del:6@AC"
+            ]
+        );
     }
 
     #[test]
@@ -1696,7 +3681,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t> </w:t></w:r><w:del w:id="1" w:author="John Doe"><w:r><w:delText>b</w:delText></w:r></w:del></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         assert_eq!(handles.by_author["Ann Counsel"], "AC");
         assert_eq!(handles.by_author["John Doe"], "JD");
         let p = d.child("body").unwrap().child("p").unwrap();
@@ -1708,10 +3693,30 @@ mod tests {
         assert_eq!(join_tags(&["1@AC".into(), "2@AC".into()]), "1+2@AC");
         assert_eq!(join_tags(&["1@AC".into(), "2@JD".into()]), "1@AC|2@JD");
         assert_eq!(join_tags(&["1+2@AC".into(), "3@AC".into()]), "1+2+3@AC");
-        assert_eq!(format_tag("0@AC"), "#0 @AC");
-        assert_eq!(format_tag("1+2@AC"), "#1+2 @AC");
-        assert_eq!(format_tag("1@AC|2@JD"), "#1 @AC; #2 @JD");
+        assert_eq!(format_tag("0@AC"), "r0 @AC");
+        assert_eq!(format_tag("1+2@AC"), "r1+2 @AC");
+        assert_eq!(format_tag("1@AC|2@JD"), "r1 @AC; r2 @JD");
+        assert_eq!(format_tag("footnotes#1+2@AC"), "footnotes.r1+2 @AC");
+        assert_eq!(format_tag("1@AC|header1#2@JD"), "r1 @AC; header1.r2 @JD");
+        // An id the short form cannot spell prints its long id.
+        assert_eq!(format_tag("007@AC"), "body:rev:007 @AC");
+        assert_eq!(
+            format_tag("Header_1#4+5@AC"),
+            "Header_1:rev:4 @AC; Header_1:rev:5 @AC"
+        );
+        assert_eq!(format_tag("?@??"), "noid @??");
+        assert_eq!(format_tag("footnotes#?@AC"), "footnotes.noid @AC");
+        assert!(crate::ids::parse_change_ids("noid").is_err());
         assert_eq!(handle_of("1+2@AC"), Some("AC"));
+        assert_eq!(handle_of("header1#1@AC"), Some("AC"));
+        assert_eq!(
+            join_tags(&["header1#1@AC".into(), "header1#2@AC".into()]),
+            "header1#1+2@AC"
+        );
+        assert_eq!(
+            join_tags(&["1@AC".into(), "header1#2@AC".into()]),
+            "1@AC|header1#2@AC"
+        );
     }
 
     #[test]
@@ -1720,7 +3725,7 @@ mod tests {
             r#"<w:p><w:ins w:id="0" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/><w:ins w:id="1" w:author="Al Cooper" w:date="2026-10-02T08:00:00Z"/><w:ins w:id="2" w:author="Al Cooper" w:date="2026-10-03T08:30:00Z"/></w:p>"#,
         );
         let comments = parse_xml(format!(r#"<w:comments {W}><w:comment w:id="5" w:author="Arthur Souza Rodrigues" w:initials="AS" w:date="2026-10-09T16:13:00Z"/><w:comment w:id="6" w:author="Ann Counsel" w:date="2026-10-01T09:00:00Z"/></w:comments>"#).as_bytes()).unwrap();
-        let handles = handles(&d, &[], Some(&comments));
+        let handles = handles(&d, &[], Some(&comments), None);
         assert_eq!(
             handles.order,
             ["Ann Counsel", "Al Cooper", "Arthur Souza Rodrigues"]
@@ -1734,24 +3739,78 @@ mod tests {
         );
         assert_eq!(handles.unique_date("Al Cooper"), None);
         assert_eq!(
-            handles.date_range("Al Cooper"),
-            Some("2026-10-02..2026-10-03".to_string())
+            handles.latest_date("Al Cooper"),
+            Some("2026-10-03T08:30:00Z")
         );
         assert_eq!(handles.unique_date("Nobody"), None);
+        assert_eq!(handles.latest_date("Ann Counsel"), None);
+        assert_eq!(handles.latest_date("Nobody"), None);
+    }
+
+    #[test]
+    fn latest_date_orders_positive_offsets_by_instant() {
+        let handles = Handles {
+            dates: HashMap::from([(
+                "Ann Lee".into(),
+                BTreeSet::from([
+                    "2026-03-04T05:00:00+02:00".into(),
+                    "2026-03-04T04:00:00Z".into(),
+                ]),
+            )]),
+            ..Handles::default()
+        };
+        assert_eq!(handles.latest_date("Ann Lee"), Some("2026-03-04T04:00:00Z"));
+    }
+
+    #[test]
+    fn latest_date_orders_negative_offsets_by_instant() {
+        let handles = Handles {
+            dates: HashMap::from([(
+                "Ann Lee".into(),
+                BTreeSet::from([
+                    "2026-03-04T03:00:00-02:00".into(),
+                    "2026-03-04T04:00:00Z".into(),
+                ]),
+            )]),
+            ..Handles::default()
+        };
+        assert_eq!(
+            handles.latest_date("Ann Lee"),
+            Some("2026-03-04T03:00:00-02:00")
+        );
+    }
+
+    #[test]
+    fn latest_date_compares_fractions_across_days_and_missing_offsets() {
+        for (earlier, later) in [
+            ("2026-01-01T00:30:00+01:00", "2025-12-31T23:45:00Z"),
+            ("2024-03-01T00:30:00+01:00", "2024-02-29T23:45:00Z"),
+            ("2026-03-04T05:00:00.100+02:00", "2026-03-04T03:00:00.11Z"),
+            ("2026-03-04T05:00:00+02:00", "2026-03-04T04:00:00"),
+        ] {
+            let handles = Handles {
+                dates: HashMap::from([(
+                    "Ann Lee".into(),
+                    BTreeSet::from([earlier.into(), later.into()]),
+                )]),
+                ..Handles::default()
+            };
+            assert_eq!(handles.latest_date("Ann Lee"), Some(later), "{earlier}");
+        }
     }
 
     #[test]
     fn range_markers_do_not_break_a_move_or_a_substitution() {
         let d = doc(
-            r#"<w:p><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permStart w:id="30"/><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permEnd w:id="30"/></w:p>"#,
+            r#"<w:p><w:moveToRangeStart w:id="21" w:name="m"/><w:moveTo w:id="2" w:author="Ann Counsel"><w:r><w:t>b</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="21"/><w:permStart w:id="30"/><w:moveFromRangeStart w:id="20" w:name="m"/><w:moveFrom w:id="1" w:author="Ann Counsel"><w:r><w:delText>a</w:delText></w:r></w:moveFrom><w:moveFromRangeEnd w:id="20"/><w:permEnd w:id="30"/></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         let tags: Vec<String> = revision_tags(p, &handles)
             .into_iter()
             .map(|t| format!("{}:{}", t.kind, t.tag))
             .collect();
-        assert_eq!(tags, ["sub:1+2@AC"]);
+        assert_eq!(tags, ["ins:2@AC", "del:1@AC"]);
     }
 
     #[test]
@@ -1764,7 +3823,7 @@ mod tests {
         let d = doc(
             r#"<w:p><w:pPr><w:pPrChange w:id="1" w:author="Ann Counsel"><w:pPr/></w:pPrChange></w:pPr><w:r><w:rPr><w:b/><w:rPrChange w:id="2" w:author="Ann Counsel"><w:rPr/></w:rPrChange></w:rPr><w:t>x</w:t></w:r></w:p>"#,
         );
-        let handles = handles(&d, &[], None);
+        let handles = handles(&d, &[], None, None);
         let p = d.child("body").unwrap().child("p").unwrap();
         assert_eq!(format_change_tags(p, &handles), ["1@AC", "2@AC"]);
     }

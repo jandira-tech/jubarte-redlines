@@ -2,15 +2,29 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `serializeElement` / `XDocument.toString` from `lib/xml-linq.ts`.
+//! Arena-DOM → XML string, ported from `serializeElement` and
+//! `XDocument.toString` in `lib/xml-linq.ts`.
 //!
 //! Scope-aware namespace serialization: each element inherits its parent
-//! namespace scope and may add/override local `xmlns` declarations, so nested
-//! namespace scopes are not flattened to the root.
+//! namespace scope and may add or override local `xmlns` declarations, so
+//! nested namespaces are NOT flattened to the root. When a prefix is
+//! rebound in this scope, an unused conventional OOXML prefix
+//! ([`serialize_element`]) is preferred; only when no conventional prefix is
+//! free does it fall back to a generated `ns{{n}}`.
 //!
-//! SER-01: tags, attributes, and escapes are written directly into the final
-//! output buffer (no intermediate `attr_str` / `qname` String / always-alloc
-//! `escape_*` that re-allocates when nothing needs escaping).
+//! # Entry points
+//!
+//! - [`serialize_element`] — element subtree → XML string.
+//! - [`serialize_document`] — whole document (declaration + children).
+//! - [`serialize_element_sha1_hex`] — streaming SHA-1 hex of the
+//!   element, with the first WML default xmlns stripped (the
+//!   atom-hash stream, HASH-STREAM).
+//! - [`serialize_element_structure_sha1_hex`] — SHA-1 hex of the
+//!   structural shape only (element / attribute names and nesting;
+//!   no text / comment / PI; same xmlns strip; HASH-STREAM-02).
+//!
+//! Tag bodies, attributes, and escapes are written straight into the
+//! output sink with no per-token `String` allocation (SER-01).
 
 use std::collections::HashMap;
 
@@ -367,7 +381,23 @@ pub(crate) fn is_namespace_prefix_list(element: &XName, name: &XName) -> bool {
         )
 }
 
-/// Serialize an element subtree to an XML string (port of `serializeElement`).
+/// Serialize an element subtree (`el` and its descendants) to an XML
+/// string. Port of `serializeElement` from `lib/xml-linq.ts`.
+///
+/// Each element inherits its parent's namespace scope and may add or
+/// override local `xmlns` declarations, so nested namespace scopes are
+/// preserved (not flattened to the root). When an attribute or a side
+/// element lives in one that no scope has bound yet, a conventional OOXML
+/// prefix (`w`, `r`, `mc`, `w14`, …) is preferred when one is free; if
+/// none is, a generated `ns{{n}}` is used.
+///
+/// Element-only output: text children are escaped; comments and
+/// processing instructions are emitted verbatim (a comment holding `--` is
+/// not repaired), attributes are emitted in
+/// declaration order, namespace declarations first. No DTD, CDATA, or
+/// signature lists — the input is already a parsed DOM.
+///
+/// `el` must be an element node (no-op / panic via `emit` if not).
 pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
     let mut state = State { counter: 0 };
     let root_scope = Scope::root();
@@ -376,10 +406,15 @@ pub fn serialize_element(dom: &Dom, el: NodeId) -> String {
     out
 }
 
-/// HASH-STREAM-01 lite: SHA-1 (lowercase hex) of the serialized element with the
-/// first WML default-xmlns declaration stripped — byte-identical to
-/// `sha1_hex(serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1))` without
-/// materializing the full XML string for hashing.
+/// SHA-1 hex of [`serialize_element`] output with the first
+/// `xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
+/// declaration stripped from the root open tag (HASH-STREAM). Byte-identical
+/// to hashing the materialized string after the same `replacen` call, but
+/// streams straight into SHA-1 so the comparison-style XML never needs to
+/// sit in a heap `String`.
+///
+/// Used by the atom hash stream so that two elements that differ only by
+/// their first default-ns declaration hash the same.
 pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
     let mut state = State { counter: 0 };
     let root_scope = Scope::root();
@@ -388,10 +423,12 @@ pub fn serialize_element_sha1_hex(dom: &Dom, el: NodeId) -> String {
     out.finish_hex()
 }
 
-/// HASH-STREAM-02: structure-only SHA-1 (element names + attributes + nesting;
-/// no text/comment/PI) with the same first WML default-xmlns strip as
-/// [`serialize_element_sha1_hex`]. Digest-identical to hashing a
-/// structure-clone then serializing, without allocating the structure DOM.
+/// SHA-1 hex of the structural shape only: element names, attributes,
+/// and nesting; no text, comment, or PI content. The same first WML
+/// default-xmlns strip applies as in
+/// [`serialize_element_sha1_hex`] (HASH-STREAM-02). Two elements with
+/// identical structure but different text content hash the same — used
+/// for moves detection and similar shape-only comparisons.
 pub fn serialize_element_structure_sha1_hex(dom: &Dom, el: NodeId) -> String {
     let mut state = State { counter: 0 };
     let root_scope = Scope::root();
@@ -496,9 +533,15 @@ fn write_qname(out: &mut impl XmlBuf, prefix: &str, local: &str) {
 }
 
 /// SER-01: escape attribute values into `out`. Fast path when no special chars.
+/// XML 1.0 §3.3.3: attribute-value normalization turns a literal TAB, CR or
+/// LF into a space on every read, so whitespace must be a character
+/// reference to survive.
 #[inline]
 fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
-    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'"')) {
+    if !s
+        .bytes()
+        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\t' | b'\n' | b'\r'))
+    {
         out.push_str(s);
         return;
     }
@@ -508,15 +551,20 @@ fn write_escape_attr(out: &mut impl XmlBuf, s: &str) {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            '\t' => out.push_str("&#x9;"),
+            '\n' => out.push_str("&#xA;"),
+            '\r' => out.push_str("&#xD;"),
             _ => out.push(c),
         }
     }
 }
 
 /// SER-01: escape text content into `out`. Fast path when no special chars.
+/// XML 1.0 §2.11: a reader normalizes a literal CR to LF, so a bare CR in
+/// text must be a character reference; TAB and LF in text are kept.
 #[inline]
 fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
-    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>')) {
+    if !s.bytes().any(|b| matches!(b, b'&' | b'<' | b'>' | b'\r')) {
         out.push_str(s);
         return;
     }
@@ -525,6 +573,7 @@ fn write_escape_text(out: &mut impl XmlBuf, s: &str) {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
+            '\r' => out.push_str("&#xD;"),
             _ => out.push(c),
         }
     }
@@ -745,7 +794,14 @@ fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: 
     out.push('>');
 }
 
-/// Serialize a whole document (declaration + root), port of `XDocument.toString`.
+/// Serialize a whole document (declaration + root + siblings) to a
+/// string. Port of `XDocument.toString` from `lib/xml-linq.ts`.
+///
+/// The declaration is emitted first (if present), then each child of
+/// `doc` in order: elements are streamed into the same `String` rather
+/// than materialized first (no intermediate `String` per child);
+/// text, comment, and PI children are escaped / emitted verbatim.
+/// `doc` must be a Document node.
 pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
     let mut out = String::new();
     if let Some(d) = dom.declaration(doc) {
@@ -792,10 +848,59 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
     use crate::xmllinq::{Dom, XNamespace};
+
+    /// SHA-1 hex of `xml` with its first WML default xmlns removed: what
+    /// the streaming hash must equal.
+    fn materialized_sha1(xml: &str) -> String {
+        use sha1::Digest;
+        let stripped = xml.replacen(WML_DEFAULT_XMLNS, "", 1);
+        crate::util::sha1::hex_string_from_bytes(&sha1::Sha1::digest(stripped.as_bytes()))
+    }
+
+    const RICH: &[&str] = &[
+        r#"<w:document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" mc:Ignorable="w14 x9"><w:body><w:p w14:paraId="1" xml:space="preserve"><!--note--><?pi data?><?bare?><w:r><w:t>a &amp; "b" &lt;c&gt;</w:t></w:r></w:p><inner xmlns="" plain="1&amp;2">t</inner><w:sectPr/></w:body></w:document>"#,
+        r#"<root xmlns="urn:default" xmlns:a="urn:a" xmlns:b="urn:a"><a:x b:y="1"><b:z/></a:x>text</root>"#,
+        r#"<lone/>"#,
+    ];
+
+    #[test]
+    fn the_streamed_hash_equals_the_hash_of_the_serialized_text() {
+        for xml in RICH {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            let root = dom.root(doc).unwrap();
+            let text = serialize_element(&dom, root);
+            assert_eq!(
+                serialize_element_sha1_hex(&dom, root),
+                materialized_sha1(&text),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_structure_hash_ignores_text_comments_and_instructions() {
+        let hash = |xml: &str| {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            let root = dom.root(doc).unwrap();
+            serialize_element_structure_sha1_hex(&dom, root)
+        };
+        let base = hash(RICH[0]);
+        let retexted = RICH[0]
+            .replace("a &amp; \"b\" &lt;c&gt;", "other")
+            .replace("<!--note-->", "")
+            .replace("<?pi data?>", "")
+            .replace(">t</inner>", ">u</inner>");
+        assert_eq!(hash(&retexted), base);
+        let restructured = RICH[0].replace("<w:sectPr/>", "<w:sectPr><w:pgSz/></w:sectPr>");
+        assert_ne!(hash(&restructured), base);
+        assert_ne!(hash(RICH[1]), hash(RICH[2]));
+    }
 
     /// Word binds `w16` to the 2018 wordml namespace (and writes `w16sdtfl`,
     /// `w16du` for its 2024/2023 ones); an unbound use gets Word's prefix.
@@ -957,6 +1062,29 @@ mod tests {
         }
     }
 
+    /// XML 1.0 §3.3.3: attribute-value normalization turns a literal TAB,
+    /// CR or LF in an attribute value into a space on every read, so the
+    /// DOM's whitespace must be written back as character references.
+    /// §2.11: a bare CR in text reads back as LF; TAB and LF in text are
+    /// kept as they are.
+    #[test]
+    fn attribute_and_text_whitespace_survive_serialization_round_trips() {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument("<root a=\"x&#13;&#10;y&#9;z\">t&#13;u</root>");
+        let root = dom.root(document).unwrap();
+        let xml = serialize_element(&dom, root);
+        assert!(xml.contains("x&#xD;&#xA;y&#x9;z"), "{xml}");
+        assert!(xml.contains("t&#xD;u"), "{xml}");
+        let mut back = Dom::new();
+        let parsed = back.parse_xdocument(&xml);
+        let r = back.root(parsed).unwrap();
+        assert_eq!(
+            back.attribute(r, &XNamespace::none().name("a")),
+            Some("x\r\ny\tz")
+        );
+        assert_eq!(back.value(r), "t\ru");
+    }
+
     #[test]
     fn reserved_namespace_rebindings_cannot_corrupt_xml_attributes() {
         for (prefix, uri) in [
@@ -983,7 +1111,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod xml_structure_namespace_boundary_tests {
     use super::*;
 

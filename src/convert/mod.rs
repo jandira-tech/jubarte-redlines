@@ -2,16 +2,38 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Independent DOCX → PDF conversion (not LibreOffice / soffice).
+//! Independent DOCX → PDF, PNG and page-text conversion (no LibreOffice
+//! or Word process is involved).
 //!
-//! Layout aims at LibreOffice visual parity: Carlito/Liberation faces (the
-//! same metric-compatible substitutes soffice embeds), Word `docDefaults`
-//! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
+//! Layout aims at LibreOffice visual parity: the Carlito / Liberation
+//! faces (the same metric-compatible substitutes soffice embeds),
+//! Word's `docDefaults` (Calibri 11 / line 276 / after 200 twips) and
+//! `sectPr` page geometry. A page-by-page visual diff against a Word PDF
+//! is the `diff_render` family; per-page font resolutions and the page
+//! text are in `RenderReport`.
+//!
+//! Entry points:
+//!
+//! - `docx_to_pdf`, `docx_to_pdf_with`, `docx_to_pdf_report` for the
+//!   PDF;
+//! - `docx_to_png`, `docx_render_report`, `render` for PNG pages
+//!   and the page report;
+//! - `pdf_page_count` to count pages of a PDF;
+//! - `DiffOptions` / `RenderDiff` / `PageDiff` (re-exported from
+//!   `diff_render`) for the visual diff;
+//! - `FontStep` / `FontReportEntry` / `font_report_json` (re-exported
+//!   from `font`) for the conversion's font-resolution report.
+//!
+//! `RevisionStyle` / `RevisionPalette` back the `--revisions` CLI flag
+//! and the `RevisionStyle::Word` mode the fidelity benchmarks measure
+//! against Word's own Save as PDF.
 
-mod altchunk;
+pub(crate) mod altchunk;
 mod diff_render;
 mod font;
 mod font_table;
+mod math_font;
+mod math_layout;
 mod metafile;
 mod pdf;
 mod preset_geom;
@@ -46,10 +68,11 @@ fn fonts() -> &'static Fonts<'static> {
 }
 use pdf::{Op, Page, PdfComment};
 
-/// Failure opening a DOCX or emitting a PDF.
+/// Opening a DOCX, emitting a PDF, or selecting pages failed.
 #[derive(Debug)]
 pub enum ConvertError {
-    /// The bytes were not a readable OPC package.
+    /// The bytes were not a readable OPC package, or its strict-to-transitional
+    /// normalization couldn't open.
     OpenPackage(String),
     /// The package has no main document part.
     MissingDocument,
@@ -58,14 +81,19 @@ pub enum ConvertError {
     /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
     /// rasterize at the requested one.
     Raster(String),
-    /// [`RenderRequest::pages`] named a page the output does not have.
+    /// [`RenderRequest::pages`] named a page past the document's last.
     PageOutOfRange {
-        /// The zero-based index asked for.
+        /// The zero-based document page asked for.
         requested: usize,
-        /// Pages written: the layout's, narrowed by
-        /// `PdfOptions::changed_only` and extended by the listing pages of
-        /// `CommentPlacement::End`.
+        /// The document's pages: the layout's, and the listing pages of
+        /// `CommentPlacement::End` after them.
         page_count: usize,
+    },
+    /// [`RenderRequest::pages`] named a document page that
+    /// [`PdfOptions::changed_only`] dropped.
+    PageNotKept {
+        /// The zero-based document page asked for.
+        requested: usize,
     },
 }
 
@@ -81,9 +109,14 @@ impl fmt::Display for ConvertError {
                 page_count,
             } => write!(
                 f,
-                "page {} is out of range: the output has {page_count} page{}",
+                "page {} is out of range: the document has {page_count} page{}",
                 requested + 1,
                 if *page_count == 1 { "" } else { "s" }
+            ),
+            Self::PageNotKept { requested } => write!(
+                f,
+                "page {} is not among the kept pages (changed pages only)",
+                requested + 1
             ),
         }
     }
@@ -91,7 +124,8 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
-/// How many lines a revision mark draws (strike through or under the text).
+/// How many strike or underline lines a revision mark draws under
+/// changed text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MarkLines {
     /// No line.
@@ -103,10 +137,11 @@ pub enum MarkLines {
     Double,
 }
 
-/// How one kind of tracked change is painted.
+/// How one kind of tracked change is painted: the ink and the strike /
+/// underline it draws.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RevisionMark {
-    /// Ink of the changed text and its lines (RGB).
+    /// Ink of the changed text and its lines, as an RGB triple.
     pub color: [u8; 3],
     /// Lines struck through the text.
     pub strike: MarkLines,
@@ -114,25 +149,26 @@ pub struct RevisionMark {
     pub underline: MarkLines,
 }
 
-/// The marks for each kind of tracked change.
+/// The marks for each kind of tracked change (`w:del`, `w:ins`,
+/// `w:moveFrom`, `w:moveTo`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RevisionPalette {
-    /// `w:del`.
+    /// `w:del`: text deleted by the redline.
     pub deleted: RevisionMark,
-    /// `w:ins`.
+    /// `w:ins`: text inserted by the redline.
     pub inserted: RevisionMark,
-    /// `w:moveFrom`.
+    /// `w:moveFrom`: text moved from here.
     pub moved_from: RevisionMark,
-    /// `w:moveTo`.
+    /// `w:moveTo`: text moved to here.
     pub moved_to: RevisionMark,
 }
 
 impl RevisionPalette {
     /// The legal-redline convention, as Litera Compare sets Word's track
-    /// changes: an insertion or deletion is marked once (blue underline, red
-    /// strike) and a move twice, in green (double strike where it left,
-    /// double underline where it landed), so a move never reads as an
-    /// insertion by its colour alone.
+    /// changes: an insertion or deletion is marked once (blue underline,
+    /// red strike) and a move twice, in green (double strike where it
+    /// left, double underline where it landed), so a move never reads as
+    /// an insertion by its colour alone.
     pub const CONVENTIONAL: Self = Self {
         deleted: RevisionMark {
             color: [0xFF, 0x00, 0x00],
@@ -214,19 +250,28 @@ impl RevisionPalette {
 /// painted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RevisionStyle {
-    /// `RevisionPalette::CONVENTIONAL`.
+    /// [`RevisionPalette::CONVENTIONAL`] (red / blue / green redline).
     #[default]
     Conventional,
     /// What Microsoft Word's Save as PDF paints (per-author ink, single
-    /// strike and underline); the fidelity benchmarks measure this one.
+    /// strike and underline); the fidelity benchmarks measure against this
+    /// one, so a jubarte PDF compared against a Word one must be rendered
+    /// with this mode.
     Word,
     /// The caller's own marks.
     Custom(RevisionPalette),
 }
 
 impl RevisionStyle {
-    /// `"conventional"`, `"word"` or `"custom"` (which needs a
-    /// `RevisionPalette::parse` spec), as the CLI and bindings name them.
+    /// Parse `"conventional"`, `"word"` or `"custom"` (which needs a
+    /// [`RevisionPalette::parse`] spec), as the CLI flag and the bindings
+    /// name them.
+    ///
+    /// # Errors
+    ///
+    /// A message when `name` is unknown, when `name = "custom"` but
+    /// `palette` is `None`, when `palette` is set with any name other than
+    /// `"custom"`, or when `palette` fails [`RevisionPalette::parse`].
     ///
     /// ```
     /// use jubarte::convert::RevisionStyle;
@@ -276,7 +321,7 @@ fn with_options<T>(options: PdfOptions, f: impl FnOnce() -> T) -> T {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod with_options_tests {
     use super::*;
 
@@ -310,8 +355,10 @@ fn comments_at_end() -> bool {
     PAGE_PLAN.with(|p| p.get().0 == CommentPlacement::End)
 }
 
-/// Convert a `.docx` package into a PDF (`%PDF` header, one or more pages).
-/// How `docx_to_pdf` writes the PDF's stream objects.
+/// The flags a DOCX → PDF conversion runs with.
+///
+/// Defaults match what `docx_to_pdf(docx)` passes
+/// ([`PdfOptions::default`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PdfOptions {
     /// Deflate content streams (`/Filter /FlateDecode`). Image samples and
@@ -329,21 +376,30 @@ pub struct PdfOptions {
     /// Where comments go: in balloons beside the text (the default, as
     /// Word prints them) or listed after the last page.
     pub comments: CommentPlacement,
+    /// Also attach each comment as a PDF note (a text annotation) at its
+    /// anchor. Off by default for every revision style: a viewer paints
+    /// the note as an icon over the text, and the balloon already shows
+    /// the comment. Word's Save as PDF writes none.
+    pub comment_notes: bool,
     /// Lay the whole document out, then keep only the pages a tracked
-    /// change touches (a change bar marks the page). Page numbers stay the
-    /// document's. A document without changes keeps its first page.
+    /// change touches (a revision in the body, a table, a footnote or an
+    /// endnote), the
+    /// pages a comment is anchored on, and the first page of each section
+    /// on which a revised header or footer paints. Page numbers stay the
+    /// document's. A document with none of these keeps its first page.
     pub changed_only: bool,
 }
 
 /// Where a converted PDF puts the document's comments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CommentPlacement {
-    /// Balloons in a pane beside the page, joined to the commented text,
-    /// as Word's Save as PDF prints them.
+    /// Balloons in a pane beside the page, joined to the commented text, as
+    /// Word's Save as PDF prints them.
     #[default]
     Margin,
-    /// The page keeps its own width: the commented text keeps its tint and
-    /// a `[JR1]` marker, and the comments are listed after the last page.
+    /// The page keeps its own width: the commented text keeps its tint
+    /// and a `[JR1]`-style marker, and the comments are listed after the
+    /// last page.
     End,
 }
 
@@ -352,22 +408,42 @@ pub enum CommentPlacement {
 pub struct ConvertedPdf {
     /// Rendered PDF (`%PDF` header).
     pub pdf: Vec<u8>,
-    /// Per-document font report (plan Step 2f): one row per distinct
-    /// requested family + style.
+    /// Per-document font report (plan Step 2f): one entry per distinct
+    /// requested family + style the layout saw.
     pub font_report: Vec<FontReportEntry>,
 }
 
-/// Render a DOCX package to PDF with the default options.
+/// Render a DOCX package to PDF with [`PdfOptions::default`]. Equivalent to
+/// `docx_to_pdf_with(docx, PdfOptions::default())`.
+///
+/// # Errors
+///
+/// [`ConvertError`] from [`docx_to_pdf_with`].
 pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {
     docx_to_pdf_with(docx, PdfOptions::default())
 }
 
-/// Render a DOCX package to PDF, choosing how streams are written.
+/// Render a DOCX package to PDF, choosing how streams are written and
+/// how marks are painted.
+///
+/// # Errors
+///
+/// - [`ConvertError::OpenPackage`] when `docx` is not a readable OPC
+///   package;
+/// - [`ConvertError::MissingDocument`] when the package has no main
+///   document part;
+/// - [`ConvertError::Emit`] when the PDF object assembly fails.
 pub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
     Ok(docx_to_pdf_report(docx, options)?.pdf)
 }
 
-/// Render a DOCX package to PDF and return the font-resolution report.
+/// Render a DOCX package to PDF and return the font-resolution report for
+/// it. The PDF is the `pdf` field of the result; the font report is the
+/// entries the conversion made for that document.
+///
+/// # Errors
+///
+/// As [`docx_to_pdf_with`].
 pub fn docx_to_pdf_report(docx: &[u8], options: PdfOptions) -> Result<ConvertedPdf, ConvertError> {
     let (result, font_report) = font::with_font_report(|| docx_to_pdf_inner(docx, options));
     Ok(ConvertedPdf {
@@ -387,9 +463,13 @@ fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, Convert
 /// Text painted on one page, in paint order (header first when present).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageText {
-    /// Zero-based page index.
+    /// Zero-based index among the pages written by the run.
     pub index: usize,
-    /// One line per baseline.
+    /// The page's number in the document, from 1. The comment listing's
+    /// pages number on after the last document page when
+    /// [`PdfOptions::comments`] is `End`.
+    pub number: usize,
+    /// One line per baseline, in painting order.
     pub text: String,
 }
 
@@ -399,8 +479,13 @@ pub struct PageText {
 pub struct RenderReport {
     /// Pages written: every page laid out, less those
     /// `PdfOptions::changed_only` drops, plus a `CommentPlacement::End`
-    /// listing.
+    /// listing, narrowed to [`RenderRequest::pages`] when set.
     pub page_count: usize,
+    /// The document's pages: every page laid out, plus a
+    /// `CommentPlacement::End` listing, whatever was written. The last
+    /// [`PageText::number`] a full render can have; names padded to its
+    /// width sort the same whichever pages are written.
+    pub document_pages: usize,
     /// Per-page painted text.
     pub pages: Vec<PageText>,
     /// Distinct font resolutions (requested → physical face).
@@ -408,18 +493,38 @@ pub struct RenderReport {
 }
 
 impl RenderReport {
-    /// `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
+    /// Each written page's first line, at most 60 characters: the
+    /// `page_starts` an edit bundle's `render` line lists.
+    #[must_use]
+    pub fn page_starts(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .map(|page| {
+                page.text
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// `{"page_count", "document_pages", "pages": [{"index", "number", "text"}],
+    /// "fonts": [...]}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         let pages: Vec<serde_json::Value> = self
             .pages
             .iter()
-            .map(|p| serde_json::json!({"index": p.index, "text": p.text}))
+            .map(|p| serde_json::json!({"index": p.index, "number": p.number, "text": p.text}))
             .collect();
         let fonts: serde_json::Value =
             serde_json::from_str(&font::font_report_json(&self.fonts)).unwrap_or_default();
         serde_json::json!({
             "page_count": self.page_count,
+            "document_pages": self.document_pages,
             "pages": pages,
             "fonts": fonts,
         })
@@ -427,26 +532,32 @@ impl RenderReport {
     }
 }
 
-/// What [`render`] should produce from its single layout pass.
+/// What [`render`] should produce from its single layout pass. All fields
+/// default to "off"; `pdf = true` writes the PDF, `png_dpi = Some(d)`
+/// rasterizes, `pages = Some([…])` narrows any of the above to a chosen
+/// set of document pages.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RenderRequest {
-    /// Write the PDF.
+    /// Write the PDF (only when at least one page is kept).
     pub pdf: bool,
-    /// Rasterize every page to PNG at this resolution.
+    /// Rasterize every page written to PNG at this DPI. Must be in
+    /// `1.0..=MAX_PNG_DPI` when set.
     pub png_dpi: Option<f32>,
-    /// Zero-based pages to rasterize (any order, repeats ignored); `None`
-    /// rasterizes every page. Layout always covers the whole document; the
-    /// report covers every page written, which `PdfOptions::changed_only`
-    /// narrows and `CommentPlacement::End` extends, and so do these
-    /// indices. An index at or past the page count is
-    /// [`ConvertError::PageOutOfRange`].
+    /// Zero-based document pages to write (any order, repeats ignored):
+    /// the PDF, the PNGs and the report hold these pages only; `None`
+    /// writes every page. They count the document's pages whatever
+    /// [`PdfOptions::changed_only`] keeps, then the listing pages of
+    /// [`CommentPlacement::End`]. A page it dropped is
+    /// [`ConvertError::PageNotKept`]; one past the last is
+    /// [`ConvertError::PageOutOfRange`]; an empty list writes no page and
+    /// no PDF. Layout always covers the whole document.
     pub pages: Option<Vec<usize>>,
 }
 
 /// Output of [`render`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
-    /// PDF bytes when requested.
+    /// PDF bytes when requested and at least one page is written.
     pub pdf: Option<Vec<u8>>,
     /// One PNG per page when requested (page order), or one per selected
     /// page in ascending order when [`RenderRequest::pages`] is set.
@@ -455,11 +566,29 @@ pub struct Rendered {
     pub report: RenderReport,
 }
 
-/// Highest PNG resolution [`render`] accepts.
+/// Highest PNG resolution [`render`] accepts (`1.0..=1200.0`).
 pub const MAX_PNG_DPI: f32 = 1200.0;
 
 /// Lay the document out once and emit any combination of PDF, PNG pages and
 /// the page report.
+/// Lay the document out once and emit any combination of PDF, PNG pages
+/// and the page report. The default `RenderRequest` writes nothing.
+///
+/// One layout pass covers the whole document; `request.pages` then
+/// narrows what is written. The font report always runs, so an empty
+/// `request` still pages the document and counts fonts.
+///
+/// # Errors
+///
+/// - [`ConvertError::OpenPackage`] / [`ConvertError::MissingDocument`]
+///   from the layout pass;
+/// - [`ConvertError::Raster`] when `request.png_dpi` is `Some(d)` outside
+///   `1.0..=MAX_PNG_DPI`, or any page is too large to rasterize at `d`;
+/// - [`ConvertError::PageNotKept`] when `request.pages` names a page
+///   [`PdfOptions::changed_only`] dropped;
+/// - [`ConvertError::PageOutOfRange`] when `request.pages` names a page
+///   past the document's last;
+/// - [`ConvertError::Emit`] when PDF object assembly fails.
 pub fn render(
     docx: &[u8],
     options: PdfOptions,
@@ -479,73 +608,105 @@ pub fn render(
     }
     let (result, font_report) = font::with_font_report(|| {
         with_options(options, || {
-            with_pages(docx, |fonts, pages| {
-                let selected = selected_pages(wanted, pages.len());
-                let pdf = (want_pdf && selected.is_ok()).then(|| pdf::emit(fonts, pages, options));
-                let pngs: Result<Vec<Vec<u8>>, ConvertError> = match (png_dpi, selected) {
-                    (_, Err(err)) => Err(err),
-                    (Some(dpi), Ok(selected)) => selected
-                        .into_iter()
-                        .map(|i| {
-                            raster::paint_page(fonts, &pages[i], dpi)
+            with_layout(docx, |fonts, pages, facts| {
+                let document_pages = document_pages(pages, facts.page_count);
+                let written: Vec<&pdf::Page> = selected_pages(wanted, pages, facts.page_count)?
+                    .into_iter()
+                    .map(|i| &pages[i])
+                    .collect();
+                let pdf =
+                    (want_pdf && !written.is_empty()).then(|| pdf::emit(fonts, &written, options));
+                let pngs: Vec<Vec<u8>> = match png_dpi {
+                    Some(dpi) => written
+                        .iter()
+                        .map(|page| {
+                            raster::paint_page(fonts, page, dpi)
                                 .map(|pixmap| raster::encode_png(&pixmap))
                                 .ok_or_else(|| {
                                     ConvertError::Raster(format!(
                                         "page {} is too large to rasterize at {dpi} dpi",
-                                        i + 1
+                                        page.number
                                     ))
                                 })
                         })
-                        .collect(),
-                    (None, Ok(_)) => Ok(Vec::new()),
+                        .collect::<Result<_, _>>()?,
+                    None => Vec::new(),
                 };
-                let texts = pages
+                let texts = written
                     .iter()
                     .enumerate()
                     .map(|(index, page)| PageText {
                         index,
+                        number: page.number,
                         text: raster::page_text(fonts, page),
                     })
                     .collect();
-                (pdf, pngs, pages.len(), texts)
+                Ok::<_, ConvertError>((pdf, pngs, written.len(), document_pages, texts))
             })
         })
     });
-    let (pdf, pngs, page_count, pages) = result?;
-    let pngs = pngs?;
+    let (pdf, pngs, page_count, document_pages, pages) = result??;
     Ok(Rendered {
         pdf,
         pngs,
         report: RenderReport {
             page_count,
+            document_pages,
             pages,
             fonts: font_report,
         },
     })
 }
 
-/// The zero-based pages to rasterize, ascending and without repeats: all of
-/// them when `pages` is `None`.
-fn selected_pages(
-    pages: Option<Vec<usize>>,
-    page_count: usize,
-) -> Result<Vec<usize>, ConvertError> {
-    let Some(mut selected) = pages else {
-        return Ok((0..page_count).collect());
-    };
-    selected.sort_unstable();
-    selected.dedup();
-    match selected.last() {
-        Some(&requested) if requested >= page_count => Err(ConvertError::PageOutOfRange {
-            requested,
-            page_count,
-        }),
-        _ => Ok(selected),
-    }
+/// The document's page count: `laid` (the layout's pages) or, past it, the
+/// last comment-listing page.
+fn document_pages(pages: &[pdf::Page], laid: usize) -> usize {
+    pages.iter().map(|p| p.number).max().unwrap_or(0).max(laid)
 }
 
-/// Rasterize every page to PNG at `dpi` (96 is screen resolution; 150 reads
-/// comfortably; 300 is print).
+/// Where in `pages` (the pages kept) each wanted zero-based document page
+/// is, ascending and without repeats: every kept page when `wanted` is
+/// `None`. `laid` is the layout's page count; the comment listing's pages
+/// number on after it.
+fn selected_pages(
+    wanted: Option<Vec<usize>>,
+    pages: &[pdf::Page],
+    laid: usize,
+) -> Result<Vec<usize>, ConvertError> {
+    let Some(mut wanted) = wanted else {
+        return Ok((0..pages.len()).collect());
+    };
+    wanted.sort_unstable();
+    wanted.dedup();
+    let page_count = document_pages(pages, laid);
+    if let Some(&requested) = wanted.last()
+        && requested >= page_count
+    {
+        return Err(ConvertError::PageOutOfRange {
+            requested,
+            page_count,
+        });
+    }
+    wanted
+        .into_iter()
+        .map(|requested| {
+            pages
+                .iter()
+                .position(|p| p.number == requested + 1)
+                .ok_or(ConvertError::PageNotKept { requested })
+        })
+        .collect()
+}
+
+/// Rasterize every page to PNG at `dpi` (96 is screen resolution, 150
+/// reads comfortably, 300 is print).
+///
+/// # Errors
+///
+/// [`ConvertError::OpenPackage`] when `docx` is not a readable package,
+/// [`ConvertError::MissingDocument`] when it has no main document part;
+/// [`ConvertError::Raster`] when `dpi` is outside `1.0..=MAX_PNG_DPI` or
+/// when a page is too large to rasterize at `dpi`.
 pub fn docx_to_png(
     docx: &[u8],
     options: PdfOptions,
@@ -563,7 +724,14 @@ pub fn docx_to_png(
     .pngs)
 }
 
-/// Page count, page text and font resolutions without writing PDF or PNG.
+/// Page count, page text and font resolutions from one layout pass, with
+/// no PDF or PNG written.
+///
+/// # Errors
+///
+/// As [`render`] with a default [`RenderRequest`]: an
+/// [`ConvertError::OpenPackage`] or
+/// [`ConvertError::MissingDocument`] from the layout pass.
 pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderReport, ConvertError> {
     Ok(render(docx, options, RenderRequest::default())?.report)
 }
@@ -604,7 +772,8 @@ fn with_layout<T>(
 ) -> Result<T, ConvertError> {
     crate::document_comparer::admit_package(docx)
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
-    let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
     let main = pkg
@@ -714,6 +883,18 @@ fn with_layout<T>(
         } else {
             MathFace::All
         });
+        // The same face supplies glyph ids for the math boxes. A face
+        // with no MATH table still lays out, on the TeX fallback. Without
+        // an equation the face is never resolved: resolving it would list
+        // Cambria Math in the font report of a document that asks for no
+        // such font.
+        let _math_font = math_font::MathFontGuard::set(if has_math {
+            let math_face = fonts.get(fonts.resolve("Cambria Math", false, false));
+            math_font::MathFont::from_bytes(math_face.bytes())
+                .unwrap_or_else(|| math_font::MathFont::fallback(math_face.upem))
+        } else {
+            math_font::MathFont::fallback(1000.0)
+        });
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
             let mut sheet = load_stylesheet(&pkg);
@@ -766,11 +947,12 @@ fn with_layout<T>(
             for (i, page) in pages.iter_mut().enumerate() {
                 page.number = i + 1;
             }
+            let laid = pages.len();
             if PAGE_PLAN.with(|p| p.get().1) {
                 keep_changed_pages(&mut pages);
             }
             if comments_at_end() {
-                list_comments_at_end(&fonts, &sheet, &mut pages);
+                list_comments_at_end(&fonts, &sheet, &mut pages, laid);
             } else {
                 paint_comment_balloons(&fonts, &sheet, &mut pages);
             }
@@ -779,7 +961,11 @@ fn with_layout<T>(
     })
 }
 
-/// Count page objects in a PDF (`/Type /Page`, excluding `/Type /Pages`).
+/// Count page objects in `pdf`: `/Type /Page` (not `/Type /Pages`).
+///
+/// Counts by matching the substring; an invalid PDF that happens to
+/// contain `/Type /Page` strings will over-count. The conservative use
+/// is `page_count` from a [`RenderReport`].
 pub fn pdf_page_count(pdf: &[u8]) -> usize {
     let text = String::from_utf8_lossy(pdf);
     let needle = "/Type /Page";
@@ -1161,6 +1347,8 @@ struct PageSetup {
     col_w: [f32; 4],
     /// Space after each custom column (pt).
     col_gap: [f32; 4],
+    /// `w:cols/@w:sep`: a rule down the middle of each gap.
+    col_sep: bool,
     /// `w:lnNumType/@w:countBy`. 0 = line numbering off.
     ln_count_by: u32,
     /// `w:lnNumType/@w:start`. Word default 1.
@@ -1609,6 +1797,7 @@ impl Defaults {
                 col_custom: 0,
                 col_w: [0.0; 4],
                 col_gap: [0.0; 4],
+                col_sep: false,
                 ln_count_by: 0,
                 ln_start: 1,
                 ln_distance: 0.0,
@@ -1735,6 +1924,9 @@ struct TextRun {
     /// mathematical alphanumerics: they still read back as Word's
     /// (U+1D44E for a), not as the ASCII they are painted with.
     math_ascii: bool,
+    /// A laid-out bar fraction, radical, or delimiter. Glyphs and rules
+    /// are positioned from the run's baseline. `None` for every other run.
+    math: Option<math_layout::MathBox>,
 }
 
 impl TextRun {
@@ -1769,12 +1961,18 @@ impl TextRun {
             checkbox: None,
             strut: false,
             math_ascii: false,
+            math: None,
         }
     }
 
     fn with_text(&self, text: impl Into<String>) -> Self {
         let mut run = self.clone();
         run.text = text.into();
+        // A split keeps the letters and drops the box. Painting the whole
+        // equation on a substring would draw it twice.
+        if run.text != self.text {
+            run.math = None;
+        }
         run
     }
 }
@@ -4968,6 +5166,7 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         if let Some(sp) = attr_any(dom, cols, "space").and_then(parse_len) {
             page.col_space = sp;
         }
+        page.col_sep = matches!(attr_any(dom, cols, "sep"), Some("1" | "true" | "on"));
         let equal = !matches!(
             attr_any(dom, cols, "equalWidth").unwrap_or("1"),
             "0" | "false" | "off"
@@ -5133,7 +5332,7 @@ fn parse_pg_borders(dom: &Dom, pb: NodeId) -> PageBorders {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod default_tab_tests {
     use super::*;
 
@@ -5149,7 +5348,7 @@ mod default_tab_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod pg_border_tests {
     use super::*;
 
@@ -7156,7 +7355,7 @@ fn settings_ul_trail_space(pkg: &PartFs) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod settings_tests {
     use super::*;
 
@@ -7653,11 +7852,23 @@ fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
     )
 }
 
-/// `PdfOptions::changed_only`: the pages a body change bar marks, or the
-/// first page when no change touches the body.
+/// `PdfOptions::changed_only`: the pages a body or note change bar marks,
+/// the pages a comment is anchored on, and the first page of every section
+/// on which a revised header or footer paints; the first page when none
+/// qualifies. A continuous section starts no page, so its pages count with
+/// the section before (Word starts no header there either). With a
+/// different first page, a revised default header first paints on the
+/// section's second page, and that page is the one kept.
 fn keep_changed_pages(pages: &mut Vec<Page>) {
-    if pages.iter().any(|p| p.changed) {
-        pages.retain(|p| p.changed);
+    let mut first_painted: BTreeMap<u32, usize> = BTreeMap::new();
+    for page in pages.iter().filter(|p| p.chrome_changed) {
+        first_painted.entry(page.section).or_insert(page.number);
+    }
+    let keep = |p: &Page| {
+        p.changed || !p.comments.is_empty() || first_painted.get(&p.section) == Some(&p.number)
+    };
+    if pages.iter().any(keep) {
+        pages.retain(keep);
     } else {
         pages.truncate(1);
     }
@@ -7731,8 +7942,10 @@ fn mark_comment_anchors(runs: &mut Vec<TextRun>) {
 /// `CommentPlacement::End`: the comments of the pages kept, taken off
 /// them and listed on pages of their own after the last one, in reading
 /// order: `[JR1] Author, page N` in the author's ink, then the comment's
-/// text, in the document's default face.
-fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>) {
+/// text, in the document's default face. The listing's pages number on
+/// from `laid`, the document's page count, so none takes the number of a
+/// document page `PdfOptions::changed_only` dropped.
+fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>, laid: usize) {
     const MARGIN: f32 = 72.0;
     const HEADING: f32 = 14.0;
     const SIZE: f32 = 10.0;
@@ -7829,6 +8042,9 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
             y -= pitch;
         }
         y -= GAP;
+    }
+    for (i, page) in out.iter_mut().enumerate() {
+        page.number = laid + 1 + i;
     }
     pages.extend(out);
 }
@@ -8947,7 +9163,15 @@ fn walk_container(
                     apply_sect_pr(dom, here, base),
                     apply_sect_pr(dom, next, base),
                 );
-                let cols = |p: &PageSetup| (p.col_count.max(1), p.col_custom, p.col_w, p.col_gap);
+                let cols = |p: &PageSetup| {
+                    (
+                        p.col_count.max(1),
+                        p.col_custom,
+                        p.col_w,
+                        p.col_gap,
+                        p.col_sep,
+                    )
+                };
                 let moved = cols(&was) != cols(&page)
                     || (page.col_count > 1 && (was.col_space - page.col_space).abs() > 0.01)
                     || (was.margin_l - page.margin_l).abs() > 0.01
@@ -9518,7 +9742,10 @@ fn para_line_box(metrics: &Face, size: f32, style: &ParaStyle) -> f32 {
 /// A line's box on the docGrid `grid` (0 = none). A line whose face fits
 /// one grid line takes the multiple of the grid line itself: 00b37b14's
 /// TNR 12 at 1.5 on a 15.6pt grid steps 23.4, not 31.2. A taller face
-/// (its 14pt title) still snaps its multiplied height (31.2).
+/// takes the grid lines it needs, or the multiple of one grid line when
+/// that is more: Word probes 2026-10-15 (Calibri Light, 15.6pt grid) step
+/// 24pt 31.2 at line 240, 278, 360 and 480 and 46.8 at 720, and 36pt 46.8
+/// at 480 and 720 (Demo.docx's Heading 1: 31.2, not the multiplied 46.8).
 fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
     let multiple = style.line_exact.is_none() && style.line_at_least.is_none();
     if grid > 0.5 && multiple && natural <= grid + 0.01 {
@@ -9528,6 +9755,13 @@ fn grid_line_box(natural: f32, style: &ParaStyle, grid: f32) -> f32 {
             1.0
         };
         grid * m
+    } else if grid > 0.5 && multiple {
+        let m = if style.line_mult > 0.0 {
+            style.line_mult
+        } else {
+            1.0
+        };
+        snap_doc_grid(natural, grid).max(grid * m)
     } else {
         snap_doc_grid(line_box_from_natural(natural, style), grid)
     }
@@ -10154,6 +10388,65 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 }
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
+    let (size, box_h) = cell_font_line_box(fonts, runs, style);
+    (size, line_box_for_math(fonts, runs, size, box_h, style))
+}
+
+/// A math box is taller than its font. The cell line holds the ascent
+/// and the descent (quadratic-in-table's fraction).
+fn line_box_for_math(
+    fonts: &Fonts,
+    runs: &[TextRun],
+    size: f32,
+    box_h: f32,
+    style: &ParaStyle,
+) -> f32 {
+    let mut up = 0.0_f32;
+    let mut down = 0.0_f32;
+    let mut any = false;
+    for run in runs {
+        if let Some(math) = &run.math {
+            any = true;
+            up = up.max(math.ascent);
+            down = down.max(math.descent);
+        }
+    }
+    if !any {
+        return box_h;
+    }
+    let face = fonts.get(cell_runs_face(fonts, runs).1);
+    let em = size.max(1.0);
+    let natural = (face.ascent_pt(em).max(up) + face.line_descent_pt(em).max(down))
+        .max(face.single_line_pt(em));
+    box_h.max(line_box_from_natural(natural, style))
+}
+
+/// How far the baseline sits below the top of a cell line.
+fn cell_baseline_drop(
+    face: &Face,
+    size: f32,
+    line: &[TextRun],
+    line_box: f32,
+    exact: bool,
+    grid_pad: f32,
+) -> f32 {
+    if exact {
+        return exact_baseline(line_box);
+    }
+    let math_up = line
+        .iter()
+        .filter_map(|run| run.math.as_ref().map(|math| math.ascent))
+        .fold(0.0_f32, f32::max);
+    // The equation's own ascent. A grid pad on top of it drops the
+    // radical out of the row.
+    if math_up > 0.0 {
+        face.ascent_pt(size).max(math_up)
+    } else {
+        face.ascent_pt(size) + grid_pad
+    }
+}
+
+fn cell_font_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, face_id) = cell_runs_face(fonts, runs);
     let grid = para_grid_pitch(style, style.cell_grid);
     if grid > 0.5 {
@@ -12028,8 +12321,11 @@ fn core_dates() -> CoreDates {
     CORE_DATES.with(Cell::get)
 }
 
-/// Now, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`: the date Word writes on a
-/// revision.
+/// The current UTC wall time as Word writes revision dates:
+/// `YYYY-MM-DDTHH:MM:SSZ` (no sub-second precision).
+///
+/// On native targets the time comes from [`SystemTime::now`]; on
+/// `wasm32-unknown-unknown` it comes from `js_sys::Date`.
 pub fn utc_now_iso8601() -> String {
     iso8601(utc_now())
 }
@@ -12039,7 +12335,7 @@ fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod iso8601_tests {
     use super::*;
 
@@ -12148,6 +12444,41 @@ fn parse_w3cdtf(raw: &str) -> Option<CivilDateTime> {
     Some(civil_from_unix_secs(local - offset_min * 60))
 }
 
+/// A revision timestamp ordered by UTC seconds and fractional digits.
+/// As with W3CDTF fields, a missing offset is UTC.
+pub(crate) fn timestamp_order_key(raw: &str) -> Option<(i64, &str)> {
+    crate::util::datetime::parse_datetime(raw).ok()?;
+    let time = parse_w3cdtf(raw)?;
+    let seconds = unix_days_from_civil(time.y, time.m, time.d) * 86_400
+        + i64::from(time.h * 3600 + time.min * 60 + time.s);
+    let fraction = raw[19..]
+        .strip_prefix('.')
+        .unwrap_or_default()
+        .split(['Z', '+', '-'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('0');
+    Some((seconds, fraction))
+}
+
+/// Format an instant in a fixed offset, retaining its fractional seconds.
+pub(crate) fn timestamp_with_offset(seconds: i64, fraction: &str, offset: i64) -> String {
+    let mut value = iso8601(civil_from_unix_secs(seconds + offset));
+    value.pop();
+    if !fraction.is_empty() {
+        value.push('.');
+        value.push_str(fraction);
+    }
+    if offset == 0 {
+        value.push('Z');
+    } else {
+        let sign = if offset < 0 { '-' } else { '+' };
+        let minutes = offset.abs() / 60;
+        value.push_str(&format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60));
+    }
+    value
+}
+
 /// `docProps/core.xml` dates, read as elements (a title that merely
 /// contains "created" is text, not a tag).
 fn core_dates_from_xml(xml: &str) -> CoreDates {
@@ -12201,7 +12532,7 @@ fn weekday_sun0(y: i32, m: u32, d: u32) -> usize {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn format_date_picture(pic: &str, y: i32, m: u32, d: u32) -> String {
     format_datetime_picture(
         pic,
@@ -14422,6 +14753,8 @@ struct RunCollect<'a> {
     /// The enclosing `m:r`'s math style: `None` for `m:nor` (ordinary
     /// text), else whether its letters are upright (`m:sty` p or b).
     math_upright: Option<bool>,
+    /// Inside `m:oMathPara`: fractions and radicals use display constants.
+    math_display: bool,
     /// file_146 pBdr-bottom section heads keep generator xml:space pads.
     /// Body without pBdr stays collapsed (mini 401). Courier New body
     /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
@@ -14470,6 +14803,7 @@ fn collect_runs_in(
         math_vert: VertAlign::Baseline,
         in_math: false,
         math_upright: Some(false),
+        math_display: false,
         keep_xml_space: para_keeps_xml_space(dom, node),
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
@@ -15303,6 +15637,16 @@ fn collect_runs_rec(
         }
         return;
     }
+    if ctx.dom.name_is(node, &M::name("oMathPara")) {
+        let saved = ctx.math_display;
+        ctx.math_display = true;
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            collect_runs_rec(ctx, child, mark, author, runs);
+        }
+        ctx.math_display = saved;
+        return;
+    }
     if ctx.dom.name_is(node, &M::name("oMath")) {
         let saved = ctx.in_math;
         ctx.in_math = true;
@@ -15323,8 +15667,10 @@ fn collect_runs_rec(
         ctx.math_upright = saved;
         return;
     }
-    if ctx.dom.name_is(node, &M::name("d")) {
-        collect_math_delimiter(ctx, node, mark, author, runs);
+    if (ctx.dom.name_is(node, &M::name("d")) || ctx.dom.name_is(node, &M::name("rad")))
+        && math_box_unmarked(ctx, node)
+    {
+        emit_math_box(ctx, node, mark, author, runs);
         return;
     }
     if ctx.dom.name_is(node, &M::name("nary")) {
@@ -15394,6 +15740,12 @@ fn collect_runs_rec(
         return;
     }
     if ctx.dom.name_is(node, &M::name("f")) {
+        // A bar (the Office default) is a 2D box. noBar stays stacked
+        // runs; lin and skw stay on one baseline.
+        if math_f_is_bar(ctx.dom, node) && math_box_unmarked(ctx, node) {
+            emit_math_box(ctx, node, mark, author, runs);
+            return;
+        }
         // Strict01 binomial is m:f type=noBar. Linear n/k (mini 359)
         // was ITT-neg; Quartz stacks n over k with no bar. Do not
         // center oMathPara.
@@ -15438,14 +15790,7 @@ fn collect_runs_rec(
                     // The whole run maps only if the face draws every
                     // letter it maps to; else it stays ASCII italic.
                     let mapped: String = shown.chars().map(math_italic).collect();
-                    let drawn = MATH_ALPHANUMERICS.with(|face| {
-                        let face = face.borrow();
-                        mapped
-                            .chars()
-                            .zip(shown.chars())
-                            .all(|(to, from)| to == from || face.draws(to))
-                    });
-                    if drawn {
+                    if math_alphanumerics_cover(&shown, &mapped) {
                         shown = mapped;
                     } else {
                         style.italic = true;
@@ -15522,7 +15867,7 @@ impl MathAlphanumerics {
     }
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     fn only<const N: usize>(drawn: [char; N]) -> Self {
         Self::set(MathFace::Only(drawn.into_iter().collect()))
     }
@@ -15568,57 +15913,82 @@ fn writes_omml(text: &str) -> bool {
         .any(|prefix| text.contains(&format!("<{prefix}oMath")))
 }
 
-/// An `m:d`: its `begChr`, its `m:e` items with `sepChr` between them,
-/// its `endChr` (Word's PDF of math_all_objects: "(𝑥 + 𝑦)", "sin(𝑥)").
-/// The characters default to `(`, `|` and `)`; an empty `m:val` draws
-/// nothing there.
-fn collect_math_delimiter(
+/// Whether a bar fraction, radical, or delimiter can be drawn as one box.
+/// The box takes one mark for all its glyphs, the mark around it, and
+/// carries no comment, so a box holding a revision of its own (`w:ins`,
+/// `w:del`, `w:moveFrom`, `w:moveTo`, `w:delText`, `w:rPrChange`), or
+/// inside or holding a comment range keeps the per-run path, which inks,
+/// strikes and tints each run.
+fn math_box_unmarked(ctx: &RunCollect<'_>, node: NodeId) -> bool {
+    const MARKED: [&str; 4] = [
+        "rPrChange",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "commentReference",
+    ];
+    ctx.open.is_empty()
+        && ctx.pending.is_empty()
+        && ctx.dom.descendants(node, None).into_iter().all(|d| {
+            rev_mark_of(ctx.dom, d).is_none()
+                && !ctx.dom.name_is(d, &W::del_text())
+                && !MARKED.iter().any(|name| ctx.dom.name_is(d, &W::name(name)))
+        })
+}
+
+/// A bar fraction, radical, or delimiter, as one box. A script or stack
+/// around it is baked into the glyphs. The run stays on the baseline.
+fn emit_math_box(
     ctx: &mut RunCollect<'_>,
     node: NodeId,
     mark: RevMark,
     author: &str,
     runs: &mut Vec<TextRun>,
 ) {
-    let pr = ctx.dom.element(node, &M::name("dPr"));
-    let chr = |name: &str, default: &str| -> String {
-        pr.and_then(|p| ctx.dom.element(p, &M::name(name)))
-            .map(|c| {
-                ctx.dom
-                    .attribute(c, &M::name("val"))
-                    .or_else(|| attr_any(ctx.dom, c, "val"))
-                    .unwrap_or("")
-                    .to_string()
-            })
-            .unwrap_or_else(|| default.to_string())
+    let size = if ctx.base.size > 0.0 {
+        ctx.base.size
+    } else {
+        11.0
     };
-    let (beg, sep, end) = (chr("begChr", "("), chr("sepChr", "|"), chr("endChr", ")"));
-    let push = |ctx: &mut RunCollect<'_>, text: &str, runs: &mut Vec<TextRun>| {
-        if text.is_empty() {
-            return;
-        }
-        let mut style = ctx.base.clone();
-        math_text_style(&mut style);
-        // Inside a script or a stacked fraction the delimiters move with
-        // their contents.
-        if ctx.math_vert != VertAlign::Baseline {
-            style.vert = ctx.math_vert;
-        }
-        if mark != RevMark::None {
-            apply_rev(&mut style, mark, ctx.authors.color(author));
-        }
-        let mut run = TextRun::new(text, style);
-        run.rev = mark != RevMark::None;
-        runs.push(run);
+    let (scale, shift) = match ctx.math_vert {
+        VertAlign::Super => (0.65, 0.35),
+        VertAlign::Sub => (0.65, -0.15),
+        VertAlign::StackNum => (0.65, 0.45),
+        VertAlign::StackDen => (0.65, -0.40),
+        VertAlign::Baseline => (1.0, 0.0),
     };
-    push(ctx, &beg, runs);
-    let items: Vec<NodeId> = ctx.dom.elements(node, Some(&M::name("e")));
-    for (i, item) in items.into_iter().enumerate() {
-        if i > 0 {
-            push(ctx, &sep, runs);
+    let mut laid = math_font::with_current_math_font(|font| {
+        math_layout::layout_node(ctx.dom, node, font, size * scale, ctx.math_display)
+    });
+    if shift != 0.0 {
+        let dy = shift * size;
+        for glyph in &mut laid.glyphs {
+            glyph.y += dy;
         }
-        collect_runs_rec(ctx, item, mark, author, runs);
+        for rule in &mut laid.rules {
+            rule.y_top += dy;
+        }
+        if dy >= 0.0 {
+            laid.ascent += dy;
+            laid.descent = (laid.descent - dy).max(0.0);
+        } else {
+            laid.descent -= dy;
+            laid.ascent = (laid.ascent + dy).max(0.0);
+        }
     }
-    push(ctx, &end, runs);
+    let text: String = laid
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.text.as_str())
+        .collect();
+    let mut style = ctx.base.clone();
+    math_text_style(&mut style);
+    if mark != RevMark::None {
+        apply_rev(&mut style, mark, ctx.authors.color(author));
+    }
+    let mut run = TextRun::new(text, style);
+    run.rev = mark != RevMark::None;
+    run.math = Some(laid);
+    runs.push(run);
 }
 
 /// An `m:r`'s math style: `None` when `m:nor` makes it ordinary text,
@@ -15655,6 +16025,18 @@ fn math_text_style(style: &mut RunStyle) {
     style.italic = false;
 }
 
+/// Whether `mapped` is covered by this conversion's math face. A miss
+/// keeps the whole run in ASCII.
+pub(crate) fn math_alphanumerics_cover(from: &str, mapped: &str) -> bool {
+    MATH_ALPHANUMERICS.with(|face| {
+        let face = face.borrow();
+        mapped
+            .chars()
+            .zip(from.chars())
+            .all(|(to, from_ch)| to == from_ch || face.draws(to))
+    })
+}
+
 /// The mathematical italic form of a Latin or Greek lowercase letter
 /// (h is U+210E, the Planck constant, the block's hole); anything else
 /// as it is.
@@ -15678,6 +16060,21 @@ fn math_f_is_nobar(dom: &Dom, f: NodeId) -> bool {
                 .or_else(|| attr_any(dom, n, "val"))
         })
         .is_some_and(|v| v.eq_ignore_ascii_case("noBar"))
+}
+
+/// Office's default fraction is a bar. `noBar`, `lin`, and `skw` stay
+/// on the flat collector.
+fn math_f_is_bar(dom: &Dom, f: NodeId) -> bool {
+    let Some(pr) = dom.element(f, &M::name("fPr")) else {
+        return true;
+    };
+    let Some(kind) = dom.element(pr, &M::name("type")) else {
+        return true;
+    };
+    let val = dom
+        .attribute(kind, &M::name("val"))
+        .or_else(|| attr_any(dom, kind, "val"));
+    val.is_none_or(|v| v.eq_ignore_ascii_case("bar"))
 }
 
 fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
@@ -15919,7 +16316,7 @@ fn collapse_ws(text: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn collect_textboxes(
     src: Option<(&PartFs, &str)>,
     dom: &Dom,
@@ -17499,7 +17896,7 @@ fn chart_ser_color(dom: &Dom, ser: NodeId, idx: usize, theme: &ThemeFonts) -> [f
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn parse_chart(xml: &str) -> Option<ChartData> {
     parse_chart_with(xml, &ThemeFonts::default())
 }
@@ -21959,9 +22356,18 @@ fn collect_hf_rev(
         let outer = std::mem::take(scan);
         let instr = attr_any(dom, node, "instr").unwrap_or("");
         scan.result = true;
+        scan.kind = numeric_field_kind(instr);
         scan.styleref = styleref_target(instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
         for idx in 0..dom.child_count(node) {
             collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
+        }
+        // No cached result: the page still fills the number in.
+        if !scan.emitted
+            && let Some(kind) = scan.kind
+        {
+            let mut run = field_run(String::new(), base);
+            run.field = kind;
+            runs.push(run);
         }
         *scan = outer;
     } else {
@@ -21972,6 +22378,19 @@ fn collect_hf_rev(
         if scan.result && run.styleref.is_none() {
             run.styleref.clone_from(&scan.styleref);
         }
+    }
+}
+
+/// The number a header or footer field computes, from its instruction.
+/// The field's name is its first word: an INCLUDEPICTURE of
+/// ".../page1image1105008" or a PAGEREF is no PAGE (2566689f0f painted
+/// "111" over its header).
+fn numeric_field_kind(instr: &str) -> Option<FieldKind> {
+    match field_first_token(instr).to_ascii_uppercase().as_str() {
+        "NUMPAGES" => Some(FieldKind::NumPages),
+        "NUMWORDS" => Some(FieldKind::NumWords),
+        "PAGE" => Some(FieldKind::Page),
+        _ => None,
     }
 }
 
@@ -21989,16 +22408,7 @@ fn collect_hf_rev_runs(
     if dom.name_is(node, &W::instr_text()) || dom.name_is(node, &W::del_instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
-        // The field's name is its first word: an INCLUDEPICTURE of
-        // ".../page1image1105008" or a PAGEREF is no PAGE (2566689f0f
-        // painted "111" over its header).
-        let name = field_first_token(&scan.instr).to_ascii_uppercase();
-        scan.kind = match name.as_str() {
-            "NUMPAGES" => Some(FieldKind::NumPages),
-            "NUMWORDS" => Some(FieldKind::NumWords),
-            "PAGE" => Some(FieldKind::Page),
-            _ => None,
-        };
+        scan.kind = numeric_field_kind(&scan.instr);
         return;
     }
     if skip_non_text(dom, node) {
@@ -22300,6 +22710,9 @@ struct Layout<'a> {
     in_chrome_boxes: bool,
     /// Painting the page's headers and footers (`chrome`).
     in_chrome: bool,
+    /// The section being laid out, counted by `apply_section`: each page
+    /// records it (`Page::section`).
+    section_i: u32,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -22803,6 +23216,7 @@ impl<'a> Layout<'a> {
             tb_step: false,
             in_chrome_boxes: false,
             in_chrome: false,
+            section_i: 0,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -22851,6 +23265,7 @@ impl<'a> Layout<'a> {
     }
 
     fn apply_section(&mut self, next: &SectionChrome) {
+        self.section_i += 1;
         let (w, h) = (next.page.width, next.page.height);
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
@@ -23147,12 +23562,14 @@ impl<'a> Layout<'a> {
         page.vertical = self.page.vertical;
         page.markup_pane = self.page.balloon_gutter > 0.0;
         page.margin_r = self.page.margin_r;
+        page.section = self.section_i;
         page
     }
 
     fn new_page(&mut self) {
         self.blank_below = None;
         self.close_rev_bar();
+        self.paint_col_rules();
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
@@ -23270,6 +23687,7 @@ impl<'a> Layout<'a> {
         let keep_empty_section =
             !self.page_has_body && next.is_some() && self.last_break_was_section;
         if self.page_has_body || keep_empty_section || skip_blank {
+            self.paint_col_rules();
             if self.pages.len() == 1 {
                 self.center_first_page_body();
             }
@@ -23525,6 +23943,13 @@ impl<'a> Layout<'a> {
         let mut single = 0.0_f32;
         let mut ascent = 0.0_f32;
         for run in &runs {
+            if let Some(math) = &run.math {
+                up = up.max(math.ascent);
+                down = down.max(math.descent);
+                single = single.max(math.ascent + math.descent);
+                ascent = ascent.max(math.ascent);
+                continue;
+            }
             // 000f4c0b's all-lowercase small-caps line is a 12pt line.
             let size = if run.style.box_size > 0.0 {
                 run.style.box_size
@@ -23628,6 +24053,7 @@ impl<'a> Layout<'a> {
     /// margins apply at once; its top/bottom wait for the next page (the
     /// floor is fixed when a page starts).
     fn start_continuous_section(&mut self, next: &PageSetup) {
+        self.paint_col_rules();
         // A continuous section opens under the tallest column of the one
         // before, not under whichever column it ended in (003329b5's
         // "NOS RESSOURCES" sits under column three's last line).
@@ -23639,6 +24065,7 @@ impl<'a> Layout<'a> {
         self.page.col_custom = next.col_custom;
         self.page.col_w = next.col_w;
         self.page.col_gap = next.col_gap;
+        self.page.col_sep = next.col_sep;
         self.page.margin_l = next.margin_l;
         self.page.margin_r = next.margin_r;
         self.top_pending |= (self.page.margin_t - next.margin_t).abs() > 0.01;
@@ -23648,6 +24075,40 @@ impl<'a> Layout<'a> {
         self.margin_r0 = next.margin_r;
         self.col_i = 0;
         self.col_top = (next.col_count > 1).then_some(self.y);
+    }
+
+    /// `w:cols/@w:sep`: a 0.75pt black rule down the middle of each gap,
+    /// from the columns' top to the bottom of the longest one (Word's PDF
+    /// of Demo.docx: 72.03 to 738.73 under the left column's last line,
+    /// not the bottom margin). Runs as the columns end: a page or a
+    /// section closing.
+    fn paint_col_rules(&mut self) {
+        let n = self.page.col_count;
+        if n <= 1 || !self.page.col_sep || !self.page_has_body {
+            return;
+        }
+        let top = self.col_top.unwrap_or(self.page.height - self.body_top);
+        let bottom = self
+            .col_floor
+            .map_or(self.y, |f| f.min(self.y))
+            .max(self.body_floor);
+        if top - bottom < 0.5 {
+            return;
+        }
+        const W: f32 = 0.75;
+        let mut x = self.page.margin_l;
+        for i in 0..n - 1 {
+            x += self.col_width_at(i);
+            let mid = x + self.col_gap_at(i) / 2.0;
+            x += self.col_gap_at(i);
+            self.current().ops.push(Op::FillRect {
+                x: mid - W / 2.0,
+                y: bottom,
+                w: W,
+                h: top - bottom,
+                color: [0.0, 0.0, 0.0],
+            });
+        }
     }
 
     fn column_break(&mut self) {
@@ -23956,6 +24417,11 @@ impl<'a> Layout<'a> {
     fn paint_note_paras(&mut self, paras: &[FootnotePara], mut y: f32, width: f32) -> f32 {
         for para in paras {
             let runs = &para.runs;
+            // A revised footnote marks its page as a body revision does
+            // (`PdfOptions::changed_only`).
+            if para.style.fmt_rev || runs.iter().any(|r| r.rev) {
+                self.current().changed = true;
+            }
             y -= para.style.before;
             let indent = para.style.indent_left;
             let measure = (width - indent - para.style.indent_right).max(40.0);
@@ -25270,7 +25736,9 @@ impl<'a> Layout<'a> {
         let Some((page, col, top)) = self.rev_bar else {
             return;
         };
-        if !self.in_chrome {
+        if self.in_chrome {
+            self.current().chrome_changed = true;
+        } else {
             self.current().changed = true;
         }
         let top = if (page, col) == (self.pages.len(), self.col_i) {
@@ -25923,6 +26391,11 @@ impl<'a> Layout<'a> {
         if text.is_empty() {
             return 0.0;
         }
+        if let Some(math) = &run.math
+            && text == run.text
+        {
+            return math.width;
+        }
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
                 .array_windows()
@@ -26159,7 +26632,54 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Glyphs at their box positions, and rules as filled rectangles.
+    /// `y` is the run baseline. A glyph id of 0 stays searchable only.
+    fn paint_math_box(
+        &mut self,
+        run: &TextRun,
+        math: &math_layout::MathBox,
+        x: f32,
+        y: f32,
+    ) -> f32 {
+        let fid = self
+            .fonts
+            .resolve(&run.style.family, run.style.bold, run.style.italic);
+        let color = run.style.color;
+        for glyph in &math.glyphs {
+            let op = Op::text(
+                fid,
+                glyph.size,
+                x + glyph.x,
+                y + glyph.y,
+                vec![glyph.gid],
+                color,
+                glyph.text.clone(),
+            );
+            self.current()
+                .ops
+                .push(if glyph.gid == 0 { op.hidden() } else { op });
+        }
+        for rule in &math.rules {
+            if rule.thickness <= 0.0 || rule.w <= 0.0 {
+                continue;
+            }
+            self.current().ops.push(Op::FillRect {
+                x: x + rule.x,
+                y: y + rule.y_top - rule.thickness,
+                w: rule.w,
+                h: rule.thickness,
+                color,
+            });
+        }
+        self.decorate_run(x, y, math.width, &run.style);
+        self.place_run_comments(run, x, y, math.width);
+        x + math.width
+    }
+
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
+        if let Some(math) = &run.math {
+            return self.paint_math_box(run, math, x, y);
+        }
         // Word's separator is the run's strikeout line on the 300dpi grid
         // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
         // 2.75 over the baseline, Strict01 p13's rule 450.48 over the
@@ -26617,6 +27137,15 @@ impl<'a> Layout<'a> {
         let mut idx = 0usize;
         for run in line {
             let start = x;
+            // An equation is one box. Splitting it on its spaces paints
+            // the letters at body size and drops the bar (inline-symbol-runs
+            // is justified, so its superscript fraction became "p+14").
+            if run.math.is_some() {
+                x = self.paint_run(run, x, y);
+                idx += run.text.len();
+                self.place_run_comments(run, start, y, x - start);
+                continue;
+            }
             let mut word = String::new();
             for ch in run.text.chars() {
                 if ch == ' ' {
@@ -30045,10 +30574,14 @@ impl<'a> Layout<'a> {
                                     0.0
                                 };
                             let ty = y_line
-                                - match para.style.line_exact {
-                                    Some(_) => exact_baseline(line_box),
-                                    None => face.ascent_pt(size) + grid_pad,
-                                };
+                                - cell_baseline_drop(
+                                    face,
+                                    size,
+                                    &line,
+                                    line_box,
+                                    para.style.line_exact.is_some(),
+                                    grid_pad,
+                                );
                             if ty < bottom {
                                 break;
                             }
@@ -30267,7 +30800,9 @@ impl<'a> Layout<'a> {
                     .iter()
                     .any(|c| c.paras.iter().any(|p| p.style.fmt_rev) || c.runs().any(|r| r.rev))
                 {
-                    if !self.in_chrome {
+                    if self.in_chrome {
+                        self.current().chrome_changed = true;
+                    } else {
                         self.current().changed = true;
                     }
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
@@ -30956,9 +31491,15 @@ impl<'a> Layout<'a> {
         (self.y, self.para_top, self.page_has_body) = saved;
     }
 
+    /// The header and footer span the page's text area: columns divide
+    /// the body only (Word's PDF of Demo.docx centres the two-column
+    /// section's page number and header on the page).
     fn chrome(&mut self) {
         self.in_chrome = true;
+        let cols = (self.page.col_count, self.col_i);
+        (self.page.col_count, self.col_i) = (1, 0);
         self.chrome_parts();
+        (self.page.col_count, self.col_i) = cols;
         self.in_chrome = false;
     }
 
@@ -31369,6 +31910,7 @@ impl<'a> Layout<'a> {
     /// (9b22b88370's deleted header line and its footer).
     fn hf_rev_bar(&mut self, line: &[TextRun], para: Option<&ParaStyle>, top: f32, h: f32) {
         if line.iter().any(|r| r.rev) || para.is_some_and(|p| p.fmt_rev) {
+            self.current().chrome_changed = true;
             self.paint_rev_bar(self.rev_bar_x(), top - h, top);
         }
     }
@@ -32780,6 +33322,11 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
+        if let Some(math) = &run.math {
+            units.push((vec![(run, run.text.as_str(), math.width)], false));
+            open = false;
+            continue;
+        }
         if run.strut && run.text.is_empty() {
             units.push((vec![(run, "", 0.0)], false));
             open = false;
@@ -32956,13 +33503,15 @@ fn wrap_runs_segment(
         // (0129b302's "19.720.000") where it has room, so only a word
         // wider than its laid-out cell breaks; CJK text already breaks per
         // character where our fallback faces run wide (002c5410).
+        let math_unit = unit.iter().any(|(run, _, _)| run.math.is_some());
         let cjk = unit
             .iter()
             .any(|(run, tok, _)| !run.style.ideograph_words && tok.chars().any(is_cjk));
         let ideograph_word = unit
             .iter()
             .any(|(run, tok, _)| run.style.ideograph_words && tok.chars().any(is_cjk));
-        if (tabs.is_some() || fit.char_break || ideograph_word)
+        if !math_unit
+            && (tabs.is_some() || fit.char_break || ideograph_word)
             && !cjk
             && !is_space
             && w > limit * 1.02
@@ -33041,6 +33590,8 @@ fn wrap_runs_segment(
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
                 && !run.strut
+                && last.math.is_none()
+                && run.math.is_none()
                 // A run carrying comments stays its own run: its start is
                 // where the balloon connectors anchor, and the merge would
                 // drop its notes.
@@ -33075,7 +33626,7 @@ fn wrap_runs_segment(
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn layout(
     fonts: &Fonts,
     page: &PageSetup,
@@ -33726,6 +34277,7 @@ fn layout_with_facts(
             " ",
         ));
     }
+    lay.paint_col_rules();
     if lay.pages.len() == 1 {
         lay.center_first_page_body();
     }
@@ -35889,7 +36441,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod page_num_fmt_labels {
     use super::{
         NumFmt, chicago_label, decimal_fullwidth_label, format_num, ideograph_digital_label,
@@ -36235,7 +36787,7 @@ mod page_num_fmt_labels {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod page_count_tests {
     use super::pdf_page_count;
 
@@ -36247,7 +36799,7 @@ mod page_count_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod theme_slot_tests {
     use super::*;
 
@@ -36803,7 +37355,7 @@ mod theme_slot_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod field_tests {
     use super::*;
 
@@ -37127,6 +37679,57 @@ mod field_tests {
     }
 
     #[test]
+    fn a_tracked_change_inside_a_math_box_keeps_its_marks() {
+        // A box paints its glyphs unmarked: a deleted run inside a
+        // delimiter drew exactly like plain x. A marked equation keeps the
+        // per-run path, which inks and strikes each revised run.
+        for (inner, mark) in [
+            (
+                r#"<m:r><w:del w:id="1" w:author="Ann"><m:t>x</m:t></w:del></m:r>"#,
+                "del in run",
+            ),
+            (
+                r#"<w:del w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:del>"#,
+                "del around run",
+            ),
+            (
+                r#"<w:ins w:id="1" w:author="Ann"><m:r><m:t>x</m:t></m:r></w:ins>"#,
+                "ins around run",
+            ),
+        ] {
+            for (open, close) in [
+                ("<m:d><m:e>", "</m:e></m:d>"),
+                (
+                    "<m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg/><m:e>",
+                    "</m:e></m:rad>",
+                ),
+                (
+                    "<m:f><m:num>",
+                    "</m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>",
+                ),
+            ] {
+                let runs = math_runs(&format!(
+                    "<w:p><m:oMath>{open}{inner}{close}</m:oMath></w:p>"
+                ));
+                assert!(
+                    runs.iter().all(|r| r.math.is_none()),
+                    "{mark} in {open}: a marked equation is not one box"
+                );
+                assert!(
+                    runs.iter().any(|r| r.rev && r.text.contains('\u{1D465}')),
+                    "{mark} in {open}: the revised x keeps its mark: {:?}",
+                    runs.iter().map(|r| (&r.text, r.rev)).collect::<Vec<_>>()
+                );
+            }
+        }
+        // Unmarked, the same delimiter is still one laid-out box.
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath></w:p>"#,
+        );
+        assert!(runs.iter().any(|r| r.math.is_some()), "plain box");
+    }
+
+    #[test]
     fn omml_letters_are_cambria_math_italic() {
         // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
         // CambriaMath and draws a matrix's a as U+1D44E: Word sets math
@@ -37214,14 +37817,35 @@ mod field_tests {
 
     #[test]
     fn omml_delimiters_take_the_script_placement() {
-        // An m:d inside a superscript is raised with its contents.
+        // An m:d inside a superscript is raised with its contents. The
+        // shift is baked into the box; the run stays on the baseline so
+        // paint does not raise it a second time.
         let runs = math_runs(
             r#"<w:p><m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>n</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:p>"#,
         );
-        for text in ["(", "\u{1D45B}", ")"] {
-            let run = runs.iter().find(|r| r.text == text).expect(text);
-            assert!(run.style.vert == VertAlign::Super, "{text}");
-        }
+        let sup = runs
+            .iter()
+            .find(|r| r.math.is_some())
+            .expect("delimiter box");
+        assert!(sup.style.vert == VertAlign::Baseline);
+        let n = sup
+            .math
+            .as_ref()
+            .unwrap()
+            .glyphs
+            .iter()
+            .find(|g| g.text.contains('\u{1D45B}'))
+            .expect("n");
+        assert!(
+            (n.y - 11.0 * 0.35).abs() < 0.05,
+            "delimiter contents sit at +0.35 em, got {}",
+            n.y
+        );
+        assert!(
+            (n.size - 11.0 * 0.65).abs() < 0.05,
+            "script size {}",
+            n.size
+        );
     }
 
     #[test]
@@ -37514,8 +38138,12 @@ mod field_tests {
             "\u{1D465},\u{1D466})"
         );
         let runs = math_runs(&format!("<w:p><m:oMath><m:d>{x}</m:d></m:oMath></w:p>"));
-        let open = runs.iter().find(|r| r.text == "(").expect("(");
+        let open = runs.iter().find(|r| r.text.contains('(')).expect("(");
         assert_eq!(open.style.family, "Cambria Math");
+        assert!(
+            open.math.is_some(),
+            "a delimiter is one box, not a flat run of characters"
+        );
     }
 
     #[test]
@@ -37847,7 +38475,7 @@ mod field_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod drawing_tests {
     use super::*;
 
@@ -43824,7 +44452,7 @@ mod drawing_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod numbering_tests {
     use super::*;
 
@@ -44207,7 +44835,7 @@ mod numbering_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod table_tests {
     use super::*;
 
@@ -44743,7 +45371,7 @@ mod table_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod comments_spacing_tests {
     use super::*;
 
@@ -44781,7 +45409,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -44833,7 +45461,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let sheet = load_stylesheet(&pkg);
         let bullet = sheet.by_id.get("ListBullet").expect("ListBullet style");
@@ -44849,7 +45477,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -44932,7 +45560,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -44990,7 +45618,7 @@ mod comments_spacing_tests {
         let Some(bytes) = sibling_bytes(COMMENTS) else {
             return;
         };
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45178,7 +45806,7 @@ mod comments_spacing_tests {
         };
         let pdf = crate::convert::docx_to_pdf(&bytes).expect("pdf");
         let n = super::pdf_page_count(&pdf);
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg.main_document_part().expect("main");
         let xml = pkg.part_string(&main).expect("xml");
@@ -45206,7 +45834,7 @@ mod comments_spacing_tests {
     #[test]
     fn strict01_section_break_census() {
         let bytes = std::fs::read("tests/fixtures/strict/Strict01.docx").expect("strict");
-        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(&bytes).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45300,7 +45928,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marked(docx: &[u8]) -> Marked {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45342,7 +45970,7 @@ mod comments_spacing_tests {
     }
 
     fn listbullet_marker_family(docx: &[u8]) -> Option<String> {
-        let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
+        let normalized = crate::strict_translation::strict_to_transitional_docx(docx).unwrap();
         let pkg = PartFs::open(&normalized).expect("pkg");
         let main = pkg
             .main_document_part()
@@ -45479,7 +46107,7 @@ mod comments_spacing_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod regression_tests {
     use super::*;
 
@@ -45910,7 +46538,7 @@ mod regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod comment_listing_review_tests {
     use super::*;
 
@@ -46062,7 +46690,7 @@ mod comment_listing_review_tests {
         pages[0]
             .comments
             .push(note("Jane", "中文中文中文中文中文中文中文中文中文中文"));
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let mut painted = 0;
         for page in &pages[1..] {
             for op in &page.ops {
@@ -46091,7 +46719,7 @@ mod comment_listing_review_tests {
         pages[0].number = 1;
         let author = "An exceptionally long author attribution that needs several lines";
         pages[0].comments.push(note(author, "First content line"));
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let mut all = String::new();
         for page in &pages[1..] {
             for op in &page.ops {
@@ -46137,7 +46765,7 @@ mod comment_listing_review_tests {
                     .comments
                     .push(note(&format!("A{i}"), &format!("Body{i}")));
             }
-            list_comments_at_end(&fonts, &sheet(), &mut pages);
+            list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
             let page_of = |needle: &str| {
                 pages.iter().position(|page| {
                     page.ops
@@ -46165,7 +46793,7 @@ mod comment_listing_review_tests {
         page.number = 1;
         page.comments.push(note("Jane", "縦書き"));
         let mut pages = vec![page];
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         let listing = &pages[1];
         assert_eq!((listing.width, listing.height), (595.3, 841.9));
         assert!(!listing.vertical);
@@ -46173,7 +46801,7 @@ mod comment_listing_review_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_boundary_tests {
     use super::*;
 
@@ -47109,26 +47737,60 @@ mod coverage_boundary_tests {
 
     #[test]
     fn page_selection_sorts_deduplicates_and_reports_the_largest_invalid_page() {
-        assert_eq!(selected_pages(None, 3).unwrap(), vec![0, 1, 2]);
-        assert!(selected_pages(None, 0).unwrap().is_empty());
-        assert!(selected_pages(Some(vec![]), 0).unwrap().is_empty());
+        // Document pages numbered as given (a gap is a page changed_only
+        // dropped).
+        let kept = |numbers: &[usize]| -> Vec<pdf::Page> {
+            numbers
+                .iter()
+                .map(|&number| {
+                    let mut page = pdf::Page::new(612.0, 792.0);
+                    page.number = number;
+                    page
+                })
+                .collect()
+        };
         assert_eq!(
-            selected_pages(Some(vec![2, 0, 2, 1]), 3).unwrap(),
+            selected_pages(None, &kept(&[1, 2, 3]), 3).unwrap(),
+            vec![0, 1, 2]
+        );
+        assert!(selected_pages(None, &[], 0).unwrap().is_empty());
+        assert!(selected_pages(Some(vec![]), &[], 0).unwrap().is_empty());
+        assert_eq!(
+            selected_pages(Some(vec![2, 0, 2, 1]), &kept(&[1, 2, 3]), 3).unwrap(),
             vec![0, 1, 2]
         );
         for count in [0, 1, 3] {
-            let result = selected_pages(Some(vec![0, count, count + 1]), count);
+            let numbers: Vec<usize> = (1..=count).collect();
+            let result = selected_pages(Some(vec![0, count, count + 1]), &kept(&numbers), count);
             assert!(
                 matches!(result,Err(ConvertError::PageOutOfRange{requested,page_count}) if requested==count+1 && page_count==count)
             );
         }
+        // Pages 2 and 4 of 4 kept: page 4 is the second kept; page 1 was
+        // dropped; the listing (5) lies past the layout's 4.
+        let gaps = kept(&[2, 4, 5]);
+        assert_eq!(
+            selected_pages(Some(vec![3, 4]), &gaps, 4).unwrap(),
+            vec![1, 2]
+        );
+        assert!(matches!(
+            selected_pages(Some(vec![0, 1]), &gaps, 4),
+            Err(ConvertError::PageNotKept { requested: 0 })
+        ));
+        assert!(matches!(
+            selected_pages(Some(vec![5]), &gaps, 4),
+            Err(ConvertError::PageOutOfRange {
+                requested: 5,
+                page_count: 5
+            })
+        ));
         assert_eq!(
             ConvertError::PageOutOfRange {
                 requested: 1,
                 page_count: 1
             }
             .to_string(),
-            "page 2 is out of range: the output has 1 page"
+            "page 2 is out of range: the document has 1 page"
         );
         assert_eq!(
             ConvertError::PageOutOfRange {
@@ -47136,7 +47798,11 @@ mod coverage_boundary_tests {
                 page_count: 2
             }
             .to_string(),
-            "page 4 is out of range: the output has 2 pages"
+            "page 4 is out of range: the document has 2 pages"
+        );
+        assert_eq!(
+            ConvertError::PageNotKept { requested: 2 }.to_string(),
+            "page 3 is not among the kept pages (changed pages only)"
         );
         assert_eq!(
             ConvertError::Emit("probe".into()).to_string(),
@@ -47155,10 +47821,16 @@ mod coverage_boundary_tests {
         assert_eq!(line_box_from_natural(12.0, &style), 24.0);
         assert_eq!(grid_line_box(12.0, &style, 18.0), 36.0);
         assert_eq!(line_fit_need(12.0, 8.0, &style, 24.0), 12.0);
+        // A face over one grid line: the lines it needs or the multiple's,
+        // the more (Word probe 2026-10-15), not its multiplied face snapped.
+        assert_eq!(grid_line_box(20.0, &style, 18.0), 36.0);
+        style.line_mult = 3.0;
         assert_eq!(grid_line_box(20.0, &style, 18.0), 54.0);
         style.line_mult = 0.0;
         assert_eq!(line_box_from_natural(12.0, &style), 12.0);
         assert_eq!(grid_line_box(12.0, &style, 18.0), 18.0);
+        // No multiple set: a face over one grid line takes the lines it needs.
+        assert_eq!(grid_line_box(20.0, &style, 18.0), 36.0);
         style.line_exact = Some(4.0);
         assert_eq!(line_fit_need(12.0, 8.0, &style, 4.0), 4.0);
         assert_eq!(para_grid_pitch(&style, 18.0), 0.0);
@@ -47884,7 +48556,7 @@ mod coverage_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -48834,7 +49506,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -49098,19 +49770,49 @@ mod coverage_round_three_tests {
     #[test]
     fn fractions_with_and_without_bars_preserve_operand_order() {
         let _face = MathAlphanumerics::only([]);
-        for (kind, num, den) in [
-            ("noBar", VertAlign::StackNum, VertAlign::StackDen),
-            ("bar", VertAlign::Baseline, VertAlign::Baseline),
-        ] {
-            let collected = runs(&format!(
-                r#"<m:oMath><m:f><m:fPr><m:type m:val="{kind}"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#
-            ));
-            assert_eq!(text(&collected), "ndend");
-            assert!(
-                collected.iter().map(|r| r.style.vert).collect::<Vec<_>>()
-                    == vec![num, den, VertAlign::Baseline]
-            );
-        }
+        let nobar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="noBar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        assert_eq!(text(&nobar), "ndend");
+        assert!(
+            nobar.iter().map(|r| r.style.vert).collect::<Vec<_>>()
+                == vec![
+                    VertAlign::StackNum,
+                    VertAlign::StackDen,
+                    VertAlign::Baseline
+                ]
+        );
+        let bar = runs(
+            r#"<m:oMath><m:f><m:fPr><m:type m:val="bar"/></m:fPr><m:num><m:r><m:t>n</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f><m:nary><m:naryPr><m:chr m:val=""/></m:naryPr><m:e><w:r><w:t>end</w:t></w:r></m:e></m:nary></m:oMath>"#,
+        );
+        // only([]) : the face draws no mathematical italics, so n and d
+        // stay ASCII inside the box.
+        assert_eq!(text(&bar), "ndend");
+        assert_eq!(bar.len(), 2, "a bar fraction is one box, then end");
+        let frac = bar[0].math.as_ref().expect("bar fraction is a box");
+        assert_eq!(frac.rules.len(), 1, "the bar is a rule");
+        let glyph_text: String = frac.glyphs.iter().map(|g| g.text.as_str()).collect();
+        assert_eq!(glyph_text, "nd");
+        assert!(frac.glyphs[0].y > frac.rules[0].y_top);
+        assert!(bar[0].style.vert == VertAlign::Baseline);
+        assert_eq!(bar[1].text, "end");
+        assert!(bar[1].style.vert == VertAlign::Baseline);
+    }
+
+    #[test]
+    fn omml_rad_emits_a_radical_sign() {
+        let collected = runs(
+            r#"<m:oMath><m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>x</m:t></m:r></m:e></m:rad></m:oMath>"#,
+        );
+        let joined = text(&collected);
+        assert!(
+            joined.contains('\u{221A}'),
+            "a radical must draw its sign, got {joined:?}"
+        );
+        assert!(
+            collected.iter().any(|r| r.math.is_some()),
+            "a radical is a box"
+        );
     }
 
     #[test]
@@ -49900,17 +50602,37 @@ mod coverage_round_three_tests {
                 let collected = runs(&format!(
                     "<w:{tag}><m:oMath><m:sSup><m:e><m:r><m:t>a</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:{tag}><w:r><w:t>Z</w:t></w:r>"
                 ));
+                // The face draws no mathematical italics, so the letters
+                // stay ASCII. The delimiter is one box, raised with the
+                // superscript, and the run itself stays on the baseline.
                 assert_eq!(text(&collected), "a(x|y)Z");
-                assert_eq!(collected.len(), 7);
+                assert_eq!(collected.len(), 3);
+                assert_eq!(collected[0].text, "a");
                 assert!(collected[0].style.vert == VertAlign::Baseline);
+                assert!(collected[0].rev);
+                let sup = &collected[1];
+                assert_eq!(sup.text, "(x|y)");
+                assert!(sup.rev);
+                assert!(sup.style.vert == VertAlign::Baseline);
+                let math = sup.math.as_ref().expect("delimiter box");
+                let x = math
+                    .glyphs
+                    .iter()
+                    .find(|glyph| glyph.text == "x")
+                    .expect("x");
                 assert!(
-                    collected[1..6]
-                        .iter()
-                        .all(|r| r.style.vert == VertAlign::Super)
+                    (x.y - 11.0 * 0.35).abs() < 0.05,
+                    "x sits at +0.35 em, got {}",
+                    x.y
                 );
-                assert!(collected[..6].iter().all(|r| r.rev));
-                assert!(!collected[6].rev);
-                assert!(collected[6].style.vert == VertAlign::Baseline);
+                assert!(
+                    (x.size - 11.0 * 0.65).abs() < 0.05,
+                    "x is 0.65 em, got {}",
+                    x.size
+                );
+                assert_eq!(collected[2].text, "Z");
+                assert!(!collected[2].rev);
+                assert!(collected[2].style.vert == VertAlign::Baseline);
             }
             assert_eq!(
                 text(&runs(
@@ -50327,7 +51049,7 @@ mod coverage_round_three_tests {
         }
 
         #[test]
-        fn formatting_revisions_and_run_revisions_mark_body_tables_but_leave_chrome_unchanged() {
+        fn formatting_revisions_and_run_revisions_mark_body_tables_and_chrome_tables_apart() {
             let fonts = fonts();
             for (fmt_rev, run_rev) in [(true, false), (false, true), (true, true)] {
                 for chrome in [false, true] {
@@ -50347,6 +51069,7 @@ mod coverage_round_three_tests {
                     lay.emit_table_cells(&cols, &rows, &exact_style(), None, &geom, None);
                     assert_eq!(contents(&lay.pages), "A");
                     assert_eq!(lay.pages[0].changed, !chrome);
+                    assert_eq!(lay.pages[0].chrome_changed, chrome);
                     assert_eq!(lay.y, 256.0);
                 }
             }
@@ -51120,6 +51843,115 @@ mod coverage_round_three_tests {
             assert_eq!(texts, ["\u{1D44E}", "\u{1D44F}"]);
         }
 
+        /// A justified line splits runs on spaces. A fraction is one box,
+        /// including when its text contains a space, and stays at its
+        /// glyph size above the baseline. inline-symbol-runs is Normal
+        /// `jc both`, so the superscript fraction was painted as body
+        /// "p+14" once the line stretched.
+        #[test]
+        fn justified_line_paints_a_math_box_whole() {
+            let fonts = fonts();
+            let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+            let prose = TextRun::new("roots ", Defaults::word().run);
+            let mut frac = TextRun::new("p + 1", Defaults::word().run);
+            frac.style.size = 10.0;
+            frac.math = Some(super::math_layout::MathBox {
+                width: 14.0,
+                ascent: 8.0,
+                descent: 4.0,
+                glyphs: vec![
+                    super::math_layout::MathGlyph {
+                        text: "p".to_string(),
+                        gid: 1,
+                        x: 0.0,
+                        y: 4.0,
+                        size: 6.5,
+                    },
+                    super::math_layout::MathGlyph {
+                        text: "1".to_string(),
+                        gid: 2,
+                        x: 6.0,
+                        y: -3.0,
+                        size: 6.5,
+                    },
+                ],
+                rules: vec![super::math_layout::MathRule {
+                    x: 0.0,
+                    y_top: 1.0,
+                    w: 10.0,
+                    thickness: 0.4,
+                }],
+            });
+            lay.paint_stretched(&[prose, frac], 72.0, 700.0, 2.0);
+            let glyphs: Vec<(&str, f32, f32)> = lay.pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text { text, size, y, .. } if *text == "p" || *text == "1" => {
+                        Some((text.as_str(), *size, *y))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(glyphs, vec![("p", 6.5, 704.0), ("1", 6.5, 697.0)]);
+            let rule = lay.pages[0].ops.iter().any(|op| match op {
+                Op::FillRect { w, h, y, .. } => {
+                    (*w - 10.0).abs() < 0.01 && (*h - 0.4).abs() < 0.01 && (*y - 700.6).abs() < 0.01
+                }
+                _ => false,
+            });
+            assert!(rule, "the fraction bar is painted with the box");
+        }
+
+        /// quadratic-in-table's fraction is one box inside a cell. The row
+        /// stayed a body font line, so the radical painted into the cell
+        /// above and the denominator through the bottom border.
+        #[test]
+        fn a_cell_line_holds_a_math_box() {
+            let fonts = fonts();
+            let mut run = TextRun::new("fraction", Defaults::word().run);
+            run.style.size = 11.0;
+            run.math = Some(super::math_layout::MathBox {
+                width: 40.0,
+                ascent: 18.0,
+                descent: 12.0,
+                glyphs: vec![],
+                rules: vec![],
+            });
+            let mut style = Defaults::word().para;
+            style.before = 0.0;
+            style.after = 0.0;
+            style.line_exact = None;
+            style.line_at_least = None;
+            style.line_mult = 1.0;
+            let para = super::super::CellPara {
+                runs: vec![run],
+                images: Vec::new(),
+                boxes: Vec::new(),
+                style,
+                bookmarks: Vec::new(),
+                blank_bookmarks: Vec::new(),
+                continued: false,
+                vertical: false,
+                squeeze: super::super::Squeeze::NONE,
+                hang_spaces: false,
+            };
+            let (size, face_id, h) = super::super::cell_line_metrics(&fonts, &para, &para.runs);
+            assert!(h + 0.05 >= 30.0, "cell line {h} does not hold the math box");
+            let drop = super::super::cell_baseline_drop(
+                fonts.get(face_id),
+                size,
+                &para.runs,
+                h,
+                false,
+                0.0,
+            );
+            assert!(
+                (drop - 18.0).abs() < 0.05,
+                "baseline drop {drop} is not the math ascent"
+            );
+        }
+
         /// Two stretches of missing glyphs around painted text: one hidden
         /// op each, in reading order between the painted ones.
         #[test]
@@ -51601,7 +52433,7 @@ mod coverage_round_three_tests {
     }
 
     #[cfg(test)]
-    #[cfg_attr(coverage_nightly, coverage(off))]
+    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
     mod coverage_deep_layout_tests {
         use super::*;
 
@@ -55139,7 +55971,7 @@ mod coverage_round_three_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod converter_semantic_boundary_tests {
     use super::*;
 
@@ -55498,7 +56330,7 @@ mod converter_semantic_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod rendering_uncovered_contract_tests {
     use super::*;
 
@@ -57084,6 +57916,43 @@ mod rendering_uncovered_contract_tests {
         }
     }
 
+    /// A simple field (`w:fldSimple`, which jubarte's Markdown writer emits
+    /// for `{PAGE}`) is computed like a complex one: its cached `1` is not
+    /// what the page shows.
+    #[test]
+    fn numeric_header_simple_fields_are_computed_not_cached() {
+        for (name, kind) in [
+            ("PAGE", FieldKind::Page),
+            ("NUMPAGES", FieldKind::NumPages),
+            ("NUMWORDS", FieldKind::NumWords),
+        ] {
+            for cached in [None, Some("1")] {
+                let result = cached.map_or(String::new(), |v| {
+                    format!("<w:r><w:rPr><w:b/></w:rPr><w:t>{v}</w:t></w:r>")
+                });
+                let (dom, root) = xml(&format!(
+                    r#"<w:p><w:fldSimple w:instr=" {name} ">{result}</w:fldSimple><w:r><w:t> tail</w:t></w:r></w:p>"#
+                ));
+                let mut runs = Vec::new();
+                let mut scan = FieldScan::default();
+                collect_hf_rec(
+                    &dom,
+                    root,
+                    &Defaults::word().run,
+                    &sheet(),
+                    &mut scan,
+                    &mut runs,
+                );
+                assert_eq!(runs.len(), 2, "{name} {cached:?}");
+                assert!(runs[0].field == kind, "{name} {cached:?}");
+                assert_eq!(runs[0].text, cached.unwrap_or(""));
+                assert!(runs[1].field == FieldKind::None);
+                assert_eq!(runs[1].text, " tail");
+                assert!(scan.kind.is_none());
+            }
+        }
+    }
+
     #[test]
     fn nonnumeric_header_fields_keep_cached_text_without_inventing_page_numbers() {
         for instruction in [
@@ -58610,7 +59479,7 @@ mod rendering_uncovered_contract_tests {
             resolved: true,
         });
         let mut pages = vec![page];
-        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        list_comments_at_end(&fonts, &sheet(), &mut pages, 0);
         assert_eq!(pages.len(), 2);
         assert!(pages.iter().all(|p| p.comments.is_empty()));
         let ink: Vec<_> = pages[1]
@@ -61467,7 +62336,7 @@ mod rendering_uncovered_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_coordinate_layout_contract_tests {
     use super::*;
 
@@ -61857,7 +62726,7 @@ mod complete_coordinate_layout_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod complete_coordinate_vml_owner_contract_tests {
     use super::*;
 
@@ -61959,7 +62828,7 @@ mod complete_coordinate_vml_owner_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod field_group_coordinate_contract_tests {
     use super::*;
 
@@ -62458,7 +63327,7 @@ mod field_group_coordinate_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_cache_and_diagram_threshold_contract_tests {
     use super::*;
 
@@ -62668,7 +63537,7 @@ mod chart_cache_and_diagram_threshold_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_series_cache_owner_regression_tests {
     use super::*;
 
@@ -62700,7 +63569,7 @@ mod chart_series_cache_owner_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod cell_picture_owned_room_contract_tests {
     use super::*;
 
@@ -63015,7 +63884,7 @@ mod cell_picture_owned_room_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod style_hit_and_following_line_contract_tests {
     use super::*;
     fn fonts() -> Fonts<'static> {
@@ -63243,7 +64112,7 @@ mod style_hit_and_following_line_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod encoded_picture_effect_contract_tests {
     use super::*;
     fn package() -> PartFs {
@@ -63390,7 +64259,7 @@ mod encoded_picture_effect_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chart_admitted_series_owner_boundaries {
     use super::*;
 
@@ -63490,7 +64359,7 @@ mod chart_admitted_series_owner_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod automatic_column_source_matrix_tests {
     use super::*;
     fn fonts() -> Fonts<'static> {
@@ -64964,7 +65833,7 @@ mod automatic_column_source_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod chrome_collector_source_boundary_tests {
     use super::*;
 

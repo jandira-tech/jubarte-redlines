@@ -188,8 +188,14 @@ pub(crate) struct Page {
     /// (`PdfOptions::changed_only` keeps such pages).
     pub changed: bool,
     /// The page's number in the whole document, from 1: kept when
-    /// `PdfOptions::changed_only` drops pages around it.
+    /// `PdfOptions::changed_only` drops pages around it. The comment
+    /// listing's pages number on after the document's last.
     pub number: usize,
+    /// A revised header or footer paints a change bar on the page.
+    pub chrome_changed: bool,
+    /// The ordinal of the section the page was laid out in (a continuous
+    /// section break starts no page, so its pages keep the previous one).
+    pub section: u32,
 }
 
 impl Page {
@@ -205,6 +211,8 @@ impl Page {
             vertical: false,
             changed: false,
             number: 0,
+            chrome_changed: false,
+            section: 0,
         }
     }
 }
@@ -367,7 +375,15 @@ impl Op {
     }
 }
 
-pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8> {
+/// The PDF of `pages`: every page laid out, or the subset a caller keeps
+/// (`&[Page]` or `&[&Page]`).
+pub(crate) fn emit<P: std::borrow::Borrow<Page>>(
+    fonts: &Fonts,
+    pages: &[P],
+    options: PdfOptions,
+) -> Vec<u8> {
+    let pages: Vec<&Page> = pages.iter().map(std::borrow::Borrow::borrow).collect();
+    let pages = pages.as_slice();
     let used: Vec<FaceRef> = {
         let mut seen = Vec::new();
         for page in pages {
@@ -404,9 +420,14 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 face, glyphs, text, ..
             } = op
             {
-                // A glyph shaped from several characters is painted by its
-                // id; WinAnsi would paint each character instead.
-                if text.chars().count() == glyphs.len() {
+                // A glyph shaped from several characters, or a glyph the
+                // caller chose (a MATH variant), is painted by its id.
+                // WinAnsi would paint the cmap character instead.
+                let cmap_match = text
+                    .chars()
+                    .zip(glyphs.iter())
+                    .all(|(ch, &gid)| fonts.get(*face).glyph(ch) == gid);
+                if text.chars().count() == glyphs.len() && cmap_match {
                     enc = winansi_bytes(text);
                 }
                 if enc.is_some() {
@@ -1007,12 +1028,13 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        // Word's Save as PDF writes no annotation for a comment: its
-        // balloon is the print. The other styles keep the sticky note.
-        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
-            &[]
-        } else {
+        // A viewer paints a note as an icon over the text, and the balloon
+        // already shows the comment (Word's Save as PDF writes none): a
+        // note is written only when asked.
+        let sticky: &[PdfComment] = if options.comment_notes {
             &page.comments
+        } else {
+            &[]
         };
         for note in sticky {
             let id = objs.len() + 1;
@@ -1121,7 +1143,7 @@ impl FaceObjIds {
 
 /// Glyph ids a face paints: the shaped ids (Identity-H) and, for the
 /// WinAnsi path, the ids the reader finds through the face's own cmap.
-fn face_used_glyphs(face: &super::font::Face, id: FaceRef, pages: &[Page]) -> BTreeSet<u16> {
+fn face_used_glyphs(face: &super::font::Face, id: FaceRef, pages: &[&Page]) -> BTreeSet<u16> {
     let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
     let mut used = BTreeSet::from([0u16]);
     for page in pages {
@@ -1309,7 +1331,7 @@ fn hundredths(v: f32) -> i64 {
 
 /// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 fn fmt_hundredths(h: i64) -> String {
     let mut out = String::new();
     push_hundredths(&mut out, h);
@@ -1634,7 +1656,7 @@ fn type0_font_obj(face: &super::font::Face, cid_id: usize, cmap_id: usize) -> Ve
 fn face_unicode_map(
     face: &super::font::Face,
     id: FaceRef,
-    pages: &[Page],
+    pages: &[&Page],
 ) -> BTreeMap<u16, String> {
     let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
     // A symbol-encoded face (Windows cmap encoding 0) paints U+F0xx; its
@@ -2151,7 +2173,7 @@ fn stands_upright(c: char) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::uniquify;
 
@@ -2249,7 +2271,7 @@ mod tests {
             hscale: 1.0,
             hidden: false,
         });
-        let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[page]);
+        let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[&page]);
         assert_eq!(map.get(&square).map(String::as_str), Some("▪"));
         assert_eq!(map.get(&a).map(String::as_str), Some("a"));
     }
@@ -2298,7 +2320,12 @@ mod tests {
             color: [0.0; 3],
             resolved: false,
         });
-        let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
+        // Notes are opt-in (f8932ae1); this test is about where one lands.
+        let options = crate::convert::PdfOptions {
+            comment_notes: true,
+            ..crate::convert::PdfOptions::default()
+        };
+        let pdf = super::emit(&fonts, &[page], options);
         let hay = String::from_utf8_lossy(&pdf);
         // X = y, Y = width − x: [700, 595.2 − 120] to [714, 595.2 − 100].
         assert!(
@@ -2595,7 +2622,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod residual_byte_and_geometry_contract_tests {
     use super::*;
     use std::io::Read;
@@ -2782,11 +2809,14 @@ mod residual_byte_and_geometry_contract_tests {
             Op::Pin(true),
             Op::Pin(false),
         ];
-        let map = face_unicode_map(fa, a, &[page]);
+        let map = face_unicode_map(fa, a, &[&page]);
         assert_eq!(map, BTreeMap::from([(ag[0], "A".into())]));
         let mut page = Page::new(40.0, 40.0);
         page.ops = vec![Op::text(a, 10.0, 1.0, 10.0, ag.clone(), [0.0; 3], "A")];
-        assert_eq!(face_used_glyphs(fa, a, &[page]), BTreeSet::from([0, ag[0]]));
+        assert_eq!(
+            face_used_glyphs(fa, a, &[&page]),
+            BTreeSet::from([0, ag[0]])
+        );
     }
 
     #[test]

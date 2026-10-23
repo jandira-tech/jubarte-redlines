@@ -8,6 +8,10 @@
 //! without a final `w:sectPr` gets one, starting from Word's default Letter
 //! page with one-inch margins. The comparer records the old geometry in
 //! `w:sectPrChange`.
+//!
+//! Backs the `page_setup` plan operation: [`SectionScope`], [`PageSize`],
+//! [`Orientation`] and [`Margins`] are its `section`, `page`, `orientation`
+//! and `margins_dxa` fields.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,28 +22,30 @@ use crate::xmllinq::{Dom, NodeId};
 use super::{EditError, EditOutcome, Transaction, err};
 
 /// Which sections a [`super::OperationKind::PageSetup`] changes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionScope {
     /// The document's last section (the body's final `w:sectPr`).
     #[default]
     Last,
-    /// Every section.
+    /// Every section: the mid-document breaks and the final one.
     All,
 }
 
 /// A paper size, by name or in twentieths of a point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum PageSize {
-    /// A named paper size, portrait.
+    /// A named paper size; the orientation orders its sides.
     Named(Paper),
-    /// A custom size.
+    /// A custom size; keeps its sides unless an orientation is given.
     Custom(CustomPage),
 }
 
 /// Named paper sizes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Paper {
     /// US Letter, 8.5 x 11 inches.
@@ -49,17 +55,19 @@ pub enum Paper {
 }
 
 /// A custom page size in twentieths of a point (1440 per inch).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CustomPage {
-    /// Page width.
+    /// Page width in twentieths of a point, 1 to 31_680 (22 inches).
+    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub width_dxa: u32,
-    /// Page height.
+    /// Page height in twentieths of a point, 1 to 31_680 (22 inches).
+    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub height_dxa: u32,
 }
 
 /// Page orientation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Orientation {
     /// Taller than wide.
@@ -71,26 +79,35 @@ pub enum Orientation {
 /// Page margins in twentieths of a point; fields not given keep the
 /// section's. Top and bottom may be negative, as in Word: text then ignores
 /// the header or footer.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct Margins {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Top margin.
+    #[schemars(range(min = -31_680, max = MAX_SIDE))]
+    /// Top margin in twentieths of a point.
     pub top: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Right margin.
+    #[schemars(range(min = 0, max = MAX_SIDE))]
+    /// Right margin in twentieths of a point.
     pub right: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Bottom margin.
+    #[schemars(range(min = -31_680, max = MAX_SIDE))]
+    /// Bottom margin in twentieths of a point.
     pub bottom: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Left margin.
+    #[schemars(range(min = 0, max = MAX_SIDE))]
+    /// Left margin in twentieths of a point.
     pub left: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Distance from the page top to the header.
+    #[schemars(range(min = 0, max = MAX_SIDE))]
+    /// Distance from the page top to the header, in twentieths of a point.
     pub header: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    /// Distance from the page bottom to the footer.
+    #[schemars(range(min = 0, max = MAX_SIDE))]
+    /// Distance from the page bottom to the footer, in twentieths of a
+    /// point.
     pub footer: Option<u32>,
 }
 
@@ -510,7 +527,7 @@ pub(super) fn targets_overlap(a: &Targets, b: &Targets) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
 
@@ -622,7 +639,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod mid_section_authored_history_boundary_tests {
     use super::*;
     use crate::opc::PartFs;

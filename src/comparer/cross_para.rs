@@ -18,6 +18,11 @@
 //! `LICENSES/LicenseRef-Docxodus-MIT.txt`). A region is re-streamed only when
 //! the segmenter changes its paragraph structure; otherwise the LCS sequences
 //! stand.
+//!
+//! Public entry point:
+//! - [`restream_cross_paragraph_regions`] — in-place re-diff of changed
+//!   paragraph regions inside the body's `LCS` run. Word-visual mode only;
+//!   regions holding anything other than plain text keep the LCS.
 
 use std::collections::{HashMap, HashSet};
 
@@ -114,8 +119,22 @@ struct Region {
     run_ends_story: bool,
 }
 
-/// Re-stream every changed-paragraph region of `seqs` the way Word's Compare
-/// does. Word mode only; regions holding anything but plain text keep the LCS.
+/// Re-stream every changed-paragraph region of `seqs` the way Word's
+/// Compare does.
+///
+/// Word-visual mode only; regions whose contents are not plain text
+/// (tables, text boxes, fields, content controls, hyperlinks, smart tags)
+/// keep the paragraph-level LCS — the segmenter only handles plain
+/// `paragraph → run → w:t` chains. Each shipped region has its paragraph
+/// Unid aligned with the left paragraph it pairs with so that accept and
+/// reject keep the merged paragraph intact. Called from
+/// [`super::compare_bodies_faithful_with_notes`] after the LCS has paired
+/// whole paragraphs; the result is the cross-paragraph edit script the body
+/// rebuild consumes.
+///
+/// `settings.case_insensitive`, `settings.conflate_breaking_and_nonbreaking_spaces`
+/// and `settings.detail_threshold` are read by the per-region
+/// [`super::lcs`] and resegmentation passes.
 pub fn restream_cross_paragraph_regions(
     dom: &mut Dom,
     seqs: &mut Vec<CorrelatedSequence>,
@@ -2117,7 +2136,7 @@ fn emit_segment(
     }
 }
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod lexical_pairing_contract_tests {
     use super::*;
     use crate::comparer::atoms::ComparisonUnitWord;
@@ -2452,15 +2471,14 @@ mod lexical_pairing_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod public_option_source_ownership_tests {
     use super::*;
     use crate::xmllinq::NodeId;
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes(node)
-            .into_iter()
+            .attributes_iter(node)
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -2536,8 +2554,7 @@ mod public_option_source_ownership_tests {
                         walk(&notes, child, pkg, &mut note_events);
                     }
                     let mut owner_attrs = notes
-                        .attributes(note)
-                        .into_iter()
+                        .attributes_iter(note)
                         .filter(|(name, _)| !notes.is_namespace_declaration(name))
                         .map(|(name, value)| {
                             (
@@ -2571,8 +2588,7 @@ mod public_option_source_ownership_tests {
                 .any(|name| dom.name_is(node, name))
             {
                 let mut attrs = dom
-                    .attributes(node)
-                    .into_iter()
+                    .attributes_iter(node)
                     .filter(|(name, _)| !dom.is_namespace_declaration(name))
                     .map(|(name, value)| (format!("{name:?}"), value))
                     .collect::<Vec<_>>();

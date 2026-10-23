@@ -56,7 +56,7 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let contract = std::fs::read("contract.docx")?;
 //!     let plan = r#"{"schema_version": 1, "author": "Reviewer", "operations": [
-//!         {"kind": "replace", "paragraph": "body:p:4",
+//!         {"kind": "replace", "paragraph": "p4",
 //!          "find": "thirty (30) days", "replacement": "sixty (60) days"}
 //!     ]}"#;
 //!     let edited = jubarte::edit::apply_plan_json(&contract, plan)?;
@@ -116,7 +116,10 @@ pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
 pub mod edit;
+/// V2-13 (issue #845): the checker core for `--expect` evaluations.
+pub mod expect;
 pub mod fields;
+pub mod ids;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
@@ -129,6 +132,7 @@ pub mod namespaces;
 pub mod opc;
 /// P0-LAB-01 stage counters/timers — no-ops unless `perf-profile` is enabled.
 pub mod perf;
+pub mod result;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
 pub mod scrub;
@@ -152,3 +156,7 @@ pub mod xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
+
+/// Capability-confined, staged filesystem publication for host applications.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod publication;

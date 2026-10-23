@@ -2,11 +2,16 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Port of `MarkupSimplifier.ts` (the comparison subset the comparer uses) — M2.
+//! `MarkupSimplifier` comparison subset (M2).
 //!
-//! Faithful transcription of `SingleCharacterRunTransform`, `RemoveRsidTransform`,
-//! and the comparison-relevant element removal. These are tree-REBUILD transforms
-//! (functional in the TS); in the arena we build fresh nodes and return them.
+//! Port of `SingleCharacterRunTransform` (MarkupSimplifier.ts), the
+//! rsid-stripper `remove_rsid_transform`, and the entry point that runs
+//! it on a non-run container (`transform_element_to_single_character_runs`).
+//! These are tree-rebuild transforms in the TS source; in the arena we
+//! build fresh nodes and return them. The comparer calls
+//! `remove_rsid_transform` from every accept / reject pass; the
+//! single-character-run transform is exposed for the WASM bindings and
+//! for the corpus reconciliation tests.
 
 use crate::namespaces::W;
 use crate::util::group_adjacent;
@@ -34,11 +39,13 @@ fn copy_attrs(dom: &mut Dom, src: NodeId, dst: NodeId) {
     }
 }
 
-/// Port of `SingleCharacterRunTransform(node)` — returns the transformed node(s).
-/// Non-elements pass through; a `w:r` explodes into one run per character (text)
-/// or per child element (non-text); other elements rebuild recursively. A
-/// one-character `w:t` that holds XML whitespace (space, tab, CR, LF) gets
-/// `xml:space="preserve"`.
+/// Port of `SingleCharacterRunTransform(node)` — returns the transformed
+/// node(s).
+///
+/// Non-elements pass through; a `w:r` explodes into one run per character
+/// (text) or per child element (non-text); other elements rebuild
+/// recursively. A one-character `w:t` that holds XML whitespace (space,
+/// tab, CR, LF) gets `xml:space="preserve"`.
 pub fn single_character_run_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     if !dom.is_element(node) {
         return vec![node];
@@ -105,16 +112,16 @@ pub fn single_character_run_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId
     vec![ne]
 }
 
-/// `TransformElementToSingleCharacterRuns(element)` — returns the single rebuilt
-/// root of a non-`w:r` container such as the body or a paragraph.
+/// `TransformElementToSingleCharacterRuns(element)` — returns the single
+/// rebuilt root of a non-`w:r` container such as the body or a paragraph.
 ///
 /// # Behaviour
 ///
-/// A `w:r` explodes into zero, one or many runs, so it has no single rebuilt
-/// root. A `w:r` `element` is outside this function's contract: it is returned
-/// unchanged and the DOM is left as it was (use [`single_character_run_transform`]
-/// to explode a run into its runs). Every other element, and a non-element
-/// node, yields exactly one node.
+/// A `w:r` explodes into zero, one or many runs, so it has no single
+/// rebuilt root. A `w:r` `element` is outside this function's contract: it
+/// is returned unchanged and the DOM is left as it was (use
+/// [`single_character_run_transform`] to explode a run into its runs).
+/// Every other element, and a non-element node, yields exactly one node.
 pub fn transform_element_to_single_character_runs(dom: &mut Dom, element: NodeId) -> NodeId {
     if dom.is_element(element) && dom.name(element) == Some(W::r()) {
         return element;
@@ -136,13 +143,14 @@ fn is_rsid_attr(name: &XName) -> bool {
     )
 }
 
-/// Port of `RemoveRsidTransform(node)` — drops `<w:rsid>` elements and all
-/// `w:rsid*` attributes. Returns `None` if the node itself is dropped
-/// (a `<w:rsid>`).
+/// Port of `RemoveRsidTransform(node)` — drops every `w:rsid*` element and
+/// every `w:rsid*` attribute across the subtree. Returns `None` when the
+/// node itself is dropped (a `w:rsid` element).
 ///
 /// RSID-INPLACE-01: mutates the existing subtree in place (same root
 /// `NodeId`) instead of rebuilding every node. Observable XML after the
-/// transform is unchanged; only intermediate allocation/drop work is removed.
+/// transform is unchanged; only intermediate allocation / drop work is
+/// removed.
 pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
         return Some(node);

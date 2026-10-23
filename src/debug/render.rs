@@ -9,7 +9,7 @@
 //! jubarte's own layout pass makes of the package: pages and the face each
 //! requested font resolved to.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
     Package, TEXT_PARTS, attr, clip, decode_xml, local, percent_decode, rels_of, resolve_target,
@@ -107,6 +107,10 @@ fn parse(pkg: &Package, name: &str) -> Option<(Dom, NodeId)> {
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc)?;
+    // Strict files write universal measures (`612pt`) where Transitional
+    // writes integer twips: list them alike. A plain value stays as the
+    // file spells it — the diagnostic reports, it does not repair.
+    crate::comparer::finalize::normalize_unit_measures(&mut dom, root);
     Some((dom, root))
 }
 
@@ -170,8 +174,7 @@ impl StyleBook {
                     };
                     book.default_fonts = descendant(dom, s, "rFonts").map(|f| {
                         let mut items: Vec<String> = dom
-                            .attributes(f)
-                            .into_iter()
+                            .attributes_iter(f)
                             .map(|(k, v)| format!("{}={v}", k.local_name()))
                             .collect();
                         items.sort();
@@ -458,13 +461,38 @@ fn own_text(dom: &Dom, n: NodeId, para: NodeId) -> String {
     s
 }
 
-/// Counts with the first sample seen, by line key.
+/// Each fact's stretches and the first one's text. A stretch is a run of
+/// runs in one paragraph that share the fact: Word splits runs where
+/// nothing on the page changes (`monospace` and `.`), so a fact counts
+/// once until a run without it comes between.
 #[derive(Default)]
-struct Tally(BTreeMap<String, (usize, String)>);
+struct Tally {
+    facts: BTreeMap<String, (usize, String)>,
+    /// The paragraph of the run being read, and the facts the run before
+    /// it in that paragraph had and the facts it has so far.
+    para: Option<NodeId>,
+    before: BTreeSet<String>,
+    now: BTreeSet<String>,
+}
 
 impl Tally {
+    /// A run of `para` starts: the facts of the run before it carry on.
+    fn next_run(&mut self, para: NodeId) {
+        if self.para == Some(para) {
+            self.before = std::mem::take(&mut self.now);
+        } else {
+            self.para = Some(para);
+            self.before.clear();
+            self.now.clear();
+        }
+    }
+
     fn add(&mut self, key: String, sample: &str) {
-        let e = self.0.entry(key).or_default();
+        self.now.insert(key.clone());
+        if self.before.contains(&key) {
+            return;
+        }
+        let e = self.facts.entry(key).or_default();
         if e.0 == 0 {
             e.1 = clip(sample, SAMPLE);
         }
@@ -472,7 +500,7 @@ impl Tally {
     }
 
     fn lines(self, out: &mut Vec<String>) {
-        for (key, (n, sample)) in self.0 {
+        for (key, (n, sample)) in self.facts {
             if sample.is_empty() {
                 out.push(format!("  {key} ×{n}"));
             } else {
@@ -649,6 +677,38 @@ fn paints(dom: &Dom, r: NodeId) -> bool {
         })
 }
 
+/// A run that paints something a highlight can colour: text, a symbol,
+/// a tab (plain or positioned) or a hyphen glyph (a non-breaking or soft
+/// one). A break paints no glyph (a page break ends the page, a line
+/// break wraps), so a highlight on it never reaches the page.
+fn paints_glyphs(dom: &Dom, r: NodeId) -> bool {
+    dom.elements(r, None)
+        .into_iter()
+        .any(|c| match local(dom, c).as_str() {
+            "t" | "delText" => dom
+                .nodes(c)
+                .into_iter()
+                .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
+            "tab" | "ptab" | "sym" | "noBreakHyphen" | "softHyphen" => true,
+            _ => false,
+        })
+}
+
+/// The run's leading `rPr` blocks by local name: a Strict package writes
+/// them in the Strict namespace, which a qualified lookup misses.
+fn leading_rprs(dom: &Dom, r: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for i in 0..dom.child_count(r) {
+        let child = dom.child_at(r, i);
+        if local(dom, child) == "rPr" {
+            out.push(child);
+        } else if dom.text_value(child).is_none() {
+            break;
+        }
+    }
+    out
+}
+
 /// A run's colour, highlight, shading, hidden state and requested font,
 /// direct or from its character or paragraph style, over `docDefaults`.
 /// The leading `w:rPr` blocks apply in order, each its character style and
@@ -658,8 +718,9 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
     let Some(para) = nearest(dom, r, "p") else {
         return;
     };
+    tally.next_run(para);
     let text = own_text(dom, r, para);
-    let rprs = crate::convert::leading_rprs(dom, r);
+    let rprs = leading_rprs(dom, r);
     let style_of = |pr: Option<NodeId>, name: &str| {
         pr.and_then(|x| child(dom, x, name))
             .map(|s| attr(dom, s, "val"))
@@ -695,10 +756,14 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
         None => {}
     };
     add("color", fold(&|x| color(dom, x), &|s| s.color.clone()));
-    add(
-        "highlight",
-        fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
-    );
+    // A highlight paints behind glyphs, so only a run that paints some
+    // (text, a symbol, a tab) can show one on the page.
+    if paints_glyphs(dom, r) {
+        add(
+            "highlight",
+            fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
+        );
+    }
     add(
         "run-shd",
         fold(&|x| run_shd(dom, x), &|s| s.run_shd.clone()),
@@ -785,8 +850,7 @@ fn font_slots(dom: &Dom, f: NodeId) -> Vec<(&'static str, String)> {
 
 /// An element's attributes as `(local name, value)`.
 fn attr_pairs(dom: &Dom, n: NodeId) -> Vec<(String, String)> {
-    dom.attributes(n)
-        .into_iter()
+    dom.attributes_iter(n)
         .map(|(k, v)| (k.local_name().to_string(), v.to_string()))
         .collect()
 }
@@ -804,17 +868,9 @@ fn merge_pairs(base: &mut Vec<(String, String)>, over: &[(String, String)]) {
 /// `table N RxC style=… float(…) shd=… cells-shd[…] style-shd[…] "first row"`.
 fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     let tblpr = child(dom, t, "tblPr");
-    // customXml-wrapped rows are the table's own, as the converter lays
-    // them out.
-    let rows: Vec<NodeId> = dom
-        .elements(t, None)
-        .into_iter()
-        .flat_map(|c| match local(dom, c).as_str() {
-            "tr" => vec![c],
-            "customXml" => kids(dom, c, "tr"),
-            _ => Vec::new(),
-        })
-        .collect();
+    // Wrapper-held rows are the table's own, as the converter lays them
+    // out (`customXml`, and `sdt`/`sdtContent` as Strict files spell them).
+    let rows: Vec<NodeId> = crate::convert::wrapped_children(dom, t, "tr");
     // The columns the converter lays out: the grid, or the widest row
     // (its spans, grid before/after and, with a live `w:cellDel`, the
     // "Deleted Cells" column Word's All Markup appends).
@@ -863,8 +919,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     }
     if let Some(float) = tblpr.and_then(|x| child(dom, x, "tblpPr")) {
         let mut items: Vec<String> = dom
-            .attributes(float)
-            .into_iter()
+            .attributes_iter(float)
             .map(|(k, v)| format!("{}={v}", k.local_name()))
             .collect();
         items.sort();
@@ -876,6 +931,36 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     {
         s.push_str(&format!(" shd={fill}"));
     }
+    // The borders the table and its cells carry themselves, as a table
+    // line prints them.
+    let borders = |props: Option<NodeId>, all: &[&'static str]| -> String {
+        use crate::markdown::borders::{self, Border};
+        let found: Vec<_> = props
+            .map(|x| dom.elements(x, None))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|side| {
+                let name = borders::side(&local(dom, side), all)?;
+                let get = |key: &str| Some(attr(dom, side, key)).filter(|v| !v.is_empty());
+                let border = Border::new(
+                    &get("val")?,
+                    get("sz").as_deref(),
+                    get("color").as_deref(),
+                    get("space").as_deref(),
+                );
+                Some((name, border))
+            })
+            .collect();
+        borders::describe(&borders::ordered(&found, all), all)
+    };
+    let own = borders(
+        tblpr.and_then(|x| child(dom, x, "tblBorders")),
+        &crate::markdown::borders::TABLE_SIDES,
+    );
+    if !own.is_empty() {
+        s.push_str(&format!(" borders[{own}]"));
+    }
+    let mut cell_borders: BTreeMap<String, usize> = BTreeMap::new();
     let mut cells: BTreeMap<String, usize> = BTreeMap::new();
     for tc in dom.descendants(t, None) {
         if local(dom, tc) != "tc" || nearest(dom, tc, "tbl") != Some(t) {
@@ -887,6 +972,20 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         {
             *cells.entry(fill).or_default() += 1;
         }
+        let own = borders(
+            child(dom, tc, "tcPr").and_then(|x| child(dom, x, "tcBorders")),
+            &crate::markdown::borders::CELL_SIDES,
+        );
+        if !own.is_empty() {
+            *cell_borders.entry(own).or_default() += 1;
+        }
+    }
+    if !cell_borders.is_empty() {
+        let items: Vec<String> = cell_borders
+            .iter()
+            .map(|(b, k)| format!("{b}×{k}"))
+            .collect();
+        s.push_str(&format!(" cells-borders[{}]", items.join(",")));
     }
     if !cells.is_empty() {
         let items: Vec<String> = cells.iter().map(|(f, k)| format!("{f}×{k}")).collect();
@@ -913,7 +1012,7 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         let texts: Vec<String> = crate::convert::wrapped_children(dom, *first, "tc")
             .into_iter()
             .map(|tc| {
-                kids(dom, tc, "p")
+                crate::convert::wrapped_children(dom, tc, "p")
                     .into_iter()
                     .map(|p| own_text(dom, p, p))
                     .collect::<Vec<_>>()
@@ -934,9 +1033,12 @@ fn section(dom: &Dom, sect: NodeId, n: usize, rels: &[Rel]) -> String {
             attr(dom, sz, "w"),
             attr(dom, sz, "h")
         ));
-        let orient = attr(dom, sz, "orient");
-        if !orient.is_empty() {
-            s.push_str(&format!(" {orient}"));
+        // The page's orientation, not the attribute's: `portrait` is the
+        // default a page need not state, and a page wider than tall is
+        // landscape (as the view reads it).
+        let number = |k: &str| attr(dom, sz, k).parse::<u64>().unwrap_or(0);
+        if attr(dom, sz, "orient") == "landscape" || number("w") > number("h") {
+            s.push_str(" landscape");
         }
     }
     if let Some(m) = child(dom, sect, "pgMar") {
@@ -1136,7 +1238,7 @@ fn layout_lines(pkg: &Package, rels: &[Rel]) -> (Vec<String>, usize) {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod story_diagnostic_contract_tests {
     use super::*;
     use std::io::{Cursor, Write};
@@ -1267,13 +1369,113 @@ mod story_diagnostic_contract_tests {
             (
                 vec![
                     "  frame(hAnchor=page,w=2000,x=300) \"firstsecondreset\"".into(),
-                    "  color 112233 via \"Base face\" ×2 \"first\"".into(),
-                    "  highlight yellow via \"Base face\" ×2 \"first\"".into(),
+                    // `first` and `second` are one stretch; the face
+                    // spans all three runs.
+                    "  color 112233 via \"Base face\" ×1 \"first\"".into(),
+                    "  highlight yellow via \"Base face\" ×1 \"first\"".into(),
                     "  pstyle \"Child face\" ×1".into(),
-                    "  rfonts \"Example\" via \"Base face\" ×3".into(),
+                    "  rfonts \"Example\" via \"Base face\" ×1".into(),
                 ],
                 1
             )
+        );
+    }
+
+    #[test]
+    fn a_stretch_split_into_runs_counts_once_and_a_gap_counts_twice() {
+        // file_170's "monospace" and "." are two runs of one highlight; a
+        // round trip that leaves the space between unhighlighted has two.
+        let split = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">yellow, </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono</w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>.</w:t></w:r></w:p>"#;
+        let gap = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>yellow,</w:t></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>mono.</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(split, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"yellow,\"".to_string()]
+        );
+        assert_eq!(
+            report(gap, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+        // Two paragraphs are two stretches.
+        assert_eq!(
+            report(&format!("{split}{split}"), &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×2 \"yellow,\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn strict_rprs_tally_by_local_name() {
+        // A Strict package writes its parts in the purl.oclc.org namespace
+        // (Strict01): a run's leading `rPr` blocks are found by local name,
+        // so their direct highlight still counts.
+        let (d, root) = dom(
+            r#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>Video provides</w:t></w:r></w:p></w:body></w:document>"#,
+        );
+        let mut lines = Vec::new();
+        part_lines(&d, root, &StyleBook::default(), &[], &mut lines);
+        assert_eq!(
+            lines,
+            vec!["  highlight yellow ×1 \"Video provides\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_highlight_on_a_run_that_paints_no_glyph_is_not_tallied() {
+        // 791ca61933's only highlight sits on a deleted page-break run: a
+        // break paints no glyph a highlight can colour, while a tab or
+        // text does.
+        let br = r#"<w:p><w:del w:id="1" w:author="A" w:date="2024-01-01T00:00:00Z"><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:br w:type="page"/></w:r></w:del><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:t>lit</w:t></w:r></w:p>"#;
+        assert_eq!(
+            report(br, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1 \"lit\"".to_string()]
+        );
+        let tab = r#"<w:p><w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:tab/></w:r></w:p>"#;
+        assert_eq!(
+            report(tab, &StyleBook::default(), &[]).0,
+            vec!["  highlight yellow ×1".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_highlight_on_a_hyphen_or_position_tab_is_tallied() {
+        // Word draws the highlight band behind a non-breaking or soft
+        // hyphen and behind a position tab as behind any other glyph, so
+        // the comparator counts them: a faithful round trip reports no
+        // difference and a lost one a real difference, instead of hiding
+        // both behind a run that paints nothing.
+        for (run, line) in [
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="cyan"/></w:rPr><w:noBreakHyphen/></w:r>"#,
+                "  highlight cyan ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="green"/></w:rPr><w:softHyphen/></w:r>"#,
+                "  highlight green ×1",
+            ),
+            (
+                r#"<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr><w:ptab/></w:r>"#,
+                "  highlight yellow ×1",
+            ),
+        ] {
+            let body =
+                format!(r#"<w:p><w:r><w:t>A </w:t></w:r>{run}<w:r><w:t> B</w:t></w:r></w:p>"#);
+            assert_eq!(
+                report(&body, &StyleBook::default(), &[]).0,
+                vec![line.to_string()],
+                "{run}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_table_reports_its_own_borders_and_its_cells() {
+        // 5331b981b7's shape: a grid written with start/end, grey cells.
+        let body = r#"<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="2" w:color="000000"/><w:start w:val="single" w:sz="2" w:color="000000"/><w:bottom w:val="nil"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcBorders><w:top w:val="single" w:sz="8" w:color="CCCCCC"/></w:tcBorders></w:tcPr><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        assert_eq!(
+            report(body, &StyleBook::default(), &[]).0,
+            vec![
+                "  table 1 1x2 borders[top,left single 0.25pt 000000 + bottom none] cells-borders[top single 1pt CCCCCC×2] \"A | B\""
+                    .to_string()
+            ]
         );
     }
 
@@ -1346,6 +1548,120 @@ mod story_diagnostic_contract_tests {
                 0
             )
         );
+    }
+
+    #[test]
+    fn section_geometry_prints_one_spelling_of_the_same_measure() {
+        // A strict `w:sectPr` writes universal measures (`612pt`) where
+        // the transitional form writes twips: the diagnostic lists the
+        // twips, so a round trip compares one spelling while a changed
+        // size still differs and a malformed value stays raw. Packages,
+        // not `report`'s bare Dom: the normalisation lives in `parse`.
+        let sect = |size: &str, mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz {size}/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        let strict = sect(
+            r#"w:w="612pt" w:h="792pt""#,
+            r#"w:top="72pt" w:right="1440" w:bottom="1in" w:left="36pt" w:header="0.5in" w:footer="720""#,
+        );
+        assert_eq!(
+            strict,
+            "  section 1 page=12240x15840 margins=1440,1440,1440,720 header=720 footer=720"
+        );
+        let transitional = sect(
+            r#"w:w="12240" w:h="15840""#,
+            r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#,
+        );
+        assert_eq!(transitional, strict);
+        // Wider than tall is landscape in either spelling, and a page a
+        // twip apart is a different page.
+        assert!(sect(r#"w:w="792pt" w:h="612pt""#, "").contains("page=15840x12240 landscape"));
+        assert_ne!(
+            sect(
+                r#"w:w="12241" w:h="15840""#,
+                r#"w:top="1440" w:right="1440" w:bottom="1440" w:left="720" w:header="720" w:footer="720""#
+            ),
+            strict
+        );
+        assert!(sect(r#"w:w="6..1" w:h="792pt""#, "").contains("page=6..1x15840"));
+    }
+
+    #[test]
+    fn section_prints_a_plain_value_as_the_file_spells_it() {
+        // A plain fractional dxa (gdocs-style) is the file's own literal,
+        // not a unit spelling to canonicalize: the diagnostic reports what
+        // the part carries (#531 review defect 3). Only unit-bearing
+        // measures ("612pt") list as the twips they name.
+        let sect = |mar: &str| {
+            let main = document(&format!(
+                r#"<w:p><w:r><w:t>x</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar {mar}/></w:sectPr>"#
+            ));
+            let root_rels = format!(
+                r#"<Relationships xmlns="{PR}"><Relationship Id="main" Type="{R}/officeDocument" Target="word/document.xml"/></Relationships>"#
+            );
+            let pkg = package(&[("_rels/.rels", &root_rels), ("word/document.xml", &main)]);
+            render_parts(&pkg, None)["word/document.xml"]
+                .0
+                .iter()
+                .find(|l| l.starts_with("  section"))
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(
+            sect(
+                r#"w:top="1440.4" w:right="1440" w:bottom="1in" w:left="1440" w:header="720" w:footer="720""#
+            ),
+            "  section 1 page=12240x15840 margins=1440.4,1440,1440,1440 header=720 footer=720"
+        );
+    }
+
+    #[test]
+    fn section_orientation_is_the_pages_not_the_attributes() {
+        // `w:orient="portrait"` is the schema's default: a page that says
+        // it and one that does not are the same page (Demo.docx's round
+        // trip reported them as a lost and a new section).
+        for (size, expected) in [
+            (
+                r#"w:w="11906" w:h="16838" w:orient="portrait""#,
+                "  section 1 page=11906x16838",
+            ),
+            (r#"w:w="11906" w:h="16838""#, "  section 1 page=11906x16838"),
+            (
+                r#"w:w="16838" w:h="11906" w:orient="landscape""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            // Wider than tall is landscape, as the view reads it.
+            (
+                r#"w:w="16838" w:h="11906""#,
+                "  section 1 page=16838x11906 landscape",
+            ),
+            (
+                r#"w:w="11906" w:h="16838" w:orient="landscape""#,
+                "  section 1 page=11906x16838 landscape",
+            ),
+        ] {
+            assert_eq!(
+                report(
+                    &format!("<w:sectPr><w:pgSz {size}/></w:sectPr>"),
+                    &StyleBook::default(),
+                    &[]
+                ),
+                (vec![expected.into()], 0),
+                "{size}"
+            );
+        }
     }
 
     #[test]
