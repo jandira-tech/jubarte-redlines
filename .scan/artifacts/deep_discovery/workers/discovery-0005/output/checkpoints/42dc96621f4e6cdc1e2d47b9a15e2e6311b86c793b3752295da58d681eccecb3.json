@@ -1,0 +1,68 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0005-drawing-cycle",
+        "reason": "Independent baseline candidate awaiting parent validation",
+        "candidate": {
+          "title": "Cyclic drawing dependencies in Markdown can overflow the process stack",
+          "source": "baseline",
+          "attacker": "Caller controlling Markdown input",
+          "evidence": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1397,
+              "endLine": 1412,
+              "description": "decode directly deserializes drawing JSON"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1881,
+              "description": "materialize calls dep_part"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1956,
+              "endLine": 1995,
+              "description": "dep_part recursively follows rel.part without visited/in-progress/depth guard; self-reference part=0 loops"
+            }
+          ],
+          "impact": "Stack overflow/abort via default markdown_to_docx",
+          "limitations": "Static candidate, parent source validation pending; no application execution",
+          "originalMessage": "Confirmed static candidate: attacker-crafted Markdown drawing: JSON dependencies can cycle. decode() at src/markdown/from_docx/drawing.rs:1397-1412 directly deserializes; materialize() 1881+ calls dep_part(); dep_part at 1956-1995 recurses on rel.part without visited/in-progress/depth guards. One dependency whose rel.part=0 repeatedly recurses, stack overflows/aborts process through default markdown_to_docx; no application execution used."
+        },
+        "id": "discovery-0005-drawing-cycle"
+      },
+      {
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        },
+        "id": "discovery-0005-doc-piece-amplification"
+      }
+    ]
+  }
+}

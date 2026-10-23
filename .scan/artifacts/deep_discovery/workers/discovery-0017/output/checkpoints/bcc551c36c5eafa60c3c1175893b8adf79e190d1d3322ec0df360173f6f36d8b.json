@@ -1,0 +1,119 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX comparison/edit/inspection/rendering engine exposed through native CLI, PyO3 Python facade/CLI, WASM byte APIs/Node CLI, and an optional Python stdio MCP server (src/lib.rs:5-35; jubarte-python/pyproject.toml:42-49; jubarte-wasm/cli/package.json:33-46).",
+    "assets": [
+      "Document contents, revisions, comments, metadata, generated DOCX/PDF/PNG, edit snapshots and reports; host input/output files and engine process availability.",
+      "Installed executable and release integrity; updater selects jandira-tech/jubarte-redlines assets and SHA256SUMS.txt, with currently empty RELEASE_KEYS and no FIRST_SIGNED_RELEASE (src/update.rs:25-48,198-210,245-257)."
+    ],
+    "trustBoundaries": [
+      "Untrusted package bytes enter bounded admission before document operations; default input budgets are 64 MiB compressed/per part, 256 MiB inflated, 10000 entries and XML depth 256; compare budgets instead allow 512 MiB compressed/per part and 2 GiB inflated (src/admission.rs:63-100).",
+      "MCP stdio clients obtain document I/O under operator-selected --root (default cwd); _OutputRoot holds a cap-std directory handle for relative reads/publication; read/write ToolAnnotations are hints, while capability-relative I/O enforces containment (jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199).",
+      "Native CLI publish_paths has ambient filesystem authority, held parent handles and staged per-file commits; OutputRoot is a separately confined interface (src/publication.rs:203-225,421-569)."
+    ],
+    "attackerCapabilities": [
+      "A sender can provide malicious DOCX/DOC/XML/font/image bytes and edit or Markdown content to a willing caller; no remote listener or tenant identity is inferred.",
+      "An MCP client can request supported tools and overwrite=true inside the granted root; it does not thereby possess operator environment, release signing keys, or repository publish authority (jubarte-python/python/jubarte_redlines/mcp_server.py:152-160,258-277,373-381)."
+    ],
+    "securityObjectives": [
+      "Preserve bounded parsing, package identity, safe path handling, and checked XML policy before materializing untrusted input; callers own OS memory/CPU confinement (SECURITY.md:35-79).",
+      "Confine MCP document reads and outputs to held root authority; never confuse read-only tool hints with enforcement (src/publication.rs:146-199; jubarte-python/python/jubarte_redlines/mcp_server.py:54-108)."
+    ],
+    "assumptions": [
+      "No deployment context or authoritative threat model supplied; userContext is null. Analysis is offline and current-state-only.",
+      "Native rendering additionally reads installed fonts and persists font-index.tsv beside the user font folder, with JUBARTE_FONT_INDEX overriding or disabling; MCP --root does not encompass those independent native renderer operations (src/convert/font.rs:2633-2652,3095-3107,3213-3229).",
+      "Byte-in/byte-out library docs say no temp files (src/lib.rs:8-11), but native font indexing writes a sibling tsv.<pid>.tmp then renames; retain this qualification, not a vulnerability claim (src/convert/font.rs:3213-3229)."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current source architecture; partial boundary mapping, not audit coverage"
+    }
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-27af9a1e1d45135a",
+        "label": "Document rendering and HTML altChunk expansion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Potential numeric expansion bypass under investigation; not yet validated."
+      },
+      {
+        "label": "Python and Node edit-plan staging",
+        "disposition": "needs_follow_up",
+        "notes": "Worker candidate received; validation pending.",
+        "id": "surface-2ffd4a3bc2b0cb5d",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0017-altchunk-colspan",
+        "candidateId": "discovery-0017-altchunk-colspan",
+        "reason": "Parent validation pending for numeric colspan expansion after package admission.",
+        "paths": [
+          "src/convert/altchunk.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-altchunk-colspan",
+          "title": "HTML altChunk colspan expands without a bound during rendering",
+          "attacker": "Provider of a DOCX containing a related HTML/MHT altChunk",
+          "evidence": [
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 562,
+              "endLine": 566,
+              "code": "self.cell_spans.push(\n    attr(open, \"colspan\")\n        .and_then(|s| s.trim().parse::<usize>().ok())\n        .unwrap_or(1)\n        .max(1),\n);"
+            },
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 469,
+              "endLine": 490,
+              "code": "let cols = table.rows.iter().map(|r| r.iter().map(|c| c.span).sum::<usize>()).max().unwrap_or(1).max(1);\nfor _ in 0..cols {\n    let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n}"
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 769,
+              "endLine": 798,
+              "description": "with_layout admits original package, resolves related altChunk bytes, then expands before DOM construction."
+            }
+          ],
+          "impact": "A short numeric colspan may cause effectively unbounded generated XML and CPU/memory consumption despite archive admission.",
+          "unresolved": "Check complete HTML dispatch, valid routing and admission counterevidence before retaining."
+        }
+      },
+      {
+        "candidateId": "discovery-0017-plan-staging-symlink",
+        "reason": "Awaiting independent validation of local shared-directory attacker prerequisites and symlink-following writes.",
+        "paths": [
+          "jubarte-python/python/jubarte_redlines/__main__.py",
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-plan-staging-symlink",
+          "title": "Binding CLI plan recording follows predictable temporary-file symlinks",
+          "originalWorkerEvidence": "Early candidate: both binding CLIs still record --plan through predictable .<plan-name>.<pid>.partial followed by ordinary write (Python __main__.py:407-411; npm mjs:420-423). A local attacker who can create entries in the chosen/shared plan directory can precreate that partial as symlink to victim-writable file elsewhere; ordinary write follows it and truncates unrelated file before rename. Native src/edit/record.rs:143 explicitly says callers no longer open this predictable path because publication now uses exclusive staging, but Python/npm duplicate old path. Assessing concrete privilege preconditions; document/plan content alone cannot exploit it.",
+          "source": "bindings_investigator"
+        },
+        "id": "discovery-0017-plan-staging-symlink"
+      }
+    ],
+    "openQuestions": [
+      "Remaining source groups are under review."
+    ]
+  },
+  "scope": {
+    "summary": "Read-only offline Standard scan of the supplied target and scope .",
+    "runtimeStatus": "Application code not executed per core scan procedure.",
+    "validationMode": "static source analysis",
+    "context": "Generated source-backed threat model; exact userContext null; three subagents assigned."
+  }
+}

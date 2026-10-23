@@ -1,0 +1,763 @@
+diff --git a/src/admission.rs b/src/admission.rs
+index d556610..358b1d5 100644
+--- a/src/admission.rs
++++ b/src/admission.rs
+@@ -765,7 +765,7 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
+ /// with a byte-order mark (SharePoint's `customXml` items often are) and
+ /// Word opens it, so it is transcoded; other bytes decode lossily, as the
+ /// rest of the engine reads them.
+-fn part_text(xml: &[u8]) -> Cow<'_, str> {
++pub(crate) fn part_text(xml: &[u8]) -> Cow<'_, str> {
+     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+         let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
+         Cow::Owned(
+diff --git a/src/convert/altchunk.rs b/src/convert/altchunk.rs
+index 7def5f9..1f85c4d 100644
+--- a/src/convert/altchunk.rs
++++ b/src/convert/altchunk.rs
+@@ -146,6 +146,19 @@ fn quoted_printable(s: &str) -> String {
+     String::from_utf8_lossy(&out).into_owned()
+ }
+ 
++/// The most columns one imported HTML table lays out. The HTML standard
++/// clamps a `colspan` at 1000 and Word lays no table out wider than 63
++/// columns; past the cap a span is a document's padding, not columns to
++/// emit — a `colspan` of 4294967295 used to append a `w:gridCol` per
++/// claimed column.
++const MAX_TABLE_COLUMNS: usize = 1000;
++
++/// The most tables nested one inside another. Word nests a handful deep;
++/// past the cap the inner content still imports, flattened into the
++/// enclosing table, instead of generating WML whose nesting no admission
++/// gate sees (the chunk is expanded after its package was admitted).
++const MAX_NESTED_TABLES: usize = 32;
++
+ type Props = HashMap<String, String>;
+ 
+ /// `selector { prop: value; … }` rules; a selector list shares its block.
+@@ -276,6 +289,8 @@ struct Builder {
+     fmts: Vec<(String, Fmt)>,
+     tables: Vec<Table>,
+     cell_spans: Vec<usize>,
++    /// `<table>` opens past the nesting cap: their end tags close nothing.
++    skipped_tables: usize,
+ }
+ 
+ const BLOCKS: [&str; 10] = [
+@@ -472,7 +487,10 @@ impl Builder {
+             .map(|r| r.iter().map(|c| c.span).sum::<usize>())
+             .max()
+             .unwrap_or(1)
+-            .max(1);
++            .max(1)
++            // A row of padded spans cannot widen the grid past the cap:
++            // every claimed column became an emitted `w:gridCol`.
++            .min(MAX_TABLE_COLUMNS);
+         let col_w = 9360 / cols;
+         let mut s = String::from("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>");
+         if table.border {
+@@ -542,6 +560,10 @@ impl Builder {
+             }
+             "table" => {
+                 self.flush();
++                if self.tables.len() >= MAX_NESTED_TABLES {
++                    self.skipped_tables += 1;
++                    return;
++                }
+                 let border = attr(open, "border").is_some_and(|b| b.trim() != "0");
+                 self.tables.push(Table {
+                     border,
+@@ -563,7 +585,10 @@ impl Builder {
+                     attr(open, "colspan")
+                         .and_then(|s| s.trim().parse::<usize>().ok())
+                         .unwrap_or(1)
+-                        .max(1),
++                        .max(1)
++                        // The HTML standard clamps a colspan at 1000; a
++                        // vaster one is padding, not columns to emit.
++                        .min(MAX_TABLE_COLUMNS),
+                 );
+                 let mut fmt = self.fmt();
+                 if tag == "th" {
+@@ -594,7 +619,13 @@ impl Builder {
+             t if BLOCKS.contains(&t) => self.flush(),
+             "td" | "th" if self.in_open_cell() => self.end_cell(),
+             "td" | "th" => {}
+-            "table" => self.end_table(),
++            "table" => {
++                if self.skipped_tables > 0 {
++                    self.skipped_tables -= 1;
++                } else {
++                    self.end_table();
++                }
++            }
+             _ => {}
+         }
+     }
+@@ -620,6 +651,7 @@ pub(crate) fn html_to_wml(html: &str) -> String {
+         )],
+         tables: Vec::new(),
+         cell_spans: Vec::new(),
++        skipped_tables: 0,
+     };
+     let src = &html[body_at..];
+     let mut i = 0;
+@@ -817,6 +849,34 @@ mod tests {
+         assert!(html.contains("<p class=\"x\">Članak</p>"), "{html}");
+     }
+ 
++    #[test]
++    fn a_colspan_past_the_cap_emits_a_bounded_grid() {
++        // A colspan of 4294967295 used to append a `w:gridCol` per claimed
++        // column — tens of gigabytes of markup from one attribute.
++        let wml = html_to_wml(
++            "<html><body><table><tr><td colspan='4294967295'>x</td></tr></table></body></html>",
++        );
++        assert_eq!(wml.matches("<w:gridCol").count(), MAX_TABLE_COLUMNS, "{wml}");
++        assert!(wml.contains("<w:gridSpan w:val=\"1000\"/>"), "{wml}");
++    }
++
++    #[test]
++    fn tables_nested_past_the_cap_flatten_into_the_enclosing_table() {
++        let depth = MAX_NESTED_TABLES + 8;
++        let mut html = String::from("<html><body>");
++        for _ in 0..depth {
++            html.push_str("<table><tr><td>");
++        }
++        html.push_str("deep");
++        for _ in 0..depth {
++            html.push_str("</td></tr></table>");
++        }
++        html.push_str("</body></html>");
++        let wml = html_to_wml(&html);
++        assert_eq!(wml.matches("<w:tbl>").count(), MAX_NESTED_TABLES, "{wml}");
++        assert!(wml.contains(">deep</w:t>"), "{wml}");
++    }
++
+     mod regression_tests {
+         use super::*;
+ 
+diff --git a/src/convert/mod.rs b/src/convert/mod.rs
+index d900e05..8555352 100644
+--- a/src/convert/mod.rs
++++ b/src/convert/mod.rs
+@@ -13598,6 +13598,17 @@ fn table_block(
+     // tcW 10080 cell over its four-column grid (gridSpan absent), not the
+     // first 84pt column; 91 corpus documents carry such a row.
+     stretch_stale_spans(&mut raw_rows, &cols);
++    // Budget the claims at row level too: every cell keeps the one column
++    // it is, but a row of padded spans cannot claim past the budget, so
++    // the column, preference and merge vectors stay proportional to the
++    // part instead of to a span's claimed width.
++    for row in &mut raw_rows {
++        let mut budget = MAX_GRID_COLUMNS;
++        for cell in row.iter_mut() {
++            cell.colspan = cell.colspan.min(budget.max(1)).max(1);
++            budget = budget.saturating_sub(cell.colspan);
++        }
++    }
+     let mut occupancy = 0usize;
+     let grid_len = cols.len();
+     for row in &raw_rows {
+@@ -14201,6 +14212,13 @@ fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
+     }
+ }
+ 
++/// The most grid columns one table's spans may claim. Word lays a table
++/// out in at most 63 columns; a span past the budget is a document's error
++/// or padding, not a wider table — the column, preference and merge
++/// vectors a span asked to size were gigabytes (a `gridSpan` of
++/// 4294967295 wanted 16 GiB of `f32` columns from one attribute).
++const MAX_GRID_COLUMNS: usize = 4096;
++
+ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
+     let Some(pr) = first_named(dom, cell, "tcPr") else {
+         return (1, VMerge::None);
+@@ -14212,7 +14230,8 @@ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
+         .and_then(|n| attr_any(dom, n, "val"))
+         .and_then(|s| s.parse().ok())
+         .unwrap_or(1)
+-        .max(1);
++        .max(1)
++        .min(MAX_GRID_COLUMNS);
+     let vmerge = match direct_named(dom, pr, "vMerge") {
+         None => VMerge::None,
+         Some(n) => match dom.attribute(n, &W::val()) {
+@@ -14342,7 +14361,8 @@ fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth
+     let span = direct_named(dom, pr, &format!("grid{side}"))
+         .and_then(|n| attr_any(dom, n, "val"))
+         .and_then(|v| v.parse::<usize>().ok())
+-        .filter(|n| *n > 0)?;
++        .filter(|n| *n > 0)
++        .map(|n| n.min(MAX_GRID_COLUMNS))?;
+     let pref = direct_named(dom, pr, &format!("w{side}"))
+         .filter(|n| attr_any(dom, *n, "type").is_none_or(|t| t == "dxa"))
+         .and_then(|n| attr_any(dom, n, "w"))
+@@ -62587,6 +62607,27 @@ mod complete_coordinate_layout_contract_tests {
+         }
+     }
+ 
++    #[test]
++    fn huge_spans_lay_out_a_bounded_grid_instead_of_allocating_it() {
++        // A `gridSpan`/`gridBefore` in the billions used to size the column
++        // vectors by the width it claimed (4294967295 → a 17 GiB `f32`
++        // grid): past the budget it is the document's error, and the table
++        // still lays out.
++        let Block::Table { geom, .. } = table(
++            "<w:tbl><w:tblGrid><w:gridCol w:w='1000'/></w:tblGrid>\
++             <w:tr><w:trPr><w:gridBefore w:val='2000000000'/></w:trPr>\
++             <w:tc><w:tcPr><w:gridSpan w:val='4294967295'/></w:tcPr><w:p/></w:tc></w:tr></w:tbl>",
++        )
++        else {
++            panic!("table fixture");
++        };
++        assert!(
++            geom.pref.len() <= MAX_GRID_COLUMNS + 2,
++            "a row's spanned width stays inside the column budget: {}",
++            geom.pref.len()
++        );
++    }
++
+     #[test]
+     fn content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins() {
+         let fonts = fonts();
+diff --git a/src/legacy_doc.rs b/src/legacy_doc.rs
+index 1881053..1abe6e7 100644
+--- a/src/legacy_doc.rs
++++ b/src/legacy_doc.rs
+@@ -1592,32 +1592,39 @@ impl Story<'_> {
+         let mut out = Vec::new();
+         let mut spans: Vec<Span> = Vec::new();
+         // Field nesting: true while inside a field's code (before its
+-        // separator).
++        // separator). `open_codes` counts the code frames, so the check a
++        // character makes is O(1): a document can open fields without end
++        // and leave a long all-false stack each character would walk.
+         let mut fields: Vec<bool> = Vec::new();
++        let mut open_codes = 0usize;
+         // Each finished row and whether it is marked as a header.
+         let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
+         let mut row: Vec<String> = Vec::new();
+         let mut cell: Vec<String> = Vec::new();
+ 
+         for story in chars {
+-            // Inside any field's code, even a nested field's result is code.
+-            let in_code = fields.iter().any(|&code| code);
+             let text = match story.ch {
+                 '\u{13}' => {
+                     fields.push(true);
++                    open_codes = open_codes.saturating_add(1);
+                     continue;
+                 }
+                 '\u{14}' => {
+                     if let Some(top) = fields.last_mut() {
++                        open_codes = open_codes.saturating_sub(usize::from(*top));
+                         *top = false;
+                     }
+                     continue;
+                 }
+                 '\u{15}' => {
+-                    fields.pop();
++                    if fields.pop().is_some_and(|code| code) {
++                        open_codes = open_codes.saturating_sub(1);
++                    }
+                     continue;
+                 }
+-                _ if in_code => continue,
++                // Inside any field's code, even a nested field's result is
++                // code.
++                _ if open_codes > 0 => continue,
+                 '\u{0C}' if self.section_marks.binary_search(&story.cp).is_err() => {
+                     // A page break: Markdown has no pages, so a line break.
+                     '\n'
+@@ -2817,6 +2824,80 @@ mod legacy_byte_source_boundary_tests {
+         assert_eq!(word, [b'A', 0xb2, 0x03]);
+     }
+ 
++    fn owned_story() -> (FkpIndex, FkpIndex, Lists) {
++        (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() }, Lists::default())
++    }
++
++    fn story_text(story: &Story<'_>, text: &str) -> String {
++        let chars = text
++            .chars()
++            .enumerate()
++            .map(|(i, ch)| StoryChar {
++                ch,
++                cp: i as u32,
++                fc: i as u32,
++                modifier: CharModifier::default(),
++            })
++            .collect::<Vec<_>>();
++        story
++            .blocks(&chars)
++            .iter()
++            .flat_map(|block| match block {
++                Block::Paragraph(paragraph) => paragraph
++                    .spans
++                    .iter()
++                    .map(|span| span.text.as_str())
++                    .collect::<Vec<_>>(),
++                _ => Vec::new(),
++            })
++            .collect()
++    }
++
++    #[test]
++    fn field_codes_stay_suppressed_and_results_stay_through_any_nesting() {
++        let (papx, chpx, lists) = owned_story();
++        let story = Story {
++            papx: &papx,
++            chpx: &chpx,
++            styles: &[],
++            lists: &lists,
++            section_marks: Vec::new(),
++        };
++        assert_eq!(story_text(&story, "\u{13}CODE\u{14}RESULT\u{15}AFTER"), "RESULTAFTER");
++        // A nested field's result is code while an outer code is open; a
++        // field's code after its inner field closes stays code until its
++        // own separator, and only what no open code covers is text.
++        assert_eq!(story_text(&story, "\u{13}A\u{13}B\u{14}C\u{15}D\u{14}E\u{15}F"), "EF");
++    }
++
++    #[test]
++    fn an_all_false_field_stack_costs_no_per_character_walk() {
++        // Twenty thousand fields opened and separated leave a twenty
++        // thousand entry all-false stack; every character used to walk it
++        // end to end before it could prove no code was open.
++        let (papx, chpx, lists) = owned_story();
++        let story = Story {
++            papx: &papx,
++            chpx: &chpx,
++            styles: &[],
++            lists: &lists,
++            section_marks: Vec::new(),
++        };
++        let mut text = String::with_capacity(40_000);
++        for _ in 0..20_000 {
++            text.push('\u{13}');
++            text.push('\u{14}');
++        }
++        for _ in 0..20_000 {
++            text.push('x');
++        }
++        assert_eq!(
++            story_text(&story, &text),
++            "x".repeat(20_000),
++            "separated fields suppress nothing"
++        );
++    }
++
+     #[test]
+     fn unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters() {
+         let papx = FkpIndex { runs: Vec::new() };
+diff --git a/src/markdown/from_docx/drawing.rs b/src/markdown/from_docx/drawing.rs
+index a944602..ef54d3b 100644
+--- a/src/markdown/from_docx/drawing.rs
++++ b/src/markdown/from_docx/drawing.rs
+@@ -1886,12 +1886,27 @@ pub(crate) fn materialize(
+     used: &mut HashSet<String>,
+     next_doc_pr: &mut u32,
+ ) -> Option<String> {
++    // A payload's graph may name a part that names it back, or a cycle of
++    // parts: the walk holds the indices it is inside (a revisit is a cycle,
++    // refused) and the names it has written (a shared subgraph is written
++    // once), so no relationship chain recurses without end.
++    let mut active: HashSet<usize> = HashSet::new();
++    let mut written: HashMap<usize, String> = HashMap::new();
+     let mut xml = drawing.xml.clone();
+     for rel in &drawing.rels {
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(index), _) if index < drawing.deps.len() => {
+-                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;
++                let name = dep_part(
++                    drawing,
++                    index,
++                    package,
++                    existing,
++                    used,
++                    next_doc_pr,
++                    &mut active,
++                    &mut written,
++                )?;
+                 (rel.kind.clone(), relative_rel_target(part, &name), false)
+             }
+             (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),
+@@ -1952,7 +1967,9 @@ fn renumber_doc_pr(xml: &mut String, next: &mut u32) {
+ }
+ 
+ /// Write dependent part `index` and its own dependency closure; its new
+-/// part name.
++/// part name. `active` holds the indices the walk is inside (a revisit is
++/// a cycle, refused rather than recursed) and `written` the names already
++/// materialized, so a shared subgraph is written once.
+ fn dep_part(
+     drawing: &Drawing,
+     index: usize,
+@@ -1960,8 +1977,47 @@ fn dep_part(
+     existing: &HashSet<String>,
+     used: &mut HashSet<String>,
+     next_doc_pr: &mut u32,
++    active: &mut HashSet<usize>,
++    written: &mut HashMap<usize, String>,
+ ) -> Option<String> {
++    if let Some(name) = written.get(&index) {
++        return Some(name.clone());
++    }
+     let dep = drawing.deps.get(index)?;
++    if !active.insert(index) {
++        return None;
++    }
++    let name = dep_closure(
++        drawing,
++        dep,
++        index,
++        package,
++        existing,
++        used,
++        next_doc_pr,
++        active,
++        written,
++    );
++    active.remove(&index);
++    if let Some(name) = &name {
++        written.insert(index, name.clone());
++    }
++    name
++}
++
++/// `dep`'s part and the dependency closure its relationships reach, called
++/// only with `index` inside `active`.
++fn dep_closure(
++    drawing: &Drawing,
++    dep: &Dep,
++    index: usize,
++    package: &mut PartFs,
++    existing: &HashSet<String>,
++    used: &mut HashSet<String>,
++    next_doc_pr: &mut u32,
++    active: &mut HashSet<usize>,
++    written: &mut HashMap<usize, String>,
++) -> Option<String> {
+     let name = name_for(&dep.name, existing, used);
+     used.insert(name.clone());
+     // The part's own relationships name the parts the recursion is writing;
+@@ -1971,7 +2027,16 @@ fn dep_part(
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(inner), _) if inner < drawing.deps.len() => {
+-                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;
++                let inner_name = dep_part(
++                    drawing,
++                    inner,
++                    package,
++                    existing,
++                    used,
++                    next_doc_pr,
++                    active,
++                    written,
++                )?;
+                 (
+                     rel.kind.clone(),
+                     relative_rel_target(&name, &inner_name),
+@@ -2036,6 +2101,104 @@ mod tests {
+         parse_xml(xml.as_bytes()).unwrap()
+     }
+ 
++    fn story_package() -> PartFs {
++        PartFs::open(include_bytes!(
++            "../../../tests/fixtures/redline/original.docx"
++        ))
++        .unwrap()
++    }
++
++    #[test]
++    fn a_dependency_cycle_is_refused_instead_of_recursing_without_end() {
++        // Part 0's only relationship names part 0: the materializer used to
++        // follow the chain forever.
++        let image = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
++        let drawing = Drawing {
++            rels: vec![PayRel {
++                sym: "r1".into(),
++                kind: image.into(),
++                part: Some(0),
++                ..PayRel::default()
++            }],
++            deps: vec![Dep {
++                name: "word/media/self.png".into(),
++                kind: "image/png".into(),
++                xml: "<png/>".into(),
++                rels: vec![PayRel {
++                    sym: "d0.1".into(),
++                    kind: image.into(),
++                    part: Some(0),
++                    ..PayRel::default()
++                }],
++                ..Dep::default()
++            }],
++            ..Drawing::default()
++        };
++        let mut package = story_package();
++        let existing: HashSet<String> = package.parts().into_iter().collect();
++        let mut used = HashSet::new();
++        let mut next = 1u32;
++        assert!(
++            materialize(
++                &drawing,
++                &mut package,
++                "word/document.xml",
++                &existing,
++                &mut used,
++                &mut next
++            )
++            .is_none(),
++            "a cyclic dependency graph is refused, not materialized"
++        );
++    }
++
++    #[test]
++    fn a_directed_dependency_closure_still_materializes() {
++        let image = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
++        let drawing = Drawing {
++            xml: "<w:drawing/>".into(),
++            rels: vec![
++                PayRel {
++                    sym: "r1".into(),
++                    kind: image.into(),
++                    part: Some(0),
++                    ..PayRel::default()
++                },
++                PayRel {
++                    sym: "r2".into(),
++                    kind: image.into(),
++                    part: Some(0),
++                    ..PayRel::default()
++                },
++            ],
++            deps: vec![Dep {
++                name: "word/media/shared.png".into(),
++                kind: "image/png".into(),
++                xml: "<png/>".into(),
++                ..Dep::default()
++            }],
++            ..Drawing::default()
++        };
++        let mut package = story_package();
++        let existing: HashSet<String> = package.parts().into_iter().collect();
++        let mut used = HashSet::new();
++        let mut next = 1u32;
++        let xml = materialize(
++            &drawing,
++            &mut package,
++            "word/document.xml",
++            &existing,
++            &mut used,
++            &mut next,
++        )
++        .expect("an acyclic closure materializes");
++        assert!(xml.contains("<w:drawing/>"), "{xml}");
++        assert!(
++            package.part_bytes("word/media/shared.png").is_some(),
++            "the shared part is written once"
++        );
++    }
++
+     #[test]
+     fn xml_round_trips_verbatim() {
+         let xml = r#"<wp:anchor xmlns:wp="wp" wp14:anchorId="AB"><wp:docPr id="2" name="P"/><x:y a="1&quot;2"><t>x &amp; y</t></x:y></wp:anchor>"#;
+diff --git a/src/scrub.rs b/src/scrub.rs
+index 641d427..76b1a3d 100644
+--- a/src/scrub.rs
++++ b/src/scrub.rs
+@@ -387,7 +387,10 @@ fn scrub_properties(pkg: &mut PartFs) {
+ /// The parts of `docx` where `needle` still occurs, sorted: in a text node,
+ /// an attribute value that can hold text, an XML comment, the joined run
+ /// text of a paragraph (a text split across runs), or the raw bytes of a
+-/// part that is not XML (UTF-8 or UTF-16LE). An empty needle occurs nowhere.
++/// part that is not XML (UTF-8, UTF-16LE or UTF-16BE). XML parts are decoded
++/// with admission's BOM-aware policy first, so a UTF-16 copy is scanned as
++/// the text it holds, not as NUL-interleaved bytes. An empty needle occurs
++/// nowhere.
+ /// An unreadable archive or entry is a finding: an incomplete scan cannot
+ /// certify a redaction.
+ ///
+@@ -422,7 +425,8 @@ pub(crate) fn leaks_within(
+         Ok(zip) => zip,
+         Err(error) => return vec![format!("the package (cannot read: {error})")],
+     };
+-    let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
++    let utf16le: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
++    let utf16be: Vec<u8> = needle.encode_utf16().flat_map(u16::to_be_bytes).collect();
+     let mut total = 0u64;
+     for i in 0..zip.len() {
+         let mut entry = match zip.by_index(i) {
+@@ -466,9 +470,14 @@ pub(crate) fn leaks_within(
+         }
+         let xml = name.ends_with(".xml") || name.ends_with(".rels");
+         let hit = if xml {
+-            xml_holds(&String::from_utf8_lossy(&bytes), needle)
++            // BOM-aware, as admission reads the part: a UTF-16 XML part's
++            // lossy UTF-8 reading interleaves NULs, and the copy it still
++            // holds would otherwise certify a redaction that kept it.
++            xml_holds(&crate::admission::part_text(&bytes), needle)
+         } else {
+-            contains(&bytes, needle.as_bytes()) || contains(&bytes, &utf16)
++            contains(&bytes, needle.as_bytes())
++                || contains(&bytes, &utf16le)
++                || contains(&bytes, &utf16be)
+         };
+         if hit {
+             found.insert(name);
+@@ -716,6 +725,44 @@ mod public_memory_leak_boundary_tests {
+         }
+     }
+     #[test]
++    fn utf16_xml_and_utf16be_parts_hold_the_secret_like_any_other_copy() {
++        let secret = "PrivateReviewer";
++        let mut pkg = package("<w:p><w:r><w:t>Independent body payload</w:t></w:r></w:p>");
++        let item = format!("<metadata><!-- {secret} --><note who='{secret}'/></metadata>");
++        // A BOM-marked UTF-16 XML part, as SharePoint writes customXml items.
++        let utf16le = [0xFF, 0xFE]
++            .into_iter()
++            .chain(item.encode_utf16().flat_map(u16::to_le_bytes))
++            .collect::<Vec<u8>>();
++        let utf16be = [0xFE, 0xFF]
++            .into_iter()
++            .chain(item.encode_utf16().flat_map(u16::to_be_bytes))
++            .collect::<Vec<u8>>();
++        // Not XML once decoded: the no-root fallback has to find it too.
++        let bare = [0xFF, 0xFE]
++            .into_iter()
++            .chain(secret.encode_utf16().flat_map(u16::to_le_bytes))
++            .collect::<Vec<u8>>();
++        pkg.set_part("customXml/item1.xml", utf16le);
++        pkg.set_part("customXml/item2.xml", utf16be);
++        pkg.set_part("customXml/item3.xml", bare);
++        pkg.set_part(
++            "customXml/utf16be.bin",
++            secret.encode_utf16().flat_map(u16::to_be_bytes).collect(),
++        );
++        pkg.add_content_type_override("/customXml/utf16be.bin", "application/octet-stream");
++        let bytes = pkg.to_zip().unwrap();
++        assert_eq!(
++            leaks(&bytes, secret),
++            [
++                "customXml/item1.xml",
++                "customXml/item2.xml",
++                "customXml/item3.xml",
++                "customXml/utf16be.bin"
++            ]
++        );
++    }
++    #[test]
+     fn decoded_entities_and_split_word_runs_are_secrets_but_numeric_ids_are_not() {
+         let body = "<w:p><w:pPr><w:spacing w:before='1234' w:after='-1234'/></w:pPr><w:r><w:t>Jane </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Doe &amp; </w:t></w:r><w:r><w:t>Associates</w:t></w:r></w:p>";
+         let mut pkg = package(body);
+diff --git a/src/strict_translation.rs b/src/strict_translation.rs
+index 38bb072..b538d86 100644
+--- a/src/strict_translation.rs
++++ b/src/strict_translation.rs
+@@ -663,10 +663,21 @@ fn replace_all(text: &str, table: &[(&str, &str)]) -> String {
+ /// part Strict rather than Transitional.
+ const STRICT_MAIN: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+ 
++/// The most bytes of a main part's head the probe retains while it waits
++/// for the root element's opening tag to close (its `<` may sit at offset
++/// zero, so no later `<` ever trims it). No Word document's preamble or
++/// root tag is this long; past the budget the probe answers undecided —
++/// not Strict — instead of retaining and rescanning a head that grows
++/// with the part.
++const MAX_ROOT_HEAD_BYTES: usize = 1024 * 1024;
++
+ /// Whether the package's main document part (`word/document.xml`) is ISO
+ /// Strict — decided by the namespace its root element declares, the same
+ /// fact Word reads the dialect from. A Transitional package that merely
+ /// *quotes* a Strict URI in its text is not a Strict package (#531).
++/// A part past the probe's head or part budgets answers `false` as well,
++/// the same answer a malformed part gets: an endless preamble is
++/// undecided, not Strict.
+ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
+     let Ok(mut archive) = crate::opc::open_archive(Cursor::new(bytes)) else {
+         return false;
+@@ -680,6 +691,7 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
+     // preamble can push the root past (#561). Only the tail since the
+     // last `<` can still hold the tag, so the head stays small.
+     let mut head: Vec<u8> = Vec::new();
++    let mut read_total: u64 = 0;
+     let mut chunk = vec![0u8; 16 * 1024];
+     loop {
+         let Ok(read) = part.read(&mut chunk) else {
+@@ -688,6 +700,13 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
+         if read == 0 {
+             break;
+         }
++        read_total = read_total.saturating_add(read as u64);
++        if read_total > InputLimits::default().max_part_bytes {
++            // A main part past the product's part budget is not decided
++            // by this probe; the admission that allows one refuses the
++            // same shape elsewhere.
++            return false;
++        }
+         head.extend(chunk.iter().copied().take(read));
+         let window = String::from_utf8_lossy(&head);
+         if let Some((start, _)) = root_open(&window)
+@@ -701,6 +720,9 @@ pub fn main_part_is_strict(bytes: &[u8]) -> bool {
+             }
+             None => head.clear(),
+         }
++        if head.len() > MAX_ROOT_HEAD_BYTES {
++            return false;
++        }
+     }
+     let head = String::from_utf8_lossy(&head);
+     let Some((start, _)) = root_open(&head) else {
+@@ -1150,6 +1172,48 @@ mod tests {
+         )));
+     }
+ 
++    /// A main part that never closes its root opening tag is refused once
++    /// past the probe's head budget. Before the budget the whole endless
++    /// head was retained and rescanned — and a Strict URI inside it read
++    /// as Strict.
++    #[test]
++    fn an_endless_root_head_is_refused_as_undecided() {
++        let doc = format!(
++            "<w:document xmlns:w=\"http://purl.oclc.org/ooxml/wordprocessingml/main\" {}",
++            "x".repeat(2 * 1024 * 1024)
++        );
++        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
++        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
++        writer.start_file("word/document.xml", options).unwrap();
++        writer.write_all(doc.as_bytes()).unwrap();
++        let pkg = writer.finish().unwrap().into_inner();
++        assert!(
++            !main_part_is_strict(&pkg),
++            "an endless root head is undecided, not Strict"
++        );
++    }
++
++    /// A truncated root tag inside the budget still decides from the
++    /// declarations it holds: the truncation semantics stay.
++    #[test]
++    fn a_truncated_root_head_inside_the_budget_still_decides() {
++        let package = |uri: &str| {
++            let doc = format!(r#"<w:document xmlns:w="{uri}" "#);
++            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
++            let options =
++                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
++            writer.start_file("word/document.xml", options).unwrap();
++            writer.write_all(doc.as_bytes()).unwrap();
++            writer.finish().unwrap().into_inner()
++        };
++        assert!(main_part_is_strict(&package(
++            "http://purl.oclc.org/ooxml/wordprocessingml/main"
++        )));
++        assert!(!main_part_is_strict(&package(
++            "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
++        )));
++    }
++
+     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).
+     #[test]
+     fn transitional_package_returned_byte_identical() {

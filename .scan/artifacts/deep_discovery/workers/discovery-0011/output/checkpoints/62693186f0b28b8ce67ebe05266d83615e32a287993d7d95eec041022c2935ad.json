@@ -1,0 +1,193 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Standard offline static audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0011, userContext null.",
+    "runtimeStatus": "No application code or tests executed.",
+    "validationMode": "offline_source_review"
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-table-grid-allocation",
+      "title": "Untrusted table spans cause unbounded renderer allocations",
+      "summary": "A small DOCX table can set w:gridSpan, w:gridBefore or w:gridAfter to a large usize. The shared PDF/PNG layout pipeline admits the package, derives column occupancy from these values, and allocates column and merge vectors at that size without a semantic budget. This can exhaust worker memory or panic before returning a normal conversion error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can deterministically deny service to a process rendering the supplied file with very small input. Impact is availability of that process; no remote service or broader compromise is assumed, and process resource limits constrain host-wide impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace from public conversion entry points through admission and uncapped attribute parsing to Vec allocation; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource allocation from untrusted document metadata",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13615,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14638,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 799,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "grid-span-input",
+          "label": "Cell span lacks an upper bound",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "The return type (usize, VMerge) makes the parsed span an attacker-controlled usize; max(1) sets only a minimum."
+        },
+        {
+          "id": "row-span-input",
+          "label": "Row skips use the same uncapped span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+          "explanation": "gridBefore and gridAfter create RawCell placeholders with this span and enter the same occupancy calculation."
+        },
+        {
+          "id": "grid-allocation",
+          "label": "Occupancy directly sizes column allocations",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13615,
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }",
+          "explanation": "For one cell with span 1073741824, this attempts a 4 GiB f32 column vector before other span-sized allocations."
+        },
+        {
+          "id": "grid-merge-allocation",
+          "label": "Merge tracking also allocates by span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14638,
+          "code": "            if open.len() < col + span {\n                open.resize(col + span, None);",
+          "explanation": "The same metadata controls a second potentially much larger per-column vector."
+        },
+        {
+          "id": "render-admission",
+          "label": "Renderer admits input before layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 778,
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "This establishes the real untrusted package boundary. Existing archive/XML size/depth limits do not constrain numeric grid values."
+        }
+      ],
+      "rootCause": {
+        "summary": "The renderer accepts cell spans and row skips as unbounded machine integers and expands sparse semantic counts into dense vectors without checked cumulative arithmetic or an allocation budget.",
+        "evidenceRefs": [
+          "grid-span-input",
+          "row-span-input",
+          "grid-allocation",
+          "grid-merge-allocation"
+        ]
+      },
+      "remediation": "Apply a conservative semantic maximum to cell spans, row skips and cumulative grid columns before creating RawCell or allocating vectors. Use checked cumulative arithmetic and return a typed resource-limit error before any span-derived loop/allocation. Enforce the same budget in every shared layout path.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission enforces byte, ZIP entry, XML depth and attribute limits before layout; those checks accept short decimal span attributes.",
+          "stretch_stale_spans returns early when used spans exceed existing columns (14172-14177); it does not cap spans.",
+          "SECURITY.md recommends process CPU/memory isolation; that mitigates host impact but does not prevent termination of a rendering worker."
+        ],
+        "limitations": [
+          "No application code executed; no claim of a deployed remotely accessible renderer."
+        ],
+        "method": "offline source inspection",
+        "status": "validated",
+        "summary": "Validated by reading the public PDF/render entry points (422-460,592-645), with_layout admission (769-799), table_block callers (8619,9178,17184,20598), span propagation (13200-13216,13466,13530-13536), allocation (13600-13619) and merge tracking (14600-14644). InputLimits fields (src/admission.rs:42-60) cover byte/entry/XML structural limits, not grid counts."
+      },
+      "attackPath": {
+        "controls": [
+          "Input byte/depth limits",
+          "Host-enforced process resource limits recommended by SECURITY.md"
+        ],
+        "dataflow": {
+          "summary": "DOCX bytes -> public docx_to_pdf/render -> with_layout -> admitted main-part DOM -> table_block -> cell_span/row_grid_skip -> RawCell.colspan -> occupancy/merge vectors.",
+          "evidenceRefs": [
+            "render-admission",
+            "grid-span-input",
+            "row-span-input",
+            "grid-allocation",
+            "grid-merge-allocation"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Memory exhaustion, capacity panic or excessive work in rendering process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Large positive numeric table spans require no optional unsafe parser or elevated caller authority once rendering occurs."
+        },
+        "reachability": {
+          "summary": "Public Rust PDF and raster conversion accept caller-provided DOCX bytes and share this layout path. A tiny ordinary table with one large positive span reaches allocation without exceeding byte/depth admission limits.",
+          "attacker": "Supplier of a document rendered by another caller",
+          "preconditions": [
+            "Victim renders an attacker-supplied DOCX containing a table."
+          ],
+          "evidenceRefs": [
+            "render-admission",
+            "grid-span-input",
+            "grid-allocation"
+          ]
+        },
+        "summary": "An untrusted document supplier gains denial of service of the process that renders their table."
+      },
+      "remediationTests": [
+        "Test default public PDF and PNG/render entry points with small DOCX tables containing excessive gridSpan, gridBefore and gridAfter values; require typed refusal before allocation.",
+        "Test cumulative multi-cell spans and machine-width boundary values, plus legitimate merged tables within the budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0011",
+        "discoveredBy": "baseline",
+        "candidateId": "discovery-0011-grid-span-allocation"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "DOCX table layout numeric span budgets",
+        "disposition": "reported",
+        "notes": "Validated discovery-0011-grid-span-allocation: src/convert/mod.rs:14211-14215,14340-14345 feed uncapped span-sized column and merge allocations at 13600-13615,14637-14638.",
+        "id": "surface-e1c813379b90f1df",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": []
+  }
+}

@@ -1,0 +1,435 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.table-spans",
+      "title": "Rendering a small table can allocate gigabytes from an unchecked span",
+      "summary": "Rendering an admitted DOCX trusts `gridSpan`, `gridBefore` and `gridAfter` as allocation dimensions. A span of 1073741824 requests a 4 GiB column vector; embedded HTML `colspan` independently generates that many XML columns.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded logical table dimensions",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "span-input",
+          "label": "DOCX span parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "The document's positive span becomes a usize without an upper bound."
+        },
+        {
+          "id": "skip-input",
+          "label": "Skipped column parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+          "explanation": "Before/after placeholders carry the same unchecked dimension."
+        },
+        {
+          "id": "span-allocation",
+          "label": "Column allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];",
+          "explanation": "Summed spans directly determine f32 vector length."
+        },
+        {
+          "id": "html-span",
+          "label": "HTML span parsing",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "user_input",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "An embedded chunk supplies a positive usize colspan."
+        },
+        {
+          "id": "html-columns",
+          "label": "HTML column generation",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");",
+          "explanation": "The requested logical width sets loop iterations and generated XML size."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span()` and `row_grid_skip()` parse positive document-controlled integers without a logical-column cap. `table_block()` sums those spans into `occupancy` and passes it to vector allocation. The HTML importer repeats the same missing column-bound control before generating one `gridCol` per column.",
+        "evidenceRefs": [
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "html-span",
+          "html-columns"
+        ]
+      },
+      "remediation": "Apply a supported logical-column cap to DOCX and HTML spans and row skip counts, checked-sum row occupancy, and refuse over-budget tables before allocation or XML generation.",
+      "validation": {
+        "counterEvidence": [
+          "Admission limits archive/XML sizes and depth, but not numeric table spans.",
+          "stretch_stale_spans skips rows whose used span already exceeds the grid; it does not clamp the attack.",
+          "PNG raster limits occur after layout. SECURITY.md recommends external process limits, whose presence is not established."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "DOCX table attributes -> cell_span/row_grid_skip -> RawCell.colspan -> summed occupancy -> vec!/resize; embedded HTML colspan -> cell_spans -> end_table -> unbounded gridCol generation."
+      },
+      "attackPath": {
+        "controls": [
+          "Admission limits archive/XML sizes and depth, but not numeric table spans.",
+          "stretch_stale_spans skips rows whose used span already exceeds the grid; it does not clamp the attack.",
+          "PNG raster limits occur after layout. SECURITY.md recommends external process limits, whose presence is not established."
+        ],
+        "dataflow": {
+          "summary": "DOCX table attributes -> cell_span/row_grid_skip -> RawCell.colspan -> summed occupancy -> vec!/resize; embedded HTML colspan -> cell_spans -> end_table -> unbounded gridCol generation."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Host-process memory exhaustion or termination, including Python/WASM embeddings; no code execution or file disclosure established."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed."
+        },
+        "reachability": {
+          "summary": "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed."
+          ]
+        },
+        "summary": "Rendering an admitted DOCX trusts `gridSpan`, `gridBefore` and `gridAfter` as allocation dimensions. A span of 1073741824 requests a 4 GiB column vector; embedded HTML `colspan` independently generates that many XML columns."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-table-span"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.numbering-level",
+      "title": "Rendering one numbered paragraph can perform billions of iterations",
+      "summary": "A DOCX paragraph can set `ilvl` to 4000000000. The renderer searches every lower integer for a defined numbering level; supplying an oversized definition instead makes it populate billions of counters.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded numbering-level work",
+        "cwe": [
+          "CWE-834"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "level-input",
+          "label": "Paragraph numbering level",
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {\n    let Some(num) = first_named(dom, ppr, \"numPr\") else {\n        return (None, 0);\n    };\n    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);\n    let num_id = first_named(dom, num, \"numId\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .map(str::to_string);\n    (num_id, ilvl)",
+          "explanation": "Caller-controlled w:ilvl is parsed as an unrestricted u32."
+        },
+        {
+          "id": "level-definition",
+          "label": "Numbering definitions",
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        for lvl in dom.descendants(abs, Some(&W::name(\"lvl\"))) {\n            let ilvl = attr_any(&dom, lvl, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);",
+          "explanation": "An attacker may also define the oversized level."
+        },
+        {
+          "id": "level-search",
+          "label": "Numeric parent search",
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    fn resolve_ilvl(&self, abs: &str, ilvl: u32) -> u32 {\n        let Some(lvls) = self.levels.get(abs) else {\n            return ilvl;\n        };\n        if lvls.contains_key(&ilvl) {\n            return ilvl;\n        }\n        // Word ignores a requested ilvl the abstract never defined\n        // (potpourri / file_170 ListNumber only has ilvl=0). Continue\n        // the parent level so Sift is \"3.\" at the same hanging as\n        // Preheat, not a synthesized nested \"1.\" at +18pt.\n        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "Fallback probes every lower integer instead of defined levels."
+        },
+        {
+          "id": "level-counters",
+          "label": "Counter materialization",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "language": "rust",
+          "role": "sink",
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }\n            let first = self\n                .starts\n                .get(&(num_id.to_string(), level))\n                .copied()\n                .or_else(|| {\n                    self.levels\n                        .get(&abs)\n                        .and_then(|m| m.get(&level))\n                        .map(|l| l.start)\n                })\n                .unwrap_or(1)\n                .max(1);\n            self.counters\n                .insert((num_id.to_string(), level), first.saturating_add(1));",
+          "explanation": "A defined huge level bypasses fallback but causes one insertion per lower level."
+        }
+      ],
+      "rootCause": {
+        "summary": "`num_pr()` and numbering-definition loading accept unbounded u32 levels. `resolve_ilvl()` searches the numeric interval rather than actual definitions; `next_marker()` materializes every lower counter when the huge level is defined.",
+        "evidenceRefs": [
+          "level-input",
+          "level-definition",
+          "level-search",
+          "level-counters"
+        ]
+      },
+      "remediation": "Validate paragraph, style, abstract-level and override indices against the supported list-level range. Find parents among existing definitions and avoid creating counters for nonexistent levels.",
+      "validation": {
+        "counterEvidence": [
+          "The Markdown reader separately clamps levels to eight, so this finding concerns the renderer.",
+          "Archive/XML depth/attribute byte limits do not restrict the numeric value.",
+          "External CPU/memory limits can contain process impact; no such deployment was provided."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "Paragraph w:ilvl/numbering lvl -> u32 -> resolve_ilvl numeric-range search -> next_marker range insertion and render range loop."
+      },
+      "attackPath": {
+        "controls": [
+          "The Markdown reader separately clamps levels to eight, so this finding concerns the renderer.",
+          "Archive/XML depth/attribute byte limits do not restrict the numeric value.",
+          "External CPU/memory limits can contain process impact; no such deployment was provided."
+        ],
+        "dataflow": {
+          "summary": "Paragraph w:ilvl/numbering lvl -> u32 -> resolve_ilvl numeric-range search -> next_marker range insertion and render range loop."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "CPU exhaustion from billions of hashmap probes; defined oversized levels also exhaust memory."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission."
+        },
+        "reachability": {
+          "summary": "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission."
+          ]
+        },
+        "summary": "A DOCX paragraph can set `ilvl` to 4000000000. The renderer searches every lower integer for a defined numbering level; supplying an oversized definition instead makes it populate billions of counters."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-numbering-depth"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-87e131495b8ce5d9",
+        "label": "Native file publication and MCP root confinement",
+        "disposition": "no_issue_found",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-924aa4b0d019bb93",
+        "label": "Document semantic resource limits and privacy scrub",
+        "disposition": "reported",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-59fc88e1be67624b",
+        "label": "ZIP entry budget and EOCD interpretation",
+        "disposition": "needs_follow_up",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-6269990b80a6df3a",
+        "label": "Legacy DOC and strict-format probing",
+        "disposition": "needs_follow_up",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "scrub-opc-location",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "scrub-opc-location",
+          "title": "Scrubbing uses conventional filenames instead of relationship-selected metadata parts",
+          "evidence": [
+            {
+              "path": "src/scrub.rs",
+              "startLine": 39,
+              "endLine": 43,
+              "code": "const CORE: &str = \"docProps/core.xml\";\nconst APP: &str = \"docProps/app.xml\";\nconst CUSTOM: &str = \"docProps/custom.xml\";"
+            },
+            {
+              "path": "src/scrub.rs",
+              "startLine": 357,
+              "endLine": 385,
+              "summary": "scrub_properties loads fixed CORE/APP and removes fixed CUSTOM; aliases iterate word/ XML only at lines 211-215,277."
+            }
+          ],
+          "question": "Verify nonstandard relationship targets are admitted and metadata remains despite public scrub removal contract."
+        },
+        "id": "scrub-opc-location"
+      },
+      {
+        "candidateId": "baseline-chicago-marker",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "baseline-chicago-marker",
+          "title": "Chicago numbering start amplifies to giant marker allocation",
+          "originalEvidence": "Baseline: src/convert/mod.rs:6750-6753 accepts w:start u32; format_num5861 -> chicago_label6015-6018 repeats symbol (n-1)/4+1. Start2147483647 generates ~1.5GiB; markdown/from_docx/mod.rs:3025-3030 shares list_number helper. Alpha/Roman bounded modulo."
+        },
+        "id": "baseline-chicago-marker"
+      },
+      {
+        "candidateId": "zip-eocd-entry-budget",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "zip-eocd-entry-budget",
+          "title": "False EOCD record bypasses pre-index entry budget",
+          "originalEvidence": "Investigator: src/admission.rs:580-610 selects last raw EOCD signature without validating record; zip9.0.5 get_metadata scans backward to earlier valid EOCD on metadata/header failure (read/zip_archive.rs199-235). False low-count EOCD inside real comment with mismatched disk fields passes preindex; real ZipArchive loads >max_entries. admit:450 only tests archive.len()<declared; actual >max_entries absent. Parent validation pending."
+        },
+        "id": "zip-eocd-entry-budget"
+      },
+      {
+        "candidateId": "baseline-altchunk-expansion",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "baseline-altchunk-expansion",
+          "title": "altChunk expansion constructs unbounded/deep WML after admission",
+          "originalEvidence": "Baseline: convert/mod.rs774-775 admission before altchunk expansion791-797, generated XML enters infallible Dom.parse_xdocument800. HTML parts can contain >256 nested table/tr/td; builder stacks produce deep WML consumed by recursive table_block13230-13235. Admission only checks XML/rels + main. Repeated 1000 refs to same10MiB HTML rerenders/appends >10GiB while admitted aggregate10MiB. Parent validation pending."
+        },
+        "id": "baseline-altchunk-expansion"
+      },
+      {
+        "candidateId": "strict-probe-inflate",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "strict-probe-inflate",
+          "originalEvidence": "Investigator: public strict_translation::main_part_is_strict src/strict_translation.rs670-725 opens archive without preindex/admission; unbounded read word/document.xml. Long XML comment prefix head retained from '<' at0 and rescanned every16KiB at695-709 yields unbounded inflation/memory and quadratic work. Public export lib.rs144, no internal caller; library boundary only."
+        },
+        "id": "strict-probe-inflate"
+      },
+      {
+        "candidateId": "legacy-piece-expansion",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "legacy-piece-expansion",
+          "originalEvidence": "Investigator: src/legacy_doc.rs1148-1226 main_text expands each piece.cp_start..end into StoryChar; parsed pieces1054-1112 allow same physical FC range referenced repeatedly, ccp_text attacker FIB. Sequential CPs pass, 1000 pieces reusing1MiB yield billion StoryChar/tensGB from1MiB. No logical character cap."
+        },
+        "id": "legacy-piece-expansion"
+      },
+      {
+        "candidateId": "legacy-nested-fields",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "legacy-nested-fields",
+          "originalEvidence": "Investigator: src/legacy_doc.rs1598 onward Story::blocks fields.iter().any per char. Repeated field begin/result characters nest N false fields, O(N) per char O(N²); no field depth cap."
+        },
+        "id": "legacy-nested-fields"
+      }
+    ],
+    "openQuestions": [
+      "Architecture model pending; remaining repository source coverage unresolved.",
+      "Architecture review in progress; scoped source coverage not yet reconciled."
+    ]
+  }
+}

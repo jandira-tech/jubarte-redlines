@@ -1,0 +1,408 @@
+diff --git a/src/convert/mod.rs b/src/convert/mod.rs
+--- a/src/convert/mod.rs
++++ b/src/convert/mod.rs
+@@ -788,9 +788,21 @@
+         .ok_or(ConvertError::MissingDocument)?;
+     // Word merges `w:altChunk` content (HTML / MHT) into the body on open.
+     let xml = if xml.contains("<w:altChunk") {
+-        altchunk::expand(&xml, |rid| {
++        let expanded = altchunk::expand(&xml, |rid| {
+             rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))
+-        })
++        });
++        // Admission checked the package's own parts, not this rewritten
++        // body: nested HTML tables expand to WordprocessingML far deeper
++        // than any part was, and the DOM parser recurses per element.
++        // Re-check the expanded document under the same admission gate
++        // (depth and tag policy) before it is parsed.
++        crate::admission::check_xml_depth(
++            &main,
++            expanded.as_bytes(),
++            crate::admission::InputLimits::compare(),
++        )
++        .map_err(|error| ConvertError::OpenPackage(error.to_string()))?;
++        expanded
+     } else {
+         xml
+     };
+@@ -33225,6 +33237,28 @@
+     (lines, ends_br)
+ }
+ 
++/// Tail widths for [`wrap_runs_segment`]: for every tab unit, the width of
++/// the units after it up to the next tab. Only a tab unit ever consults its
++/// tail (`tab_w` runs for tab units alone), and one tab unit's span ends
++/// where the next tab unit begins, so scanning just the tab units' suffixes
++/// — with the same per-index scan as before — yields the same values with
++/// linear total work. A tab-free paragraph, whose eager per-unit suffix
++/// scans cost N*(N-1)/2 unit visits, now computes nothing.
++fn wrap_tab_tails(units: &[(Vec<WrapPiece<'_>>, bool)]) -> Vec<f32> {
++    let mut tails = vec![0.0; units.len()];
++    for (i, (u, _)) in units.iter().enumerate() {
++        if u.iter().all(|(_, tok, _)| !tok.contains('\t')) {
++            continue;
++        }
++        tails[i] = units[i + 1..]
++            .iter()
++            .take_while(|(u, _)| u.iter().all(|(_, tok, _)| !tok.contains('\t')))
++            .map(|(u, _)| u.iter().map(|(_, _, w)| w).sum::<f32>())
++            .sum();
++    }
++    tails
++}
++
+ fn wrap_runs_segment(
+     fonts: &Fonts,
+     runs: &[TextRun],
+@@ -33316,15 +33350,7 @@
+     // The text after each unit up to the next tab: a centre or right stop
+     // sets it back by half or all of it, as at paint time. Measured from
+     // the stop alone, 5fb9cedf's centred title overflowed and wrapped.
+-    let tails: Vec<f32> = (0..units.len())
+-        .map(|i| {
+-            units[i + 1..]
+-                .iter()
+-                .take_while(|(u, _)| u.iter().all(|(_, tok, _)| !tok.contains('\t')))
+-                .map(|(u, _)| u.iter().map(|(_, _, w)| w).sum::<f32>())
+-                .sum()
+-        })
+-        .collect();
++    let tails = wrap_tab_tails(&units);
+     for (ui, (unit, is_space)) in units.into_iter().enumerate() {
+         let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
+         // A tab jumps to the next stop from where it stands (00996ee5's
+@@ -33561,6 +33587,81 @@
+ 
+ #[cfg(test)]
+ #[cfg_attr(all(coverage_nightly, test), coverage(off))]
++mod wrap_tab_tail_tests {
++    use super::*;
++
++    fn embedded_fonts() -> Fonts<'static> {
++        let mut fonts = Fonts::new();
++        // Use the dependency's embedded catalogue to bypass every system
++        // font override: unit tests must not read installed font files.
++        for face in FaceId::all() {
++            let key = face.key();
++            fonts.insert_embedded(&key.family, key.bold, key.italic, face.bytes());
++        }
++        fonts
++    }
++
++    #[test]
++    fn tab_tails_match_the_scanned_definition_and_skip_tab_free_units() {
++        let run = TextRun::new("", default_run_style());
++        let unit = |toks: &[(&str, f32)]| {
++            toks.iter()
++                .map(|&(tok, w)| (&run, tok, w))
++                .collect::<Vec<WrapPiece<'_>>>()
++        };
++        let units = vec![
++            (unit(&[("one", 10.0)]), false),
++            (unit(&[("\t", 0.0)]), true),
++            (unit(&[("two", 4.0), ("three", 6.0)]), false),
++            (unit(&[("four", 8.0)]), false),
++            (unit(&[("\t", 0.0)]), true),
++            (unit(&[("five", 2.0)]), false),
++            (unit(&[("six", 7.0)]), false),
++        ];
++        let tails = wrap_tab_tails(&units);
++        assert_eq!(tails.len(), units.len());
++        // The eager definition the wrap loop used to compute for every
++        // unit, evaluated per index; only a tab unit's tail is ever read.
++        let scanned = |i: usize| {
++            units[i + 1..]
++                .iter()
++                .take_while(|(u, _)| u.iter().all(|(_, tok, _)| !tok.contains('\t')))
++                .map(|(u, _)| u.iter().map(|(_, _, w)| w).sum::<f32>())
++                .sum::<f32>()
++        };
++        for i in 0..units.len() {
++            let tab = units[i].0.iter().any(|(_, tok, _)| tok.contains('\t'));
++            assert_eq!(tails[i], if tab { scanned(i) } else { 0.0 }, "unit {i}");
++        }
++        // The first tab's tail stops at the second tab; the last runs out.
++        assert_eq!(tails[1], 18.0);
++        assert_eq!(tails[4], 9.0);
++    }
++
++    #[test]
++    fn wrapping_a_tab_free_paragraph_is_not_quadratic() {
++        // One paragraph of 60 000 space-separated words forms ~120 000
++        // units. The eager tail scan visited N*(N-1)/2 of them (~7.2e9)
++        // before any line was laid out; with no tab unit to read a tail,
++        // the work must stay linear. The bound is generous on purpose: it
++        // is a complexity cliff (minutes in a debug build before), not a
++        // stopwatch.
++        let words = "word ".repeat(60_000);
++        let runs = vec![TextRun::new(words, default_run_style())];
++        let fonts = embedded_fonts();
++        let started = std::time::Instant::now();
++        let lines = wrap_runs_tabbed(&fonts, &runs, 400.0, 400.0, false, None).0;
++        let elapsed = started.elapsed();
++        assert!(lines.len() > 1000, "60 000 words at 400pt wrap to thousands of lines");
++        assert!(
++            elapsed.as_secs() < 30,
++            "wrapping took {elapsed:?}; the suffix scan is quadratic again"
++        );
++    }
++}
++
++#[cfg(test)]
++#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+ fn layout(
+     fonts: &Fonts,
+     page: &PageSetup,
+diff --git a/src/comparer/lcs_table.rs b/src/comparer/lcs_table.rs
+--- a/src/comparer/lcs_table.rs
++++ b/src/comparer/lcs_table.rs
+@@ -18,6 +18,13 @@
+ use crate::namespaces::{PT, W};
+ use crate::xmllinq::{Dom, NodeId};
+ 
++/// Largest row-by-row DP matrix the table alignment routes allocate:
++/// `(m + 1) * (n + 1)` `usize` cells, about 1 000 rows a side. A bigger
++/// pair declines to the positional and whole-table routes — the quadratic
++/// matrix is a resource-exhaustion surface on untrusted pairs, as
++/// `LCS_CELL_CAP` is for the word resolvers in `cross_para`.
++const TABLE_ROW_CELL_CAP: usize = 1_000_000;
++
+ fn as_group(u: &ComparisonUnit) -> Option<&ComparisonUnitGroup> {
+     match u {
+         ComparisonUnit::Group(g) => Some(g),
+@@ -252,6 +259,11 @@
+     if rows1.is_empty() || rows2.is_empty() {
+         return None;
+     }
++    if rows1.len().saturating_mul(rows2.len()) > TABLE_ROW_CELL_CAP {
++        // Too many DP cells for the shared-word matrix; the caller keeps
++        // the positional and whole-table routes for a pair this size.
++        return None;
++    }
+     if table_has_merges(dom, rows1) || table_has_merges(dom, rows2) {
+         return None;
+     }
+@@ -663,7 +675,11 @@
+         // a few changed rows" case: do not collapse positionally when at least two
+         // rows differ but most still match, fall through to row-level LCS.
+         let use_content_lcs = hash_diff > 1 && hash_diff < total && hash_diff > total / 3;
+-        if can_collapse && use_content_lcs && total >= 7 {
++        if can_collapse
++            && use_content_lcs
++            && total >= 7
++            && total.saturating_mul(total) <= TABLE_ROW_CELL_CAP
++        {
+             let r = apply_lcs_to_table_rows(rows1, rows2);
+             if !r.is_empty() {
+                 return Some(r);
+@@ -1873,6 +1889,65 @@
+             }
+         }
+     }
++
++    #[test]
++    fn oversized_row_pairs_decline_the_shared_word_matrix() {
++        // 1001 × 1001 rows is past TABLE_ROW_CELL_CAP: the shared-word
++        // route must decline (None) instead of allocating the
++        // (m+1)×(n+1) DP matrix the alignment would fill.
++        let count = 1001;
++        let mut dom = Dom::new();
++        let left: Vec<String> = (0..count).map(|i| format!("old row {i}")).collect();
++        let right: Vec<String> = (0..count).map(|i| format!("new row {i}")).collect();
++        let left_refs: Vec<&str> = left.iter().map(String::as_str).collect();
++        let right_refs: Vec<&str> = right.iter().map(String::as_str).collect();
++        let a = source(&mut dom, &left_refs, None);
++        let b = source(&mut dom, &right_refs, None);
++        let rows_a = &as_group(&a).unwrap().contents;
++        let rows_b = &as_group(&b).unwrap().contents;
++        assert!(
++            rows_a.len().saturating_mul(rows_b.len()) > TABLE_ROW_CELL_CAP,
++            "the fixture must exceed the cap"
++        );
++        // "row" and the row numbers are shared tokens, so the route has
++        // signal and would run without the cap; over it the pair declines
++        // to the positional and whole-table routes.
++        assert!(shared_word_row_sequences(&dom, rows_a, rows_b).is_none());
++    }
++
++    #[test]
++    fn oversized_same_count_tables_stay_positional_without_the_matrix() {
++        // Same row count, one identical row and 1000 changed ones: the
++        // content-LCS heuristic applies, but the pair is past
++        // TABLE_ROW_CELL_CAP, so the rows pair positionally instead of
++        // allocating the quadratic LCS matrix.
++        let count = 1001;
++        let mut dom = Dom::new();
++        let mut left: Vec<String> = (1..count).map(|i| format!("old row {i}")).collect();
++        left.insert(0, "same header".to_string());
++        let mut right: Vec<String> = (1..count).map(|i| format!("new row {i}")).collect();
++        right.insert(0, "same header".to_string());
++        let left_refs: Vec<&str> = left.iter().map(String::as_str).collect();
++        let right_refs: Vec<&str> = right.iter().map(String::as_str).collect();
++        let a = source(&mut dom, &left_refs, None);
++        let b = source(&mut dom, &right_refs, None);
++        let out = do_lcs_algorithm_for_table(
++            &dom,
++            std::slice::from_ref(&a),
++            std::slice::from_ref(&b),
++            &WmlComparerSettings::powertools_faithful(),
++        )
++        .unwrap();
++        assert_eq!(out.len(), count);
++        assert!(
++            out.iter()
++                .all(|sequence| sequence.correlation_status == CorrelationStatus::Unknown),
++            "over-cap rows pair positionally: {:?}",
++            out.iter()
++                .map(|sequence| sequence.correlation_status)
++                .collect::<Vec<_>>()
++        );
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/scrub.rs b/src/scrub.rs
+--- a/src/scrub.rs
++++ b/src/scrub.rs
+@@ -465,6 +465,14 @@
+             break;
+         }
+         let xml = name.ends_with(".xml") || name.ends_with(".rels");
++        if xml && let Err(error) = crate::admission::check_xml_depth(&name, &bytes, limits) {
++            // The DOM scan below parses permissively, and the byte budgets
++            // above say nothing about nesting: a part too deep (or too
++            // malformed) to scan structurally cannot certify a redaction,
++            // so refuse it by name, as the budget refusals do.
++            found.insert(format!("{name} ({error})"));
++            break;
++        }
+         let hit = if xml {
+             xml_holds(&String::from_utf8_lossy(&bytes), needle)
+         } else {
+@@ -802,5 +810,25 @@
+             leaks_within(&bytes, "aaaa", fixture::limits()),
+             ["word/media/a.bin"]
+         );
++    }
++    #[test]
++    fn deeply_nested_xml_part_is_a_refusal_not_a_dom_parse() {
++        // 300 nested elements fit every byte budget, yet the permissive DOM
++        // parser recurses per element; the scan must refuse the part by
++        // name instead of parsing it.
++        use std::io::Write as _;
++        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
++        let options = zip::write::SimpleFileOptions::default()
++            .compression_method(zip::CompressionMethod::Deflated);
++        writer.start_file("[Content_Types].xml", options).unwrap();
++        writer.write_all(b"<Types/>").unwrap();
++        let deep = format!("{}{}", "<a>".repeat(300), "</a>".repeat(300));
++        writer.start_file("word/deep.xml", options).unwrap();
++        writer.write_all(deep.as_bytes()).unwrap();
++        let bytes = writer.finish().unwrap().into_inner();
++        let findings = leaks_within(&bytes, "absent needle", InputLimits::compare());
++        let text = findings.join(", ");
++        assert!(text.contains("word/deep.xml"), "{text}");
++        assert!(text.contains("nests deeper than 256"), "{text}");
+     }
+ }
+diff --git a/src/admission.rs b/src/admission.rs
+--- a/src/admission.rs
++++ b/src/admission.rs
+@@ -785,7 +785,11 @@
+ /// inside the tag/namespace policy (`xmllinq::parse::TagPolicy`) so no part
+ /// reaching the permissive DOM parser can carry pathological attribute or
+ /// namespace-declaration widths.
+-fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {
++pub(crate) fn check_xml_depth(
++    name: &str,
++    xml: &[u8],
++    limits: InputLimits,
++) -> Result<(), AdmissionError> {
+     let invalid =
+         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
+     let text = part_text(xml);
+diff --git a/tests/convert_docx_to_pdf.rs b/tests/convert_docx_to_pdf.rs
+--- a/tests/convert_docx_to_pdf.rs
++++ b/tests/convert_docx_to_pdf.rs
+@@ -49222,3 +49222,81 @@
+         );
+     }
+ }
++
++/// A package whose body is one `w:altChunk` holding `html`, the chunk part
++/// reachable through the document's relationship (`chunk.html` is not an
++/// XML part, so package admission never scans it).
++fn altchunk_docx(html: &str) -> Vec<u8> {
++    let document = format!(
++        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
++         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"\
++          xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
++         <w:body><w:altChunk r:id=\"rIdChunk\"/><w:sectPr/></w:body></w:document>"
++    );
++    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
++        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
++        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
++        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
++        <Default Extension=\"html\" ContentType=\"text/html\"/>\
++        <Override PartName=\"/word/document.xml\" \
++          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
++        </Types>";
++    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
++        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
++        <Relationship Id=\"rId1\" \
++          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
++          Target=\"word/document.xml\"/>\
++        </Relationships>";
++    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
++        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
++        <Relationship Id=\"rIdChunk\" \
++          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk\" \
++          Target=\"chunk.html\"/>\
++        </Relationships>";
++    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
++    let opts = SimpleFileOptions::default();
++    zip.start_file("[Content_Types].xml", opts).unwrap();
++    zip.write_all(content_types.as_bytes()).unwrap();
++    zip.start_file("_rels/.rels", opts).unwrap();
++    zip.write_all(rels.as_bytes()).unwrap();
++    zip.start_file("word/document.xml", opts).unwrap();
++    zip.write_all(document.as_bytes()).unwrap();
++    zip.start_file("word/_rels/document.xml.rels", opts).unwrap();
++    zip.write_all(doc_rels.as_bytes()).unwrap();
++    zip.start_file("word/chunk.html", opts).unwrap();
++    zip.write_all(html.as_bytes()).unwrap();
++    zip.finish().unwrap().into_inner()
++}
++
++/// `levels` single-cell HTML tables nested inside each other.
++fn nested_tables_html(levels: usize) -> String {
++    let mut html = String::new();
++    for _ in 0..levels {
++        html.push_str("<table><tr><td>");
++    }
++    html.push_str("leaf");
++    for _ in 0..levels {
++        html.push_str("</td></tr></table>");
++    }
++    html
++}
++
++#[test]
++fn conversion_refuses_altchunk_expansion_past_the_xml_depth_limit() {
++    // Every nested HTML table level emits w:tbl > w:tr > w:tc, so 90
++    // levels expand past the 256-element depth admission enforces on the
++    // package's own XML parts — but the expansion runs after admission,
++    // and the expanded body used to reach the recursive DOM parser
++    // unchecked.
++    let err = docx_to_pdf(&altchunk_docx(&nested_tables_html(90)))
++        .expect_err("over-deep expansion must be refused, not parsed");
++    assert!(format!("{err}").contains("nests deeper than 256"), "{err}");
++}
++
++#[test]
++fn bounded_altchunk_table_nesting_still_converts() {
++    // 60 levels (~186 nested elements) stay inside the depth budget and
++    // must keep rendering as ordinary nested tables.
++    let pdf = docx_to_pdf(&altchunk_docx(&nested_tables_html(60))).expect("bounded nesting");
++    assert!(pdf_page_count(&pdf) >= 1);
++}

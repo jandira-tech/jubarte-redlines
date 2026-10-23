@@ -1,0 +1,284 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Current repository /Users/arthrod/temp/T/jubarte-redlines, scope ., userContext null; offline read-only static audit.",
+    "validationMode": "static source review",
+    "limitations": [
+      "No application execution, network validation, or history review."
+    ]
+  },
+  "findings": [
+    {
+      "ruleId": "xml-admission-bypass",
+      "title": "Rendering a relationship-selected XML part can bypass the depth limit and abort the host",
+      "summary": "A document can place deeply nested numbering XML in a .bin part and reference it with the numbering relationship. Admission skips its XML policy; rendering later passes it to the recursive unchecked DOM parser, allowing a small input to overflow the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled document bytes reach unbounded recursion through an ordinary conversion API. Process availability impact is medium and likelihood is high once the document is converted; no remote deployment is assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static trace establishes suffix-based admission, arbitrary relationship target selection, and recursive parsing without a depth guard. No crash input was executed."
+      },
+      "taxonomy": {
+        "category": "XML resource-limit bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 551,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21320
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "xml-admission",
+          "label": "Admission checks XML by filename suffix",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 551,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?",
+          "explanation": "An auxiliary .bin part is only drained and charged to the inflation budget; its XML depth and tag policy are never inspected."
+        },
+        {
+          "id": "xml-target",
+          "label": "Relationship type selects an arbitrary part name",
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21320,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())\n}",
+          "explanation": "A numbering relationship may point to a non-.xml internal part; no suffix or content-policy check is applied here."
+        },
+        {
+          "id": "xml-numbering",
+          "label": "Numbering loader invokes unchecked DOM parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6571,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn load_numbering(pkg: &PartFs) -> Numbering {\n    let numbering_part = main_rel_part(pkg, \"numbering\", \"word/numbering.xml\");\n    let Some(xml) = pkg.part_string(&numbering_part) else {\n        return Numbering::default();\n    };\n    parse_numbering_xml(&xml, |rid| resolve_media(pkg, &numbering_part, rid))\n}\n\n/// `word/numbering.xml`; `media` resolves a picture-bullet r:id.\nfn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering {\n    let mut numbering = Numbering::default();\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);\n    let Some(root) = dom.root(doc) else {\n        return numbering;",
+          "explanation": "The selected part bytes become a string and enter Dom::parse_xdocument regardless of their filename."
+        },
+        {
+          "id": "xml-recursion",
+          "label": "Unchecked parser recurses for each nested element",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "outcome",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Each nested '<' adds another parse_element stack frame without checking InputLimits."
+        }
+      ],
+      "rootCause": {
+        "summary": "admit classifies auxiliary XML by filename suffix, while main_rel_part classifies it by relationship type. load_numbering bridges those inconsistent classifications and sends the unvalidated bytes to parse_xdocument, whose parse_element calls itself for every nested element. The main-part fallback check does not protect auxiliary numbering parts.",
+        "evidenceRefs": [
+          "xml-admission",
+          "xml-target",
+          "xml-numbering",
+          "xml-recursion"
+        ]
+      },
+      "remediation": "Apply the active XML depth/tag policy to every relationship-selected XML consumer before constructing its DOM, or classify all XML content types during admission and retain checked depth at each unchecked consumer.",
+      "validation": {
+        "limitations": [
+          "No runtime crash reproduction; affected thread stack size and host isolation determine failure threshold."
+        ],
+        "method": "static source trace",
+        "summary": "with_layout admits input at src/convert/mod.rs:776, then opens the same package and reaches collect_blocks at :923. collect_blocks calls load_numbering at :7734. A valid internal numbering relationship to a .bin part passes admission's byte limits and main-part check yet reaches unchecked recursive parsing. strict_to_transitional_docx_within only rewrites .xml/.rels names (:810) and PartFs read_package only applies metadata checks to [Content_Types].xml/.rels (:354). Neither inserts the missing depth check.",
+        "counterevidence": [
+          "Ordinary .xml/.rels parts are depth-checked; the main document is explicitly checked even with a different extension.",
+          "ZIP entry/part/total byte limits and process limits reduce blast radius but do not bound recursive depth of this auxiliary part."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> admit suffix filter -> internal numbering relationship -> part_string -> parse_numbering_xml -> recursive parse_element",
+          "source": "Attacker-controlled auxiliary package part and relationship",
+          "sink": "Recursive DOM parser",
+          "outcome": "Stack exhaustion terminates the processing thread/process, including an embedding Python host."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability loss of the process converting the document."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "The attacker chooses both relationship target and deeply nested part bytes; current parser has no guard."
+        },
+        "reachability": {
+          "summary": "An untrusted-document supplier needs the victim to call a normal PDF/PNG/render-report conversion; no filesystem or configuration privileges are required.",
+          "attacker": "Document supplier",
+          "entrypoint": "convert::render / docx_to_pdf",
+          "preconditions": [
+            "Victim converts the supplied package; it contains valid root metadata and main document."
+          ]
+        },
+        "summary": "Supply an otherwise valid DOCX with an internal numbering relationship targeting word/numbering.bin containing deeply nested XML; ask the library or CLI to render it."
+      },
+      "remediationTests": [
+        "Verify that rendering refuses a numbering relationship targeting deeply nested .bin XML with INVALID_XML before DOM construction.",
+        "Apply the same regression to renamed styles, headers, footers, notes, settings and other relationship-selected XML parts."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-xml-extension",
+        "workerLabel": "discovery-0034",
+        "originalCandidates": [
+          {
+            "title": "Non-XML extension may bypass XML depth budget for relationship-selected parts",
+            "evidence": [
+              {
+                "path": "src/admission.rs",
+                "startLine": 529,
+                "code": "let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");",
+                "explanation": "Admission chooses XML validation by suffix except for main part."
+              },
+              {
+                "path": "src/opc/mod.rs",
+                "startLine": 561,
+                "code": "pub fn part_string(&self, name: &str) -> Option<String> {\n self.part_bytes(name).map(|b| String::from_utf8_lossy(b).into_owned())\n}",
+                "explanation": "Relationship targets can supply raw strings to later DOM consumers."
+              }
+            ],
+            "unresolved": "Must establish reachable unchecked parser consumer and concrete impact."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "title": "Non-XML extension may bypass XML depth budget for relationship-selected parts",
+          "evidence": [
+            {
+              "path": "src/admission.rs",
+              "startLine": 534,
+              "code": "let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");",
+              "explanation": "Admission chooses XML validation by suffix except for main part."
+            },
+            {
+              "path": "src/opc/mod.rs",
+              "startLine": 561,
+              "code": "pub fn part_string(&self, name: &str) -> Option<String> {\n self.part_bytes(name).map(|b| String::from_utf8_lossy(b).into_owned())\n}",
+              "explanation": "Relationship targets can supply raw strings to later DOM consumers."
+            }
+          ],
+          "unresolved": "Must establish reachable unchecked parser consumer and concrete impact."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "package-xml",
+        "label": "Package admission and XML consumers",
+        "disposition": "reported",
+        "notes": "Validated extension-based XML depth bypass through numbering relationship; review of sibling consumers ongoing.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "audit-remaining",
+        "reason": "Independent baseline, architecture review, conversion investigation and remaining current-scope files are being reviewed."
+      },
+      {
+        "id": "candidate-altchunk-span",
+        "candidateId": "discovery-0034-altchunk-span",
+        "reason": "Investigator candidate awaiting parent validation; preserving original report.",
+        "candidate": {
+          "source": "conversion",
+          "title": "Unbounded HTML colspan expansion during altChunk conversion",
+          "originalReport": "Confirmed source-level conversion DoS candidate: altchunk::Builder::start parses untrusted HTML colspan as unrestricted usize (src/convert/altchunk.rs:588-594), end_table sums spans and emits one gridCol per computed column (470-490). A tiny admitted HTML altChunk can demand billions of generated XML elements before layout; no HTML-derived output/column budget.",
+          "unresolved": "Parent must verify input-to-expansion flow and counterevidence."
+        }
+      },
+      {
+        "id": "candidate-ci-runner",
+        "candidateId": "discovery-0034-ci-runner",
+        "reason": "Baseline candidate awaiting parent validation; original evidence retained.",
+        "candidate": {
+          "source": "baseline",
+          "originalReport": "Public-repo pull_request CI executes attacker-controlled checkout on self-hosted runner without fork/trust gate. .github/workflows/ci.yml:16,36-49; docs.yml PR trigger+self-hosted+run scripts/gen_docs.sh; md-roundtrip/adoption same. .github/actions/mbx/action.yml says runners share private Docker network, tokenless HTTP mbx-cache:7543, and same checkout/store. Fork PR can change build.rs/local action/tests/scripts to execute runner commands when GitHub permits the run, reach private network/poison persistent host for protected jobs. persist-credentials:false/read-only token do not constrain host execution.",
+          "fullResult": {
+            "title": "Untrusted pull requests execute on persistent self-hosted runners",
+            "cwe": "CWE-250",
+            "severity": "high",
+            "confidence": "high",
+            "attacker": "Fork PR author whose run is permitted by GitHub repository-level approval settings",
+            "impact": "Runner-account execution, private Docker network access, possible interference with later jobs. Credential theft/protected-build compromise not established offline.",
+            "affectedLocations": [
+              ".github/workflows/ci.yml:13-48",
+              ".github/actions/mbx/action.yml:8-32",
+              ".github/workflows/docs.yml:79-99",
+              ".github/workflows/md-roundtrip.yml:28-39",
+              ".github/workflows/adoption.yml:48-72"
+            ],
+            "counterevidence": [
+              "contents:read and persist-credentials:false restrict workflow token only",
+              "Fork-run approval may be required",
+              "No live runner inspection; persistence/network facts from committed action"
+            ],
+            "remediation": "Isolate untrusted jobs on ephemeral runners without trusted network/shared state; server-enforced read-only cache."
+          }
+        }
+      },
+      {
+        "id": "candidate-wmf-record",
+        "candidateId": "discovery-0034-wmf-record",
+        "reason": "Investigator candidate awaiting parent source validation.",
+        "candidate": {
+          "source": "conversion",
+          "originalReport": "WMF EXTTEXTOUT validates record size/advance but takes n-byte text from entire file at data.get(at..at+n), not current record (src/convert/metafile.rs:603-611), then copies into retained MetaText. Repeated 14-byte records can each claim 65535 bytes overlapping subsequent records; approximately 1 MiB -> 4GiB retained text. Polygon/polyline siblings may share boundary error. Needs record-scoped slicing and budget."
+        }
+      },
+      {
+        "id": "candidate-html-entities",
+        "candidateId": "discovery-0034-html-entities",
+        "reason": "Investigator candidate awaiting parent source validation.",
+        "candidate": {
+          "source": "conversion",
+          "originalReport": "src/convert/altchunk.rs:733 decode_entities searches entire remaining tail for ';' then filters e<=10. Repeated '&' without ';' can cause quadratic rescans. Sibling markdown/write.rs:1420 uses same helper."
+        }
+      },
+      {
+        "id": "candidate-doc-fields",
+        "candidateId": "discovery-0034-doc-fields",
+        "reason": "Investigator candidate awaiting parent source validation.",
+        "candidate": {
+          "source": "conversion",
+          "originalReport": "src/legacy_doc.rs:1604 fields.iter().any scans whole stack per character. Nested fields already in result state leave false frames and yield quadratic parsing; no depth cap."
+        }
+      }
+    ]
+  }
+}

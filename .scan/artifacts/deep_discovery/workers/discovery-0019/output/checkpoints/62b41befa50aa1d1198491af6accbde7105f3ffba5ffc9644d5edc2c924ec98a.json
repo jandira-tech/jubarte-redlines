@@ -1,0 +1,1697 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "untrusted-ci-runner-authority",
+      "title": "Pull-request builds gain access to shared internal runners",
+      "summary": "A contributor whose pull-request workflow is permitted can execute modified build/test or local-action code on the project's self-hosted runners, gaining their internal network and shared local build state. The source explicitly places these runners on a private Docker network with a tokenless shared cache.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The boundary crosses from a fork contribution into the internal runner environment. The attacker can execute arbitrary job code and contact the documented private cache; persistence, cache poisoning and access to other services depend on deployment details not established by source. GitHub approval settings may require a maintainer to permit the run.",
+        "changeConditions": "Reduce severity if PR jobs are proven to use disposable runners with no shared state or internal network; raise it if persistent credentials or a writable cache consumed by trusted builds are confirmed."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Workflow scheduling, attacker-controlled checkout and internal cache endpoint are explicit in current source; live runner isolation and Actions approval policy were not inspected."
+      },
+      "taxonomy": {
+        "category": "CI runner isolation / access control",
+        "cwe": [
+          "CWE-284"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 101,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 138,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 165,
+          "endLine": 184,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 186,
+          "endLine": 218,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 227,
+          "endLine": 264,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 266,
+          "endLine": 312,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ci-trigger",
+          "label": "Pull-request code scheduled on internal runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "role": "entrypoint",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "Pull-request code scheduled on internal runner"
+        },
+        {
+          "id": "ci-exec",
+          "label": "PR checkout and local build execute on self-hosted runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 33,
+          "endLine": 48,
+          "role": "root_control",
+          "code": "jobs:\n  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "PR checkout and local build execute on self-hosted runner"
+        },
+        {
+          "id": "ci-shared-net",
+          "label": "Shared unauthenticated internal cache",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "role": "outcome",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines",
+          "explanation": "Shared unauthenticated internal cache"
+        },
+        {
+          "id": "ci-docs",
+          "label": "Docs job runs checked-out scripts on self-hosted runner",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "role": "sink",
+          "code": "jobs:\n  drift:\n    name: generated docs drift\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against\n      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares\n      # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's\n      # system node predates ESM (`import` is a SyntaxError), so a real node is\n      # set up here instead of trusting the image.\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version: \"24\"\n      - name: Regenerate and compare\n        run: scripts/gen_docs.sh --check",
+          "explanation": "Docs job runs checked-out scripts on self-hosted runner"
+        },
+        {
+          "id": "ci-roundtrip",
+          "label": "Roundtrip executes PR tests on self-hosted runner",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "sink",
+          "code": "jobs:\n  roundtrip:\n    name: md -> docx -> md, exact\n    runs-on: self-hosted\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - run: cargo test --all-features --test md_fixed_point",
+          "explanation": "Roundtrip executes PR tests on self-hosted runner"
+        },
+        {
+          "id": "ci-adoption",
+          "label": "Adoption job executes PR tests on self-hosted runner",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 59,
+          "role": "sink",
+          "code": "jobs:\n  claims:\n    name: adoption claims (tests/adoption.rs)\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - name: one test per adoption-page row, and the .doc reader\n        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc",
+          "explanation": "Adoption job executes PR tests on self-hosted runner"
+        }
+      ],
+      "rootCause": {
+        "summary": "The `pull_request` trigger schedules the checked-out contribution on `self-hosted` without a trusted-origin guard. The local `.github/actions/mbx` action and Cargo/test/script commands run with the runner account and its network access. The private-network restriction described for `mbx-cache` does not distinguish PR code from trusted jobs once both execute on these runners.",
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net",
+          "ci-docs",
+          "ci-roundtrip",
+          "ci-adoption"
+        ]
+      },
+      "remediation": "Run all untrusted pull-request jobs on fresh isolated hosted runners, or enforce disposable self-hosted sandboxes with no trusted shared state, internal service access or reusable credentials. Restrict internal runner jobs to explicitly trusted events and enforce cache write authorization on the server.",
+      "validation": {
+        "counterEvidence": [
+          "Job tokens have contents:read and checkout persist-credentials:false; neither removes host/network authority from arbitrary job code.",
+          "GitHub may require approval before running an external contributor's job.",
+          "No live host, cache service, credential or network access was attempted; cache poisoning is not claimed as demonstrated."
+        ],
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net",
+          "ci-docs",
+          "ci-roundtrip",
+          "ci-adoption"
+        ],
+        "limitations": [
+          "Runner lifecycle, fork run policy and cache server-side authorization are unavailable in the authorized source."
+        ],
+        "method": "offline static source trace",
+        "summary": "Checked all self-hosted PR workflow families and their job guards. Source establishes no origin restriction in CI/docs/adoption/roundtrip, while the shared action documents and configures private HTTP cache access."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "pull_request source -> actions/checkout -> local composite action / Cargo tests / repository scripts -> internal runner process and mbx-cache network",
+          "source": "PR-controlled code",
+          "sink": "self-hosted runner account and private Docker network",
+          "outcome": "An external contributor gains execution inside the internal CI trust zone.",
+          "evidenceRefs": [
+            "ci-trigger",
+            "ci-exec",
+            "ci-shared-net"
+          ]
+        },
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net"
+        ],
+        "reachability": {
+          "summary": "Requires a PR run to be enabled or approved. No repository write privilege, release credential, or existing internal-network access is required to author a fork PR.",
+          "attacker": "fork PR contributor",
+          "entrypoint": "pull_request jobs in CI, Docs, Markdown round trip and adoption",
+          "outcome": "Arbitrary execution with the CI runner's network and filesystem authority",
+          "preconditions": [
+            "Self-hosted runners are registered and PR workflows are permitted by GitHub settings."
+          ]
+        },
+        "summary": "Submit a PR changing a local action, build hook or test; when its workflow runs, that code executes on `self-hosted` and can access the runner's private network and shared build state."
+      },
+      "remediationTests": [
+        "Assert every pull_request job is routed to an isolated runner pool or rejects untrusted head repositories.",
+        "Verify an untrusted build cannot reach the internal cache or read state from an earlier trusted job."
+      ],
+      "preventiveControls": [
+        "Separate untrusted PR compute and trusted push/release infrastructure."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "ci-self-hosted-pr",
+        "workerLabel": "discovery-0019",
+        "originalCandidates": [
+          {
+            "candidateId": "ci-self-hosted-pr",
+            "title": "Pull requests execute attacker-controlled code on shared self-hosted runners",
+            "severity": "medium",
+            "confidence": "medium",
+            "attacker": "fork pull-request contributor whose workflow run is permitted by repository Actions policy",
+            "invariant": "Untrusted pull-request code must not inherit internal runner/network authority.",
+            "locations": [
+              {
+                "path": ".github/workflows/ci.yml",
+                "startLine": 13,
+                "endLine": 48
+              },
+              {
+                "path": ".github/actions/mbx/action.yml",
+                "startLine": 8,
+                "endLine": 12
+              },
+              {
+                "path": ".github/workflows/docs.yml",
+                "startLine": 81,
+                "endLine": 113
+              },
+              {
+                "path": ".github/workflows/md-roundtrip.yml",
+                "startLine": 13,
+                "endLine": 39
+              },
+              {
+                "path": ".github/workflows/adoption.yml",
+                "startLine": 48,
+                "endLine": 99
+              }
+            ],
+            "evidence": "ci.yml triggers on pull_request without a trust guard; lint runs-on self-hosted, checks out PR source and invokes local .github/actions/mbx and cargo. mbx/action.yml documents a shared private Docker network/cache. Sibling docs/adoption/roundtrip also use self-hosted PR execution.",
+            "uncertainty": "Runner lifecycle, isolation, GitHub approval policy and external fork run enablement need source-backed assessment."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "html-table-resource-amplification",
+      "title": "Rendering an HTML table with a large colspan exhausts memory",
+      "summary": "Render a DOCX containing an internal HTML/MHT `w:altChunk` with one table cell whose `colspan` is `4294967295`. The converter accepts it as `usize` and tries to append billions of grid-column elements before layout, exhausting process memory or CPU despite a tiny admitted package.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can deterministically force enormous allocation and work through normal conversion. This can terminate a native host process, Python/MCP server or WASM instance; no remote deployment is assumed. The repository recommends process CPU/memory limits, which contain host damage but do not make the conversion succeed.",
+        "changeConditions": "Shared service exposure increases operational impact; disposable conversion workers with enforced memory/CPU limits reduce collateral impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The source directly converts an unbounded parsed integer into a counted String-append loop before any page raster bound. No runtime reproduction was run."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admit",
+          "label": "Admit then expand relationship-loaded HTML",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admit then expand relationship-loaded HTML"
+        },
+        {
+          "id": "chunk-dispatch",
+          "label": "Decode HTML or MHT then convert to WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Decode HTML or MHT then convert to WML"
+        },
+        {
+          "id": "span-parse",
+          "label": "Attacker colspan becomes unrestricted usize",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "role": "root_control",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Attacker colspan becomes unrestricted usize"
+        },
+        {
+          "id": "span-expand",
+          "label": "Column count drives output loop",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 463,
+          "endLine": 491,
+          "role": "sink",
+          "code": "    fn end_table(&mut self) {\n        self.close_open_cell();\n        self.flush();\n        let Some(table) = self.tables.pop() else {\n            return;\n        };\n        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "Column count drives output loop"
+        }
+      ],
+      "rootCause": {
+        "summary": "`with_layout` admits the original package then expands its internal altChunk. `Builder::start` accepts a cell span with only a lower bound. `end_table` sums spans into a column count and allocates one XML grid column for every claimed column. Input byte limits do not bound this numeric expansion, and no output/column budget is checked before the loop.",
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "span-parse",
+          "span-expand"
+        ]
+      },
+      "remediation": "Enforce a small supported maximum colspan and total table-column count with checked arithmetic before generating WML, and charge all expanded output to a bounded conversion budget.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission limits input bytes and XML depth, but runs before HTML expansion.",
+          "MAX_PAGE_PIXELS protects later PNG page allocation, after this expansion.",
+          "Process isolation is recommended in SECURITY.md; it bounds collateral impact rather than this parser workload."
+        ],
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "span-parse",
+          "span-expand"
+        ],
+        "limitations": [
+          "No malicious document or application code was executed."
+        ],
+        "method": "offline static source trace",
+        "summary": "Verified internal relationship load, HTML/MHT dispatch, unrestricted span parsing and output loop. A single span fits both 32-bit and 64-bit usize and does not need arithmetic overflow to cause billions of iterations."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> package admission -> internal altChunk HTML -> colspan usize -> summed cols -> repeated gridCol String appends",
+          "source": "attacker HTML table attribute",
+          "sink": "unbounded XML generation",
+          "outcome": "memory exhaustion or prolonged CPU use",
+          "evidenceRefs": [
+            "render-admit",
+            "chunk-dispatch",
+            "span-parse",
+            "span-expand"
+          ]
+        },
+        "evidenceRefs": [
+          "render-admit",
+          "span-parse",
+          "span-expand"
+        ],
+        "reachability": {
+          "summary": "Any caller of public native conversion APIs can pass the document bytes. CLI/Python/MCP and full WASM expose the converter subject to their build features; the attacker needs only to supply a document that the operator renders.",
+          "attacker": "document supplier",
+          "entrypoint": "public document rendering/conversion",
+          "outcome": "conversion process or instance unavailable"
+        },
+        "summary": "Supply an otherwise valid DOCX with an internal HTML altChunk containing a one-cell table and very large colspan, then request PDF, PNG or render report."
+      },
+      "remediationTests": [
+        "Refuse a single td/th with colspan=4294967295 without allocating proportional output.",
+        "Refuse rows whose individually valid spans exceed the aggregate column budget; preserve ordinary merged-cell rendering."
+      ],
+      "preventiveControls": [
+        "Apply resource limits to decoded/expanded representations, not only archive bytes."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "altchunk-unbounded-colspan",
+        "worker": "render_inputs",
+        "workerLabel": "discovery-0019",
+        "originalCandidates": [
+          {
+            "candidateId": "altchunk-unbounded-colspan",
+            "source": "render_inputs",
+            "title": "HTML altChunk colspan expands into billions of grid columns",
+            "originalEvidence": "src/convert/altchunk.rs:562-566 parses attacker td/th colspan as unrestricted usize; end_table :469-475 sums spans into cols and :489-491 emits one <w:gridCol> per cols. A single colspan='4294967295' drives billions of iterations/allocations before DOM/layout, independent of page pixel cap.",
+            "uncertainty": "Pending original investigator payload, caller/admission verification and parent source validation."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "css-selector-memory-amplification",
+      "title": "Imported CSS selector lists multiply memory during rendering",
+      "summary": "A DOCX HTML/MHT altChunk can put thousands of distinct selectors before one large property value. The importer clones that entire String-backed declaration map for every selector, retaining gigabytes from about a megabyte of HTML before any body content needs to use those rules.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-supplied document content reaches an eager allocation sink in public rendering. Thousands of independent copies can exhaust the CLI or an embedding process; a shared service is not assumed. Caller process limits contain the failed conversion but do not bound its expansion.",
+        "changeConditions": "Dedicated memory-limited workers reduce collateral damage; concurrent shared rendering increases availability impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Props is a String-valued map and the selector loop explicitly clones it; html_to_wml eagerly parses the full style block. No dynamic allocation test was run."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 604,
+          "endLine": 611,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 149,
+          "endLine": 170,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admit",
+          "label": "Admit then expand relationship-loaded HTML",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admit then expand relationship-loaded HTML"
+        },
+        {
+          "id": "chunk-dispatch",
+          "label": "Decode HTML or MHT then convert to WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Decode HTML or MHT then convert to WML"
+        },
+        {
+          "id": "css-clone",
+          "label": "Selector fan-out clones property values",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 149,
+          "endLine": 170,
+          "role": "root_control",
+          "code": "type Props = HashMap<String, String>;\n\n/// `selector { prop: value; … }` rules; a selector list shares its block.\nfn parse_css(css: &str) -> HashMap<String, Props> {\n    let mut rules: HashMap<String, Props> = HashMap::new();\n    for block in css.split('}') {\n        let Some((sel, body)) = block.split_once('{') else {\n            continue;\n        };\n        let props: Props = body\n            .split(';')\n            .filter_map(|d| d.split_once(':'))\n            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))\n            .collect();\n        for s in sel.split(',') {\n            let s = s.trim().to_ascii_lowercase();\n            if !s.is_empty() {\n                rules.entry(s).or_default().extend(props.clone());\n            }\n        }\n    }\n    rules",
+          "explanation": "Selector fan-out clones property values"
+        },
+        {
+          "id": "css-load",
+          "label": "Style block eagerly parsed before body",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 603,
+          "endLine": 611,
+          "role": "propagation",
+          "code": "/// The body WML of an HTML document.\npub(crate) fn html_to_wml(html: &str) -> String {\n    let css = collect_between(html, \"<style\", \"</style>\")\n        .map(|s| parse_css(&s))\n        .unwrap_or_default();\n    let body_at = html.to_ascii_lowercase().find(\"<body\").unwrap_or(0);\n    let mut b = Builder {\n        css,\n        sinks: vec![String::new()],",
+          "explanation": "Style block eagerly parsed before body"
+        }
+      ],
+      "rootCause": {
+        "summary": "After package admission, altChunk dispatch converts embedded HTML with html_to_wml. Its initial stylesheet collection invokes parse_css before body processing. parse_css owns every declaration value as a String, then deep-clones the map for each comma-separated selector. Distinct selector count multiplies retained declaration bytes without shared storage or an aggregate budget.",
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "css-load",
+          "css-clone"
+        ]
+      },
+      "remediation": "Share immutable declaration blocks across selectors and enforce explicit selector, declaration and aggregate retained-byte budgets before storing CSS rules.",
+      "validation": {
+        "counterEvidence": [
+          "Identical selectors reuse entries; the attack uses unique selectors.",
+          "Admission caps HTML input bytes, not expanded retained CSS.",
+          "Page raster bounds apply after the importer and do not limit this map."
+        ],
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "css-clone",
+          "css-load"
+        ],
+        "limitations": [
+          "Memory estimate follows source types/copies; actual OOM threshold depends on allocator and host. No application execution."
+        ],
+        "method": "offline static source trace",
+        "summary": "Verified that arbitrary declaration keys/values are collected before interpretation and unused distinct selectors retain independent cloned values. About 4096 selectors and a 1MiB value imply about 4GiB of value storage, excluding overhead, from an input far below admission byte bounds."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX -> admitted altChunk -> HTML style text -> String-valued Props -> deep clone per unique selector -> retained rule map",
+          "source": "attacker-controlled stylesheet",
+          "sink": "HashMap declaration clone loop",
+          "outcome": "process memory exhaustion",
+          "evidenceRefs": [
+            "render-admit",
+            "chunk-dispatch",
+            "css-clone",
+            "css-load"
+          ]
+        },
+        "evidenceRefs": [
+          "render-admit",
+          "css-load",
+          "css-clone"
+        ],
+        "reachability": {
+          "summary": "Document supplier needs an operator/caller to invoke native or full-binding render APIs on the document; no control of trusted configuration or network service is required.",
+          "attacker": "document supplier",
+          "entrypoint": "public DOCX rendering/conversion",
+          "outcome": "renderer/embedding process terminates or stalls"
+        },
+        "summary": "Embed a style block with a long comma-separated list of unique selectors and one large value, then render the DOCX."
+      },
+      "remediationTests": [
+        "Reject or boundedly process thousands of distinct selectors sharing a large declaration value.",
+        "Ensure unused CSS rules are subject to the same storage budget and ordinary comma-separated selectors still render correctly."
+      ],
+      "preventiveControls": [
+        "Account for multiplicative representation expansion at parser boundaries."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "altchunk-css-selector-amplification",
+        "worker": "render_inputs",
+        "workerLabel": "discovery-0019",
+        "originalInvestigatorFinding": {
+          "title": "CSS selector lists multiply property storage without an allocation budget",
+          "cwe": "CWE-400: Uncontrolled Resource Consumption",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "Document author supplying HTML/MHT altChunk inside DOCX passed to public conversion API.",
+          "violated_security_invariant": "CSS parsing must not multiply bounded input into arbitrarily large retained property storage.",
+          "source_to_sink": "html_to_wml eagerly calls parse_css; Props=HashMap<String,String> cloned completely for every distinct comma-separated selector,duplicating String values.",
+          "concrete_impact": "Roughly 1MiB HTML,4096 distinct selectors,1MiB property value retains ~4GiB even if body never uses selectors.",
+          "locations": [
+            {
+              "path": "src/convert/altchunk.rs",
+              "line_start": 152,
+              "line_end": 170
+            },
+            {
+              "path": "src/convert/altchunk.rs",
+              "line_start": 604,
+              "line_end": 607
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "line_start": 789,
+              "line_end": 793
+            }
+          ],
+          "supporting_source_evidence": [
+            "Props stores String values",
+            "rules.entry(s).or_default().extend(props.clone()) for nonempty selector",
+            "Complete altchunk has no selector/declaration/aggregate storage bound or shared declaration representation",
+            "Unused rules retained eagerly"
+          ],
+          "counterevidence": [
+            "Duplicate selectors reuse entries; construction uses distinct names",
+            "Admission bounds original HTML only",
+            "Process limits contain failure"
+          ],
+          "recommended_remediation": "Share immutable declaration blocks; aggregate CSS storage/selectors/declaration budgets with checked accounting/typed refusal."
+        },
+        "originalCandidates": [
+          {
+            "candidateId": "altchunk-css-selector-amplification",
+            "source": "render_inputs",
+            "title": "HTML altChunk CSS selector fan-out clones property values",
+            "originalEvidence": "src/convert/altchunk.rs:152-170 parse_css clones complete Props map, including String values, for every comma-separated unique selector. Investigator estimates 4096 selectors sharing 1MiB property value allocate ~4GiB from ~1MiB HTML without matching body references.",
+            "uncertainty": "Pending source validation and same-control reconciliation with colspan expansion.",
+            "returnedFinding": {
+              "title": "CSS selector lists multiply property storage without an allocation budget",
+              "cwe": "CWE-400: Uncontrolled Resource Consumption",
+              "severity": "medium",
+              "confidence": "high",
+              "attacker": "Document author supplying HTML/MHT altChunk inside DOCX passed to public conversion API.",
+              "violated_security_invariant": "CSS parsing must not multiply bounded input into arbitrarily large retained property storage.",
+              "source_to_sink": "html_to_wml eagerly calls parse_css; Props=HashMap<String,String> cloned completely for every distinct comma-separated selector,duplicating String values.",
+              "concrete_impact": "Roughly 1MiB HTML,4096 distinct selectors,1MiB property value retains ~4GiB even if body never uses selectors.",
+              "locations": [
+                {
+                  "path": "src/convert/altchunk.rs",
+                  "line_start": 152,
+                  "line_end": 170
+                },
+                {
+                  "path": "src/convert/altchunk.rs",
+                  "line_start": 604,
+                  "line_end": 607
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "line_start": 789,
+                  "line_end": 793
+                }
+              ],
+              "supporting_source_evidence": [
+                "Props stores String values",
+                "rules.entry(s).or_default().extend(props.clone()) for nonempty selector",
+                "Complete altchunk has no selector/declaration/aggregate storage bound or shared declaration representation",
+                "Unused rules retained eagerly"
+              ],
+              "counterevidence": [
+                "Duplicate selectors reuse entries; construction uses distinct names",
+                "Admission bounds original HTML only",
+                "Process limits contain failure"
+              ],
+              "recommended_remediation": "Share immutable declaration blocks; aggregate CSS storage/selectors/declaration budgets with checked accounting/typed refusal."
+            }
+          },
+          {
+            "candidateId": "altchunk-css-selector-amplification",
+            "source": "render_inputs",
+            "title": "HTML altChunk CSS selector fan-out clones property values",
+            "originalEvidence": "src/convert/altchunk.rs:152-170 parse_css clones complete Props map, including String values, for every comma-separated unique selector. Investigator estimates 4096 selectors sharing 1MiB property value allocate ~4GiB from ~1MiB HTML without matching body references.",
+            "uncertainty": "Pending source validation and same-control reconciliation with colspan expansion."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "wmf-record-length-amplification",
+      "title": "Malformed WMF text records exhaust memory while rendering",
+      "summary": "Render a document with an embedded placeable WMF containing many small text records whose character counts extend into later records. The renderer accepts each range if it fits the file and retains a separate decoded String, allowing less than 1MiB of media to request roughly 4GiB of text storage.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An untrusted document supplier can trigger the WMF parser through embedded drawings and exhaust the host process without large admitted input. The effect is availability loss; no memory corruption or file disclosure is claimed. SECURITY.md recommends caller process limits, which contain collateral damage.",
+        "changeConditions": "Memory-limited disposable conversion workers reduce collateral damage; a long-lived shared embedding host increases operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both text handlers use whole-file ranges despite the record-length check, and every accepted range becomes independently retained String text. The overlapping-range construction is supported statically; no exploit execution."
+      },
+      "taxonomy": {
+        "category": "Improper validation of record payload length",
+        "cwe": [
+          "CWE-1284"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 18396,
+          "endLine": 18403,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20261,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 473,
+          "endLine": 489,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 602,
+          "endLine": 620,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 716,
+          "role": "outcome"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wmf-input",
+          "label": "Embedded drawing resolves to decode_image",
+          "path": "src/convert/mod.rs",
+          "startLine": 18396,
+          "endLine": 18403,
+          "role": "entrypoint",
+          "code": "        for blip in dom\n            .descendants(drawing, Some(&A::name(\"blip\")))\n            .into_iter()\n            .filter(|b| !nested_in_text(dom, *b, drawing))\n        {\n            if let Some(rid) = attr_any(dom, blip, \"embed\") {\n                if let Some(bytes) = resolve_media(pkg, main, rid) {\n                    let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);",
+          "explanation": "Embedded drawing resolves to decode_image"
+        },
+        {
+          "id": "wmf-dispatch",
+          "label": "Metafile decoder retains decoded texts",
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20261,
+          "role": "propagation",
+          "code": "fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {\n    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {\n        let raster = ImageKind::Rgb {\n            width,\n            height,\n            bytes: rgb,\n            alpha: None,\n        };\n        if texts.is_empty() {\n            return Some(raster);\n        }\n        return Some(ImageKind::Metafile {\n            raster: Box::new(raster),\n            texts: texts.into(),\n        });",
+          "explanation": "Metafile decoder retains decoded texts"
+        },
+        {
+          "id": "wmf-record",
+          "label": "Record length bounds advancement only",
+          "path": "src/convert/metafile.rs",
+          "startLine": 473,
+          "endLine": 489,
+          "role": "root_control",
+          "code": "    let mut saved: Vec<WmfState> = Vec::new();\n    let mut texts: Vec<MetaText> = Vec::new();\n    let mut winding = false;\n    let mut off = 22 + 18;\n    while off + 6 <= data.len() {\n        let size = read_u32(data, off)? as usize;\n        let func = read_u16(data, off + 4)?;\n        // checked_mul: `size` is untrusted and `usize` is 32-bit on wasm32;\n        // comparing against the remaining length keeps `off` from ever\n        // moving past (or wrapping around) the buffer end.\n        let Some(size2) = size.checked_mul(2) else {\n            break;\n        };\n        if size < 3 || size2 > data.len() - off {\n            break;\n        }\n        let payload = off + 6;",
+          "explanation": "Record length bounds advancement only"
+        },
+        {
+          "id": "wmf-text",
+          "label": "Text ranges use whole-file slice",
+          "path": "src/convert/metafile.rs",
+          "startLine": 602,
+          "endLine": 620,
+          "role": "sink",
+          "code": "            // EXTTEXTOUT: y, x, count, options, [rect], string.\n            0x0A32 => {\n                let y = read_i16(data, payload)?;\n                let x = read_i16(data, payload + 2)?;\n                let n = usize::from(read_u16(data, payload + 4)?);\n                let opts = read_u16(data, payload + 6)?;\n                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };\n                if let Some(bytes) = data.get(at..at + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }\n            }\n            // TEXTOUT: count, string (word-padded), y, x.\n            0x0521 => {\n                let n = usize::from(read_u16(data, payload)?);\n                let at = payload + 2 + n.next_multiple_of(2);\n                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);\n                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }",
+          "explanation": "Text ranges use whole-file slice"
+        },
+        {
+          "id": "wmf-retain",
+          "label": "Independent text allocation retained in MetaText",
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 716,
+          "role": "outcome",
+          "code": "fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {\n    let text = ansi_text(bytes);\n    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {\n        return None;\n    }\n    let font = dc.font.as_deref();\n    let height = font.map_or(0, |f| f.height);\n    Some(MetaText {\n        text,\n        x: (f32::from(x) - map.org_x) / map.ext_x,\n        y: (f32::from(y) - map.org_y) / map.ext_y,\n        // lfHeight 0 is the default font, 12pt at 96 dpi of a 1440 inch.\n        size: if height == 0 {\n            0.0\n        } else {\n            f32::from(height.unsigned_abs()) / map.ext_y.abs()\n        },\n        cell: height > 0,\n        family: font.map_or_else(String::new, |f| f.face.clone()),\n        bold: font.is_some_and(|f| f.weight >= 600),\n        italic: font.is_some_and(|f| f.italic),\n        color: dc.text_color,\n        align: dc.text_align,\n        aspect: (map.ext_x / map.ext_y).abs(),\n    })",
+          "explanation": "Independent text allocation retained in MetaText"
+        }
+      ],
+      "rootCause": {
+        "summary": "Embedded drawing bytes flow through decode_image into the placeable WMF decoder. The iterator checks a declared record size against remaining file bytes but leaves payload readers pointed at the full file. EXTTEXTOUT and TEXTOUT accept counts extending beyond that record. wmf_text decodes every overlapping span into an independent String and the outer texts vector retains them all.",
+        "evidenceRefs": [
+          "wmf-input",
+          "wmf-dispatch",
+          "wmf-record",
+          "wmf-text",
+          "wmf-retain"
+        ]
+      },
+      "remediation": "Parse each WMF record from a slice confined to its declared extent, validate every text/padding/rectangle/coordinate length against that slice, and enforce an aggregate decoded-text and work budget.",
+      "validation": {
+        "counterEvidence": [
+          "checked_mul prevents size/iterator wrap, not cross-record reads.",
+          "Each n is u16-bounded; multiplicative aggregate retention remains.",
+          "384-pixel canvas cap and stroke clipping do not limit texts.",
+          "Sibling EMF point parsing uses record bounds; this finding concerns the two WMF text branches."
+        ],
+        "evidenceRefs": [
+          "wmf-input",
+          "wmf-dispatch",
+          "wmf-record",
+          "wmf-text",
+          "wmf-retain"
+        ],
+        "limitations": [
+          "Actual OOM threshold and UTF8 size vary by host/bytes; no runtime reproduction."
+        ],
+        "method": "offline static source trace",
+        "summary": "A 7-word EXTTEXTOUT record contains its 6-byte header and 8-byte fixed fields but can declare 65535 text bytes starting at the next record. Repeating 65536 such 14-byte records plus a 65535-byte suffix keeps every range inside a file under 1MiB while causing ~4GiB of separately decoded characters. Nonzero placeable dimensions pass the geometry guard."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "embedded a:blip -> resolve_media -> decode_image -> metafile::render -> raster_wmf -> full-file text ranges -> MetaText Strings",
+          "source": "attacker WMF bytes",
+          "sink": "texts.extend(wmf_text(...))",
+          "outcome": "large retained allocation and CPU consumption",
+          "evidenceRefs": [
+            "wmf-input",
+            "wmf-dispatch",
+            "wmf-record",
+            "wmf-text",
+            "wmf-retain"
+          ]
+        },
+        "evidenceRefs": [
+          "wmf-input",
+          "wmf-record",
+          "wmf-text",
+          "wmf-retain"
+        ],
+        "reachability": {
+          "summary": "A supplier of DOCX bytes controls embedded media accepted by public conversion APIs. No external image URL, filesystem write privilege or special renderer option is needed beyond selecting a document with a drawing.",
+          "attacker": "document author",
+          "entrypoint": "embedded drawing decoded during rendering",
+          "outcome": "conversion process/instance unavailable"
+        },
+        "summary": "Embed a WMF with many short EXTTEXTOUT or TEXTOUT records and oversized overlapping character spans, then request document rendering."
+      },
+      "remediationTests": [
+        "Refuse EXTTEXTOUT and TEXTOUT whose counts or coordinate fields extend past their own record even when still inside the file.",
+        "Ensure many valid records hit a bounded aggregate text budget and ordinary WMF text stays supported."
+      ],
+      "preventiveControls": [
+        "Pass bounded record slices to all metafile handlers instead of exposing the entire backing file."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "wmf-overlap-text-amplification",
+        "worker": "render_inputs",
+        "workerLabel": "discovery-0019",
+        "originalInvestigatorFinding": {
+          "title": "WMF text records read across record boundaries and amplify retained text",
+          "cwe": "CWE-1284: Improper Validation of Specified Quantity in Input",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "Document author embedding malformed placeable WMF referenced by drawing in DOCX converted by victim.",
+          "violated_security_invariant": "Record consumes only its declared payload and decoded text is bounded relative to admitted media.",
+          "source_to_sink": "collect_images -> decode_image -> metafile::render -> raster_wmf. Iterator checks record extent but EXTTEXTOUT/TEXTOUT text/coordinates read from full data slice; overlapping spans decoded to retained independent Strings.",
+          "concrete_impact": "65536 14-byte EXTTEXTOUT records,size=7 words,count=65535,opts=0,plus65535 filler bytes -> media under1MiB retains ~4GiB decoded chars before UTF8 overhead; nonzero placeable box passes geometry guard.",
+          "locations": [
+            {
+              "path": "src/convert/metafile.rs",
+              "line_start": 477,
+              "line_end": 489
+            },
+            {
+              "path": "src/convert/metafile.rs",
+              "line_start": 602,
+              "line_end": 620
+            },
+            {
+              "path": "src/convert/metafile.rs",
+              "line_start": 692,
+              "line_end": 716
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "line_start": 18396,
+              "line_end": 18403
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "line_start": 20247,
+              "line_end": 20260
+            }
+          ],
+          "supporting_source_evidence": [
+            "size2 vs whole-file remaining controls advancement,not payload reads",
+            "EXTTEXTOUT data.get(at..at+n) lacks record-end bound",
+            "TEXTOUT text and coordinates cross record end",
+            "ansi_text fresh String retained in MetaText",
+            "Sibling EMF point parser checks off+size"
+          ],
+          "counterevidence": [
+            "checked_mul protects iterator wrap",
+            "384-side canvas and clipped strokes effective,not text limits",
+            "u16 individual length bounded,aggregate copies not",
+            "No out-of-bounds access/disclosure claim"
+          ],
+          "recommended_remediation": "Parse bounded per-record slices; validate text/padding/rectangles/coordinates; aggregate decoded-text/work budget."
+        },
+        "originalCandidates": [
+          {
+            "candidateId": "wmf-overlap-text-amplification",
+            "source": "render_inputs",
+            "title": "WMF text records may copy overlapping file suffixes",
+            "originalEvidence": "Investigator preliminary: record size is checked only for iterator advancement, while EXTTEXTOUT/TEXTOUT lengths read from the entire file, permitting overlapping 65,535-byte text copies per tiny record.",
+            "uncertainty": "Awaiting original file/line evidence, caller reachability and sibling controls; not validated.",
+            "returnedFinding": {
+              "title": "WMF text records read across record boundaries and amplify retained text",
+              "cwe": "CWE-1284: Improper Validation of Specified Quantity in Input",
+              "severity": "medium",
+              "confidence": "high",
+              "attacker": "Document author embedding malformed placeable WMF referenced by drawing in DOCX converted by victim.",
+              "violated_security_invariant": "Record consumes only its declared payload and decoded text is bounded relative to admitted media.",
+              "source_to_sink": "collect_images -> decode_image -> metafile::render -> raster_wmf. Iterator checks record extent but EXTTEXTOUT/TEXTOUT text/coordinates read from full data slice; overlapping spans decoded to retained independent Strings.",
+              "concrete_impact": "65536 14-byte EXTTEXTOUT records,size=7 words,count=65535,opts=0,plus65535 filler bytes -> media under1MiB retains ~4GiB decoded chars before UTF8 overhead; nonzero placeable box passes geometry guard.",
+              "locations": [
+                {
+                  "path": "src/convert/metafile.rs",
+                  "line_start": 477,
+                  "line_end": 489
+                },
+                {
+                  "path": "src/convert/metafile.rs",
+                  "line_start": 602,
+                  "line_end": 620
+                },
+                {
+                  "path": "src/convert/metafile.rs",
+                  "line_start": 692,
+                  "line_end": 716
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "line_start": 18396,
+                  "line_end": 18403
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "line_start": 20247,
+                  "line_end": 20260
+                }
+              ],
+              "supporting_source_evidence": [
+                "size2 vs whole-file remaining controls advancement,not payload reads",
+                "EXTTEXTOUT data.get(at..at+n) lacks record-end bound",
+                "TEXTOUT text and coordinates cross record end",
+                "ansi_text fresh String retained in MetaText",
+                "Sibling EMF point parser checks off+size"
+              ],
+              "counterevidence": [
+                "checked_mul protects iterator wrap",
+                "384-side canvas and clipped strokes effective,not text limits",
+                "u16 individual length bounded,aggregate copies not",
+                "No out-of-bounds access/disclosure claim"
+              ],
+              "recommended_remediation": "Parse bounded per-record slices; validate text/padding/rectangles/coordinates; aggregate decoded-text/work budget."
+            }
+          },
+          {
+            "candidateId": "wmf-overlap-text-amplification",
+            "source": "render_inputs",
+            "title": "WMF text records may copy overlapping file suffixes",
+            "originalEvidence": "Investigator preliminary: record size is checked only for iterator advancement, while EXTTEXTOUT/TEXTOUT lengths read from the entire file, permitting overlapping 65,535-byte text copies per tiny record.",
+            "uncertainty": "Awaiting original file/line evidence, caller reachability and sibling controls; not validated."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "auxiliary-xml-admission-bypass",
+      "title": "Nonstandard auxiliary part names bypass XML depth checks",
+      "summary": "A DOCX can point its styles, theme, numbering or font-table relationship to XML stored under a `.bin` name. Admission charges its bytes but skips XML depth/tag policy. Rendering resolves the relationship and recursively parses that unchecked XML, allowing a small deeply nested part to exhaust the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document suppliers control part names, relationships and contents at a public conversion boundary. A deeply nested auxiliary part can abort the CLI or embedding process, bypassing the documented depth=256 control. Archive byte bounds and recommended process limits constrain collateral damage, but not this stack-depth violation.",
+        "changeConditions": "Per-job disposable workers reduce service collateral damage; shared long-lived conversion hosts increase availability impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Admission's filename predicate, main-only exception, arbitrary relationship selection and unchecked recursive parser are explicit source; no runtime stack-overflow input was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursion through XML admission bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 553,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 570,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 771,
+          "endLine": 778,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21307,
+          "endLine": 21324,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 3305,
+          "endLine": 3317,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 78,
+          "role": "sink"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 655,
+          "endLine": 663,
+          "role": "outcome"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "aux-admit",
+          "label": "Admission classifies XML by filename",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 553,
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?\n        };\n        tally_inflated(&mut total, read, &name, cap, &limits)?;",
+          "explanation": "Admission classifies XML by filename"
+        },
+        {
+          "id": "aux-main-exception",
+          "label": "Only main part gets nonstandard-name check",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 570,
+          "role": "root_control",
+          "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;\n    }",
+          "explanation": "Only main part gets nonstandard-name check"
+        },
+        {
+          "id": "aux-render",
+          "label": "Rendering admits original package",
+          "path": "src/convert/mod.rs",
+          "startLine": 771,
+          "endLine": 778,
+          "role": "entrypoint",
+          "code": "    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "Rendering admits original package"
+        },
+        {
+          "id": "aux-rel",
+          "label": "Auxiliary relationship names may be arbitrary",
+          "path": "src/convert/mod.rs",
+          "startLine": 21307,
+          "endLine": 21324,
+          "role": "propagation",
+          "code": "/// A main-document part found the OPC way, by relationship type\n/// (`…/relationships/<kind>`, transitional or strict), falling back to\n/// Word's conventional name. Other producers may name these parts freely.\npub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())\n}\n\nfn settings_part(pkg: &PartFs) -> String {\n    main_rel_part(pkg, \"settings\", \"word/settings.xml\")\n}",
+          "explanation": "Auxiliary relationship names may be arbitrary"
+        },
+        {
+          "id": "aux-styles",
+          "label": "Selected styles parsed without checked API",
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "role": "sink",
+          "code": "    let Some(xml) = pkg.part_string(&main_rel_part(pkg, \"styles\", \"word/styles.xml\")) else {\n        return StyleSheet {\n            defaults,\n            by_id: HashMap::new(),\n            tables: HashMap::new(),\n            theme,\n            latent: true,\n            default_table: false,\n        };\n    };\n    let linked = settings_link_styles(pkg);\n    let xml = if linked {\n        link_template_styles(&xml)\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Selected styles parsed without checked API"
+        },
+        {
+          "id": "aux-theme",
+          "label": "Selected theme parsed without checked API",
+          "path": "src/convert/mod.rs",
+          "startLine": 3305,
+          "endLine": 3317,
+          "role": "sink",
+          "code": "fn load_theme(pkg: &PartFs) -> ThemeFonts {\n    let Some(xml) = pkg\n        .part_string(&main_rel_part(pkg, \"theme\", \"word/theme/theme1.xml\"))\n        .or_else(|| pkg.part_string(\"word/theme/theme2.xml\"))\n    else {\n        return ThemeFonts::default();\n    };\n    parse_theme_xml(&xml)\n}\n\nfn parse_theme_xml(xml: &str) -> ThemeFonts {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "Selected theme parsed without checked API"
+        },
+        {
+          "id": "aux-numbering",
+          "label": "Selected numbering parsed without checked API",
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "role": "sink",
+          "code": "fn load_numbering(pkg: &PartFs) -> Numbering {\n    let numbering_part = main_rel_part(pkg, \"numbering\", \"word/numbering.xml\");\n    let Some(xml) = pkg.part_string(&numbering_part) else {\n        return Numbering::default();\n    };\n    parse_numbering_xml(&xml, |rid| resolve_media(pkg, &numbering_part, rid))\n}\n\n/// `word/numbering.xml`; `media` resolves a picture-bullet r:id.\nfn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering {\n    let mut numbering = Numbering::default();\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "Selected numbering parsed without checked API"
+        },
+        {
+          "id": "aux-fonttable",
+          "label": "Selected font table parsed without checked API",
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 78,
+          "role": "sink",
+          "code": "fn font_table_part(pkg: &PartFs) -> String {\n    super::main_rel_part(pkg, \"fontTable\", \"word/fontTable.xml\")\n}\n\npub(crate) fn load_font_table(pkg: &PartFs) -> FontTable {\n    pkg.part_string(&font_table_part(pkg))\n        .map(|xml| parse_font_table_xml(&xml))\n        .unwrap_or_default()\n}\n\npub(crate) fn parse_font_table_xml(xml: &str) -> FontTable {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "Selected font table parsed without checked API"
+        },
+        {
+          "id": "aux-recursion",
+          "label": "DOM parser recursively enters nested element",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 655,
+          "endLine": 663,
+          "role": "outcome",
+          "code": "            if self.starts_with(\"<?\") {\n                let pi = self.parse_pi_node();\n                self.dom.add(el, pi);\n                continue;\n            }\n            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "DOM parser recursively enters nested element"
+        }
+      ],
+      "rootCause": {
+        "summary": "Package admission recognizes XML by `.xml`/`.rels` suffix and separately checks only a nonstandard main-document name. OPC auxiliary relationships are allowed arbitrary internal target names. Conversion opens those selected parts as text and calls permissive parse_xdocument, whose nested-element branch recurses without a depth check. Renaming the target changes admission classification without changing its later XML interpretation.",
+        "evidenceRefs": [
+          "aux-render",
+          "aux-admit",
+          "aux-main-exception",
+          "aux-rel",
+          "aux-styles",
+          "aux-theme",
+          "aux-numbering",
+          "aux-fonttable",
+          "aux-recursion"
+        ]
+      },
+      "remediation": "Identify all XML by supported relationship/content types during admission and validate every selected XML part under the active InputLimits immediately before DOM construction, regardless of filename. Prefer checked parser APIs at these boundaries.",
+      "validation": {
+        "counterEvidence": [
+          "Conventional .xml/.rels parts are policy-checked.",
+          "A renamed main document is checked explicitly, so it is not the demonstrated bypass.",
+          "PartFs byte/inflation and ZIP consistency controls still apply.",
+          "SECURITY.md distinguishes infallible parser and recommends caller process limits; conversion itself advertises admission before parsing."
+        ],
+        "evidenceRefs": [
+          "aux-admit",
+          "aux-main-exception",
+          "aux-render",
+          "aux-rel",
+          "aux-styles",
+          "aux-theme",
+          "aux-numbering",
+          "aux-fonttable",
+          "aux-recursion"
+        ],
+        "limitations": [
+          "Crash depth depends on host stack/target; no dynamic reproduction.",
+          "Other auxiliary consumers were mapped but the retained proof names these four independently selected operations."
+        ],
+        "method": "offline static source trace",
+        "summary": "Verified styles, theme, numbering and font-table variants through the shared relationship selector, plus the original admission and DOM recursion. A nonstandard UTF8 auxiliary part with many nested elements is below byte limits but never reaches check_xml_depth; checked XML APIs exist but these consumers do not use them."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "attacker target name/bytes -> suffix-based admission skips XML -> main_rel_part -> part_string -> parse_xdocument -> recursive parse_element",
+          "source": "DOCX auxiliary relationship and part",
+          "sink": "unbounded recursive DOM construction",
+          "outcome": "conversion stack exhaustion",
+          "evidenceRefs": [
+            "aux-admit",
+            "aux-main-exception",
+            "aux-rel",
+            "aux-styles",
+            "aux-recursion"
+          ]
+        },
+        "evidenceRefs": [
+          "aux-render",
+          "aux-rel",
+          "aux-styles",
+          "aux-recursion"
+        ],
+        "reachability": {
+          "summary": "An untrusted document supplier needs only the victim to use a public render API on the document. This does not require trusted configuration changes, remote hosting or unsafe Rust.",
+          "attacker": "document supplier",
+          "entrypoint": "DOCX render/conversion APIs",
+          "outcome": "process abort or WASM instance failure"
+        },
+        "summary": "Create an ordinary DOCX with a styles relationship targeting word/styles.bin containing deeply nested valid XML, then request PDF/PNG/report rendering."
+      },
+      "remediationTests": [
+        "Rename styles,theme,numbering,fontTable XML to .bin and verify excess nesting/tag-policy inputs are refused before DOM construction.",
+        "Keep the renamed-main-part check and ordinary valid nonstandard auxiliary names supported."
+      ],
+      "preventiveControls": [
+        "Validate the representation actually consumed, using the consumer's type rather than filename suffix alone."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "aux-xml-extension-policy-bypass",
+        "worker": "baseline",
+        "workerLabel": "discovery-0019",
+        "originalBaselineFinding": {
+          "candidateId": "aux-xml-extension-policy-bypass",
+          "title": "Auxiliary XML with a non-XML filename bypasses admission depth limits and reaches recursive parsing",
+          "cwe": "CWE-674",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A document producer supplying a DOCX that a victim converts to PDF, PNG, or a render report.",
+          "violated_security_invariant": "Untrusted package XML must satisfy the active XML admission limits before entering the permissive DOM parser.",
+          "source_to_sink": "Admission recognizes XML by .xml/.rels suffix, with an extra check only for main document. Internal styles/theme relationships can target arbitrary filenames. Conversion resolves them and calls unchecked Dom::parse_xdocument; Parser::parse_element recursively calls itself without depth guard.",
+          "concrete_impact": "Small auxiliary XML with approximately 100000 nested elements bypasses max_xml_depth=256 and can exhaust conversion stack, terminating CLI/embedding application.",
+          "locations": [
+            {
+              "path": "src/admission.rs",
+              "start_line": 533,
+              "end_line": 550
+            },
+            {
+              "path": "src/admission.rs",
+              "start_line": 558,
+              "end_line": 569
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "start_line": 772,
+              "end_line": 778
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "start_line": 3480,
+              "end_line": 3497
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "start_line": 21310,
+              "end_line": 21320
+            },
+            {
+              "path": "src/xmllinq/parse.rs",
+              "start_line": 555,
+              "end_line": 662
+            }
+          ],
+          "supporting_source_evidence": [
+            "is_xml from lower.ends_with(.xml) || lower.ends_with(.rels); check_xml_depth only that branch.",
+            "Nonstandard-filename check applies only to main_part.",
+            "load_stylesheet reads main_rel_part(styles) then dom.parse_xdocument.",
+            "main_rel_part resolves arbitrary internal relationship target.",
+            "Nested-element branch calls self.parse_element(scope)."
+          ],
+          "counterevidence": [
+            "Conventional auxiliary XML is checked.",
+            "Admission and byte budgets still apply.",
+            "Caller process limits contain impact but do not enforce XML depth."
+          ],
+          "recommended_remediation": "Validate relationship-resolved XML under active InputLimits immediately before DOM construction; test nonstandard styles/theme/header names."
+        },
+        "originalCandidates": [
+          {
+            "candidateId": "aux-xml-extension-policy-bypass",
+            "source": "baseline",
+            "title": "Nonstandard auxiliary XML targets bypass admission depth bounds",
+            "originalEvidence": "src/admission.rs:534-567 checks .xml/.rels and nonstandard main part only. src/convert/mod.rs:773 admits first, load_stylesheet at 3480 reads main_rel_part(styles) and at 3497 calls unchecked Dom::parse_xdocument. main_rel_part at 21310 resolves arbitrary internal targets. src/xmllinq/parse.rs:555-661 recursively parses elements without depth guard. Investigator proposes styles relationship to word/styles.bin with extreme nested XML bypassing max_xml_depth=256; no execution performed.",
+            "uncertainty": "Pending full baseline payload and parent source validation, including all auxiliary consumers and effective checked parser controls.",
+            "returnedFinding": {
+              "candidateId": "aux-xml-extension-policy-bypass",
+              "title": "Auxiliary XML with a non-XML filename bypasses admission depth limits and reaches recursive parsing",
+              "cwe": "CWE-674",
+              "severity": "medium",
+              "confidence": "high",
+              "attacker": "A document producer supplying a DOCX that a victim converts to PDF, PNG, or a render report.",
+              "violated_security_invariant": "Untrusted package XML must satisfy the active XML admission limits before entering the permissive DOM parser.",
+              "source_to_sink": "Admission recognizes XML by .xml/.rels suffix, with an extra check only for main document. Internal styles/theme relationships can target arbitrary filenames. Conversion resolves them and calls unchecked Dom::parse_xdocument; Parser::parse_element recursively calls itself without depth guard.",
+              "concrete_impact": "Small auxiliary XML with approximately 100000 nested elements bypasses max_xml_depth=256 and can exhaust conversion stack, terminating CLI/embedding application.",
+              "locations": [
+                {
+                  "path": "src/admission.rs",
+                  "start_line": 533,
+                  "end_line": 550
+                },
+                {
+                  "path": "src/admission.rs",
+                  "start_line": 558,
+                  "end_line": 569
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "start_line": 772,
+                  "end_line": 778
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "start_line": 3480,
+                  "end_line": 3497
+                },
+                {
+                  "path": "src/convert/mod.rs",
+                  "start_line": 21310,
+                  "end_line": 21320
+                },
+                {
+                  "path": "src/xmllinq/parse.rs",
+                  "start_line": 555,
+                  "end_line": 662
+                }
+              ],
+              "supporting_source_evidence": [
+                "is_xml from lower.ends_with(.xml) || lower.ends_with(.rels); check_xml_depth only that branch.",
+                "Nonstandard-filename check applies only to main_part.",
+                "load_stylesheet reads main_rel_part(styles) then dom.parse_xdocument.",
+                "main_rel_part resolves arbitrary internal relationship target.",
+                "Nested-element branch calls self.parse_element(scope)."
+              ],
+              "counterevidence": [
+                "Conventional auxiliary XML is checked.",
+                "Admission and byte budgets still apply.",
+                "Caller process limits contain impact but do not enforce XML depth."
+              ],
+              "recommended_remediation": "Validate relationship-resolved XML under active InputLimits immediately before DOM construction; test nonstandard styles/theme/header names."
+            }
+          },
+          {
+            "candidateId": "aux-xml-extension-policy-bypass",
+            "source": "baseline",
+            "title": "Nonstandard auxiliary XML targets bypass admission depth bounds",
+            "originalEvidence": "src/admission.rs:534-567 checks .xml/.rels and nonstandard main part only. src/convert/mod.rs:773 admits first, load_stylesheet at 3480 reads main_rel_part(styles) and at 3497 calls unchecked Dom::parse_xdocument. main_rel_part at 21310 resolves arbitrary internal targets. src/xmllinq/parse.rs:555-661 recursively parses elements without depth guard. Investigator proposes styles relationship to word/styles.bin with extreme nested XML bypassing max_xml_depth=256; no execution performed.",
+            "uncertainty": "Pending full baseline payload and parent source validation, including all auxiliary consumers and effective checked parser controls."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-03bcc94c5dfb9dd4",
+        "label": "Pull-request CI runner authority",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "CI trust boundary",
+        "notes": "Validated ci-self-hosted-pr by static workflow trace. contents:read and persist-credentials:false limit GitHub credentials, but not internal host/network authority. Live runner isolation and fork approvals remain deployment uncertainties."
+      },
+      {
+        "id": "surface-9833a295e2f21fa7",
+        "label": "WMF text record bounds",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated whole-file text slices in both WMF EXTTEXTOUT/TEXTOUT branches; per-record size and canvas caps do not bound retained overlapping decoded Strings."
+      },
+      {
+        "id": "surface-cf13d00b3d752b57",
+        "label": "Relationship-selected auxiliary XML admission",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated styles/theme/numbering/fontTable renamed-target -> unchecked recursive DOM path. Main-only exception and byte limits do not enforce XML depth for these targets. Mapped other settings/comments/notes/header/diagram parsers for remediation reach."
+      },
+      {
+        "id": "surface-2470ad5139efde6a",
+        "label": "HTML altChunk table expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated altchunk-unbounded-colspan: usize colspan -> sum -> one gridCol allocation per column. Admission precedes expansion; raster limits follow it."
+      },
+      {
+        "id": "surface-9759781118ba669c",
+        "label": "Redaction residual-data detection",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/scrub.rs:467-471 routes .xml/.rels through xml_holds(String::from_utf8_lossy(bytes), needle), while UTF-16LE byte matching is only in non-XML branch. admission::part_text at src/admission.rs:768-781 supports BOM UTF-16. src/edit/prepared.rs:804,873 calls tx.check_redactions; src/edit.rs:4731-4747 refuses only when scrub::leaks finds hit. models.py:829-832 promises removed text nowhere in either output."
+      },
+      {
+        "id": "surface-5162c4587dfa38d8",
+        "label": "Scrub relationship-selected metadata",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/scrub.rs:39-41 hardcodes docProps/core.xml, app.xml, custom.xml; :357-385 only edits literal paths and removes custom-properties relationship only when literal CUSTOM exists. Active _rels/.rels property relationships can target different valid internal names. scrub API docs at :8-20,60-62 promise removal of people/dates/custom property part."
+      },
+      {
+        "id": "surface-f5799f04fe94a93b",
+        "label": "HTML altChunk CSS selector allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated independent CSS map-cloning control failure; distinct from colspan numeric iteration, requiring shared declaration storage/aggregate CSS budget."
+      },
+      {
+        "id": "surface-da4388c1ecb0253c",
+        "label": "Independent baseline control dispositions and secrets search",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Baseline reviewed current source for embedded credential/private-key formats and contextual assignments, including hidden configs/docs/tests/examples/inactive code, without history/network or live credential checks. No supported secret exposure. MCP stdio/native OutputRoot prevents established root escape. Updater checksum-only stage documented; regular-file hook present. Original baseline fully_reviewed_files: SECURITY.md,Cargo.toml,src/update.rs,src/wml_document.rs,src/scrub.rs,src/edit/images.rs,src/markdown/from_docx/media.rs,jubarte-python/python/jubarte_redlines/mcp_server.py."
+      },
+      {
+        "id": "surface-8869127f4d76a570",
+        "label": "Architecture and effective-resource mapping",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Independent canonical model retained with source-backed entrypoints/resources, verified by parent at native publication, MCP bridge, font consumers, admission budgets, updater, normal/local release paths. Architecture does not count as completed full-file audit. No supplied external context."
+      },
+      {
+        "id": "surface-499fd0c299bd1962",
+        "label": "Render investigator counterevidence",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Pixel allocation cap src/convert/raster.rs:24-42 effective; DPI checked src/convert/mod.rs:602-607. In-package image/altchunk/font relationship bytes do not fetch external sources. Font cloud names single normal component src/convert/font.rs:2228-2236 and cache separator guards :3264-3275; fontKey GUID is obfuscation,not credential. Ordinary image per-decode limit not fully source verified within target; no absent-bound finding based on caller source alone. Large font/layout/PDF modules not exhaustively audited."
+      },
+      {
+        "id": "surface-d8af461c2190cff3",
+        "label": "Public document stamp opens ZIP before preindex limits",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "jubarte-python/src/lib.rs:118-121 markdown_stamp and jubarte-wasm/src/lib.rs:1456-1462 markdownStamp; CLI __main__.py:674 and Node:248 -> markdown::markdown_stamp -> docx_stamp -> from_docx::creator_created src/markdown/mod.rs:576-600,from_docx/mod.rs:1348-1352 -> Package::open. ooxml.rs:43-55,191-200 opens archive before check_limits, no preindex_budget/compressed cap; docx_to_markdown uses bounded PartFs::open_within at markdown/mod.rs:650-656."
+      },
+      {
+        "id": "surface-40617831ed0ba659",
+        "label": "Embedded MATH font may amplify extender allocation",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/convert/math_layout.rs:645-697 computes unbounded assembly reps from font advances/overlap/equation height, pushes MathGlyph per repetition. Embedded Cambria Math selected first, raw constants unvalidated; hostile script_percent >100% may exponentially increase size in fraction chain under MAX_DEPTH=64, surrounding radical/delimiter demands huge extenders."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "redaction-utf16-xml-leak",
+        "candidateId": "redaction-utf16-xml-leak",
+        "reason": "Full baseline result checkpointed before parent validation; original preliminary evidence retained.",
+        "candidate": {
+          "candidateId": "redaction-utf16-xml-leak",
+          "source": "baseline",
+          "title": "Redaction leak scan misses BOM UTF-16 auxiliary XML",
+          "originalEvidence": "src/scrub.rs:467-471 routes .xml/.rels through xml_holds(String::from_utf8_lossy(bytes), needle), while UTF-16LE byte matching is only in non-XML branch. admission::part_text at src/admission.rs:768-781 supports BOM UTF-16. src/edit/prepared.rs:804,873 calls tx.check_redactions; src/edit.rs:4731-4747 refuses only when scrub::leaks finds hit. models.py:829-832 promises removed text nowhere in either output.",
+          "uncertainty": "Pending unchanged customXml preservation proof and parent validation; potential confidentiality failure, no runtime execution.",
+          "returnedFinding": {
+            "candidateId": "redaction-utf16-xml-leak",
+            "title": "Redaction verification misses confidential text retained in UTF-16 XML parts",
+            "cwe": "CWE-212",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "Recipient of supposedly redacted document, including duplicate sensitive values in UTF-16 custom XML.",
+            "violated_security_invariant": "Redaction must refuse when confidential text remains anywhere in either output.",
+            "source_to_sink": "Admission supports BOM UTF-16; leak scanner sends XML through from_utf8_lossy, confining UTF16 matching to non-XML branch. Untouched customXml bytes survive clean output; check_redactions accepts empty scanner result.",
+            "concrete_impact": "Visible text replaced but confidential text remains readable in clean DOCX UTF16 XML.",
+            "locations": [
+              {
+                "path": "src/scrub.rs",
+                "start_line": 425
+              },
+              {
+                "path": "src/scrub.rs",
+                "start_line": 467,
+                "end_line": 472
+              },
+              {
+                "path": "src/scrub.rs",
+                "start_line": 523,
+                "end_line": 529
+              },
+              {
+                "path": "src/admission.rs",
+                "start_line": 768,
+                "end_line": 781
+              },
+              {
+                "path": "src/edit.rs",
+                "start_line": 4724,
+                "end_line": 4747
+              },
+              {
+                "path": "src/edit.rs",
+                "start_line": 5381,
+                "end_line": 5387
+              },
+              {
+                "path": "src/edit.rs",
+                "start_line": 5419,
+                "end_line": 5424
+              },
+              {
+                "path": "src/edit/prepared.rs",
+                "start_line": 873
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/models.py",
+                "start_line": 826,
+                "end_line": 833
+              }
+            ],
+            "supporting_source_evidence": [
+              "XML scanner uses xml_holds(from_utf8_lossy), raw UTF16 matching only else.",
+              "No-root fallback xml.contains also misses NUL-separated text.",
+              "Untouched parts retain exact bytes and full package emitted.",
+              "check_redactions succeeds when parts set empty.",
+              "Public redact contract refuses residual text anywhere in either output."
+            ],
+            "counterevidence": [
+              "UTF8 XML entities/split runs checked.",
+              "Non-XML UTF16LE checked.",
+              "Test customXml/utf16.bin takes working else branch."
+            ],
+            "recommended_remediation": "Share BOM/encoding-aware XML decoder with admission; fail closed on unsupported encodings; cover LE/BE XML in scanner and publication."
+          }
+        }
+      },
+      {
+        "id": "scrub-relocated-properties",
+        "candidateId": "scrub-relocated-properties",
+        "reason": "Full baseline result checkpointed before parent validation; original preliminary evidence retained.",
+        "candidate": {
+          "candidateId": "scrub-relocated-properties",
+          "source": "baseline",
+          "title": "Privacy scrub ignores relationship-selected document properties",
+          "originalEvidence": "src/scrub.rs:39-41 hardcodes docProps/core.xml, app.xml, custom.xml; :357-385 only edits literal paths and removes custom-properties relationship only when literal CUSTOM exists. Active _rels/.rels property relationships can target different valid internal names. scrub API docs at :8-20,60-62 promise removal of people/dates/custom property part.",
+          "uncertainty": "Pending parent validation, package preservation and any rejection of relocated properties; no runtime execution.",
+          "returnedFinding": {
+            "candidateId": "scrub-relocated-properties",
+            "title": "Metadata scrubbing leaves identifying properties at relationship-selected filenames",
+            "cwe": "CWE-212",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "Recipient of scrubbed document using producer-selected metadata filenames.",
+            "violated_security_invariant": "Doc-property scrubbing must remove identifying properties independent of valid OPC part name.",
+            "source_to_sink": "Only literal docProps/core.xml/app.xml/custom.xml handled. Other valid root relationship targets and content survive; validation compares introduced structural findings, not metadata absence.",
+            "concrete_impact": "Creator,last editor,dates,manager,company,custom properties remain in successful scrub output.",
+            "locations": [
+              {
+                "path": "src/scrub.rs",
+                "start_line": 39,
+                "end_line": 43
+              },
+              {
+                "path": "src/scrub.rs",
+                "start_line": 136,
+                "end_line": 140
+              },
+              {
+                "path": "src/scrub.rs",
+                "start_line": 355,
+                "end_line": 385
+              }
+            ],
+            "supporting_source_evidence": [
+              "CORE/APP/CUSTOM fixed paths.",
+              "Part::load only CORE/APP without relationships.",
+              "Custom relationship removed only if literal CUSTOM exists.",
+              "Public docs promise identifying properties/custom part removal."
+            ],
+            "counterevidence": [
+              "Conventional names handled.",
+              "Before/after validate rejects new structural findings.",
+              "Structural validity does not establish metadata removal."
+            ],
+            "recommended_remediation": "Resolve root property relationship types and strict variants; scrub/remove every internal target, relationships and content types; verify absence."
+          }
+        }
+      },
+      {
+        "id": "stamp-preindex-budget-bypass",
+        "candidateId": "stamp-preindex-budget-bypass",
+        "reason": "Investigator assessing concrete resource impact; parent validation pending.",
+        "candidate": {
+          "candidateId": "stamp-preindex-budget-bypass",
+          "source": "architecture",
+          "title": "Public document stamp opens ZIP before preindex limits",
+          "originalEvidence": "jubarte-python/src/lib.rs:118-121 markdown_stamp and jubarte-wasm/src/lib.rs:1456-1462 markdownStamp; CLI __main__.py:674 and Node:248 -> markdown::markdown_stamp -> docx_stamp -> from_docx::creator_created src/markdown/mod.rs:576-600,from_docx/mod.rs:1348-1352 -> Package::open. ooxml.rs:43-55,191-200 opens archive before check_limits, no preindex_budget/compressed cap; docx_to_markdown uses bounded PartFs::open_within at markdown/mod.rs:650-656.",
+          "uncertainty": "Investigator assessing concrete resource impact; parent validation pending."
+        }
+      },
+      {
+        "id": "math-font-extender-amplification",
+        "candidateId": "math-font-extender-amplification",
+        "reason": "Finite construction and effective font/parser gates still being verified; do not treat as validated.",
+        "candidate": {
+          "candidateId": "math-font-extender-amplification",
+          "source": "render_inputs",
+          "title": "Embedded MATH font may amplify extender allocation",
+          "originalEvidence": "src/convert/math_layout.rs:645-697 computes unbounded assembly reps from font advances/overlap/equation height, pushes MathGlyph per repetition. Embedded Cambria Math selected first, raw constants unvalidated; hostile script_percent >100% may exponentially increase size in fraction chain under MAX_DEPTH=64, surrounding radical/delimiter demands huge extenders.",
+          "uncertainty": "Finite construction and effective font/parser gates still being verified; do not treat as validated.",
+          "additionalEvidence": "Finite construction: embedded glyf Cambria Math,unitsPerEm1000,leaf bbox yMin0/yMax1000,MATH scriptPercentScaleDown10000=>100.0,radical assembly one extender fullAdvance1,minConnectorOverlap0. Ten numerator m:f nests produce finite 12*100^10=1.2e21pt below MAX_DEPTH64; outer radical target>=1.2e21,advance .012 => ceil>1e23 -> usize::MAX reps. mod.rs:15648-15652,15937-15938; font selection :891-894,font.rs:1730-1743,font_table.rs:205-228; glyf accepted font.rs:1487-1494; embedded prevents installed replacement :3427-3430. No execution."
+        }
+      },
+      {
+        "candidateId": "leak-scanner-unchecked-xml-depth",
+        "reason": "Baseline found direct public scanner consumer without full XML admission; parent source validation pending.",
+        "candidate": {
+          "title": "Public residual-text scanner parses deep XML without depth check",
+          "source": "baseline",
+          "originalEvidence": "src/scrub.rs:403-477 leaks/leaks_within calls preindex and inflated-byte bounds only; xml_holds :527-529 calls permissive parse_xdocument without XML admission. Direct public leaks on deep customXml/item1.xml reaches recursive parser independently of nonstandard extension. Production edit usually admitted earlier; direct library boundary remains."
+        },
+        "id": "leak-scanner-unchecked-xml-depth"
+      }
+    ],
+    "openQuestions": [
+      "Whether deployed self-hosted runners are disposable and externally isolated is not established by source."
+    ]
+  },
+  "scope": {
+    "summary": "Current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and vulnerability-triggering inputs have not been executed.",
+    "validationMode": "offline static source review",
+    "context": "Generated threat model in progress; no external context supplied."
+  },
+  "threatModel": {
+    "summary": "Jubarte is an in-process Word document engine exposed through a Rust library and native CLI, PyO3 Python bindings and Python CLI, wasm-bindgen browser/Node bindings and a Node CLI, and an optional Python stdio MCP server. Untrusted DOCX packages pass through ZIP/package admission, XML parsing and document transformations before returning document bytes, extracted text, reports, PDF or PNG. Legacy DOC conversion follows a separate compound-file parser. Native publication, MCP filesystem confinement, ambient CLI writes, self-update, and privileged release/CI automation are distinct authority surfaces. The library forbids unsafe Rust, but process isolation and CPU/memory enforcement remain caller responsibilities. Evidence: src/lib.rs:5-30,85-86,96-165; jubarte-python/src/lib.rs:5-15; jubarte-wasm/src/lib.rs:7-28; jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; src/legacy_doc.rs:170-215.",
+    "assets": [
+      "Confidential source documents and derived text, comments, authors, revisions, Markdown, redlines, PDF/PNG and reports. MCP returns extracted text/structured data over its client stream and publishes files under its granted root: jubarte-python/python/jubarte_redlines/mcp_server.py:126-150,185-205.",
+      "Document integrity and correspondence between inspected snapshot, edit anchors, clean output and redline. Optional source_sha256 guards are not authentication: src/edit.rs:2081-2089. Schema/operation checks are distinct: src/edit.rs:1744-1761,2073-2100.",
+      "Caller-owned files and output directories. Native CLI grants ambient parent authority; MCP grants persistent directory capability with separate read/publish: src/publication.rs:146-199,203-210; src/bin/jubarte.rs:261-273.",
+      "Installed native executable and release integrity. Updater fixed repository jandira-tech/jubarte-redlines and SHA256SUMS.txt; RELEASE_KEYS empty and FIRST_SIGNED_RELEASE None: src/update.rs:25-48,198-210,245-257.",
+      "Release authority: GITHUB_TOKEN, optional ZIPSIGN_PRIVATE_KEY, Cargo credential store/CARGO_REGISTRY_TOKEN, npm auth/NPM_OTP, UV_PUBLISH_TOKEN. Distinct publisher recipients: .github/workflows/release.yml:230-263,356-369; scripts/release.sh:374-380,904-939,1063-1069.",
+      "Shared runner resources, build state and cache integrity. http://mbx-cache:7543 namespace jandira-tech/jubarte-redlines, no configured token: .github/actions/mbx/action.yml:8-22. Isolation external.",
+      "Review credentials, comment/review authority and Jules spending. Distinct pinned actions with JULES_API_KEY: .github/workflows/jules-review.yml:19-50; .github/workflows/jules-el-conejo-review.yml:31-54,262-324."
+    ],
+    "trustBoundaries": [
+      "Document supplier -> package/parser process: ZIP metadata, entries, XML, relationships, embedded media. Admission checks preindex size/entries, inflation and zip defects. Default 64 MiB compressed/per part, 256 MiB total,10000 entries,depth256; compare/render/WmlDocument 512 MiB compressed/per part,2 GiB total,same depth/entries. src/admission.rs:63-100,397-425,439-470; src/opc/archive.rs:34-51; src/inspect.rs:605-615; src/document_comparer.rs:4926-4927; src/convert/mod.rs:773.",
+      "Raw XML -> DOM: checked APIs enforce InputLimits/tag policy; infallible parse_xdocument is permissive. Defaults 1024 attrs,1024-byte names,64 MiB values,128 MiB start tags. src/xmllinq/parse.rs:19-36,48-57,98-129,910-919; SECURITY.md:43-60.",
+      "Legacy DOC -> compound-file parser: streams/FIB-selected tables -> text/style/list; distinct from DOCX ZIP admission and needs separate resource assessment: src/legacy_doc.rs:170-215,225-236.",
+      "Agent/edit plan -> mutation: schema,optional source hash,author,anchors checked before outputs. Snapshot guard conditional. Plan refusal distinct from publication atomicity: src/edit.rs:1740-1761,2073-2100; src/publication.rs:83-131.",
+      "MCP client -> host files: --root defaults cwd, expanded/resolved once, must directory. Path diagnostics plus actual native _OutputRoot backed cap_std directory. Stdio tools confer root-scoped authority; annotations not per-user authorization. jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,373-381; jubarte-python/src/lib.rs:1244-1277; src/publication.rs:146-199.",
+      "MCP artifacts: <root>/<out_dir>/{clean.docx,redline.docx,patch.diff,report.json}, optional redline.pdf,redline-page-NN.png. Capability-relative parents,portable names,output symlink refusal; staging <destination parent>/.jubarte-<UUID>.partial/bytes; byte readback; overwrite=false atomic hard link,overwrite=true rename; per-file partial commits reported. jubarte-python/python/jubarte_redlines/mcp_server.py:185-205; src/publication.rs:83-131,168-199,419-505,535-570.",
+      "Native CLI -> ambient selected parents via publish_paths; differs from MCP. Ordinary Python/Node CLI helpers directly Path.write_bytes/fs.writeFileSync after prechecks; common grammar does not prove shared write controls. src/bin/jubarte.rs:261-273; src/publication.rs:203-210; jubarte-python/python/jubarte_redlines/__main__.py:101-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:76-79,106-110.",
+      "Markdown -> native image loader: --resource-path else Markdown parent else '.'; percent decode,scheme refusal,canonical containment and actual capability-relative read. Explicit image embedding authority,not external relationship fetching: src/bin/jubarte.rs:2811-2870,2936-2943.",
+      "Document font request -> renderer-owned local font access: JUBARTE_FONT_DIR overrides; macOS HOME/Library/Application Support/jubarte/fonts; Linux XDG_DATA_HOME/jubarte/fonts or HOME/.local/share/jubarte/fonts, requires HOME before XDG lookup; Windows APPDATA/jubarte/fonts. Installed Windows fonts WINDIR else SystemRoot else C:\\Windows/Fonts plus LOCALAPPDATA/Microsoft/Windows/Fonts. Native catalogue includes /System/Library/Fonts/Supplemental,/Library/Fonts,/Applications/Microsoft Word.app/Contents/Resources/DFonts,/Library/Fonts/Microsoft,/System/Library/Fonts and HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts. Readers renderer/font parser and generated PDF/subsets; controls operator env/host permissions/family matching, not MCP root. src/convert/font.rs:2228-2232,2258-2315,2427-2466,2633-2652,2831-2862.",
+      "WASM host -> byte engine: Uint8Array/JSON same core; native publication excluded wasm32. Browser hosts advised lower compare defaults since 2GiB inflated exceeds practical heap. Node file authority JS host not WASM API: src/lib.rs:163-165; jubarte-wasm/src/lib.rs:7-28,63-95; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-55.",
+      "Self-update -> fixed GitHub release -> jubarte-<version>-<target>/jubarte[.exe] -> installed executable. macos/linux aarch64/x86_64 tar.gz; windows-x86_64 ZIP. Noninteractive requires --yes or --check; --check no replacement; explicit --version allows downgrade. SHA256SUMS.txt and regular-file verify hook; signing currently inactive. Bindings disable updater default features. src/update.rs:25-48,91-108,120-125,144-150,198-257,299-315; jubarte-python/Cargo.toml:35-39; jubarte-wasm/Cargo.toml:18-20.",
+      "Release tag/operator -> public supply chain: v* -> hosted builds -> contents:write release job; step-scoped ZIPSIGN_PRIVATE_KEY base64 -> RUNNER_TEMP/zipsign.<random>/keyN -> zipsign -> trap cleanup,64-byte key check,committed public-key verification; checksums then gh release create GH_TOKEN=GITHUB_TOKEN. Local script separately Cargo auth -> crates.io jubarte-redlines@$VER; npm auth/NPM_OTP -> jubarte-wasm/jubarte-redlines; UV_PUBLISH_TOKEN -> dist/pypi/* to PyPI with wheel inventory or explicit --no-wait partial fallback. Local artifact recovery downloads completed workflow artifacts to dist/release,creates sdist/checksums and gh release create $TAG without signing step. .github/workflows/release.yml:15-21,40-49,51-89,230-308,317-321,356-369; scripts/release.sh:374-380,876-939,976-1012,1028-1032,1039-1069.",
+      "PR -> internal runner/cache: PR CI/adoption/docs/roundtrip use self-hosted; contents:read and no persisted checkout credentials. Composite mbx remote http://mbx-cache:7543 namespace jandira-tech/jubarte-redlines,cache-links=false,MBX_GC_MAX_TOTAL_SIZE=20GiB. Comments claim private Docker network and protected-push-only publication,not enforced by repository server configuration. Network ACLs,upstream action enforcement and runner lifecycle external. .github/workflows/ci.yml:13-48; .github/workflows/adoption.yml:16-42,48-59; .github/workflows/docs.yml:76-99; .github/actions/mbx/action.yml:8-38.",
+      "PR/dispatch -> review services: Jules Review same-repo non-Dependabot guard,runner var else ubuntu-latest,pinned action receives JULES_API_KEY/GITHUB_TOKEN,contents:read,pull-requests:write,checks:write,enable_approve=false. Conejo resolves/rejects forks,checks exact SHA,no persisted credentials,contents:read,pull-requests:write,issues:write; trusted user arthrod gates session; JULES_API_KEY reaches separate pinned action. External service/install authority absent. .github/workflows/jules-review.yml:19-50; .github/workflows/jules-el-conejo-review.yml:31-54,65-102,262-324."
+    ],
+    "attackerCapabilities": [
+      "Document supplier controls ZIP names,relationships,XML,embedded font/image,legacy DOC and extracted text,not trusted env/roots/release configuration or CI credentials.",
+      "MCP stdio client can request documented root reads/mutations and explicit overwrite; no remote HTTP or multi-tenant deployment established. Outside-root authority would be new; authorized root access expected.",
+      "Markdown supplier controls resource names relative to independently selected root,not --resource-path. Scheme/confinement controls prevent beyond-root fetch/read.",
+      "PR author supplies build/test/docs code run by applicable jobs subject to actual GitHub approvals. Approval bypass or actual run permission is not assumed.",
+      "Release-asset-only attacker can replace archive and adjacent checksum in current checksum-only model; no operator/signing-key compromise assumed,explicit updater invocation still required.",
+      "Developer benchmark stdin/stdout client supplies local compare paths to existing process authority; no authenticated production server: jubarte-rust-inproc/src/main.rs:5-20,91-98."
+    ],
+    "securityObjectives": [
+      "Bound indexing,inflation and XML construction under entrypoint-selected budgets; ZIP header/extent/type checks; compare defaults differ from agent defaults: src/admission.rs:63-100,397-470; src/opc/archive.rs:34-51.",
+      "Keep checked/permissive XML APIs distinct; validate untrusted XML; namespace/resource checks not full Word schema: SECURITY.md:43-65; src/xmllinq/parse.rs:98-129,910-919.",
+      "No document-driven external relationship fetch; native Markdown images confined to explicit capability,not macro execution or Word launch: src/admission.rs:20-22; src/bin/jubarte.rs:2811-2870.",
+      "MCP actual I/O stays in root; overwrite opt-in,output symlinks refused,partial per-file commits accurately reported: src/publication.rs:83-131,146-199,419-505,535-570.",
+      "Optional source_sha256 binds exact edit snapshot; invalid/unresolved plans refused before outputs,not authentication/approval: src/edit.rs:1740-1761,2073-2100.",
+      "Native install only explicit updater,confirmation/checksum/regular-file/conditional signatures. Current releases checksum-only until keys and first signed version: src/update.rs:44-48,120-125,198-257; docs/SELF_UPDATE.md:59-80.",
+      "Scope independent publisher credentials to consumers and preserve account/package/tag/artifact binding; architecture mapping does not prove release execution/registry account setup.",
+      "Protect shared runners/cache and Jules spend with effective external authorization/isolation; token permissions/action inputs alone do not prove external controls.",
+      "Scrub and redact exports must remove requested identifying/confidential data from returned document bytes, not merely visible body text: src/scrub.rs:5-27; jubarte-python/python/jubarte_redlines/models.py:826-833."
+    ],
+    "assumptions": [
+      "Current checkout HEAD verified 4e10eca69c42211651ca907f38b74b6d19e6928c; historical artifact label not inspected. Static/read-only/offline; no application/test/exploit/network execution.",
+      "Architecture mapping is not fully audited coverage. Large parser/render/transformation files sampled only for boundaries unless separately audited.",
+      "Root SECURITY.md inherited; no nested policy returned. Process CPU/memory limits caller-owned,not engine-enforced: SECURITY.md:65-68.",
+      "No supplied hosting,tenants,remote MCP,auth,container mounts or ACLs; callers choose identity/root.",
+      "MCP invalid-plan promise and publisher per-file atomicity are distinct; I/O failure may leave reported earlier commits: mcp_server.py:161-168 (full path jubarte-python/python/jubarte_redlines/mcp_server.py); src/publication.rs:5-7,168-174.",
+      "Native staged publication differs from ordinary Python/Node direct helpers despite CLI parity: src/bin/jubarte.rs:261-273; jubarte-python/python/jubarte_redlines/__main__.py:126-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-110.",
+      "docs/SELF_UPDATE.md:22-24 claims GH_TOKEN/GITHUB_TOKEN raises API budget; src/update.rs:198-210 never explicitly configures token/env auth. Actual dependency default unresolved within authorized source; no credential recipient inferred from docs.",
+      "Signing inactive agrees with staged documentation,configuration limitation not independently reported: src/update.rs:29-48; docs/SELF_UPDATE.md:59-80.",
+      "Future signing-path discrepancy: normal release workflow signs and fails missing secret once keys exist; local artifact recovery checksums/publishes without signing. Current keys empty; already-signed artifact handling and future impact unresolved: .github/workflows/release.yml:252-308; scripts/release.sh:976-1012.",
+      "MCP root only path arguments; renderer additionally reads installed/configured fonts. Not process-wide sandbox: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/convert/font.rs:2258-2315,2633-2652.",
+      "Cache comments claim runner-only private network/protected-push publication; source proves endpoint/namespace/no token config,not ACLs/upstream implementation: .github/actions/mbx/action.yml:8-22.",
+      "External actions,Jules service,GitHub approvals,registry account policies,cache storage/authorization and runner reuse absent from repository. Remain conditional.",
+      "No credential store contents or secret environment values read. All credential material described by references only.",
+      "userContext was exactly null. No user-supplied threat model/knowledge base; fresh independent architecture review obtained and material resource consumers verified by parent source excerpts. Findings will reconcile model scenarios through coverage."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current working-tree architecture of /Users/arthrod/temp/T/jubarte-redlines, inspected read-only. HEAD resolved to 4e10eca69c42211651ca907f38b74b6d19e6928c; independent reviewer reported clean status. Historical artifact directory label is not the authorized revision."
+    }
+  }
+}

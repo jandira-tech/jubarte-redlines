@@ -1,0 +1,497 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local, in-process Rust document engine that accepts DOCX/ZIP/XML, legacy DOC, Markdown, edit plans, images and fonts; compares, inspects, edits and resolves revisions; and produces DOCX, Markdown, PDF, PNG and reports. Supported execution paths are the native CLI, Rust API, Python native extension and facade, Python CLI, Python stdio MCP server, and Node/browser WASM bindings (README.md:13-17; src/lib.rs:96-165; jubarte-python/pyproject.toml:45-59; jubarte-wasm/Cargo.toml:18-35). Native CLI self-update and maintainer release publication are separate, privileged workflows. This model describes the live supplied checkout, observed HEAD 4e10eca69c42211651ca907f38b74b6d19e6928c, rather than inferring a revision from the scan output directory. Architecture mapping is not completed security-audit coverage.",
+    "assets": [
+      "Confidential document contents, comments, authorship, embedded media and metadata; inspection text, rendered documents and reports disclose selected document data to their caller (jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,194-218,245-255).",
+      "Integrity of source documents and exact edit targets. V1 plans can carry an optional source SHA-256; V2 plans require source.sha256 and refuse mismatches (src/edit.rs:2081-2089; src/edit/v2_apply.rs:84-93).",
+      "Host files accessible to the native or Python process; MCP grants a persistent directory capability for document input and generated output, whereas ordinary CLI paths use ambient local authority (src/publication.rs:146-205; jubarte-python/src/lib.rs:1244-1278).",
+      "Process memory, CPU, raster memory and availability while parsing, comparing and rendering untrusted documents. Admission limits differ by operation and do not establish comprehensive process resource isolation (src/admission.rs:63-99; src/convert/mod.rs:602-630; SECURITY.md:71-74).",
+      "Native executable installation integrity: the updater installs a platform-specific GitHub release binary after checksum verification and an optional compiled-key signature policy (src/update.rs:25-48,198-210,245-257).",
+      "Release publication authority and signing material: GitHub release write permission, optional ZIPSIGN_PRIVATE_KEY, local Cargo/npm registry credentials, optional NPM_OTP and UV_PUBLISH_TOKEN (.github/workflows/release.yml:230-263,278-307,356-369; scripts/release.sh:919-959,1063-1069)."
+    ],
+    "trustBoundaries": [
+      "Untrusted package bytes cross into the shared engine through admission and OPC parsing. Default agent inspection/editing limits are 64 MiB compressed, 64 MiB per part, 256 MiB total inflated, 10,000 entries and XML depth 256; comparison and rendering use 512 MiB compressed/per part and 2 GiB total inflated, with the same entry/depth defaults. Explicit InputLimitOverrides replace individual base fields and reject unknown keys (src/admission.rs:63-108,137-163; src/inspect.rs:606-615; src/convert/mod.rs:769-778; src/document_comparer.rs:4927).",
+      "ZIP metadata crosses a parser-consistency boundary before normal package processing. Admission checks defects explicitly; the shared normal opener rejects divergent headers, overlapping extents and special entry types. Reads remain in memory rather than extracting document entries to the host filesystem. The debug diagnostic opener intentionally bypasses those structural refusals to inspect rejected packages (src/admission.rs:439-470,516-554; src/opc/archive.rs:15-51).",
+      "Checked XML and permissive DOM parsing are distinct capabilities. Checked APIs apply well-formedness, tag and namespace policy; parse_xdocument deliberately does not enforce input policy, so direct library callers must validate first. Tag defaults include 1,024 attributes, 1,024-byte attribute names, 64 MiB attribute values and 128 MiB start tags; other namespace limits also exist (src/xmllinq/parse.rs:44-65,84-114).",
+      "Edit requests cross from caller intent into document mutation. V1 hashes are optional, V2 source hashes mandatory; exact target resolution and shared preparation are separate from filesystem publication. Source hash agreement is a consistency guard, not caller authentication (src/edit.rs:2081-2094; src/edit/v2_apply.rs:74-93; src/edit/prepared.rs:185-230).",
+      "MCP clients invoke document tools through stdio, not an evidenced network listener. --root defaults to startup cwd; the expanded resolved root is opened once as a native OutputRoot. Input paths receive an early containment diagnostic, while actual reads and writes use the held cap-std directory capability. Explicit tool overwrite flags authorize replacing existing outputs; tool annotations are hints rather than an independent authorization mechanism (jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199).",
+      "MCP output locations are root/out_dir/clean.docx, redline.docx, patch.diff, report.json and optional redline.pdf/redline-page-NN.png for editing; rendering uses root/out_dir/page-NN.png and optional render.pdf. OutputRoot validates portable relative paths, stages all files before committing, and commits atomically per file, not as one atomic set (jubarte-python/python/jubarte_redlines/mcp_server.py:161-218,229-255; src/publication.rs:100-143,168-199,228-245).",
+      "Native CLI filesystem publication is explicitly ambient: it opens and holds each selected parent directory and stages outputs. Python CLI and npm CLI have their own host filesystem adapters that read user paths and perform direct writes; those adapters must not inherit MCP confinement or native staged-publication guarantees by implication (src/publication.rs:203-225; jubarte-python/python/jubarte_redlines/__main__.py:73-89,101-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-78,106-110).",
+      "Native rendering has an independent ambient font-reading capability. Document font names select installed-font searches; JUBARTE_FONT_DIR overrides platform user font directories. macOS/Unix defaults derive HOME and XDG_DATA_HOME; Windows uses APPDATA for Jubarte fonts and WINDIR/SystemRoot plus LOCALAPPDATA for installed fonts. macOS cloud fonts derive HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/<family>; the direct family component is checked. Font bytes feed shaping and output generation (src/convert/font.rs:2225-2236,2241-2255,2281-2315,2633-2652,2831-2862).",
+      "Browser WASM accepts byte inputs and returns byte/text results; host filesystem publication is excluded from wasm32, while the Node CLI itself supplies ambient Node filesystem operations. WASM uses the same Rust engine with default features disabled and cli enabled, and its release profile aborts on panic (src/lib.rs:163-165; jubarte-wasm/Cargo.toml:18-35,64-69; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-78,106-110).",
+      "Self-update crosses from GitHub release assets into replacement of the running executable. The repository is fixed to jandira-tech/jubarte-redlines, sums asset to SHA256SUMS.txt, and binary archive member to jubarte-<version>-<platform>/jubarte[.exe]. It refuses noninteractive install without --yes or --check, checks the selected version, and verifies an extracted regular file. RELEASE_KEYS is currently empty and FIRST_SIGNED_RELEASE is None, so present builds consume checksum-only updates; Windows ZIP and Unix tar extraction are delegated to self_update (src/update.rs:25-48,91-108,120-125,198-210,240-285,299-320).",
+      "Maintainer publication is separate from runtime document handling. Tag pushes v* trigger release builds with read-only contents permission; only the final release job has contents:write. Optional signing keys are decoded under RUNNER_TEMP/zipsign.<random>/keyN with exit cleanup and passed to zipsign; release assets and SHA256SUMS.txt are uploaded using a job GITHUB_TOKEN supplied as GH_TOKEN. The local release script separately publishes to crates.io, npm and PyPI, with an explicit version confirmation unless --yes (.github/workflows/release.yml:15-25,51-55,230-307,317-321,356-369; scripts/release.sh:875-899,919-959,1063-1069)."
+    ],
+    "attackerCapabilities": [
+      "A document supplier can control package structure, XML, relationships, embedded media/fonts, document text, revision metadata, Markdown or legacy DOC bytes that a caller chooses to process. Such control does not grant host filesystem paths, trusted environment variables, operator credentials or release authority by itself.",
+      "A connected MCP client can request reads and supported document transformations within the server root and select output paths and overwrite flags there. The server intentionally grants that directory authority to its client; there is no evidenced per-tool principal separation or independent read-only client role (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,152-159,258-277,373-381).",
+      "An ordinary CLI user selects ambient input/output paths under their process permissions. Merely exercising those already-granted paths is not a privilege escalation; a meaningful failure would require document data or a lower-authority caller to gain additional unauthorized authority.",
+      "A hostile document can consume parser, comparison and rendering resources within effective input limits, including the materially larger comparison/render budgets. Shared-service impact requires a host deployment that accepts attacker inputs and shares finite process resources; no such network service or tenant deployment was supplied (src/admission.rs:63-99; SECURITY.md:71-74).",
+      "An attacker able to replace GitHub release archives and the adjacent checksum file could influence checksum-only update content; that requires release-asset control absent from a mere document supplier. Compiled release signature verification is not currently active (src/update.rs:44-48,245-285; docs/SELF_UPDATE.md:59-80).",
+      "Control of trusted release tags, repository code or maintainer registry credentials is a separate supply-chain actor capability, not something inferred from untrusted document content."
+    ],
+    "securityObjectives": [
+      "Reject malformed or ambiguous packages before normal processing, enforce effective compressed/inflated/XML budgets, and preserve safe in-memory package handling (src/admission.rs:439-554; src/opc/archive.rs:34-51).",
+      "Keep document relationships as document data rather than unintended host-file/network fetch authority. SECURITY.md states external relationships are not fetched; this architecture pass did not establish exhaustive caller coverage of every relationship consumer (SECURITY.md:71-74).",
+      "Bind guarded edits to exact source bytes, resolve all required targets before mutation is published, and keep optional V1 guards distinct from mandatory V2 guards (src/edit.rs:2081-2094; src/edit/v2_apply.rs:84-93).",
+      "Confine MCP document reads and generated outputs to the operator-granted root using actual capability-relative I/O, with explicit overwrite and reporting of partial commit/durability outcomes (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/publication.rs:83-143,146-199).",
+      "Prevent data-controlled output names or symlink replacement from expanding filesystem authority, while preserving the intentionally broader ambient authority of ordinary CLI adapters (src/publication.rs:146-225,228-245).",
+      "Verify updater checksums and the applicable signature policy before replacing the executable; preserve the fixed repository/platform/member selection and regular-file check (src/update.rs:198-210,245-285,299-320).",
+      "Keep signing and registry credentials limited to their intended publication consumers and bind published artifacts to the selected version/source through release gates and artifact checks (.github/workflows/release.yml:40-49,261-307; scripts/release.sh:870-899,1063-1069)."
+    ],
+    "assumptions": [
+      "Scope is the supplied live repository at /Users/arthrod/temp/T/jubarte-redlines, observed HEAD 4e10eca69c42211651ca907f38b74b6d19e6928c. No alternate revision was inspected. Source may change after this read-only pass.",
+      "The offline security-policy resolver returned root SECURITY.md; file inventory found no nested SECURITY.md. Policy statements are repository analysis data, not evidence that every stated guarantee holds.",
+      "No deployment infrastructure, shared HTTP service, tenant model, production authentication configuration, host mounts or external knowledge base was supplied. MCP is evidenced as stdio; remote reachability must not be invented.",
+      "MCP documentation says every path must lie under --root and build_server says tools only touch files under root, but native rendering independently discovers and reads host fonts outside that root. The supported control is confinement of explicit document/output paths, not process-wide filesystem isolation. This distinction is architecture evidence, not a demonstrated exploit (jubarte-python/python/jubarte_redlines/mcp_server.py:7-9,67-87,234-236; src/convert/font.rs:2281-2315,2633-2652).",
+      "Self-update documentation describes signature verification conditionally and explicitly documents checksum-only bootstrap. Current source has no compiled trusted keys or first signed version, so signing must not be described as active. Repository signing support and actual updater enforcement are separate facts (docs/SELF_UPDATE.md:32-35,59-80; src/update.rs:44-48,245-285).",
+      "docs/SELF_UPDATE.md:22-24 says GH_TOKEN/GITHUB_TOKEN can raise the GitHub API budget; src/update.rs:198-210 does not explicitly pass a token. Dependency-level environment consumption was not inspected, so effective token behavior remains unresolved rather than accepted or disproved.",
+      "SECURITY.md:89-95 describes an rdocx-opc 0.2 dependency requiring quick-xml 0.41; current Cargo.toml:102-105 instead declares oxml-opc 0.14.2, and Cargo.toml also declares quick-xml 0.42 plus a 0.41 compatibility dependency. The policy's dependency identity is stale; this discrepancy alone establishes no vulnerability.",
+      "Per-file atomic publication does not guarantee all-or-nothing multi-file filesystem commits. OutputRoot stages the complete set, but later commit or durability failures can report already committed files (src/publication.rs:100-143,168-174).",
+      "Process memory/CPU isolation is a host obligation explicitly recommended by SECURITY.md, not an engine-enforced sandbox. Runtime resource ceilings outside admission and raster checks remain deployment dependent.",
+      "Legacy DOC parsing is an additional OLE/compound-file input path, not a DOCX ZIP path. Its parser performs structural sector/chain checks, but this pass did not map a complete equivalent admission budget (src/legacy_doc.rs:180-181,657-740).",
+      "No application execution, external service contact, mutation or vulnerability-triggering input was used. Dependency implementations, generated WASM implementation parity, exhaustive parser coverage and actual remote account/registry configuration remain outside this focused architecture verification."
+    ]
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-allocation.table-grid-span",
+      "title": "Converting a DOCX with a large table span can exhaust the host process",
+      "summary": "A small DOCX can place a very large positive value in `w:gridSpan`, `w:gridBefore` or `w:gridAfter`. PDF/PNG/report layout turns that value into vector lengths without a column budget, causing disproportionate allocation or an abort before returning a conversion error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Untrusted document producers can deterministically exhaust or abort the embedding renderer. Likelihood is high for a caller that converts attacker-supplied documents; impact is confined to availability of that process, with no established remote deployment.",
+        "changeConditions": "Dedicated subprocess limits reduce impact; an exposed shared conversion service would increase operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static trace connects positive usize XML values to two unconditional allocation sites after admission; no semantic span cap exists on this path. No runtime reproduction was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource allocation from document metadata",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14216,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13617,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14639,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-entry",
+          "label": "Public conversion enters admitted layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 761,
+          "endLine": 775,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_pages<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,\n) -> Result<T, ConvertError> {\n    with_layout(docx, |fonts, pages, _| emit(fonts, pages))\n}\n\n/// [`with_pages`] that also hands `emit` the layout's page facts.\nfn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)",
+          "explanation": "`docx_to_pdf`, PNG and reports share `with_layout`; admission limits ZIP/XML structure, then layout parses the body."
+        },
+        {
+          "id": "span-input",
+          "label": "Unbounded cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14224,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)\n}",
+          "explanation": "`w:gridSpan/@w:val` is parsed as `usize` with only a lower bound; the untrusted value becomes `RawCell.colspan`."
+        },
+        {
+          "id": "skip-input",
+          "label": "Unbounded omitted grid columns",
+          "path": "src/convert/mod.rs",
+          "startLine": 14338,
+          "endLine": 14353,
+          "language": "rust",
+          "role": "user_input",
+          "code": "/// A row's `w:gridBefore`/`w:gridAfter` (`side` \"Before\"/\"After\"): the\n/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.\nfn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))\n}",
+          "explanation": "`gridBefore` and `gridAfter` likewise accept every positive `usize` and become synthetic cell spans."
+        },
+        {
+          "id": "span-allocation",
+          "label": "Span drives column allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13617,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);",
+          "explanation": "Row occupancy becomes the length of a `Vec<f32>` without a semantic column limit."
+        },
+        {
+          "id": "merge-allocation",
+          "label": "Span drives merge allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 14635,
+          "endLine": 14645,
+          "language": "rust",
+          "role": "sink",
+          "code": "                style_fill: false,\n            });\n            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;\n            }\n            col += span;\n        }",
+          "explanation": "The same span later sets the length of a vector of merge records, amplifying memory use."
+        }
+      ],
+      "rootCause": {
+        "summary": "The renderer parses attacker-authored table span attributes into `usize` and preserves them in raw cells, including synthetic cells for omitted columns. `table_block` sums the spans and allocates a column vector of that size; `resolve_table_merges` then allocates merge tracking to the same extent. XML byte, depth and attribute budgets do not restrict these numeric values. For example, a one-cell span of 1000000000 requests roughly 4 GB for columns alone despite requiring only ten digits in XML.",
+        "evidenceRefs": [
+          "render-entry",
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "merge-allocation"
+        ]
+      },
+      "remediation": "Apply a documented maximum table grid width to cell and omitted-column spans before raw-cell construction; use checked accumulation and reject over-budget occupancy before allocating or iterating. Enforce the same limit in merge bookkeeping.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission bounds compressed/inflated bytes, entry counts, XML attributes and depth.",
+          "SECURITY.md asks callers to apply CPU/memory process limits; those contain host impact but do not let the API return a bounded refusal."
+        ],
+        "evidenceRefs": [
+          "render-entry",
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "merge-allocation"
+        ],
+        "limitations": [
+          "No application code or vulnerability input was executed; no deployment exposure is asserted."
+        ],
+        "method": "static source trace",
+        "summary": "Validated public conversion -> admitted layout -> `cell_span`/`row_grid_skip` -> raw cell occupancy -> `Vec` expansion. `stretch_stale_spans` skips rows whose used count exceeds existing columns and does not clamp hostile spans. Admission does not inspect grid span semantics."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX XML span -> positive usize -> RawCell.colspan -> occupancy -> column and merge vectors",
+          "source": "attacker-authored table attributes",
+          "sink": "`cols = vec![each; occupancy]`, `cols.resize`, and `open.resize`",
+          "outcome": "memory exhaustion, panic or process abort",
+          "evidenceRefs": [
+            "render-entry",
+            "span-input",
+            "skip-input",
+            "span-allocation",
+            "merge-allocation"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of the CLI or embedding process; no confidentiality/integrity compromise established."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short decimal attribute directly controls allocation on an ordinary supported conversion path."
+        },
+        "reachability": {
+          "summary": "The public in-process renderer accepts document bytes and uses this table parser after admission, which checks structure rather than numeric table semantics.",
+          "attacker": "untrusted document producer",
+          "entrypoint": "convert::docx_to_pdf, docx_to_png, docx_render_report",
+          "outcome": "loss of availability of the rendering process",
+          "preconditions": [
+            "Victim processes the supplied DOCX through layout; attacker needs no host filesystem/configuration access."
+          ]
+        },
+        "summary": "Supply a valid small DOCX containing a table cell with `w:gridSpan w:val=\"1000000000\"`, then have the victim convert it to PDF/PNG or request page layout. The table model attempts multi-gigabyte allocation."
+      },
+      "remediationTests": [
+        "Convert a minimal admitted DOCX with a huge gridSpan and assert a typed resource refusal before allocating.",
+        "Cover huge gridBefore/gridAfter and multiple individually valid spans whose sum exceeds the grid budget."
+      ],
+      "preventiveControls": [
+        "Use shared semantic allocation budgets for document-controlled counts in every layout path."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0023-render-span-allocation",
+        "workerLabel": "discovery-0023"
+      }
+    },
+    {
+      "ruleId": "uncontrolled-recursion.drawing-dependencies",
+      "title": "Converting Markdown with cyclic drawing dependencies can abort the host",
+      "summary": "The `drawing:` image envelope accepts dependency indices but materializes them recursively without cycle detection or memoization. A tiny valid envelope in Markdown can make one dependency reference itself, causing unbounded recursion and allocations instead of a conversion error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document producer can reliably terminate or exhaust the in-process converter through ordinary Markdown input. Impact is process availability; no remote service or privilege escalation is assumed.",
+        "changeConditions": "A shared conversion service increases operational impact; a resource-limited disposable process contains it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent source validation confirms an in-range self-reference takes the recursive branch repeatedly; the default public Markdown conversion path reaches materialization. No runtime trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Missing cycle control in document dependency graph",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1956,
+          "endLine": 1983,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "role": "user_input"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4189,
+          "endLine": 4197,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "md-drawing-input",
+          "label": "Markdown accepts drawing envelopes",
+          "path": "src/markdown/write.rs",
+          "startLine": 4183,
+          "endLine": 4203,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    fn picture(&mut self) {\n        let Some((url, id, alt, loose)) = self.image.take() else {\n            return;\n        };\n        // A `drawing:` destination is a whole element and its parts,\n        // spliced back as it was; a payload that does not read is alt text.\n        if url.starts_with(\"drawing:\") {\n            match super::from_docx::drawing::decode(&url) {\n                Ok(drawing) => {\n                    self.document.drawings.push(drawing);\n                    let index = self.document.drawings.len() - 1;\n                    if self.box_names.insert(id.clone(), index).is_some() {\n                        self.box_duplicates.insert(id);\n                    }\n                    self.push(Content::Drawing(index));\n                }\n                Err(_) => self.plain(alt.trim()),\n            }\n            return;\n        }\n        // A `data:` destination names its bytes. A `<!-- imageN drawing:…",
+          "explanation": "A Markdown image destination beginning with drawing: is decoded and added as Content::Drawing without graph validation."
+        },
+        {
+          "id": "drawing-decode",
+          "label": "Decoder only deserializes JSON",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1409,
+          "language": "rust",
+          "role": "user_input",
+          "code": "pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))\n}",
+          "explanation": "Shallow attacker-controlled JSON becomes Drawing/Dep/PayRel objects, including integer dependency indices."
+        },
+        {
+          "id": "drawing-root",
+          "label": "Materializer follows the root index",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1881,
+          "endLine": 1904,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn materialize(\n    drawing: &Drawing,\n    package: &mut PartFs,\n    part: &str,\n    existing: &HashSet<String>,\n    used: &mut HashSet<String>,\n    next_doc_pr: &mut u32,\n) -> Option<String> {\n    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),\n            _ => return None,\n        };\n        let rid = relate(package, part, &kind, &target, external);\n        xml = xml.replace(&format!(\"\\\"{}\\\"\", rel.sym), &format!(\"\\\"{rid}\\\"\"));\n    }\n    renumber_doc_pr(&mut xml, next_doc_pr);\n    Some(xml)",
+          "explanation": "A root relationship part index selects dep_part if within deps length; cycles are not checked."
+        },
+        {
+          "id": "drawing-recursion",
+          "label": "Dependency traversal has no cycle detection",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1956,
+          "endLine": 1983,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn dep_part(\n    drawing: &Drawing,\n    index: usize,\n    package: &mut PartFs,\n    existing: &HashSet<String>,\n    used: &mut HashSet<String>,\n    next_doc_pr: &mut u32,\n) -> Option<String> {\n    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;\n                (\n                    rel.kind.clone(),\n                    relative_rel_target(&name, &inner_name),\n                    false,\n                )\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),\n            _ => return None,\n        };",
+          "explanation": "Every dependent relationship recursively calls dep_part, with no active/visited index set, depth limit or memo table."
+        },
+        {
+          "id": "drawing-capture-cache",
+          "label": "Capture permits graph cycles",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 591,
+          "endLine": 612,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    /// first use; `None` when the part is absent.\n    fn dep_for(&mut self, package: &mut Package<'_>, target: &str) -> Option<usize> {\n        if let Some(&index) = self.index.get(target) {\n            return Some(index);\n        }\n        if self.parts.len() >= MAX_DEPS {\n            self.failed = Some(format!(\"more than {MAX_DEPS} dependent parts\"));\n            return None;\n        }\n        let bytes = match package.read(target) {\n            Ok(Some(bytes)) if bytes.len() as u64 <= MAX_DEP_BYTES => bytes,\n            Ok(Some(_)) => {\n                self.failed = Some(format!(\"{target} exceeds {MAX_DEP_BYTES} bytes\"));\n                return None;\n            }\n            _ => return None,\n        };\n        let index = self.parts.len();\n        self.parts.push(Dep::default());\n        self.index.insert(target.to_string(), index);\n        let rels = package.rels(target).unwrap_or_default();\n        let mut pay_rels = Vec::new();",
+          "explanation": "DOCX capture memoizes a part before descending, so cycles can be encoded even by the trusted writer; capture limits do not protect materialization."
+        }
+      ],
+      "rootCause": {
+        "summary": "`picture` recognizes a caller-authored `drawing:` destination and `decode` base64-decodes it into serde graph structs. Package assembly invokes `materialize`, which follows a root `part` index into `deps`. `dep_part` reserves a fresh name and clones XML, then follows every dependent `part` index by calling itself before writing or memoizing the current part. A root pointing to dependency 0 whose own relationship points to 0 repeats indefinitely. Capture's 64-part limits are not validated by decode and would not rule out a one-node cycle anyway.",
+        "evidenceRefs": [
+          "md-drawing-input",
+          "drawing-decode",
+          "drawing-root",
+          "drawing-recursion",
+          "drawing-capture-cache"
+        ]
+      },
+      "remediation": "Validate drawing dependency graphs on decode and materialization. Use a visited-index map with reserved output names before recursion, reject unsupported cycles, and enforce depth, dependency count and cumulative byte budgets independently of capture.",
+      "validation": {
+        "counterEvidence": [
+          "DOCX capture limits parts, relationships and bytes and memoizes captured parts; the materializer neither reuses that memo nor validates graph cycles.",
+          "Caller process resource limits constrain availability impact but cannot turn stack overflow into a recoverable conversion error."
+        ],
+        "evidenceRefs": [
+          "md-drawing-input",
+          "drawing-decode",
+          "drawing-root",
+          "drawing-recursion",
+          "drawing-capture-cache"
+        ],
+        "limitations": [
+          "Static validation only; no malicious input or application code was executed."
+        ],
+        "method": "static source trace",
+        "summary": "Confirmed markdown_to_docx -> read/picture -> package::assemble/drawing -> materialize -> dep_part. Bounds checks prove indices exist but do not establish acyclicity. `used` is a name-collision set rather than a graph-visit set. serde recursion limits concern nested JSON, not integer graph cycles."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown drawing: URI -> base64/serde graph -> Content::Drawing -> package materialize -> repeated dep_part(0)",
+          "source": "attacker-authored Markdown image destination",
+          "sink": "recursive dependency traversal with per-call allocation",
+          "outcome": "stack overflow/process abort or memory exhaustion",
+          "evidenceRefs": [
+            "md-drawing-input",
+            "drawing-decode",
+            "drawing-root",
+            "drawing-recursion",
+            "drawing-capture-cache"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Terminates or exhausts the current process."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A small shallow JSON envelope can express the required integer cycle."
+        },
+        "reachability": {
+          "summary": "Public markdown::markdown_to_docx accepts the Markdown directly; CLI and bindings wrap this library boundary. No image-loader callback or filesystem authority is needed.",
+          "attacker": "untrusted Markdown document producer",
+          "entrypoint": "markdown::markdown_to_docx",
+          "outcome": "converter availability loss",
+          "preconditions": [
+            "A victim converts the supplied Markdown."
+          ]
+        },
+        "summary": "Have the victim convert Markdown containing a `drawing:` JSON envelope with a root dependency 0 and a dependency relationship back to 0. Default conversion reaches recursive materialization and cannot return normally."
+      },
+      "remediationTests": [
+        "Convert an inline drawing envelope with a self-cycle and assert a bounded typed refusal.",
+        "Cover a two-node cycle, deep acyclic chain, repeated shared dependency and over-budget graph."
+      ],
+      "preventiveControls": [
+        "Treat integer-indexed serialized graphs as untrusted graphs rather than assuming capture-produced invariants."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0023-drawing-dependency-cycle",
+        "workerLabel": "discovery-0023",
+        "discoveredBy": "baseline",
+        "originalCandidate": {
+          "originalEvidence": "Confirmed static DoS candidate: src/markdown/from_docx/drawing.rs dep_part at 1956-2007 recursively follows attacker JSON rel.part at 1973-1974 without visited/memo/depth guard; decode at 1397-1408 only base64+serde. A single drawing dep whose rel.part=0 loops forever, creating new names and cloning XML until stack/OOM. Reachability: Markdown write::picture 4189-4197 accepts payload; package::drawing 1703-1712 invokes materialize->dep_part (1893-1894). Capture side memoizes at 608-610, so cyclic DOCX part relationships are also preserved into payload.",
+          "provenance": "baseline"
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-99ed6c0f5d538e96",
+        "label": "DOCX table span layout allocations",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Renderer resource admission",
+        "notes": "Validated discovery-0023-render-span-allocation at src/convert/mod.rs:14211,14340,13600,14637. Original candidate evidence retained in finding provenance; package/XML limits do not constrain numeric occupancy.",
+        "candidateId": "discovery-0023-render-span-allocation"
+      },
+      {
+        "id": "surface-0fe42393429a54aa",
+        "label": "Markdown drawing dependency materialization",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Serialized graph resource controls",
+        "notes": "Validated discovery-0023-drawing-dependency-cycle at drawing.rs:1397,1881,1956 and write.rs:4189. Separate capture caps and name deduplication do not bound recursive graph materialization.",
+        "candidateId": "discovery-0023-drawing-dependency-cycle"
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0023-strict-root-inflate",
+        "candidateId": "discovery-0023-strict-root-inflate",
+        "reason": "Focused investigator lead pending source validation.",
+        "candidate": {
+          "originalEvidence": "Source review has two concrete DoS leads: public strict_translation::main_part_is_strict inflates without InputLimits and rescans a growing unterminated/huge root tag; unescape_xml_text repeatedly scans remaining suffix on invalid/literal '&', and PartFs::resolve_rel_target calls it on already decoded upstream relationship targets. Verifying reachable package callers and strongest counterevidence; no code execution or network.",
+          "provenance": "parser_controls"
+        }
+      },
+      {
+        "id": "discovery-0023-relationship-unescape",
+        "candidateId": "discovery-0023-relationship-unescape",
+        "reason": "Focused investigator lead pending source validation.",
+        "candidate": {
+          "originalEvidence": "unescape_xml_text repeatedly scans remaining suffix on invalid/literal '&', and PartFs::resolve_rel_target calls it on already decoded upstream relationship targets. Verifying reachable package callers and strongest counterevidence; no code execution or network.",
+          "provenance": "parser_controls"
+        }
+      },
+      {
+        "id": "discovery-0023-legacy-logical-expansion",
+        "candidateId": "discovery-0023-legacy-logical-expansion",
+        "reason": "Baseline amplification lead awaiting parent validation.",
+        "candidate": {
+          "originalEvidence": "read() calls main_text before other validation (legacy_doc.rs:180-193). main_text verifies contiguous logical CP ranges (1157-1175), but each Piece may reuse same physical fc and pushes a StoryChar per CP (1181-1221), with ccp_text directly read u32 (919), no output budget. A ~1 MiB WordDocument stream and ~4096 PCDs each referencing the same 1 MiB physical text can demand ~4 billion StoryChars from ~1.1 MiB input. Finite file-sector bounds do not limit this logical expansion.",
+          "provenance": "baseline",
+          "finalBaselineEvidence": {
+            "title": "Legacy DOC piece tables can expand reused physical text into billions of character records",
+            "cwe": "CWE-409",
+            "severity": "medium",
+            "confidence": "high",
+            "entrypoint": "legacy_doc::read, doc_to_docx, doc_to_markdown, run_convert_any",
+            "sourceToSink": "Fib::parse accepts ccp_text as u32; piece fc offsets are independent. main_text checks logical contiguous CP coverage but not physical reuse or cumulative output work, then pushes a StoryChar per CP.",
+            "example": "4096 contiguous pieces each 1,000,000 compressed characters long reuse the same physical fc; 4,096,000,000 logical chars fit u32 while physical text is ~1MB and PCD table ~49KB.",
+            "counterEvidence": [
+              "Physical sector/DIFAT chains bounded by input and duplicate FAT sectors rejected.",
+              "Physical character reads bounds checked; logical CP coverage must be increasing/contiguous.",
+              "Policy recommends caller process limits; no decoder output-work budget.",
+              "Static only; no exploit execution."
+            ],
+            "remediation": "Enforce maximum logical decoded character/output-work budget before allocating StoryChar; thread configurable legacy limits into public and CLI conversion."
+          }
+        }
+      },
+      {
+        "id": "discovery-0023-xml-parser-differential",
+        "candidateId": "discovery-0023-xml-parser-differential",
+        "reason": "Focused investigator reports admission/DOM grammar differential; awaiting parent validation.",
+        "candidate": {
+          "originalEvidence": "main XML `<w:document xmlns:w='…' a=x b=\"x><n><n>...(100000 times)...\"> </w:document>`. Admission TagPolicy::tolerant accepts unquoted a=x and sees all `<n>` inside quoted b, depth=1. DOM Parser::parse_element instead treats unquoted x as the opening quote, consumes through next x at b's start, then takes b's embedded `>` as root delimiter and recursively parses the hidden `<n>` sequence without depth checks. WmlDocument::from_bytes admission -> lazy main_document reaches it; inspect strict validation counterguards this malformed fixture.",
+          "provenance": "parser_controls"
+        }
+      }
+    ]
+  }
+}

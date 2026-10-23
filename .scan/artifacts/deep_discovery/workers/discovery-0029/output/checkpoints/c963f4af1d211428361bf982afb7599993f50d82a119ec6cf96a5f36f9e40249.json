@@ -1,0 +1,650 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Current source of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application code or tests executed.",
+    "validationMode": "offline static source audit"
+  },
+  "threatModel": {
+    "summary": "Jubarte is an in-process Rust DOCX comparison, editing, revision-resolution, validation, scrubbing and PDF/PNG rendering engine, exposed through the native CLI, PyO3 Python library/CLI, wasm-bindgen Node/browser APIs and an optional Python MCP server over stdio. Document bytes flow through package admission, OPC/XML processing and operation-specific logic into returned bytes, text or host-owned output files. Legacy DOC conversion is a separate OLE parser. The Rust library forbids unsafe code. The normal runtime is a caller-owned process, not a repository-provided multitenant web service. Separately privileged workflows publish releases and packages and run external Jules review/remediation actions. Evidence: README.md:13-41; src/lib.rs:86-165; src/legacy_doc.rs:13-50; jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; .github/workflows/release.yml:230-369; .github/workflows/jules-el-conejo-review.yml:254-324.",
+    "assets": [
+      "Confidential document text, revisions, comments, images, embedded package parts and generated DOCX/PDF/PNG/diff/report bytes. Text-returning MCP tools intentionally disclose selected document content to the connected host; exported binary outputs are stored under the granted root. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:131-150; jubarte-python/python/jubarte_redlines/mcp_server.py:185-218; jubarte-python/python/jubarte_redlines/mcp_server.py:234-255.",
+      "Integrity of input files, existing outputs, edit plans and source-to-edit correspondence. Legacy plans conditionally verify source_sha256; this is not unconditional authentication or authorization. Evidence: src/edit.rs:2081-2089; src/publication.rs:168-173.",
+      "Process memory, CPU and availability while processing hostile ZIP, XML, OLE, font, raster-image and layout inputs. Default package budgets are 64 MiB compressed/per-part, 256 MiB inflated, 10000 entries and depth 256; comparison defaults instead permit 512 MiB compressed/per-part and 2 GiB inflated. Evidence: src/admission.rs:39-100; src/legacy_doc.rs:5-11; jubarte-wasm/src/lib.rs:77-96.",
+      "Filesystem authority: native CLI ambient output paths; Python/Node host filesystem operations; MCP's separately granted, persistent directory capability; native Markdown image resource root; native renderer's installed/user font directories. These authorities are independently enforced and are not interchangeable. Evidence: src/publication.rs:146-225; src/bin/jubarte.rs:2851-2876; src/convert/font.rs:2633-2652; jubarte-python/python/jubarte_redlines/__main__.py:126-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111.",
+      "Installed executable integrity and publication authority. Current self-update trusts HTTPS release assets plus same-release SHA-256 checksums; its compiled release-key list is empty and first-signed-release threshold is None. Release signing secret, GitHub publication token, local registry credentials, Jules API key and Codecov token are distinct sensitive capabilities. Evidence: src/update.rs:25-48; src/update.rs:198-257; .github/workflows/release.yml:261-309; .github/workflows/release.yml:356-369; scripts/release.sh:918-919; scripts/release.sh:935-956; scripts/release.sh:1069; .github/workflows/jules-review.yml:28-50; .github/workflows/ci.yml:102-107."
+    ],
+    "trustBoundaries": [
+      "Untrusted DOCX bytes -> package admission -> OPC/XML engine: admission checks archive budgets, duplicate/case-folded names, allowed compression, encryption, structural ZIP defects, bounded inflated streams and XML policy. Normal archive opens reject zip_defects; debug intentionally uses the unchecked opener to inspect rejected packages. These are in-memory package names, not filesystem extraction destinations. Evidence: src/admission.rs:439-574; src/opc/archive.rs:15-51; docs/FILESYSTEM_PUBLICATION.md:9-12.",
+      "Unchecked public XML -> DOM: permissive parse_xdocument explicitly does not enforce input policy. Callers must first admit package/XML or use checked APIs. Checked XML policy rejects DTD/custom entities and applies depth/tag/attribute limits; no blanket safety claim extends to raw permissive APIs. Evidence: src/xmllinq/parse.rs:19-36; src/xmllinq/parse.rs:48-65; src/wml_document.rs:50-55.",
+      "Edit plan and document -> prepared result: schema and nonempty author checks, optional exact source SHA-256 guard, package restrictions and operation/anchor validation precede returned results. Preview and application are engine operations; publishing is separately host-owned. No user identity or human approval is established by an author string or source digest. Evidence: src/edit.rs:1740-1761; src/edit.rs:2074-2100; jubarte-python/python/jubarte_redlines/mcp_server.py:170-217.",
+      "MCP client arguments -> root-confined document I/O: operator chooses --root, default cwd; build_server resolves it and opens native _OutputRoot once. Python containment is an early diagnostic; actual reads and publication use capability-relative operations. MCP tool hints inform hosts but do not implement per-user authorization or write approval. All connected callers share the configured root authority; overwrite is a caller-supplied option. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-108; jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199; docs/adoption/mcp.md:39-41.",
+      "MCP edit/render -> root-relative outputs: docx_edit writes out_dir/clean.docx, redline.docx, patch.diff, report.json and optional redline.pdf/redline-page-NN.png; docx_render writes out_dir/page-NN.png and optional render.pdf. Publisher stages all members first but commits per file, so later commit failures can leave earlier committed members. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:185-218; jubarte-python/python/jubarte_redlines/mcp_server.py:234-255; src/publication.rs:115-130; src/publication.rs:168-173.",
+      "Native CLI -> ambient output paths: explicitly requested paths use publication::publish_paths, holding parent capabilities and staging bytes before commit. This intentionally does not impose MCP root confinement. Python and Node CLI wrappers own their I/O and use direct host writes; sharing the Rust parser does not share the native publisher. Evidence: src/bin/jubarte.rs:261-273; src/publication.rs:203-225; jubarte-python/python/jubarte_redlines/__main__.py:126-133; jubarte-python/python/jubarte_redlines/__main__.py:1002-1026; jubarte-wasm/cli/bin/jubarte-redlines.mjs:76-79; jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111.",
+      "Native Markdown image targets -> local resource files: explicit resource_path overrides the Markdown parent directory, with '.' for a bare filename. image_loader canonicalizes that root, rejects inappropriate decoded targets and reads through a held OutputRoot capability. Hosted callers must separately decide what input authority to grant. Evidence: src/bin/jubarte.rs:2840-2876; src/bin/jubarte.rs:2936-2943; docs/FILESYSTEM_PUBLICATION.md:78-81.",
+      "Native rendering -> host fonts: JUBARTE_FONT_DIR overrides platform defaults; otherwise macOS uses HOME/Library/Application Support/jubarte/fonts, Windows APPDATA/jubarte/fonts, and other platforms XDG_DATA_HOME/jubarte/fonts or HOME/.local/share/jubarte/fonts. macOS discovery also searches system/Word font paths and HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/<family>; family must be one normal path component. These reads use renderer/OS authority, not MCP document-root authority. Evidence: src/convert/font.rs:2194-2216; src/convert/font.rs:2225-2236; src/convert/font.rs:2633-2652.",
+      "Operator self-update -> GitHub release -> executable replacement: explicit command, platform selection, version decision and optional confirmation precede delegated installation; SHA256SUMS.txt is configured and the extracted binary must be a regular file. Current compiled keys require no signature. Windows selects a ZIP archive, other published targets use tar.gz; extraction/swap internals belong to self_update and were not independently inspected in this pass. Evidence: src/update.rs:44-48; src/update.rs:186-257; src/update.rs:299-321; docs/SELF_UPDATE.md:22-41.",
+      "Tag/release infrastructure -> public executable assets: v* tag push triggers the release workflow, which checks tag/manifests, builds with read permissions, and grants contents:write only to the release job. ZIPSIGN_PRIVATE_KEY is scoped to the signing step, decoded into RUNNER_TEMP/zipsign.XXXXXX/keyN and cleaned on exit; missing secret fails only when committed public keys exist. The GitHub token separately authorizes gh release create for github.repository with dist/* and notes.md. Evidence: .github/workflows/release.yml:15-55; .github/workflows/release.yml:230-309; .github/workflows/release.yml:356-369.",
+      "Local release operator -> registry publication: release.sh obtains typed tag confirmation unless YES is set, pushes the release tag, separately publishes crates.io and two npm packages, and sends dist/pypi/* to PyPI using UV_PUBLISH_TOKEN. These registry/account capabilities are distinct from GitHub release signing and publication. Evidence: scripts/release.sh:875-901; scripts/release.sh:918-919; scripts/release.sh:935-956; scripts/release.sh:1042-1069.",
+      "PR/repository content -> CI runner and external review: CI/docs execute repository-controlled build/generation code on self-hosted runners with contents:read and nonpersisted checkout credentials; runner filesystem/network isolation is not established by token permissions. Jules review separately receives JULES_API_KEY and a token with PR/check write capability; same-repository/non-Dependabot guards apply. Companion remediation additionally gates session startup to TRUSTED_USERS and configured events, but delegates AUTO_CREATE_PR with require_plan_approval:false to a pinned external action whose implementation is absent here. Evidence: .github/workflows/ci.yml:13-48; .github/workflows/docs.yml:76-99; .github/workflows/jules-review.yml:19-50; .github/workflows/jules-el-conejo-review.yml:35-52; .github/workflows/jules-el-conejo-review.yml:254-324."
+    ],
+    "attackerCapabilities": [
+      "A document supplier can control ZIP/XML/OPC, legacy OLE, embedded image/font and Markdown data processed by a caller. This alone does not grant process execution, ambient filesystem paths, trusted environment variables or publication credentials.",
+      "An MCP caller can supply tool arguments and edit plans and request reads/writes within the configured root, including overwrite=true. Additional host approval is a host policy; MCP annotations are not enforcement. Authority outside the granted document root must be assessed separately from root-confined document operations.",
+      "A local CLI caller already has the invoking account's ambient file authority. Demonstrating arbitrary paths supplied by that caller is not itself a privilege gain; a meaningful violation needs an untrusted document-driven path or another actor with less authority.",
+      "A PR author controls proposed source/build inputs. Same-repository PRs and trusted-author remediation have materially different gates from fork PRs. Access to self-hosted runner resources depends on runner configuration and workflow admission that are not present in this source.",
+      "An attacker controlling only unsigned release assets and their accompanying checksums is outside checksum-corruption protection; changing those assets is not assumed without a separate GitHub/release compromise prerequisite. Current shipped updater signing is disabled by explicit empty compiled keys.",
+      "External-action internals, remote Jules/GitHub authorization, registry account protection, host filesystem ACLs, process resource limits and browser embedding policy are not established by this architecture review."
+    ],
+    "securityObjectives": [
+      "Reject malformed or over-budget untrusted packages before expensive engine processing, while retaining checked XML policy at raw-input boundaries. Comparison's larger limits and any caller overrides must remain explicit. Evidence: src/admission.rs:63-108; src/admission.rs:439-574.",
+      "Preserve source/edit correspondence when a source digest is supplied and refuse invalid plans before producing publishable edits. Keep author attribution separate from authentication. Evidence: src/edit.rs:1740-1761; src/edit.rs:2074-2100.",
+      "Confine MCP document reads, parent creation and publication to the held root capability; reject unsafe export names and output symlinks; preserve no-overwrite behavior under publication races. Evidence: src/publication.rs:146-199; src/publication.rs:228-273; docs/FILESYSTEM_PUBLICATION.md:60-69.",
+      "Keep output durability and atomicity claims aligned with implementation: native per-file staging/commit differs from multi-file transactions, directory bundles and direct-write wrapper paths; Windows directory synchronization has a documented limitation. Evidence: src/publication.rs:115-130; src/publication.rs:168-173; docs/FILESYSTEM_PUBLICATION.md:28-58; jubarte-python/python/jubarte_redlines/__main__.py:126-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111.",
+      "Do not turn document relationships or Markdown resource targets into unrestricted host/network access. Explicit resource roots and caller-provided loaders are capabilities, not document authority. Evidence: src/bin/jubarte.rs:2851-2876; src/bin/jubarte.rs:2936-2943; src/document_comparer.rs:100-107.",
+      "Protect executable/package publication credentials, bind released artifacts to selected versions and targets, and describe current checksum-only updater trust accurately. Evidence: src/update.rs:44-48; src/update.rs:198-257; .github/workflows/release.yml:41-49; .github/workflows/release.yml:261-309; scripts/release.sh:870-899.",
+      "Keep review/report permissions, remediation session authority and public package publication distinct; do not infer enforcement from review prompts or MCP tool hints. Evidence: .github/workflows/jules-review.yml:28-50; .github/workflows/jules-el-conejo-review.yml:254-324."
+    ],
+    "assumptions": [
+      "Authorized scope is the repository current state at /Users/arthrod/temp/T/jubarte-redlines, scope '.'; userContext is null; no supplied threat model or authoritative knowledge base was provided. This independent architecture mapping is not completed audit coverage or a set of validated findings.",
+      "The product is primarily an embedded engine/local tool. No production HTTP service, tenant model, hosted authentication scheme, container mount topology or deployment-specific document audience was supplied.",
+      "Resource budgets constrain admitted data, not total process CPU/memory. Comparison defaults permit 2 GiB inflated data; WASM source explicitly tells browser hosts to lower them. Evidence: src/admission.rs:39-100; jubarte-wasm/src/lib.rs:77-96.",
+      "Documentation/control disagreement: docs/FILESYSTEM_PUBLICATION.md:9-24 describes 'The CLI' as using staged publication with no direct-write fallback; that matches native src/bin/jubarte.rs:261-273. Python jubarte-python/python/jubarte_redlines/__main__.py:126-133 and Node CLI:106-111 use direct writes. Treat the guarantee as native-specific unless documentation or wrapper implementations are reconciled; no hostile concurrent-writer deployment or exploit is established.",
+      "Documentation/control scope disagreement: MCP build_server describes tools as only touching files under root, and docs/adoption/mcp.md:61-75 describes root checks/package validation. Those claims hold for the mapped document read/publication capability, but native rendering separately discovers host fonts outside that root. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-87; src/convert/font.rs:2194-2216; src/convert/font.rs:2633-2652. Font discovery is a separate authority, not evidence of arbitrary document-root escape.",
+      "Staged release-signing documentation and source agree that current empty RELEASE_KEYS and None threshold mean checksum-only updates. Do not report optional signature support as currently enforced authenticity. Evidence: docs/SELF_UPDATE.md:59-82; src/update.rs:44-48.",
+      "SECURITY.md describes rdocx-opc 0.2 in its dependency narrative, while the current manifest uses oxml-opc 0.14.2 and both quick-xml 0.42 and an explicit 0.41 alias. This is documentation drift requiring dependency-specific review, not evidence that the old named vulnerability is present. Evidence: SECURITY.md:92-100; Cargo.toml:101-118.",
+      "External action and dependency implementations were not available within the inspected repository paths; self_update extraction/swap, cap-std confinement internals and pinned Jules actions remain supporting-control review gaps. Source assertions and configuration were mapped, not independently certified.",
+      "Self-hosted CI runner lifecycle, isolation, allowed PR actors, secret availability, host data and cache permissions were not supplied. contents:read and persist-credentials:false restrict GitHub token handling, not all resources reachable by executed build code. Evidence: .github/workflows/ci.yml:13-48; .github/workflows/docs.yml:76-99.",
+      "Repository-adjacent desktop/site and benchmark services are separate repositories. This model does not infer their deployment, tenant isolation or publication controls from references in release scripts. The inproc compare worker is explicitly benchmark tooling. Evidence: .github/workflows/ci.yml:69-70; jubarte-rust-inproc/src/main.rs:5-20."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current supplied repository source."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.legacy-doc-piece-expansion",
+      "title": "Converting a small legacy DOC can exhaust memory through reused text pieces",
+      "summary": "An attacker-supplied DOC can reuse one physical text range across thousands of contiguous logical pieces. `legacy_doc::read` decodes every declared character into an unbounded vector, allowing megabyte-sized input to request billions of characters and exhaust the converting process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Availability impact is limited to the converting process. Processing attacker-controlled documents is supported and the amplification requires no privileged configuration; shared-service exposure is not assumed. SECURITY.md recommends external memory/CPU isolation.",
+        "changeConditions": "A decoded-output budget would remove this path; shared service exposure without worker isolation would increase impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static trace confirms attacker-controlled counts and reusable physical offsets reach unbounded allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded logical text expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1176,
+          "endLine": 1187,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1110
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3129,
+          "endLine": 3131
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "legacy-entry",
+          "label": "legacy-entry",
+          "path": "src/legacy_doc.rs",
+          "startLine": 235,
+          "endLine": 237,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {\n    document_to_docx(&read(bytes)?)\n}",
+          "explanation": "Caller-controlled legacy bytes enter read before DOCX generation."
+        },
+        {
+          "id": "legacy-read",
+          "label": "legacy-read",
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {\n    let file = CompoundFile::open(bytes)?;\n    let word = file.stream(\"WordDocument\").ok_or_else(|| {\n        LegacyDocError::new(\n            \"no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password\",\n        )\n    })?;\n    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;",
+          "explanation": "read forwards document FIB length and parsed pieces to main_text without a decoded-text budget."
+        },
+        {
+          "id": "legacy-count",
+          "label": "legacy-count",
+          "path": "src/legacy_doc.rs",
+          "startLine": 912,
+          "endLine": 919,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        let csw = usize::from(u16_at(word, 32).ok_or_else(bad)?);\n        let cslw_at = csw\n            .checked_mul(2)\n            .and_then(|n| n.checked_add(34))\n            .ok_or_else(bad)?;\n        let cslw = usize::from(u16_at(word, cslw_at).ok_or_else(bad)?);\n        let lw = cslw_at.checked_add(2).ok_or_else(bad)?;\n        let ccp_text = u32_at(word, lw.checked_add(12).ok_or_else(bad)?).ok_or_else(bad)?;",
+          "explanation": "ccp_text is read directly from the FIB."
+        },
+        {
+          "id": "legacy-pieces",
+          "label": "legacy-pieces",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1110,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    for i in 0..count {\n        let cp_at = i.checked_mul(4).ok_or_else(bad)?;\n        let cp_start = u32_at(plc, cp_at).ok_or_else(bad)?;\n        let cp_end = u32_at(plc, cp_at.checked_add(4).ok_or_else(bad)?).ok_or_else(bad)?;\n        let pcd = i\n            .checked_mul(8)\n            .and_then(|n| n.checked_add(pcd_base))\n            .ok_or_else(bad)?;\n        let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;\n        let compressed = raw & 0x4000_0000 != 0;\n        let fc = raw & 0x3FFF_FFFF;\n        let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;\n        let modifier = piece_modifier(prm, &prcs)?;\n        out.push(Piece {\n            cp_start,\n            cp_end,\n            fc: if compressed { fc / 2 } else { fc },\n            compressed,\n            modifier,\n        });",
+          "explanation": "Every piece independently retains physical fc, including reused ranges."
+        },
+        {
+          "id": "legacy-control",
+          "label": "legacy-control",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1154,
+          "endLine": 1176,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    if pieces.iter().any(|piece| piece.cp_end < piece.cp_start) {\n        return Err(LegacyDocError::new(\"the piece table's CPs are decreasing\"));\n    }\n    let mut covered = 0u32;\n    for piece in pieces {\n        if covered >= ccp_text {\n            break;\n        }\n        // An empty piece (fast-saved files carry them) covers nothing.\n        if piece.cp_end == piece.cp_start {\n            continue;\n        }\n        if piece.cp_start != covered {\n            break;\n        }\n        covered = piece.cp_end;\n    }\n    if covered < ccp_text {\n        return Err(LegacyDocError::new(\n            \"the piece table does not cover the main story\",\n        ));\n    }\n    let mut out = Vec::new();",
+          "explanation": "Contiguous CP coverage does not cap aggregate decoded output."
+        },
+        {
+          "id": "legacy-loop",
+          "label": "legacy-loop",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1204,
+          "language": "rust",
+          "role": "sink",
+          "code": "    for piece in pieces {\n        if piece.cp_start >= ccp_text {\n            break;\n        }\n        let end = piece.cp_end.min(ccp_text);\n        let width: u32 = if piece.compressed { 1 } else { 2 };\n        for cp in piece.cp_start..end {\n            let fc = cp\n                .checked_sub(piece.cp_start)\n                .and_then(|n| n.checked_mul(width))\n                .and_then(|n| n.checked_add(piece.fc))\n                .ok_or_else(past)?;\n            let offset = index(fc).ok_or_else(past)?;\n            let here = StoryChar {\n                ch: '\\u{FFFD}',\n                cp,\n                fc,\n                modifier: piece.modifier,\n            };\n            let ch = if piece.compressed {\n                out.extend(pending_high.take().map(|(_, lone)| lone));\n                cp1252(*word.get(offset).ok_or_else(past)?)\n            } else {\n                let unit = u16_at(word, offset).ok_or_else(past)?;",
+          "explanation": "Every logical character reads within each piece physical range; reuse passes bounds checks."
+        },
+        {
+          "id": "legacy-push",
+          "label": "legacy-push",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1219,
+          "endLine": 1225,
+          "language": "rust",
+          "role": "outcome",
+          "code": "                }\n            };\n            out.push(StoryChar { ch, ..here });\n        }\n    }\n    out.extend(pending_high.map(|(_, lone)| lone));\n    Ok(out)",
+          "explanation": "Every decoded character grows the StoryChar vector."
+        },
+        {
+          "id": "legacy-cli",
+          "label": "legacy-cli",
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3144,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let raw =\n        std::fs::read(job.file).map_err(|e| format!(\"reading {}: {e}\", job.file.display()))?;\n    // A Word 97-2003 `.doc` is read into a `.docx` first; everything after\n    // sees that package. An encrypted document is still refused.\n    let legacy = jubarte::legacy_doc::is_compound_file(&raw);\n    let bytes = if legacy {\n        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!(\"convert failed: {e}\"))?\n    } else {\n        jubarte::admission::sniff(&raw)\n            .map_err(|refused| format!(\"{} is {}\", job.file.display(), refused.message))?;\n        raw\n    };\n    let from = if legacy {\n        Format::Docx\n    } else {\n        Format::of_input(markdown.from, job.file, &bytes)\n    };\n    if from == Format::Docx && !legacy {\n        admit_word(job.file, &bytes)?;\n    }",
+          "explanation": "CLI converts legacy bytes before DOCX admission."
+        }
+      ],
+      "rootCause": {
+        "summary": "`doc_to_docx` calls `read`, which reads `ccp_text` and physical piece offsets from untrusted streams. `main_text` checks contiguous increasing CP coverage and physical byte access, but permits repeated physical ranges and never bounds total decoded characters before appending `StoryChar` values.",
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-read",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-control",
+          "legacy-loop",
+          "legacy-push",
+          "legacy-cli"
+        ]
+      },
+      "remediation": "Enforce a configurable aggregate decoded-character/byte budget before main_text iterates and return a typed LEGACY_DOC refusal on excess; preserve legitimate overlapping physical ranges within budget.",
+      "validation": {
+        "counterEvidence": [
+          "OLE chains are bounded by file sectors (src/legacy_doc.rs:681-704,765-803); this limits physical streams, not logical piece expansion.",
+          "Decreasing CPs, gaps and out-of-range bytes are rejected (1154-1204), but none rejects repeated physical fc values."
+        ],
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-read",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-control",
+          "legacy-loop",
+          "legacy-push",
+          "legacy-cli"
+        ],
+        "limitations": [
+          "Static validation only; no malicious input or app execution."
+        ],
+        "method": "Independent parent static source trace",
+        "summary": "Confirmed direct public/CLI reachability and lack of aggregate decoded-text budget. Two thousand contiguous million-character pieces can reuse the same million physical bytes while requesting two billion StoryChar entries; all logical CPs fit u32 and all physical reads remain in bounds."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOC FIB and Clx -> pieces -> main_text per-CP loop -> Vec<StoryChar>::push",
+          "source": "Untrusted DOC bytes",
+          "sink": "Decoded-story vector",
+          "outcome": "Memory/CPU exhaustion and possible process termination"
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Converting process availability."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Document-controlled lengths directly drive unbounded allocation."
+        },
+        "reachability": {
+          "summary": "Document suppliers can trigger this when users or applications call public legacy conversion or CLI convert on their DOC; no operator privileges or remote deployment are assumed.",
+          "attacker": "Document supplier",
+          "entrypoint": "legacy_doc::read/doc_to_docx/doc_to_markdown and CLI convert",
+          "preconditions": [
+            "Victim processes attacker-controlled legacy DOC."
+          ]
+        },
+        "summary": "Supply a readable legacy DOC with a large FIB story length and repeated physical text ranges under contiguous increasing CPs, then request conversion."
+      },
+      "remediationTests": [
+        "Construct a small repeated-range piece table and assert refusal before large allocation.",
+        "Accept legitimate reused ranges when decoded length remains below budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0029-legacy-piece-expansion",
+        "workerLabel": "discovery-0029",
+        "discoveredBy": "baseline",
+        "originalCandidates": [
+          {
+            "title": "Legacy DOC piece-table expansion has no decoded-character budget",
+            "originalEvidence": "Baseline candidate: src/legacy_doc.rs read() 180-197 calls main_text before any resource admission; pieces() accepts repeated physical fc ranges with contiguous increasing CPs (1088-1105), and main_text loops every declared CP and pushes StoryChar (1187-1219). Thousands of pieces can each reference the same ~1MiB WordDocument bytes, yielding billions of characters from ~1MiB input, exhausting host memory. CLI convert invokes doc_to_docx directly at src/bin/jubarte.rs:3129-3131 before DOCX admission.",
+            "producer": "baseline",
+            "validationStatus": "pending baseline control review and independent parent validation"
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "title": "Legacy DOC piece-table expansion has no decoded-character budget",
+          "originalEvidence": "Baseline candidate: src/legacy_doc.rs read() 180-197 calls main_text before any resource admission; pieces() accepts repeated physical fc ranges with contiguous increasing CPs (1088-1105), and main_text loops every declared CP and pushes StoryChar (1187-1219). Thousands of pieces can each reference the same ~1MiB WordDocument bytes, yielding billions of characters from ~1MiB input, exhausting host memory. CLI convert invokes doc_to_docx directly at src/bin/jubarte.rs:3129-3131 before DOCX admission.",
+          "producer": "baseline",
+          "validationStatus": "pending baseline control review and independent parent validation"
+        }
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.html-altchunk-columns",
+      "title": "Unbounded HTML colspan expands a tiny altChunk into gigabytes of generated XML",
+      "summary": "An internal HTML chunk containing <table><tr><td colspan='1000000000'>x</td></tr></table> causes one billion generated gridCol elements, approximately 20 GB of XML, from a tiny input. This can exhaust memory and terminate the conversion process or embedding host. No remote service exposure is assumed.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A tiny document attribute deterministically drives multi-gigabyte allocation in supported rendering APIs. Impact is converting-process availability, with no remote service assumed. External process quotas recommended by SECURITY.md can contain impact.",
+        "changeConditions": "Enforced logical-column and generated-output budgets remove this path; an exposed shared renderer without isolated workers increases impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent source trace independently verifies the attribute parser, generated-column loop, and placement after admission. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded generated XML expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "html-entry",
+          "label": "html-entry",
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 438,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn docx_to_pdf(docx: &[u8]) -> Result<Vec<u8>, ConvertError> {\n    docx_to_pdf_with(docx, PdfOptions::default())\n}\n\n/// Render a DOCX package to PDF, choosing how streams are written and\n/// how marks are painted.\n///\n/// # Errors\n///\n/// - [`ConvertError::OpenPackage`] when `docx` is not a readable OPC\n///   package;\n/// - [`ConvertError::MissingDocument`] when the package has no main\n///   document part;\n/// - [`ConvertError::Emit`] when the PDF object assembly fails.\npub fn docx_to_pdf_with(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {\n    Ok(docx_to_pdf_report(docx, options)?.pdf)\n}",
+          "explanation": "Public PDF conversion accepts caller-controlled DOCX bytes."
+        },
+        {
+          "id": "html-layout",
+          "label": "html-layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 759,
+          "endLine": 765,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// The shared layout pipeline: open, resolve fonts, lay out, then hand the\n/// pages to `emit`.\nfn with_pages<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,\n) -> Result<T, ConvertError> {\n    with_layout(docx, |fonts, pages, _| emit(fonts, pages))",
+          "explanation": "PDF with_pages enters the common with_layout pipeline."
+        },
+        {
+          "id": "html-expansion",
+          "label": "html-expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admission checks original bytes before relationship-targeted HTML expansion; generated XML is parsed afterward."
+        },
+        {
+          "id": "html-chunk",
+          "label": "html-chunk",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Relationship bytes are decoded to HTML then passed to html_to_wml."
+        },
+        {
+          "id": "html-span",
+          "label": "html-span",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "user_input",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "colspan becomes any positive usize with no upper bound."
+        },
+        {
+          "id": "html-columns",
+          "label": "html-columns",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");",
+          "explanation": "Sum of spans controls an unbounded generated gridCol loop before DOM construction."
+        }
+      ],
+      "rootCause": {
+        "summary": "The public renderer admits the original ZIP, then `altchunk::expand` loads relationship bytes, converts HTML/MHT, and calls `html_to_wml`. `Builder::start` accepts unrestricted positive `usize` spans. `end_table` sums them and serializes one `gridCol` per logical column into a growing string. Original archive and XML budgets therefore do not bound this generated representation.",
+        "evidenceRefs": [
+          "html-entry",
+          "html-layout",
+          "html-expansion",
+          "html-chunk",
+          "html-span",
+          "html-columns"
+        ]
+      },
+      "remediation": "Apply a documented maximum colspan and total logical table-column count, use checked addition, and enforce a shared generated-output budget during HTML conversion and repeated altChunk expansion. Refuse over-budget conversion before allocating the expanded XML.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission restricts compressed and inflated source bytes and XML depth.",
+          "HTML text and font names are XML-escaped, and scripts are skipped.",
+          "SECURITY.md explicitly requires caller process memory/CPU limits; these can contain the blast radius but do not bound or reject this expansion.",
+          "This conclusion is from source inspection; no application code or reproduction was executed."
+        ],
+        "evidenceRefs": [
+          "html-entry",
+          "html-layout",
+          "html-expansion",
+          "html-chunk",
+          "html-span",
+          "html-columns"
+        ],
+        "limitations": [
+          "No crafted package or application code executed."
+        ],
+        "method": "Independent parent static source trace",
+        "summary": "Confirmed a one-cell table with colspan=1000000000 selects a billion-iteration serialization loop, even though the source table is only dozens of bytes. The check occurs after source admission and before any generated XML parse. The value fits both 32-bit and 64-bit usize."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX relationship -> altchunk::expand -> HTML colspan -> cell.span -> sum of spans -> gridCol serialization",
+          "source": "Document-controlled HTML numeric attribute",
+          "sink": "Unbounded generated WML String",
+          "outcome": "Memory exhaustion or process termination"
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Converting process availability."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A small input directly controls the number of generated XML elements."
+        },
+        "reachability": {
+          "summary": "Attacker controls a document submitted to a public conversion API or CLI user. No privileged configuration, external relationship or live deployment is required.",
+          "attacker": "A caller supplying a crafted DOCX to the public PDF, PNG, or render-report API.",
+          "entrypoint": "convert::docx_to_pdf/docx_to_png/render/docx_render_report"
+        },
+        "summary": "Supply a DOCX with an internal HTML altChunk containing an enormous numeric colspan, then request PDF/PNG rendering or a layout report."
+      },
+      "remediationTests": [
+        "Assert oversized colspan and excessive aggregate table columns return a typed error before generating the grid.",
+        "Test repeated references to the same chunk against an aggregate generated-output budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0029-html-colspan",
+        "workerLabel": "discovery-0029",
+        "discoveredBy": "conversion",
+        "originalCandidates": [
+          {
+            "title": "Unbounded HTML colspan expands a tiny altChunk into gigabytes of generated XML",
+            "cwe": "CWE-400",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "A caller supplying a crafted DOCX to the public PDF, PNG, or render-report API.",
+            "violated_security_invariant": "A small admitted package must not control an effectively unbounded generated-document allocation through a numeric HTML attribute.",
+            "source_to_sink": "Public rendering reaches with_layout, which admits the package and then expands internal HTML/MHT altChunk relationships. Builder::start accepts colspan as any positive usize. Builder::end_table sums those spans and writes one gridCol element per column into an unbounded String before the generated XML is parsed.",
+            "concrete_impact": "An internal HTML chunk containing <table><tr><td colspan='1000000000'>x</td></tr></table> causes one billion generated gridCol elements, approximately 20 GB of XML, from a tiny input. This can exhaust memory and terminate the conversion process or embedding host. No remote service exposure is assumed.",
+            "locations": [
+              "src/convert/mod.rs:773-800",
+              "src/convert/altchunk.rs:34-39",
+              "src/convert/altchunk.rs:469-490",
+              "src/convert/altchunk.rs:558-566"
+            ],
+            "supporting_source_evidence": [
+              "colspan is parsed with parse::<usize>(), unwrap_or(1), and max(1), with no upper bound.",
+              "The generated column count is the maximum sum of cell spans.",
+              "for _ in 0..cols writes <w:gridCol w:w=\"{col_w}\"/> into String s.",
+              "Admission bounds original archive bytes; conversion performs this expansion afterward."
+            ],
+            "counterevidence": [
+              "Package admission restricts compressed and inflated source bytes and XML depth.",
+              "HTML text and font names are XML-escaped, and scripts are skipped.",
+              "SECURITY.md explicitly requires caller process memory/CPU limits; these can contain the blast radius but do not bound or reject this expansion.",
+              "This conclusion is from source inspection; no application code or reproduction was executed."
+            ],
+            "recommended_remediation": "Apply a documented maximum colspan and total logical table-column count, use checked addition, and enforce a shared generated-output budget during HTML conversion and repeated altChunk expansion. Refuse over-budget conversion before allocating the expanded XML.",
+            "originalEarlyCandidate": {
+              "title": "HTML colspan expands without output budget",
+              "originalEvidence": "Confirmed source-backed candidate: src/convert/altchunk.rs accepts arbitrary usize HTML colspan (around 567-572), sums spans and serializes one <w:gridCol> per logical column (481-505). A tiny internal HTML altChunk with colspan=1000000000 forces ~20 GB generated XML before DOM parsing. Public with_layout admits package then expands at mod.rs:773-800, no output budget.",
+              "producer": "conversion"
+            }
+          },
+          {
+            "title": "HTML colspan expands without output budget",
+            "originalEvidence": "Confirmed source-backed candidate: src/convert/altchunk.rs accepts arbitrary usize HTML colspan (around 567-572), sums spans and serializes one <w:gridCol> per logical column (481-505). A tiny internal HTML altChunk with colspan=1000000000 forces ~20 GB generated XML before DOM parsing. Public with_layout admits package then expands at mod.rs:773-800, no output budget.",
+            "producer": "conversion"
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "title": "Unbounded HTML colspan expands a tiny altChunk into gigabytes of generated XML",
+          "cwe": "CWE-400",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A caller supplying a crafted DOCX to the public PDF, PNG, or render-report API.",
+          "violated_security_invariant": "A small admitted package must not control an effectively unbounded generated-document allocation through a numeric HTML attribute.",
+          "source_to_sink": "Public rendering reaches with_layout, which admits the package and then expands internal HTML/MHT altChunk relationships. Builder::start accepts colspan as any positive usize. Builder::end_table sums those spans and writes one gridCol element per column into an unbounded String before the generated XML is parsed.",
+          "concrete_impact": "An internal HTML chunk containing <table><tr><td colspan='1000000000'>x</td></tr></table> causes one billion generated gridCol elements, approximately 20 GB of XML, from a tiny input. This can exhaust memory and terminate the conversion process or embedding host. No remote service exposure is assumed.",
+          "locations": [
+            "src/convert/mod.rs:773-800",
+            "src/convert/altchunk.rs:34-39",
+            "src/convert/altchunk.rs:469-490",
+            "src/convert/altchunk.rs:558-566"
+          ],
+          "supporting_source_evidence": [
+            "colspan is parsed with parse::<usize>(), unwrap_or(1), and max(1), with no upper bound.",
+            "The generated column count is the maximum sum of cell spans.",
+            "for _ in 0..cols writes <w:gridCol w:w=\"{col_w}\"/> into String s.",
+            "Admission bounds original archive bytes; conversion performs this expansion afterward."
+          ],
+          "counterevidence": [
+            "Package admission restricts compressed and inflated source bytes and XML depth.",
+            "HTML text and font names are XML-escaped, and scripts are skipped.",
+            "SECURITY.md explicitly requires caller process memory/CPU limits; these can contain the blast radius but do not bound or reject this expansion.",
+            "This conclusion is from source inspection; no application code or reproduction was executed."
+          ],
+          "recommended_remediation": "Apply a documented maximum colspan and total logical table-column count, use checked addition, and enforce a shared generated-output budget during HTML conversion and repeated altChunk expansion. Refuse over-budget conversion before allocating the expanded XML.",
+          "originalEarlyCandidate": {
+            "title": "HTML colspan expands without output budget",
+            "originalEvidence": "Confirmed source-backed candidate: src/convert/altchunk.rs accepts arbitrary usize HTML colspan (around 567-572), sums spans and serializes one <w:gridCol> per logical column (481-505). A tiny internal HTML altChunk with colspan=1000000000 forces ~20 GB generated XML before DOM parsing. Public with_layout admits package then expands at mod.rs:773-800, no output budget.",
+            "producer": "conversion"
+          }
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-934910b14fd464c9",
+        "label": "Legacy DOC piece-table expansion",
+        "disposition": "reported",
+        "notes": "Independent parent source validation confirms unbounded logical text expansion despite checked physical reads; CWE-400 finding retained.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-aec127e3b2325a91",
+        "label": "HTML altChunk table expansion",
+        "disposition": "reported",
+        "notes": "Parent static validation confirms unrestricted colspan drives generated gridCol allocation after admission; distinct HTML output-budget failure.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-3a420d729b0bc65f",
+        "label": "XML policy for arbitrarily named auxiliary parts",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate awaiting full returned evidence and parent validation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-4e4e9136f3450219",
+        "label": "WMF text record boundary",
+        "disposition": "needs_follow_up",
+        "notes": "Investigator candidate awaiting independent validation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-b872d4c9cd47c116",
+        "label": "Legacy DOC field-state quadratic scan",
+        "disposition": "needs_follow_up",
+        "notes": "Investigator candidate awaiting independent validation.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "remaining-source-review",
+        "reason": "Baseline audit, architecture review, conversion investigation and parent source review are ongoing."
+      },
+      {
+        "id": "discovery-0029-auxiliary-xml-policy",
+        "candidateId": "discovery-0029-auxiliary-xml-policy",
+        "reason": "Baseline source candidate awaiting full validation.",
+        "candidate": {
+          "producer": "baseline",
+          "title": "Auxiliary part names can bypass XML admission",
+          "originalEvidence": "Admission only calls check_xml_depth/TagPolicy for names ending .xml/.rels (src/admission.rs:535-545), special-cases only extensionless main part (562-571). Auxiliary header/footer/notes/styles targets can have arbitrary extensions. header word/header.dat referenced from document.xml sectPr and rels: with_layout admits then opens package (src/convert/mod.rs:771-781), load_chrome_part follows rid and reads arbitrary path (20768-20782), chrome_part_xml calls permissive recursive parse_xdocument without limits (20795-20797), which recursively calls parse_element (src/xmllinq/parse.rs:655-657). Deep header.dat can pass admission then stack-overflow renderer. Same notes path pre_process_markup src/document_comparer.rs:4737-4751 reaches DOM after compare admission."
+        }
+      },
+      {
+        "id": "discovery-0029-wmf-record",
+        "candidateId": "discovery-0029-wmf-record",
+        "reason": "Candidate pending full returned evidence and parent validation.",
+        "candidate": {
+          "title": "WMF payload reads cross record boundaries and repeatedly retain subsequent records as text",
+          "cwe": "CWE-400",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "A caller supplying a DOCX containing a referenced crafted placeable WMF image.",
+          "violated_security_invariant": "Each WMF operation must consume only its declared record payload; overlapping interpretation must not amplify a bounded image into gigabytes of retained text or repeated geometry processing.",
+          "source_to_sink": "DrawingML and VML image relationships reach resolve_media and decode_image, which invokes metafile::render before raster image decoders. raster_wmf validates that each declared record fits in the remaining file, but passes the entire file to payload readers. EXTTEXTOUT takes its attacker-controlled character count and slices data.get(at..at+n), allowing the text to extend across subsequent records. wmf_text allocates the decoded String, and texts retains it. The outer parser then advances only by the short declared record size and repeats the overlapping read. TEXTOUT independently reads both string and coordinates beyond its record. POLYGON, POLYPOLYGON, and POLYLINE similarly process points beyond their declared payload.",
+          "concrete_impact": "A placeable WMF with nonzero bounds and repeated 14-byte EXTTEXTOUT records, each declaring size=7 words, count=65535, and options=0, causes each record with sufficient trailing data to retain roughly 64 KiB of subsequent records as text. About 1 MiB of such records can generate more than 4 GB of retained strings before layout. The sibling geometry operations also permit overlapping repeated processing. This can exhaust memory or monopolize conversion CPU.",
+          "locations": [
+            "src/convert/mod.rs:18396-18403",
+            "src/convert/mod.rs:18573-18575",
+            "src/convert/mod.rs:20009-20011",
+            "src/convert/mod.rs:20247-20260",
+            "src/convert/metafile.rs:474-489",
+            "src/convert/metafile.rs:602-619",
+            "src/convert/metafile.rs:628-679",
+            "src/convert/metafile.rs:684",
+            "src/convert/metafile.rs:692-700"
+          ],
+          "supporting_source_evidence": [
+            "size2 is checked against data.len() - off, but no record-local payload slice is constructed.",
+            "EXTTEXTOUT uses data.get(at..at + n) and texts.extend(wmf_text(...)).",
+            "TEXTOUT computes coordinates after the claimed string and reads them from the entire data buffer.",
+            "wmf_text immediately calls ansi_text(bytes), then retains the resulting String in MetaText.",
+            "The outer loop advances by off += size2, independently of the consumed payload span."
+          ],
+          "counterevidence": [
+            "WMF/EMF raster dimensions are capped at 384 pixels per side, and line/polygon painting clips coordinates to the canvas.",
+            "Checked multiplication prevents WMF record-size overflow on wasm32.",
+            "The sibling EMF read_emf_points helper checks point reads against off + size; that control is absent from the affected WMF operations.",
+            "Input admission and image crate decoder limits do not inspect or constrain these internal WMF text allocations.",
+            "Caller process resource limits can contain availability impact. No runtime reproduction was executed."
+          ],
+          "recommended_remediation": "Construct a slice for each complete WMF record and perform every fixed-field, string, font, ring, and point read relative to that slice. Reject records whose declared counts exceed their payload using checked arithmetic. Add aggregate decoded-text and operation budgets as defense in depth.",
+          "originalEarlyCandidate": {
+            "title": "WMF text record boundary",
+            "producer": "conversion",
+            "originalEvidence": "WMF raster_wmf validates record size only against entire file, then EXTTEXTOUT reads n-byte text with data.get(at..at+n) across record boundary (metafile.rs:613-623). Repeated 14-byte records (size=7 words, function 0x0A32, y/x=0, n=65535, opts=0) each copy ~64KiB of following records into retained MetaText, ~4600x amplification; sub-MiB embedded WMF can retain GiBs. POLYGON/POLYPOLYGON/POLYLINE sibling payload readers also cross records; EMF read_emf_points correctly bounds off+size. Public decode_image calls metafile::render first."
+          }
+        }
+      },
+      {
+        "id": "discovery-0029-legacy-field-depth",
+        "candidateId": "discovery-0029-legacy-field-depth",
+        "reason": "Candidate pending full returned evidence and parent validation.",
+        "candidate": {
+          "title": "Legacy DOC field-state quadratic scan",
+          "producer": "baseline",
+          "originalEvidence": "Story::blocks src/legacy_doc.rs:1595-1617 computes fields.iter().any(|&code| code) for every StoryChar, using an unbounded Vec<bool> stack. N repetitions of U+0013 (field begin), U+0014 (separator) leave N false entries; each next begin/separator scans every false ancestor, causing quadratic work on ~2N source bytes. N end markers also scan/pop. Single 1MiB piece can encode ~500k field levels and ~250 billion checks. Distinct from memory expansion; candidate CWE-407."
+        }
+      }
+    ]
+  }
+}

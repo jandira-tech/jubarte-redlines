@@ -1,0 +1,376 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline current-state audit of /Users/arthrod/temp/T/jubarte-redlines, scope .",
+    "runtimeStatus": "Application code not executed",
+    "validationMode": "static source review"
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-expansion.html-table-colspan",
+      "title": "Rendering an embedded HTML table can exhaust process memory",
+      "summary": "Rendering a small DOCX containing an HTML altChunk with a large `colspan` allocates one generated grid column per attacker-supplied span value. A single cell with `colspan=\"1000000000\"` causes a billion string writes before layout, bypassing the original package's input-size budgets.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document author can deterministically exhaust CPU and memory in a consuming renderer with a tiny input. Availability impact is high for that process, but remote/shared-service deployment is not established and process limits can contain it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace establishes attacker-controlled integer parsing and the unbounded allocation loop after admission; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption during HTML expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chunk-consumer",
+          "label": "Admission precedes HTML expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+        },
+        {
+          "id": "chunk-transform",
+          "label": "Chunk bytes become HTML and generated WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+        },
+        {
+          "id": "span-input",
+          "label": "HTML colspan accepted without upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "language": "rust",
+          "role": "user_input",
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Any positive span fitting usize survives unchanged; the lower clamp adds no upper bound."
+        },
+        {
+          "id": "span-count",
+          "label": "Span values determine generated grid length",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "A one-cell row sets cols directly to the supplied span, independently of input length."
+        },
+        {
+          "id": "span-sink",
+          "label": "One string write for each column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "The attacker-sized loop grows the output string by tens of gigabytes for a billion-column cell before later validation could occur."
+        }
+      ],
+      "rootCause": {
+        "summary": "`with_layout()` admits the original DOCX, then `expand()` loads its HTML chunk and passes it to `html_to_wml()`. Cell parsing stores `colspan` as an unrestricted usize. `end_table()` sums the spans into `cols` and emits a grid element for every column, so a short decimal attribute controls huge CPU and allocation work after the input gate.",
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "span-input",
+          "span-count",
+          "span-sink"
+        ]
+      },
+      "remediation": "Reject spans and total table column counts above a documented limit before construction; use checked addition and enforce a generated-output/work budget shared across all HTML chunks.",
+      "validation": {
+        "counterEvidence": [
+          "Admission caps compressed/inflated bytes and XML policy before conversion (src/convert/mod.rs:773-778).",
+          "SECURITY.md recommends process memory/CPU isolation, which can limit collateral damage.",
+          "No shared or remote renderer deployment is established."
+        ],
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "span-input",
+          "span-count",
+          "span-sink"
+        ],
+        "limitations": [
+          "No application code or resource-exhaustion input was executed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "Parent verified the baseline candidate against the actual converter entrypoint and HTML builder. A well-formed one-cell table with a large positive colspan reaches the grid-generation loop with no upper bound; admission limits only the stored input, not this new output."
+      },
+      "attackPath": {
+        "controls": [
+          "Original package admission limits do not bound generated table columns.",
+          "Host process resource limits mitigate collateral impact."
+        ],
+        "dataflow": {
+          "summary": "DOCX main-story altChunk relationship -> embedded HTML bytes -> html_to_wml cell span -> row span sum -> repeated grid-column string writes.",
+          "evidenceRefs": [
+            "chunk-consumer",
+            "chunk-transform",
+            "span-input",
+            "span-count",
+            "span-sink"
+          ]
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Renderer process CPU and memory exhaustion; a shared host could lose service if its integration provides no isolation."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The numeric span flows directly to the allocation loop and a small input can request billions of iterations."
+        },
+        "reachability": {
+          "summary": "A caller-controlled document is sufficient at public conversion APIs; no privileged options or network access are required. The victim must render/layout the supplied document.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "DOCX rendering through with_layout",
+          "preconditions": [
+            "Victim invokes a rendering/layout API on attacker-authored DOCX."
+          ]
+        },
+        "summary": "Provide a DOCX whose main story references an embedded HTML table with a huge numeric colspan, then have a victim render it as PDF/PNG or request layout facts."
+      },
+      "remediationTests": [
+        "Assert that a tiny HTML chunk with a huge colspan is refused before grid allocation.",
+        "Cover aggregate span overflow, multiple cells/chunks, and valid spans at the inclusive boundary."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0016",
+        "worker": "baseline",
+        "candidateId": "discovery-0016-altchunk-colspan"
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.html-css-selector-copy",
+      "title": "Rendering embedded CSS multiplies property allocations per selector",
+      "summary": "A small HTML altChunk stylesheet can exhaust renderer memory before layout. `parse_css()` deep-copies every property value into a separate map for every selector, including unused selectors and unsupported property names; thousands of selectors can retain thousands of copies of one large value.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-authored document content can reliably exhaust the consuming process with a modest input. Shared-service deployment is conditional and host process limits reduce collateral impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source shows owned String property values, HashMap::clone per selector and retention in Builder with no count or allocation budget."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource amplification in stylesheet parsing",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 152,
+          "endLine": 168,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 604,
+          "endLine": 610,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 790,
+          "endLine": 793,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "css-owned-values",
+          "label": "CSS properties stored as owned strings",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 158,
+          "endLine": 162,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        let props: Props = body\n            .split(';')\n            .filter_map(|d| d.split_once(':'))\n            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))\n            .collect();",
+          "explanation": "A large attacker property value becomes a retained owned String without filtering supported properties or limiting value size."
+        },
+        {
+          "id": "css-per-selector",
+          "label": "Deep clone for every selector",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 163,
+          "endLine": 168,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        for s in sel.split(',') {\n            let s = s.trim().to_ascii_lowercase();\n            if !s.is_empty() {\n                rules.entry(s).or_default().extend(props.clone());\n            }\n        }",
+          "explanation": "Distinct comma-separated selectors each retain a deep clone of the complete property map. Allocation is selector count times property bytes."
+        },
+        {
+          "id": "css-eager",
+          "label": "All styles parsed before body import",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 604,
+          "endLine": 610,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub(crate) fn html_to_wml(html: &str) -> String {\n    let css = collect_between(html, \"<style\", \"</style>\")\n        .map(|s| parse_css(&s))\n        .unwrap_or_default();\n    let body_at = html.to_ascii_lowercase().find(\"<body\").unwrap_or(0);\n    let mut b = Builder {\n        css,",
+          "explanation": "The parser retains every rule before examining body content, so selectors need not match any element to trigger the allocation."
+        },
+        {
+          "id": "chunk-consumer",
+          "label": "Admission precedes HTML expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+        },
+        {
+          "id": "chunk-transform",
+          "label": "Chunk bytes become HTML and generated WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+        }
+      ],
+      "rootCause": {
+        "summary": "After DOCX admission, `expand()` imports an embedded HTML chunk. `html_to_wml()` eagerly calls `parse_css()`, which owns property values as Strings and calls `props.clone()` for every selector. Each distinct selector retains a full copy, making retained memory proportional to selector count multiplied by property size rather than bounded by the original part.",
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "css-eager",
+          "css-owned-values",
+          "css-per-selector"
+        ]
+      },
+      "remediation": "Share immutable declaration blocks between selectors and enforce aggregate stylesheet work/allocation budgets, selector-count and value-length limits before allocating. Ignore unsupported properties before retention.",
+      "validation": {
+        "counterEvidence": [
+          "Package input/inflation limits constrain the original HTML but not selector-value multiplication.",
+          "Process limits recommended by SECURITY.md can contain the failure."
+        ],
+        "limitations": [
+          "No memory-exhaustion input was executed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "Parent verified that selector keys are distinct, values are owned Strings, clones remain in Builder, and no maximum or supported-property filter limits the copies. A stylesheet with 10,000 short selectors and one 1 MiB property requests about 10 GiB of retained property bytes from about 1.1 MiB HTML."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX chunk -> html_to_wml -> parse_css -> owned property map -> full cloned map retained under each selector."
+        },
+        "reachability": {
+          "summary": "Public PDF/PNG/layout conversion loads relationship-targeted HTML after admission. Attacker needs only to supply the document; unused selectors still trigger parsing.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "DOCX rendering"
+        },
+        "summary": "Embed a stylesheet containing many distinct comma-separated selectors and a long property value in a DOCX altChunk, then have a victim render the document."
+      },
+      "remediationTests": [
+        "Assert that many selectors sharing a large declaration block remain bounded or are refused before multiplication.",
+        "Cover unused selectors, unsupported property names, multiple style blocks, and valid boundary inputs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0016-altchunk-css",
+        "worker": "baseline",
+        "workerLabel": "discovery-0016"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-6409104186aa3f4d",
+        "label": "Embedded HTML altChunk table expansion",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-altchunk-colspan by independent source trace; input admission precedes unbounded generated-grid construction.",
+        "receiptRefs": []
+      },
+      {
+        "label": "Embedded HTML CSS selector expansion",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-altchunk-css; selector count multiplies retained String values at src/convert/altchunk.rs:158-166 independently of body matches.",
+        "id": "surface-9a2a22e90e3f28ee",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0016-leaks-depth",
+        "reason": "Parent discovered unchecked recursive DOM parse at public leaks API; trace all caller admission and XML policy before validation.",
+        "paths": [
+          "src/scrub.rs",
+          "src/xmllinq/parse.rs"
+        ],
+        "candidate": {
+          "title": "Public leak scan bypasses XML depth admission",
+          "evidence": [
+            "src/scrub.rs:403-404 public leaks calls leaks_within directly.",
+            "src/scrub.rs:418-469 bounds ZIP input/inflation, then passes XML to xml_holds without structural validation.",
+            "src/scrub.rs:529 Dom::parse_xdocument is unchecked.",
+            "src/xmllinq/parse.rs:660-662 recursively parses child elements with no depth guard."
+          ],
+          "potentialImpact": "Deep XML inside a small archive may stack overflow a caller invoking public scrub::leaks directly."
+        },
+        "id": "discovery-0016-leaks-depth"
+      },
+      {
+        "candidateId": "discovery-0016-wmf-record",
+        "reason": "Focused renderer candidate received; parent must verify WMF record extent, text copies, and public reachability.",
+        "paths": [
+          "src/convert/metafile.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "WMF text records read beyond declared record and amplify retained memory",
+          "source": "render_investigator",
+          "message": "raster_wmf only validates size>=3 and size*2 fits remaining bytes (486-500); EXTTEXTOUT at 623-634 reads y/x/n/options and data.get(at..at+n) against entire file, not current record. Repeating six-byte WMF records [u32 size=3,u16 func=0x0A32] makes each record read next record's func as n=2610 and opts=3 from following size; at=off+22 then copies ~2610 bytes into persistent MetaText despite declared payload zero. ~6 MB body can retain ~2.6 GB text before later layout. Needs nonzero placeable extents and trailing bytes; no runtime reproduction."
+        },
+        "id": "discovery-0016-wmf-record"
+      }
+    ]
+  }
+}

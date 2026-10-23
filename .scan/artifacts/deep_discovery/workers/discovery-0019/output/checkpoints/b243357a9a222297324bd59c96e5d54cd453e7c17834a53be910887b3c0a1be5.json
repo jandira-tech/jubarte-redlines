@@ -1,0 +1,564 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "untrusted-ci-runner-authority",
+      "title": "Pull-request builds gain access to shared internal runners",
+      "summary": "A contributor whose pull-request workflow is permitted can execute modified build/test or local-action code on the project's self-hosted runners, gaining their internal network and shared local build state. The source explicitly places these runners on a private Docker network with a tokenless shared cache.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The boundary crosses from a fork contribution into the internal runner environment. The attacker can execute arbitrary job code and contact the documented private cache; persistence, cache poisoning and access to other services depend on deployment details not established by source. GitHub approval settings may require a maintainer to permit the run.",
+        "changeConditions": "Reduce severity if PR jobs are proven to use disposable runners with no shared state or internal network; raise it if persistent credentials or a writable cache consumed by trusted builds are confirmed."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Workflow scheduling, attacker-controlled checkout and internal cache endpoint are explicit in current source; live runner isolation and Actions approval policy were not inspected."
+      },
+      "taxonomy": {
+        "category": "CI runner isolation / access control",
+        "cwe": [
+          "CWE-284"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 101,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 138,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 165,
+          "endLine": 184,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 186,
+          "endLine": 218,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 227,
+          "endLine": 264,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 266,
+          "endLine": 312,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ci-trigger",
+          "label": "Pull-request code scheduled on internal runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "role": "entrypoint",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "Pull-request code scheduled on internal runner"
+        },
+        {
+          "id": "ci-exec",
+          "label": "PR checkout and local build execute on self-hosted runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 33,
+          "endLine": 48,
+          "role": "root_control",
+          "code": "jobs:\n  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "PR checkout and local build execute on self-hosted runner"
+        },
+        {
+          "id": "ci-shared-net",
+          "label": "Shared unauthenticated internal cache",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "role": "outcome",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines",
+          "explanation": "Shared unauthenticated internal cache"
+        },
+        {
+          "id": "ci-docs",
+          "label": "Docs job runs checked-out scripts on self-hosted runner",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "role": "sink",
+          "code": "jobs:\n  drift:\n    name: generated docs drift\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against\n      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares\n      # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's\n      # system node predates ESM (`import` is a SyntaxError), so a real node is\n      # set up here instead of trusting the image.\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version: \"24\"\n      - name: Regenerate and compare\n        run: scripts/gen_docs.sh --check",
+          "explanation": "Docs job runs checked-out scripts on self-hosted runner"
+        },
+        {
+          "id": "ci-roundtrip",
+          "label": "Roundtrip executes PR tests on self-hosted runner",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "sink",
+          "code": "jobs:\n  roundtrip:\n    name: md -> docx -> md, exact\n    runs-on: self-hosted\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - run: cargo test --all-features --test md_fixed_point",
+          "explanation": "Roundtrip executes PR tests on self-hosted runner"
+        },
+        {
+          "id": "ci-adoption",
+          "label": "Adoption job executes PR tests on self-hosted runner",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 59,
+          "role": "sink",
+          "code": "jobs:\n  claims:\n    name: adoption claims (tests/adoption.rs)\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - name: one test per adoption-page row, and the .doc reader\n        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc",
+          "explanation": "Adoption job executes PR tests on self-hosted runner"
+        }
+      ],
+      "rootCause": {
+        "summary": "The `pull_request` trigger schedules the checked-out contribution on `self-hosted` without a trusted-origin guard. The local `.github/actions/mbx` action and Cargo/test/script commands run with the runner account and its network access. The private-network restriction described for `mbx-cache` does not distinguish PR code from trusted jobs once both execute on these runners.",
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net",
+          "ci-docs",
+          "ci-roundtrip",
+          "ci-adoption"
+        ]
+      },
+      "remediation": "Run all untrusted pull-request jobs on fresh isolated hosted runners, or enforce disposable self-hosted sandboxes with no trusted shared state, internal service access or reusable credentials. Restrict internal runner jobs to explicitly trusted events and enforce cache write authorization on the server.",
+      "validation": {
+        "counterEvidence": [
+          "Job tokens have contents:read and checkout persist-credentials:false; neither removes host/network authority from arbitrary job code.",
+          "GitHub may require approval before running an external contributor's job.",
+          "No live host, cache service, credential or network access was attempted; cache poisoning is not claimed as demonstrated."
+        ],
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net",
+          "ci-docs",
+          "ci-roundtrip",
+          "ci-adoption"
+        ],
+        "limitations": [
+          "Runner lifecycle, fork run policy and cache server-side authorization are unavailable in the authorized source."
+        ],
+        "method": "offline static source trace",
+        "summary": "Checked all self-hosted PR workflow families and their job guards. Source establishes no origin restriction in CI/docs/adoption/roundtrip, while the shared action documents and configures private HTTP cache access."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "pull_request source -> actions/checkout -> local composite action / Cargo tests / repository scripts -> internal runner process and mbx-cache network",
+          "source": "PR-controlled code",
+          "sink": "self-hosted runner account and private Docker network",
+          "outcome": "An external contributor gains execution inside the internal CI trust zone.",
+          "evidenceRefs": [
+            "ci-trigger",
+            "ci-exec",
+            "ci-shared-net"
+          ]
+        },
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-exec",
+          "ci-shared-net"
+        ],
+        "reachability": {
+          "summary": "Requires a PR run to be enabled or approved. No repository write privilege, release credential, or existing internal-network access is required to author a fork PR.",
+          "attacker": "fork PR contributor",
+          "entrypoint": "pull_request jobs in CI, Docs, Markdown round trip and adoption",
+          "outcome": "Arbitrary execution with the CI runner's network and filesystem authority",
+          "preconditions": [
+            "Self-hosted runners are registered and PR workflows are permitted by GitHub settings."
+          ]
+        },
+        "summary": "Submit a PR changing a local action, build hook or test; when its workflow runs, that code executes on `self-hosted` and can access the runner's private network and shared build state."
+      },
+      "remediationTests": [
+        "Assert every pull_request job is routed to an isolated runner pool or rejects untrusted head repositories.",
+        "Verify an untrusted build cannot reach the internal cache or read state from an earlier trusted job."
+      ],
+      "preventiveControls": [
+        "Separate untrusted PR compute and trusted push/release infrastructure."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "ci-self-hosted-pr",
+        "workerLabel": "discovery-0019",
+        "originalCandidates": [
+          {
+            "candidateId": "ci-self-hosted-pr",
+            "title": "Pull requests execute attacker-controlled code on shared self-hosted runners",
+            "severity": "medium",
+            "confidence": "medium",
+            "attacker": "fork pull-request contributor whose workflow run is permitted by repository Actions policy",
+            "invariant": "Untrusted pull-request code must not inherit internal runner/network authority.",
+            "locations": [
+              {
+                "path": ".github/workflows/ci.yml",
+                "startLine": 13,
+                "endLine": 48
+              },
+              {
+                "path": ".github/actions/mbx/action.yml",
+                "startLine": 8,
+                "endLine": 12
+              },
+              {
+                "path": ".github/workflows/docs.yml",
+                "startLine": 81,
+                "endLine": 113
+              },
+              {
+                "path": ".github/workflows/md-roundtrip.yml",
+                "startLine": 13,
+                "endLine": 39
+              },
+              {
+                "path": ".github/workflows/adoption.yml",
+                "startLine": 48,
+                "endLine": 99
+              }
+            ],
+            "evidence": "ci.yml triggers on pull_request without a trust guard; lint runs-on self-hosted, checks out PR source and invokes local .github/actions/mbx and cargo. mbx/action.yml documents a shared private Docker network/cache. Sibling docs/adoption/roundtrip also use self-hosted PR execution.",
+            "uncertainty": "Runner lifecycle, isolation, GitHub approval policy and external fork run enablement need source-backed assessment."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "html-table-resource-amplification",
+      "title": "Rendering an HTML table with a large colspan exhausts memory",
+      "summary": "Render a DOCX containing an internal HTML/MHT `w:altChunk` with one table cell whose `colspan` is `4294967295`. The converter accepts it as `usize` and tries to append billions of grid-column elements before layout, exhausting process memory or CPU despite a tiny admitted package.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can deterministically force enormous allocation and work through normal conversion. This can terminate a native host process, Python/MCP server or WASM instance; no remote deployment is assumed. The repository recommends process CPU/memory limits, which contain host damage but do not make the conversion succeed.",
+        "changeConditions": "Shared service exposure increases operational impact; disposable conversion workers with enforced memory/CPU limits reduce collateral impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The source directly converts an unbounded parsed integer into a counted String-append loop before any page raster bound. No runtime reproduction was run."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admit",
+          "label": "Admit then expand relationship-loaded HTML",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admit then expand relationship-loaded HTML"
+        },
+        {
+          "id": "chunk-dispatch",
+          "label": "Decode HTML or MHT then convert to WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Decode HTML or MHT then convert to WML"
+        },
+        {
+          "id": "span-parse",
+          "label": "Attacker colspan becomes unrestricted usize",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "role": "root_control",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Attacker colspan becomes unrestricted usize"
+        },
+        {
+          "id": "span-expand",
+          "label": "Column count drives output loop",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 463,
+          "endLine": 491,
+          "role": "sink",
+          "code": "    fn end_table(&mut self) {\n        self.close_open_cell();\n        self.flush();\n        let Some(table) = self.tables.pop() else {\n            return;\n        };\n        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "Column count drives output loop"
+        }
+      ],
+      "rootCause": {
+        "summary": "`with_layout` admits the original package then expands its internal altChunk. `Builder::start` accepts a cell span with only a lower bound. `end_table` sums spans into a column count and allocates one XML grid column for every claimed column. Input byte limits do not bound this numeric expansion, and no output/column budget is checked before the loop.",
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "span-parse",
+          "span-expand"
+        ]
+      },
+      "remediation": "Enforce a small supported maximum colspan and total table-column count with checked arithmetic before generating WML, and charge all expanded output to a bounded conversion budget.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission limits input bytes and XML depth, but runs before HTML expansion.",
+          "MAX_PAGE_PIXELS protects later PNG page allocation, after this expansion.",
+          "Process isolation is recommended in SECURITY.md; it bounds collateral impact rather than this parser workload."
+        ],
+        "evidenceRefs": [
+          "render-admit",
+          "chunk-dispatch",
+          "span-parse",
+          "span-expand"
+        ],
+        "limitations": [
+          "No malicious document or application code was executed."
+        ],
+        "method": "offline static source trace",
+        "summary": "Verified internal relationship load, HTML/MHT dispatch, unrestricted span parsing and output loop. A single span fits both 32-bit and 64-bit usize and does not need arithmetic overflow to cause billions of iterations."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> package admission -> internal altChunk HTML -> colspan usize -> summed cols -> repeated gridCol String appends",
+          "source": "attacker HTML table attribute",
+          "sink": "unbounded XML generation",
+          "outcome": "memory exhaustion or prolonged CPU use",
+          "evidenceRefs": [
+            "render-admit",
+            "chunk-dispatch",
+            "span-parse",
+            "span-expand"
+          ]
+        },
+        "evidenceRefs": [
+          "render-admit",
+          "span-parse",
+          "span-expand"
+        ],
+        "reachability": {
+          "summary": "Any caller of public native conversion APIs can pass the document bytes. CLI/Python/MCP and full WASM expose the converter subject to their build features; the attacker needs only to supply a document that the operator renders.",
+          "attacker": "document supplier",
+          "entrypoint": "public document rendering/conversion",
+          "outcome": "conversion process or instance unavailable"
+        },
+        "summary": "Supply an otherwise valid DOCX with an internal HTML altChunk containing a one-cell table and very large colspan, then request PDF, PNG or render report."
+      },
+      "remediationTests": [
+        "Refuse a single td/th with colspan=4294967295 without allocating proportional output.",
+        "Refuse rows whose individually valid spans exceed the aggregate column budget; preserve ordinary merged-cell rendering."
+      ],
+      "preventiveControls": [
+        "Apply resource limits to decoded/expanded representations, not only archive bytes."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "altchunk-unbounded-colspan",
+        "worker": "render_inputs",
+        "workerLabel": "discovery-0019",
+        "originalCandidates": [
+          {
+            "candidateId": "altchunk-unbounded-colspan",
+            "source": "render_inputs",
+            "title": "HTML altChunk colspan expands into billions of grid columns",
+            "originalEvidence": "src/convert/altchunk.rs:562-566 parses attacker td/th colspan as unrestricted usize; end_table :469-475 sums spans into cols and :489-491 emits one <w:gridCol> per cols. A single colspan='4294967295' drives billions of iterations/allocations before DOM/layout, independent of page pixel cap.",
+            "uncertainty": "Pending original investigator payload, caller/admission verification and parent source validation."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-03bcc94c5dfb9dd4",
+        "label": "Pull-request CI runner authority",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "CI trust boundary",
+        "notes": "Validated ci-self-hosted-pr by static workflow trace. contents:read and persist-credentials:false limit GitHub credentials, but not internal host/network authority. Live runner isolation and fork approvals remain deployment uncertainties."
+      },
+      {
+        "id": "surface-9833a295e2f21fa7",
+        "label": "WMF text record bounds",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Investigator preliminary: record size is checked only for iterator advancement, while EXTTEXTOUT/TEXTOUT lengths read from the entire file, permitting overlapping 65,535-byte text copies per tiny record."
+      },
+      {
+        "id": "surface-cf13d00b3d752b57",
+        "label": "Relationship-selected auxiliary XML admission",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/admission.rs:534-567 checks .xml/.rels and nonstandard main part only. src/convert/mod.rs:773 admits first, load_stylesheet at 3480 reads main_rel_part(styles) and at 3497 calls unchecked Dom::parse_xdocument. main_rel_part at 21310 resolves arbitrary internal targets. src/xmllinq/parse.rs:555-661 recursively parses elements without depth guard. Investigator proposes styles relationship to word/styles.bin with extreme nested XML bypassing max_xml_depth=256; no execution performed."
+      },
+      {
+        "id": "surface-2470ad5139efde6a",
+        "label": "HTML altChunk table expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated altchunk-unbounded-colspan: usize colspan -> sum -> one gridCol allocation per column. Admission precedes expansion; raster limits follow it."
+      },
+      {
+        "id": "surface-9759781118ba669c",
+        "label": "Redaction residual-data detection",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/scrub.rs:467-471 routes .xml/.rels through xml_holds(String::from_utf8_lossy(bytes), needle), while UTF-16LE byte matching is only in non-XML branch. admission::part_text at src/admission.rs:768-781 supports BOM UTF-16. src/edit/prepared.rs:804,873 calls tx.check_redactions; src/edit.rs:4731-4747 refuses only when scrub::leaks finds hit. models.py:829-832 promises removed text nowhere in either output."
+      },
+      {
+        "id": "surface-5162c4587dfa38d8",
+        "label": "Scrub relationship-selected metadata",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/scrub.rs:39-41 hardcodes docProps/core.xml, app.xml, custom.xml; :357-385 only edits literal paths and removes custom-properties relationship only when literal CUSTOM exists. Active _rels/.rels property relationships can target different valid internal names. scrub API docs at :8-20,60-62 promise removal of people/dates/custom property part."
+      },
+      {
+        "id": "surface-f5799f04fe94a93b",
+        "label": "HTML altChunk CSS selector allocation",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "src/convert/altchunk.rs:152-170 parse_css clones complete Props map, including String values, for every comma-separated unique selector. Investigator estimates 4096 selectors sharing 1MiB property value allocate ~4GiB from ~1MiB HTML without matching body references."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "wmf-overlap-text-amplification",
+        "candidateId": "wmf-overlap-text-amplification",
+        "reason": "Preliminary investigator lead retained before validation; exact source anchors and controls still being traced.",
+        "candidate": {
+          "candidateId": "wmf-overlap-text-amplification",
+          "source": "render_inputs",
+          "title": "WMF text records may copy overlapping file suffixes",
+          "originalEvidence": "Investigator preliminary: record size is checked only for iterator advancement, while EXTTEXTOUT/TEXTOUT lengths read from the entire file, permitting overlapping 65,535-byte text copies per tiny record.",
+          "uncertainty": "Awaiting original file/line evidence, caller reachability and sibling controls; not validated."
+        }
+      },
+      {
+        "id": "aux-xml-extension-policy-bypass",
+        "candidateId": "aux-xml-extension-policy-bypass",
+        "reason": "Pending full baseline payload and parent source validation, including all auxiliary consumers and effective checked parser controls.",
+        "candidate": {
+          "candidateId": "aux-xml-extension-policy-bypass",
+          "source": "baseline",
+          "title": "Nonstandard auxiliary XML targets bypass admission depth bounds",
+          "originalEvidence": "src/admission.rs:534-567 checks .xml/.rels and nonstandard main part only. src/convert/mod.rs:773 admits first, load_stylesheet at 3480 reads main_rel_part(styles) and at 3497 calls unchecked Dom::parse_xdocument. main_rel_part at 21310 resolves arbitrary internal targets. src/xmllinq/parse.rs:555-661 recursively parses elements without depth guard. Investigator proposes styles relationship to word/styles.bin with extreme nested XML bypassing max_xml_depth=256; no execution performed.",
+          "uncertainty": "Pending full baseline payload and parent source validation, including all auxiliary consumers and effective checked parser controls."
+        }
+      },
+      {
+        "id": "redaction-utf16-xml-leak",
+        "candidateId": "redaction-utf16-xml-leak",
+        "reason": "Pending unchanged customXml preservation proof and parent validation; potential confidentiality failure, no runtime execution.",
+        "candidate": {
+          "candidateId": "redaction-utf16-xml-leak",
+          "source": "baseline",
+          "title": "Redaction leak scan misses BOM UTF-16 auxiliary XML",
+          "originalEvidence": "src/scrub.rs:467-471 routes .xml/.rels through xml_holds(String::from_utf8_lossy(bytes), needle), while UTF-16LE byte matching is only in non-XML branch. admission::part_text at src/admission.rs:768-781 supports BOM UTF-16. src/edit/prepared.rs:804,873 calls tx.check_redactions; src/edit.rs:4731-4747 refuses only when scrub::leaks finds hit. models.py:829-832 promises removed text nowhere in either output.",
+          "uncertainty": "Pending unchanged customXml preservation proof and parent validation; potential confidentiality failure, no runtime execution."
+        }
+      },
+      {
+        "id": "scrub-relocated-properties",
+        "candidateId": "scrub-relocated-properties",
+        "reason": "Pending parent validation, package preservation and any rejection of relocated properties; no runtime execution.",
+        "candidate": {
+          "candidateId": "scrub-relocated-properties",
+          "source": "baseline",
+          "title": "Privacy scrub ignores relationship-selected document properties",
+          "originalEvidence": "src/scrub.rs:39-41 hardcodes docProps/core.xml, app.xml, custom.xml; :357-385 only edits literal paths and removes custom-properties relationship only when literal CUSTOM exists. Active _rels/.rels property relationships can target different valid internal names. scrub API docs at :8-20,60-62 promise removal of people/dates/custom property part.",
+          "uncertainty": "Pending parent validation, package preservation and any rejection of relocated properties; no runtime execution."
+        }
+      },
+      {
+        "id": "altchunk-css-selector-amplification",
+        "candidateId": "altchunk-css-selector-amplification",
+        "reason": "Pending source validation and same-control reconciliation with colspan expansion.",
+        "candidate": {
+          "candidateId": "altchunk-css-selector-amplification",
+          "source": "render_inputs",
+          "title": "HTML altChunk CSS selector fan-out clones property values",
+          "originalEvidence": "src/convert/altchunk.rs:152-170 parse_css clones complete Props map, including String values, for every comma-separated unique selector. Investigator estimates 4096 selectors sharing 1MiB property value allocate ~4GiB from ~1MiB HTML without matching body references.",
+          "uncertainty": "Pending source validation and same-control reconciliation with colspan expansion."
+        }
+      }
+    ],
+    "openQuestions": [
+      "Whether deployed self-hosted runners are disposable and externally isolated is not established by source."
+    ]
+  },
+  "scope": {
+    "summary": "Current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and vulnerability-triggering inputs have not been executed.",
+    "validationMode": "offline static source review",
+    "context": "Generated threat model in progress; no external context supplied."
+  }
+}

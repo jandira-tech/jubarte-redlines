@@ -1,0 +1,38 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "DOCX renderer table-grid allocation",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate received; independent parent validation pending.",
+        "id": "surface-d95e1f1173948b28",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0031-table-grid-allocation",
+        "reason": "Baseline source-backed candidate awaits parent validation; original interim evidence preserved.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Unbounded table grid spans allocate document-controlled column vectors",
+          "evidence": [
+            "src/convert/mod.rs:14211-14216 parses gridSpan as usize",
+            "src/convert/mod.rs:14340-14354 parses gridBefore/gridAfter as usize",
+            "src/convert/mod.rs:13599-13615 allocates/resizes occupancy vectors",
+            "src/convert/mod.rs:14637-14638 open.resize"
+          ],
+          "attacker": "DOCX supplier",
+          "impact": "Tiny admitted XML with gridSpan=1000000000 requests about 4GB column vector then larger merge vector",
+          "status": "baseline tracing entrypoints and counterevidence"
+        },
+        "id": "discovery-0031-table-grid-allocation"
+      }
+    ]
+  }
+}

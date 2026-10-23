@@ -1,0 +1,77 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0037; three subagents.",
+    "runtimeStatus": "No application execution, tests, network access, or credential use.",
+    "validationMode": "static source analysis",
+    "context": "userContext is null. Generated architecture review is pending."
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-cb72fe95bbd18916",
+        "label": "Engine document parsing and rendering",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline audit in progress.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-1f22bf056ad79c1e",
+        "label": "Python/MCP and WASM interfaces",
+        "disposition": "needs_follow_up",
+        "notes": "Focused investigation in progress.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-9d0f5f4165ed863e",
+        "label": "Native publication and self-update",
+        "disposition": "needs_follow_up",
+        "notes": "Parent source review in progress.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0037-chicago-label-amplification",
+        "candidateId": "discovery-0037-chicago-label-amplification",
+        "reason": "Baseline candidate awaiting source trace and independent parent validation.",
+        "paths": [
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "Possible Chicago numeric-format allocation amplification",
+          "originalEvidence": "Baseline: src/convert/mod.rs:6015-6018 chicago_label(n:u32) repeats up to ~1B symbols (3GB UTF-8) from a numeric list or note start. Tracing effective controls now.",
+          "baselineValidation": "parse_num_level reads unbounded u32 start at src/convert/mod.rs:6750-6753; Numbering next_marker uses it at 5629-5641; render calls format_num at 5765; Chicago at 5861 calls 6015-6018. start=4294967295 yields 1,073,741,824 double-daggers (~3GiB), tiny admitted DOCX."
+        }
+      },
+      {
+        "candidateId": "discovery-0037-numbering-level-amplification",
+        "reason": "Baseline candidate awaiting independent source validation.",
+        "paths": [
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "Unbounded numbering level triggers billions of iterations or counter insertions",
+          "originalEvidence": "Baseline: direct ilvl u32 at 12711-12714 feeds resolve_ilvl 5518-5532 looping 0..ilvl in reverse, so ilvl=4294967294 with only normal level 0 performs ~4B hash lookups. If malicious numbering defines that high ilvl, next_marker loops 0..resolved inserting billions of HashMap counters (5610-5627). No value range validation seen."
+        },
+        "id": "discovery-0037-numbering-level-amplification"
+      },
+      {
+        "candidateId": "discovery-0037-npm-plan-symlink",
+        "reason": "Focused investigator candidate awaiting independent source validation and severity calibration.",
+        "paths": [
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "title": "Predictable plan staging follows symlinks",
+          "originalEvidence": "Investigator: recordPlan constructs .<plan basename>.<process.pid>.partial then fs.writeFileSync without exclusive/no-follow flags (lines 423-425), allowing a local attacker able to populate plan directory to pre-place a symlink and truncate a victim before rename. Independently reachable from plan-recording (--plan plus operation flags). Local-directory-write precondition; no document-only path escape found."
+        },
+        "id": "discovery-0037-npm-plan-symlink"
+      }
+    ]
+  }
+}

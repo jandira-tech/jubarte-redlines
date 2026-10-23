@@ -1,0 +1,545 @@
+diff --git a/src/convert/altchunk.rs b/src/convert/altchunk.rs
+index 7def5f9..be4d81f 100644
+--- a/src/convert/altchunk.rs
++++ b/src/convert/altchunk.rs
+@@ -730,7 +730,11 @@ pub(crate) fn decode_entities(s: &str) -> String {
+     while let Some(a) = rest.find('&') {
+         out.push_str(&rest[..a]);
+         let tail = &rest[a..];
+-        let semi = tail.find(';').filter(|&e| e <= 10);
++        // A supported entity is at most `&#x10FFFF;` (eight characters):
++        // searching only the first eleven bytes keeps a run of bare `&`
++        // from rescanning the rest of the chunk for each one. `&` and `;`
++        // are ASCII, so the matched index is a `;` byte boundary.
++        let semi = tail.as_bytes().iter().take(11).position(|&b| b == b';');
+         let decoded = semi.and_then(|e| {
+             let ent = &tail[1..e];
+             let ch = match ent {
+diff --git a/src/markdown/from_docx/drawing.rs b/src/markdown/from_docx/drawing.rs
+index a944602..16fc283 100644
+--- a/src/markdown/from_docx/drawing.rs
++++ b/src/markdown/from_docx/drawing.rs
+@@ -1887,11 +1887,16 @@ pub(crate) fn materialize(
+     next_doc_pr: &mut u32,
+ ) -> Option<String> {
+     let mut xml = drawing.xml.clone();
++    // The dependency indexes on the path being written: a payload may name
++    // a part that (transitively) depends on itself, which capture never
++    // produces but a hand-written payload can.
++    let mut active: Vec<usize> = Vec::new();
+     for rel in &drawing.rels {
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(index), _) if index < drawing.deps.len() => {
+-                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;
++                let name =
++                    dep_part(drawing, index, package, existing, used, next_doc_pr, &mut active)?;
+                 (rel.kind.clone(), relative_rel_target(part, &name), false)
+             }
+             (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),
+@@ -1952,7 +1957,9 @@ fn renumber_doc_pr(xml: &mut String, next: &mut u32) {
+ }
+ 
+ /// Write dependent part `index` and its own dependency closure; its new
+-/// part name.
++/// part name. An `index` already on the active path — a payload whose part
++/// (transitively) depends on itself — refuses the drawing instead of
++/// recursing until the stack ends.
+ fn dep_part(
+     drawing: &Drawing,
+     index: usize,
+@@ -1960,6 +1967,26 @@ fn dep_part(
+     existing: &HashSet<String>,
+     used: &mut HashSet<String>,
+     next_doc_pr: &mut u32,
++    active: &mut Vec<usize>,
++) -> Option<String> {
++    if active.contains(&index) {
++        return None;
++    }
++    active.push(index);
++    let written = dep_part_closure(drawing, index, package, existing, used, next_doc_pr, active);
++    active.pop();
++    written
++}
++
++/// The body of [`dep_part`] once the cycle guard has recorded `index`.
++fn dep_part_closure(
++    drawing: &Drawing,
++    index: usize,
++    package: &mut PartFs,
++    existing: &HashSet<String>,
++    used: &mut HashSet<String>,
++    next_doc_pr: &mut u32,
++    active: &mut Vec<usize>,
+ ) -> Option<String> {
+     let dep = drawing.deps.get(index)?;
+     let name = name_for(&dep.name, existing, used);
+@@ -1971,7 +1998,8 @@ fn dep_part(
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(inner), _) if inner < drawing.deps.len() => {
+-                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;
++                let inner_name =
++                    dep_part(drawing, inner, package, existing, used, next_doc_pr, active)?;
+                 (
+                     rel.kind.clone(),
+                     relative_rel_target(&name, &inner_name),
+@@ -2078,6 +2106,66 @@ mod tests {
+         assert!(!is_rel_name("embed", &scope));
+     }
+ 
++    fn fixture_package() -> PartFs {
++        PartFs::open(include_bytes!(
++            "../../../tests/fixtures/redline/original.docx"
++        ))
++        .unwrap()
++    }
++
++    #[test]
++    fn a_dependency_cycle_refuses_the_drawing_instead_of_recursing() {
++        // Dep 0's own relationship names part 0 — itself. Capture never
++        // writes such a graph; a hand-written payload can, and
++        // materializing it must refuse the drawing rather than write parts
++        // until the stack ends.
++        let json = r#"{"xml":"<w:drawing/>","rels":[{"sym":"r1","t":"image","part":0}],"deps":[{"name":"media/image1.png","t":"image/png","b64":"aGk=","rels":[{"sym":"d0.1","t":"image","part":0}]}]}"#;
++        let drawing: Drawing = serde_json::from_str(json).unwrap();
++        let mut pkg = fixture_package();
++        let existing: HashSet<String> = pkg.parts().into_iter().collect();
++        let mut used = HashSet::new();
++        let mut next = 0u32;
++        assert!(
++            materialize(
++                &drawing,
++                &mut pkg,
++                "word/document.xml",
++                &existing,
++                &mut used,
++                &mut next
++            )
++            .is_none()
++        );
++        assert!(pkg.part_bytes("media/image1.png").is_none());
++    }
++
++    #[test]
++    fn a_chain_of_dependencies_still_materializes() {
++        // Root → dep 0 (its own XML) → dep 1 (base64 bytes): the guard
++        // refuses cycles only, so an acyclic closure still writes every
++        // part. The root's `embed="r1"` symbol is a quoted attribute
++        // value — the shape `materialize` rewrites — so the returned XML
++        // must name a real relationship id.
++        let json = r#"{"xml":"<w:drawing><img embed=\"r1\"/></w:drawing>","rels":[{"sym":"r1","t":"image","part":0}],"deps":[{"name":"media/top.png","t":"image/png","xml":"<p d0.1=\"x\"/>","rels":[{"sym":"d0.1","t":"image","part":1}]},{"name":"media/leaf.png","t":"image/png","b64":"aGk="}]}"#;
++        let drawing: Drawing = serde_json::from_str(json).unwrap();
++        let mut pkg = fixture_package();
++        let existing: HashSet<String> = pkg.parts().into_iter().collect();
++        let mut used = HashSet::new();
++        let mut next = 0u32;
++        let xml = materialize(
++            &drawing,
++            &mut pkg,
++            "word/document.xml",
++            &existing,
++            &mut used,
++            &mut next,
++        )
++        .unwrap();
++        assert!(pkg.part_bytes("media/top.png").is_some());
++        assert_eq!(pkg.part_bytes("media/leaf.png"), Some(&b"hi"[..]));
++        assert!(xml.contains("rId"), "{xml}");
++    }
++
+     #[test]
+     fn token_parses_destination_and_length() {
+         let text = "![Text Box 2](drawing:eyJ4) next";
+diff --git a/src/opc/mod.rs b/src/opc/mod.rs
+index 9865bda..552f06a 100644
+--- a/src/opc/mod.rs
++++ b/src/opc/mod.rs
+@@ -675,10 +675,12 @@ impl PartFs {
+     /// absolute target ("/word/footer1.xml") was later re-prefixed into a
+     /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
+     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
+-        // PartFs receives raw relationship attributes; DOM consumers already
+-        // decoded XML entities and call the pure resolver directly.
+-        let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
+-        resolve_rel_target(source_part, &target)
++        // Relationship targets are stored decoded — `read_relationships`
++        // decodes `&amp;` and friends once (the migration test pins it), so
++        // resolving a stored target must not decode again:
++        // `Target="media/a&amp;amp;b.png"` is the stored `media/a&amp;b.png`,
++        // a real part name, not `media/a&b.png`.
++        resolve_rel_target(source_part, rel_target)
+     }
+ 
+     /// `contentTypeFor(part)`.
+@@ -1292,6 +1294,24 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn stored_targets_resolve_without_decoding_entities_again() {
++        // `Target="media/a&amp;amp;b.png"` is stored decoded once as
++        // `media/a&amp;b.png` (…decodes_literal_entities_once): resolving a
++        // stored target must not decode it a second time into the part name
++        // `media/a&b.png`, which the package never had.
++        let bytes = package_with_document_rels(
++            r#"<Relationship Id="rId7" Type="image" Target="media/a&amp;amp;b.png"/>"#,
++        );
++        let fs = PartFs::open(&bytes).unwrap();
++        let target = &fs.read_rels_for("word/document.xml").unwrap().items[0].target;
++        assert_eq!(target, "media/a&amp;b.png");
++        assert_eq!(
++            fs.resolve_rel_target("word/document.xml", target),
++            "word/media/a&amp;b.png"
++        );
++    }
++
+     #[test]
+     fn rel_targets_resolve_to_canonical_part_names() {
+         let fs = package_with_header_rels();
+diff --git a/src/scrub.rs b/src/scrub.rs
+index 641d427..5058cf5 100644
+--- a/src/scrub.rs
++++ b/src/scrub.rs
+@@ -32,7 +32,7 @@ use std::io::Read;
+ use serde::{Deserialize, Serialize};
+ 
+ use crate::markup_simplifier::remove_rsid_transform;
+-use crate::namespaces::{W, W15};
++use crate::namespaces::{A, W, W15};
+ use crate::opc::PartFs;
+ use crate::xmllinq::{Dom, NodeId, XName};
+ 
+@@ -41,6 +41,10 @@ const APP: &str = "docProps/app.xml";
+ const CUSTOM: &str = "docProps/custom.xml";
+ const CUSTOM_REL: &str =
+     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
++const CORE_REL: &str =
++    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
++const EXTENDED_REL: &str =
++    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties";
+ const CP: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+ const DC: &str = "http://purl.org/dc/elements/1.1/";
+ const DCTERMS: &str = "http://purl.org/dc/terms/";
+@@ -352,35 +356,63 @@ fn remove_children(part: &mut Part, names: &[XName]) -> bool {
+     changed
+ }
+ 
++/// The parts a property kind occupies: every internal package relationship
++/// of `rel_type` that targets an existing part (a document may place its
++/// property parts under any name — `document_comparer::custom_props_part`
++/// already reads custom properties that way), plus the conventional name
++/// when it is present. Sorted and deduplicated: one relationship may be
++/// repeated.
++fn property_parts(pkg: &PartFs, rel_type: &str, conventional: &str) -> Vec<String> {
++    let mut parts: Vec<String> = pkg
++        .package_relationships()
++        .items
++        .iter()
++        .filter(|r| r.rel_type == rel_type && r.target_mode.as_deref() != Some("External"))
++        .map(|r| r.target.trim_start_matches('/').to_string())
++        .filter(|part| pkg.part_bytes(part).is_some())
++        .collect();
++    if pkg.part_bytes(conventional).is_some() {
++        parts.push(conventional.to_string());
++    }
++    parts.sort();
++    parts.dedup();
++    parts
++}
++
+ /// Drop the people and dates of the core and extended properties, and the
+-/// custom properties part.
++/// custom properties part — of every part the package relationships name,
++/// not only the conventional filenames.
+ fn scrub_properties(pkg: &mut PartFs) {
+-    if let Some(mut core) = Part::load(pkg, CORE) {
+-        let names = [
+-            XName::get("creator", DC),
+-            XName::get("lastModifiedBy", CP),
+-            XName::get("revision", CP),
+-            XName::get("lastPrinted", CP),
+-            XName::get("created", DCTERMS),
+-            XName::get("modified", DCTERMS),
+-        ];
+-        if remove_children(&mut core, &names) {
+-            core.store(pkg);
++    for name in property_parts(pkg, CORE_REL, CORE) {
++        if let Some(mut core) = Part::load(pkg, &name) {
++            let names = [
++                XName::get("creator", DC),
++                XName::get("lastModifiedBy", CP),
++                XName::get("revision", CP),
++                XName::get("lastPrinted", CP),
++                XName::get("created", DCTERMS),
++                XName::get("modified", DCTERMS),
++            ];
++            if remove_children(&mut core, &names) {
++                core.store(pkg);
++            }
+         }
+     }
+-    if let Some(mut app) = Part::load(pkg, APP) {
+-        let names = [
+-            XName::get("Manager", EXTENDED),
+-            XName::get("Company", EXTENDED),
+-        ];
+-        if remove_children(&mut app, &names) {
+-            app.store(pkg);
++    for name in property_parts(pkg, EXTENDED_REL, APP) {
++        if let Some(mut app) = Part::load(pkg, &name) {
++            let names = [
++                XName::get("Manager", EXTENDED),
++                XName::get("Company", EXTENDED),
++            ];
++            if remove_children(&mut app, &names) {
++                app.store(pkg);
++            }
+         }
+     }
+-    if pkg.part_bytes(CUSTOM).is_some() {
+-        pkg.remove_part(CUSTOM);
++    for custom in property_parts(pkg, CUSTOM_REL, CUSTOM) {
++        pkg.remove_part(&custom);
+         pkg.remove_package_relationships_by_type(CUSTOM_REL);
+-        pkg.remove_content_type_override(&format!("/{CUSTOM}"));
++        pkg.remove_content_type_override(&format!("/{custom}"));
+     }
+ }
+ 
+@@ -566,6 +598,22 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
+             return true;
+         }
+     }
++    // DrawingML paragraphs split their text the same way — a chart title, a
++    // text box's drawing side — and the Markdown view re-joins exactly
++    // those `a:t` runs (`from_docx::mermaid::title`), so the joined text is
++    // logical text a reader recovers and must fail the redaction check.
++    let a_t = A::name("t");
++    for p in dom.descendants_and_self(root, Some(&A::name("p"))) {
++        let joined: String = dom
++            .descendants(p, None)
++            .into_iter()
++            .filter(|&n| dom.name_is(n, &a_t))
++            .map(|n| dom.value(n))
++            .collect();
++        if joined.contains(needle) {
++            return true;
++        }
++    }
+     false
+ }
+ 
+@@ -752,6 +800,118 @@ mod public_memory_leak_boundary_tests {
+             assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
+         }
+     }
++
++    #[test]
++    fn split_drawingml_runs_are_a_leak() {
++        // A chart title splits its text across `a:t` runs; neither run
++        // holds the whole phrase, but the joined DrawingML paragraph does,
++        // and the Markdown view re-joins exactly those runs. A redaction
++        // must be refused for it, not certified.
++        let (c, a) = (crate::namespaces::C::URI, A::URI);
++        let mut pkg = package("<w:p><w:r><w:t>Independent body payload</w:t></w:r></w:p>");
++        pkg.set_part(
++            "word/charts/chart1.xml",
++            format!(
++                r#"<c:chartSpace xmlns:c="{c}" xmlns:a="{a}"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>Private</a:t></a:r><a:r><a:t>Secret</a:t></a:r></a:p></c:rich></c:tx></c:title></c:chart></c:chartSpace>"#
++            )
++            .into_bytes(),
++        );
++        let bytes = pkg.to_zip().unwrap();
++        assert_eq!(leaks(&bytes, "PrivateSecret"), ["word/charts/chart1.xml"]);
++    }
++}
++
++#[cfg(test)]
++#[cfg_attr(all(coverage_nightly, test), coverage(off))]
++mod scrub_property_placement_tests {
++    use super::*;
++
++    fn package(body: &str) -> PartFs {
++        let mut pkg =
++            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
++        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
++        pkg
++    }
++
++    #[test]
++    fn docprops_scrub_reaches_property_parts_the_relationships_name() {
++        // OPC places property parts by package relationship, and a document
++        // may name them anything: scrub must reach them there, not only at
++        // the conventional filenames, or it reports success while the
++        // creator and the whole custom-properties part survive.
++        let mut pkg = package("<w:p><w:r><w:t>Owned source payload</w:t></w:r></w:p>");
++        pkg.set_part(
++            "metadata/private.xml",
++            b"<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\">\
++<property name=\"OutsideCounsel\" fmtid=\"{D5CDD505-2E9C-101B-9397-08002B2CF9AE}\" pid=\"2\">\
++Jane Doe</property></Properties>"
++                .to_vec(),
++        );
++        pkg.add_package_relationship(CUSTOM_REL, "metadata/private.xml");
++        pkg.add_content_type_override(
++            "/metadata/private.xml",
++            "application/vnd.openxmlformats-officedocument.custom-properties+xml",
++        );
++        // Core properties moved off the conventional name: the conventional
++        // part, relationship and override go, one relationship names the
++        // alternate part.
++        pkg.remove_part(CORE);
++        pkg.remove_package_relationships_by_type(CORE_REL);
++        pkg.remove_content_type_override(&format!("/{CORE}"));
++        pkg.set_part(
++            "metadata/core-alt.xml",
++            format!(
++                "<cp:coreProperties xmlns:cp=\"{CP}\" xmlns:dc=\"{DC}\">\
++<dc:title>Kept Title</dc:title><dc:creator>Jane Doe</dc:creator>\
++<cp:lastModifiedBy>Richard Roe</cp:lastModifiedBy></cp:coreProperties>"
++            )
++            .into_bytes(),
++        );
++        pkg.add_package_relationship(CORE_REL, "metadata/core-alt.xml");
++        pkg.add_content_type_override(
++            "/metadata/core-alt.xml",
++            "application/vnd.openxmlformats-package.core-properties+xml",
++        );
++        pkg.set_part(
++            APP,
++            format!(
++                "<Properties xmlns=\"{EXTENDED}\"><Application>jubarte</Application>\
++<Manager>Old Manager</Manager><Company>Old Company</Company></Properties>"
++            )
++            .into_bytes(),
++        );
++        let bytes = pkg.to_zip().unwrap();
++        let options = ScrubOptions {
++            author_alias: None,
++            rsids: false,
++            docprops: true,
++            comments: false,
++        };
++        let out = scrub(&bytes, &options).unwrap();
++        let scrubbed = PartFs::open(&out).unwrap();
++        // The alternate custom part is gone, with its relationship and
++        // content-type override.
++        assert!(scrubbed.part_bytes("metadata/private.xml").is_none());
++        assert!(
++            scrubbed
++                .package_relationships()
++                .items
++                .iter()
++                .all(|r| r.rel_type != CUSTOM_REL)
++        );
++        assert_eq!(scrubbed.content_type_for("metadata/private.xml"), None);
++        // The alternate core part survives scrubbed: no people, title kept.
++        let core = scrubbed.part_string("metadata/core-alt.xml").unwrap();
++        assert!(!core.contains("Jane"), "{core}");
++        assert!(!core.contains("Richard"), "{core}");
++        assert!(core.contains("Kept Title"), "{core}");
++        // The conventional extended properties still lose people, and keep
++        // the application name.
++        let app = scrubbed.part_string(APP).unwrap();
++        assert!(!app.contains("Old Manager"), "{app}");
++        assert!(!app.contains("Old Company"), "{app}");
++        assert!(app.contains("jubarte"), "{app}");
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/xmllinq/parse.rs b/src/xmllinq/parse.rs
+index 236c54c..afad132 100644
+--- a/src/xmllinq/parse.rs
++++ b/src/xmllinq/parse.rs
+@@ -761,6 +761,13 @@ fn extract_pseudo_attr(s: &str, key: &str) -> Option<String> {
+ /// through. ASCII-only names (matching the TS regex `[a-zA-Z]+`) are
+ /// recognized; names with non-ASCII letters (e.g. `&eacute;`) are left
+ /// literal. Input with no `&` short-circuits to a clone of `s`.
++///
++/// The search for the terminating `;` covers only
++/// [`MAX_ENTITY_CHARS`] characters after the `&`: every reference this
++/// decoder recognizes fits (predefined names are at most four characters,
++/// a character reference at most eight), so a longer body is preserved
++/// verbatim, and a payload of bare `&` cannot rescan the whole remaining
++/// value for each one.
+ pub fn unescape_xml_text(s: &str) -> String {
+     if !s.contains('&') {
+         return s.to_string();
+@@ -770,8 +777,12 @@ pub fn unescape_xml_text(s: &str) -> String {
+     let mut i = 0;
+     while i < chars.len() {
+         if chars[i] == '&' {
+-            // find ';'
+-            if let Some(semi_rel) = chars[i + 1..].iter().position(|&c| c == ';') {
++            // find ';' within the window a reference can occupy
++            if let Some(semi_rel) = chars[i + 1..]
++                .iter()
++                .take(MAX_ENTITY_CHARS)
++                .position(|&c| c == ';')
++            {
+                 let body: String = chars[i + 1..i + 1 + semi_rel].iter().collect();
+                 if let Some(decoded) = decode_entity(&body) {
+                     out.push_str(&decoded);
+@@ -789,6 +800,13 @@ pub fn unescape_xml_text(s: &str) -> String {
+     out
+ }
+ 
++/// How many characters after an `&` may still belong to an entity or
++/// character reference. XML's predefined names are at most four characters
++/// (`quot;`, `apos;`) and a character reference at most eight
++/// (`&#x10FFFF;`); 32 leaves room for every decodable shape while keeping
++/// the per-`&` search constant.
++const MAX_ENTITY_CHARS: usize = 32;
++
+ fn decode_entity(body: &str) -> Option<String> {
+     let b: Vec<char> = body.chars().collect();
+     if b.is_empty() {
+@@ -1069,6 +1087,20 @@ mod xml_lexical_boundary_contract_tests {
+         }
+     }
+ 
++    #[test]
++    fn entity_search_stays_within_the_reference_window() {
++        // A reference padded past the window is not one this decoder
++        // knows: it stays literal instead of decoding (and instead of
++        // rescanning the whole value for its `;`).
++        let padded = format!("&#{}65;", "0".repeat(64));
++        assert_eq!(unescape_xml_text(&padded), padded);
++        // Inside the window, padding is irrelevant.
++        assert_eq!(unescape_xml_text("&#0065;"), "A");
++        // A bare `&` far from any `;` keeps its literal shape.
++        let bare = format!("&{}", "x".repeat(4096));
++        assert_eq!(unescape_xml_text(&bare), bare);
++    }
++
+     #[test]
+     fn literal_attribute_whitespace_reads_as_spaces_references_survive() {
+         // XML 1.0 §2.11 + §3.3.3, the value a conforming reader (Word) sees:
+diff --git a/tests/markdown_to_docx.rs b/tests/markdown_to_docx.rs
+index 95d127c..d7910e0 100644
+--- a/tests/markdown_to_docx.rs
++++ b/tests/markdown_to_docx.rs
+@@ -2347,3 +2347,20 @@ fn a_kept_part_whose_w_prefix_is_unbound_on_the_root_is_left_alone() {
+         Some(item)
+     );
+ }
++
++#[test]
++fn a_cyclic_drawing_payload_converts_without_its_drawing() {
++    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
++    // A `drawing:` payload whose dependency graph closes a cycle on itself:
++    // capture never writes one, a hand-written payload can. The drawing is
++    // refused and dropped, and the document still converts instead of
++    // recursing until the stack ends.
++    let json = r#"{"xml":"<w:drawing/>","rels":[{"sym":"r1","t":"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image","part":0}],"deps":[{"name":"media/image1.png","t":"image/png","b64":"aGk=","rels":[{"sym":"d0.1","t":"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image","part":0}]}]}"#;
++    let payload = URL_SAFE_NO_PAD.encode(json.as_bytes());
++    let docx = write(&format!("![chart](drawing:{payload})\n"));
++    assert!(
++        !part_string(&docx, "word/document.xml")
++            .unwrap()
++            .contains("<w:drawing")
++    );
++}

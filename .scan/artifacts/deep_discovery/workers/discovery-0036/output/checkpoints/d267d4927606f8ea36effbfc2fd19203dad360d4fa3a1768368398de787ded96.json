@@ -1,0 +1,287 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline static audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and tests not executed under offline audit instructions.",
+    "validationMode": "static source inspection"
+  },
+  "findings": [
+    {
+      "ruleId": "uncontrolled-recursion.drawing-dependencies",
+      "title": "Converting cyclic Markdown drawing payloads can terminate the host process",
+      "summary": "An attacker-supplied Markdown image with a `drawing:` payload can encode a dependency pointing back to itself. `markdown_to_docx` accepts the flat JSON graph and recursively materializes it without cycle detection, exhausting the stack or memory before conversion returns.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A compact input deterministically reaches unbounded recursion in a public conversion API. Impact is availability of the processing host; shared-service exposure depends on the caller deployment.",
+        "changeConditions": "Process isolation and strict CPU/memory budgets constrain impact; an exposed shared conversion service increases operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct static trace shows accepted input, unchecked dependency indexes and unconditional recursive re-entry; no deployment or runtime reproduction is assumed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1970,
+          "endLine": 1974,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4188,
+          "endLine": 4198,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "sink"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 59,
+          "endLine": 110,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "drawing-decode",
+          "label": "Flat payload graph is deserialized without graph validation",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "language": "rust",
+          "role": "user_input",
+          "code": "pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))\n}",
+          "explanation": "The attacker controls the base64 JSON and its flat dependency indexes; the JSON nesting limit does not validate graph cycles."
+        },
+        {
+          "id": "drawing-materialize",
+          "label": "Accepted drawing traverses its dependency indexes",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1888,
+          "endLine": 1895,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)\n            }",
+          "explanation": "Any valid in-range dependency is passed to dep_part, including an attacker-defined self-referential node."
+        },
+        {
+          "id": "drawing-recursion",
+          "label": "Part expansion recurses before recording a completed node",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1974,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;",
+          "explanation": "used tracks output names, not visited dependency indexes. A self edge repeatedly re-enters the same dependency; package deduplication occurs only after recursion returns."
+        }
+      ],
+      "rootCause": {
+        "summary": "Markdown image destinations are decoded into `Drawing` objects and stored by `picture()`. `package::assemble` routes them through `PartRelate::drawing()` to `materialize()`. The dependency graph is attacker-defined flat JSON; `dep_part()` bounds only each index and uses a name set for collision avoidance. It has neither an active-index set nor a traversal budget, so an in-range self edge or mutual cycle never returns.",
+        "evidenceRefs": [
+          "drawing-decode",
+          "drawing-materialize",
+          "drawing-recursion"
+        ]
+      },
+      "remediation": "Validate drawing dependency graphs before materialization. Reject cycles and excessive traversal depth/work, and memoize materialized indexes so shared dependencies are not repeatedly expanded.",
+      "validation": {
+        "counterEvidence": [
+          "Bounds checks reject out-of-range dependency indexes, but do not reject valid cyclic indexes.",
+          "check_box_regions returns success for empty boxes and does not inspect dependency graphs (drawing.rs:1569-1576).",
+          "Output-name collision handling and post-recursion byte deduplication cannot stop recursion."
+        ],
+        "limitations": [
+          "No application code or vulnerability-triggering input was executed."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Confirmed public `markdown_to_docx` -> `read` -> `picture` -> `package::assemble` -> `PartRelate::drawing` -> `materialize` -> `dep_part`. A drawing with simple valid XML, no boxes, a root relation to dependency 0 and dependency 0 referring to itself bypasses box checks and repeatedly enters the same function."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown image destination -> base64 decode -> serde Drawing graph -> document.drawings -> assembly -> materialize -> recursive dep_part cycle",
+          "source": "attacker-controlled Markdown",
+          "sink": "unbounded native call stack and intermediate names/XML allocations",
+          "outcome": "conversion host exhaustion or termination"
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Denial of service in the processing process; no read/write escape or code execution established."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Flat small cyclic graph passes local type and index checks."
+        },
+        "reachability": {
+          "summary": "Reachable through public Rust markdown_to_docx and its Python/WASM wrappers; CLI creation also forwards text to it. Requires the victim to process attacker-provided Markdown, with no control over victim configuration required.",
+          "attacker": "untrusted Markdown author",
+          "entrypoint": "markdown::markdown_to_docx; Python markdown_to_docx; WASM markdown_to_docx",
+          "preconditions": [
+            "A host converts attacker-provided Markdown."
+          ]
+        },
+        "summary": "Supply Markdown containing an image whose drawing payload has an in-range cyclic dependency, then have the host convert it with the public Markdown-to-DOCX API."
+      },
+      "remediationTests": [
+        "Assert self cycles and two-node cycles return structured errors without recursion.",
+        "Assert deeply nested and exponentially shared acyclic graphs obey an explicit work budget.",
+        "Preserve valid shared dependency round trips."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "drawing-dependency-cycle",
+        "workerLabel": "discovery-0036",
+        "originalCandidates": [
+          {
+            "candidateId": "drawing-dependency-cycle",
+            "title": "Cyclic drawing payload may cause unbounded recursive materialization",
+            "locations": [
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1397
+              },
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1975
+              }
+            ],
+            "evidence": "decode deserializes caller-provided base64 JSON into Drawing; dep_part recursively follows rel.part indexes without an apparent visited set. Public markdown assembly calls materialize. Reachability and validation controls remain under review.",
+            "codeEvidence": [
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1408,
+                "code": "serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))"
+              },
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1975,
+                "code": "let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;"
+              }
+            ]
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "candidateId": "drawing-dependency-cycle",
+          "title": "Cyclic drawing payload may cause unbounded recursive materialization",
+          "locations": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1397
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1975
+            }
+          ],
+          "evidence": "decode deserializes caller-provided base64 JSON into Drawing; dep_part recursively follows rel.part indexes without an apparent visited set. Public markdown assembly calls materialize. Reachability and validation controls remain under review.",
+          "codeEvidence": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1408,
+              "code": "serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1975,
+              "code": "let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-06de44aad00200a4",
+        "label": "Markdown drawing payload dependency materialization",
+        "disposition": "reported",
+        "notes": "Validated drawing-dependency-cycle through public Markdown conversion to recursive dependency materialization. Original candidate evidence retained in finding extensions.",
+        "candidateId": "drawing-dependency-cycle",
+        "receiptRefs": []
+      },
+      {
+        "label": "Image decoder limits and legacy sector-chain bounds",
+        "disposition": "no_issue_found",
+        "notes": "Focused investigator found image 0.25.10 default 512 MiB ImageReader allocation budget and file-sector bounds/duplicate FAT rejection in legacy chain materialization. Parent has not yet completed all implementation review; these are control observations, not full-file coverage.",
+        "id": "surface-e6b7843e4c0e4b8f",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "xml-nonstandard-part-depth",
+        "reason": "Independent baseline provisional return; parent validation pending.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "admission scans XML only by .xml/.rels suffix (except main part), while converter resolves arbitrary stylesheet target then recursively calls unchecked parse_xdocument; a deep styles.bin bypasses max_xml_depth and can overflow stack."
+        },
+        "id": "xml-nonstandard-part-depth"
+      },
+      {
+        "candidateId": "altchunk-colspan-expansion",
+        "reason": "Independent baseline provisional return; parent validation pending.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "altChunk HTML colspan parses unbounded usize and end_table iterates 0..sum(spans), so a tiny chunk with colspan=1000000000 generates billions of grid columns before rendering."
+        },
+        "id": "altchunk-colspan-expansion"
+      },
+      {
+        "candidateId": "docx-table-span-expansion",
+        "reason": "Both baseline and focused investigator independently identified table occupancy allocation; parent validation pending.",
+        "candidate": {
+          "baseline": "cell_span at src/convert/mod.rs:14211 parses gridSpan as unbounded usize; table_block computes occupancy from sums and allocates vec![each; occupancy]/resize at 13604-13616, and resolve_table_merges resizes per span at 14638.",
+          "investigator": "cell_span parses gridSpan as usize with only max(1), row_grid_skip similarly; table_block computes max summed occupancy then cols.resize(occupancy,80.0), followed by additional per-column vectors. Shallow admitted WML with a single gridSpan=1073741824 requests at least 4 GiB from a short attribute; no options needed."
+        },
+        "id": "docx-table-span-expansion"
+      },
+      {
+        "candidateId": "chicago-numbering-expansion",
+        "reason": "Baseline preliminary candidate; requires parent caller/range validation.",
+        "candidate": {
+          "baseline": "Chicago numbering format repeats symbol n/4 times at src/convert/mod.rs:6015-6018 with unbounded u32 list start/section page counters, allowing multi-GB allocation from a short attribute."
+        },
+        "id": "chicago-numbering-expansion"
+      },
+      {
+        "candidateId": "numbering-level-expansion",
+        "reason": "Focused investigator identified unchecked numeric level expansion; parent validation pending.",
+        "candidate": {
+          "originalMessage": "num_pr parses paragraph ilvl as unrestricted u32 (src/convert/mod.rs:12711-12714); Numbering::resolve_ilvl scans every integer down from ilvl until a defined parent (5529-5532). One normal level-0 numbering definition plus ilvl=2147483647 entails ~2.1 billion HashMap probes before rendering. If huge level is itself defined, next_marker materializes counters for all lower levels (5610-5627)."
+        },
+        "id": "numbering-level-expansion"
+      },
+      {
+        "candidateId": "legacy-field-result-quadratic",
+        "reason": "Focused investigator returned source-backed candidate; parent validation pending.",
+        "candidate": {
+          "originalMessage": "Story::blocks calls fields.iter().any(...) for every character (src/legacy_doc.rs:1602-1604), while field begin pushes true and separator flips last false (1606-1613). Deeply nested field results leave an arbitrarily long all-false stack, making each later byte rescan full depth; no legacy nesting/work cap and public read plus CLI convert reach it. Ordinary all-code nesting short-circuits."
+        },
+        "id": "legacy-field-result-quadratic"
+      }
+    ]
+  }
+}

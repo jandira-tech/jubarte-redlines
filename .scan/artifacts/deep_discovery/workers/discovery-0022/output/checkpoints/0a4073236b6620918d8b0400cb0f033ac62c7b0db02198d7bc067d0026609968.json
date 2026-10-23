@@ -1,0 +1,41 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application execution or network requests.",
+    "validationMode": "static source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "HTML altChunk table expansion",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate awaiting independent parent source validation.",
+        "id": "surface-aa8f55b1964c304d",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0022-altchunk-colspan",
+        "reason": "Baseline candidate awaiting independent parent validation; original evidence retained.",
+        "candidate": {
+          "candidateId": "discovery-0022-altchunk-colspan",
+          "title": "Unbounded HTML colspan expands into excessive generated XML",
+          "source": "baseline",
+          "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+          "status": "awaiting parent source validation"
+        },
+        "id": "discovery-0022-altchunk-colspan"
+      },
+      {
+        "reason": "Whole current repository review and independent architecture/other worker investigations remain in progress.",
+        "id": "deferred-f098098c4baf4acc"
+      }
+    ]
+  }
+}

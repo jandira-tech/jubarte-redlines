@@ -1,0 +1,4524 @@
+{
+  "folder": "dedup-0002",
+  "findings": [
+    {
+      "findingId": "csf_9e40f23e742aa43493a0fb92",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "severity": "medium",
+      "summary": "An untrusted DOCX author can set huge positive w:gridSpan, w:gridBefore or w:gridAfter counts in a small, shallow table. Rendering sums those counts into grid occupancy and directly sizes column, preference and merge vectors. Counts of 1000000000/1073741824 request about 4 GB/4 GiB for f32 columns; 4294967295 requests approximately 16 GiB before additional allocations, despite package admission. Assigned discovery-0031 corroborates the existing one-billion-column, 4,000,000,000-byte f32-vector framing through both span and row-skip inputs; these are static counts.\n Assigned discovery-0032 corroborates the live span and both synthetic row-skip paths, including merge-slot expansion; separate Markdown span clamping does not protect rendering.",
+      "remediation": "Enforce practical per-span and total-column budgets for gridSpan, gridBefore and gridAfter before excessive RawCell, column, preference or merge allocation/work. Use checked occupancy sums and col+span arithmetic, apply the same budget to every derived table vector, and return a typed resource-limit refusal on excess. Propagate a caller-adjustable semantic column limit through all public rendering surfaces and charge later column/merge vectors to that same budget.\nAdditional retained remediation detail: Enforce explicit maximum live cell spans, row skips, aggregate table columns and merge slots before any allocation. Use checked sums and a cumulative layout resource budget, returning a typed refusal when exceeded.",
+      "locations": [
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13598
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14635
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13537,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14645,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 9174
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14379
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14263
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14643,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14603
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14346,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 14642,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 13618,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 13216,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13199
+        },
+        {
+          "endLine": 13560,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13554
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14603
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 773
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14340
+        },
+        {
+          "endLine": 789,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13617,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14639,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 786,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 774
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13486,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13466
+        },
+        {
+          "endLine": 13540,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13524
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14338
+        },
+        {
+          "endLine": 14380,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14376
+        },
+        {
+          "endLine": 13536,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14354,
+          "path": "src/convert/mod.rs",
+          "role": "input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13603
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 13220,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13200
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13466
+        }
+      ]
+    },
+    {
+      "findingId": "csf_8dcaf50784fd95a7f0c2ec28",
+      "title": "Processing renamed auxiliary XML bypasses XML depth limits",
+      "severity": "medium",
+      "summary": "A DOCX author can put deeply nested auxiliary XML under a non-.xml/.rels suffix. Admission drains those bytes without XML policy, while rendering, revision listing, revision acceptance/rejection and comparison follow internal relationships and recursively build a DOM. Confirmed rendering parts include theme, styles, numbering, comments/commentsExtended, notes and headers/footers; get_revisions and comparison also parse renamed footnotes/endnotes. A small admitted package can terminate the native host or trap WASM. The assigned source additionally confirms eager relationship-selected fontTable parsing before font inspection, including renamed fontTable.bin. Comparison preprocessing also follows renamed styles and charts, alongside footnotes/endnotes. The assigned Standard source additionally identifies edit initialization's existing_comment_ids on relationship-selected comments before the later checked CommentFamily loader. Assigned discovery-0019 corroborates the same shared selector for styles, theme, numbering and fontTable under .bin names; its proof is limited to those four consumers, while earlier validated consumer paths remain retained. Assigned discovery-0027 additionally confirms relationship-selected settings bytes reaching settings_dom/settings_dom_xml and unchecked DOM construction on cache miss; settings is now a supplied validated consumer, whereas earlier recommendations remain historical source limitations. Assigned discovery-0028 supplies already-validated linked-textbox and diagram consumers: relationship-ID media targets at src/convert/mod.rs:17417-17428 and :17453-17464 are decoded and recursively parsed regardless of filename. The new source corroborates fontTable, theme, styles, numbering, settings, comments, notes and header/footer paths, and records that admission's content-type check covers the main part only. Assigned discovery-0031 additionally preserves strict normalization's extension-based pass-through: a relationship-selected fonts.bin remains unmodified before eager fontTable parsing. The raw unchecked parser's documented caller obligations are not themselves the finding.",
+      "remediation": "Apply active InputLimits at a centralized checked XML access/parse boundary for every semantic XML consumer regardless of filename, or resolve/classify and admit XML through actual content-type/relationship use. Cover theme, styles, numbering, converter comments/commentsExtended, notes and headers/footers; explicitly cover the now supplied validated settings_dom/settings_dom_xml cache-miss consumer, with earlier settings-only recommendations retained as historical source limitations. Preserve renamed-main checks, and enforce actual DOM construction depth or use iterative construction. Apply that same mandatory checked boundary to get_revisions and comparison notes parsing, including both footnotes and endnotes; propagate typed refusal under the active comparer InputLimits. Include pre_process_markup's relationship-selected notes at src/document_comparer.rs:4725-4750 and exposed Python get_revisions_json/WASM getRevisions; valid arbitrary part names remain supported. Include linked-textbox and diagram relationship targets in the mandatory filename-independent checked XML boundary before parse_xdocument and in regression coverage. These are now supplied validated affected consumers from discovery-0028; earlier sources' proposed-only status remains historical. Cover revision_processor RevisionIds collection and process_part for all six selected auxiliary buckets (headers, footers, endnotes, footnotes, comments and styles), including public revision acceptance/rejection. Explicitly include the now-confirmed fontTable loader (src/convert/font_table.rs:66-78; src/convert/mod.rs:806) in the mandatory checked XML boundary; parsing must be bounded before any font root/entry inspection. Explicitly cover comparison defined_style_ids (src/document_comparer.rs:4684-4696), relationship-selected footnotes/endnotes (4724-4750) and chart preprocessing (4861-4878), all reached through admitted nonidentical comparison inputs (6555-6569,6607-6625). Apply the same mandatory XML boundary before edit initialization's existing_comment_ids scan, not only in the later checked CommentFamily loader; preserve the effective checks at inspect::parse_part_within and edit::load_stories. Enforce the same checked boundary before settings DOM cache population, and preserve valid bounded nonstandard auxiliary filenames.",
+      "locations": [
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21310
+        },
+        {
+          "endLine": 3317,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3305
+        },
+        {
+          "endLine": 3497,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 6569,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6557
+        },
+        {
+          "endLine": 7786,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7781
+        },
+        {
+          "endLine": 8487,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8527,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8524
+        },
+        {
+          "endLine": 8700,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8696
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 659
+        },
+        {
+          "endLine": 20785,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 20767
+        },
+        {
+          "endLine": 20796,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20794
+        },
+        {
+          "endLine": 551,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 532
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 555
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 21321,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21310
+        },
+        {
+          "endLine": 3501,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 664,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 556
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 8489,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 7675,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7669
+        },
+        {
+          "endLine": 20781,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 20768
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20786
+        },
+        {
+          "endLine": 7689,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7688
+        },
+        {
+          "endLine": 551,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 6328,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 6318
+        },
+        {
+          "endLine": 6479,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6461
+        },
+        {
+          "endLine": 6689,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 6676
+        },
+        {
+          "endLine": 547,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 556
+        },
+        {
+          "endLine": 6327,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6293
+        },
+        {
+          "endLine": 6480,
+          "path": "src/document_comparer.rs",
+          "role": "root_control",
+          "startLine": 6461
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4748
+        },
+        {
+          "endLine": 358,
+          "path": "jubarte-python/src/lib.rs",
+          "role": "entrypoint",
+          "startLine": 347
+        },
+        {
+          "endLine": 228,
+          "path": "jubarte-wasm/src/lib.rs",
+          "role": "entrypoint",
+          "startLine": 225
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21310
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20768
+        },
+        {
+          "endLine": 553,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 3714,
+          "path": "src/revision_processor.rs",
+          "role": "input",
+          "startLine": 3699
+        },
+        {
+          "endLine": 3794,
+          "path": "src/revision_processor.rs",
+          "role": "sensitive_operation",
+          "startLine": 3785
+        },
+        {
+          "endLine": 3748,
+          "path": "src/revision_processor.rs",
+          "role": "affected_operation",
+          "startLine": 3732
+        },
+        {
+          "endLine": 4751,
+          "path": "src/document_comparer.rs",
+          "role": "affected_operation",
+          "startLine": 4724
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6607
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sensitive_operation",
+          "startLine": 637
+        },
+        {
+          "endLine": 78,
+          "path": "src/convert/font_table.rs",
+          "role": "supporting",
+          "startLine": 66
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 660
+        },
+        {
+          "endLine": 543,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 534
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 558
+        },
+        {
+          "endLine": 21305,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21301
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 660
+        },
+        {
+          "endLine": 6569,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6555
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6607
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4724
+        },
+        {
+          "endLine": 4696,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4684
+        },
+        {
+          "endLine": 4878,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4861
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 534
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4724
+        },
+        {
+          "endLine": 6624,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6607
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 533
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21310
+        },
+        {
+          "endLine": 807,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 806
+        },
+        {
+          "endLine": 3485,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 3498,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3490
+        },
+        {
+          "endLine": 8530,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8524
+        },
+        {
+          "endLine": 8703,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8696
+        },
+        {
+          "endLine": 20782,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20767
+        },
+        {
+          "endLine": 20797,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20788
+        },
+        {
+          "endLine": 4696,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4685
+        },
+        {
+          "endLine": 4752,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4737
+        },
+        {
+          "endLine": 4880,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4869
+        },
+        {
+          "endLine": 2158,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 2154
+        },
+        {
+          "endLine": 5563,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 5552
+        },
+        {
+          "endLine": 8490,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 8473
+        },
+        {
+          "endLine": 635,
+          "path": "src/inspect.rs",
+          "role": "supporting",
+          "startLine": 605
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 771
+        },
+        {
+          "endLine": 21324,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21307
+        },
+        {
+          "endLine": 78,
+          "path": "src/convert/font_table.rs",
+          "role": "sink",
+          "startLine": 66
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 655
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 4987,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4961
+        },
+        {
+          "endLine": 3728,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3689
+        },
+        {
+          "endLine": 3792,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3784
+        },
+        {
+          "endLine": 3905,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3897
+        },
+        {
+          "endLine": 543,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 561,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 555
+        },
+        {
+          "endLine": 8488,
+          "path": "src/convert/mod.rs",
+          "role": "source",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8527,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 8524
+        },
+        {
+          "endLine": 20799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 20768
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 6607
+        },
+        {
+          "endLine": 3713,
+          "path": "src/revision_processor.rs",
+          "role": "supporting",
+          "startLine": 3700
+        },
+        {
+          "endLine": 3794,
+          "path": "src/revision_processor.rs",
+          "role": "supporting",
+          "startLine": 3787
+        },
+        {
+          "endLine": 4965,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 4961
+        },
+        {
+          "endLine": 545,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 21310
+        },
+        {
+          "endLine": 6571,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6557
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 660
+        },
+        {
+          "endLine": 807,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 806
+        },
+        {
+          "endLine": 6868,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 6864
+        },
+        {
+          "endLine": 6892,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6887
+        },
+        {
+          "endLine": 3318,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 3304
+        },
+        {
+          "endLine": 3500,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 3478
+        },
+        {
+          "endLine": 6570,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 6556
+        },
+        {
+          "endLine": 6891,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 6864
+        },
+        {
+          "endLine": 7787,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 7780
+        },
+        {
+          "endLine": 8488,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8528,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 8522
+        },
+        {
+          "endLine": 8701,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 8694
+        },
+        {
+          "endLine": 20797,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 20768
+        },
+        {
+          "endLine": 17428,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 17417
+        },
+        {
+          "endLine": 17464,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 17453
+        },
+        {
+          "endLine": 3713,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3699
+        },
+        {
+          "endLine": 3792,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3787
+        },
+        {
+          "endLine": 3740,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3732
+        },
+        {
+          "endLine": 4965,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4961
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "startLine": 20768
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "startLine": 4740
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660
+        },
+        {
+          "endLine": 81,
+          "path": "src/convert/font_table.rs",
+          "role": "supporting",
+          "startLine": 66
+        },
+        {
+          "endLine": 661,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 654
+        },
+        {
+          "endLine": 21320,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21308
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 21320,
+          "path": "src/convert/mod.rs",
+          "startLine": 21310
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660
+        }
+      ]
+    },
+    {
+      "findingId": "csf_64b247931cd1f053217fde7a",
+      "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+      "severity": "medium",
+      "summary": "A document author can place a huge positive colspan in a small embedded HTML/MHT altChunk table. Ordinary DOCX rendering generates one grid XML element per effective column after original package admission and before DOM/layout checks. A count of 1000000000 drives a billion appends; 4294967295 generates over 85 GB of markup, exhausting CPU/memory. The supplied positive 4294967295 framing fits both 32-bit and 64-bit usize and needs no arithmetic overflow. Assigned discovery-0031 corroborates colspan=1000000000 causing tens of gigabytes of generated XML and work before layout; rejecting invalid, negative or zero spans does not bound valid positive values.\n Assigned discovery-0032 supplies a static colspan=1000000000 framing of one billion 20-byte grid elements, about 20 GB of generated text before DOM construction; this is not a runtime measurement.",
+      "remediation": "Enforce a practical maximum cell span and checked per-row/aggregate column counts before generating any table XML. Charge all HTML/MHT-generated WML, including repeated/nested tables, to a cumulative byte/work budget inside altChunk expansion and return a typed input-limit refusal before allocation or DOM construction.\nAdditional retained remediation detail: Bound individual spans and aggregate columns before summation or iteration, use checked arithmetic, and impose a cumulative generated-WML byte/element budget shared across every HTML/MHT altChunk. Refuse excessive expansion with a typed input-limit error before allocation.",
+      "locations": [
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 33
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 557
+        },
+        {
+          "endLine": 491,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 34
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 800,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 34
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 460,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 422
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 762
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 562
+        },
+        {
+          "endLine": 493,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 566,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 463
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 789
+        },
+        {
+          "endLine": 566,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 562
+        },
+        {
+          "endLine": 476,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 469
+        },
+        {
+          "endLine": 491,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 488
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "startLine": 789
+        },
+        {
+          "endLine": 568,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 559
+        },
+        {
+          "endLine": 476,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 469
+        },
+        {
+          "endLine": 493,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 489
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "startLine": 776
+        },
+        {
+          "endLine": 558,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 535
+        }
+      ]
+    },
+    {
+      "findingId": "csf_eaffa9e4af9c9c07d800ef1b",
+      "title": "ZIP footer and count interpretation mismatch bypasses entry-count admission",
+      "severity": "medium",
+      "summary": "The independent preindex footer parser can count a different EOCD or count field from zip 9.0.5. False small-count EOCDs in valid comments can be skipped by zip; a same-footer total=3/on-this-disk=10001 also passes max_entries=10000 while zip indexes 10001. ZIP64 size/offset triggers differ too. Neither admission nor PartFs enforces the actual opened count; duplicate detection also trusts the unrelated declared count. Another supplied false-footer proof uses an EOCD-shaped record inside the real archive comment whose own comment length is impossible; preindex trusts its low count while the ZIP reader rejects it and backtracks.",
+      "remediation": "Use the delegated reader's authoritative validated EOCD/ZIP64 selection, consistent ZIP32 total/per-disk fields and all ZIP64 total/size/offset triggers. Bound raw central-record traversal/count before index allocation, reject inconsistent unsupported metadata, and retain a post-open active archive.len cap as defense in depth; that later check cannot undo earlier allocation. Reconcile selected raw counts with indexed counts for exact duplicates, including name collapse, comments, ZIP64 and prepended data. Detect raw exact-name duplicates directly or through the reader's duplicate flag rather than relying solely on a count-shortfall inference.",
+      "locations": [
+        {
+          "endLine": 408,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 397
+        },
+        {
+          "endLine": 601,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 590
+        },
+        {
+          "endLine": 457,
+          "path": "src/admission.rs",
+          "role": "propagation",
+          "startLine": 444
+        },
+        {
+          "endLine": 289,
+          "path": "src/opc/mod.rs",
+          "role": "entrypoint",
+          "startLine": 282
+        },
+        {
+          "endLine": 31,
+          "path": "src/opc/archive.rs",
+          "role": "propagation",
+          "startLine": 20
+        },
+        {
+          "endLine": 407,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 397
+        },
+        {
+          "endLine": 601,
+          "path": "src/admission.rs",
+          "role": "user_input",
+          "startLine": 590
+        },
+        {
+          "endLine": 456,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 444
+        },
+        {
+          "endLine": 290,
+          "path": "src/opc/mod.rs",
+          "role": "entrypoint",
+          "startLine": 282
+        },
+        {
+          "endLine": 407,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 399
+        },
+        {
+          "endLine": 455,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 444
+        },
+        {
+          "endLine": 605,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 590
+        },
+        {
+          "endLine": 293,
+          "path": "src/opc/mod.rs",
+          "role": "sink",
+          "startLine": 282
+        },
+        {
+          "endLine": 30,
+          "path": "src/opc/archive.rs",
+          "role": "sink",
+          "startLine": 20
+        },
+        {
+          "endLine": 407,
+          "path": "src/admission.rs",
+          "role": "input",
+          "startLine": 399
+        },
+        {
+          "endLine": 456,
+          "path": "src/admission.rs",
+          "role": "sensitive_operation",
+          "startLine": 439
+        },
+        {
+          "endLine": 290,
+          "path": "src/opc/mod.rs",
+          "role": "affected_operation",
+          "startLine": 282
+        },
+        {
+          "endLine": 601,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 595
+        },
+        {
+          "endLine": 407,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 399
+        },
+        {
+          "endLine": 456,
+          "path": "src/admission.rs",
+          "role": "sink",
+          "startLine": 448
+        },
+        {
+          "endLine": 289,
+          "path": "src/opc/mod.rs",
+          "role": "sink",
+          "startLine": 282
+        },
+        {
+          "endLine": 455,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 448
+        },
+        {
+          "endLine": 290,
+          "path": "src/opc/mod.rs",
+          "role": "sink",
+          "startLine": 282
+        },
+        {
+          "endLine": 455,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 439
+        },
+        {
+          "endLine": 602,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 580
+        },
+        {
+          "endLine": 475,
+          "path": "src/opc/archive.rs",
+          "role": "sink",
+          "startLine": 463
+        },
+        {
+          "endLine": 602,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 595
+        },
+        {
+          "endLine": 455,
+          "path": "src/admission.rs",
+          "role": "sink",
+          "startLine": 444
+        },
+        {
+          "endLine": 602,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 590
+        },
+        {
+          "endLine": 407,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 399
+        },
+        {
+          "endLine": 456,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 444
+        },
+        {
+          "endLine": 31,
+          "path": "src/opc/archive.rs",
+          "role": "supporting",
+          "startLine": 20
+        },
+        {
+          "endLine": 3663,
+          "path": "Cargo.lock",
+          "role": "supporting",
+          "startLine": 3662
+        },
+        {
+          "endLine": 456,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 444
+        },
+        {
+          "endLine": 289,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 282
+        },
+        {
+          "endLine": 455,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 444
+        },
+        {
+          "endLine": 3665,
+          "path": "Cargo.lock",
+          "role": "propagation",
+          "startLine": 3661
+        }
+      ]
+    },
+    {
+      "findingId": "csf_a9b4e9d87eb567391149dad1",
+      "title": "Large page coordinates make border rendering loop without progress",
+      "severity": "medium",
+      "summary": "Finite page dimensions and margins from DOCX can place a dotted border at coordinates where its f32 increment rounds to zero. Rendering then loops indefinitely while appending drawing operations, exhausting memory.",
+      "remediation": "Validate finite, reasonable page/margin/border geometry before layout. Use a bounded integer segment count instead of open-ended float accumulation, enforce a maximum border-operation budget, and explicitly refuse any step that cannot advance.",
+      "locations": [
+        {
+          "endLine": 5053,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 5037
+        },
+        {
+          "endLine": 5304,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 5291
+        },
+        {
+          "endLine": 31881,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 31874
+        },
+        {
+          "endLine": 32015,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 32004
+        },
+        {
+          "endLine": 25483,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 25473
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 23239
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 31840
+        }
+      ]
+    },
+    {
+      "findingId": "csf_09abb95061370ae3d7d342ca",
+      "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+      "severity": "medium",
+      "summary": "The redact operation can return successful clean and redline documents while a supported BOM-marked UTF-16LE/BE auxiliary XML part still contains the same confidential text. Its XML leak branch uses lossy UTF-8 and misses the retained copy, which a recipient can recover after sharing. Even the scanner's no-root fallback searches the already lossily decoded string, so it cannot recover a multi-character value split by UTF-16 NUL bytes.",
+      "remediation": "Decode every XML part with the same BOM-aware policy as admission before semantic leak scanning. Fail closed on unsupported/undecodable/unparseable representations and retain raw UTF8 and both UTF16 byte-order checks as defense in depth. Use the same decoding across leak checks and package validation.",
+      "locations": [
+        {
+          "endLine": 780,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 764
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 467
+        },
+        {
+          "endLine": 4747,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 376,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 368
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 659
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "role": "sink",
+          "startLine": 873
+        },
+        {
+          "endLine": 540,
+          "path": "src/scrub.rs",
+          "role": "supporting",
+          "startLine": 527
+        },
+        {
+          "endLine": 314,
+          "path": "src/edit/prepared.rs",
+          "role": "supporting",
+          "startLine": 282
+        },
+        {
+          "endLine": 471,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 467
+        },
+        {
+          "endLine": 4745,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 4727
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "role": "entrypoint",
+          "startLine": 873
+        },
+        {
+          "endLine": 780,
+          "path": "src/admission.rs",
+          "role": "user_input",
+          "startLine": 764
+        },
+        {
+          "endLine": 4745,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "user_input",
+          "startLine": 777
+        },
+        {
+          "endLine": 5386,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 4746,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 430,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 403
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 463
+        },
+        {
+          "endLine": 535,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 527
+        },
+        {
+          "endLine": 875,
+          "path": "src/edit/prepared.rs",
+          "role": "outcome",
+          "startLine": 863
+        },
+        {
+          "endLine": 668,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 658
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 768
+        },
+        {
+          "endLine": 836,
+          "path": "jubarte-python/python/jubarte_redlines/models.py",
+          "role": "entrypoint",
+          "startLine": 826
+        },
+        {
+          "endLine": 5387,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 5424,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5420
+        },
+        {
+          "endLine": 874,
+          "path": "src/edit/prepared.rs",
+          "role": "propagation",
+          "startLine": 867
+        },
+        {
+          "endLine": 4748,
+          "path": "src/edit.rs",
+          "role": "outcome",
+          "startLine": 4724
+        },
+        {
+          "endLine": 425,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 425
+        },
+        {
+          "endLine": 533,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 527
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 764
+        },
+        {
+          "endLine": 5384,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 4746,
+          "path": "src/edit.rs",
+          "role": "entrypoint",
+          "startLine": 4727
+        },
+        {
+          "endLine": 537,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 527
+        },
+        {
+          "endLine": 532,
+          "path": "src/scrub.rs",
+          "startLine": 527
+        },
+        {
+          "endLine": 784,
+          "path": "src/admission.rs",
+          "startLine": 765
+        },
+        {
+          "endLine": 4746,
+          "path": "src/edit.rs",
+          "startLine": 4727
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "startLine": 873
+        }
+      ]
+    },
+    {
+      "findingId": "csf_de54caf2d47d7e03bce741e0",
+      "title": "Metadata scrub leaves property parts under alternate names",
+      "severity": "medium",
+      "summary": "With docprops enabled, scrub removes metadata only from three conventional filenames. A document using alternate package relationship targets can retain creators, editors, dates, company/manager or custom properties while scrub returns success. The custom-properties branch additionally skips relationship/content-type removal when docProps/custom.xml is absent, leaving an active relationship to a relocated target such as metadata/private.xml.",
+      "remediation": "Resolve all core, extended and custom property parts through authoritative package relationships and content types, sanitize every applicable internal target according to docprops selection, and remove corresponding custom-property parts/relationships/content-type records coherently. Verify the selected privacy postcondition; refuse unsupported or ambiguous layouts rather than returning a successfully scrubbed copy. Preserve intentional title/subject/application and revision-date retention. Missing/invalid selected targets require explicit refusal or documented safe handling; default public and CLI callers must enforce the same postcondition. Include supported Strict property relationship variants and regression cases containing both conventional and relocated targets; every active property target must satisfy the requested postcondition.",
+      "locations": [
+        {
+          "endLine": 43,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 133
+        },
+        {
+          "endLine": 384,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 357
+        },
+        {
+          "endLine": 376,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 365
+        },
+        {
+          "endLine": 633,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 630
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 659
+        },
+        {
+          "endLine": 42,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 38
+        },
+        {
+          "endLine": 384,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 357
+        },
+        {
+          "endLine": 41,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 126
+        },
+        {
+          "endLine": 226,
+          "path": "jubarte-python/python/jubarte_redlines/document.py",
+          "role": "entrypoint",
+          "startLine": 202
+        },
+        {
+          "endLine": 41,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 39
+        },
+        {
+          "endLine": 377,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 360
+        },
+        {
+          "endLine": 122,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 113
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 134
+        },
+        {
+          "endLine": 43,
+          "path": "src/scrub.rs",
+          "role": "control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 136
+        },
+        {
+          "endLine": 6188,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 6180
+        },
+        {
+          "endLine": 79,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 55
+        },
+        {
+          "endLine": 155,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 109
+        },
+        {
+          "endLine": 45,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 37
+        },
+        {
+          "endLine": 665,
+          "path": "src/opc/mod.rs",
+          "role": "sink",
+          "startLine": 658
+        },
+        {
+          "endLine": 867,
+          "path": "src/opc/mod.rs",
+          "role": "expected_control",
+          "startLine": 857
+        },
+        {
+          "endLine": 47,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 385,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 355
+        },
+        {
+          "endLine": 377,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 365
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 654
+        },
+        {
+          "endLine": 20,
+          "path": "src/scrub.rs",
+          "role": "expected_control",
+          "startLine": 16
+        },
+        {
+          "endLine": 383,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 357
+        },
+        {
+          "endLine": 43,
+          "path": "src/scrub.rs",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "startLine": 136
+        },
+        {
+          "endLine": 376,
+          "path": "src/opc/mod.rs",
+          "startLine": 365
+        }
+      ]
+    },
+    {
+      "findingId": "csf_d22452ac5ec901578d340334",
+      "title": "Opaque DTD and top-level CDATA bypass package XML depth checks",
+      "severity": "medium",
+      "summary": "Package admission ignores opaque DTD and top-level CDATA events, while the permissive DOM handles top-level <! constructs by skipping only to the first '>'. A delimiter within a quoted entity or CDATA body exposes deeply nested literal markup as recursive elements, bypassing admission depth and potentially exhausting the host stack. Rendering and lazy WmlDocument main-part access are preserved affected entrypoints.\nAn internal-subset comment with a literal > supplies an additional hidden-tag framing at the same declaration boundary. The assigned corroboration additionally identifies get_revisions main-document parsing after ordinary admission.",
+      "remediation": "Align admission and DOM lexical/structural semantics for every opaque <! construct. Reject unsupported DTD and CDATA/text outside the root consistently with checked XML validation, and enforce active depth during DOM construction or use the checked API before every untrusted consumer. If opaque constructs are supported, consume their complete grammar rather than the first '>'. A DTD-only refusal does not fix the top-level CDATA subcase; retain valid in-root CDATA. Include get_revisions main-document parsing in the mandatory lexical/depth boundary while preserving existing checked-consumer distinctions.",
+      "locations": [
+        {
+          "endLine": 821,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 788
+        },
+        {
+          "endLine": 547,
+          "path": "src/xmllinq/parse.rs",
+          "role": "propagation",
+          "startLine": 539
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 958,
+          "path": "src/xmllinq/parse.rs",
+          "role": "expected_control",
+          "startLine": 950
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "entrypoint",
+          "startLine": 85
+        },
+        {
+          "endLine": 55,
+          "path": "src/wml_document.rs",
+          "role": "entrypoint",
+          "startLine": 50
+        },
+        {
+          "endLine": 820,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 798
+        },
+        {
+          "endLine": 547,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 539
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 58,
+          "path": "src/wml_document.rs",
+          "role": "entrypoint",
+          "startLine": 50
+        },
+        {
+          "endLine": 95,
+          "path": "src/wml_document.rs",
+          "role": "sink",
+          "startLine": 85
+        },
+        {
+          "endLine": 959,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 950
+        },
+        {
+          "endLine": 546,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 539
+        },
+        {
+          "endLine": 58,
+          "path": "src/wml_document.rs",
+          "role": "input",
+          "startLine": 50
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "affected_operation",
+          "startLine": 85
+        },
+        {
+          "endLine": 550,
+          "path": "src/xmllinq/parse.rs",
+          "role": "transformation",
+          "startLine": 539
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sensitive_operation",
+          "startLine": 637
+        },
+        {
+          "endLine": 820,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 788
+        },
+        {
+          "endLine": 95,
+          "path": "src/wml_document.rs",
+          "role": "propagation",
+          "startLine": 85
+        },
+        {
+          "endLine": 548,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 539
+        },
+        {
+          "endLine": 6308,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6299
+        },
+        {
+          "endLine": 820,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 795
+        },
+        {
+          "endLine": 547,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 539
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 660
+        },
+        {
+          "endLine": 58,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 50
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 89
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "propagation",
+          "startLine": 85
+        },
+        {
+          "endLine": 55,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 50
+        },
+        {
+          "endLine": 820,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 788
+        },
+        {
+          "endLine": 95,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 85
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 660
+        },
+        {
+          "endLine": 6308,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 6299
+        },
+        {
+          "endLine": 957,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 950
+        }
+      ]
+    },
+    {
+      "findingId": "csf_b2aa4325c8f3aa14a940fcad",
+      "title": "npm plan recording follows a predictable staging symlink",
+      "severity": "low",
+      "summary": "When recording plan operations, the npm CLI writes to a basename/PID staging path without exclusive creation. A local attacker who can create entries in that directory can redirect the write to an unrelated file writable by the CLI user.",
+      "remediation": "Create an unpredictable private staging directory next to the plan and open the staged regular file exclusively. Write through its held descriptor and rename only that file. At minimum refuse every preexisting staging entry using exclusive creation rather than default truncating writes.",
+      "locations": [
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 443
+        }
+      ]
+    },
+    {
+      "findingId": "csf_85d9c340b10d981559925227",
+      "title": "A shared font-index directory permits staging symlink overwrites",
+      "severity": "low",
+      "summary": "Native font-index saving writes to a predictable PID-based temporary file with fs::write. If an operator places the index in a directory writable by a less-trusted local user, that user can redirect a cache save to another victim-writable file.",
+      "remediation": "Publish the font index through an unpredictable private staging directory and an exclusively created regular file held open through writing. Atomically rename only that file; refuse preexisting staging entries and document/private-parent expectations for shared configurations.",
+      "locations": [
+        {
+          "endLine": 3107,
+          "path": "src/convert/font.rs",
+          "role": "entrypoint",
+          "startLine": 3100
+        },
+        {
+          "endLine": 3248,
+          "path": "src/convert/font.rs",
+          "role": "propagation",
+          "startLine": 3241
+        },
+        {
+          "endLine": 3229,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3213
+        },
+        {
+          "endLine": 3107,
+          "path": "src/convert/font.rs",
+          "role": "entrypoint",
+          "startLine": 3098
+        },
+        {
+          "endLine": 3209,
+          "path": "src/convert/font.rs",
+          "role": "supporting",
+          "startLine": 3205
+        },
+        {
+          "endLine": 3230,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3213
+        },
+        {
+          "endLine": 3248,
+          "path": "src/convert/font.rs",
+          "role": "supporting",
+          "startLine": 3236
+        },
+        {
+          "endLine": 3227,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3222
+        },
+        {
+          "endLine": 3106,
+          "path": "src/convert/font.rs",
+          "role": "configuration",
+          "startLine": 3100
+        },
+        {
+          "endLine": 3247,
+          "path": "src/convert/font.rs",
+          "role": "propagation",
+          "startLine": 3242
+        },
+        {
+          "endLine": 857,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 857
+        }
+      ]
+    },
+    {
+      "findingId": "csf_33c5fede5e569e4c1531e38a",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "severity": "medium",
+      "summary": "An untrusted DOCX author can set huge positive w:gridSpan, w:gridBefore or w:gridAfter counts in a small, shallow table. Rendering sums those counts into grid occupancy and directly sizes column, preference and merge vectors. Counts of 1000000000/1073741824 request about 4 GB/4 GiB for f32 columns; 4294967295 requests approximately 16 GiB before additional allocations, despite package admission.",
+      "remediation": "Enforce practical per-span and total-column budgets for gridSpan, gridBefore and gridAfter before excessive RawCell, column, preference or merge allocation/work. Use checked occupancy sums and col+span arithmetic, apply the same budget to every derived table vector, and return a typed resource-limit refusal on excess.",
+      "locations": [
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13598
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14635
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13537,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14645,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 9174
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14379
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14263
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14643,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14603
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14346,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 14642,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 13618,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 13216,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13199
+        },
+        {
+          "endLine": 13560,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13554
+        }
+      ]
+    },
+    {
+      "findingId": "csf_8510b5bc0ddac96422dfcdc6",
+      "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+      "severity": "medium",
+      "summary": "A document author can place a huge positive colspan in a small embedded HTML/MHT altChunk table. Ordinary DOCX rendering generates one grid XML element per effective column after original package admission and before DOM/layout checks. A count of 1000000000 drives a billion appends; 4294967295 generates over 85 GB of markup, exhausting CPU/memory.",
+      "remediation": "Enforce a practical maximum cell span and checked per-row/aggregate column counts before generating any table XML. Charge all HTML/MHT-generated WML, including repeated/nested tables, to a cumulative byte/work budget inside altChunk expansion and return a typed input-limit refusal before allocation or DOM construction.",
+      "locations": [
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 33
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 557
+        },
+        {
+          "endLine": 491,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 34
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 800,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 34
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 460,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 422
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 762
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 562
+        },
+        {
+          "endLine": 493,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 566,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        }
+      ]
+    },
+    {
+      "findingId": "csf_4b64ae60e06cc87420036fe5",
+      "title": "Metadata scrub leaves property parts under alternate names",
+      "severity": "medium",
+      "summary": "With docprops enabled, scrub removes metadata only from three conventional filenames. A document using alternate package relationship targets can retain creators, editors, dates, company/manager or custom properties while scrub returns success. The custom-properties branch additionally skips relationship/content-type removal when docProps/custom.xml is absent, leaving an active relationship to a relocated target such as metadata/private.xml.",
+      "remediation": "Resolve all core, extended and custom property parts through authoritative package relationships and content types, sanitize every applicable internal target according to docprops selection, and remove corresponding custom-property parts/relationships/content-type records coherently. Verify the selected privacy postcondition; refuse unsupported or ambiguous layouts rather than returning a successfully scrubbed copy. Preserve intentional title/subject/application and revision-date retention. Missing/invalid selected targets require explicit refusal or documented safe handling; default public and CLI callers must enforce the same postcondition. Include supported Strict property relationship variants and regression cases containing both conventional and relocated targets; every active property target must satisfy the requested postcondition.",
+      "locations": [
+        {
+          "endLine": 43,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 133
+        },
+        {
+          "endLine": 384,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 357
+        },
+        {
+          "endLine": 376,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 365
+        },
+        {
+          "endLine": 633,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 630
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 659
+        },
+        {
+          "endLine": 42,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 38
+        },
+        {
+          "endLine": 384,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 357
+        },
+        {
+          "endLine": 41,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 126
+        },
+        {
+          "endLine": 226,
+          "path": "jubarte-python/python/jubarte_redlines/document.py",
+          "role": "entrypoint",
+          "startLine": 202
+        },
+        {
+          "endLine": 41,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 39
+        },
+        {
+          "endLine": 377,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 360
+        },
+        {
+          "endLine": 122,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 113
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 134
+        },
+        {
+          "endLine": 43,
+          "path": "src/scrub.rs",
+          "role": "control",
+          "startLine": 39
+        },
+        {
+          "endLine": 150,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 136
+        },
+        {
+          "endLine": 6188,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 6180
+        },
+        {
+          "endLine": 79,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 55
+        },
+        {
+          "endLine": 155,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 109
+        },
+        {
+          "endLine": 45,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 37
+        },
+        {
+          "endLine": 665,
+          "path": "src/opc/mod.rs",
+          "role": "sink",
+          "startLine": 658
+        },
+        {
+          "endLine": 867,
+          "path": "src/opc/mod.rs",
+          "role": "expected_control",
+          "startLine": 857
+        },
+        {
+          "endLine": 47,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 39
+        },
+        {
+          "endLine": 385,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 355
+        },
+        {
+          "endLine": 377,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 365
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 654
+        },
+        {
+          "endLine": 20,
+          "path": "src/scrub.rs",
+          "role": "expected_control",
+          "startLine": 16
+        }
+      ]
+    },
+    {
+      "findingId": "csf_58625a5255dafe3f4e5744ea",
+      "title": "npm plan recording follows a predictable staging symlink",
+      "severity": "low",
+      "summary": "When recording plan operations, the npm CLI writes to a basename/PID staging path without exclusive creation. A local attacker who can create entries in that directory can redirect the write to an unrelated file writable by the CLI user.",
+      "remediation": "Create an unpredictable private staging directory next to the plan and open the staged regular file exclusively. Write through its held descriptor and rename only that file. At minimum refuse every preexisting staging entry using exclusive creation rather than default truncating writes.",
+      "locations": [
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        }
+      ]
+    },
+    {
+      "findingId": "csf_5a86b3f5aa767e4e64bd9e71",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "severity": "medium",
+      "summary": "An untrusted DOCX author can set huge positive w:gridSpan, w:gridBefore or w:gridAfter counts in a small, shallow table. Rendering sums those counts into grid occupancy and directly sizes column, preference and merge vectors. Counts of 1000000000/1073741824 request about 4 GB/4 GiB for f32 columns; 4294967295 requests approximately 16 GiB before additional allocations, despite package admission.",
+      "remediation": "Enforce practical per-span and total-column budgets for gridSpan, gridBefore and gridAfter before excessive RawCell, column, preference or merge allocation/work. Use checked occupancy sums and col+span arithmetic, apply the same budget to every derived table vector, and return a typed resource-limit refusal on excess. Propagate a caller-adjustable semantic column limit through all public rendering surfaces and charge later column/merge vectors to that same budget.",
+      "locations": [
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13598
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14635
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13537,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14645,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 9174
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14379
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14263
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14643,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14603
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14346,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 14642,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 13618,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 13216,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13199
+        },
+        {
+          "endLine": 13560,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13554
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14603
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 773
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14340
+        },
+        {
+          "endLine": 789,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13617,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14639,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 786,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 774
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13486,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13466
+        },
+        {
+          "endLine": 13540,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13524
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14338
+        }
+      ]
+    },
+    {
+      "findingId": "csf_32d60b431e9d66bf961b0a29",
+      "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+      "severity": "medium",
+      "summary": "The redact operation can return successful clean and redline documents while a supported BOM-marked UTF-16LE/BE auxiliary XML part still contains the same confidential text. Its XML leak branch uses lossy UTF-8 and misses the retained copy, which a recipient can recover after sharing. Even the scanner's no-root fallback searches the already lossily decoded string, so it cannot recover a multi-character value split by UTF-16 NUL bytes.",
+      "remediation": "Decode every XML part with the same BOM-aware policy as admission before semantic leak scanning. Fail closed on unsupported/undecodable/unparseable representations and retain raw UTF8 and both UTF16 byte-order checks as defense in depth. Use the same decoding across leak checks and package validation.",
+      "locations": [
+        {
+          "endLine": 780,
+          "path": "src/admission.rs",
+          "role": "entrypoint",
+          "startLine": 764
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 467
+        },
+        {
+          "endLine": 4747,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 376,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 368
+        },
+        {
+          "endLine": 664,
+          "path": "src/opc/mod.rs",
+          "role": "outcome",
+          "startLine": 659
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "role": "sink",
+          "startLine": 873
+        },
+        {
+          "endLine": 540,
+          "path": "src/scrub.rs",
+          "role": "supporting",
+          "startLine": 527
+        },
+        {
+          "endLine": 314,
+          "path": "src/edit/prepared.rs",
+          "role": "supporting",
+          "startLine": 282
+        },
+        {
+          "endLine": 471,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 467
+        },
+        {
+          "endLine": 4745,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 4727
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "role": "entrypoint",
+          "startLine": 873
+        },
+        {
+          "endLine": 780,
+          "path": "src/admission.rs",
+          "role": "user_input",
+          "startLine": 764
+        },
+        {
+          "endLine": 4745,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "user_input",
+          "startLine": 777
+        },
+        {
+          "endLine": 5386,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 4746,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 4727
+        },
+        {
+          "endLine": 430,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 403
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 463
+        },
+        {
+          "endLine": 535,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 527
+        },
+        {
+          "endLine": 875,
+          "path": "src/edit/prepared.rs",
+          "role": "outcome",
+          "startLine": 863
+        },
+        {
+          "endLine": 668,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 658
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 768
+        },
+        {
+          "endLine": 836,
+          "path": "jubarte-python/python/jubarte_redlines/models.py",
+          "role": "entrypoint",
+          "startLine": 826
+        },
+        {
+          "endLine": 5387,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 5424,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5420
+        },
+        {
+          "endLine": 874,
+          "path": "src/edit/prepared.rs",
+          "role": "propagation",
+          "startLine": 867
+        },
+        {
+          "endLine": 4748,
+          "path": "src/edit.rs",
+          "role": "outcome",
+          "startLine": 4724
+        },
+        {
+          "endLine": 425,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 425
+        },
+        {
+          "endLine": 533,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 527
+        },
+        {
+          "endLine": 781,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 764
+        },
+        {
+          "endLine": 5384,
+          "path": "src/edit.rs",
+          "role": "propagation",
+          "startLine": 5381
+        },
+        {
+          "endLine": 4746,
+          "path": "src/edit.rs",
+          "role": "entrypoint",
+          "startLine": 4727
+        },
+        {
+          "endLine": 537,
+          "path": "src/scrub.rs",
+          "role": "sink",
+          "startLine": 527
+        }
+      ]
+    },
+    {
+      "findingId": "csf_f756bbe5509c42bdcaa64921",
+      "title": "Processing renamed auxiliary XML bypasses XML depth limits",
+      "severity": "medium",
+      "summary": "A DOCX author can put deeply nested auxiliary XML under a non-.xml/.rels suffix. Admission drains those bytes without XML policy, while rendering, revision listing, revision acceptance/rejection and comparison follow internal relationships and recursively build a DOM. Confirmed rendering parts include theme, styles, numbering, comments/commentsExtended, notes and headers/footers; get_revisions and comparison also parse renamed footnotes/endnotes. A small admitted package can terminate the native host or trap WASM. The assigned source additionally confirms eager relationship-selected fontTable parsing before font inspection, including renamed fontTable.bin. Comparison preprocessing also follows renamed styles and charts, alongside footnotes/endnotes. The assigned Standard source additionally identifies edit initialization's existing_comment_ids on relationship-selected comments before the later checked CommentFamily loader. Assigned discovery-0019 corroborates the same shared selector for styles, theme, numbering and fontTable under .bin names; its proof is limited to those four consumers, while earlier validated consumer paths remain retained. Assigned discovery-0027 additionally confirms relationship-selected settings bytes reaching settings_dom/settings_dom_xml and unchecked DOM construction on cache miss; settings is now a supplied validated consumer, whereas earlier recommendations remain historical source limitations. Assigned discovery-0028 supplies already-validated linked-textbox and diagram consumers: relationship-ID media targets at src/convert/mod.rs:17417-17428 and :17453-17464 are decoded and recursively parsed regardless of filename. The new source corroborates fontTable, theme, styles, numbering, settings, comments, notes and header/footer paths, and records that admission's content-type check covers the main part only. Assigned discovery-0031 additionally preserves strict normalization's extension-based pass-through: a relationship-selected fonts.bin remains unmodified before eager fontTable parsing. The raw unchecked parser's documented caller obligations are not themselves the finding.",
+      "remediation": "Apply active InputLimits at a centralized checked XML access/parse boundary for every semantic XML consumer regardless of filename, or resolve/classify and admit XML through actual content-type/relationship use. Cover theme, styles, numbering, converter comments/commentsExtended, notes and headers/footers; explicitly cover the now supplied validated settings_dom/settings_dom_xml cache-miss consumer, with earlier settings-only recommendations retained as historical source limitations. Preserve renamed-main checks, and enforce actual DOM construction depth or use iterative construction. Apply that same mandatory checked boundary to get_revisions and comparison notes parsing, including both footnotes and endnotes; propagate typed refusal under the active comparer InputLimits. Include pre_process_markup's relationship-selected notes at src/document_comparer.rs:4725-4750 and exposed Python get_revisions_json/WASM getRevisions; valid arbitrary part names remain supported. Include linked-textbox and diagram relationship targets in the mandatory filename-independent checked XML boundary before parse_xdocument and in regression coverage. These are now supplied validated affected consumers from discovery-0028; earlier sources' proposed-only status remains historical. Cover revision_processor RevisionIds collection and process_part for all six selected auxiliary buckets (headers, footers, endnotes, footnotes, comments and styles), including public revision acceptance/rejection. Explicitly include the now-confirmed fontTable loader (src/convert/font_table.rs:66-78; src/convert/mod.rs:806) in the mandatory checked XML boundary; parsing must be bounded before any font root/entry inspection. Explicitly cover comparison defined_style_ids (src/document_comparer.rs:4684-4696), relationship-selected footnotes/endnotes (4724-4750) and chart preprocessing (4861-4878), all reached through admitted nonidentical comparison inputs (6555-6569,6607-6625). Apply the same mandatory XML boundary before edit initialization's existing_comment_ids scan, not only in the later checked CommentFamily loader; preserve the effective checks at inspect::parse_part_within and edit::load_stories. Enforce the same checked boundary before settings DOM cache population, and preserve valid bounded nonstandard auxiliary filenames.",
+      "locations": [
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21310
+        },
+        {
+          "endLine": 3317,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3305
+        },
+        {
+          "endLine": 3497,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 6569,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6557
+        },
+        {
+          "endLine": 7786,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7781
+        },
+        {
+          "endLine": 8487,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8527,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8524
+        },
+        {
+          "endLine": 8700,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8696
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 659
+        },
+        {
+          "endLine": 20785,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 20767
+        },
+        {
+          "endLine": 20796,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20794
+        },
+        {
+          "endLine": 551,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 532
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 555
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 21321,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21310
+        },
+        {
+          "endLine": 3501,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 664,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 556
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 8489,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 7675,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7669
+        },
+        {
+          "endLine": 20781,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 20768
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20786
+        },
+        {
+          "endLine": 7689,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 7688
+        },
+        {
+          "endLine": 551,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 6328,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 6318
+        },
+        {
+          "endLine": 6479,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6461
+        },
+        {
+          "endLine": 6689,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 6676
+        },
+        {
+          "endLine": 547,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 556
+        },
+        {
+          "endLine": 6327,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6293
+        },
+        {
+          "endLine": 6480,
+          "path": "src/document_comparer.rs",
+          "role": "root_control",
+          "startLine": 6461
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4748
+        },
+        {
+          "endLine": 358,
+          "path": "jubarte-python/src/lib.rs",
+          "role": "entrypoint",
+          "startLine": 347
+        },
+        {
+          "endLine": 228,
+          "path": "jubarte-wasm/src/lib.rs",
+          "role": "entrypoint",
+          "startLine": 225
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21310
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20768
+        },
+        {
+          "endLine": 553,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 3714,
+          "path": "src/revision_processor.rs",
+          "role": "input",
+          "startLine": 3699
+        },
+        {
+          "endLine": 3794,
+          "path": "src/revision_processor.rs",
+          "role": "sensitive_operation",
+          "startLine": 3785
+        },
+        {
+          "endLine": 3748,
+          "path": "src/revision_processor.rs",
+          "role": "affected_operation",
+          "startLine": 3732
+        },
+        {
+          "endLine": 4751,
+          "path": "src/document_comparer.rs",
+          "role": "affected_operation",
+          "startLine": 4724
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6607
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sensitive_operation",
+          "startLine": 637
+        },
+        {
+          "endLine": 78,
+          "path": "src/convert/font_table.rs",
+          "role": "supporting",
+          "startLine": 66
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 660
+        },
+        {
+          "endLine": 543,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 534
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "expected_control",
+          "startLine": 558
+        },
+        {
+          "endLine": 21305,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21301
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 660
+        },
+        {
+          "endLine": 6569,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 6555
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6607
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4724
+        },
+        {
+          "endLine": 4696,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4684
+        },
+        {
+          "endLine": 4878,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4861
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 534
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4724
+        },
+        {
+          "endLine": 6624,
+          "path": "src/document_comparer.rs",
+          "role": "propagation",
+          "startLine": 6607
+        },
+        {
+          "endLine": 550,
+          "path": "src/admission.rs",
+          "role": "supporting",
+          "startLine": 533
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21310
+        },
+        {
+          "endLine": 807,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 806
+        },
+        {
+          "endLine": 3485,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3480
+        },
+        {
+          "endLine": 3498,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 3490
+        },
+        {
+          "endLine": 8530,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8524
+        },
+        {
+          "endLine": 8703,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 8696
+        },
+        {
+          "endLine": 20782,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20767
+        },
+        {
+          "endLine": 20797,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 20788
+        },
+        {
+          "endLine": 4696,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4685
+        },
+        {
+          "endLine": 4752,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4737
+        },
+        {
+          "endLine": 4880,
+          "path": "src/document_comparer.rs",
+          "role": "sink",
+          "startLine": 4869
+        },
+        {
+          "endLine": 2158,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 2154
+        },
+        {
+          "endLine": 5563,
+          "path": "src/edit.rs",
+          "role": "sink",
+          "startLine": 5552
+        },
+        {
+          "endLine": 8490,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 8473
+        },
+        {
+          "endLine": 635,
+          "path": "src/inspect.rs",
+          "role": "supporting",
+          "startLine": 605
+        },
+        {
+          "endLine": 570,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 556
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 771
+        },
+        {
+          "endLine": 21324,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 21307
+        },
+        {
+          "endLine": 78,
+          "path": "src/convert/font_table.rs",
+          "role": "sink",
+          "startLine": 66
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 655
+        },
+        {
+          "endLine": 569,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 4987,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4961
+        },
+        {
+          "endLine": 3728,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3689
+        },
+        {
+          "endLine": 3792,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3784
+        },
+        {
+          "endLine": 3905,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3897
+        },
+        {
+          "endLine": 543,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 533
+        },
+        {
+          "endLine": 561,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 555
+        },
+        {
+          "endLine": 8488,
+          "path": "src/convert/mod.rs",
+          "role": "source",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8527,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 8524
+        },
+        {
+          "endLine": 20799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 20768
+        },
+        {
+          "endLine": 6625,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 6607
+        },
+        {
+          "endLine": 3713,
+          "path": "src/revision_processor.rs",
+          "role": "supporting",
+          "startLine": 3700
+        },
+        {
+          "endLine": 3794,
+          "path": "src/revision_processor.rs",
+          "role": "supporting",
+          "startLine": 3787
+        },
+        {
+          "endLine": 4965,
+          "path": "src/document_comparer.rs",
+          "role": "supporting",
+          "startLine": 4961
+        },
+        {
+          "endLine": 545,
+          "path": "src/admission.rs",
+          "role": "root_control",
+          "startLine": 531
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 21310
+        },
+        {
+          "endLine": 6571,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6557
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "outcome",
+          "startLine": 660
+        },
+        {
+          "endLine": 807,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 806
+        },
+        {
+          "endLine": 6868,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 6864
+        },
+        {
+          "endLine": 6892,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 6887
+        },
+        {
+          "endLine": 3318,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 3304
+        },
+        {
+          "endLine": 3500,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 3478
+        },
+        {
+          "endLine": 6570,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 6556
+        },
+        {
+          "endLine": 6891,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 6864
+        },
+        {
+          "endLine": 7787,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 7780
+        },
+        {
+          "endLine": 8488,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 8473
+        },
+        {
+          "endLine": 8528,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 8522
+        },
+        {
+          "endLine": 8701,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 8694
+        },
+        {
+          "endLine": 20797,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 20768
+        },
+        {
+          "endLine": 17428,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 17417
+        },
+        {
+          "endLine": 17464,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 17453
+        },
+        {
+          "endLine": 3713,
+          "path": "src/revision_processor.rs",
+          "role": "propagation",
+          "startLine": 3699
+        },
+        {
+          "endLine": 3792,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3787
+        },
+        {
+          "endLine": 3740,
+          "path": "src/revision_processor.rs",
+          "role": "sink",
+          "startLine": 3732
+        },
+        {
+          "endLine": 4965,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4961
+        },
+        {
+          "endLine": 20795,
+          "path": "src/convert/mod.rs",
+          "startLine": 20768
+        },
+        {
+          "endLine": 4750,
+          "path": "src/document_comparer.rs",
+          "startLine": 4740
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660
+        },
+        {
+          "endLine": 81,
+          "path": "src/convert/font_table.rs",
+          "role": "supporting",
+          "startLine": 66
+        },
+        {
+          "endLine": 661,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 654
+        },
+        {
+          "endLine": 21320,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21308
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        }
+      ]
+    },
+    {
+      "findingId": "csf_32625277093e7f286a267e2b",
+      "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+      "severity": "medium",
+      "summary": "A document author can place a huge positive colspan in a small embedded HTML/MHT altChunk table. Ordinary DOCX rendering generates one grid XML element per effective column after original package admission and before DOM/layout checks. A count of 1000000000 drives a billion appends; 4294967295 generates over 85 GB of markup, exhausting CPU/memory. The supplied positive 4294967295 framing fits both 32-bit and 64-bit usize and needs no arithmetic overflow. Assigned discovery-0031 corroborates colspan=1000000000 causing tens of gigabytes of generated XML and work before layout; rejecting invalid, negative or zero spans does not bound valid positive values.",
+      "remediation": "Enforce a practical maximum cell span and checked per-row/aggregate column counts before generating any table XML. Charge all HTML/MHT-generated WML, including repeated/nested tables, to a cumulative byte/work budget inside altChunk expansion and return a typed input-limit refusal before allocation or DOM construction.",
+      "locations": [
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 33
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 557
+        },
+        {
+          "endLine": 491,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 34
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 558
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 469
+        },
+        {
+          "endLine": 800,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 39,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 34
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 460,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 422
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 762
+        },
+        {
+          "endLine": 567,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 562
+        },
+        {
+          "endLine": 493,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 469
+        },
+        {
+          "endLine": 566,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 562
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 463
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 789
+        },
+        {
+          "endLine": 566,
+          "path": "src/convert/altchunk.rs",
+          "role": "user_input",
+          "startLine": 562
+        },
+        {
+          "endLine": 476,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 469
+        },
+        {
+          "endLine": 491,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 488
+        },
+        {
+          "endLine": 490,
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "startLine": 789
+        },
+        {
+          "endLine": 568,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 559
+        },
+        {
+          "endLine": 476,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 469
+        },
+        {
+          "endLine": 493,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 489
+        }
+      ]
+    }
+  ]
+}

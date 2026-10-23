@@ -1,0 +1,493 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "insecure-temporary-file.plan-recording",
+      "title": "Recording a plan in a shared directory can overwrite a symlink target",
+      "summary": "The Python and npm CLIs record edit/add plans through a predictable .<plan>.<pid>.partial file opened with ordinary truncating writes. A local attacker who can create entries in that directory can preplant the staging name as a symlink, causing valid plan JSON to overwrite another file writable by the victim before the rename.",
+      "severity": {
+        "level": "low",
+        "rationale": "Arbitrary victim-writable file corruption is security-relevant, but exploitation requires a hostile shared plan directory and predicting or observing the process ID. No remote or privileged deployment is established.",
+        "changeConditions": "A demonstrated privileged invocation in an attacker-writable directory would increase impact; exclusive no-follow staging removes the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both host implementations directly construct the PID-based name and write without exclusive creation; the paths are reachable from normal plan recording after preview."
+      },
+      "taxonomy": {
+        "category": "insecure-temporary-file",
+        "cwe": [
+          "CWE-377"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "endLine": 411,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "root_control"
+        },
+        {
+          "path": "src/edit/record.rs",
+          "startLine": 142,
+          "endLine": 167,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "python-record-route",
+          "label": "Python recording entry",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "entrypoint",
+          "code": "def _run_edit(args: argparse.Namespace, verb: str) -> int:\n    doc = _read(args.file)\n    if getattr(args, \"plan\", None) is not None and args.operations:\n        return _record(args, verb, doc)",
+          "explanation": "An edit/add command with a plan and operations enters _record, which previews the generated plan before publishing it."
+        },
+        {
+          "id": "python-partial",
+          "label": "Python staging follows a pre-existing link",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "endLine": 411,
+          "role": "root_control",
+          "code": "        target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)",
+          "explanation": "Canonicalizing the final plan does not protect the separate staging entry. Path.write_bytes opens the predictable entry for truncating writes and follows symlinks before os.replace runs."
+        },
+        {
+          "id": "npm-partial",
+          "label": "npm uses the same predictable staging control",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "sink",
+          "code": "    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+          "explanation": "Default writeFileSync uses truncating write semantics without exclusive creation, so an attacker-created staging link redirects the JSON write."
+        },
+        {
+          "id": "rust-exclusive",
+          "label": "Rust host delegates to exclusive publication",
+          "path": "src/edit/record.rs",
+          "startLine": 161,
+          "endLine": 167,
+          "role": "expected_control",
+          "code": "pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {\n    #[cfg(not(target_arch = \"wasm32\"))]\n    {\n        let target = plan_target(plan);\n        crate::publication::publish_paths(&[(target, json.as_bytes())], true)\n            .map(|report| report.warnings)\n            .map_err(|error| std::io::Error::new(error.source.kind(), error))",
+          "explanation": "The Rust host routes plan writes to the publication subsystem; the sibling Python/npm hosts implement the unsafe write themselves."
+        }
+      ],
+      "rootCause": {
+        "summary": "The host wrappers protect plan validity by previewing the edit, but then create a sibling staging path solely from the plan basename and PID. Ordinary write_bytes/writeFileSync opens an attacker-precreated symlink and truncates its referent. The subsequent rename cannot undo that write.",
+        "evidenceRefs": [
+          "python-record-route",
+          "python-partial",
+          "npm-partial",
+          "rust-exclusive"
+        ]
+      },
+      "remediation": "Use exclusive unpredictable staging in the destination directory, retain the opened handle for writing, and rename only that owned regular file. Reuse the native publication implementation for Python where possible; use exclusive creation (wx) with equivalent symlink/race protection in Node.",
+      "validation": {
+        "evidenceRefs": [
+          "python-record-route",
+          "python-partial",
+          "npm-partial"
+        ],
+        "limitations": [
+          "No runtime reproduction was performed.",
+          "Actual deployment and directory permissions are unknown; a private plan directory prevents this attacker prerequisite."
+        ],
+        "method": "independent offline source trace",
+        "summary": "Parent inspected Python _run_edit/_record and npm recordPlan: successful preview and a non-dry-run lead directly to the predictable staging write, without an exclusive-create/no-follow guard. realpath protects neither staging entry. The Rust publication alternative does not intercept these host writes."
+      },
+      "attackPath": {
+        "controls": [
+          "A private plan directory prevents planting the staging entry.",
+          "Plan preview validates document/edit semantics but does not validate staging-file identity."
+        ],
+        "dataflow": {
+          "summary": "attacker-owned staging directory entry -> predictable PID filename -> write_bytes/writeFileSync -> victim-writable symlink referent -> rename of the staging name"
+        },
+        "preconditions": [
+          "Plan recording is not a dry run.",
+          "Attacker can create the predicted staging symlink in the selected plan directory.",
+          "The target file is writable by the victim process."
+        ],
+        "reachability": {
+          "summary": "Reachable through normal Python/npm edit/add --plan with operation flags after successful preview; dry-run does not write. The attacker needs directory-entry creation and PID knowledge/prediction, but need not control the victim-writable target.",
+          "attacker": "local writer in the plan's parent directory",
+          "entrypoint": "Python/npm plan recording",
+          "outcome": "corruption of a different victim-writable file"
+        },
+        "summary": "A local attacker plants the expected .<plan>.<pid>.partial symlink in a shared writable directory. The victim records a valid edit/add plan there; the CLI truncates the symlink target with JSON using the victim's file permissions."
+      },
+      "remediationTests": [
+        "In integration tests, preplant the historical predictable partial path as a symlink and verify its referent remains unchanged.",
+        "Exercise Python and npm plan recording with colliding staging names and failed writes; ensure cleanup only removes files created by the operation."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0038-plan-staging",
+        "worker": "baseline",
+        "parentValidation": "discovery-0038"
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.html-table-colspan",
+      "title": "Converting a small HTML altChunk can exhaust memory",
+      "summary": "An attacker-controlled HTML table colspan inside a DOCX altChunk is parsed as an unrestricted usize and expanded into one generated WML gridCol per column. A short decimal span can force billions of XML tags before rendering, bypassing admission limits on the original package.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document-supplied input deterministically triggers unbounded CPU and memory amplification in public conversion paths. Impact is availability of the processing process; no shared-service deployment is assumed.",
+        "changeConditions": "Process memory/CPU isolation limits collateral impact. Enforcing bounded numeric spans and aggregate generated-output limits prevents the expansion."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly connects admitted document relationships to colspan parsing and the proportional output loop; no configuration prerequisite is needed."
+      },
+      "taxonomy": {
+        "category": "resource-exhaustion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "html-conversion-route",
+          "label": "Admitted chunk is expanded before DOM parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "role": "entrypoint",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The attacker-controlled package's internal relationship bytes reach altChunk expansion after original-package admission. Generated output has no intervening budget."
+        },
+        {
+          "id": "html-parse-span",
+          "label": "Unrestricted colspan",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control",
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Parsing applies a minimum of one but no maximum to an attacker-controlled decimal span."
+        },
+        {
+          "id": "html-span-total",
+          "label": "Unbounded row total",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "role": "propagation",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "A single cell's span determines the full generated grid count; there is no aggregate cap or checked sum."
+        },
+        {
+          "id": "html-grid-output",
+          "label": "One XML tag emitted per declared column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 492,
+          "role": "sink",
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }\n        s.push_str(\"</w:tblGrid>\");",
+          "explanation": "A tiny input value expands into an unbounded String, exhausting memory or CPU before the WML table layout can reject it."
+        }
+      ],
+      "rootCause": {
+        "summary": "with_layout admits the original ZIP, then expands internal HTML chunks. HTML td/th colspan values become usize cell spans with only a lower bound. end_table sums them and emits a gridCol tag for every column into a String. Package byte/XML budgets do not apply to this newly generated representation.",
+        "evidenceRefs": [
+          "html-conversion-route",
+          "html-parse-span",
+          "html-span-total",
+          "html-grid-output"
+        ]
+      },
+      "remediation": "Reject excessive per-cell and aggregate HTML column spans using checked arithmetic before output generation, and charge all altChunk-generated XML against an explicit expansion budget.",
+      "validation": {
+        "evidenceRefs": [
+          "html-conversion-route",
+          "html-parse-span",
+          "html-span-total",
+          "html-grid-output"
+        ],
+        "limitations": [
+          "No application code or malicious input was executed.",
+          "The host's memory/CPU limits determine the final termination behavior."
+        ],
+        "method": "independent static source trace",
+        "summary": "Parent verified the internal chunk load, html_to_wml propagation, parsed colspan, aggregate column computation and output loop. A large but representable positive span reaches the loop without requiring overflow or an oversized package."
+      },
+      "attackPath": {
+        "controls": [
+          "Original ZIP size, inflated bytes and XML depth limits remain active, but the short HTML attribute fits within them.",
+          "External resources are not fetched; this attack uses an internal part."
+        ],
+        "dataflow": {
+          "summary": "untrusted internal HTML part -> chunk_html -> html_to_wml -> td/th colspan -> cell span sum -> unbounded gridCol output String"
+        },
+        "reachability": {
+          "summary": "Public convert::render and its PDF/PNG/report wrappers share with_layout, which expands internal altChunks after admission.",
+          "attacker": "document author",
+          "entrypoint": "DOCX conversion APIs",
+          "outcome": "processing-process memory or CPU exhaustion"
+        },
+        "summary": "Supply a DOCX with a main-document altChunk relationship to an internal HTML part containing a table cell with a very large positive colspan, then invoke render/PDF/PNG conversion. Expansion grows a massive XML string before layout."
+      },
+      "remediationTests": [
+        "Integration-test a tiny internal HTML chunk with a span above the configured cap and require a typed refusal before expansion.",
+        "Test exact span/output-budget limits, multiple-cell sum overflow and ordinary colspan rendering."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0038-html-colspan",
+        "worker": "baseline",
+        "parentValidation": "discovery-0038"
+      }
+    },
+    {
+      "ruleId": "unbounded-allocation.wml-table-grid",
+      "title": "Rendering a small DOCX table can allocate billions of columns",
+      "summary": "The renderer accepts w:gridSpan and row grid skip values as unbounded usize counts. table_block sizes its column vectors from the summed spans, so a small admitted DOCX can request multi-gigabyte allocations or a capacity-overflow abort in PDF/PNG/report conversion.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-authored documents cause severe processing-process availability loss through tiny numeric inputs. Public library/parser reachability is established; no remote-service exposure is assumed.",
+        "changeConditions": "Process resource limits contain collateral impact; bounded table counts and checked allocation remove this amplification."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The unbounded gridSpan parser directly feeds row occupancy and vector allocations after admission."
+      },
+      "taxonomy": {
+        "category": "resource-exhaustion",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13619,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14644,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wml-render-route",
+          "label": "Public rendering performs layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 609,
+          "endLine": 611,
+          "role": "entrypoint",
+          "code": "    let (result, font_report) = font::with_font_report(|| {\n        with_options(options, || {\n            with_layout(docx, |fonts, pages, facts| {",
+          "explanation": "Document bytes supplied to public render reach the common layout pipeline, including table construction."
+        },
+        {
+          "id": "wml-gridspan",
+          "label": "Unrestricted numeric gridSpan",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control",
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "A table cell's attacker-controlled attribute becomes a usize without an upper bound."
+        },
+        {
+          "id": "wml-grid-alloc",
+          "label": "Occupancy controls column vector allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "sink",
+          "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];",
+          "explanation": "Row span totals become allocation lengths even when the physical XML contains only one cell."
+        },
+        {
+          "id": "wml-merge-alloc",
+          "label": "Merge bookkeeping repeats the unbounded allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14644,
+          "role": "sink",
+          "code": "            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;\n            }\n            col += span;",
+          "explanation": "The same untrusted count also sizes merge tracking; fixing only the first allocation would leave a sibling sink."
+        }
+      ],
+      "rootCause": {
+        "summary": "The table parser interprets declared logical column spans as allocation counts, imposes only a minimum of one, and sums them without a table-width budget. table_block expands cols to occupancy and resolve_table_merges expands open to col+span. InputLimits bounds physical package/XML size rather than these numeric logical counts.",
+        "evidenceRefs": [
+          "wml-render-route",
+          "wml-gridspan",
+          "wml-grid-alloc",
+          "wml-merge-alloc"
+        ]
+      },
+      "remediation": "Validate gridSpan and row gridBefore/gridAfter counts against a bounded aggregate table-column budget before any arithmetic, iteration or allocation. Use checked addition and fallible allocations with typed conversion errors.",
+      "validation": {
+        "evidenceRefs": [
+          "wml-render-route",
+          "wml-gridspan",
+          "wml-grid-alloc",
+          "wml-merge-alloc"
+        ],
+        "limitations": [
+          "No exploit input or application code was executed.",
+          "Allocation failure behavior depends on platform and process limits."
+        ],
+        "method": "independent static source trace",
+        "summary": "Parent verified render -> with_layout admission -> table_block, cell_span and both vector growth sinks. A one-cell table with a representable very large span fits all physical input budgets and forces the allocations. The HTML expansion finding is separate because it consumes resources before this WML parser."
+      },
+      "attackPath": {
+        "controls": [
+          "Admission limits archive/inflated bytes and XML shape, not numeric table counts.",
+          "OS process limits may terminate the worker sooner."
+        ],
+        "dataflow": {
+          "summary": "DOCX XML -> DOM table cell -> cell_span usize -> RawCell.colspan -> summed occupancy -> cols vector and merge open vector"
+        },
+        "reachability": {
+          "summary": "Normal public rendering and shared layout consumers accept document bytes; attacker controls table XML but needs no host configuration authority.",
+          "attacker": "document author",
+          "entrypoint": "convert::render and shared layout APIs",
+          "outcome": "memory exhaustion or allocation panic/abort"
+        },
+        "summary": "Provide a tiny admitted DOCX containing a table cell whose w:gridSpan/@w:val is extremely large, then render PDF, PNG or a layout report. The declared logical width drives enormous vectors."
+      },
+      "remediationTests": [
+        "Integration-test a minimal admitted WML table with an excessive gridSpan and require bounded refusal.",
+        "Cover excessive gridBefore/gridAfter, overflowing row sums, merge bookkeeping and exact accepted limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0038-wml-gridspan",
+        "worker": "parsers",
+        "parentValidation": "discovery-0038"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-d7c45252c0af8984",
+        "label": "Python and npm plan-recording staging",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated local symlink corruption; private directory prevents attacker prerequisite."
+      },
+      {
+        "id": "surface-c7aebdaaf7f48dd7",
+        "label": "HTML altChunk table expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated independent generated-XML amplification."
+      },
+      {
+        "id": "surface-2a5b4d48abfcf27a",
+        "label": "WML table grid allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated independent logical-span allocation; numeric count budgets absent."
+      },
+      {
+        "id": "surface-b110fcb276285df9",
+        "label": "MCP filesystem capability confinement",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Baseline fully audited mcp_server.py and publication.rs. Native OutputRoot holds cap_std root across read/publish; Python resolves diagnostic only. UUID private staging + exclusive bytes; no-clobber hard_link; overwrite rename. No supported symlink escape."
+      },
+      {
+        "id": "surface-bad1180276de89bf",
+        "label": "Updater signature and extracted-file policy",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "notes": "Baseline fully audited src/update.rs. RELEASE_KEYS empty and FIRST_SIGNED_RELEASE None explicitly document checksum-only policy; no hidden signature bypass. verify_binary uses symlink_metadata to reject nonregular extracted binary. No use of credentials or network validation."
+      },
+      {
+        "id": "surface-208ce0132e4b80d7",
+        "label": "Embedded credential review",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Baseline reviewed current-tree credential/private-key pattern hits including hidden docs/config/tests/examples/inactive code; no confirmed exposed credential. Environment/secret references, public keys and demonstrable dummy values rejected."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0038-doc-piece-amplification",
+        "reason": "Investigator source-backed candidate awaiting full returned evidence and parent validation.",
+        "candidate": {
+          "producer": "parsers",
+          "evidence": "legacy_doc.rs FIB ccp_text919 unconstrained; piece entries1090-1118 allow contiguous CP intervals sharing fc; main_text1181-1221 loops and appends StoryChar per logical CP. 65536 pieces each65535 chars reuse ~64KiB stream, 0.75MiB table expands ~4.29 billion records. Public read180-192/doc_to_docx235 no InputLimits."
+        },
+        "id": "discovery-0038-doc-piece-amplification"
+      },
+      {
+        "candidateId": "discovery-0038-doc-field-stack",
+        "reason": "Investigator source-backed candidate awaiting parent validation of superlinear field processing.",
+        "candidate": {
+          "producer": "parsers",
+          "evidence": "legacy_doc.rs Story.blocks1595-1610 uses fields.iter().any per char; repeated begin0x13/separator0x14 leaves false nesting levels so per-char scan grows quadratically even without rendered text."
+        },
+        "id": "discovery-0038-doc-field-stack"
+      },
+      {
+        "candidateId": "discovery-0038-embedded-font-copies",
+        "reason": "Investigator candidate awaiting parent validation and exact source evidence.",
+        "candidate": {
+          "producer": "parsers",
+          "evidence": "font_table.rs205-231 iterates every distinct font table name; each may reuse same embed rid. deobfuscate_odttf180 copies entire raw font;228 converts copy into fresh Arc retained by unique lowercase family. with_layout806-807 loads all. 10000 names referencing1MiB font retains~10GiB from~1MiB input payload. Catalogue skip/parse validation/later u16 face-index cap do not bound preloaded map.",
+          "remediation": "Deduplicate decoded font Arc by part/key; enforce total count/byte budgets."
+        },
+        "id": "discovery-0038-embedded-font-copies"
+      },
+      {
+        "candidateId": "discovery-0038-wmf-record-count",
+        "reason": "Investigator lead awaiting completed record-boundary proof and parent validation.",
+        "candidate": {
+          "producer": "parsers",
+          "evidence": "metafile.rs WMF whole-record size481-492; polygon628-642,polypolygon645-664,polyline667-682 point counts use read_i16 against entire file not record end. Many8-byte records claim65535 points and reuse subsequent~256KiB; outer cursor advances only declared8 bytes. Canvas fill loops384*65k edges each. EMF helper1065-1082 bounds reads by off+size."
+        },
+        "id": "discovery-0038-wmf-record-count"
+      }
+    ]
+  }
+}

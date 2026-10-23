@@ -1,0 +1,58 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Standard static security audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .",
+    "runtimeStatus": "No product code, tests or smoke tests executed; static security review only.",
+    "validationMode": "Offline source review",
+    "context": "Exact userContext is null. Independent baseline and architecture reviews plus one focused investigator; source remains read-only and offline.",
+    "limitations": [
+      "Whole repository audit is in progress; search hits and architecture mapping do not count as fully audited files."
+    ]
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-552dde7c7fbd2b79",
+        "label": "Nonstandard-extension XML relationship consumers",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Baseline candidate awaiting independent parent validation: compare admission extension policy against converter relationship-directed unchecked parsing."
+      },
+      {
+        "label": "Renderer table grid span allocation",
+        "disposition": "needs_follow_up",
+        "notes": "Numeric w:gridSpan allocation lead awaiting complete dataflow and parent validation.",
+        "id": "surface-9915139344954d30",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "candidate-0003-xml-extension",
+        "candidateId": "candidate-0003-xml-extension",
+        "reason": "Baseline lead received; original evidence preserved before validation.",
+        "candidate": {
+          "source": "baseline",
+          "message": "Potential concrete finding: admission.rs 533 checks XML limits only for names ending .xml/.rels (plus main); converter load_stylesheet/load_theme follows relationships to arbitrary extension and calls unchecked recursive Dom::parse_xdocument. A styles relationship to word/styles.bin with deeply nested XML bypasses max_xml_depth and can stack-overflow host. Verifying full source chain/countercontrols now."
+        }
+      },
+      {
+        "id": "deferred-cfb37355012ea510",
+        "reason": "Audit and coverage reconciliation are ongoing across current in-scope source; no complete coverage claim."
+      },
+      {
+        "candidateId": "candidate-0003-table-grid",
+        "reason": "Focused investigator lead received before parent validation.",
+        "candidate": {
+          "source": "rendering_investigator",
+          "message": "Found concrete numeric geometry amplification: src/convert/mod.rs cell_span parses w:gridSpan to usize without max (14211+); collect_table uses summed colspan as occupancy then cols.resize/vec at 13604-13615. Tiny table with gridSpan=4294967295 requests ~16 GiB for cols before any page raster bound. Investigating sibling gridBefore/After and exact controls/evidence. Will include finding JSON."
+        },
+        "id": "candidate-0003-table-grid"
+      }
+    ]
+  }
+}

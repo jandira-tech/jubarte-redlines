@@ -1,0 +1,57 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline static audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and tests not executed under offline audit instructions.",
+    "validationMode": "static source inspection"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Markdown drawing payload dependency materialization",
+        "disposition": "needs_follow_up",
+        "notes": "Candidate drawing-dependency-cycle: parent tracing decode/assembly and recursive dependency control.",
+        "id": "surface-06de44aad00200a4",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "drawing-dependency-cycle",
+        "reason": "Candidate found during source inspection; awaiting independent parent source validation and complete public-entrypoint trace.",
+        "candidate": {
+          "candidateId": "drawing-dependency-cycle",
+          "title": "Cyclic drawing payload may cause unbounded recursive materialization",
+          "locations": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1397
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1975
+            }
+          ],
+          "evidence": "decode deserializes caller-provided base64 JSON into Drawing; dep_part recursively follows rel.part indexes without an apparent visited set. Public markdown assembly calls materialize. Reachability and validation controls remain under review.",
+          "codeEvidence": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1408,
+              "code": "serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1975,
+              "code": "let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;"
+            }
+          ]
+        },
+        "id": "drawing-dependency-cycle"
+      }
+    ]
+  }
+}

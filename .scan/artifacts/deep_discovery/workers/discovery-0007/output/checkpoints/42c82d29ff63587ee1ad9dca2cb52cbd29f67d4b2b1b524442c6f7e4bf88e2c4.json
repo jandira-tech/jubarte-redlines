@@ -1,0 +1,842 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard security audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0007.",
+    "runtimeStatus": "Application execution and network validation not performed.",
+    "validationMode": "static source analysis",
+    "context": "Exact userContext null; generated threat model in progress. Audit exact current supplied target, not the directory-name revision."
+  },
+  "threatModel": {
+    "summary": "Jubarte is an in-process Word document engine exposing Rust byte APIs, a native CLI, PyO3/Python APIs and CLI, wasm-bindgen byte APIs and a Node CLI. It reads DOCX/OOXML, Markdown and supported legacy DOC inputs; compares, inspects, edits, resolves revisions, validates/repairs, scrubs and renders documents. Explicitly authorized host adapters publish resulting documents, reports, PDFs and PNGs. A Python MCP adapter serves document tools over stdio under a caller-selected directory capability. Native self-update and maintainer release publication are separate privileged workflows. The independent architecture reviewer reported current HEAD 41019ae16a6123f0273af0ca997901c85437be12; the scan-directory basename was not treated as its revision. Evidence: README.md:12-16,29-42; src/lib.rs:15-35,163-165; jubarte-python/pyproject.toml:42-49; jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; src/update.rs:186-210.",
+    "assets": [
+      "Confidential document bytes and extracted text, including paragraphs, comments, revisions, metadata, embedded images/fonts and relationship targets; generated clean/redline DOCX, rendered PDF/PNG and edit/audit reports. MCP intentionally returns text through read tools and page text through rendering, while document/image bytes are published as files. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:132-150,185-217,229-255; docs/adoption/mcp.md:69-73.",
+      "Integrity of edited documents, source snapshots and revision attribution. SHA-256 protects optional edit-plan snapshot binding; paragraph/text anchors and plan preparation protect edit applicability. Author strings are supplied document metadata, not authenticated identities. Evidence: src/inspect.rs:273-277; src/edit.rs:1744-1761,2073-2105; jubarte-python/python/jubarte_redlines/mcp_server.py:258-276.",
+      "Filesystem authority granted to the MCP server: explicit input reads and output publication beneath resolved --root, defaulting to startup working directory. The persistent native OutputRoot holds a cap-std directory handle. This is distinct from ambient filesystem authority used by CLI adapters and renderer font/cache operations. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; jubarte-python/src/lib.rs:1244-1277; src/publication.rs:146-199,203-225.",
+      "Renderer resources outside explicit document paths: installed font files, Word cloud fonts and a persistent font-index TSV containing font source paths, file stamps and directory stamps. Default index location is the parent of Jubarte's font directory plus font-index.tsv, not a child of fonts/. Evidence: src/convert/font.rs:2258-2315,2633-2652,3090-3106,3154-3169,3192-3227.",
+      "Process memory, CPU and availability across native, Python and WASM callers. Default package admission allows 64 MiB compressed and per part, 256 MiB inflated, 10,000 entries and XML depth 256; comparison uses 512 MiB compressed/per part and 2 GiB inflated with the same entry/depth limits. XML limits default to 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags. These are configured objectives, with actual enforcement findings recorded separately. Evidence: src/admission.rs:63-100; src/xmllinq/parse.rs:49-57.",
+      "Installed native executable and the trusted release channel; release archives, SHA256SUMS.txt, optional signing-key material, GitHub release write authority and registry publication authority. Current updater trust configuration has no release public keys and no first-signed-release version. Evidence: src/update.rs:25-48,198-210,245-257; .github/workflows/release.yml:235-275,278-308,356-369; scripts/release.sh:72-84,105,375-380."
+    ],
+    "trustBoundaries": [
+      "Untrusted document producer -> host process -> package admission and parsers. The host supplies bytes; admission implements archive size/count/inflation and structure controls before consumers parse input, including the shared ZIP structural pass. No disk extraction or external relationship fetching is part of admission. Public parse_xdocument deliberately does not enforce input policy; checked variants validate before DOM construction. Enforcement defects found in this audit remain separate from these intended controls. Evidence: src/admission.rs:13-28,397-407,439-470; src/opc/archive.rs:15-51; src/xmllinq/parse.rs:85-135.",
+      "Document/edit-plan producer -> edit transaction -> transformed package bytes. Plans have schema checks, optional source_sha256 verification, exact-anchor failure modes and signed/macro-bearing source refusal; apply_plan returns prepared results rather than publishing files. Snapshot hashing authenticates neither author nor caller. Evidence: src/edit.rs:1740-1761,2073-2105; src/inspect.rs:273-277.",
+      "MCP client/model -> stdio server -> explicit root-relative input reads. Startup resolves --root or current working directory, opens one native OutputRoot and passes lexical relative names to read. Python resolution is an early diagnostic; actual confinement belongs to held cap-std directory capability. Tools do not establish independent users/tenants. Gemini extension starts uvx --from jubarte-redlines[mcp] jubarte-mcp --root ${workspacePath}, giving the same capability rooted at the host-selected workspace. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-89,373-381; jubarte-python/src/lib.rs:1244-1262; src/publication.rs:146-165; gemini-extension.json:5-8.",
+      "MCP client/model -> brokered publication under the same held root. docx_edit derives out_dir/clean.docx, redline.docx, patch.diff and report.json, optionally redline.pdf and redline-page-NN.png; docx_render derives out_dir/page-NN.png and render.pdf; compare/accept/reject use caller-selected output names. OutputRoot validates portable relative names, capability directories and output symlinks, stages/verifies files, and atomically installs each without clobber unless overwrite=true. Atomicity is per file; errors report committed files. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:101-112,185-217,229-277,285-298; src/publication.rs:83-143,168-199,228-273,431-482,535-570.",
+      "MCP registration/annotations -> external host approval policy. read_only_hint and destructive_hint are hints, not server-side caller authentication or approval enforcement. Host chooses approval policy; admitted calls can request overwrite=true and share a root. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,152-160,220-228; docs/adoption/mcp.md:39-41,168-169.",
+      "Native CLI operator -> ambient local output paths. publish_paths holds selected parent directory handles and stages verified bytes under sibling .jubarte-<UUID>.partial/bytes with private Unix permissions; typed edit publication rechecks input hash and output aliases/collisions. Partial commits may remain after a later error. This grants ambient access rather than MCP root confinement. Evidence: src/publication.rs:203-225,431-505,535-570; src/bin/jubarte.rs:261-273,1642-1656,1764-1812.",
+      "Python/Node CLI operator -> ambient filesystem. Python _write uses Path.write_bytes and Node write uses fs.writeFileSync after adapter path/force checks; these do not inherit native publication merely from shared engine grammar. Python Document.read uses ambient read_bytes; in-memory operations return bytes. Evidence: jubarte-python/python/jubarte_redlines/document.py:117-145; jubarte-python/python/jubarte_redlines/__main__.py:116-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-79,106-111.",
+      "Document-selected font family -> native renderer -> ambient font stores using std::fs, outside MCP OutputRoot. Own-font directory precedence: nonempty JUBARTE_FONT_DIR, otherwise macOS HOME/Library/Application Support/jubarte/fonts; other Unix XDG_DATA_HOME/jubarte/fonts or HOME/.local/share/jubarte/fonts (HOME required); Windows APPDATA/jubarte/fonts. System/Word discovery separately uses /System/Library/Fonts/Supplemental, /Library/Fonts, /Applications/Microsoft Word.app/Contents/Resources/DFonts, /Library/Fonts/Microsoft, /System/Library/Fonts and HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/<family>. Cloud family is one normal path component. Windows discovery uses WINDIR, else SystemRoot, else C:\\Windows joined with Fonts, plus LOCALAPPDATA/Microsoft/Windows/Fonts. These resources feed font parser/shaper and rendered output, controlled by ambient OS permissions. Evidence: src/convert/font.rs:2230-2235,2258-2315,2324-2376,2460-2467,2633-2652,2814-2862.",
+      "Native renderer -> persistent ambient font-index state. JUBARTE_FONT_INDEX empty/off disables; another value is complete path; absent value derives parent(user_font_dir())/font-index.tsv. Effective defaults: HOME/Library/Application Support/jubarte/font-index.tsv on macOS, XDG_DATA_HOME/jubarte/font-index.tsv or HOME/.local/share/jubarte/font-index.tsv on other Unix, APPDATA/jubarte/font-index.tsv on Windows. JUBARTE_FONT_DIR overrides instead derive its parent/font-index.tsv. Reads reuse stamped source paths; writes create parent, write sibling font-index.tsv.<pid>.tmp then rename. No MCP-root control applies; OS permissions, index version/header, file/directory stamps are effective controls. Evidence: src/convert/font.rs:2637-2652,3095-3112,3154-3188,3213-3229.",
+      "JS caller -> WASM linear memory -> shared engine. WASM exports take byte arrays/JSON and return bytes/results, omit self-update, and cfg-exclude native publication. Node CLI separately supplies filesystem authority. WASM compare inherits roomier 2 GiB inflated comparison budget and documentation tells browser hosts to lower it. Evidence: jubarte-wasm/Cargo.toml:18-32; jubarte-wasm/src/lib.rs:63-97; src/lib.rs:163-165; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-55,106-111.",
+      "Operator -> explicit native self-update -> GitHub release/archive/SHA256SUMS.txt -> executable swap. Fixed jandira-tech/jubarte-redlines and OS/arch target select archive and member jubarte-<version>-<target>/jubarte (Windows jubarte.exe). macOS/Linux use tar.gz, Windows ZIP; extraction/swap delegated to self_update. Noninteractive requires --check or --yes before network lookup; interactive installation confirms. verify_binary rejects nonregular extracted binary. RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None mean checksum-only verification, matching staged-signing docs. Evidence: src/update.rs:25-48,91-108,120-125,186-210,212-257; Cargo.toml:137-148; docs/SELF_UPDATE.md:22-45,57-87.",
+      "Maintainer/tag authority -> GitHub Actions builds -> release publication. v* tag triggers tag/version check and per-platform locked read-only builds; release job gets contents:write and same-run artifacts. Optional signing alone receives ZIPSIGN_PRIVATE_KEY, decodes to RUNNER_TEMP/zipsign.<random>/keyN, signs dist archives, verifies committed keys/*.pub and deletes keys on exit. Checksums follow signing. GITHUB_TOKEN maps to GH_TOKEN for gh release create at GITHUB_REF_NAME in github.repository, notes.md and dist/*. Local release.sh additionally publishes registries and runs security-check.sh even when ordinary gates skipped. Evidence: .github/workflows/release.yml:15-25,40-49,51-89,235-308,317-322,356-369; scripts/release.sh:72-84,105,375-380,654-678.",
+      "Developer benchmark worker -> ambient paths over stdin COMPARE basePath nextPath outPath -> std::fs reads/writes. It is a same-user speed harness, not a hosted network service; independently exposed deployment would require separate controls. Evidence: jubarte-rust-inproc/src/main.rs:5-20,29-69,91-99."
+    ],
+    "attackerCapabilities": [
+      "A document producer controls container records, XML/relationships, text, revision/comment metadata, embedded media/fonts and legacy DOC bytes. This is a parser/resource boundary without proof of a public service. Input budgets/shared ZIP checks/checked XML are existing controls, not proof of complete DoS resistance. Evidence: SECURITY.md:33-80; src/admission.rs:13-28,63-100,439-470.",
+      "An MCP client/model chooses exposed tool arguments, relative paths, plans, output names and overwrite flags within root. It does not thereby control --root, environment/font-index settings, installed binary, signing keys or release credentials. All calls share root; no tenant identities established. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,152-160,220-228,373-381.",
+      "Untrusted returned text may influence a consuming model, but interpreting it as instructions/granting tools is an external host decision. MCP hints are metadata, not identity enforcement. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,132-150; docs/adoption/mcp.md:39-41.",
+      "Replacing release assets plus adjacent checksum differs from source/build/signing-key authority. Present updater does not have independent signature trust root. GitHub publication/transport compromise is an additional prerequisite, not granted by ordinary document input. Evidence: src/update.rs:44-48,198-210,245-257; docs/SELF_UPDATE.md:59-80.",
+      "Write access to shared output/font/cache state could influence a privileged consumer but must be established for a deployment. Publication mitigates races with held directories/staging/atomic installation; renderer cache has separate ambient authority. Evidence: src/publication.rs:431-482,535-570; src/convert/font.rs:3154-3188,3213-3229."
+    ],
+    "securityObjectives": [
+      "Refuse malformed/ambiguous/over-budget documents before unrestricted package inflation/DOM work; preserve checked versus raw XML distinction. Use host CPU/memory limits rather than claiming comprehensive execution limits from admission. Findings record exceptions. Evidence: src/admission.rs:39-40,63-100,397-407,439-470; src/xmllinq/parse.rs:90-135; SECURITY.md:74-80.",
+      "Confine explicit MCP document I/O to startup root, preserve no-clobber unless overwrite=true, report partial commits/durability uncertainty. Do not mistake broker controls for process-wide sandboxing. Evidence: src/publication.rs:36-46,146-199,431-482,535-570; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108.",
+      "Bind edit plans to inspected bytes when source_sha256 supplied; refuse unsupported schema/stale snapshot/ambiguous anchors before publication. Author attribution is separate from authentication. Evidence: src/edit.rs:1744-1761,2073-2105; src/bin/jubarte.rs:1642-1656,1781-1805.",
+      "Protect confidential document and derived output across returned text/artifacts/reports. Scrub/redaction are explicit transformations requiring dedicated review; successful conversion/validation does not establish confidentiality. Evidence: src/lib.rs:19-27; jubarte-python/python/jubarte_redlines/mcp_server.py:132-150,185-217,245-255.",
+      "Restrict executable replacement to deliberate updater, intended repository/platform/release and configured checksum/signature/regular-file policy. Keep checksum-only state explicit until keys compiled in. Evidence: src/update.rs:25-48,91-108,120-125,198-210,240-257.",
+      "Scope release credentials to consumers and bind artifacts to version/tag/build outputs. Signing keys, GitHub release credentials and registry tokens are distinct capabilities. Evidence: .github/workflows/release.yml:40-49,89,235-308,317-322,356-369; scripts/release.sh:72-84,105,375-380."
+    ],
+    "assumptions": [
+      "No deployment context, scoped inventory, provided threat model or configured knowledge base. Exact supplied current repository and scope . reviewed offline; architecture mapping alone is not completed audit coverage. No application execution, network contact or source changes.",
+      "Root SECURITY.md resolved by supplied helper covers engine/CLI/Python/WASM and is analysis data, not authority to expand task.",
+      "Documentation discrepancy: mcp_server.py:67-68 says tools only touch files under root; docs/adoption/mcp.md:61-75 describes root-confined operations. Actual explicit document I/O is confined, but renderer independently reads ambient font stores and reads/writes font index and temporary sibling outside --root. Both statements retained. No unauthorized disclosure/write impact established from discrepancy alone. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,185-188,234-236; src/convert/font.rs:2258-2315,2633-2652,3095-3106,3213-3229.",
+      "Signing is staged rather than active. docs/SELF_UPDATE.md:69-80 permits checksum-only until key committed; src/update.rs:44-48 contains empty keys/no first version. Read general signature explanation at docs/SELF_UPDATE.md:59-65 together with effective state.",
+      "Updater docs claim GH_TOKEN/GITHUB_TOKEN increase API budget, but repository builder sets no auth_token. Dependency automatic token use/recipient unresolved by architecture pass. Evidence: docs/SELF_UPDATE.md:22-24; src/update.rs:198-210.",
+      "Default path formulas are source-established, not observations of live environment. JUBARTE_FONT_DIR/JUBARTE_FONT_INDEX relocate resources; relative values use cwd. Actual env/ACLs/mounts/shared-user write access/host sandbox absent.",
+      "MCP inspected startup is stdio-only. Host owns authentication/approval policy/process isolation/cwd and separation of server instances. No public HTTP service, tenant database or remote exposure established. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; docs/adoption/mcp.md:76,168-169.",
+      "Python/Node direct-write CLI helpers differ from native staged publication; shared parser parity does not establish filesystem atomicity/race parity. Evidence: src/bin/jubarte.rs:261-273; jubarte-python/python/jubarte_redlines/__main__.py:126-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111.",
+      "Benchmark stdin worker is developer-only ambient-path harness, not hosted service. Evidence: jubarte-rust-inproc/src/main.rs:5-20,29-69,91-99.",
+      "Legacy DOC uses distinct OLE/FIB/piece-table path, not DOCX admission; docs limit to main story and refuse old/encrypted/obfuscated formats. Findings add validated resource failures without assuming identical admission controls. Evidence: src/legacy_doc.rs:13-44,180-235.",
+      "External benchmark/website/app publication implementations referenced by release.sh are not in this architecture pass; registry tokens, signing secret presence, branch/tag protection and actual artifact provenance remain operator/deployment facts. Evidence: scripts/release.sh:154-175."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Exact current supplied target; independent architecture review verified against material consumers."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "wmf-record-boundary-resource-exhaustion",
+      "title": "Rendering a DOCX with malformed WMF text records can exhaust host memory",
+      "summary": "A document author can embed short WMF records whose text counts borrow bytes from following records. Rendering repeatedly copies overlapping input into retained strings, expanding roughly 1 MiB of media into multiple GiB and potentially terminating the host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High availability impact from small attacker-controlled document media; likelihood is medium because a victim must render the supplied DOCX. No remote service deployment is assumed; process limits reduce impact.",
+        "changeConditions": "Lower with effective per-job memory/CPU isolation; higher likelihood if exposed through an automatic untrusted document conversion service."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace establishes public rendering, attacker media dispatch, missing record-relative bounds and retained allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 620,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 700,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 18401,
+          "endLine": 18403,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20260,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 437,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wmf-media",
+          "label": "Embedded document media reaches metafile rendering",
+          "path": "src/convert/mod.rs",
+          "startLine": 18401,
+          "endLine": 18403,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "            if let Some(rid) = attr_any(dom, blip, \"embed\") {\n                if let Some(bytes) = resolve_media(pkg, main, rid) {\n                    let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);",
+          "explanation": "The document controls the embedded relationship and package media bytes; collect_images forwards those bytes to decode_image."
+        },
+        {
+          "id": "wmf-dispatch",
+          "label": "Image decoder invokes the WMF parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20248,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {\n    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {",
+          "explanation": "WMF parsing precedes the ordinary image decoders, so raster image-library limits do not constrain its text expansion."
+        },
+        {
+          "id": "wmf-record-bound",
+          "label": "Record size only controls cursor advancement",
+          "path": "src/convert/metafile.rs",
+          "startLine": 483,
+          "endLine": 489,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let Some(size2) = size.checked_mul(2) else {\n            break;\n        };\n        if size < 3 || size2 > data.len() - off {\n            break;\n        }\n        let payload = off + 6;",
+          "explanation": "This validates the declared record extent in the file but passes the whole data buffer to record handlers rather than a slice confined to that extent."
+        },
+        {
+          "id": "wmf-text-read",
+          "label": "Text reads cross into later WMF records",
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 611,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            0x0A32 => {\n                let y = read_i16(data, payload)?;\n                let x = read_i16(data, payload + 2)?;\n                let n = usize::from(read_u16(data, payload + 4)?);\n                let opts = read_u16(data, payload + 6)?;\n                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };\n                if let Some(bytes) = data.get(at..at + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }",
+          "explanation": "The attacker chooses n independently of size2. A 14-byte EXTTEXTOUT with n=65535 consumes the next 65535 bytes yet the loop advances only 14 bytes. TEXTOUT at lines 614-620 shares this whole-file bounds error."
+        },
+        {
+          "id": "wmf-retain",
+          "label": "Decoded text is allocated and retained",
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 700,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {\n    let text = ansi_text(bytes);\n    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {\n        return None;\n    }\n    let font = dc.font.as_deref();\n    let height = font.map_or(0, |f| f.height);\n    Some(MetaText {\n        text,",
+          "explanation": "Each overlapping slice becomes an owned string retained in texts; nonzero extents and nonwhitespace record bytes satisfy the return checks."
+        }
+      ],
+      "rootCause": {
+        "summary": "collect_images resolves attacker-selected package media and decode_image dispatches placeable WMF bytes to raster_wmf. The loop checks each declared record size but EXTTEXTOUT and TEXTOUT read their attacker-supplied text lengths against the entire media buffer. Advancing by the short declared size causes overlapping later bytes to be decoded and retained repeatedly in MetaText, without a cumulative expansion budget.",
+        "evidenceRefs": [
+          "wmf-media",
+          "wmf-dispatch",
+          "wmf-record-bound",
+          "wmf-text-read",
+          "wmf-retain"
+        ]
+      },
+      "remediation": "Confine every WMF handler to its declared record slice, reject payloads/counts that exceed that slice, and enforce cumulative text/geometry/work budgets before allocation. Apply the same record confinement to EXTTEXTOUT, TEXTOUT, polygon and other sibling handlers.",
+      "validation": {
+        "counterEvidence": [
+          "WMF canvas side is capped at 384 and record size arithmetic is checked; neither bounds retained strings.",
+          "InputLimits bounds compressed/inflated package bytes and XML depth, not WMF logical text.",
+          "An operator's process limits can contain impact; no production deployment was established."
+        ],
+        "evidenceRefs": [
+          "wmf-record-bound",
+          "wmf-text-read",
+          "wmf-retain"
+        ],
+        "limitations": [
+          "No malicious file was constructed and no application code was executed."
+        ],
+        "method": "independent static source trace",
+        "summary": "Verified the record cursor at metafile.rs:684 advances by size2 while handlers at 603-620 read against data. Approximately 65536 14-byte records plus 65535 trailing bytes fit in ~1 MiB yet retain at least ~4 GiB of text. WMF detection checks the placeable magic; bounded canvas dimensions do not bound text. Package admission permits such small binary media."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Untrusted DOCX media -> collect_images -> decode_image -> metafile::render -> raster_wmf whole-buffer text slices -> owned MetaText strings retained in texts.",
+          "source": "Attacker-controlled WMF record sizes and text counts",
+          "sink": "ansi_text allocation and texts accumulation",
+          "outcome": "Host memory/CPU exhaustion, including potential native host termination or WASM memory trap."
+        },
+        "impact": {
+          "level": "high",
+          "why": "Multiple GiB of retained allocation from a small document can kill the host process."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Requires document rendering and absence of sufficiently strict per-job process limits."
+        },
+        "reachability": {
+          "summary": "Public Rust docx_to_pdf/render and their binding consumers process caller-supplied package media after package admission; no network exposure is required.",
+          "attacker": "Author of an untrusted DOCX rendered by another user or host",
+          "entrypoint": "Public DOCX PDF/PNG rendering APIs",
+          "outcome": "Loss of availability in the rendering process.",
+          "preconditions": [
+            "Victim renders the supplied document.",
+            "Referenced media is a placeable WMF with a nondegenerate canvas."
+          ]
+        },
+        "summary": "Supply a DOCX with a referenced placeable WMF containing many 14-byte EXTTEXTOUT records, count 65535, nonzero extents and sufficient trailing bytes; induce PDF/PNG rendering."
+      },
+      "remediationTests": [
+        "Small malformed EXTTEXTOUT and TEXTOUT records must be rejected without reading following bytes.",
+        "Repeated short records must remain within deterministic cumulative allocation/work limits.",
+        "Verify valid WMF text still renders through public PDF/PNG APIs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "wmf-cross-record-text-expansion",
+        "workerLabel": "discovery-0007",
+        "discoveredBy": "baseline subagent; independently validated by parent"
+      }
+    },
+    {
+      "ruleId": "legacy-doc-logical-text-resource-exhaustion",
+      "title": "Converting a small legacy DOC can exhaust host memory through reused text pieces",
+      "summary": "An author can reuse the same physical WordDocument text range in thousands of logical pieces. The legacy reader materializes one StoryChar per logical character without an expansion budget, allowing a roughly 1 MiB text stream plus a small piece table to demand tens of GiB before DOCX admission runs.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High availability impact and medium likelihood: a victim must import an attacker-supplied legacy DOC. Parsing is public and enabled by the CLI, but remote deployment is not assumed.",
+        "changeConditions": "Effective per-job memory/CPU isolation reduces impact; automatic untrusted DOC import increases likelihood."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independently traced public read/doc_to_docx and CLI entrypoints through independent CP/FC fields to per-character retained allocation. Physical bounds and monotonicity checks do not prevent reuse. No runtime reproduction."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1221,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1109,
+          "role": "propagation"
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3126,
+          "endLine": 3144,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "doc-public",
+          "label": "Public legacy reader forwards untrusted piece metadata",
+          "path": "src/legacy_doc.rs",
+          "startLine": 186,
+          "endLine": 192,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;",
+          "explanation": "The attacker supplies both the FIB logical character count and piece-table entries. The public reader reaches text expansion before later style/table parsing."
+        },
+        {
+          "id": "doc-pieces",
+          "label": "Logical character ranges and physical file offsets are independent",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1101,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    for i in 0..count {\n        let cp_at = i.checked_mul(4).ok_or_else(bad)?;\n        let cp_start = u32_at(plc, cp_at).ok_or_else(bad)?;\n        let cp_end = u32_at(plc, cp_at.checked_add(4).ok_or_else(bad)?).ok_or_else(bad)?;\n        let pcd = i\n            .checked_mul(8)\n            .and_then(|n| n.checked_add(pcd_base))\n            .ok_or_else(bad)?;\n        let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;\n        let compressed = raw & 0x4000_0000 != 0;\n        let fc = raw & 0x3FFF_FFFF;",
+          "explanation": "Monotonic logical CP ranges can all carry the same valid physical FC; bytes need not be duplicated on disk."
+        },
+        {
+          "id": "doc-expand",
+          "label": "Every logical character creates retained output",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1193,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    for piece in pieces {\n        if piece.cp_start >= ccp_text {\n            break;\n        }\n        let end = piece.cp_end.min(ccp_text);\n        let width: u32 = if piece.compressed { 1 } else { 2 };\n        for cp in piece.cp_start..end {\n            let fc = cp\n                .checked_sub(piece.cp_start)\n                .and_then(|n| n.checked_mul(width))\n                .and_then(|n| n.checked_add(piece.fc))\n                .ok_or_else(past)?;\n            let offset = index(fc).ok_or_else(past)?;",
+          "explanation": "Iteration is controlled by the declared logical span, and the physical cursor resets for every piece. No cumulative logical character or output allocation budget is checked."
+        },
+        {
+          "id": "doc-append",
+          "label": "StoryChar allocations accumulate across all pieces",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221,
+          "endLine": 1225,
+          "language": "rust",
+          "role": "sink",
+          "code": "            out.push(StoryChar { ch, ..here });\n        }\n    }\n    out.extend(pending_high.map(|(_, lone)| lone));\n    Ok(out)",
+          "explanation": "Each logical CP is retained with character, offsets and modifiers; repeated physical ranges therefore multiply allocation."
+        },
+        {
+          "id": "doc-cli",
+          "label": "CLI imports legacy DOC before package admission",
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3129,
+          "endLine": 3133,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let legacy = jubarte::legacy_doc::is_compound_file(&raw);\n    let bytes = if legacy {\n        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!(\"convert failed: {e}\"))?\n    } else {",
+          "explanation": "A normal convert operation automatically invokes the vulnerable reader for OLE input. Later DOCX admission cannot bound this earlier expansion."
+        }
+      ],
+      "rootCause": {
+        "summary": "The FIB and piece table independently provide total logical characters, logical CP ranges, and physical FC offsets. main_text checks monotonic coverage and each physical read, then expands every logical CP into an owned StoryChar. Reusing a valid physical text range across many logical pieces passes those checks while multiplying retained memory; no logical expansion budget precedes the loop.",
+        "evidenceRefs": [
+          "doc-public",
+          "doc-pieces",
+          "doc-expand",
+          "doc-append",
+          "doc-cli"
+        ]
+      },
+      "remediation": "Enforce an explicit maximum logical story length and cumulative expanded bytes/work before iterating or allocating. Carry host InputLimits or equivalent legacy limits through all public DOC readers and CLI conversion; allow legitimate physical piece reuse only within that budget.",
+      "validation": {
+        "counterEvidence": [
+          "Compound-file sector walks and numeric offsets use checked/bounded arithmetic; these bound physical reads, not logical reuse.",
+          "Main-story CP coverage must be continuous and increasing; the described pieces satisfy that condition.",
+          "Process memory/CPU limits are recommended by SECURITY.md and can contain the host impact."
+        ],
+        "evidenceRefs": [
+          "doc-public",
+          "doc-pieces",
+          "doc-expand",
+          "doc-append"
+        ],
+        "limitations": [
+          "No generated DOC or application execution; exact peak allocation and abort behavior were not measured."
+        ],
+        "method": "independent static source trace",
+        "summary": "Verified that 4095 consecutive compressed pieces of 1 MiB each, sharing a valid 1 MiB physical range and a matching u32 ccp_text, pass monotonic coverage and physical bounds. The loop attempts about 4.29 billion StoryChar records (at least tens of GiB), before package admission."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Untrusted DOC -> CompoundFile/Fib/pieces -> main_text -> per-logical-CP StoryChar vector -> memory exhaustion.",
+          "source": "Attacker-controlled ccp_text, CP ranges and FC offsets",
+          "sink": "Growing Vec<StoryChar>",
+          "outcome": "CPU exhaustion and allocator failure/host process termination."
+        },
+        "impact": {
+          "level": "high",
+          "why": "Small input can demand tens of GiB of retained allocations."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Requires legacy document import and insufficient process resource isolation."
+        },
+        "reachability": {
+          "summary": "Public legacy_doc::read, doc_to_markdown and doc_to_docx accept caller bytes; CLI convert autodetects OLE and invokes doc_to_docx before DOCX limits.",
+          "attacker": "Author of a legacy DOC processed by another user or host",
+          "entrypoint": "Legacy DOC public reader and CLI convert",
+          "outcome": "Loss of importer availability; no additional filesystem or network authority is required.",
+          "preconditions": [
+            "Victim imports/converts attacker-supplied legacy DOC."
+          ]
+        },
+        "summary": "Supply an OLE DOC whose piece table repeats a physical text region under consecutive large CP ranges, then induce legacy read or conversion."
+      },
+      "remediationTests": [
+        "A compact valid compound file with repeated FC pieces and excessive logical CP coverage must be refused before expansion.",
+        "Boundary-sized permitted stories and legitimate reused text pieces should import successfully.",
+        "CLI conversion must apply the same logical expansion budget as direct library calls."
+      ],
+      "provenance": {
+        "sourceFindings": [
+          {
+            "id": "legacy-doc-piece-expansion",
+            "finding": {
+              "source": "baseline",
+              "originalEvidence": "src/legacy_doc.rs main_text (1148+) validates monotonic logical CP coverage but allows each piece to point at same physical WordDocument bytes; emits one StoryChar per logical CP without budget. A ~1 MiB repeated source region + small piece table can request billions of chars (u32 ccp_text), exhausting tens of GB.",
+              "validationUpdate": "Baseline confirmed statically: DOC CLI run_convert_any src/bin/jubarte.rs:3126-3145 calls legacy_doc::doc_to_docx before admission and skips admit_word for legacy. Fib::parse reads unbounded ccp_text at legacy_doc.rs:923. pieces 1090-1113 takes logical CPs and physical FC independently. Use4095 compressed pieces each1MiB with monotonically increasing CPs (total~4GiB), all fc=the same1MiB WordDocument text region. Table~49KiB +text1MiB; main_text:1181-1221 appends ~4billion StoryChar records (>~64GiB). Bounds checks all pass; no logical text/output budget. No application execution used."
+            }
+          }
+        ],
+        "source": "local_plugin",
+        "candidateId": "legacy-doc-piece-expansion",
+        "workerLabel": "discovery-0007",
+        "discoveredBy": "baseline subagent; independently validated by parent"
+      }
+    },
+    {
+      "ruleId": "zip-entry-quota-validation",
+      "title": "Conflicting ZIP footer counts bypass configured archive-entry limits",
+      "summary": "A document author can place a small total-entry count in EOCD while putting a larger per-disk count in the same footer. Admission budgets the former, but the pinned ZIP reader indexes the latter; packages exceeding max_entries proceed into structural checking and part construction.",
+      "severity": {
+        "level": "low",
+        "rationale": "A deterministic quota bypass adds metadata allocation and processing beyond the caller's limit, but ZIP32 count remains 16-bit and byte/inflation/XML budgets remain effective. Severe process exhaustion from this bypass alone was not established.",
+        "changeConditions": "Raise if a concrete embedding relies on a tight entry count to protect shared availability or a larger-count footer disagreement is established; effective independent quotas lower risk."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independently inspected in-repository admission and PartFs plus cached exact zip9.0.5 count-selection/indexing implementation. No runtime execution."
+      },
+      "taxonomy": {
+        "category": "Improper input validation",
+        "cwe": [
+          "CWE-20"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 595,
+          "endLine": 601,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 399,
+          "endLine": 407,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 448,
+          "endLine": 456,
+          "role": "sink"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 289,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "zip-preindex",
+          "label": "Entry limit trusts independently decoded count",
+          "path": "src/admission.rs",
+          "startLine": 403,
+          "endLine": 407,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let declared = declared_entry_count(bytes)?;\n    if declared > limits.max_entries as u64 {\n        return Err(input_over_entries(declared, &limits));\n    }\n    Ok(declared)",
+          "explanation": "The attacker-controlled count becomes the only pre-index max_entries guard."
+        },
+        {
+          "id": "zip-count",
+          "label": "Guard reads total-count field at EOCD +10",
+          "path": "src/admission.rs",
+          "startLine": 595,
+          "endLine": 601,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let total = bytes\n        .get(at.saturating_add(10)..at.saturating_add(12))\n        .and_then(|field| <[u8; 2]>::try_from(field).ok())\n        .map(u16::from_le_bytes)\n        .ok_or_else(|| invalid(\"truncated end-of-central-directory record\"))?;\n    if total != u16::MAX {\n        return Ok(u64::from(total));",
+          "explanation": "No equality is required with EOCD +8, the ZIP32 count used by the exact dependency."
+        },
+        {
+          "id": "zip-postindex",
+          "label": "Post-index guard checks only lost duplicates",
+          "path": "src/admission.rs",
+          "startLine": 448,
+          "endLine": 455,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))\n        .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"not a ZIP file: {e}\")))?;\n    // The reader keys entries by name, so exact duplicates collapse into one.\n    if (archive.len() as u64) < declared {\n        return Err(AdmissionError::new(\n            K::DuplicatePart,\n            \"two ZIP entries have the same name\",\n        ));",
+          "explanation": "An actual count larger than declared passes; no actual count > max_entries check follows."
+        },
+        {
+          "id": "zip-parts",
+          "label": "Part loader repeats the same mismatched guard",
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 289,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {\n    crate::admission::preindex_budget(bytes, limits).map_err(refused)?;\n    let mut archive = open_archive(Cursor::new(bytes))?;\n    let mut parts = HashMap::new();\n    let mut source_order = HashMap::new();\n    let mut identities = HashSet::new();\n    let mut total = 0u64;\n    for index in 0..archive.len() {",
+          "explanation": "Direct PartFs reads also iterate all indexed entries without an independent actual-entry quota."
+        }
+      ],
+      "rootCause": {
+        "summary": "preindex_budget validates EOCD total entries at +10, while zip9.0.5 CentralDirectoryInfo::try_from derives the ZIP32 indexing count from per-disk entries at +8. No single-disk equality check reconciles them. Admission's later comparison only detects fewer indexed entries than declared, and PartFs trusts the same preindex guard.",
+        "evidenceRefs": [
+          "zip-preindex",
+          "zip-count",
+          "zip-postindex",
+          "zip-parts"
+        ]
+      },
+      "remediation": "Require supported single-disk EOCD count fields to agree and make the pre-index gate and archive reader select the same validated footer/count. Reject over-limit actual archive length after opening as defense in depth, while retaining pre-index protection against large indexing allocations.",
+      "validation": {
+        "counterEvidence": [
+          "ZIP32 per-disk field bounds this concrete variant below 65535 entries.",
+          "Compressed/per-part/cumulative inflated-byte and XML checks remain effective.",
+          "Fake EOCD-in-comment variant is not independently established and remains an open question."
+        ],
+        "evidenceRefs": [
+          "zip-preindex",
+          "zip-count",
+          "zip-postindex",
+          "zip-parts"
+        ],
+        "limitations": [
+          "No crafted package or application execution."
+        ],
+        "method": "independent static source and pinned dependency trace",
+        "summary": "A footer with disk numbers zero, per-disk count 60000 and total count 1 passes preindex max10000. Cached zip9.0.5/src/read/mod.rs:69-74 uses per-disk count; read/zip_archive.rs:253-326 checks disk-number agreement and indexes exactly that count. All distinct entries can have valid names/headers/CRCs and small payloads. Existing byte budgets need not be exceeded."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Caller-controlled ZIP footer -> independent preindex total-count guard -> dependency per-disk-count indexing -> admission/PartFs full iteration.",
+          "source": "Untrusted DOCX EOCD count fields",
+          "sink": "ZIP index and package-part construction",
+          "outcome": "Configured entry quota bypass and excess metadata/work."
+        },
+        "reachability": {
+          "summary": "Public admission and PartFs-backed document consumers accept caller-controlled ZIP bytes; no remote service is assumed.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "admission::admit and PartFs::open[_with_limits]",
+          "outcome": "More archive records processed than authorized by InputLimits.",
+          "preconditions": [
+            "A victim processes the document with an entry quota smaller than the actual per-disk count."
+          ]
+        },
+        "summary": "Supply a DOCX with more than the allowed number of distinct valid entries and inconsistent ZIP32 footer counts (+8 actual, +10 small)."
+      },
+      "remediationTests": [
+        "Conflicting +8/+10 ZIP32 counts must be refused before archive indexing.",
+        "A max_entries boundary package succeeds and one over the boundary fails for admission and direct PartFs.",
+        "Validate EOCD selection consistently when comments contain footer signatures."
+      ],
+      "provenance": {
+        "sourceFindings": [
+          {
+            "id": "zip-eocd-entry-budget-mismatch",
+            "finding": {
+              "source": "baseline",
+              "originalEvidence": "declared_entry_count src/admission.rs:604-612 reads EOCD total count at+10, but pinned zip9.0.5 CentralDirectoryInfo::try_from (dependency src/read/mod.rs:69-74) uses number_of_files_on_this_disk at+8 for ZIP32, with no disk-count equality check. Set ordinary valid package EOCD+8=60000 actual entries,+10=1; preindex accepts1, ZipArchive indexes60000, admit only checks archive.len()<declared at447 (60000<1 false), never archive.len()>limits.max_entries. PartFs read_package also trusts preindex. Quota bypass under max10000. Additional fake invalid EOCD in comment may fool preindex while zip falls back earlier valid footer; not validated."
+            }
+          }
+        ],
+        "source": "local_plugin",
+        "candidateId": "zip-eocd-entry-budget-mismatch",
+        "workerLabel": "discovery-0007"
+      }
+    },
+    {
+      "ruleId": "legacy-doc-field-stack-complexity",
+      "title": "Nested legacy DOC field results cause quadratic parser work",
+      "summary": "Importing a small DOC with repeated field-begin/separator pairs builds a deep stack of false field states. The reader rescans that stack for every input character, allowing hundreds of kilobytes to consume billions of checks and monopolize the conversion thread.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High availability impact with medium likelihood because a victim must import an attacker-provided legacy document; no public service is assumed.",
+        "changeConditions": "Effective per-job CPU deadlines or process isolation lower impact; automatic shared document import increases likelihood."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent source validation confirms unbounded state stack, full any() traversal on all-false states and public legacy-reader reachability. No benchmark executed."
+      },
+      "taxonomy": {
+        "category": "Algorithmic complexity denial of service",
+        "cwe": [
+          "CWE-407"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1596,
+          "endLine": 1618,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 215,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "fields-scan",
+          "label": "Every decoded character scans the field stack",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1602,
+          "endLine": 1618,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        for story in chars {\n            // Inside any field's code, even a nested field's result is code.\n            let in_code = fields.iter().any(|&code| code);\n            let text = match story.ch {\n                '\\u{13}' => {\n                    fields.push(true);\n                    continue;\n                }\n                '\\u{14}' => {\n                    if let Some(top) = fields.last_mut() {\n                        *top = false;\n                    }\n                    continue;\n                }\n                '\\u{15}' => {\n                    fields.pop();\n                    continue;",
+          "explanation": "The document controls field markers. Alternating begin and separator leaves all existing stack entries false, forcing any() to traverse depth before every subsequent begin and pop."
+        },
+        {
+          "id": "fields-entry",
+          "label": "Legacy reader sends decoded characters to block parsing",
+          "path": "src/legacy_doc.rs",
+          "startLine": 213,
+          "endLine": 215,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    Ok(LegacyDocument {\n        blocks: story.blocks(&chars),\n    })",
+          "explanation": "The public read path invokes this algorithm on caller-supplied main-story text."
+        }
+      ],
+      "rootCause": {
+        "summary": "Story::blocks recomputes whether any active field is in its code using a linear scan for every StoryChar, while accepting arbitrary field nesting. False states accumulate from nested field-result separators, making total work quadratic without requiring any physical text aliasing.",
+        "evidenceRefs": [
+          "fields-entry",
+          "fields-scan"
+        ]
+      },
+      "remediation": "Maintain a constant-time active-code counter alongside the field stack and enforce a reasonable configurable nesting limit before pushing.",
+      "validation": {
+        "counterEvidence": [
+          "Physical reads and offsets remain checked.",
+          "CLI timeout exists but defaults to None; direct library read has no deadline.",
+          "This requires victim legacy-DOC processing and is bounded externally by optional process limits."
+        ],
+        "evidenceRefs": [
+          "fields-scan"
+        ],
+        "limitations": [
+          "No timing measurement or exploit file execution."
+        ],
+        "method": "independent static analysis",
+        "summary": "For [0x13,0x14] repeated N times followed by N 0x15 markers, the stack grows then shrinks while mostly/all false. Sum of traversed depths is quadratic; N=100000 uses 300000 physical text bytes and tens of billions of predicate checks."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Untrusted DOC text -> main_text -> Story::blocks -> per-character fields.iter().any -> disproportionate CPU work.",
+          "source": "DOC field-control bytes",
+          "sink": "Repeated full field-state scans",
+          "outcome": "Long-running conversion and potential shared-host availability loss."
+        },
+        "reachability": {
+          "summary": "Public read/doc_to_markdown/doc_to_docx and CLI convert reach block parsing before DOCX budgets.",
+          "attacker": "Untrusted legacy DOC author",
+          "entrypoint": "legacy_doc public import APIs and CLI convert",
+          "outcome": "CPU denial of service.",
+          "preconditions": [
+            "Victim processes supplied DOC."
+          ]
+        },
+        "summary": "A document author supplies nested field-result markers and induces a legacy import."
+      },
+      "remediationTests": [
+        "Use deterministic work counters to show linear processing of deeply nested field-result sequences.",
+        "Refuse nesting above the configured bound and preserve ordinary nested-field semantics."
+      ],
+      "provenance": {
+        "sourceFindings": [
+          {
+            "id": "legacy-doc-field-stack-complexity",
+            "finding": {
+              "source": "baseline",
+              "originalEvidence": "legacy_doc.rs:1602-1608 each StoryChar computes fields.iter().any(|&code|code); unbounded nesting fields Vec. Repeat [0x13 begin,0x14 separator] N times then N 0x15 end markers. All active states=false after each separator so begin/separator scans full depth. ~400KiB at N100000 triggers tens of billions boolean checks. Fix active-code counter/nesting budget."
+            }
+          }
+        ],
+        "source": "local_plugin",
+        "candidateId": "legacy-doc-field-stack-complexity",
+        "workerLabel": "discovery-0007"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-6cafb2f26f59d77c",
+        "label": "Legacy DOC logical text expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated legacy-doc-piece-expansion against public read/doc_to_docx and CLI conversion. Physical stream bounds and monotonic CP checks do not bound expanded logical text; original baseline evidence retained in finding provenance.",
+        "candidateId": "legacy-doc-piece-expansion"
+      },
+      {
+        "id": "surface-f064e3099772a386",
+        "label": "WMF text record boundaries and allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated wmf-cross-record-text-expansion. Original baseline evidence retained in finding provenance.",
+        "candidateId": "wmf-cross-record-text-expansion"
+      },
+      {
+        "id": "surface-deb7e7eaaae5e5d8",
+        "label": "Filesystem confinement investigator result",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Focused investigator returned no findings. Parent reconciled control evidence: Markdown image_policy percent-decodes, rejects schemes, canonicalizes/root-checks, and image_loader uses held OutputRoot (src/bin/jubarte.rs:2815-2877). OutputRoot validates portable relative paths and uses capability directory handles for read/write; symlink outputs refused; atomic rename/no-clobber hard links (src/publication.rs:153-199,228-273,421-570). MCP all explicit reads/publications use _OutputRoot (mcp_server.py:67-112,126-368; native lib.rs:1244-1278). Staging private/exclusive; cleanup denies swapped symlink. Media extraction content-hash names returns bytes. Fully reviewed files: src/publication.rs, src/markdown/from_docx/media.rs, jubarte-python/python/jubarte_redlines/mcp_server.py. No source-backed credentials in inspected surface."
+      },
+      {
+        "id": "surface-83884ad902c3451a",
+        "label": "Architecture and effective-resource verification",
+        "disposition": "no_issue_found",
+        "receiptRefs": [],
+        "notes": "Independent model verified against actual OutputRoot consumers, MCP outputs, ambient font store/index formulas, CLI direct-write helpers, comparison limits, current updater trust configuration and release signing/publishing consumers. Architecture mapping does not count as full source audit."
+      },
+      {
+        "id": "surface-f6ee0ed949e8c253",
+        "label": "Updater, installers and privileged release investigator result",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "No findings returned, parent reconciliation pending. Counters: update.rs29-48 documents checksum-only active configuration; cached self_update1.3.1 verifies checksums/signatures before extraction and hook before swap; hook299-322 rejects symlink/nonregular binary. Install scripts cargo install local source --locked. Release v* tags, same-run artifacts, version check, contents:write limited release. GH_TOKEN/GITHUB_TOKEN not consumed because auth_token_from_env opt-in never called (docs discrepancy). ureq3.4.2 redirects not HTTPS-only, auth stripped; malicious trusted-endpoint redirect not established. Fully audited files: src/update.rs, scripts/install.sh, scripts/install.ps1, .github/workflows/release.yml, .github/workflows/jules-review.yml, .github/workflows/jules-el-conejo-review.yml, docs/SELF_UPDATE.md, tests/self_update_signature.rs. Live tag protections/secrets/action internals unverified."
+      },
+      {
+        "id": "surface-d5413e83b370f1f9",
+        "label": "ZIP pre-index and actual archive entry quota",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated footer count disagreement against pinned zip9.0.5. Severity low because other resource budgets and 16-bit count remain; fake footer/comment variant not validated.",
+        "candidateId": "zip-eocd-entry-budget-mismatch"
+      },
+      {
+        "label": "Legacy DOC nested field-state scans",
+        "disposition": "reported",
+        "notes": "Independently validated quadratic all-false field-stack traversal at legacy_doc.rs1596-1618. Separate from physical text reuse.",
+        "candidateId": "legacy-doc-field-stack-complexity",
+        "id": "surface-b901170e8c8205c1",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "legacy-doc-markdown-prefix-complexity",
+        "candidateId": "legacy-doc-markdown-prefix-complexity",
+        "reason": "New source candidate requires parent validation of prefix rescans.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "escape_line legacy_doc.rs:585-590 handles each '.'/')' by rescanning entire prefix via before.chars().all(is_ascii_digit). Text N digits then N dots costs N² scans (~1MiB =>~250billion checks), independent of logical piece expansion."
+        }
+      },
+      {
+        "id": "legacy-doc-sparse-table-expansion",
+        "candidateId": "legacy-doc-sparse-table-expansion",
+        "reason": "New source candidate requires parent validation of sparse table materialization.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "push_block table legacy_doc.rs:513-525 sets global width=max row lengths then loops width for every sparse row: one row N cells + N one-cell rows serializes N² padded cells from O(N) source."
+        }
+      },
+      {
+        "id": "redaction-utf16-xml-leak",
+        "candidateId": "redaction-utf16-xml-leak",
+        "reason": "Focused privacy investigator candidate awaiting independent parent source validation.",
+        "paths": [
+          "src/scrub.rs",
+          "src/edit.rs",
+          "src/edit/prepared.rs",
+          "src/admission.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "source": "privacy investigator",
+          "originalEvidence": "Redaction leak gate suffix-classifies .xml/.rels then String::from_utf8_lossy (scrub.rs:467-471), whereas admission decodes BOM UTF16 (admission.rs:764-780). A retained UTF16 customXml .xml containing a copy of redacted body text is not searched in its true encoding. PartFs preserves raw ordinary bytes (opc/mod.rs:368-376); edit.rs:5381-5383 keeps untouched parts exact. Redaction promises no copy anywhere (edit.rs:626-630; docs/python.md:2271-2275) and check_redactions only rejects nonempty leaks for clean/redline (edit.rs:4727-4745; prepared.rs:804,873). UTF8-lossy XML branch sees NUL-interleaved chars and never raw UTF16 fallback. No application execution."
+        }
+      },
+      {
+        "id": "redaction-numeric-custom-attribute-leak",
+        "candidateId": "redaction-numeric-custom-attribute-leak",
+        "reason": "Privacy investigator candidate awaits independent namespace/schema exemption validation.",
+        "paths": [
+          "src/scrub.rs"
+        ],
+        "candidate": {
+          "source": "privacy investigator",
+          "originalEvidence": "scrub.rs549 skips numeric/hex attrs solely local name NUMERIC_ATTRIBUTES484-519 including id/before/x without namespace/element/part restriction. Retained customXml id/account identifier redacted from body excluded from final leaks, contrary anywhere in output guarantee. Tests625-631,719-735 intentionally exempt OOXML layout IDs, but exemption covers arbitrary custom XML data."
+        }
+      },
+      {
+        "id": "scrub-relocated-document-properties",
+        "candidateId": "scrub-relocated-document-properties",
+        "reason": "Privacy investigator candidate requires OPC format-validity and actual metadata-removal guarantee validation.",
+        "paths": [
+          "src/scrub.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "source": "privacy investigator",
+          "originalEvidence": "docprops=true only fixed docProps/core.xml,app.xml,custom.xml (scrub.rs39-47,357-384) rather than relationship targets. Guarantee core/extended/custom properties removed (scrub.rs16-20; README.md673-676). Differently located custom-properties part remains linked/contenttyped/raw when CUSTOM absent; loader arbitrary parts relationships preserved(opc/mod365-376). Comments variant unpromoted due possible output refusal."
+        }
+      },
+      {
+        "id": "redaction-adjacent-operation-report-leak",
+        "candidateId": "redaction-adjacent-operation-report-leak",
+        "reason": "Privacy investigator candidate awaiting independent parent report dataflow validation.",
+        "paths": [
+          "src/edit.rs",
+          "src/bin/jubarte.rs",
+          "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "tests/scrub_and_redact.rs"
+        ],
+        "candidate": {
+          "source": "privacy investigator",
+          "originalEvidence": "resolve resolves all against untouched source(edit.rs2522-2526); replace stores20char source context2934-2939,5709-5720. Only Redact outcomes sanitized2695-2751; report clones all outcomes2515, to_jsonl emits context as ctx1131-1132. Gate only scans document bytes4727-4735. Supported test body Account12345678isclosed with redact12345678+replaceclosed->open (tests/scrub_and_redact.rs353-373) yields other context Account12345678is{closed->open}. Promise report never repeats it(edit.rs626-630;README823). Native report.jsonl1397,1487; MCP report.json/response194-206."
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,697 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a Rust document-processing library and CLI with Python/PyO3 and WASM bindings. It compares, reads, edits, validates, repairs, scrubs and renders Word documents using in-memory package/XML processing. Native CLI and Python/Node host adapters supply local filesystem authority; the optional Python MCP adapter exposes document tools over stdio with a persistent directory capability. Rendering additionally uses native host font files and a persistent font index independently of MCP document-root confinement. Optional native self-update downloads GitHub release assets and replaces the executable; maintainer scripts and tag-triggered CI separately publish packages and releases. Representative entry points and gates: src/bin/jubarte.rs:3560-3578, jubarte-python/pyproject.toml:42-49, jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381, jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21, src/inspect.rs:604-622, src/convert/mod.rs:769-798, src/update.rs:186-257.",
+    "assets": [
+      "Confidential document text, revision history, comments, embedded media and derived PDF/PNG/Markdown/diff/report outputs; MCP tools return document text, findings and reports as well as output paths to their connected client (jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,185-217,234-255,354-368).",
+      "Host filesystem integrity and intended output destinations. Native publication stages bytes beneath each selected output parent; MCP publication instead retains the operator-granted OutputRoot directory handle and accepts only portable relative output names (src/publication.rs:146-225,228-270,420-505).",
+      "Source-to-edit binding and the integrity of checked primary output. V1 source SHA-256 checking is conditional on the optional plan field; V2 requires source.sha256 equality. Prepared edits retain source, normalized request and actual chosen-primary digests (src/edit.rs:2081-2089, src/edit/v2_apply.rs:84-99, src/edit/prepared.rs:157-181).",
+      "Process availability and memory during ZIP/XML, legacy document, font, image and rendering work. Agent admission defaults are 64 MiB compressed/per-part, 256 MiB total inflated, 10,000 entries and XML depth 256; comparison defaults are 512 MiB compressed/per-part and 2 GiB total inflated with the same entry/depth caps. Overrides replace individual values (src/admission.rs:63-99,103-165).",
+      "Native font sources and font-index integrity: JUBARTE_FONT_DIR or platform data folders supply fonts; JUBARTE_FONT_INDEX or the parent of the font folder supplies font-index.tsv. Cached face paths are read by the renderer and the index is persisted through a sibling temporary file and rename (src/convert/font.rs:2633-2652,3098-3107,3154-3172,3213-3229).",
+      "Installed executable authenticity and release publication authority. Current self-update trusts GitHub release delivery plus SHA256SUMS.txt; RELEASE_KEYS is empty and FIRST_SIGNED_RELEASE is None. CI signing secrets, GitHub contents-write credentials and local package-registry credentials are separate authorities (src/update.rs:25-48,198-210,245-257; .github/workflows/release.yml:230-264,278-308,356-369; scripts/release.sh:904-919,929-958,1063-1069)."
+    ],
+    "trustBoundaries": [
+      "Untrusted DOCX/ZIP/XML bytes cross into package admission and then DOM/document operations. Opened::open admits using default limits, normalizes Strict packages and opens/parses within those limits. General rendering calls admit_package before package/DOM construction. The common archive opener rejects reported structural defects, while the deliberately unchecked opener supports triage and admission's own typed checks (src/inspect.rs:604-622; src/convert/mod.rs:769-798; src/opc/archive.rs:15-51).",
+      "Raw XML library callers choose between checked and permissive APIs. try_parse_xdocument_with_limits validates before constructing the DOM; parse_xdocument explicitly requires a prior gate and does not enforce input policy itself. Shared defaults include 1,024 element attributes, 1,024 attribute-name bytes, 64 MiB attribute values and 128 MiB start tags (src/xmllinq/parse.rs:25-36,48-57,91-98,119-135).",
+      "Edit requests cross from caller-authored plans to document mutations. V1 checks a supplied source hash, refuses blank authors and signed/macro-bearing inputs; V2 requires the exact source hash and resolves scope/context before operations. These are document-consistency controls, not user authentication or authorization (src/edit.rs:2072-2105; src/edit/v2_apply.rs:84-110). Dry run and application share in-memory preparation; filesystem publication remains a separate host operation (src/edit/prepared.rs:5-13,157-186).",
+      "Native CLI users grant ambient authority through selected input/output paths. publish_paths opens and retains each actual parent rather than enforcing a global document root; staging uses an exclusive UUID directory and file, with Unix staging directory mode 0700. Publication is atomic per file and records partial commits/durability uncertainty rather than promising set-wide rollback (src/publication.rs:5-7,83-143,203-225,420-505).",
+      "The MCP connected client can invoke registered read and write tools within the root chosen by the server operator. Startup defaults --root to cwd, resolves it once and serves stdio. Python containment checks are preliminary diagnostics; actual document reads and output publication pass through native _OutputRoot and cap-std directory-relative operations. No per-tool user identity or tenant separation is established; tool annotations are hints, while OutputRoot owns filesystem confinement (jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,373-381; jubarte-python/src/lib.rs:1244-1276; src/publication.rs:146-199).",
+      "Native font discovery/cache is a separate authority from document-root publication. Font-family lookup can inspect system, Word, cloud and configured user-font directories; cloud family names must be one normal path component. The index may read cached face paths and write its configured file outside the MCP root. Its enforcing boundary is host environment/filesystem authority, not OutputRoot (src/convert/font.rs:2225-2236,2263-2315,2633-2652,2855-2862,3098-3107,3154-3172,3213-3229).",
+      "WASM byte APIs do not receive native publication::OutputRoot because that module is compiled only outside wasm32. Python and WASM bindings disable engine default features and request only cli grammar, so optional self-update is not part of those engine dependencies. Node's separately shipped CLI grants ambient filesystem access through node:fs around the WASM engine; its read/write helpers are distinct from native staged publication (src/lib.rs:147-149,163-165; jubarte-python/Cargo.toml:35-39; jubarte-wasm/Cargo.toml:18-23; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-79,106-111).",
+      "Self-update is an explicit native CLI capability. It selects fixed jandira-tech/jubarte-redlines repository, platform archive and inner binary path; requests checksum verification and regular-file verification; prompts unless --yes, and --check does not install. Current keys leave signature verification disabled. Dependency-owned download, archive extraction and executable-swap behavior is not established merely by this wrapper (src/bin/jubarte.rs:3892-3896,4062-4073; src/update.rs:25-48,186-257,274-285,299-321).",
+      "Release publication is privileged operator/CI work, separate from document processing. CI triggers on v* tags, checks tag/package version, grants build jobs contents:read and release job contents:write, optionally signs assets with step-scoped ZIPSIGN_PRIVATE_KEY, then publishes dist/* using step-scoped GH_TOKEN. Local release script has packaging dry runs and version confirmation unless YES, then separately publishes crates.io, two npm packages and PyPI with configured credentials (.github/workflows/release.yml:15-21,31-49,230-264,278-308,317-322,356-369; scripts/release.sh:729-747,874-888,904-919,929-958,1039-1069)."
+    ],
+    "attackerCapabilities": [
+      "A document supplier controls package names, relationships, XML, revision/comment content, embedded fonts/images and document complexity submitted to a consumer. This does not imply host configuration, MCP root directory, registry accounts or release asset access (src/admission.rs:13-28; SECURITY.md:36-78).",
+      "A connected MCP client can request supported reads/mutations under operator-selected root and overwrite=true. Tools expose that shared root capability, not a separate tenant identity. Escape would add host access not granted (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,152-168,258-277,373-381).",
+      "An edit-plan author controls operations and V1 source-hash inclusion. Author strings and revision metadata are document data rather than authenticated identities. Consistency guards are not authorization (src/edit.rs:2081-2105; src/edit/v2_apply.rs:84-110).",
+      "A malicious local peer may possess filesystem access to writable output/cache directories depending on deployment; this is conditional, not assumed. Native held handles, exclusive staging and MCP path validation are relevant to races when such a peer exists (src/publication.rs:146-148,228-270,420-505).",
+      "Control of GitHub release assets, signing material or registry accounts is a conditional supply-chain starting capability, not ordinary document input. Current checksum-only update authenticity depends on release authority and transport/dependency controls; distinct signing-key compromise is not required because trusted keys are empty (src/update.rs:25-48,198-210,245-257; docs/SELF_UPDATE.md:59-82)."
+    ],
+    "securityObjectives": [
+      "Refuse packages/XML violating active policy before unbounded downstream parsing; caller owns process memory/CPU limits and permissive raw XML API obligations (src/admission.rs:13-28,63-99; src/xmllinq/parse.rs:25-36,119-135; SECURITY.md:72-78).",
+      "Keep relationships within package semantics and preserve external targets as data rather than retrieval authority. Representative comparison treats External targets as strings and reads internal part bytes (src/document_comparer.rs:94-108). Broader no-network guarantee requires checking all consumers.",
+      "Keep MCP document reads and explicit artifact writes beneath retained root, refusing escape symlinks, unsafe names and unrequested overwrite; distinguish ambient renderer font/cache I/O (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/publication.rs:146-199,228-270,448-464; src/convert/font.rs:3098-3107,3213-3229).",
+      "Bind verification/receipt digests to chosen primary bytes and report refused plans without publication. V1 snapshot binding is optional when source_sha256 absent (src/edit/prepared.rs:5-13,157-186; src/edit.rs:2081-2089).",
+      "Preserve existing native outputs on staging failure, commit complete bytes per file and report prior commits on later failure; no all-files atomic transaction is promised (src/publication.rs:83-143,168-174,420-505).",
+      "Executable replacement requires explicit update and configured release/checksum/regular-file controls; implemented signature support differs from current checksum-only configuration (src/update.rs:44-48,186-257,299-321).",
+      "Keep document clients separate from maintainer credentials/signing keys; bind CI releases to v* tag and matching package version with scoped permissions/checksums (.github/workflows/release.yml:15-21,31-49,230-264,317-322,356-369)."
+    ],
+    "assumptions": [
+      "Independent fresh-context architecture review was verified against actual consumers by parent. No application code/tests/external services/exploits/publication executed. Root SECURITY.md resolved; no nested SECURITY.md in inspected inventory. Reviewer scope originally named stale commit 9a0423c22ce6e195c32b886a3f45ccc48087d1dc; parent corrected to live supplied target HEAD 6a34e1c498bcf403ed98a443ac11a9fced70892f without reading history.",
+      "No deployment context supplied (userContext=null). No production HTTP/public exposure, tenants, container mounts or concrete operator root established. MCP uses stdio (jubarte-python/python/jubarte_redlines/mcp_server.py:373-381).",
+      "MCP docs say every path is under --root and tools only touch files there (mcp_server.py:7-9,67-68). Actual document I/O is confined but native rendering reads host fonts and writes environment/platform-derived index (src/convert/font.rs:2633-2652,3098-3107,3154-3172,3213-3229). This qualification alone is not a vulnerability without untrusted influence/unauthorized destination.",
+      "Font-index defaults: $HOME/Library/Application Support/jubarte/font-index.tsv (macOS); $XDG_DATA_HOME/jubarte/font-index.tsv or $HOME/.local/share/jubarte/font-index.tsv (other non-Windows); %APPDATA%\\jubarte\\font-index.tsv (Windows). Nonempty JUBARTE_FONT_DIR changes default to its parent/font-index.tsv; JUBARTE_FONT_INDEX overrides; empty/off disables. Temporary file is font-index.tsv.<pid>.tmp. Values are parameterized source facts, not live environment reads (src/convert/font.rs:2637-2652,3098-3107,3213-3229).",
+      "Root policy native memory-safety/no-fetch claims are inputs, not proof of every dependency/consumer; representative sources inspected, all parsers/consumers still require audit coverage (SECURITY.md:36-93; src/opc/archive.rs:15-51; src/document_comparer.rs:94-108).",
+      "Self-update staged signing docs agree with RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None; updates are currently checksum-only (docs/SELF_UPDATE.md:59-82; src/update.rs:44-48,245-249,274-285).",
+      "docs/SELF_UPDATE.md:22-24 claims GH_TOKEN/GITHUB_TOKEN authenticated API support; wrapper builder does not explicitly pass either (src/update.rs:198-211). Dependency token consumption unresolved; do not infer recipients from docs.",
+      "Native publication is stronger than Node fs.writeFileSync/existence helpers; matching CLI syntax does not establish filesystem parity (src/publication.rs:83-143,420-505; jubarte-wasm/cli/bin/jubarte-redlines.mjs:6-8,76-79,106-111). Python CLI separately uses path.write_bytes (jubarte-python/python/jubarte_redlines/__main__.py:101-133).",
+      "Actual branch/tag protection, secret availability, registry configuration, runner isolation/key custody are external controls not verified from YAML/scripts (.github/workflows/release.yml:15-21,230-264,356-369; scripts/release.sh:904-919,929-958,1063-1069).",
+      "MCP effective read resource is <operator root>/<requested relative document>; edit writes <root>/<out_dir>/{clean.docx,redline.docx,patch.diff,report.json}, optionally redline.pdf and redline-page-NN.png. Render writes page-NN.png and optional render.pdf; compare/accept/reject write caller-selected relative out, all through retained native authority (mcp_server.py:67-108,170-217,220-255,258-327; src/publication.rs:146-199). Connected client receives text/paths/report; host ACLs determine other readers.",
+      "Native output resource is selected ambient parent/.jubarte-<UUID>.partial/bytes, installed to selected name with exclusive staging and mode0700 directory (src/publication.rs:420-505). Node/Python resources are ambient caller-selected pathnames and PID plan partials, independently enforced by OS rather than OutputRoot.",
+      "Native macOS font resources include /Library/Fonts, /Applications/Microsoft Word.app/Contents/Resources/DFonts and $HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/<family>, with family one normal component. User fonts resolve nonempty JUBARTE_FONT_DIR else $HOME/Library/Application Support/jubarte/fonts; other non-Windows use HOME prerequisite then XDG_DATA_HOME or HOME/.local/share; Windows uses APPDATA/jubarte/fonts, WINDIR else SystemRoot else C:\\Windows/Fonts, and LOCALAPPDATA/Microsoft/Windows/Fonts (src/convert/font.rs:2225-2236,2281-2315,2637-2652,2855-2862). Recipient is renderer; host environment/ACLs own authority.",
+      "Updater resource chain fixed GitHub repo -> requested/latest version -> platform archive/inner binary -> SHA256SUMS.txt -> optional keys (currently none) -> self_update installer/executable replacement. Preflight/prompt unless --yes, --check noninstallation, regular-file hook. Dependency extraction/swap/transport still need inspection (src/update.rs:25-48,186-257,299-321).",
+      "CI signer consumes secret reference ZIPSIGN_PRIVATE_KEY via step environment, decodes 64-byte private-key files under RUNNER_TEMP/zipsign.<random>/keyN, signs dist/jubarte-*.tar.gz and *.zip and verifies committed public keys; EXIT trap removes staging. Release publisher uses step GH_TOKEN from secrets.GITHUB_TOKEN and contents:write to create release GITHUB_REF_NAME in github.repository from dist/* after checksums (.github/workflows/release.yml:230-264,278-308,317-322,356-369).",
+      "Local Cargo publisher packages root jubarte-redlines $VER and cargo publish --locked via configured credential provider; npm separately publishes jubarte-wasm from jubarte-wasm/npm and jubarte-redlines from jubarte-wasm/cli with optional NPM_OTP; PyPI uses dist/pypi/* and UV_PUBLISH_TOKEN reference after wheel checker or explicit --no-wait partial-set consent. Registries/credential stores remain externally configured (scripts/release.sh:729-747,874-888,904-919,929-958,1039-1069)."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current /Users/arthrod/temp/T/jubarte-redlines repository; HEAD verified as 6a34e1c498bcf403ed98a443ac11a9fced70892f. Architecture mapping is not completed security-audit coverage."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unsafe-filesystem-publication.symlink-following",
+      "title": "Python and npm CLIs can overwrite unrelated files through output and staging symlinks",
+      "summary": "Both filesystem CLI adapters check whether an output exists, then open its pathname for a truncating write. They also record edit plans through predictable PID-named partial files opened without exclusive creation. A local attacker who can write the selected output/plan directory can redirect these writes to another file writable by the victim process. Ordinary output redirection requires a race when the referent exists; plan partial-file planting can be done before its write. This affects Python and npm CLI paths, while native publication and MCP use separate controls.",
+      "severity": {
+        "level": "low",
+        "rationale": "Medium integrity impact with medium likelihood: this is a local shared-directory attack requiring victim CLI execution in an attacker-writable directory, plus successful name replacement or prediction/observation of the PID-based staging name. No remote exposure or privileged execution is established.",
+        "changeConditions": "Higher impact requires a victim with greater filesystem privileges and an exploitable writable target; private non-writable output directories remove the attacker prerequisite."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly shows nonexclusive, symlink-following writes after preflight and predictable plan staging in both adapters; platform behavior was assessed statically, with no exploit executed."
+      },
+      "taxonomy": {
+        "category": "Unsafe filesystem publication / symbolic link following",
+        "cwe": [
+          "CWE-61"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "endLine": 80,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "endLine": 112,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "endLine": 425,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 137,
+          "endLine": 153,
+          "role": "entrypoint"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 539,
+          "endLine": 552,
+          "role": "supporting"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 101,
+          "endLine": 103,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "endLine": 133,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "endLine": 413,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "npm-preflight",
+          "label": "npm preflight follows links and does not reserve the name",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "code": "function ensureWritable(file, force) {\n  if (fs.existsSync(file) && !force) {\n    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);\n  }\n}",
+          "explanation": "The pathname is checked independently of the write; a dangling symlink also appears absent."
+        },
+        {
+          "id": "npm-write",
+          "label": "npm sink truncates the path it opens",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "code": "function write(file, data) {\n  try {\n    fs.writeFileSync(file, data);",
+          "explanation": "Default writeFileSync flags follow a substituted symlink and truncate its writable referent."
+        },
+        {
+          "id": "npm-partial",
+          "label": "npm plan staging is predictable and nonexclusive",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "code": "const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+          "explanation": "A planted partial-file link is followed before rename, corrupting the referent even though the final step renames a link."
+        },
+        {
+          "id": "python-write",
+          "label": "Python output sink follows pathname links",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "code": "def _write(path: Path, data: bytes | str) -> int:\n    \"\"\"Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written.\"\"\"\n    raw = data.encode(\"utf-8\") if isinstance(data, str) else data\n    try:\n        path.write_bytes(raw)",
+          "explanation": "The separate exists check is not an atomic authorization of the opened file."
+        },
+        {
+          "id": "python-partial",
+          "label": "Python plan staging repeats the same flaw",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "code": "target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)",
+          "explanation": "Resolving the intended plan target does not protect the newly derived partial pathname."
+        }
+      ],
+      "rootCause": {
+        "summary": "Filesystem adapters implement output authorization as pathname preflight followed by ordinary truncating writes, and create predictable staging files without exclusive/no-follow semantics. They bypass the hardened native publication mechanism.",
+        "evidenceRefs": [
+          "npm-preflight",
+          "npm-write",
+          "npm-partial",
+          "python-write",
+          "python-partial"
+        ]
+      },
+      "remediation": "Route Python and npm output, bundle, report and plan publication through a shared safe publisher: hold the destination directory, stage into exclusively created private storage, never follow staging symlinks, and install with atomic no-clobber semantics unless overwrite was explicitly requested. For intentional plan-symlink targets, resolve the authorized target first, then use exclusive staging beside it.",
+      "validation": {
+        "counterEvidence": [
+          "The local attacker must have write access to the actual selected directory. Ordinary authorized --force behavior alone is not a vulnerability.",
+          "recordPlan/_record intentionally resolve an explicitly selected plan symlink; the independently attacker-planted partial symlink is the vulnerability.",
+          "src/publication.rs:472-505,558-569 hardens native publication; jubarte-python/python/jubarte_redlines/mcp_server.py:101-108 delegates to confined native publication. These are separate paths."
+        ],
+        "limitations": [
+          "No live filesystem race or privileged victim scenario was reproduced."
+        ],
+        "method": "Offline source tracing; no runtime execution",
+        "status": "validated",
+        "summary": "Parent verified both output helpers, plan-recording entrypoints and staging sinks. The plan is previewed but that controls edit validity, not the filesystem object opened. Native publication uses UUID private staging, create_new and no-clobber hard links; MCP uses that separate OutputRoot, so neither mitigates these CLI adapter sinks."
+      },
+      "attackPath": {
+        "controls": [
+          "Private output directories deny the necessary directory mutation. Native/MCP publishers are independently hardened."
+        ],
+        "dataflow": {
+          "summary": "Attacker-controlled directory entries replace the CLI output after exists preflight, or precreate .<plan>.<pid>.partial. writeFileSync/write_bytes follows the link with victim privileges, writes generated bytes to the referent, then plan recording renames the partial pathname."
+        },
+        "impact": "Corruption or unauthorized creation of a file outside the selected output location using victim filesystem authority.",
+        "likelihood": "Conditional local attack; no remote or default shared deployment asserted.",
+        "reachability": {
+          "summary": "Python _run_edit calls _record for --plan plus operation flags; npm runEdit calls recordPlan. Compare/convert/diff/edit and side-report paths use ordinary write helpers. A local attacker needs writable output/plan directory and a victim executing a writing command.",
+          "attacker": "Unprivileged local user with write access to the selected output or plan directory",
+          "entrypoint": "Python/npm CLI writing operations and --plan recording",
+          "preconditions": [
+            "Victim executes a successful writing command in an attacker-writable directory.",
+            "Victim process can create/truncate the symlink referent.",
+            "Attacker can replace the output name during preflight/write or plant/replace the predictable PID staging name."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Integration: preplant a symlink at the plan partial path and assert its referent remains unchanged.",
+        "Integration: replace an output between preflight and publication and assert no unrelated referent is modified.",
+        "Verify atomic no-clobber and existing/dangling symlink handling for ordinary outputs, reports and edit bundles in both CLI adapters."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0004-npm-output-race",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "npm CLI output preflight can race with symlink replacement",
+          "locations": [
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 78,
+              "endLine": 82
+            },
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 108,
+              "endLine": 113
+            }
+          ],
+          "source": "baseline",
+          "evidence": "Baseline reports ensureWritable uses fs.existsSync before later fs.writeFileSync(file,data), without atomic no-clobber or symlink defense.",
+          "counterevidence": "Requires attacker write access to chosen output directory; native publication uses a separate hardened path. Reportability and exact wrappers not yet parent-validated.",
+          "additionalEvidence": {
+            "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+            "startLine": 420,
+            "endLine": 423,
+            "code": "const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+            "explanation": "Baseline additionally found predictable temporary pathname opened for truncating write without exclusive/no-follow flags; attacker with write access to plan directory can preplant a symlink."
+          },
+          "pythonEvidence": {
+            "locations": [
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 101,
+                "endLine": 103
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 126,
+                "endLine": 133
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 407,
+                "endLine": 411
+              }
+            ],
+            "explanation": "Baseline reports the same exists-check then write_bytes publication and predictable PID partial staging, without exclusive/no-follow creation. MCP instead uses native OutputRoot."
+          }
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.altchunk-colspan",
+      "title": "HTML altChunk colspan permits unbounded markup expansion during rendering",
+      "summary": "A small admitted DOCX can contain an internal HTML/MHT altChunk with a very large td/th colspan. The converter parses this value as usize and emits one w:gridCol element per claimed column, without a semantic count or generated-output budget. For example, a span of 1,000,000,000 entails a billion formatting iterations and tens of gigabytes of generated XML before DOM parsing, exhausting the rendering process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Process availability impact is medium and likelihood is high once an untrusted document is rendered: a tiny integer attribute drives immediate deterministic unbounded work. No remote service deployment is assumed.",
+        "changeConditions": "A shared conversion service increases operational impact. Strict external process memory/CPU limits contain host-wide impact but still allow the input to terminate its conversion worker."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified the admitted-byte entrypoint, internal relationship loading, usize parsing and per-column emission loop. No material source reachability blocker; no runtime payload executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded generated markup expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 491,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "supporting"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 460,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "html-span",
+          "label": "HTML colspan has only a lower bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "code": "self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "A small decimal attribute can denote far more columns than any admission byte/depth bound."
+        },
+        {
+          "id": "html-emission",
+          "label": "Each claimed column creates XML text",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "code": "s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "cols is the maximum unchecked per-row sum of spans (469-475). The output String grows once per claimed column."
+        },
+        {
+          "id": "html-entry",
+          "label": "Expansion runs after original package admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 790,
+          "code": "let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admission at 773 validates original ZIP/XML, not the expansion before this String is constructed."
+        }
+      ],
+      "rootCause": {
+        "summary": "The HTML importer treats document-supplied colspan as a trusted expansion count. It sums spans and serializes a physical XML column for every claimed slot without checking a maximum or generated byte budget.",
+        "evidenceRefs": [
+          "html-span",
+          "html-emission",
+          "html-entry"
+        ]
+      },
+      "remediation": "Refuse out-of-range HTML column spans before adding cells; use checked cumulative grid accounting and a small documented maximum column count. Carry a generated-markup/resource budget into altChunk expansion and return a typed refusal before allocating or iterating over excessive derived content.",
+      "validation": {
+        "counterEvidence": [
+          "Archive compressed/inflated-byte, entry, XML depth and tag limits exist; the input with one short HTML attribute fits those limits.",
+          "The chunk loader only looks up pkg.part_bytes using the resolved relationship path (src/convert/mod.rs:790-793,21301-21304); it performs no network request. The finding uses an internal HTML part.",
+          "SECURITY.md recommends CPU/memory-constrained processes and disclaims universal denial-of-service protection; these contain consequences but do not bound the expansion."
+        ],
+        "limitations": [
+          "No runtime reproduction or deployment-specific concurrency impact measured."
+        ],
+        "method": "Independent parent source tracing",
+        "status": "validated",
+        "summary": "Static trace confirms render/docx_to_pdf enter with_layout, admit the original package, load the internal chunk, parse an arbitrary usize span, and loop cols times in end_table. No schema validator or semantic span limit intervenes; a one-billion-column span fits both 32-bit and 64-bit usize."
+      },
+      "attackPath": {
+        "controls": [
+          "Original archive and XML limits apply before conversion.",
+          "External process resource limits can contain impact."
+        ],
+        "dataflow": {
+          "summary": "Attacker supplies DOCX main XML containing w:altChunk with an internal relationship to an HTML/MHT part -> with_layout -> altchunk::expand -> html_to_wml -> Builder::start parses td/th colspan -> Builder::end_table sums spans -> billion-iteration String generation before DOM parse."
+        },
+        "impact": "Excess CPU work and memory allocation can terminate or stall the conversion process.",
+        "reachability": {
+          "summary": "Public Rust PDF/render APIs and Python/WASM wrappers accept document bytes. A normal table in an internal HTML altChunk reaches this path after admission; no special host setting or raised input limits are required.",
+          "attacker": "Provider of an untrusted document rendered by a victim/library consumer",
+          "entrypoint": "convert::docx_to_pdf / convert::render and bindings",
+          "preconditions": [
+            "Victim renders attacker-supplied DOCX containing an internal HTML/MHT altChunk."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Use a tiny in-memory altChunk HTML with excessive td/th colspan and assert a prompt typed refusal without output growth.",
+        "Exercise cumulative spans across multiple cells, numeric overflow and valid inclusive limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0004-altchunk-colspan",
+        "worker": "parser_conversion",
+        "originalCandidate": {
+          "title": "Unbounded altChunk HTML colspan expands into billions of grid columns",
+          "source": "parser_conversion",
+          "locations": [
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 566,
+              "endLine": 570
+            },
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 465,
+              "endLine": 491
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 773,
+              "endLine": 798
+            }
+          ],
+          "evidence": "Investigator traced td colspan parsed as unbounded usize to end_table sum and one gridCol emission per span. Tiny HTML <table><tr><td colspan=\"1000000000\">x</td></tr></table> can cause billions of iterations / tens of GB generated output. with_layout admission checks original package only.",
+          "counterevidence": "Input archive is admitted with size/depth/tag controls; derived markup expansion still needs parent verification. Native gridSpan sibling under investigation."
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-allocation.docx-table-grid",
+      "title": "DOCX table grid spans and row offsets drive unbounded layout allocations",
+      "summary": "The renderer parses w:gridSpan, w:gridBefore and w:gridAfter as unrestricted usize values, sums their logical occupancy and allocates vectors of that length. A tiny admitted table with a span of 1,000,000,000 requests roughly four gigabytes for its f32 column vector alone before further column/merge structures. Input byte/depth limits do not constrain these semantic counts.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Medium availability impact with high likelihood for a victim rendering attacker-supplied DOCX. The first large allocation occurs directly from a short integer field; no remote deployment or host-wide crash is asserted.",
+        "changeConditions": "Shared conversion services may suffer broader availability loss; external memory/CPU limits contain host impact but do not make the conversion succeed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent traced the numeric parsers, RawCell span propagation, occupancy computation and vector allocation directly; no execution required to establish the unbounded request."
+      },
+      "taxonomy": {
+        "category": "Unbounded allocation from document dimensions",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13619,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "docx-span",
+          "label": "gridSpan numeric value lacks upper bound",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "code": "let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "The return type is usize; any fitting positive integer becomes a logical column span."
+        },
+        {
+          "id": "docx-offset",
+          "label": "Row offsets accept arbitrary logical grid widths",
+          "path": "src/convert/mod.rs",
+          "startLine": 14342,
+          "code": "let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+          "explanation": "Both Before and After offsets become grid_skip_cell.colspan and enter occupancy."
+        },
+        {
+          "id": "grid-allocation",
+          "label": "Unchecked occupancy determines allocation length",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "code": "let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }",
+          "explanation": "Physical input size is small while logical occupancy can be billions; no semantic maximum precedes this allocation."
+        }
+      ],
+      "rootCause": {
+        "summary": "Table dimensions derived from attacker-controlled numeric XML are treated as allocation sizes without an upper grid width, checked cumulative accounting or fallible layout budget.",
+        "evidenceRefs": [
+          "docx-span",
+          "docx-offset",
+          "grid-allocation"
+        ]
+      },
+      "remediation": "Enforce a practical maximum grid width and cumulative table layout budget before summing spans or allocating. Validate gridSpan, gridBefore and gridAfter consistently, use checked addition, and guard all downstream column and merge allocations with typed refusal.",
+      "validation": {
+        "counterEvidence": [
+          "with_layout admits original packages using comparison InputLimits, which bound bytes, entries, depth and tag policy.",
+          "Checked arithmetic on other parser offsets does not constrain table occupancy.",
+          "SECURITY.md advises process isolation; it bounds deployment consequences rather than numeric vector sizes."
+        ],
+        "limitations": [
+          "Allocation failure and service impact not dynamically reproduced."
+        ],
+        "method": "Offline source tracing",
+        "status": "validated",
+        "summary": "Parent verified native table path independently of HTML import. gridSpan and gridBefore/After populate RawCell.colspan; table_block takes the maximum row sum and constructs/resizes columns before column_prefs/resolve_table_merges. Admission checks original syntax/bytes and has no table-dimension cap."
+      },
+      "attackPath": {
+        "controls": [
+          "Original archive and XML admission apply; caller may impose process memory/CPU limits."
+        ],
+        "dataflow": {
+          "summary": "Untrusted DOCX table XML -> admitted package -> DOM -> cell_span/row_grid_skip -> RawCell.colspan -> unchecked sum into occupancy -> vec![f32; occupancy] or resize -> subsequent grid/merge allocations."
+        },
+        "impact": "Conversion process memory exhaustion/termination or prolonged allocation/initialization work.",
+        "reachability": {
+          "summary": "Public convert::docx_to_pdf/render/docx_to_png/docx_render_report accept DOCX bytes and reach with_layout/table_block; no nondefault option or external relationship is needed.",
+          "attacker": "Untrusted document supplier",
+          "preconditions": [
+            "Victim renders a document containing the attacker-controlled table."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Test excessive individual spans, row offsets and cumulative spans using tiny in-memory documents; assert typed refusal before allocation.",
+        "Test numeric overflow and valid boundary tables."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0004-docx-table-grid",
+        "worker": "parser_conversion",
+        "originalCandidate": {
+          "title": "Native DOCX grid spans and row offsets control unbounded table allocations",
+          "source": "parser_conversion",
+          "evidence": "w:gridSpan w:val=\"1000000000\" is parsed as usize in cell_span; table_block computes occupancy=sum(colspan) and allocates vec![each; occupancy]/resize. w:gridBefore/w:gridAfter feed same occupancy. Later column_prefs and resolve_table_merges allocate again.",
+          "locations": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 14209,
+              "endLine": 14213
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 13599,
+              "endLine": 13615
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 14343
+            }
+          ],
+          "counterevidence": "Original XML has admission size and depth bounds but no semantic span/count bound; independent native path without HTML. Parent must verify."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-8d2c9342cb837b3d",
+        "label": "Python/npm CLI filesystem publication",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Local filesystem integrity",
+        "notes": "Validated discovery-0004-npm-output-race across ordinary outputs, edit bundles, reports and PID staging. Parent verified sinks; native publication and MCP use separate controls."
+      },
+      {
+        "id": "surface-a53216e4b417b223",
+        "label": "HTML/MHT altChunk table import",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Post-admission resource expansion",
+        "notes": "Validated discovery-0004-altchunk-colspan. Original archive limits do not bound colspan-driven generated XML at src/convert/altchunk.rs:469-491,562-567."
+      },
+      {
+        "label": "Native DOCX table layout dimensions",
+        "disposition": "reported",
+        "riskArea": "Semantic allocation limits",
+        "notes": "Validated discovery-0004-docx-table-grid: gridSpan/gridBefore/gridAfter at src/convert/mod.rs:14211-14215,14340-14345 reach occupancy-sized vectors at13601-13619. Entire 65k-line renderer was not fully audited.",
+        "id": "surface-f205fb0dc9dbcb07",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0004-legacy-piece-expansion",
+        "reason": "Awaiting parent validation of investigator-reported legacy DOC piece alias amplification and effective constraints.",
+        "candidate": {
+          "title": "Legacy DOC repeated physical piece ranges expand into billions of StoryChar entries",
+          "source": "parser_conversion",
+          "evidence": "Fib reads attacker ccp_text (src/legacy_doc.rs:919), pieces accepts independent fc for each piece (1091-1118); main_text validates contiguous increasing CPs but has no decoded character budget (1155-1175), rereads physical ranges and appends StoryChar per CP (1181-1225). Approximately 65,535 twelve-byte PCDs may each map the same 64KiB WordDocument range yielding ~4.29B StoryChar from <1MiB table plus 64KiB stream; public read calls main_text before auxiliary checks.",
+          "locations": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 180,
+              "endLine": 194
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 919
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1091,
+              "endLine": 1225
+            }
+          ],
+          "counterevidence": "Surrounding CFB and piece consistency constraints still under investigator review; no payload executed."
+        },
+        "id": "discovery-0004-legacy-piece-expansion"
+      },
+      {
+        "candidateId": "discovery-0004-altchunk-replay",
+        "reason": "Awaiting parent validation of investigator-reported repeated internal altChunk conversion amplification.",
+        "candidate": {
+          "title": "Repeated internal altChunk references duplicate expanded content without cumulative limits",
+          "source": "parser_conversion",
+          "evidence": "expand iterates each w:altChunk at src/convert/altchunk.rs:18, reloads/converts same part at34-39, appends to out. with_layout:790-798 parses expanded output after admission. 10,000 small references to one 1MiB HTML part can expand ~10GiB despite original <2MiB.",
+          "counterevidence": "Requires many references and large repeated part; shared with colspan generated-markup budget remediation but independently persists if only span count is capped."
+        },
+        "id": "discovery-0004-altchunk-replay"
+      },
+      {
+        "candidateId": "discovery-0004-dtd-depth-bypass",
+        "reason": "Awaiting parent independent validation; dependency-backed opaque-markup differential now reported high-confidence by baseline.",
+        "candidate": {
+          "title": "DTD entity literal may bypass admission XML depth before permissive DOM recursion",
+          "source": "baseline",
+          "evidence": "admission::check_xml_depth ignores Event::DocType. Parser::parse_document skips <! through first > without DTD quoting/internal subset then recursively parses remainder. DTD with quoted deep <x> markup could be one scanner event but later parsed as nested DOM. WmlDocument::from_bytes admits and main_document directly permissive parses.",
+          "locations": [
+            {
+              "path": "src/admission.rs",
+              "startLine": 789,
+              "endLine": 821
+            },
+            {
+              "path": "src/xmllinq/parse.rs",
+              "startLine": 542,
+              "endLine": 546
+            },
+            {
+              "path": "src/wml_document.rs",
+              "startLine": 50,
+              "endLine": 94
+            }
+          ],
+          "counterevidence": "Checked try_parse APIs reject DTD. quick-xml event behavior and exact nested DOCX/comparer reachability still need proof.",
+          "dependencyEvidence": "Baseline verified local quick-xml 0.41.0 parser/dtd.rs:26-59 ENTITY grammar; InQuoteSensitive:194-202 ignores > in quotes; :261-265 selects ENTITY. reader/state.rs:163-169 emits a single DocType. Top-level CData also ignored by admission while parse_document skips <! only to first >; checked validator rejects both."
+        },
+        "id": "discovery-0004-dtd-depth-bypass"
+      },
+      {
+        "candidateId": "discovery-0004-drawing-cycle",
+        "reason": "Awaiting parent validation of Markdown drawing-envelope cyclic dependency recursion.",
+        "candidate": {
+          "title": "Markdown drawing envelope can contain cyclic dependency relationships causing stack overflow",
+          "source": "architecture",
+          "evidence": "Arbitrary Drawing/deps deserialized by from_docx/drawing.rs:1395-1406, accepted from ordinary image URL at markdown/write.rs:4187-4197. materialize->dep_part recursively follows dep.rels.part at drawing.rs:1888-1893,1962-1973 without active/visited set or depth budget. Tiny envelope drawing.rels part=0 and deps[0].rels part=0 recurses indefinitely. MAX_DEPS/MAX_DEP_RELS apply capture side only.",
+          "counterevidence": "Outer package writer final gate still being traced; no runtime reproduction."
+        },
+        "id": "discovery-0004-drawing-cycle"
+      },
+      {
+        "candidateId": "discovery-0004-zip-entry-budget",
+        "reason": "Awaiting parent validation of ZIP32 EOCD per-disk versus total entry count differential.",
+        "candidate": {
+          "title": "ZIP entry budget reads different EOCD count than the ZIP indexer",
+          "source": "baseline",
+          "evidence": "preindex declared_entry_count reads EOCD total at +10 (admission597-602), zip9 CentralDirectoryInfo::try_from reads number_of_files_on_this_disk +8 (src/read/mod.rs67-72). ZIP on-disk10001,total3 passes max_entries10000 then archive.len10001; admit only rejects archive.len<declared. zip9 zip_archive.rs277 loops to per-disk count.",
+          "counterevidence": "Header consistency, duplicate handling and true-count behavior need parent verification; ZIP64 related path still under investigation."
+        },
+        "id": "discovery-0004-zip-entry-budget"
+      }
+    ]
+  }
+}

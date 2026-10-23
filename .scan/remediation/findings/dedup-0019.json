@@ -1,0 +1,4161 @@
+{
+  "folder": "dedup-0019",
+  "findings": [
+    {
+      "findingId": "csf_9e40f23e742aa43493a0fb92",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "severity": "medium",
+      "summary": "An untrusted DOCX author can set huge positive w:gridSpan, w:gridBefore or w:gridAfter counts in a small, shallow table. Rendering sums those counts into grid occupancy and directly sizes column, preference and merge vectors. Counts of 1000000000/1073741824 request about 4 GB/4 GiB for f32 columns; 4294967295 requests approximately 16 GiB before additional allocations, despite package admission. Assigned discovery-0031 corroborates the existing one-billion-column, 4,000,000,000-byte f32-vector framing through both span and row-skip inputs; these are static counts.\n Assigned discovery-0032 corroborates the live span and both synthetic row-skip paths, including merge-slot expansion; separate Markdown span clamping does not protect rendering.",
+      "remediation": "Enforce practical per-span and total-column budgets for gridSpan, gridBefore and gridAfter before excessive RawCell, column, preference or merge allocation/work. Use checked occupancy sums and col+span arithmetic, apply the same budget to every derived table vector, and return a typed resource-limit refusal on excess. Propagate a caller-adjustable semantic column limit through all public rendering surfaces and charge later column/merge vectors to that same budget.\nAdditional retained remediation detail: Enforce explicit maximum live cell spans, row skips, aggregate table columns and merge slots before any allocation. Use checked sums and a cumulative layout resource budget, returning a typed refusal when exceeded.",
+      "locations": [
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13598
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14635
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13537,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14645,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 9174
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14379
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14263
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14643,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14603
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14346,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 14642,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 13618,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 13216,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13199
+        },
+        {
+          "endLine": 13560,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13554
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14603
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 773
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14340
+        },
+        {
+          "endLine": 789,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13617,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14639,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 786,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 774
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13486,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13466
+        },
+        {
+          "endLine": 13540,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13524
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14338
+        },
+        {
+          "endLine": 14380,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14376
+        },
+        {
+          "endLine": 13536,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14354,
+          "path": "src/convert/mod.rs",
+          "role": "input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13603
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 13220,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13200
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13466
+        }
+      ]
+    },
+    {
+      "findingId": "csf_0e2b085a251b34412cd71a4c",
+      "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+      "severity": "medium",
+      "summary": "An attacker-authored Word 97–2003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint. Assigned discovery-0031 supplies a balanced result-state framing with approximately 100000 nested fields in a few hundred kilobytes, implying billions of boolean inspections. This is heap-stack scanning CPU cost, not recursive call-stack overflow.",
+      "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint.",
+      "locations": [
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 179
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 206
+        },
+        {
+          "endLine": 1206,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1194
+        },
+        {
+          "endLine": 1624,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3133,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 2747,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2740
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 220,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 211
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3134,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 236,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 225
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "input",
+          "startLine": 180
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1129,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1115
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "affected_operation",
+          "startLine": 207
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1185
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1205,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1197
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1594
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1602
+        },
+        {
+          "endLine": 218,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 180
+        },
+        {
+          "endLine": 195,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1602
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 214
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2742
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 207
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1591
+        },
+        {
+          "endLine": 225,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1621,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3120
+        },
+        {
+          "endLine": 2750,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2735
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 187
+        },
+        {
+          "endLine": 1635,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1595
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 2740
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 217,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3124
+        },
+        {
+          "endLine": 1617,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1602
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "startLine": 191
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "startLine": 214
+        },
+        {
+          "endLine": 1621,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1592
+        },
+        {
+          "endLine": 194,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "startLine": 180
+        },
+        {
+          "endLine": 3132,
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125
+        }
+      ]
+    },
+    {
+      "findingId": "csf_dc0d34a6ea9a964733efe547",
+      "title": "Aliased legacy DOC pieces expand small physical text into enormous logical stories",
+      "severity": "medium",
+      "summary": "Thousands of contiguous logical pieces can all reference the same physical text range. For example, 4095 pieces referencing one common 1 MiB compressed-text range describe nearly 4 GiB of logical characters while requiring only roughly 49 KiB of piece records. main_text materializes metadata for every character, requiring tens of GiB before rendering. A second source-derived framing uses approximately 65,535 pieces reusing 64 KiB, producing over four billion logical characters from a piece table below 1 MiB; expansion precedes later auxiliary-table checks. The assigned 1024-by-65536 framing yields 67108864 logical characters and at least 768 MiB for char/CP/FC fields alone, before modifiers and allocation/output overhead; these are static counts, not measurements. Supplied discovery-0023 additionally gives 4096 contiguous one-million-character pieces sharing a 1 MB physical range (4096000000 logical characters within u32). Public read/conversion and native read_document refusal-hint parsing reach the same expansion before returning a format diagnostic; no runtime resource measurement is claimed. Additional supplied static framing: 4096 pieces reusing one 64 KiB compressed extent describe 268435456 logical characters; continuity and source-bound checks permit the reuse. This is not a measured allocation. Assigned discovery-0031 supplies 4000 one-million-character logical pieces sharing about 1 MB of physical text with about 48 KB of piece metadata, requesting about four billion StoryChars. CP continuity, checked offsets and physically bounded CFB traversal do not bound logical expansion; counts are static.\n Assigned discovery-0032 supplies 65535 contiguous pieces of 65535 compressed characters sharing one 65535-byte physical range: 4294836225 logical CPs within u32 and about 786 KB of piece records. These are static counts.",
+      "remediation": "Introduce configurable legacy physical-input, piece-count, cumulative logical-character, retained-metadata and expansion-work budgets. Check FIB ccp_text and checked cumulative piece lengths before materialization, charge every decoded character including repeated physical aliases, and return typed refusals through read/doc_to_markdown/doc_to_docx and CLI callers. Preserve legitimate fast-save aliases and split UTF-16 surrogate handling within budget. Replace full legacy parsing used only for diagnostic refusal hints with a cheap bounded probe, or apply the same logical/work budgets before that parser runs.\nAdditional retained remediation detail: Introduce a configurable legacy logical-character/output budget, check ccp_text and cumulative decoded piece work before materialization, and enforce it during decoding. Preserve valid reuse while returning a typed refusal for excessive expansion.",
+      "locations": [
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 920,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 915
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1090
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "expected_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1206,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1226,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1218
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 919
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1202,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1221
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 919
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1091
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3129
+        },
+        {
+          "endLine": 1221,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3126
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1203,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "outcome",
+          "startLine": 1219
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 194,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1084
+        },
+        {
+          "endLine": 1182,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1184
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 922,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 911
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1215
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 180
+        },
+        {
+          "endLine": 919,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 917
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1222,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1148
+        },
+        {
+          "endLine": 3132,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3126
+        },
+        {
+          "endLine": 195,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1198,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1176
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "input_conversion",
+          "startLine": 1084
+        },
+        {
+          "endLine": 1178,
+          "path": "src/legacy_doc.rs",
+          "role": "control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 1221,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1090
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2749,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2744
+        },
+        {
+          "endLine": 1111,
+          "path": "src/legacy_doc.rs",
+          "role": "source",
+          "startLine": 1090
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1181
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2740
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 180
+        },
+        {
+          "endLine": 1222,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1181
+        },
+        {
+          "endLine": 3132,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 225,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 925,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 907
+        },
+        {
+          "endLine": 1113,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1082
+        },
+        {
+          "endLine": 1203,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1176
+        },
+        {
+          "endLine": 1227,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1217
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3120
+        },
+        {
+          "endLine": 2750,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2735
+        },
+        {
+          "endLine": 919,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 912
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 187
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1220
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 2740
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 180
+        },
+        {
+          "endLine": 1202,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "outcome",
+          "startLine": 1220
+        },
+        {
+          "endLine": 1187,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1176
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3129
+        },
+        {
+          "endLine": 1187,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1224,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1187
+        },
+        {
+          "endLine": 920,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 914
+        },
+        {
+          "endLine": 1112,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1084
+        },
+        {
+          "endLine": 1200,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1219
+        },
+        {
+          "endLine": 3133,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        }
+      ]
+    },
+    {
+      "findingId": "csf_b2aa4325c8f3aa14a940fcad",
+      "title": "npm plan recording follows a predictable staging symlink",
+      "severity": "low",
+      "summary": "When recording plan operations, the npm CLI writes to a basename/PID staging path without exclusive creation. A local attacker who can create entries in that directory can redirect the write to an unrelated file writable by the CLI user.",
+      "remediation": "Create an unpredictable private staging directory next to the plan and open the staged regular file exclusively. Write through its held descriptor and rename only that file. At minimum refuse every preexisting staging entry using exclusive creation rather than default truncating writes.",
+      "locations": [
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 443
+        }
+      ]
+    },
+    {
+      "findingId": "csf_85d9c340b10d981559925227",
+      "title": "A shared font-index directory permits staging symlink overwrites",
+      "severity": "low",
+      "summary": "Native font-index saving writes to a predictable PID-based temporary file with fs::write. If an operator places the index in a directory writable by a less-trusted local user, that user can redirect a cache save to another victim-writable file.",
+      "remediation": "Publish the font index through an unpredictable private staging directory and an exclusively created regular file held open through writing. Atomically rename only that file; refuse preexisting staging entries and document/private-parent expectations for shared configurations.",
+      "locations": [
+        {
+          "endLine": 3107,
+          "path": "src/convert/font.rs",
+          "role": "entrypoint",
+          "startLine": 3100
+        },
+        {
+          "endLine": 3248,
+          "path": "src/convert/font.rs",
+          "role": "propagation",
+          "startLine": 3241
+        },
+        {
+          "endLine": 3229,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3213
+        },
+        {
+          "endLine": 3107,
+          "path": "src/convert/font.rs",
+          "role": "entrypoint",
+          "startLine": 3098
+        },
+        {
+          "endLine": 3209,
+          "path": "src/convert/font.rs",
+          "role": "supporting",
+          "startLine": 3205
+        },
+        {
+          "endLine": 3230,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3213
+        },
+        {
+          "endLine": 3248,
+          "path": "src/convert/font.rs",
+          "role": "supporting",
+          "startLine": 3236
+        },
+        {
+          "endLine": 3227,
+          "path": "src/convert/font.rs",
+          "role": "root_control",
+          "startLine": 3222
+        },
+        {
+          "endLine": 3106,
+          "path": "src/convert/font.rs",
+          "role": "configuration",
+          "startLine": 3100
+        },
+        {
+          "endLine": 3247,
+          "path": "src/convert/font.rs",
+          "role": "propagation",
+          "startLine": 3242
+        },
+        {
+          "endLine": 857,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 857
+        }
+      ]
+    },
+    {
+      "findingId": "csf_b45e3ea11925b4220c435786",
+      "title": "Python CLI output/plan and npm direct-output symlinks can overwrite unrelated files",
+      "severity": "low",
+      "summary": "Python and npm ordinary-output helpers check pathname existence separately from truncating writes; a local writer of the selected directory can replace an output name and redirect generated bytes to a victim-writable file. Python plan recording additionally uses a predictable basename/PID partial pathname without exclusive creation. The assigned report also corroborates npm plan staging, which is represented by the separately retained symlink-following.plan-staging finding. Without --force, a stable symlink to an existing referent is refused; post-preflight substitution bypasses that refusal, and a dangling link can pass the existence test. Filesystem/OS protections and shared-directory authority remain prerequisites. The shared writers also publish read/compare/revision results, document/PDF/PNG and font/render products, edit/visual-diff bundles, field-update reports, and repair outputs. Assigned Python and npm diff/bundle traces explicitly include dangling destination links permitting unintended file creation without --force, and forced existing-member links redirecting bundle/report writes; stable existing referents are refused in the ordinary nonracing no-force case.\n Assigned discovery-0032 corroborates Python PDF/PNG publication and Node renderTo, with conversion between existence preflight and final write; shared mutable directory entries and distinct attacker/victim authority remain essential.",
+      "remediation": "Publish Python/Node ordinary outputs, bundles and reports through held-directory authority and exclusive private staging. Atomically install without replacement when --force is false, or atomically replace the authorized destination entry when true; never truncate through a mutable final pathname. Apply exclusive unpredictable regular-file staging beside the authorized target to Python plan recording. Node recordPlan staging retains its separately established repair and identity. Expose/reuse native publication for Python CLI outputs with overwrite authorization passed into the commit operation; Node host publication must provide equivalent exclusive staging and atomic no-clobber/replacement. Preserve the documented final-output rule: forced publication replaces the selected symlink directory entry itself and leaves its referent unchanged; no-force installation must refuse an already occupied destination, including a dangling symlink.\nAdditional retained remediation detail: Use staged verified publication with held parent-directory authority for both wrappers. Carry overwrite authorization through commit and atomically refuse any existing destination when force is false; do not rely on a preliminary exists check.",
+      "locations": [
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 76
+        },
+        {
+          "endLine": 112,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 106
+        },
+        {
+          "endLine": 153,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 137
+        },
+        {
+          "endLine": 552,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 539
+        },
+        {
+          "endLine": 103,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 101
+        },
+        {
+          "endLine": 133,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 126
+        },
+        {
+          "endLine": 413,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 407
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 420
+        },
+        {
+          "endLine": 903,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 883
+        },
+        {
+          "endLine": 103,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "expected_control",
+          "startLine": 101
+        },
+        {
+          "endLine": 888,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 883
+        },
+        {
+          "endLine": 132,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 126
+        },
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "expected_control",
+          "startLine": 76
+        },
+        {
+          "endLine": 192,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 189
+        },
+        {
+          "endLine": 111,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 106
+        },
+        {
+          "endLine": 569,
+          "path": "src/publication.rs",
+          "role": "expected_control",
+          "startLine": 563
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 903
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 214
+        },
+        {
+          "endLine": 248,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 228
+        },
+        {
+          "endLine": 517,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 483
+        },
+        {
+          "endLine": 640,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 606
+        },
+        {
+          "endLine": 771,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 703
+        },
+        {
+          "endLine": 831,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 774
+        },
+        {
+          "endLine": 972,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 963
+        },
+        {
+          "endLine": 152,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 144
+        },
+        {
+          "endLine": 179,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 179
+        },
+        {
+          "endLine": 259,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 259
+        },
+        {
+          "endLine": 334,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 320
+        },
+        {
+          "endLine": 552,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 548
+        },
+        {
+          "endLine": 646,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 645
+        },
+        {
+          "endLine": 103,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "propagation",
+          "startLine": 101
+        },
+        {
+          "endLine": 133,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 126
+        },
+        {
+          "endLine": 757,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 740
+        },
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "propagation",
+          "startLine": 76
+        },
+        {
+          "endLine": 112,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 106
+        },
+        {
+          "endLine": 153,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 148
+        },
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 76
+        },
+        {
+          "endLine": 24,
+          "path": "docs/FILESYSTEM_PUBLICATION.md",
+          "role": "supporting",
+          "startLine": 20
+        },
+        {
+          "endLine": 73,
+          "path": "docs/FILESYSTEM_PUBLICATION.md",
+          "role": "supporting",
+          "startLine": 71
+        },
+        {
+          "endLine": 130,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 130
+        },
+        {
+          "endLine": 103,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "control",
+          "startLine": 101
+        },
+        {
+          "endLine": 903,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 884
+        },
+        {
+          "endLine": 517,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "affected_caller",
+          "startLine": 510
+        },
+        {
+          "endLine": 108,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 108
+        },
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "control",
+          "startLine": 76
+        },
+        {
+          "endLine": 214,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 190
+        },
+        {
+          "endLine": 552,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "affected_caller",
+          "startLine": 546
+        },
+        {
+          "endLine": 103,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "supporting",
+          "startLine": 101
+        },
+        {
+          "endLine": 757,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "supporting",
+          "startLine": 739
+        },
+        {
+          "endLine": 80,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 76
+        },
+        {
+          "endLine": 153,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 149
+        },
+        {
+          "endLine": 112,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 106
+        },
+        {
+          "endLine": 130,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 126
+        },
+        {
+          "endLine": 79,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 76
+        },
+        {
+          "endLine": 108,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 106
+        },
+        {
+          "endLine": 517,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 510
+        },
+        {
+          "endLine": 742,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 740
+        },
+        {
+          "endLine": 763,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 756
+        },
+        {
+          "endLine": 154,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 149
+        },
+        {
+          "endLine": 248,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 228
+        },
+        {
+          "endLine": 144,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 137
+        },
+        {
+          "endLine": 183,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 175
+        },
+        {
+          "endLine": 771,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "sink",
+          "startLine": 768
+        }
+      ]
+    },
+    {
+      "findingId": "csf_6a40bc41bdf34a737ceac40d",
+      "title": "Entity decoding repeatedly scans the input suffix",
+      "severity": "medium",
+      "summary": "HTML altChunk text with bare ampersands and the public XML entity decoder repeatedly search the remaining suffix for ';', yielding quadratic CPU work. A valid admitted .rels Target containing repeated &amp; is normalized upstream and redundantly decoded by PartFs, reaching the same XML sink during rendering, inspection, revision processing or comparison even when the target part does not exist. An additional admitted-main-XML route uses an unquoted value whose first character never reappears: the DOM consumes through EOF and decodes a bare-ampersand comment as an attribute, reaching the same quadratic XML decoder. Ordinary bare-ampersand text is rejected upstream and is not this proof. The same HTML decoder is also reached by Markdown-to-DOCX raw HTML blocks and attribute values; its ten-byte accepted-entity bound is applied after the unbounded search. Assigned discovery-0031 corroborates both established decoders independently: ordinary HTML/MHT paragraph text reaches the HTML helper even when script/style content is skipped, while an internal fontTable target reaches redundant XML decoding before any absent-part lookup. Its supplied offline dependency evidence identifies oxml-opc 0.14.2 and quick-xml 0.41.0 attribute normalization, independently supported by the repository target round-trip test. No reducer dependency inspection occurred.",
+      "remediation": "Scan entities once without revisiting suffixes. In HTML, bound the search to the supported entity-length window before looking for ';'; give XML decoding a monotonic parser or bounded entity grammar. Remove PartFs's redundant relationship decoding when upstream supplies normalized attributes; retain the linear XML-helper repair for its other callers and the separate bounded HTML-helper repair. Preserve canonical literal '&amp;' part names and one-time entity normalization through round trips. Preserve the standalone XML helper's documented permissive output for unsupported or unterminated references while making its work linear. Apply practical relationship-target length/work bounds as defense in depth, preserving exactly one normalization pass and the standalone helper's linear permissive behavior. Align admission/DOM attribute token boundaries or reject unsupported unquoted syntax as defense in depth. Preserve the linear XML decoder fix for this comment-to-attribute route; removing only the redundant relationship decode does not cover it. Apply the bounded HTML helper consistently to Markdown raw-HTML block text and attribute consumers, using UTF-8-safe bounded lookahead and preserving recognized entities, malformed literal retention and multibyte text.",
+      "locations": [
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "entrypoint",
+          "startLine": 405
+        },
+        {
+          "endLine": 735,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 728
+        },
+        {
+          "endLine": 760,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 753
+        },
+        {
+          "endLine": 783,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 768
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 234,
+          "path": "src/opc/mod.rs",
+          "role": "input",
+          "startLine": 222
+        },
+        {
+          "endLine": 3714,
+          "path": "src/revision_processor.rs",
+          "role": "affected_operation",
+          "startLine": 3699
+        },
+        {
+          "endLine": 4751,
+          "path": "src/document_comparer.rs",
+          "role": "affected_operation",
+          "startLine": 4724
+        },
+        {
+          "endLine": 682,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 672
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sensitive_operation",
+          "startLine": 764
+        },
+        {
+          "endLine": 682,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 677
+        },
+        {
+          "endLine": 791,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 21320,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21309
+        },
+        {
+          "endLine": 1233,
+          "path": "src/opc/mod.rs",
+          "role": "expected_control",
+          "startLine": 1222
+        },
+        {
+          "endLine": 233,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 222
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21307
+        },
+        {
+          "endLine": 776,
+          "path": "src/inspect.rs",
+          "role": "entrypoint",
+          "startLine": 766
+        },
+        {
+          "endLine": 681,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 677
+        },
+        {
+          "endLine": 786,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 768
+        },
+        {
+          "endLine": 1231,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 1222
+        },
+        {
+          "endLine": 233,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 222
+        },
+        {
+          "endLine": 4741,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4724
+        },
+        {
+          "endLine": 775,
+          "path": "src/inspect.rs",
+          "role": "entrypoint",
+          "startLine": 766
+        },
+        {
+          "endLine": 410,
+          "path": "src/convert/altchunk.rs",
+          "role": "entrypoint",
+          "startLine": 405
+        },
+        {
+          "endLine": 734,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 728
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 786
+        },
+        {
+          "endLine": 407,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 405
+        },
+        {
+          "endLine": 735,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 759,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 751
+        },
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 405
+        },
+        {
+          "endLine": 758,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 793,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 789
+        },
+        {
+          "endLine": 787,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 764
+        },
+        {
+          "endLine": 237,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 222
+        },
+        {
+          "endLine": 1230,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 1222
+        },
+        {
+          "endLine": 21317,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21310
+        },
+        {
+          "endLine": 775,
+          "path": "src/inspect.rs",
+          "role": "supporting",
+          "startLine": 766
+        },
+        {
+          "endLine": 786,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 774
+        },
+        {
+          "endLine": 239,
+          "path": "src/opc/mod.rs",
+          "role": "input_parser",
+          "startLine": 223
+        },
+        {
+          "endLine": 21298,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21287
+        },
+        {
+          "endLine": 820,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 813
+        },
+        {
+          "endLine": 783,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 4731,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4728
+        },
+        {
+          "endLine": 241,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 233
+        },
+        {
+          "endLine": 591,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 573
+        },
+        {
+          "endLine": 787,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 768
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 85
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 790
+        },
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 405
+        },
+        {
+          "endLine": 734,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 728
+        },
+        {
+          "endLine": 759,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 753
+        },
+        {
+          "endLine": 1357,
+          "path": "src/markdown/write.rs",
+          "role": "entrypoint",
+          "startLine": 1350
+        },
+        {
+          "endLine": 1425,
+          "path": "src/markdown/write.rs",
+          "role": "entrypoint",
+          "startLine": 1415
+        },
+        {
+          "endLine": 762,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 407,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 405
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 764
+        },
+        {
+          "endLine": 758,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 730
+        },
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "startLine": 405
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 1357
+        },
+        {
+          "endLine": 1420,
+          "path": "src/markdown/write.rs",
+          "startLine": 1415
+        }
+      ]
+    },
+    {
+      "findingId": "csf_c2ab52b1c8614c7fd5356cf8",
+      "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+      "severity": "low",
+      "summary": "The Python and Node CLIs write plans through a predictable .<plan>.<PID>.partial pathname using nonexclusive truncating writes. A local actor who can create entries in the plan directory can preplace a symlink there and make the victim overwrite another file it can write, before the intended plan replacement.\n Assigned discovery-0032 corroborates both non-dry-run recorders after successful plan preview. Intentional final-plan symlink resolution is distinct from the independently substituted staging entry.",
+      "remediation": "Use exclusive, unpredictable staging owned by a private directory, hold the opened handle through writing, and rename that verified file. Reuse the native publication design or equivalent mkstemp/exclusive wx APIs and never follow existing staging entries. Python can reuse native publication; Node needs equivalent secure publication semantics. Preserve intentional final-plan symlink resolution to its authorized resolved target while securing the separate staging object; successful recording installs a verified regular plan file and failure preserves prior output.\nAdditional retained remediation detail: Use an exclusively created private staging directory/file held by handle, verify staged bytes, and atomically publish to the authorized plan target. Refuse preexisting staging objects and preserve intended final-plan symlink semantics without following a staging symlink.",
+      "locations": [
+        {
+          "endLine": 411,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 407
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 424,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 420
+        },
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 441
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 414,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 403
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 420
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 142
+        },
+        {
+          "endLine": 388,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "propagation",
+          "startLine": 373
+        },
+        {
+          "endLine": 399,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "expected_control",
+          "startLine": 395
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 420
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        },
+        {
+          "endLine": 75,
+          "path": "docs/FILESYSTEM_PUBLICATION.md",
+          "role": "supporting",
+          "startLine": 71
+        },
+        {
+          "endLine": 411,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 408
+        },
+        {
+          "endLine": 165,
+          "path": "src/edit/record.rs",
+          "role": "supporting",
+          "startLine": 142
+        },
+        {
+          "endLine": 426,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 408
+        },
+        {
+          "endLine": 399,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 395
+        },
+        {
+          "endLine": 406,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 398
+        },
+        {
+          "endLine": 426,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 413,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 403
+        },
+        {
+          "endLine": 428,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 419
+        },
+        {
+          "endLine": 399,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 367
+        },
+        {
+          "endLine": 406,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 392
+        }
+      ]
+    },
+    {
+      "findingId": "csf_eb4256ff45478e77c3906750",
+      "title": "Scanning a document for retained text can overflow the stack",
+      "severity": "medium",
+      "summary": "Public `scrub::leaks()` enforces ZIP byte budgets but directly parses ordinary XML parts without the admission depth/tag policy. Any nonempty search needle activates this unchecked XML scan even when the needle is absent from the malicious XML; an empty needle returns immediately. Normal edit input admission may block deep conventionally named input before its postcheck.",
+      "remediation": "Validate each XML part with active depth/tag limits before DOM construction, reporting policy failure as a leak-scan refusal, or use a bounded streaming scan. Preserve deliberate empty-needle behavior; for nonempty needles, XML policy or encoding failures must produce a fail-closed incomplete-scan diagnostic even when the searched text is absent. Prefer the existing checked XML parser and preserve the failing part's context.",
+      "locations": [
+        {
+          "endLine": 425,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 418
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 467
+        },
+        {
+          "endLine": 533,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 527
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 425,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 403
+        },
+        {
+          "endLine": 475,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 448
+        },
+        {
+          "endLine": 663,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 655
+        },
+        {
+          "endLine": 136,
+          "path": "src/xmllinq/parse.rs",
+          "role": "expected_control",
+          "startLine": 129
+        },
+        {
+          "endLine": 404,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 403
+        },
+        {
+          "endLine": 469,
+          "path": "src/scrub.rs",
+          "role": "propagation",
+          "startLine": 467
+        },
+        {
+          "endLine": 529,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 527
+        },
+        {
+          "endLine": 662,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 660
+        },
+        {
+          "endLine": 530,
+          "path": "src/scrub.rs",
+          "role": "root_control",
+          "startLine": 527
+        },
+        {
+          "endLine": 405,
+          "path": "src/scrub.rs",
+          "role": "entrypoint",
+          "startLine": 403
+        }
+      ]
+    },
+    {
+      "findingId": "csf_58625a5255dafe3f4e5744ea",
+      "title": "npm plan recording follows a predictable staging symlink",
+      "severity": "low",
+      "summary": "When recording plan operations, the npm CLI writes to a basename/PID staging path without exclusive creation. A local attacker who can create entries in that directory can redirect the write to an unrelated file writable by the CLI user.",
+      "remediation": "Create an unpredictable private staging directory next to the plan and open the staged regular file exclusively. Write through its held descriptor and rename only that file. At minimum refuse every preexisting staging entry using exclusive creation rather than default truncating writes.",
+      "locations": [
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 425,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        }
+      ]
+    },
+    {
+      "findingId": "csf_5a86b3f5aa767e4e64bd9e71",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "severity": "medium",
+      "summary": "An untrusted DOCX author can set huge positive w:gridSpan, w:gridBefore or w:gridAfter counts in a small, shallow table. Rendering sums those counts into grid occupancy and directly sizes column, preference and merge vectors. Counts of 1000000000/1073741824 request about 4 GB/4 GiB for f32 columns; 4294967295 requests approximately 16 GiB before additional allocations, despite package admission.",
+      "remediation": "Enforce practical per-span and total-column budgets for gridSpan, gridBefore and gridAfter before excessive RawCell, column, preference or merge allocation/work. Use checked occupancy sums and col+span arithmetic, apply the same budget to every derived table vector, and return a typed resource-limit refusal on excess. Propagate a caller-adjustable semantic column limit through all public rendering surfaces and charge later column/merge vectors to that same budget.",
+      "locations": [
+        {
+          "endLine": 778,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14353,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13598
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14635
+        },
+        {
+          "endLine": 791,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 772
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13537,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13530
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14645,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 9190,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 9174
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 14379
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14263
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13601
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 799,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 13616,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14643,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14603
+        },
+        {
+          "endLine": 14223,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13619,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14644,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14204
+        },
+        {
+          "endLine": 14346,
+          "path": "src/convert/mod.rs",
+          "role": "user_input",
+          "startLine": 14340
+        },
+        {
+          "endLine": 14642,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 13618,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 13216,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13199
+        },
+        {
+          "endLine": 13560,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 13554
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14204
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14638,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14603
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 773
+        },
+        {
+          "endLine": 13615,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 13601
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14211
+        },
+        {
+          "endLine": 14352,
+          "path": "src/convert/mod.rs",
+          "role": "input_conversion",
+          "startLine": 14340
+        },
+        {
+          "endLine": 789,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 769
+        },
+        {
+          "endLine": 9189,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 9175
+        },
+        {
+          "endLine": 14216,
+          "path": "src/convert/mod.rs",
+          "role": "root_control",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13617,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 13600
+        },
+        {
+          "endLine": 14639,
+          "path": "src/convert/mod.rs",
+          "role": "sink",
+          "startLine": 14637
+        },
+        {
+          "endLine": 786,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 774
+        },
+        {
+          "endLine": 14215,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14211
+        },
+        {
+          "endLine": 13486,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13466
+        },
+        {
+          "endLine": 13540,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 13524
+        },
+        {
+          "endLine": 14345,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 14338
+        }
+      ]
+    },
+    {
+      "findingId": "csf_b0aa536248aea0f44dd30d47",
+      "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+      "severity": "medium",
+      "summary": "An attacker-authored Word 97–2003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint.",
+      "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint.",
+      "locations": [
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 179
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 206
+        },
+        {
+          "endLine": 1206,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1194
+        },
+        {
+          "endLine": 1624,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3133,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 2747,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2740
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 220,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 211
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3134,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 236,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 225
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "input",
+          "startLine": 180
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1129,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1115
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "affected_operation",
+          "startLine": 207
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1185
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1205,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1197
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1594
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1602
+        },
+        {
+          "endLine": 218,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 180
+        },
+        {
+          "endLine": 195,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1602
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 214
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2742
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 207
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1591
+        },
+        {
+          "endLine": 225,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1621,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3120
+        },
+        {
+          "endLine": 2750,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2735
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 187
+        },
+        {
+          "endLine": 1635,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1595
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 2740
+        }
+      ]
+    },
+    {
+      "findingId": "csf_91956fe2d99a3a2871c06916",
+      "title": "Aliased legacy DOC pieces expand small physical text into enormous logical stories",
+      "severity": "medium",
+      "summary": "Thousands of contiguous logical pieces can all reference the same physical text range. For example, 4095 pieces referencing one common 1 MiB compressed-text range describe nearly 4 GiB of logical characters while requiring only roughly 49 KiB of piece records. main_text materializes metadata for every character, requiring tens of GiB before rendering. A second source-derived framing uses approximately 65,535 pieces reusing 64 KiB, producing over four billion logical characters from a piece table below 1 MiB; expansion precedes later auxiliary-table checks. The assigned 1024-by-65536 framing yields 67108864 logical characters and at least 768 MiB for char/CP/FC fields alone, before modifiers and allocation/output overhead; these are static counts, not measurements. Supplied discovery-0023 additionally gives 4096 contiguous one-million-character pieces sharing a 1 MB physical range (4096000000 logical characters within u32). Public read/conversion and native read_document refusal-hint parsing reach the same expansion before returning a format diagnostic; no runtime resource measurement is claimed. Additional supplied static framing: 4096 pieces reusing one 64 KiB compressed extent describe 268435456 logical characters; continuity and source-bound checks permit the reuse. This is not a measured allocation.",
+      "remediation": "Introduce configurable legacy physical-input, piece-count, cumulative logical-character, retained-metadata and expansion-work budgets. Check FIB ccp_text and checked cumulative piece lengths before materialization, charge every decoded character including repeated physical aliases, and return typed refusals through read/doc_to_markdown/doc_to_docx and CLI callers. Preserve legitimate fast-save aliases and split UTF-16 surrogate handling within budget. Replace full legacy parsing used only for diagnostic refusal hints with a cheap bounded probe, or apply the same logical/work budgets before that parser runs.",
+      "locations": [
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 920,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 915
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1090
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "expected_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1206,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1226,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1218
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 919
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1202,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1221
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 919
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1091
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3129
+        },
+        {
+          "endLine": 1221,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3126
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1203,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "outcome",
+          "startLine": 1219
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 194,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1084
+        },
+        {
+          "endLine": 1182,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1184
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 922,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 911
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1215
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 180
+        },
+        {
+          "endLine": 919,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 917
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1222,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1148
+        },
+        {
+          "endLine": 3132,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3126
+        },
+        {
+          "endLine": 195,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 1091
+        },
+        {
+          "endLine": 1198,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1176
+        },
+        {
+          "endLine": 1109,
+          "path": "src/legacy_doc.rs",
+          "role": "input_conversion",
+          "startLine": 1084
+        },
+        {
+          "endLine": 1178,
+          "path": "src/legacy_doc.rs",
+          "role": "control",
+          "startLine": 1154
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 1221,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1110,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1090
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2749,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2744
+        },
+        {
+          "endLine": 1111,
+          "path": "src/legacy_doc.rs",
+          "role": "source",
+          "startLine": 1090
+        },
+        {
+          "endLine": 1176,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1148
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1181
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2740
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 180
+        },
+        {
+          "endLine": 1222,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1181
+        },
+        {
+          "endLine": 3132,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 225,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 925,
+          "path": "src/legacy_doc.rs",
+          "role": "user_input",
+          "startLine": 907
+        },
+        {
+          "endLine": 1113,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1082
+        },
+        {
+          "endLine": 1203,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1176
+        },
+        {
+          "endLine": 1227,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1217
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3120
+        },
+        {
+          "endLine": 2750,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2735
+        },
+        {
+          "endLine": 919,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 912
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 187
+        },
+        {
+          "endLine": 1225,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1220
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 2740
+        }
+      ]
+    },
+    {
+      "findingId": "csf_f1c7e6e8877805d7436a18fa",
+      "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+      "severity": "low",
+      "summary": "The Python and Node CLIs write plans through a predictable .<plan>.<PID>.partial pathname using nonexclusive truncating writes. A local actor who can create entries in the plan directory can preplace a symlink there and make the victim overwrite another file it can write, before the intended plan replacement.",
+      "remediation": "Use exclusive, unpredictable staging owned by a private directory, hold the opened handle through writing, and rename that verified file. Reuse the native publication design or equivalent mkstemp/exclusive wx APIs and never follow existing staging entries. Python can reuse native publication; Node needs equivalent secure publication semantics.",
+      "locations": [
+        {
+          "endLine": 411,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 407
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 420
+        },
+        {
+          "endLine": 424,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 420
+        },
+        {
+          "endLine": 445,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 441
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 414,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 403
+        },
+        {
+          "endLine": 444,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "entrypoint",
+          "startLine": 442
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "entrypoint",
+          "startLine": 420
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 142
+        },
+        {
+          "endLine": 388,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "propagation",
+          "startLine": 373
+        },
+        {
+          "endLine": 399,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "expected_control",
+          "startLine": 395
+        },
+        {
+          "endLine": 423,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "sink",
+          "startLine": 420
+        },
+        {
+          "endLine": 167,
+          "path": "src/edit/record.rs",
+          "role": "expected_control",
+          "startLine": 161
+        },
+        {
+          "endLine": 75,
+          "path": "docs/FILESYSTEM_PUBLICATION.md",
+          "role": "supporting",
+          "startLine": 71
+        },
+        {
+          "endLine": 411,
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "role": "root_control",
+          "startLine": 408
+        },
+        {
+          "endLine": 427,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 408
+        },
+        {
+          "endLine": 165,
+          "path": "src/edit/record.rs",
+          "role": "supporting",
+          "startLine": 142
+        },
+        {
+          "endLine": 426,
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "role": "supporting",
+          "startLine": 408
+        }
+      ]
+    },
+    {
+      "findingId": "csf_88d031991ca3e20e4aae2f24",
+      "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+      "severity": "medium",
+      "summary": "An attacker-authored Word 97–2003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint. Assigned discovery-0031 supplies a balanced result-state framing with approximately 100000 nested fields in a few hundred kilobytes, implying billions of boolean inspections. This is heap-stack scanning CPU cost, not recursive call-stack overflow.",
+      "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint.",
+      "locations": [
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 179
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 206
+        },
+        {
+          "endLine": 1206,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1194
+        },
+        {
+          "endLine": 1624,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3133,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 2747,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2740
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 220,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 211
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3134,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3127
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 236,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 225
+        },
+        {
+          "endLine": 3144,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 193,
+          "path": "src/legacy_doc.rs",
+          "role": "input",
+          "startLine": 180
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1181
+        },
+        {
+          "endLine": 1129,
+          "path": "src/legacy_doc.rs",
+          "role": "transformation",
+          "startLine": 1115
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "affected_operation",
+          "startLine": 207
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 1204,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1185
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1205,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 1197
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1594
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "sink",
+          "startLine": 1602
+        },
+        {
+          "endLine": 218,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 180
+        },
+        {
+          "endLine": 195,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1602
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "role": "propagation",
+          "startLine": 214
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3125
+        },
+        {
+          "endLine": 1619,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1596
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2742
+        },
+        {
+          "endLine": 216,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 207
+        },
+        {
+          "endLine": 1620,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 1591
+        },
+        {
+          "endLine": 225,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 1621,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 3135,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3120
+        },
+        {
+          "endLine": 2750,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 2735
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "role": "supporting",
+          "startLine": 187
+        },
+        {
+          "endLine": 1635,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1595
+        },
+        {
+          "endLine": 3143,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 3125
+        },
+        {
+          "endLine": 2754,
+          "path": "src/bin/jubarte.rs",
+          "role": "supporting",
+          "startLine": 2740
+        },
+        {
+          "endLine": 1618,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1591
+        },
+        {
+          "endLine": 217,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        },
+        {
+          "endLine": 3131,
+          "path": "src/bin/jubarte.rs",
+          "role": "entrypoint",
+          "startLine": 3124
+        },
+        {
+          "endLine": 1617,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1602
+        },
+        {
+          "endLine": 192,
+          "path": "src/legacy_doc.rs",
+          "startLine": 191
+        },
+        {
+          "endLine": 215,
+          "path": "src/legacy_doc.rs",
+          "startLine": 214
+        },
+        {
+          "endLine": 1621,
+          "path": "src/legacy_doc.rs",
+          "role": "root_control",
+          "startLine": 1592
+        },
+        {
+          "endLine": 194,
+          "path": "src/legacy_doc.rs",
+          "role": "entrypoint",
+          "startLine": 180
+        }
+      ]
+    },
+    {
+      "findingId": "csf_eb94605aebd8f08907c46e8c",
+      "title": "Entity decoding repeatedly scans the input suffix",
+      "severity": "medium",
+      "summary": "HTML altChunk text with bare ampersands and the public XML entity decoder repeatedly search the remaining suffix for ';', yielding quadratic CPU work. A valid admitted .rels Target containing repeated &amp; is normalized upstream and redundantly decoded by PartFs, reaching the same XML sink during rendering, inspection, revision processing or comparison even when the target part does not exist. An additional admitted-main-XML route uses an unquoted value whose first character never reappears: the DOM consumes through EOF and decodes a bare-ampersand comment as an attribute, reaching the same quadratic XML decoder. Ordinary bare-ampersand text is rejected upstream and is not this proof. The same HTML decoder is also reached by Markdown-to-DOCX raw HTML blocks and attribute values; its ten-byte accepted-entity bound is applied after the unbounded search. Assigned discovery-0031 corroborates both established decoders independently: ordinary HTML/MHT paragraph text reaches the HTML helper even when script/style content is skipped, while an internal fontTable target reaches redundant XML decoding before any absent-part lookup. Its supplied offline dependency evidence identifies oxml-opc 0.14.2 and quick-xml 0.41.0 attribute normalization, independently supported by the repository target round-trip test. No reducer dependency inspection occurred.",
+      "remediation": "Scan entities once without revisiting suffixes. In HTML, bound the search to the supported entity-length window before looking for ';'; give XML decoding a monotonic parser or bounded entity grammar. Remove PartFs's redundant relationship decoding when upstream supplies normalized attributes; retain the linear XML-helper repair for its other callers and the separate bounded HTML-helper repair. Preserve canonical literal '&amp;' part names and one-time entity normalization through round trips. Preserve the standalone XML helper's documented permissive output for unsupported or unterminated references while making its work linear. Apply practical relationship-target length/work bounds as defense in depth, preserving exactly one normalization pass and the standalone helper's linear permissive behavior. Align admission/DOM attribute token boundaries or reject unsupported unquoted syntax as defense in depth. Preserve the linear XML decoder fix for this comment-to-attribute route; removing only the redundant relationship decode does not cover it. Apply the bounded HTML helper consistently to Markdown raw-HTML block text and attribute consumers, using UTF-8-safe bounded lookahead and preserving recognized entities, malformed literal retention and multibyte text.",
+      "locations": [
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "entrypoint",
+          "startLine": 405
+        },
+        {
+          "endLine": 735,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 728
+        },
+        {
+          "endLine": 760,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 753
+        },
+        {
+          "endLine": 783,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 768
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 789
+        },
+        {
+          "endLine": 234,
+          "path": "src/opc/mod.rs",
+          "role": "input",
+          "startLine": 222
+        },
+        {
+          "endLine": 3714,
+          "path": "src/revision_processor.rs",
+          "role": "affected_operation",
+          "startLine": 3699
+        },
+        {
+          "endLine": 4751,
+          "path": "src/document_comparer.rs",
+          "role": "affected_operation",
+          "startLine": 4724
+        },
+        {
+          "endLine": 682,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 672
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sensitive_operation",
+          "startLine": 764
+        },
+        {
+          "endLine": 682,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 677
+        },
+        {
+          "endLine": 791,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 21320,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21309
+        },
+        {
+          "endLine": 1233,
+          "path": "src/opc/mod.rs",
+          "role": "expected_control",
+          "startLine": 1222
+        },
+        {
+          "endLine": 233,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 222
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 21319,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21307
+        },
+        {
+          "endLine": 776,
+          "path": "src/inspect.rs",
+          "role": "entrypoint",
+          "startLine": 766
+        },
+        {
+          "endLine": 681,
+          "path": "src/opc/mod.rs",
+          "role": "root_control",
+          "startLine": 677
+        },
+        {
+          "endLine": 786,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 768
+        },
+        {
+          "endLine": 1231,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 1222
+        },
+        {
+          "endLine": 233,
+          "path": "src/opc/mod.rs",
+          "role": "propagation",
+          "startLine": 222
+        },
+        {
+          "endLine": 4741,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4724
+        },
+        {
+          "endLine": 775,
+          "path": "src/inspect.rs",
+          "role": "entrypoint",
+          "startLine": 766
+        },
+        {
+          "endLine": 410,
+          "path": "src/convert/altchunk.rs",
+          "role": "entrypoint",
+          "startLine": 405
+        },
+        {
+          "endLine": 734,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 728
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 786
+        },
+        {
+          "endLine": 407,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 405
+        },
+        {
+          "endLine": 735,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 759,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 751
+        },
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 405
+        },
+        {
+          "endLine": 758,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 793,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 789
+        },
+        {
+          "endLine": 787,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 764
+        },
+        {
+          "endLine": 237,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 222
+        },
+        {
+          "endLine": 1230,
+          "path": "src/opc/mod.rs",
+          "role": "supporting",
+          "startLine": 1222
+        },
+        {
+          "endLine": 21317,
+          "path": "src/convert/mod.rs",
+          "role": "supporting",
+          "startLine": 21310
+        },
+        {
+          "endLine": 775,
+          "path": "src/inspect.rs",
+          "role": "supporting",
+          "startLine": 766
+        },
+        {
+          "endLine": 786,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 774
+        },
+        {
+          "endLine": 239,
+          "path": "src/opc/mod.rs",
+          "role": "input_parser",
+          "startLine": 223
+        },
+        {
+          "endLine": 21298,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 21287
+        },
+        {
+          "endLine": 820,
+          "path": "src/convert/mod.rs",
+          "role": "propagation",
+          "startLine": 813
+        },
+        {
+          "endLine": 783,
+          "path": "src/xmllinq/parse.rs",
+          "role": "sink",
+          "startLine": 764
+        },
+        {
+          "endLine": 4731,
+          "path": "src/document_comparer.rs",
+          "role": "entrypoint",
+          "startLine": 4728
+        },
+        {
+          "endLine": 241,
+          "path": "src/xmllinq/parse.rs",
+          "role": "root_control",
+          "startLine": 233
+        },
+        {
+          "endLine": 591,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 573
+        },
+        {
+          "endLine": 787,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 768
+        },
+        {
+          "endLine": 96,
+          "path": "src/wml_document.rs",
+          "role": "supporting",
+          "startLine": 85
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 790
+        },
+        {
+          "endLine": 406,
+          "path": "src/convert/altchunk.rs",
+          "role": "propagation",
+          "startLine": 405
+        },
+        {
+          "endLine": 734,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 728
+        },
+        {
+          "endLine": 759,
+          "path": "src/convert/altchunk.rs",
+          "role": "sink",
+          "startLine": 753
+        },
+        {
+          "endLine": 1357,
+          "path": "src/markdown/write.rs",
+          "role": "entrypoint",
+          "startLine": 1350
+        },
+        {
+          "endLine": 1425,
+          "path": "src/markdown/write.rs",
+          "role": "entrypoint",
+          "startLine": 1415
+        },
+        {
+          "endLine": 762,
+          "path": "src/convert/altchunk.rs",
+          "role": "root_control",
+          "startLine": 724
+        },
+        {
+          "endLine": 407,
+          "path": "src/convert/altchunk.rs",
+          "role": "supporting",
+          "startLine": 405
+        },
+        {
+          "endLine": 798,
+          "path": "src/convert/mod.rs",
+          "role": "entrypoint",
+          "startLine": 773
+        },
+        {
+          "endLine": 789,
+          "path": "src/xmllinq/parse.rs",
+          "role": "supporting",
+          "startLine": 764
+        }
+      ]
+    }
+  ]
+}

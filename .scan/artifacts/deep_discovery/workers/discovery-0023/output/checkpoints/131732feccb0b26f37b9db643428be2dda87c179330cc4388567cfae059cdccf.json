@@ -1,0 +1,249 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "unbounded-allocation.table-grid-span",
+      "title": "Converting a DOCX with a large table span can exhaust the host process",
+      "summary": "A small DOCX can place a very large positive value in `w:gridSpan`, `w:gridBefore` or `w:gridAfter`. PDF/PNG/report layout turns that value into vector lengths without a column budget, causing disproportionate allocation or an abort before returning a conversion error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Untrusted document producers can deterministically exhaust or abort the embedding renderer. Likelihood is high for a caller that converts attacker-supplied documents; impact is confined to availability of that process, with no established remote deployment.",
+        "changeConditions": "Dedicated subprocess limits reduce impact; an exposed shared conversion service would increase operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static trace connects positive usize XML values to two unconditional allocation sites after admission; no semantic span cap exists on this path. No runtime reproduction was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource allocation from document metadata",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14216,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13617,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14639,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-entry",
+          "label": "Public conversion enters admitted layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 761,
+          "endLine": 775,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_pages<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,\n) -> Result<T, ConvertError> {\n    with_layout(docx, |fonts, pages, _| emit(fonts, pages))\n}\n\n/// [`with_pages`] that also hands `emit` the layout's page facts.\nfn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)",
+          "explanation": "`docx_to_pdf`, PNG and reports share `with_layout`; admission limits ZIP/XML structure, then layout parses the body."
+        },
+        {
+          "id": "span-input",
+          "label": "Unbounded cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14224,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)\n}",
+          "explanation": "`w:gridSpan/@w:val` is parsed as `usize` with only a lower bound; the untrusted value becomes `RawCell.colspan`."
+        },
+        {
+          "id": "skip-input",
+          "label": "Unbounded omitted grid columns",
+          "path": "src/convert/mod.rs",
+          "startLine": 14338,
+          "endLine": 14353,
+          "language": "rust",
+          "role": "user_input",
+          "code": "/// A row's `w:gridBefore`/`w:gridAfter` (`side` \"Before\"/\"After\"): the\n/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.\nfn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))\n}",
+          "explanation": "`gridBefore` and `gridAfter` likewise accept every positive `usize` and become synthetic cell spans."
+        },
+        {
+          "id": "span-allocation",
+          "label": "Span drives column allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13617,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);",
+          "explanation": "Row occupancy becomes the length of a `Vec<f32>` without a semantic column limit."
+        },
+        {
+          "id": "merge-allocation",
+          "label": "Span drives merge allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 14635,
+          "endLine": 14645,
+          "language": "rust",
+          "role": "sink",
+          "code": "                style_fill: false,\n            });\n            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;\n            }\n            col += span;\n        }",
+          "explanation": "The same span later sets the length of a vector of merge records, amplifying memory use."
+        }
+      ],
+      "rootCause": {
+        "summary": "The renderer parses attacker-authored table span attributes into `usize` and preserves them in raw cells, including synthetic cells for omitted columns. `table_block` sums the spans and allocates a column vector of that size; `resolve_table_merges` then allocates merge tracking to the same extent. XML byte, depth and attribute budgets do not restrict these numeric values. For example, a one-cell span of 1000000000 requests roughly 4 GB for columns alone despite requiring only ten digits in XML.",
+        "evidenceRefs": [
+          "render-entry",
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "merge-allocation"
+        ]
+      },
+      "remediation": "Apply a documented maximum table grid width to cell and omitted-column spans before raw-cell construction; use checked accumulation and reject over-budget occupancy before allocating or iterating. Enforce the same limit in merge bookkeeping.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission bounds compressed/inflated bytes, entry counts, XML attributes and depth.",
+          "SECURITY.md asks callers to apply CPU/memory process limits; those contain host impact but do not let the API return a bounded refusal."
+        ],
+        "evidenceRefs": [
+          "render-entry",
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "merge-allocation"
+        ],
+        "limitations": [
+          "No application code or vulnerability input was executed; no deployment exposure is asserted."
+        ],
+        "method": "static source trace",
+        "summary": "Validated public conversion -> admitted layout -> `cell_span`/`row_grid_skip` -> raw cell occupancy -> `Vec` expansion. `stretch_stale_spans` skips rows whose used count exceeds existing columns and does not clamp hostile spans. Admission does not inspect grid span semantics."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX XML span -> positive usize -> RawCell.colspan -> occupancy -> column and merge vectors",
+          "source": "attacker-authored table attributes",
+          "sink": "`cols = vec![each; occupancy]`, `cols.resize`, and `open.resize`",
+          "outcome": "memory exhaustion, panic or process abort",
+          "evidenceRefs": [
+            "render-entry",
+            "span-input",
+            "skip-input",
+            "span-allocation",
+            "merge-allocation"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of the CLI or embedding process; no confidentiality/integrity compromise established."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short decimal attribute directly controls allocation on an ordinary supported conversion path."
+        },
+        "reachability": {
+          "summary": "The public in-process renderer accepts document bytes and uses this table parser after admission, which checks structure rather than numeric table semantics.",
+          "attacker": "untrusted document producer",
+          "entrypoint": "convert::docx_to_pdf, docx_to_png, docx_render_report",
+          "outcome": "loss of availability of the rendering process",
+          "preconditions": [
+            "Victim processes the supplied DOCX through layout; attacker needs no host filesystem/configuration access."
+          ]
+        },
+        "summary": "Supply a valid small DOCX containing a table cell with `w:gridSpan w:val=\"1000000000\"`, then have the victim convert it to PDF/PNG or request page layout. The table model attempts multi-gigabyte allocation."
+      },
+      "remediationTests": [
+        "Convert a minimal admitted DOCX with a huge gridSpan and assert a typed resource refusal before allocating.",
+        "Cover huge gridBefore/gridAfter and multiple individually valid spans whose sum exceeds the grid budget."
+      ],
+      "preventiveControls": [
+        "Use shared semantic allocation budgets for document-controlled counts in every layout path."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0023-render-span-allocation",
+        "workerLabel": "discovery-0023",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0023-render-span-allocation",
+            "title": "Document table spans drive unbounded renderer allocations",
+            "source": "parent source review",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13600,
+                "endLine": 13616
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14603,
+                "endLine": 14639
+              }
+            ],
+            "evidence": "Table row occupancy sums RawCell.colspan and resizes cols to occupancy; resolve_table_merges separately resizes open to col+span. Need trace cell_span/gridBefore input and all semantic bounds before validating.",
+            "hypothesis": "A small hostile DOCX may force large allocations despite byte/depth admission.",
+            "counterevidence": "Package admission and caller process resource limits exist; semantic span bounds not yet reviewed."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-99ed6c0f5d538e96",
+        "label": "DOCX table span layout allocations",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Renderer resource admission",
+        "notes": "Validated discovery-0023-render-span-allocation at src/convert/mod.rs:14211,14340,13600,14637. Original candidate evidence retained in finding provenance; package/XML limits do not constrain numeric occupancy.",
+        "candidateId": "discovery-0023-render-span-allocation"
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0023-drawing-dependency-cycle",
+        "candidateId": "discovery-0023-drawing-dependency-cycle",
+        "reason": "Baseline reported candidate; awaiting parent source validation.",
+        "candidate": {
+          "originalEvidence": "Confirmed static DoS candidate: src/markdown/from_docx/drawing.rs dep_part at 1956-2007 recursively follows attacker JSON rel.part at 1973-1974 without visited/memo/depth guard; decode at 1397-1408 only base64+serde. A single drawing dep whose rel.part=0 loops forever, creating new names and cloning XML until stack/OOM. Reachability: Markdown write::picture 4189-4197 accepts payload; package::drawing 1703-1712 invokes materialize->dep_part (1893-1894). Capture side memoizes at 608-610, so cyclic DOCX part relationships are also preserved into payload.",
+          "provenance": "baseline"
+        }
+      },
+      {
+        "candidateId": "discovery-0023-strict-root-inflate",
+        "reason": "Focused investigator lead pending source validation.",
+        "candidate": {
+          "originalEvidence": "Source review has two concrete DoS leads: public strict_translation::main_part_is_strict inflates without InputLimits and rescans a growing unterminated/huge root tag; unescape_xml_text repeatedly scans remaining suffix on invalid/literal '&', and PartFs::resolve_rel_target calls it on already decoded upstream relationship targets. Verifying reachable package callers and strongest counterevidence; no code execution or network.",
+          "provenance": "parser_controls"
+        },
+        "id": "discovery-0023-strict-root-inflate"
+      },
+      {
+        "candidateId": "discovery-0023-relationship-unescape",
+        "reason": "Focused investigator lead pending source validation.",
+        "candidate": {
+          "originalEvidence": "unescape_xml_text repeatedly scans remaining suffix on invalid/literal '&', and PartFs::resolve_rel_target calls it on already decoded upstream relationship targets. Verifying reachable package callers and strongest counterevidence; no code execution or network.",
+          "provenance": "parser_controls"
+        },
+        "id": "discovery-0023-relationship-unescape"
+      }
+    ]
+  }
+}

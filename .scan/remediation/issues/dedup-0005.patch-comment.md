@@ -1,0 +1,1120 @@
+```diff
+--- a/src/admission.rs
++++ b/src/admission.rs
+@@ -764,8 +764,11 @@
+ /// A part's text for scanning. Word writes UTF-8, but a part may be UTF-16
+ /// with a byte-order mark (SharePoint's `customXml` items often are) and
+ /// Word opens it, so it is transcoded; other bytes decode lossily, as the
+-/// rest of the engine reads them.
+-fn part_text(xml: &[u8]) -> Cow<'_, str> {
++/// rest of the engine reads them. Leak scanning (`scrub::leaks_within`)
++/// reads XML parts through this same policy, so a copy of a text held in
++/// a BOM-marked UTF-16 XML part is seen, not invisible under a lossy
++/// UTF-8 read.
++pub(crate) fn part_text(xml: &[u8]) -> Cow<'_, str> {
+     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+         let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
+         Cow::Owned(
+--- a/src/scrub.rs
++++ b/src/scrub.rs
+@@ -39,8 +39,19 @@
+ const CORE: &str = "docProps/core.xml";
+ const APP: &str = "docProps/app.xml";
+ const CUSTOM: &str = "docProps/custom.xml";
++/// The package relationship types that reach the three property parts. A
++/// supplier controls package names, so these (and the content types
++/// below), not the conventional `docProps/` paths, are what selects the
++/// parts scrub must clean.
++const CORE_REL: &str =
++    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
++const EXTENDED_REL: &str =
++    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties";
+ const CUSTOM_REL: &str =
+     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
++const CORE_CT: &str = "application/vnd.openxmlformats-package.core-properties+xml";
++const EXTENDED_CT: &str = "application/vnd.openxmlformats-officedocument.extended-properties+xml";
++const CUSTOM_CT: &str = "application/vnd.openxmlformats-officedocument.custom-properties+xml";
+ const CP: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+ const DC: &str = "http://purl.org/dc/elements/1.1/";
+ const DCTERMS: &str = "http://purl.org/dc/terms/";
+@@ -353,41 +364,104 @@
+ }
+ 
+ /// Drop the people and dates of the core and extended properties, and the
+-/// custom properties part.
++/// custom properties part: every part the package's property
++/// relationships and content types reach, not only the conventional
++/// `docProps/` names a supplier can move away from.
+ fn scrub_properties(pkg: &mut PartFs) {
+-    if let Some(mut core) = Part::load(pkg, CORE) {
+-        let names = [
+-            XName::get("creator", DC),
+-            XName::get("lastModifiedBy", CP),
+-            XName::get("revision", CP),
+-            XName::get("lastPrinted", CP),
+-            XName::get("created", DCTERMS),
+-            XName::get("modified", DCTERMS),
+-        ];
+-        if remove_children(&mut core, &names) {
+-            core.store(pkg);
++    let (core, extended, custom) = property_parts(pkg);
++    let core_names = [
++        XName::get("creator", DC),
++        XName::get("lastModifiedBy", CP),
++        XName::get("revision", CP),
++        XName::get("lastPrinted", CP),
++        XName::get("created", DCTERMS),
++        XName::get("modified", DCTERMS),
++    ];
++    for name in core {
++        if let Some(mut part) = Part::load(pkg, &name)
++            && remove_children(&mut part, &core_names)
++        {
++            part.store(pkg);
+         }
+     }
+-    if let Some(mut app) = Part::load(pkg, APP) {
+-        let names = [
+-            XName::get("Manager", EXTENDED),
+-            XName::get("Company", EXTENDED),
+-        ];
+-        if remove_children(&mut app, &names) {
+-            app.store(pkg);
++    let extended_names = [
++        XName::get("Manager", EXTENDED),
++        XName::get("Company", EXTENDED),
++    ];
++    for name in extended {
++        if let Some(mut part) = Part::load(pkg, &name)
++            && remove_children(&mut part, &extended_names)
++        {
++            part.store(pkg);
+         }
+     }
+-    if pkg.part_bytes(CUSTOM).is_some() {
+-        pkg.remove_part(CUSTOM);
++    for name in custom {
++        if pkg.part_bytes(&name).is_none() {
++            continue;
++        }
++        pkg.remove_part(&name);
+         pkg.remove_package_relationships_by_type(CUSTOM_REL);
+-        pkg.remove_content_type_override(&format!("/{CUSTOM}"));
++        pkg.remove_content_type_override(&format!("/{name}"));
++    }
++}
++
++/// The package's core, extended and custom property parts: the parts its
++/// property relationships reach, then the parts their content types name,
++/// then the conventional `docProps/` names a package without metadata
++/// relationships still carries.
++fn property_parts(pkg: &PartFs) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>) {
++    let mut core = BTreeSet::new();
++    let mut extended = BTreeSet::new();
++    let mut custom = BTreeSet::new();
++    for rel in &pkg.package_relationships().items {
++        if rel.target_mode.as_deref() == Some("External") {
++            continue;
++        }
++        let part = match rel.rel_type.as_str() {
++            CORE_REL => &mut core,
++            EXTENDED_REL => &mut extended,
++            CUSTOM_REL => &mut custom,
++            _ => continue,
++        };
++        let target = pkg.resolve_rel_target("", &rel.target);
++        if pkg.part_bytes(&target).is_some() {
++            part.insert(target);
++        }
++    }
++    for part in pkg.parts() {
++        match pkg.content_type_for(&part).as_deref() {
++            Some(CORE_CT) => {
++                core.insert(part);
++            }
++            Some(EXTENDED_CT) => {
++                extended.insert(part);
++            }
++            Some(CUSTOM_CT) => {
++                custom.insert(part);
++            }
++            _ => {}
++        }
+     }
++    for (name, part) in [
++        (CORE, &mut core),
++        (APP, &mut extended),
++        (CUSTOM, &mut custom),
++    ] {
++        if pkg.part_bytes(name).is_some() {
++            part.insert(name.to_string());
++        }
++    }
++    (core, extended, custom)
+ }
+ 
+ /// The parts of `docx` where `needle` still occurs, sorted: in a text node,
+ /// an attribute value that can hold text, an XML comment, the joined run
+ /// text of a paragraph (a text split across runs), or the raw bytes of a
+-/// part that is not XML (UTF-8 or UTF-16LE). An empty needle occurs nowhere.
++/// part that is not XML (UTF-8, UTF-16LE or UTF-16BE). An XML part is read
++/// through the same BOM-aware decode as admission, so a copy of the text
++/// held in a BOM-marked UTF-16 XML part (SharePoint's `customXml`) is
++/// scanned as text instead of passing unseen. An empty needle occurs
++/// nowhere.
+ /// An unreadable archive or entry is a finding: an incomplete scan cannot
+ /// certify a redaction.
+ ///
+@@ -422,7 +496,8 @@
+         Ok(zip) => zip,
+         Err(error) => return vec![format!("the package (cannot read: {error})")],
+     };
+-    let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
++    let utf16le: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
++    let utf16be: Vec<u8> = needle.encode_utf16().flat_map(u16::to_be_bytes).collect();
+     let mut total = 0u64;
+     for i in 0..zip.len() {
+         let mut entry = match zip.by_index(i) {
+@@ -466,9 +541,14 @@
+         }
+         let xml = name.ends_with(".xml") || name.ends_with(".rels");
+         let hit = if xml {
+-            xml_holds(&String::from_utf8_lossy(&bytes), needle)
++            // The decode admission uses: a BOM-marked UTF-16 XML part is
++            // text Word reads, so its copy of the needle is a leak; a
++            // lossy UTF-8 read leaves it NUL-interleaved and invisible.
++            xml_holds(&crate::admission::part_text(&bytes), needle)
+         } else {
+-            contains(&bytes, needle.as_bytes()) || contains(&bytes, &utf16)
++            contains(&bytes, needle.as_bytes())
++                || contains(&bytes, &utf16le)
++                || contains(&bytes, &utf16be)
+         };
+         if hit {
+             found.insert(name);
+@@ -733,6 +813,54 @@
+         assert!(leaks(&bytes, "1234").is_empty());
+         assert!(leaks(&bytes, "spacing").is_empty());
+         assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
++    }
++    /// A BOM-marked UTF-16 XML part is scanned through the same decode as
++    /// admission: the copy of the secret it holds is a leak, not an
++    /// invisible NUL-interleaved one, and a binary part matches in either
++    /// byte order.
++    #[test]
++    fn bom_marked_utf16_parts_are_leaks_in_either_byte_order() {
++        let secret = "PrivateReviewer";
++        let mut pkg = package("<w:p><w:r><w:t>Independent body payload</w:t></w:r></w:p>");
++        let xml = format!(
++            "<metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:creator>{secret}</dc:creator></metadata>"
++        );
++        fn utf16(text: &str, big_endian: bool) -> Vec<u8> {
++            let units: Vec<u16> = text.encode_utf16().collect();
++            let mut bytes = if big_endian {
++                vec![0xFE, 0xFF]
++            } else {
++                vec![0xFF, 0xFE]
++            };
++            bytes.extend(units.iter().flat_map(|unit| {
++                if big_endian {
++                    unit.to_be_bytes()
++                } else {
++                    unit.to_le_bytes()
++                }
++            }));
++            bytes
++        }
++        pkg.set_part("customXml/le.xml", utf16(&xml, false));
++        pkg.set_part("customXml/be.xml", utf16(&xml, true));
++        pkg.set_part("customXml/utf16be.bin", utf16(secret, true));
++        for part in [
++            "/customXml/le.xml",
++            "/customXml/be.xml",
++            "/customXml/utf16be.bin",
++        ] {
++            pkg.add_content_type_override(part, "application/octet-stream");
++        }
++        let bytes = pkg.to_zip().unwrap();
++        assert_eq!(
++            leaks(&bytes, secret),
++            [
++                "customXml/be.xml",
++                "customXml/le.xml",
++                "customXml/utf16be.bin"
++            ]
++        );
++        assert!(leaks(&bytes, "absent reviewer").is_empty());
+     }
+     #[test]
+     fn invalid_aliases_are_rejected_before_any_source_property_is_rewritten() {
+--- a/src/convert/metafile.rs
++++ b/src/convert/metafile.rs
+@@ -487,17 +487,25 @@
+             break;
+         }
+         let payload = off + 6;
++        // Record-local boundary: every handler below reads only the bytes
++        // its record declares (size2 checked against the file above). A
++        // count that reaches past the boundary would read the bytes of the
++        // records that follow, and the outer loop revisits those bytes once
++        // per record — a short crafted file then amplifies into coordinate
++        // and text work many times its own size, so a record whose fields
++        // do not fit its declared extent is refused instead.
++        let rec = &data[payload..off + size2];
+         match func {
+             0x0000 => break,
+             0x020B => {
+-                let y = read_i16(data, payload)? as i32;
+-                let x = read_i16(data, payload + 2)? as i32;
++                let y = read_i16(rec, 0)? as i32;
++                let x = read_i16(rec, 2)? as i32;
+                 map.org_x = x as f32;
+                 map.org_y = y as f32;
+             }
+             0x020C => {
+-                let y = read_i16(data, payload)? as i32;
+-                let x = read_i16(data, payload + 2)? as i32;
++                let y = read_i16(rec, 0)? as i32;
++                let x = read_i16(rec, 2)? as i32;
+                 if x != 0 {
+                     map.ext_x = x as f32;
+                 }
+@@ -506,8 +514,8 @@
+                 }
+             }
+             0x02FC => {
+-                let style = read_u16(data, payload).unwrap_or(0);
+-                let color = colorref(read_u32(data, payload + 2).unwrap_or(0));
++                let style = read_u16(rec, 0).unwrap_or(0);
++                let color = colorref(read_u32(rec, 2).unwrap_or(0));
+                 let slot = objects.iter().position(|o| matches!(o, GdiObj::Empty));
+                 if let Some(i) = slot {
+                     // BS_NULL (1) is hollow: the boxes of 5a6c's reprint
+@@ -520,9 +528,9 @@
+                 }
+             }
+             0x02FA => {
+-                let style = read_u16(data, payload).unwrap_or(0);
+-                let color = colorref(read_u32(data, payload + 6).unwrap_or(0));
+-                let width = read_i16(data, payload + 2).unwrap_or(1) as i32;
++                let style = read_u16(rec, 0).unwrap_or(0);
++                let color = colorref(read_u32(rec, 6).unwrap_or(0));
++                let width = read_i16(rec, 2).unwrap_or(1) as i32;
+                 if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                     // PS_NULL (5) strokes nothing: width 0.
+                     objects[i] = GdiObj::Pen {
+@@ -533,7 +541,7 @@
+             }
+             0x02FB => {
+                 if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+-                    objects[i] = WmfFont::parse(data, payload)
++                    objects[i] = WmfFont::parse(rec, 0)
+                         .map_or(GdiObj::Other, |f| GdiObj::Font(std::rc::Rc::new(f)));
+                 }
+             }
+@@ -545,10 +553,10 @@
+                     objects[i] = GdiObj::Other;
+                 }
+             }
+-            0x0106 => winding = read_u16(data, payload).unwrap_or(1) == 2,
++            0x0106 => winding = read_u16(rec, 0).unwrap_or(1) == 2,
+             0x012D => {
+                 // Object handles are 0-based table indices (b88ac900).
+-                let idx = read_u16(data, payload).unwrap_or(0) as usize;
++                let idx = read_u16(rec, 0).unwrap_or(0) as usize;
+                 if let Some(obj) = objects.get(idx) {
+                     match obj {
+                         GdiObj::Brush(c) => dc.brush = Some(*c),
+@@ -564,7 +572,7 @@
+             0x001E => saved.push(dc.clone()),
+             // RESTOREDC -n pops n states (5a6c's diagram: -1 after each box).
+             0x0127 => {
+-                let n = read_i16(data, payload).unwrap_or(-1);
++                let n = read_i16(rec, 0).unwrap_or(-1);
+                 let keep = if n < 0 {
+                     saved.len().saturating_sub(usize::from(n.unsigned_abs()))
+                 } else {
+@@ -575,16 +583,16 @@
+                     saved.truncate(keep);
+                 }
+             }
+-            0x0209 => dc.text_color = colorref(read_u32(data, payload).unwrap_or(0)),
+-            0x012E => dc.text_align = read_u16(data, payload).unwrap_or(0),
++            0x0209 => dc.text_color = colorref(read_u32(rec, 0).unwrap_or(0)),
++            0x012E => dc.text_align = read_u16(rec, 0).unwrap_or(0),
+             // RECTANGLE / ROUNDRECT: bottom, right, top, left; filled with
+             // the brush, outlined with the pen.
+             0x041B | 0x061C => {
+-                let at = if func == 0x061C { payload + 4 } else { payload };
+-                let bottom = read_i16(data, at)? as i32;
+-                let right = read_i16(data, at + 2)? as i32;
+-                let top = read_i16(data, at + 4)? as i32;
+-                let left = read_i16(data, at + 6)? as i32;
++                let at = if func == 0x061C { 4 } else { 0 };
++                let bottom = read_i16(rec, at)? as i32;
++                let right = read_i16(rec, at + 2)? as i32;
++                let top = read_i16(rec, at + 4)? as i32;
++                let left = read_i16(rec, at + 6)? as i32;
+                 let (x0, y0) = map.map(left, top);
+                 let (x1, y1) = map.map(right, bottom);
+                 let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+@@ -601,37 +609,37 @@
+             }
+             // EXTTEXTOUT: y, x, count, options, [rect], string.
+             0x0A32 => {
+-                let y = read_i16(data, payload)?;
+-                let x = read_i16(data, payload + 2)?;
+-                let n = usize::from(read_u16(data, payload + 4)?);
+-                let opts = read_u16(data, payload + 6)?;
+-                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };
+-                if let Some(bytes) = data.get(at..at + n) {
++                let y = read_i16(rec, 0)?;
++                let x = read_i16(rec, 2)?;
++                let n = usize::from(read_u16(rec, 4)?);
++                let opts = read_u16(rec, 6)?;
++                let at = 8 + if opts & 0x0006 != 0 { 8 } else { 0 };
++                if let Some(bytes) = rec.get(at..at + n) {
+                     texts.extend(wmf_text(&dc, &map, x, y, bytes));
+                 }
+             }
+             // TEXTOUT: count, string (word-padded), y, x.
+             0x0521 => {
+-                let n = usize::from(read_u16(data, payload)?);
+-                let at = payload + 2 + n.next_multiple_of(2);
+-                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);
+-                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {
++                let n = usize::from(read_u16(rec, 0)?);
++                let at = 2 + n.next_multiple_of(2);
++                let (y, x) = (read_i16(rec, at)?, read_i16(rec, at + 2)?);
++                if let Some(bytes) = rec.get(2..2 + n) {
+                     texts.extend(wmf_text(&dc, &map, x, y, bytes));
+                 }
+             }
+             0x01F0 => {
+-                let idx = read_u16(data, payload).unwrap_or(0) as usize;
++                let idx = read_u16(rec, 0).unwrap_or(0) as usize;
+                 if let Some(slot) = objects.get_mut(idx) {
+                     *slot = GdiObj::Empty;
+                 }
+             }
+             0x0324 => {
+-                let n = read_u16(data, payload).unwrap_or(0) as usize;
+-                let mut pts = Vec::with_capacity(n);
+-                let mut p = payload + 2;
++                let n = read_u16(rec, 0).unwrap_or(0) as usize;
++                let mut pts = Vec::with_capacity(n.min(MAX_SIDE));
++                let mut p = 2;
+                 for _ in 0..n {
+-                    let x = read_i16(data, p)? as i32;
+-                    let y = read_i16(data, p + 2)? as i32;
++                    let x = read_i16(rec, p)? as i32;
++                    let y = read_i16(rec, p + 2)? as i32;
+                     pts.push(map.map(x, y));
+                     p += 4;
+                 }
+@@ -642,15 +650,15 @@
+             // META_POLYPOLYGON: ring count, each ring's point count, then
+             // every ring's points, filled as one shape (b88ac900's logo).
+             0x0538 => {
+-                let rings = read_u16(data, payload).unwrap_or(0) as usize;
+-                let mut p = payload + 2 + 2 * rings;
+-                let mut subpaths = Vec::with_capacity(rings);
++                let rings = read_u16(rec, 0).unwrap_or(0) as usize;
++                let mut p = 2 + 2 * rings;
++                let mut subpaths = Vec::with_capacity(rings.min(MAX_SIDE));
+                 for r in 0..rings {
+-                    let n = read_u16(data, payload + 2 + 2 * r)? as usize;
+-                    let mut ring = Vec::with_capacity(n);
++                    let n = read_u16(rec, 2 + 2 * r)? as usize;
++                    let mut ring = Vec::with_capacity(n.min(MAX_SIDE));
+                     for _ in 0..n {
+-                        let x = read_i16(data, p)? as i32;
+-                        let y = read_i16(data, p + 2)? as i32;
++                        let x = read_i16(rec, p)? as i32;
++                        let y = read_i16(rec, p + 2)? as i32;
+                         ring.push(map.map(x, y));
+                         p += 4;
+                     }
+@@ -665,12 +673,12 @@
+                     off += size2;
+                     continue;
+                 };
+-                let n = read_u16(data, payload).unwrap_or(0) as usize;
+-                let mut prev: Option<(i32, i32)> = None;
+-                let mut p = payload + 2;
++                let n = read_u16(rec, 0).unwrap_or(0) as usize;
++                let mut prev: Option<(i32, i32)> = None;
++                let mut p = 2;
+                 for _ in 0..n {
+-                    let x = read_i16(data, p)? as i32;
+-                    let y = read_i16(data, p + 2)? as i32;
++                    let x = read_i16(rec, p)? as i32;
++                    let y = read_i16(rec, p + 2)? as i32;
+                     let cur = map.map(x, y);
+                     if let Some(pr) = prev {
+                         canvas.stroke_line(pr.0, pr.1, cur.0, cur.1, pen, map.pen_px(pen_w));
+@@ -1154,8 +1162,97 @@
+         rec(&mut d, 3, &[0, 0, 0, 0, 3, -big, -big, big, -big, 0, big]);
+         rec(&mut d, 14, &[]);
+         assert!(rasterize(&d).is_some());
++    }
++
++    /// A placeable WMF header (0,0 to 100,100) plus raw record bytes: the
++    /// caller writes whatever record stream it needs, including records
++    /// whose declared size lies about the fields they carry.
++    fn raw_wmf(records: &[&[u8]]) -> Vec<u8> {
++        let mut d = vec![0u8; 22];
++        d[0..4].copy_from_slice(&PLACEABLE_KEY);
++        for (i, v) in [0_i16, 0, 100, 100].iter().enumerate() {
++            d[6 + 2 * i..8 + 2 * i].copy_from_slice(&v.to_le_bytes());
++        }
++        d[14..16].copy_from_slice(&1440u16.to_le_bytes());
++        let mut header = vec![0u8; 18];
++        header[0..2].copy_from_slice(&1u16.to_le_bytes());
++        header[2..4].copy_from_slice(&9u16.to_le_bytes());
++        d.extend_from_slice(&header);
++        for record in records {
++            d.extend_from_slice(record);
++        }
++        d
++    }
++
++    /// A record declaring `words` 16-bit words with `payload` following the
++    /// function: bytes past the declared extent belong to whatever the
++    /// caller appends after, as in a crafted file.
++    fn lying_record(words: u32, func: u16, payload: &[u8]) -> Vec<u8> {
++        let mut record = words.to_le_bytes().to_vec();
++        record.extend_from_slice(&func.to_le_bytes());
++        record.extend_from_slice(payload);
++        record
++    }
++
++    /// META_POLYGON claiming more points than its record declares: the
++    /// coordinates it counts live in the bytes that follow, which the outer
++    /// loop must not hand to this record (each crafted record re-reading
++    /// the shared tail is the amplification). The record is refused.
++    #[test]
++    fn wmf_polygon_may_not_read_past_its_declared_record() {
++        let polygon = lying_record(4, 0x0324, &(8_u16).to_le_bytes());
++        let mut tail = Vec::new();
++        for i in 0..8_i16 {
++            tail.extend_from_slice(&(i * 10).to_le_bytes());
++            tail.extend_from_slice(&(i * 10 + 5).to_le_bytes());
++        }
++        let d = raw_wmf(&[&polygon, &tail]);
++        // The default white brush would fill the polygon from the tail's
++        // bytes; the record-local boundary refuses it instead.
++        assert!(render(&d).is_none());
+     }
+ 
++    /// META_EXTTEXTOUT whose string count reaches past its declared record:
++    /// nothing is retained from the next record's bytes. The record is
++    /// skipped, not the image.
++    #[test]
++    fn wmf_exttextout_may_not_retain_the_next_records_bytes() {
++        // Declared 7 words: size, function, y, x, count, options and two
++        // bytes of string — while the count claims twelve.
++        let mut fields = Vec::new();
++        for v in [20_i16, 40, 12, 0] {
++            fields.extend_from_slice(&v.to_le_bytes());
++        }
++        fields.extend_from_slice(b"AB");
++        let record = lying_record(7, 0x0A32, &fields);
++        let d = raw_wmf(&[&record, b"NEXTRECORD!!"]);
++        let (_, _, _, texts) = render(&d).expect("the record is skipped, not the image");
++        assert!(
++            texts.iter().all(|text| !text.text.contains("NEXTRECORD")),
++            "{texts:?}"
++        );
++        assert!(texts.is_empty(), "{texts:?}");
++    }
++
++    /// META_TEXTOUT whose padded string and y/x run past its declared
++    /// record: the placement coordinates are part of the record, so the
++    /// record is refused rather than placed from the next record's bytes.
++    #[test]
++    fn wmf_textout_past_its_declared_record_is_refused() {
++        // Declared 4 words: size, function, count, two string bytes — the
++        // padded string's second half and the y/x that follow it do not fit.
++        let mut fields = Vec::new();
++        fields.extend_from_slice(&(4_u16).to_le_bytes());
++        fields.extend_from_slice(b"ABCD");
++        let record = lying_record(4, 0x0521, &fields);
++        let mut tail = Vec::new();
++        for v in [30_i16, 50] {
++            tail.extend_from_slice(&v.to_le_bytes());
++        }
++        let d = raw_wmf(&[&record, &tail]);
++        assert!(render(&d).is_none());
++    }
++
+     /// WMF record size near u32::MAX: `size * 2` wraps a 32-bit usize
+     /// (wasm32). Natively this documents the guard; the checked_mul keeps
+     /// wasm from looping forever on a wrapped offset.
+--- a/src/legacy_doc.rs
++++ b/src/legacy_doc.rs
+@@ -173,10 +173,12 @@
+ ///
+ /// [`LegacyDocError`] when the bytes are not a compound file, hold no
+ /// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predate
+-/// Word 97, are encrypted, or whose tables point outside their streams
++/// Word 97, are encrypted, whose tables point outside their streams
+ /// (the piece table, the style sheet, the property bin tables and their
+-/// pages, the list tables, the section table) or contradict themselves
+-/// (pieces that do not cover the main story, or that run backwards).
++/// pages, the list tables, the section table), contradict themselves
++/// (pieces that do not cover the main story, or that run backwards), or
++/// claim more text than [`MAX_STORY_CHARS`] characters (thousands of
++/// pieces aliasing one physical range).
+ pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
+     let file = CompoundFile::open(bytes)?;
+     let word = file.stream("WordDocument").ok_or_else(|| {
+@@ -1139,14 +1141,43 @@
+     modifier: CharModifier,
+ }
+ 
++/// The most characters the main story may claim. Each becomes a
++/// [`StoryChar`] held in memory, and aliased pieces can describe far more
++/// logical text than the file holds bytes, so the claim is refused before
++/// a character is allocated. Real Word 97-2003 documents sit far below it
++/// (a 16-million-character story is a ~10,000-page document).
++const MAX_STORY_CHARS: u32 = 16 * 1024 * 1024;
++
+ /// The main story's characters, CP 0 to `ccp_text`.
+ ///
+ /// # Errors
+ ///
+ /// A piece that points past the `WordDocument` stream: a truncated or
+-/// corrupt file, refused rather than converted short.
++/// corrupt file, refused rather than converted short. The story's claim,
++/// too: `ccp_text` and the logical length the pieces add up to (aliased
++/// pieces can describe more text than the file holds) are budgeted
++/// before a character is allocated.
+ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
++    main_text_within(word, pieces, ccp_text, MAX_STORY_CHARS)
++}
++
++/// [`main_text`] under an explicit character budget, so the refusal is
++/// provable with a budget small enough for a test.
++fn main_text_within(
++    word: &[u8],
++    pieces: &[Piece],
++    ccp_text: u32,
++    max_chars: u32,
++) -> Result<Vec<StoryChar>> {
+     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
++    let over = || {
++        LegacyDocError::new(format!(
++            "the main story claims more than {max_chars} characters"
++        ))
++    };
++    if ccp_text > max_chars {
++        return Err(over());
++    }
+     // The pieces run from CP 0 through the main story without a gap, or
+     // the document would come out quietly shorter than it is.
+     // The CPs only ever increase ([MS-DOC] 2.8.35): a piece that runs
+@@ -1172,6 +1203,19 @@
+         return Err(LegacyDocError::new(
+             "the piece table does not cover the main story",
+         ));
++    }
++    // Every character the expansion below materializes, aliased pieces
++    // charged once per logical copy: thousands of pieces may reuse one
++    // physical range, and this refuses that expansion before `out` grows.
++    let mut logical = 0u64;
++    for piece in pieces {
++        if piece.cp_start >= ccp_text {
++            break;
++        }
++        logical += u64::from(piece.cp_end.min(ccp_text) - piece.cp_start);
++        if logical > u64::from(max_chars) {
++            return Err(over());
++        }
+     }
+     let mut out = Vec::new();
+     // A high surrogate waiting for its low half, which may open the next
+@@ -2817,7 +2861,47 @@
+         assert_eq!(word, [b'A', 0xb2, 0x03]);
+     }
+ 
++    /// Thousands of pieces may alias one physical range; each logical
++    /// character becomes a `StoryChar`, so the story's claim (`ccp_text`,
++    /// then the logical length the pieces add up to) is budgeted before
++    /// anything is allocated. `main_text_within` makes the budget small
++    /// enough to prove it; `main_text` runs the same checks at
++    /// [`MAX_STORY_CHARS`].
+     #[test]
++    fn aliased_pieces_past_the_story_budget_are_refused_before_allocation() {
++        let word = b"owned text bytes";
++        let piece = |cp_start: u32, cp_end: u32| Piece {
++            cp_start,
++            cp_end,
++            fc: 0,
++            compressed: true,
++            modifier: CharModifier::default(),
++        };
++        // The FIB's own claim is budgeted first.
++        let error = main_text_within(word, &[piece(0, 3), piece(3, 6)], u32::MAX, 6).unwrap_err();
++        assert_eq!(
++            error.to_string(),
++            "LEGACY_DOC: the main story claims more than 6 characters"
++        );
++        // Pieces whose logical spans add up past the budget — the covering
++        // pair plus an alias reaching back over the same range — are
++        // refused before `out` grows.
++        let overlapping = [piece(0, 3), piece(3, 6), piece(0, 3)];
++        let error = main_text_within(word, &overlapping, 6, 6).unwrap_err();
++        assert_eq!(
++            error.to_string(),
++            "LEGACY_DOC: the main story claims more than 6 characters"
++        );
++        // Within the budget the same aliases stay legitimate: a fast-saved
++        // document reuses physical ranges, and every character reads.
++        let chars = main_text_within(word, &overlapping, 6, 9).unwrap();
++        assert_eq!(chars.len(), 9);
++        assert_eq!(chars.iter().map(|s| s.ch).collect::<String>(), "ownownown");
++        // The default budget still reads a real document.
++        assert!(read(FIXTURE).is_ok());
++    }
++
++    #[test]
+     fn unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters() {
+         let papx = FkpIndex { runs: Vec::new() };
+         let chpx = FkpIndex { runs: Vec::new() };
+--- a/src/markdown/from_docx/drawing.rs
++++ b/src/markdown/from_docx/drawing.rs
+@@ -1393,7 +1393,11 @@
+ }
+ 
+ /// Decode the payload of `![label](drawing:PAYLOAD)`; `dest` is what
+-/// [`at`] returns (`drawing:…`).
++/// [`at`] returns (`drawing:…`). The payload is document text, so the
++/// imported dependency graph is held to the limits capture enforces
++/// ([`MAX_DEPS`], [`MAX_DEP_RELS`]) and refused when its parts form a
++/// cycle: materialization follows dependency edges recursively, and a
++/// cycle would recurse for ever.
+ pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {
+     let encoded = dest
+         .strip_prefix("drawing:")
+@@ -1405,9 +1409,51 @@
+             base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))
+         })
+         .map_err(|e| format!("drawing payload is not base64: {e}"))?;
+-    serde_json::from_slice(&bytes).map_err(|e| format!("drawing payload is not its JSON: {e}"))
++    let drawing: Drawing = serde_json::from_slice(&bytes)
++        .map_err(|e| format!("drawing payload is not its JSON: {e}"))?;
++    check_imported(&drawing)?;
++    Ok(drawing)
+ }
+ 
++/// An imported payload's dependency graph under the limits capture
++/// enforces while it walks a package: a hand-authored payload reaches the
++/// writer without that walk. `0` unvisited, `1` on the current path,
++/// `2` finished — a node met twice on one path is a cycle.
++fn check_imported(drawing: &Drawing) -> Result<(), String> {
++    if drawing.deps.len() > MAX_DEPS {
++        return Err(format!(
++            "drawing payload holds more than {MAX_DEPS} dependent parts"
++        ));
++    }
++    let mut state = vec![0u8; drawing.deps.len()];
++    fn visits(drawing: &Drawing, index: usize, state: &mut [u8]) -> Result<(), String> {
++        match state[index] {
++            1 => return Err("drawing payload's dependent parts form a cycle".to_string()),
++            2 => return Ok(()),
++            _ => {}
++        }
++        state[index] = 1;
++        if drawing.deps[index].rels.len() > MAX_DEP_RELS {
++            return Err(format!(
++                "a drawing payload part holds more than {MAX_DEP_RELS} relationships"
++            ));
++        }
++        for rel in &drawing.deps[index].rels {
++            if let Some(inner) = rel.part
++                && inner < drawing.deps.len()
++            {
++                visits(drawing, inner, state)?;
++            }
++        }
++        state[index] = 2;
++        Ok(())
++    }
++    for index in 0..drawing.deps.len() {
++        visits(drawing, index, state)?;
++    }
++    Ok(())
++}
++
+ pub(crate) fn encode(drawing: &Drawing) -> String {
+     use base64::Engine;
+     let json = serde_json::to_vec(drawing).unwrap_or_default();
+@@ -1886,12 +1932,24 @@
+     used: &mut HashSet<String>,
+     next_doc_pr: &mut u32,
+ ) -> Option<String> {
++    // Parts still being written: an edge back to one is a cycle. decode
++    // rejects cycles at import; this set keeps materialize itself from
++    // recursing for ever whatever it is handed.
++    let mut active: HashSet<usize> = HashSet::new();
+     let mut xml = drawing.xml.clone();
+     for rel in &drawing.rels {
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(index), _) if index < drawing.deps.len() => {
+-                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;
++                let name = dep_part(
++                    drawing,
++                    index,
++                    package,
++                    existing,
++                    used,
++                    next_doc_pr,
++                    &mut active,
++                )?;
+                 (rel.kind.clone(), relative_rel_target(part, &name), false)
+             }
+             (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),
+@@ -1952,7 +2010,8 @@
+ }
+ 
+ /// Write dependent part `index` and its own dependency closure; its new
+-/// part name.
++/// part name. A part already on the writing path is a cycle and refuses
++/// the drawing instead of recursing.
+ fn dep_part(
+     drawing: &Drawing,
+     index: usize,
+@@ -1960,7 +2019,26 @@
+     existing: &HashSet<String>,
+     used: &mut HashSet<String>,
+     next_doc_pr: &mut u32,
++    active: &mut HashSet<usize>,
+ ) -> Option<String> {
++    if !active.insert(index) {
++        return None;
++    }
++    let written = write_dep(drawing, index, package, existing, used, next_doc_pr, active);
++    active.remove(&index);
++    written
++}
++
++/// [`dep_part`]'s body once the part is on the active path.
++fn write_dep(
++    drawing: &Drawing,
++    index: usize,
++    package: &mut PartFs,
++    existing: &HashSet<String>,
++    used: &mut HashSet<String>,
++    next_doc_pr: &mut u32,
++    active: &mut HashSet<usize>,
++) -> Option<String> {
+     let dep = drawing.deps.get(index)?;
+     let name = name_for(&dep.name, existing, used);
+     used.insert(name.clone());
+@@ -1971,7 +2049,8 @@
+         let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {
+             (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),
+             (_, Some(inner), _) if inner < drawing.deps.len() => {
+-                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;
++                let inner_name =
++                    dep_part(drawing, inner, package, existing, used, next_doc_pr, active)?;
+                 (
+                     rel.kind.clone(),
+                     relative_rel_target(&name, &inner_name),
+@@ -2036,7 +2115,161 @@
+         parse_xml(xml.as_bytes()).unwrap()
+     }
+ 
++    /// A payload's dependency graph may not cycle: materialization follows
++    /// the edges recursively, and decode is where an authored payload
++    /// enters. A self-cycle and a two-node cycle are refused there.
+     #[test]
++    fn imported_dependency_cycles_are_refused_at_decode() {
++        let dep = |name: &str, part: Option<usize>| Dep {
++            name: name.into(),
++            kind: "application/octet-stream".into(),
++            b64: "eA==".into(),
++            xml: String::new(),
++            rels: vec![PayRel {
++                sym: "d0.1".into(),
++                kind: "image".into(),
++                u: None,
++                part,
++                raw: None,
++            }],
++        };
++        let drawing = |deps: Vec<Dep>| Drawing {
++            xml: "<w:pict/>".into(),
++            wrap: false,
++            rels: Vec::new(),
++            deps,
++            slot: None,
++            mhash: None,
++            mermaid: None,
++            boxes: Vec::new(),
++        };
++        // A self-cycle: part 0's relationship reaches part 0.
++        let one = drawing(vec![dep("word/media/a.bin", Some(0))]);
++        assert_eq!(
++            decode(&encode(&one)).unwrap_err(),
++            "drawing payload's dependent parts form a cycle"
++        );
++        // A two-node cycle: part 0 reaches part 1, part 1 reaches part 0.
++        let first = dep("word/media/a.bin", Some(1));
++        let second = dep("word/media/b.bin", Some(0));
++        assert_eq!(
++            decode(&encode(&drawing(vec![first, second]))).unwrap_err(),
++            "drawing payload's dependent parts form a cycle"
++        );
++        // The same parts acyclic (1 reaches 0, nothing reaches back) import.
++        let mut leaf = dep("word/media/a.bin", None);
++        leaf.rels.clear();
++        assert!(
++            decode(&encode(&drawing(vec![
++                leaf,
++                dep("word/media/b.bin", Some(0))
++            ])))
++            .is_ok()
++        );
++    }
++
++    /// Over-limit graphs are refused at decode, as capture refuses them in
++    /// flight.
++    #[test]
++    fn imported_payloads_hold_the_capture_limits() {
++        let drawing = Drawing {
++            xml: "<w:pict/>".into(),
++            wrap: false,
++            rels: Vec::new(),
++            deps: (0..=MAX_DEPS)
++                .map(|i| Dep {
++                    name: format!("word/media/d{i}.bin"),
++                    kind: "application/octet-stream".into(),
++                    b64: "eA==".into(),
++                    xml: String::new(),
++                    rels: Vec::new(),
++                })
++                .collect(),
++            slot: None,
++            mhash: None,
++            mermaid: None,
++            boxes: Vec::new(),
++        };
++        assert_eq!(
++            decode(&encode(&drawing)).unwrap_err(),
++            format!("drawing payload holds more than {MAX_DEPS} dependent parts")
++        );
++        let mut one = drawing;
++        one.deps = vec![Dep {
++            name: "word/media/a.bin".into(),
++            kind: "application/octet-stream".into(),
++            b64: "eA==".into(),
++            xml: String::new(),
++            rels: (0..=MAX_DEP_RELS)
++                .map(|i| PayRel {
++                    sym: format!("d0.{}", i + 1),
++                    kind: "image".into(),
++                    u: Some(format!("https://a.example/{i}")),
++                    part: None,
++                    raw: None,
++                })
++                .collect(),
++        }];
++        assert_eq!(
++            decode(&encode(&one)).unwrap_err(),
++            format!("a drawing payload part holds more than {MAX_DEP_RELS} relationships")
++        );
++    }
++
++    /// materialize itself refuses a cycle even when a caller hands it a
++    /// drawing that never went through decode: the active-path check, not
++    /// the stack, ends the recursion.
++    #[test]
++    fn materialize_refuses_cyclic_dependencies_without_recursing() {
++        let cyclic = Drawing {
++            xml: "<w:pict/>".into(),
++            wrap: false,
++            rels: vec![PayRel {
++                sym: "r1".into(),
++                kind: "image".into(),
++                u: None,
++                part: Some(0),
++                raw: None,
++            }],
++            deps: vec![Dep {
++                name: "word/media/a.bin".into(),
++                kind: "application/octet-stream".into(),
++                b64: "eA==".into(),
++                xml: String::new(),
++                rels: vec![PayRel {
++                    sym: "d0.1".into(),
++                    kind: "image".into(),
++                    u: None,
++                    part: Some(0),
++                    raw: None,
++                }],
++            }],
++            slot: None,
++            mhash: None,
++            mermaid: None,
++            boxes: Vec::new(),
++        };
++        let mut package = PartFs::open(include_bytes!(
++            "../../../tests/fixtures/redline/original.docx"
++        ))
++        .unwrap();
++        let existing: HashSet<String> = package.parts().into_iter().collect();
++        let mut used = HashSet::new();
++        let mut next = 0_u32;
++        assert_eq!(
++            materialize(
++                &cyclic,
++                &mut package,
++                "word/document.xml",
++                &existing,
++                &mut used,
++                &mut next
++            ),
++            None
++        );
++    }
++
++    #[test]
+     fn xml_round_trips_verbatim() {
+         let xml = r#"<wp:anchor xmlns:wp="wp" wp14:anchorId="AB"><wp:docPr id="2" name="P"/><x:y a="1&quot;2"><t>x &amp; y</t></x:y></wp:anchor>"#;
+         let e = element(xml);
+--- a/tests/scrub_and_redact.rs
++++ b/tests/scrub_and_redact.rs
+@@ -449,7 +449,129 @@
+     assert_eq!(
+         jubarte::validate::validate(&out).unwrap().len(),
+         before.len()
++    );
++}
++
++/// A supplier moves the property parts off `docProps/`: the package's
++/// relationships and content types still name them, and scrub follows
++/// those, not the conventional paths. Identifying values must not survive
++/// at a relocated part while scrub reports success.
++#[test]
++fn relocated_property_parts_are_scrubbed_through_their_relationships() {
++    let core_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"><dc:title>Deal memo</dc:title><dc:creator>Jane Secret</dc:creator><cp:lastModifiedBy>Jane Secret</cp:lastModifiedBy><cp:revision>7</cp:revision><dcterms:created>2026-01-01T00:00:00Z</dcterms:created><dcterms:modified>2026-01-02T00:00:00Z</dcterms:modified></cp:coreProperties>"#;
++    let app_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Microsoft Office Word</Application><Manager>Jane Secret</Manager><Company>Secret Corp</Company></Properties>"#;
++    let custom_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Client"><vt:lpwstr>Secret Corp</vt:lpwstr></property></Properties>"#;
++    let mut pkg = PartFs::open(&docx(&para("Kept text."))).unwrap();
++    for (name, content_type, rel_type, xml) in [
++        (
++            "metadata/core.xml",
++            "application/vnd.openxmlformats-package.core-properties+xml",
++            "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties",
++            core_xml,
++        ),
++        (
++            "metadata/app.xml",
++            "application/vnd.openxmlformats-officedocument.extended-properties+xml",
++            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties",
++            app_xml,
++        ),
++        (
++            "metadata/custom.xml",
++            "application/vnd.openxmlformats-officedocument.custom-properties+xml",
++            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties",
++            custom_xml,
++        ),
++    ] {
++        pkg.set_part(name, xml.as_bytes().to_vec());
++        pkg.add_content_type_override(&format!("/{name}"), content_type);
++        pkg.add_package_relationship(rel_type, name);
++    }
++    let source = pkg.to_zip().unwrap();
++    let out = scrub(&source, &ScrubOptions::default()).unwrap();
++    let bytes = all_bytes(&out);
++    for gone in ["Jane Secret", "Secret Corp", "<cp:revision>"] {
++        assert!(
++            !contains(&bytes, gone),
++            "{gone:?} survives the scrub at its relocated part"
++        );
++    }
++    let names = part_names(&out);
++    assert!(
++        !names.iter().any(|n| n == "metadata/custom.xml"),
++        "the relocated custom part survives: {names:?}"
++    );
++    // What the option keeps stays, at the part the relationship names.
++    let core = part_string(&out, "metadata/core.xml").unwrap();
++    assert!(core.contains("Deal memo"), "{core}");
++    let app = part_string(&out, "metadata/app.xml").unwrap();
++    assert!(app.contains("Microsoft Office Word"), "{app}");
++    // The removed part leaves neither a relationship nor a content type.
++    let rels = part_string(&out, "_rels/.rels").unwrap();
++    assert!(!rels.contains("custom-properties"), "{rels}");
++    let types = part_string(&out, "[Content_Types].xml").unwrap();
++    assert!(!types.contains("/metadata/custom.xml"), "{types}");
++}
++
++/// A BOM-marked UTF-16 XML part is read through the same decode as
++/// admission: the copy of the text it holds is a leak the redaction
++/// check refuses on, not an invisible NUL-interleaved one.
++#[test]
++fn a_utf16_auxiliary_xml_copy_of_the_text_blocks_the_redaction() {
++    fn utf16(text: &str, big_endian: bool) -> Vec<u8> {
++        let units: Vec<u16> = text.encode_utf16().collect();
++        let mut bytes = if big_endian {
++            vec![0xFE, 0xFF]
++        } else {
++            vec![0xFF, 0xFE]
++        };
++        bytes.extend(units.iter().flat_map(|unit| {
++            if big_endian {
++                unit.to_be_bytes()
++            } else {
++                unit.to_le_bytes()
++            }
++        }));
++        bytes
++    }
++    let secret = "Jane Secret";
++    let xml = format!(
++        r#"<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>{secret}</dc:creator></metadata>"#
++    );
++    let mut pkg = PartFs::open(&docx(&para("Contact Jane Secret now."))).unwrap();
++    pkg.set_part("customXml/item1.xml", utf16(&xml, false));
++    pkg.set_part("customXml/item2.xml", utf16(&xml, true));
++    for part in ["/customXml/item1.xml", "/customXml/item2.xml"] {
++        pkg.add_content_type_override(part, "application/xml");
++    }
++    let source = pkg.to_zip().unwrap();
++    // The standalone scan names the encoded copies beside the visible one.
++    let mut found = leaks(&source, secret);
++    found.sort();
++    assert_eq!(
++        found,
++        [
++            "customXml/item1.xml",
++            "customXml/item2.xml",
++            "word/document.xml"
++        ]
+     );
++    // So the redaction of the visible copy alone is refused, not
++    // certified while the encoded copies go out.
++    let e = apply_plan(
++        &source,
++        &plan(r#"{"kind":"redact","paragraph":"p0","find":"Jane Secret"}"#),
++    )
++    .unwrap_err();
++    assert_eq!(e.code, "REDACTION_LEAK", "{e:?}");
++    assert!(e.message.contains("customXml/item1.xml"), "{}", e.message);
++    assert!(!e.message.contains("Jane Secret"), "{}", e.message);
++    // Without the encoded copies the same redaction still succeeds.
++    let out = apply_plan(
++        &docx(&para("Contact Jane Secret now.")),
++        &plan(r#"{"kind":"redact","paragraph":"p0","find":"Jane Secret"}"#),
++    )
++    .unwrap();
++    assert!(!contains(&all_bytes(&out.clean), "Jane Secret"));
+ }
+ 
+ #[test]
+```

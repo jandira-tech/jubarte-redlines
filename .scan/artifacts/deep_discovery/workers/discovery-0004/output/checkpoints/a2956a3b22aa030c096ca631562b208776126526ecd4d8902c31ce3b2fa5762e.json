@@ -1,0 +1,62 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0004-npm-output-race",
+        "reason": "Awaiting parent validation of baseline candidate, attacker boundary, exact source and existing symlink behavior.",
+        "candidate": {
+          "title": "npm CLI output preflight can race with symlink replacement",
+          "locations": [
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 78,
+              "endLine": 82
+            },
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 108,
+              "endLine": 113
+            }
+          ],
+          "source": "baseline",
+          "evidence": "Baseline reports ensureWritable uses fs.existsSync before later fs.writeFileSync(file,data), without atomic no-clobber or symlink defense.",
+          "counterevidence": "Requires attacker write access to chosen output directory; native publication uses a separate hardened path. Reportability and exact wrappers not yet parent-validated.",
+          "additionalEvidence": {
+            "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+            "startLine": 420,
+            "endLine": 423,
+            "code": "const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+            "explanation": "Baseline additionally found predictable temporary pathname opened for truncating write without exclusive/no-follow flags; attacker with write access to plan directory can preplant a symlink."
+          },
+          "pythonEvidence": {
+            "locations": [
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 101,
+                "endLine": 103
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 126,
+                "endLine": 133
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 407,
+                "endLine": 411
+              }
+            ],
+            "explanation": "Baseline reports the same exists-check then write_bytes publication and predictable PID partial staging, without exclusive/no-follow creation. MCP instead uses native OutputRoot."
+          }
+        },
+        "id": "discovery-0004-npm-output-race"
+      }
+    ]
+  }
+}

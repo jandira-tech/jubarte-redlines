@@ -1,0 +1,434 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "unbounded-html-table-expansion",
+      "title": "Rendering an HTML altChunk can exhaust host memory through colspan",
+      "summary": "Rendering a DOCX whose HTML altChunk contains a very large `colspan` builds one XML grid column per requested span. A tiny input can request billions of columns and exhaust the rendering process before layout; archive and XML input budgets do not bound this generated output.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An untrusted document author can force process-wide CPU and memory exhaustion through ordinary PDF/PNG/report rendering, including an embedding Python host. Delivery requires a caller to render the document; no remote service deployment or broader compromise is established. Process memory/CPU limits recommended by SECURITY.md reduce the blast radius.",
+        "changeConditions": "A shared rendering service accepting arbitrary uploads would raise likelihood; an enforced worker memory/time/output bound would reduce impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace proves unbounded decimal span parsing and the exact proportional output loop after admission. No exploit or runtime workload was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption during HTML-to-OOXML expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render",
+          "label": "Rendering expands the embedded chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "// Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The document author selects an internal HTML relationship; its bytes are expanded before DOM/layout and without an output budget."
+        },
+        {
+          "id": "alt-html",
+          "label": "Chunk bytes flow into the HTML builder",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 38,
+          "role": "propagation",
+          "code": "let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();",
+          "explanation": "The referenced embedded part is decoded as HTML/MHT and converted by html_to_wml; no semantic table-span limit is applied."
+        },
+        {
+          "id": "alt-span",
+          "label": "Untrusted colspan has no upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control",
+          "code": "self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Any positive usize from an HTML cell is retained as span; only invalid and zero values are normalized."
+        },
+        {
+          "id": "alt-cols",
+          "label": "Spans determine the generated column count",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "role": "propagation",
+          "code": "let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "The largest row sum directly becomes cols, independently of source byte length; one cell can set it to one billion."
+        },
+        {
+          "id": "alt-loop",
+          "label": "One XML allocation append per attacker-requested column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 492,
+          "role": "sink",
+          "code": "s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }\n        s.push_str(\"</w:tblGrid>\");",
+          "explanation": "The unbounded loop appends a full gridCol string for every requested column. A billion-column span attempts tens of gigabytes of XML before any later layout guard."
+        }
+      ],
+      "rootCause": {
+        "summary": "The HTML cell parser accepts an arbitrary positive `usize` as `colspan`. `end_table` sums those values into `cols` and writes one `w:gridCol` per column into an in-memory String. The initial package admission occurs before this HTML transformation and controls original ZIP/XML bytes, while generated XML and semantic table dimensions are unbounded.",
+        "evidenceRefs": [
+          "alt-render",
+          "alt-html",
+          "alt-span",
+          "alt-cols",
+          "alt-loop"
+        ]
+      },
+      "remediation": "Reject excessive per-cell spans and cumulative table-column counts with checked arithmetic before expansion, and enforce a generated-XML byte budget during altChunk conversion. Return a structured conversion refusal instead of attempting the output.",
+      "validation": {
+        "counterEvidence": [
+          "Archive admission bounds compressed/inflated original bytes; this does not limit post-admission expansion.",
+          "SECURITY.md recommends separate process CPU/memory limits; this can contain a worker but does not reject the input in the library.",
+          "External relationships are not required; the payload resides in the DOCX."
+        ],
+        "evidenceRefs": [
+          "alt-render",
+          "alt-html",
+          "alt-span",
+          "alt-cols",
+          "alt-loop"
+        ],
+        "limitations": [
+          "Static validation only; no malicious document was generated or rendered.",
+          "Deployment exposure and host resource limits are unknown."
+        ],
+        "method": "independent parent static source trace",
+        "status": "validated",
+        "summary": "Parent checked the chunk loader, HTML token dispatch, span parsing and table closure. A small internal HTML table with `colspan=\"1000000000\"` reaches the proportional append loop after package admission. Existing tests normalize zero/invalid spans but impose no positive upper bound."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Caller-controlled DOCX -> with_layout -> internal altChunk bytes -> html_to_wml -> Builder::start colspan -> end_table cols -> String grid-column append loop."
+        },
+        "evidenceRefs": [
+          "alt-render",
+          "alt-span",
+          "alt-loop"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "Potential process termination through unbounded allocation, including the host embedding the library."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Source supports ordinary rendering reachability; deployment frequency and process isolation are unknown."
+        },
+        "reachability": {
+          "summary": "An attacker controls a document submitted to a caller of the public conversion APIs. Rendering requires no special flag for altChunk expansion. The resulting exhaustion affects the renderer process; no remote endpoint is assumed.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "DOCX rendering APIs (PDF, PNG and render reports)",
+          "outcome": "CPU and memory exhaustion before document layout.",
+          "preconditions": [
+            "A consumer renders the attacker-supplied DOCX."
+          ]
+        },
+        "summary": "Supply a small DOCX with an internal HTML altChunk containing a table cell with a very large positive colspan, then have a caller request PDF, PNG or a render report."
+      },
+      "remediationTests": [
+        "Reject a very large positive colspan before emitting grid columns.",
+        "Reject cumulative row-span overflow and excessive summed columns.",
+        "Verify normal small spans and zero/invalid-span fallback remain correct.",
+        "Verify rendering a DOCX carrying the oversized altChunk returns a bounded error."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0028-altchunk-colspan",
+        "workerLabel": "discovery-0028",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0028-altchunk-colspan",
+            "title": "HTML altChunk colspan expands without a column bound",
+            "producer": "baseline",
+            "originalEvidence": {
+              "locations": [
+                "src/convert/altchunk.rs:469-475",
+                "src/convert/altchunk.rs:489-490",
+                "src/convert/altchunk.rs:562-566",
+                "src/convert/mod.rs:789-798"
+              ],
+              "description": "Baseline reports unbounded usize colspan from HTML altChunk is summed into table columns and emitted one gridCol per span. Small embedded HTML can request a billion columns; parent validation pending."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "xml-admission-extension-bypass",
+      "title": "Renaming a related XML part can crash DOCX rendering",
+      "summary": "A document can place deeply nested font-table XML in `word/fontTable.bin` and select it with an internal fontTable relationship. Admission applies XML depth and attribute policy only to `.xml`/`.rels` filenames (with an exception for the main part), while the font-table consumer parses the renamed part recursively without checking the policy. Rendering can therefore exhaust the process stack despite passing admission.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An untrusted document author can terminate a rendering process, including its native library host, by controlling an internal auxiliary part and its relationship. The input can be small and needs no raised limits. A consumer must render the document; remote exposure is not established and process isolation limits collateral effects.",
+        "changeConditions": "Shared multi-user rendering without process isolation would raise likelihood; checked parsing at each consumer would eliminate the bypass."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static review confirms the filename-based admission branch, explicit nonstandard auxiliary part resolution and unchecked recursive parse. Crash depth is platform/stack dependent; no exploit was run."
+      },
+      "taxonomy": {
+        "category": "XML policy bypass through inconsistent part classification",
+        "cwe": [
+          "CWE-20",
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 551,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 78,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "role": "propagation"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 662,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "aux-admission",
+          "label": "Filename selects whether XML policy runs",
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 551,
+          "role": "root_control",
+          "code": "let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?",
+          "explanation": "A `.bin` auxiliary XML entry is inflated and byte-counted but never passed to check_xml_depth, which also enforces tag policy."
+        },
+        {
+          "id": "aux-main-only",
+          "label": "Only the main part gets a semantic fallback scan",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "role": "expected_control",
+          "code": "let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;",
+          "explanation": "Admission explicitly repairs the extension mismatch for the main document, but does not inspect semantic auxiliary XML targets."
+        },
+        {
+          "id": "aux-route",
+          "label": "Relationship target selects a freely named auxiliary part",
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "role": "user_input",
+          "code": "pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())",
+          "explanation": "An internal fontTable relationship can select `fontTable.bin`; there is no filename suffix restriction at the consuming boundary."
+        },
+        {
+          "id": "aux-load",
+          "label": "Font-table consumer uses the unchecked DOM parser",
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 78,
+          "role": "propagation",
+          "code": "fn font_table_part(pkg: &PartFs) -> String {\n    super::main_rel_part(pkg, \"fontTable\", \"word/fontTable.xml\")\n}\n\npub(crate) fn load_font_table(pkg: &PartFs) -> FontTable {\n    pkg.part_string(&font_table_part(pkg))\n        .map(|xml| parse_font_table_xml(&xml))\n        .unwrap_or_default()\n}\n\npub(crate) fn parse_font_table_xml(xml: &str) -> FontTable {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "The related part is converted to text and parsed without try_parse_xdocument or an active InputLimits check."
+        },
+        {
+          "id": "aux-recursion",
+          "label": "Nested input recursively consumes the native stack",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "role": "sink",
+          "code": "if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Unchecked parsing recurses once per nested element with no depth bound, so an auxiliary part bypassing admission can exhaust the host stack."
+        },
+        {
+          "id": "aux-render-call",
+          "label": "Ordinary rendering loads the font table",
+          "path": "src/convert/mod.rs",
+          "startLine": 806,
+          "endLine": 807,
+          "role": "entrypoint",
+          "code": "let table = font_table::load_font_table(&pkg);\n    let mut embedded = font_table::load_embedded_fonts(&pkg, &table);",
+          "explanation": "The shared layout pipeline always reaches this consumer after package admission and normalization, without a feature flag."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission identifies XML by filename, whereas rendering identifies the font table by an internal relationship type. The latter permits arbitrary part names. A non-XML-suffixed font-table target therefore receives only byte limits, then `load_font_table` sends it into the deliberately unchecked recursive DOM parser. The main-part fallback scan does not cover this auxiliary consumer.",
+        "evidenceRefs": [
+          "aux-route",
+          "aux-admission",
+          "aux-render-call",
+          "aux-load",
+          "aux-recursion",
+          "aux-main-only"
+        ]
+      },
+      "remediation": "Enforce active XML limits at every XML consumer regardless of part extension, or have admission discover all semantically XML related/content-typed parts. Pass limits through the font-table loader and use checked parsing before DOM construction.",
+      "validation": {
+        "counterEvidence": [
+          "Normal `.xml` font tables are policy-checked at admission.",
+          "The unchecked DOM API is intentionally documented for trusted/prevalidated input; the flaw is the package-level bypass reaching it.",
+          "Original package byte/entry and local-header controls still apply and do not prevent a small, deeply nested auxiliary XML payload."
+        ],
+        "evidenceRefs": [
+          "aux-admission",
+          "aux-main-only",
+          "aux-route",
+          "aux-load",
+          "aux-recursion",
+          "aux-render-call"
+        ],
+        "limitations": [
+          "No runtime crash was induced; exact exhaustion depth depends on target stack size.",
+          "Sibling auxiliary consumers are being reconciled; this finding establishes the font-table path."
+        ],
+        "method": "independent parent static source trace",
+        "status": "validated",
+        "summary": "Parent verified the admission branch and main-only exception, related-part resolver and font-table load, strict-normalization filename check, bounded PartFs byte loader and unchecked parser recursion. None supplies a depth check for a `.bin` font-table target."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX ZIP/relationships -> suffix-based admission skips auxiliary XML policy -> main_rel_part(fontTable) resolves `.bin` -> load_font_table -> parse_xdocument -> recursive parse_element."
+        },
+        "evidenceRefs": [
+          "aux-route",
+          "aux-admission",
+          "aux-load",
+          "aux-recursion"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "Native process stack exhaustion can terminate the embedding host."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Ordinary conversion is reachable from document input, but actual deployment isolation is unknown."
+        },
+        "reachability": {
+          "summary": "A document author controls the related part name, relationship and contents. A caller rendering the package crosses into the native recursive parser; no privileged caller setting or remote-service assumption is needed.",
+          "attacker": "Untrusted DOCX author",
+          "entrypoint": "Public DOCX conversion/layout APIs",
+          "outcome": "Renderer or embedding process termination through stack exhaustion."
+        },
+        "summary": "Provide a DOCX whose internal fontTable relationship points to a non-XML-suffixed part containing deeply nested XML, then request rendering."
+      },
+      "remediationTests": [
+        "Reject an over-depth font table targeted under a `.bin` name through an internal relationship.",
+        "Apply attribute/tag limits to renamed auxiliary XML parts.",
+        "Keep valid nonstandard auxiliary names supported while enforcing the same XML policy.",
+        "Exercise equivalent settings, styles, numbering and story consumers for filename-independent policy enforcement."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0028-aux-xml",
+        "workerLabel": "discovery-0028",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0028-aux-xml",
+            "title": "Renamed auxiliary XML bypasses admission before recursive font-table parsing",
+            "producer": "baseline",
+            "originalEvidence": {
+              "locations": [
+                "src/admission.rs:533-545",
+                "src/admission.rs:558-570",
+                "src/convert/mod.rs:806",
+                "src/convert/mod.rs:21310-21319",
+                "src/convert/font_table.rs:66-78",
+                "src/xmllinq/parse.rs:660-662",
+                "src/opc/mod.rs:280-385"
+              ],
+              "description": "Baseline reports internal /fontTable relationship may target fontTable.bin. Admission validates depth/tag policy by .xml/.rels filename (only main part has fallback); font_table loader resolves arbitrary target and unchecked recursive DOM parse permits deeply nested input to exhaust stack."
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "altchunk-expansion",
+        "label": "DOCX embedded HTML altChunk table expansion",
+        "disposition": "reported",
+        "notes": "Parent source-validated unbounded colspan expansion, src/convert/altchunk.rs:469-490,562-566 and src/convert/mod.rs:789-798. Original archive/XML admission does not bound generated output.",
+        "receiptRefs": []
+      },
+      {
+        "id": "auxiliary-xml-policy",
+        "label": "Semantic auxiliary XML consumers versus admission classification",
+        "disposition": "reported",
+        "notes": "Parent validated nonstandard font-table target bypass. Normal XML suffixes and main-document fallback are controlled; sibling consumers pending reconciliation.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0028-wmf-record",
+        "candidateId": "discovery-0028-wmf-record",
+        "reason": "Awaiting investigator source payload and independent parent validation.",
+        "paths": [
+          "src/convert/metafile.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0028-wmf-record",
+          "title": "WMF polygon record ignores record end for attacker count",
+          "producer": "conversion",
+          "originalEvidence": {
+            "path": "src/convert/metafile.rs",
+            "description": "Investigator lead: global WMF record-size validation is not used to bound polygon/text reads; short records each claim 65,535 points and reread following file bytes, amplifying CPU. Exact source trace pending.",
+            "additional": "META_EXTTEXTOUT src/convert/metafile.rs:604-612 takes n=65535 from whole data rather than record-local end; repeated short records each retain overlapping 65535-byte strings in texts. META_POLYGON similarly amplifies CPU."
+          }
+        }
+      }
+    ],
+    "openQuestions": [
+      "Remaining authorized source is under review; candidate impact and controls require parent validation."
+    ]
+  }
+}

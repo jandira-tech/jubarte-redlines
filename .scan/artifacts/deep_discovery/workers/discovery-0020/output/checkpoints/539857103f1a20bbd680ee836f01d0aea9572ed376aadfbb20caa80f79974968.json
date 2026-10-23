@@ -1,0 +1,1145 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Standard offline static security scan of current /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0020; three subagents.",
+    "runtimeStatus": "Application code and tests are not executed during this static audit.",
+    "validationMode": "Read-only offline source inspection with independent baseline, architecture review and focused bindings investigator.",
+    "context": "userContext is null; no supplied threat model or knowledge base. Generated model incorporates independent architecture review; material resource consumers verified against current source. Root SECURITY.md applies; no nested policies found."
+  },
+  "threatModel": {
+    "summary": "Jubarte is an in-process Rust DOCX comparison, inspection, editing, revision-resolution and rendering engine, exposed through a native CLI, PyO3 Python bindings, wasm-bindgen Node/browser bindings, and an optional Python MCP server over stdio. Documents flow from caller-owned bytes or local files through ZIP/OPC admission, XML/DOM processing, comparison/edit/layout components, then back to bytes, stdout or explicitly selected output paths. Python and WASM reuse the root engine with default features disabled, excluding its self-updater (README.md:14-18; src/lib.rs:96-165; jubarte-python/Cargo.toml:35-39; jubarte-wasm/Cargo.toml:18-32). MCP grants a persistent filesystem capability rooted at --root, defaulting to startup cwd (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381). Native rendering independently discovers host fonts and maintains a font index outside that document-root capability (src/convert/mod.rs:806-857; src/convert/font.rs:2637-2652,3100-3106,3213-3227). Native self-update and maintainer release/publication are conditional privileged workflows (src/update.rs:186-257; scripts/release.sh:875-919; .github/workflows/release.yml:230-269).",
+    "assets": [
+      "Confidential document text, comments, revisions, embedded media/fonts and metadata; emitted Markdown, snapshots, patches, reports, PDFs and PNGs can contain that content. MCP reads return document content; edit/render writes named artifacts (jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,185-217,234-255).",
+      "Integrity of source snapshots and authorized clean/tracked output. V1 plans optionally bind source_sha256; V2 requires matching source.sha256. Native CLI rechecks named source against preparation bytes (src/edit.rs:99-106,2073-2105; src/edit/v2_apply.rs:84-99; src/bin/jubarte.rs:1642-1655).",
+      "Host CPU, memory and filesystem authority exercised by parsers, image/font decoders and publication. Default admission permits 64 MiB compressed/per part, 256 MiB total inflated, 10,000 entries and depth 256; comparison permits 512 MiB compressed/per part and 2 GiB total (src/admission.rs:63-99).",
+      "MCP root document/output files; native host fonts, user font folders and font-index.tsv are separately authorized resources (src/publication.rs:146-199; src/convert/font.rs:2281-2315,2637-2652,3100-3106).",
+      "Installed native executable and package integrity. Updater currently trusts release-adjacent SHA256SUMS.txt; compiled signing keys are empty and first-signed-release is None (src/update.rs:25-48,198-210,245-257).",
+      "Distinct publication credentials: CI ZIPSIGN_PRIVATE_KEY, release-job GITHUB_TOKEN, operator Cargo credentials, npm login/NPM_OTP and UV_PUBLISH_TOKEN (.github/workflows/release.yml:234-235,261-290,356-369; scripts/release.sh:374-380,919,934-956,1069)."
+    ],
+    "trustBoundaries": [
+      "Untrusted DOCX crosses ZIP/OPC admission: pre-index budgets, ZIP structural/canonical-name checks, encryption/compression refusal, bounded inflation and XML policy (src/admission.rs:439-569). OPC independently checks archive defects, bounded reads and case-insensitive duplicates (src/opc/archive.rs:34-51; src/opc/mod.rs:282-350,497-524). Rendering admits before normalization/layout (src/convert/mod.rs:769-798).",
+      "Raw XML parse_xdocument intentionally skips input policy; try_parse_xdocument_with_limits validates first. Callers of raw API own prior admission (src/xmllinq/parse.rs:88-135). Tag defaults are 1,024 attributes, 1,024-byte names, 64 MiB values and 128 MiB tags (src/xmllinq/parse.rs:48-65).",
+      "Edit plans cross into mutation using schema/source checks, exact anchors and preparation gates; author labels are not authenticated identities. V1 rejects macro-bearing/signed packages and checks optional source hash; V2 rejects mismatching source hash before operation resolution (src/edit.rs:97-108,2073-2105; src/edit/v2_apply.rs:84-111).",
+      "Native CLI uses ambient operator filesystem authority. publish_paths holds parents, stages/verifies bytes and installs via overwrite rename or no-clobber hard link, atomic per file rather than per set (src/publication.rs:168-174,203-225,419-505,534-570). Python/Node ordinary CLI path writes have different controls (jubarte-python/python/jubarte_redlines/__main__.py:101-133; jubarte-wasm/cli/bin/jubarte-redlines.mjs:76-80,106-111).",
+      "MCP client arguments cross a server-granted directory capability. Startup resolves --root once; diagnostics precede capability-relative actual reads/writes. Portable relative-name checks, overwrite opt-in and output-symlink refusal apply (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199,228-273,431-463). All connected stdio clients receive registered tools; annotations are hints rather than per-user authorization (mcp_server.py:54-55,126-159,258-277, relative to jubarte-python/python/jubarte_redlines).",
+      "Native Markdown image loading separately grants --resource-path, otherwise Markdown parent or '.'. Percent decoding precedes scheme/containment checks and capability reads; operator chooses trusted root (src/bin/jubarte.rs:2811-2877,2936-2943). Python/Node reject resource_path; byte conversion defaults to no image callback (jubarte-python/python/jubarte_redlines/__main__.py:1057-1064; jubarte-wasm/cli/bin/jubarte-redlines.mjs:724-727; src/markdown/mod.rs:159-198,226).",
+      "Native font discovery reads system/Word, macOS Office CloudFonts/<family>, and configured/per-user fonts. Cloud family must be a single normal component. Index-named files are read after length/mtime checks; ambient cache persistence is independent of MCP root (src/convert/mod.rs:806-857; src/convert/font.rs:2225-2236,2258-2315,2637-2652,2855-2862,3154-3188,3213-3227).",
+      "Maintainer debug intentionally uses open_archive_unchecked after budget preflight, reports defects and continues, unlike ordinary refusal paths (src/debug.rs:206-222; src/opc/archive.rs:15-19).",
+      "Native updater downloads fixed repository/platform release assets, checks adjacent checksum and extracted regular-file type, and requires terminal confirmation or --yes; --check does not install. Empty signing keys disable required signatures (src/update.rs:25-48,91-108,120-125,198-257,299-320).",
+      "Tag CI separates read-only build from contents:write release. Signing-step secret is decoded below RUNNER_TEMP/zipsign.<random>/keyN and cleaned on exit. Separate GitHub token publishes dist/*; operator script independently publishes Cargo, npm engine/CLI and PyPI (.github/workflows/release.yml:15-21,54-55,230-290,303-321,356-369; scripts/release.sh:875-919,934-956,1039-1069).",
+      "Contributor pull_request jobs check out contributor code onto self-hosted runners also selected by main pushes; their local action configures a private mbx cache endpoint and documents persistent checkout/store use (.github/workflows/ci.yml:13-16,34-48,72-99; .github/actions/mbx/action.yml:8-12,20-38). External approval and runner isolation controls remain unknown."
+    ],
+    "attackerCapabilities": [
+      "Input suppliers control DOCX ZIP/XML, embedded fonts/images, legacy DOC, Markdown and caller-accepted edit plans, without automatically controlling trusted environment, arbitrary local paths, credentials or releases (SECURITY.md:38-74; src/admission.rs:439-569; src/legacy_doc.rs:13-50).",
+      "MCP clients select in-root documents/operations, receive derived content and request overwrite=true in-root writes; those intended grants are not additional compromise (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,131-217,258-277).",
+      "CLI/library callers already control invocation and explicitly supplied paths under their OS account; escalation requires authority beyond these grants (src/publication.rs:203-225; src/bin/jubarte.rs:2851-2866). A separate local principal may control entries in a shared output/plan directory.",
+      "Release/registry/signing compromise is separate authority; checksum-only updates do not authenticate against a compiled key, but document control does not imply release control (src/update.rs:44-48,245-257; docs/SELF_UPDATE.md:59-80).",
+      "Public-service/tenant effects require deployment separation not established by inspected source; no public HTTP service was established (jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; SECURITY.md:84-85).",
+      "PR authors control checked-out build scripts/tests/local actions for permitted CI jobs; GitHub workflow approval policy and actual runner lifecycle are external prerequisites (.github/workflows/ci.yml:13-48)."
+    ],
+    "securityObjectives": [
+      "Bound untrusted package processing and reject ambiguous archive names/interpretations before higher-level processing (src/admission.rs:439-569; src/opc/archive.rs:34-51).",
+      "Keep external relationships from fetching network resources and Markdown image reads within explicitly granted resource roots (SECURITY.md:70-74; src/convert/mod.rs:789-793,21285-21298; src/bin/jubarte.rs:2811-2877).",
+      "Bind prepared edits to intended immutable source and refuse before publication; caller author labels are not authentication (src/edit.rs:99-108,2073-2105; src/edit/v2_apply.rs:84-111; src/bin/jubarte.rs:1642-1655).",
+      "Maintain MCP I/O confinement through actual directory handles and no-clobber unless replacement is requested (src/publication.rs:146-199,431-463,558-570).",
+      "Preserve output integrity and honestly report partial commits/durability uncertainty; publication is per-file (src/publication.rs:110-143,168-174).",
+      "Restrict executable replacement and registry publication to explicit operator workflows, matching platforms and verification controls; protect each signing/publication credential independently (src/update.rs:91-125,198-257,299-320; .github/workflows/release.yml:261-290,356-369; scripts/release.sh:875-919,934-956,1069).",
+      "Keep untrusted PR execution separate from persistent trusted runner state/private services (.github/actions/mbx/action.yml:8-12,27-38)."
+    ],
+    "assumptions": [
+      "Read-only architecture/static inspection; no application execution, external-service checks or runtime reproduction. Input budgets are not a proof against all DoS; hosts remain responsible for process limits (SECURITY.md:70-74).",
+      "MCP says tools only touch files under root (jubarte-python/python/jubarte_redlines/mcp_server.py:7-9,67-68), but render calls native installed-font discovery and index persistence outside that root (same file:234-236; src/convert/mod.rs:857; src/convert/font.rs:2637-2652,3100-3106,3183-3188,3213-3227). Tool document/output I/O is confined; broad documentation guarantee is narrower in implementation. No exploit established merely from font use.",
+      "Default font index is parent(JUBARTE_FONT_DIR)/font-index.tsv when overridden; otherwise macOS $HOME/Library/Application Support/jubarte/font-index.tsv, Linux ${XDG_DATA_HOME:-$HOME/.local/share}/jubarte/font-index.tsv, Windows %APPDATA%/jubarte/font-index.tsv. JUBARTE_FONT_INDEX overrides full path; empty/off disables. It is not inside fonts nor necessarily MCP root; temporary sibling is font-index.tsv.<PID>.tmp (src/convert/font.rs:2637-2652,3100-3106,3213-3227).",
+      "Font discovery: macOS System/Library/Fonts[/Supplemental], /Library/Fonts[/Microsoft], Word.app/Contents/Resources/DFonts, $HOME/Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/<family>, plus configured/per-user Jubarte fonts (src/convert/font.rs:2225-2236,2281-2315,2637-2652). Windows uses WINDIR then SystemRoot then C:\\Windows, /Fonts, optional LOCALAPPDATA/Microsoft/Windows/Fonts, and JUBARTE_FONT_DIR or APPDATA/jubarte/fonts (src/convert/font.rs:2637-2652,2831-2862). Linux uses JUBARTE_FONT_DIR or ${XDG_DATA_HOME:-$HOME/.local/share}/jubarte/fonts; absent required HOME removes default (2637-2652). Host permissions enforce these reads; not MCP root.",
+      "Native publication effective staging is <destination-parent>/.jubarte-<UUID>.partial/bytes with held parent, exclusive creation/readback and atomic rename/hard-link. MCP edit outputs are <root>/<out_dir>/{clean.docx,redline.docx,patch.diff,report.json,optional redline.pdf/redline-page-NN.png}; MCP render outputs page-NN.png and optional render.pdf, with client receiving reports/text (src/publication.rs:419-570; jubarte-python/python/jubarte_redlines/mcp_server.py:185-255).",
+      "Updater effective assets are jubarte-<version>-{macos,linux}-{aarch64,x86_64}.tar.gz or windows-x86_64.zip; internal jubarte-<version>-<target>/jubarte[.exe] replaces installed executable. Fixed repository is jandira-tech/jubarte-redlines, current control TLS/checksum/regular-file check/confirmation. RELEASE_KEYS empty and FIRST_SIGNED_RELEASE None intentionally mean checksum-only; actual CI key-secret availability unknown (src/update.rs:25-48,91-108,198-285; docs/SELF_UPDATE.md:59-80; .github/workflows/release.yml:268-275).",
+      "SELF_UPDATE says GH_TOKEN/GITHUB_TOKEN lift rate limits (docs/SELF_UPDATE.md:22-24), but updater never opts into environment-token loading (src/update.rs:198-211). Architecture reviewer inspected locked self_update 1.3.1 default auth_token=None/auth_token_from_env=false and token copying; supporting cached dependency src/backends/common.rs:1027-1053,1077-1085 and src/macros.rs:580; repository Cargo.lock:2552-2553. Documentation/availability discrepancy, not evidence of leakage.",
+      "Frontend common flags do not establish identical filesystem controls: Python/Node ordinary output uses host path APIs and rejects unsupported capabilities; WASM has no native OutputRoot module/dependency, Node filesystem belongs to JS host (jubarte-python/python/jubarte_redlines/__main__.py:101-133,1048-1073; jubarte-wasm/cli/bin/jubarte-redlines.mjs:6-14,76-80,106-111,724-740; Cargo.toml:173-177; src/lib.rs:160-165).",
+      "CI signing receives only ZIPSIGN_PRIVATE_KEY in the signing shell/zipsign process, stores decoded keys under RUNNER_TEMP/zipsign.<random>/keyN, validates 64-byte keys, cleans on exit and signs dist/jubarte-*.tar.gz/zip; verification uses committed keys when present. Release publisher independently uses secrets.GITHUB_TOKEN as GH_TOKEN with contents:write, github.repository and GITHUB_REF_NAME to publish notes.md/dist/* (.github/workflows/release.yml:230-321,356-369).",
+      "Operator Cargo publication uses Cargo-owned credentials/CARGO_REGISTRY_TOKEN and confirmation/release gates; npm engine jubarte-wasm and CLI jubarte-redlines publish independently under npm login and optional NPM_OTP; PyPI uses UV_PUBLISH_TOKEN and validated complete CI wheels/sdist, with explicit --no-wait for local partial fallback (scripts/release.sh:363-380,875-959,1039-1069). Secret scopes and actual provider accounts are external.",
+      "Release script selects an external application checkout via JUBARTE_APP_DIR or jubarte-app; its implementation is outside scope and uninspected (scripts/release.sh:382-387).",
+      "Actual GitHub protections/approvals, registry scopes, host ACLs, MCP client trust and process/container isolation are unknown; repository declarations alone do not establish them. Generated WASM implementation was not executed/disassembled and source parity remains unverified."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current offline source in /Users/arthrod/temp/T/jubarte-redlines; architecture mapping, not completed security-audit coverage."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-allocation.table-grid",
+      "title": "DOCX and HTML table spans cause unbounded renderer expansion",
+      "summary": "A small DOCX can set w:gridSpan, w:gridBefore or w:gridAfter to an enormous positive integer. Rendering expands the table column vector to the attacker-provided occupancy without a semantic column budget, causing excessive allocation or a process-terminating allocation failure. ZIP size and XML nesting admission do not bound these numeric values. Internal HTML altChunk colspan values independently expand into one generated w:gridCol per requested column before the generated XML is parsed, bypassing the original package's byte budgets.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An attacker who can supply a document to a rendering caller can reliably request allocations disproportionate to input size and terminate or exhaust that process. No authentication bypass, code execution, remote service deployment or host-wide outage is established.",
+        "changeConditions": "Process memory/CPU limits and per-request process isolation confine impact; a shared long-lived renderer increases availability impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source traces the unbounded usize from XML through RawCell.colspan and occupancy into vec!/resize after admission. No runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 592,
+          "endLine": 611,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 15,
+          "endLine": 39,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "table-span-source",
+          "label": "Unbounded table span from document XML",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "language": "rust",
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "The return type is usize; positive values have no upper bound."
+        },
+        {
+          "id": "table-skip-source",
+          "label": "Row grid skip uses the same unchecked span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "language": "rust",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+          "explanation": "Both gridBefore and gridAfter become RawCell.colspan at line 14379 and reach the same occupancy allocator."
+        },
+        {
+          "id": "table-grid-allocation",
+          "label": "Occupancy directly sizes column storage",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "language": "rust",
+          "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }",
+          "explanation": "A single span of 1,000,000,000 requests at least four billion bytes of f32 columns before later per-column allocations."
+        },
+        {
+          "id": "render-admission",
+          "label": "Public rendering uses admission before table construction",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "language": "rust",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "Ordinary valid small table XML is reachable through public PDF/PNG/render-report APIs; archive/XML admission does not cap table column values."
+        },
+        {
+          "id": "html-colspan-expansion",
+          "label": "HTML spans generate proportional XML without a budget",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "language": "rust",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "The maximum row span sum drives generated XML size. The HTML parser accepts positive usize colspan without a maximum at lines 562-566; expansion is called after original package admission at convert/mod.rs:789-798."
+        }
+      ],
+      "rootCause": {
+        "summary": "The renderer treats document-controlled span counts as allocation sizes without a maximum semantic table width or checked aggregate occupancy. The HTML table importer likewise accepts unbounded colspan and materializes a grid proportional to it before DOM parsing.",
+        "evidenceRefs": [
+          "table-span-source",
+          "table-skip-source",
+          "table-grid-allocation",
+          "html-colspan-expansion"
+        ]
+      },
+      "remediation": "Introduce a configurable maximum table-column/occupancy budget, validate gridSpan/gridBefore/gridAfter before constructing cells, use checked_add for aggregate spans, and reject excessive values with a typed conversion error before allocating. Apply the same budget to all table sources. Enforce the same maximum during HTML altChunk parsing and checked row-span accumulation, and cap generated XML/output before materialization.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission runs first and rejects malformed/over-budget ZIP/XML; a tiny valid numeric span is within those checks.",
+          "SECURITY.md recommends process memory/CPU limits; these constrain blast radius but do not prevent request-triggered renderer termination."
+        ],
+        "limitations": [
+          "No application execution, exploit input creation, or runtime memory measurement.",
+          "Actual shared-service deployment and isolation are unknown."
+        ],
+        "method": "Offline static source validation",
+        "status": "validated",
+        "summary": "Parent verified the positive usize parser, row skip sibling, RawCell propagation, occupancy allocator and public with_layout entry path. Admission limits are byte/entry/depth/attribute budgets (src/admission.rs:42-99), not table-column bounds. Parent also verified altchunk::expand -> html_to_wml -> end_table, its positive usize colspan parser and unbounded gridCol generation. Both paths require the same semantic table-column budget; original package admission precedes HTML expansion."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> with_layout admission/normalization -> DOM body table -> table_block -> cell_span or row_grid_skip -> RawCell.colspan -> occupancy -> cols vec!/resize. Alternate path: internal altChunk relationship -> package HTML bytes -> html_to_wml colspan -> end_table gridCol loop -> generated XML -> DOM/layout.",
+          "evidenceRefs": [
+            "render-admission",
+            "table-span-source",
+            "table-skip-source",
+            "table-grid-allocation"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Loss of availability of the rendering process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "A small document carries a representable large positive span; no unusual configuration is needed."
+        },
+        "reachability": {
+          "summary": "Public docx_to_pdf/docx_to_png/render/docx_render_report render caller-supplied DOCX bytes; the table is constructed before PDF/PNG output limits.",
+          "attacker": "A document author able to get a caller to render their DOCX.",
+          "sink": "cols.resize/vec allocation at src/convert/mod.rs:13606-13615",
+          "outcome": "Memory exhaustion or renderer process termination.",
+          "preconditions": [
+            "Victim renders attacker-controlled DOCX content."
+          ]
+        },
+        "summary": "Untrusted document author crosses the document-to-renderer resource boundary through semantic table counts."
+      },
+      "remediationTests": [
+        "Test boundary and over-limit gridSpan/gridBefore/gridAfter via public rendering APIs; assert bounded refusal without allocating attacker-sized storage.",
+        "Test combined row spans and arithmetic overflow; preserve ordinary merged-cell rendering."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0020-table-gridspan",
+        "workerLabel": "discovery-0020",
+        "discoveredBy": "baseline; independently validated by parent",
+        "previousFindings": [
+          {
+            "ruleId": "unbounded-allocation.table-grid",
+            "title": "DOCX table spans cause unbounded renderer allocation",
+            "summary": "A small DOCX can set w:gridSpan, w:gridBefore or w:gridAfter to an enormous positive integer. Rendering expands the table column vector to the attacker-provided occupancy without a semantic column budget, causing excessive allocation or a process-terminating allocation failure. ZIP size and XML nesting admission do not bound these numeric values.",
+            "severity": {
+              "level": "medium",
+              "rationale": "An attacker who can supply a document to a rendering caller can reliably request allocations disproportionate to input size and terminate or exhaust that process. No authentication bypass, code execution, remote service deployment or host-wide outage is established.",
+              "changeConditions": "Process memory/CPU limits and per-request process isolation confine impact; a shared long-lived renderer increases availability impact."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Direct source traces the unbounded usize from XML through RawCell.colspan and occupancy into vec!/resize after admission. No runtime reproduction was performed."
+            },
+            "taxonomy": {
+              "category": "Uncontrolled memory allocation",
+              "cwe": [
+                "CWE-789"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13601,
+                "endLine": 13615,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14204,
+                "endLine": 14223,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14352,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 798,
+                "role": "entrypoint"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 592,
+                "endLine": 611,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "table-span-source",
+                "label": "Unbounded table span from document XML",
+                "path": "src/convert/mod.rs",
+                "startLine": 14211,
+                "endLine": 14215,
+                "language": "rust",
+                "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+                "explanation": "The return type is usize; positive values have no upper bound."
+              },
+              {
+                "id": "table-skip-source",
+                "label": "Row grid skip uses the same unchecked span",
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14345,
+                "language": "rust",
+                "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+                "explanation": "Both gridBefore and gridAfter become RawCell.colspan at line 14379 and reach the same occupancy allocator."
+              },
+              {
+                "id": "table-grid-allocation",
+                "label": "Occupancy directly sizes column storage",
+                "path": "src/convert/mod.rs",
+                "startLine": 13601,
+                "endLine": 13615,
+                "language": "rust",
+                "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }",
+                "explanation": "A single span of 1,000,000,000 requests at least four billion bytes of f32 columns before later per-column allocations."
+              },
+              {
+                "id": "render-admission",
+                "label": "Public rendering uses admission before table construction",
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 778,
+                "language": "rust",
+                "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+                "explanation": "Ordinary valid small table XML is reachable through public PDF/PNG/render-report APIs; archive/XML admission does not cap table column values."
+              }
+            ],
+            "rootCause": {
+              "summary": "The renderer treats document-controlled span counts as allocation sizes without a maximum semantic table width or checked aggregate occupancy.",
+              "evidenceRefs": [
+                "table-span-source",
+                "table-skip-source",
+                "table-grid-allocation"
+              ]
+            },
+            "remediation": "Introduce a configurable maximum table-column/occupancy budget, validate gridSpan/gridBefore/gridAfter before constructing cells, use checked_add for aggregate spans, and reject excessive values with a typed conversion error before allocating. Apply the same budget to all table sources.",
+            "validation": {
+              "counterEvidence": [
+                "Package admission runs first and rejects malformed/over-budget ZIP/XML; a tiny valid numeric span is within those checks.",
+                "SECURITY.md recommends process memory/CPU limits; these constrain blast radius but do not prevent request-triggered renderer termination."
+              ],
+              "limitations": [
+                "No application execution, exploit input creation, or runtime memory measurement.",
+                "Actual shared-service deployment and isolation are unknown."
+              ],
+              "method": "Offline static source validation",
+              "status": "validated",
+              "summary": "Parent verified the positive usize parser, row skip sibling, RawCell propagation, occupancy allocator and public with_layout entry path. Admission limits are byte/entry/depth/attribute budgets (src/admission.rs:42-99), not table-column bounds."
+            },
+            "attackPath": {
+              "dataflow": {
+                "summary": "DOCX bytes -> with_layout admission/normalization -> DOM body table -> table_block -> cell_span or row_grid_skip -> RawCell.colspan -> occupancy -> cols vec!/resize.",
+                "evidenceRefs": [
+                  "render-admission",
+                  "table-span-source",
+                  "table-skip-source",
+                  "table-grid-allocation"
+                ]
+              },
+              "impact": {
+                "level": "medium",
+                "rationale": "Loss of availability of the rendering process."
+              },
+              "likelihood": {
+                "level": "high",
+                "rationale": "A small document carries a representable large positive span; no unusual configuration is needed."
+              },
+              "reachability": {
+                "summary": "Public docx_to_pdf/docx_to_png/render/docx_render_report render caller-supplied DOCX bytes; the table is constructed before PDF/PNG output limits.",
+                "attacker": "A document author able to get a caller to render their DOCX.",
+                "sink": "cols.resize/vec allocation at src/convert/mod.rs:13606-13615",
+                "outcome": "Memory exhaustion or renderer process termination.",
+                "preconditions": [
+                  "Victim renders attacker-controlled DOCX content."
+                ]
+              },
+              "summary": "Untrusted document author crosses the document-to-renderer resource boundary through semantic table counts."
+            },
+            "remediationTests": [
+              "Test boundary and over-limit gridSpan/gridBefore/gridAfter via public rendering APIs; assert bounded refusal without allocating attacker-sized storage.",
+              "Test combined row spans and arithmetic overflow; preserve ordinary merged-cell rendering."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "candidateId": "discovery-0020-table-gridspan",
+              "workerLabel": "discovery-0020",
+              "discoveredBy": "baseline; independently validated by parent",
+              "originalCandidates": [
+                {
+                  "source": "baseline",
+                  "originalEvidence": "Untrusted DOCX w:gridSpan parsed without upper bound as usize in src/convert/mod.rs:14211-14215, summed into occupancy at 13601-13605, then drives cols vec!/resize at 13606-13615. Tiny valid XML can request billions of f32 columns and abort/OOM despite ZIP/XML admission. Public conversion path still being traced."
+                }
+              ]
+            }
+          },
+          {
+            "ruleId": "unbounded-allocation.table-grid",
+            "title": "DOCX table spans cause unbounded renderer allocation",
+            "summary": "A small DOCX can set w:gridSpan, w:gridBefore or w:gridAfter to an enormous positive integer. Rendering expands the table column vector to the attacker-provided occupancy without a semantic column budget, causing excessive allocation or a process-terminating allocation failure. ZIP size and XML nesting admission do not bound these numeric values.",
+            "severity": {
+              "level": "medium",
+              "rationale": "An attacker who can supply a document to a rendering caller can reliably request allocations disproportionate to input size and terminate or exhaust that process. No authentication bypass, code execution, remote service deployment or host-wide outage is established.",
+              "changeConditions": "Process memory/CPU limits and per-request process isolation confine impact; a shared long-lived renderer increases availability impact."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Direct source traces the unbounded usize from XML through RawCell.colspan and occupancy into vec!/resize after admission. No runtime reproduction was performed."
+            },
+            "taxonomy": {
+              "category": "Uncontrolled memory allocation",
+              "cwe": [
+                "CWE-789"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13601,
+                "endLine": 13615,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14204,
+                "endLine": 14223,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14352,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 798,
+                "role": "entrypoint"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 592,
+                "endLine": 611,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "table-span-source",
+                "label": "Unbounded table span from document XML",
+                "path": "src/convert/mod.rs",
+                "startLine": 14211,
+                "endLine": 14215,
+                "language": "rust",
+                "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+                "explanation": "The return type is usize; positive values have no upper bound."
+              },
+              {
+                "id": "table-skip-source",
+                "label": "Row grid skip uses the same unchecked span",
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14345,
+                "language": "rust",
+                "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+                "explanation": "Both gridBefore and gridAfter become RawCell.colspan at line 14379 and reach the same occupancy allocator."
+              },
+              {
+                "id": "table-grid-allocation",
+                "label": "Occupancy directly sizes column storage",
+                "path": "src/convert/mod.rs",
+                "startLine": 13601,
+                "endLine": 13615,
+                "language": "rust",
+                "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }",
+                "explanation": "A single span of 1,000,000,000 requests at least four billion bytes of f32 columns before later per-column allocations."
+              },
+              {
+                "id": "render-admission",
+                "label": "Public rendering uses admission before table construction",
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 778,
+                "language": "rust",
+                "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+                "explanation": "Ordinary valid small table XML is reachable through public PDF/PNG/render-report APIs; archive/XML admission does not cap table column values."
+              }
+            ],
+            "rootCause": {
+              "summary": "The renderer treats document-controlled span counts as allocation sizes without a maximum semantic table width or checked aggregate occupancy.",
+              "evidenceRefs": [
+                "table-span-source",
+                "table-skip-source",
+                "table-grid-allocation"
+              ]
+            },
+            "remediation": "Introduce a configurable maximum table-column/occupancy budget, validate gridSpan/gridBefore/gridAfter before constructing cells, use checked_add for aggregate spans, and reject excessive values with a typed conversion error before allocating. Apply the same budget to all table sources.",
+            "validation": {
+              "counterEvidence": [
+                "Package admission runs first and rejects malformed/over-budget ZIP/XML; a tiny valid numeric span is within those checks.",
+                "SECURITY.md recommends process memory/CPU limits; these constrain blast radius but do not prevent request-triggered renderer termination."
+              ],
+              "limitations": [
+                "No application execution, exploit input creation, or runtime memory measurement.",
+                "Actual shared-service deployment and isolation are unknown."
+              ],
+              "method": "Offline static source validation",
+              "status": "validated",
+              "summary": "Parent verified the positive usize parser, row skip sibling, RawCell propagation, occupancy allocator and public with_layout entry path. Admission limits are byte/entry/depth/attribute budgets (src/admission.rs:42-99), not table-column bounds."
+            },
+            "attackPath": {
+              "dataflow": {
+                "summary": "DOCX bytes -> with_layout admission/normalization -> DOM body table -> table_block -> cell_span or row_grid_skip -> RawCell.colspan -> occupancy -> cols vec!/resize.",
+                "evidenceRefs": [
+                  "render-admission",
+                  "table-span-source",
+                  "table-skip-source",
+                  "table-grid-allocation"
+                ]
+              },
+              "impact": {
+                "level": "medium",
+                "rationale": "Loss of availability of the rendering process."
+              },
+              "likelihood": {
+                "level": "high",
+                "rationale": "A small document carries a representable large positive span; no unusual configuration is needed."
+              },
+              "reachability": {
+                "summary": "Public docx_to_pdf/docx_to_png/render/docx_render_report render caller-supplied DOCX bytes; the table is constructed before PDF/PNG output limits.",
+                "attacker": "A document author able to get a caller to render their DOCX.",
+                "sink": "cols.resize/vec allocation at src/convert/mod.rs:13606-13615",
+                "outcome": "Memory exhaustion or renderer process termination.",
+                "preconditions": [
+                  "Victim renders attacker-controlled DOCX content."
+                ]
+              },
+              "summary": "Untrusted document author crosses the document-to-renderer resource boundary through semantic table counts."
+            },
+            "remediationTests": [
+              "Test boundary and over-limit gridSpan/gridBefore/gridAfter via public rendering APIs; assert bounded refusal without allocating attacker-sized storage.",
+              "Test combined row spans and arithmetic overflow; preserve ordinary merged-cell rendering."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "candidateId": "discovery-0020-table-gridspan",
+              "workerLabel": "discovery-0020",
+              "discoveredBy": "baseline; independently validated by parent"
+            }
+          }
+        ],
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalEvidence": "Untrusted DOCX w:gridSpan parsed without upper bound as usize in src/convert/mod.rs:14211-14215, summed into occupancy at 13601-13605, then drives cols vec!/resize at 13606-13615. Tiny valid XML can request billions of f32 columns and abort/OOM despite ZIP/XML admission. Public conversion path still being traced."
+          }
+        ]
+      },
+      "extensions": {
+        "mergedCandidateIds": [
+          "discovery-0020-altchunk-colspan"
+        ],
+        "originalAltchunkCandidate": {
+          "source": "baseline",
+          "originalEvidence": "src/convert/altchunk.rs:562-566 parses arbitrary usize colspan; end_table 469-490 sums spans then emits one <w:gridCol> per column. Internal HTML altChunk table td colspan='1000000000' can cause tens of GB XML generation. with_layout 773-798 admits original DOCX then expands altChunk and directly DOM-parses generated output; budgets do not cover expansion."
+        }
+      }
+    },
+    {
+      "ruleId": "symlink-following.plan-staging",
+      "title": "Python and npm plan recording follow predictable staging symlinks",
+      "summary": "The Python and npm CLIs record edit plans through .<plan-name>.<pid>.partial using ordinary truncating writes. A different local user able to create entries in the plan directory can preplant that name as a symlink to another file writable by the victim; the write truncates and replaces the referent's contents before the rename. The native CLI uses exclusive private staging and does not share this failure.",
+      "severity": {
+        "level": "low",
+        "rationale": "This is a conditional local integrity issue requiring a shared attacker-writable plan directory and prediction or observation of the CLI PID. It can overwrite unrelated files with the validated JSON plan using victim privileges; remote reachability and code execution are not established.",
+        "changeConditions": "Private plan directories remove the attacker prerequisite; use by a more privileged victim in a shared writable directory increases impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source shows predictable PID names and symlink-following truncating Path.write_bytes/fs.writeFileSync calls. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Symlink following in temporary file creation",
+        "cwe": [
+          "CWE-61"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 403,
+          "endLine": 414,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 408,
+          "endLine": 425,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "entrypoint"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 392,
+          "endLine": 405,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "python-plan-temp",
+          "label": "Python predictable symlink-following partial write",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "endLine": 411,
+          "language": "python",
+          "code": "        target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)",
+          "explanation": "Realpath resolves the plan, not its newly derived partial sibling. write_bytes opens and truncates an existing symlink referent."
+        },
+        {
+          "id": "npm-plan-temp",
+          "label": "npm predictable partial file write",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "endLine": 423,
+          "language": "javascript",
+          "code": "    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+          "explanation": "Default writeFileSync opens the existing path with truncation and follows symlinks; rename happens after unrelated referent damage."
+        },
+        {
+          "id": "native-plan-control",
+          "label": "Native recording uses exclusive publication",
+          "path": "src/edit/record.rs",
+          "startLine": 161,
+          "endLine": 167,
+          "language": "rust",
+          "code": "pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {\n    #[cfg(not(target_arch = \"wasm32\"))]\n    {\n        let target = plan_target(plan);\n        crate::publication::publish_paths(&[(target, json.as_bytes())], true)\n            .map(|report| report.warnings)\n            .map_err(|error| std::io::Error::new(error.source.kind(), error))",
+          "explanation": "The corresponding native writer avoids the legacy partial helper, and publication.rs:472-505 creates a private UUID directory and a create_new file."
+        }
+      ],
+      "rootCause": {
+        "summary": "Two host CLI writers construct predictable temporary filenames and open them with truncation instead of exclusively creating private staging files.",
+        "evidenceRefs": [
+          "python-plan-temp",
+          "npm-plan-temp"
+        ]
+      },
+      "remediation": "Route Python recording through the existing native exclusive publication function. For npm, exclusively create a randomly named private staging directory/file in the plan parent, write and verify through a held descriptor, then atomically rename. Refuse existing staging names and avoid following links.",
+      "validation": {
+        "counterEvidence": [
+          "Victim chooses the plan path and no remote service is established.",
+          "Private per-user directories prevent another principal from planting the partial name.",
+          "Plan generation and preview validate document operations, but neither checks the staging inode."
+        ],
+        "limitations": [
+          "Requires shared writable directory and a different principal who can precreate the predictable name.",
+          "The overwritten data is valid plan JSON, not arbitrary binary payload; no execution outcome established."
+        ],
+        "method": "Offline static source validation",
+        "status": "validated",
+        "summary": "Parent verified both record entrypaths, preview/dry-run gates, realpath handling, default file-write semantics, and native sibling counterevidence. A pre-existing partial symlink is not checked or opened exclusively."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Victim edit/add recording -> validated JSON -> predictable partial path -> preplanted symlink -> truncating write to outside referent -> rename of symlink into plan path.",
+          "evidenceRefs": [
+            "python-plan-temp",
+            "npm-plan-temp"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Unauthorized truncation and JSON overwrite of victim-writable unrelated files."
+        },
+        "likelihood": {
+          "level": "low",
+          "rationale": "Local shared-directory and PID timing prerequisites."
+        },
+        "reachability": {
+          "summary": "Reachable when Python or npm edit/add records operation flags into --plan without --dry-run, using a plan parent writable by the attacker.",
+          "attacker": "A local principal with entry-creation rights in the victim's plan directory but without write access to the target file.",
+          "preconditions": [
+            "Victim records a plan in a shared attacker-writable directory.",
+            "Attacker predicts or observes the CLI process PID and plants the partial-name symlink before the write.",
+            "Symlink target is writable by victim."
+          ]
+        },
+        "summary": "Local attacker-controlled directory entry is followed with victim filesystem privileges."
+      },
+      "remediationTests": [
+        "Integration probes preplant predicted legacy partial symlinks for both CLIs and assert unrelated files remain unchanged.",
+        "Test successful recording, dry-run, existing plan links and concurrent recording with exclusive staging."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0020-plan-temp-symlink",
+        "workerLabel": "discovery-0020",
+        "discoveredBy": "bindings; independently validated by parent",
+        "originalCandidates": [
+          {
+            "source": "bindings",
+            "originalEvidence": "npm recordPlan (jubarte-wasm/cli/bin/jubarte-redlines.mjs:420-423) and Python _record_plan (__main__.py:408-411) open predictable .<plan>.<pid>.partial using default truncating/follow-symlink writes. A local attacker controlling shared plan directory may redirect writes to other victim-writable files. Native src/edit/record.rs:143-166 labels partial_path legacy and uses exclusive publication staging."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-iteration.numbering-level",
+      "title": "Unbounded numbering levels exhaust renderer CPU and memory",
+      "summary": "A DOCX paragraph may specify any u32 numbering level. Resolving an undefined large level searches every lower integer; defining that large level instead initializes a counter for every lower level and later scans each placeholder level. A tiny document can therefore trigger billions of iterations or counter entries after normal package admission.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document author can cause severe per-process availability loss through ordinary rendering. A shared remotely reachable service is not assumed.",
+        "changeConditions": "Per-request CPU/memory limits and process isolation bound the outage; shared rendering hosts increase availability impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct static source shows uncapped u32 input driving integer ranges and map allocation. The caller chain is list_marker -> next_revised -> next_marker/resolve_ilvl. Runtime reproduction was not performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5728,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6644,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12828,
+          "endLine": 12879,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ilvl-input",
+          "label": "Unbounded document level",
+          "path": "src/convert/mod.rs",
+          "startLine": 12711,
+          "endLine": 12714,
+          "language": "rust",
+          "code": "    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);",
+          "explanation": "No semantic maximum is enforced before callers resolve or iterate over the level."
+        },
+        {
+          "id": "ilvl-search",
+          "label": "Integer-range fallback search",
+          "path": "src/convert/mod.rs",
+          "startLine": 5529,
+          "endLine": 5532,
+          "language": "rust",
+          "code": "        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "With only level zero defined and ilvl 4294967295, this attempts roughly 4.3 billion lookups."
+        },
+        {
+          "id": "ilvl-counters",
+          "label": "Counters materialized for every lower integer",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "language": "rust",
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }\n            let first = self\n                .starts\n                .get(&(num_id.to_string(), level))\n                .copied()\n                .or_else(|| {\n                    self.levels\n                        .get(&abs)\n                        .and_then(|m| m.get(&level))\n                        .map(|l| l.start)\n                })\n                .unwrap_or(1)\n                .max(1);\n            self.counters\n                .insert((num_id.to_string(), level), first.saturating_add(1));",
+          "explanation": "Defining the attacker-selected large level avoids fallback but reaches this proportional map expansion."
+        }
+      ],
+      "rootCause": {
+        "summary": "Numbering metadata is accepted as arbitrary u32 and used as the extent of dense scans and counter materialization, without validating the supported level range.",
+        "evidenceRefs": [
+          "ilvl-input",
+          "ilvl-search",
+          "ilvl-counters"
+        ]
+      },
+      "remediation": "Validate numbering levels at every paragraph/style/abstract/override parse against the supported bounded range. Select existing lower levels by bounded/sparse map lookup rather than walking arbitrary integer ranges, and materialize only necessary bounded counters; return a typed error for unsupported metadata.",
+      "validation": {
+        "counterEvidence": [
+          "Admission bounds compressed/inflated bytes and XML shape but not ilvl values.",
+          "An undefined list instance returns early; the attacker can include a normal matching num/abstractNum relationship.",
+          "Process isolation recommended in SECURITY.md can bound impact."
+        ],
+        "limitations": [
+          "No runtime timing or allocation measurement; actual hosting deployment unknown."
+        ],
+        "method": "Offline static source validation",
+        "status": "validated",
+        "summary": "Parent verified paragraph parsing, explicitly defined level parsing at 6618-6644, list_marker/next_revised/next_marker calls, fallback search, dense counter initialization and render placeholder scan. A tiny ordinary package passes byte/depth limits while carrying the oversized integer."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Attacker DOCX paragraph numPr/ilvl and numbering.xml level definitions -> list_marker -> next_revised -> resolve_ilvl or next_marker -> billions of lookups/counter entries.",
+          "evidenceRefs": [
+            "ilvl-input",
+            "ilvl-search",
+            "ilvl-counters"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Renderer CPU or memory exhaustion."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "No unusual configuration needed; large integer is a short XML attribute."
+        },
+        "reachability": {
+          "summary": "Public render/PDF/PNG and layout consumers call with_layout on untrusted DOCX, then process paragraph numbering after admission.",
+          "attacker": "Document author controlling paragraph and numbering XML.",
+          "preconditions": [
+            "Victim renders the attacker-provided document with a matching numbering instance."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Public rendering tests for maximum, over-limit and u32::MAX paragraph/abstract numbering levels should refuse promptly with bounded memory.",
+        "Cover fallback-to-parent numbering and sparse definitions without dense iteration."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0020-numbering-resource",
+        "workerLabel": "discovery-0020",
+        "discoveredBy": "baseline; independently validated by parent",
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalEvidence": "src/convert/mod.rs num_pr:12711-12714 parses arbitrary u32 ilvl; Numbering::resolve_ilvl:5529-5532 scans (0..ilvl).rev() with hash lookups. Huge explicit level load_numbering:6618-6644 reaches next_marker:5610-5627 inserting counters for every lower level. chicago_label:6015-6018 repeats n/4+1 marks; start:6750-6753 accepts u32, format_num:5861 dispatches. Potential billions of iterations or GBs of label output."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "ci-isolation.self-hosted-pull-request",
+      "title": "Contributor PR code runs on persistent self-hosted runners with private cache access",
+      "summary": "Pull-request workflows check out and execute contributor-controlled code and a local composite action on the same self-hosted label used for main. The action documents persistent same-checkout/store usage and private Docker-network access to an unauthenticated mbx cache. Once a PR job is allowed to start, contributor code receives runner and private-network authority; read-only GitHub token permissions do not isolate that execution from persistent state.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Untrusted code executing in a persistent trusted build environment can compromise runner-owned state and access its private cache network. This is high potential integrity impact, but likelihood and full blast radius depend on external workflow approvals, runner lifecycle, ACLs and network controls not established by source.",
+        "changeConditions": "Ephemeral unprivileged runner isolation and segregated trusted caches/network remove the persistent trust crossing. Automatic fork execution or reuse by privileged releases increases severity."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Events, self-hosted routing, checkout and contributor execution are explicit; action comments/configuration identify persistent state/private endpoint. Actual GitHub approvals, runner provisioning and cache server enforcement are unavailable."
+      },
+      "taxonomy": {
+        "category": "Improper isolation of untrusted CI execution",
+        "cwe": [
+          "CWE-653"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 48,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 38,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 99,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "entrypoint"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 138,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ci-pr-trigger",
+          "label": "Same workflow accepts pushes and pull requests",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "language": "yaml",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "No contributor trust restriction is declared at the workflow event."
+        },
+        {
+          "id": "ci-untrusted-runner",
+          "label": "Checked-out code and local action run on self-hosted runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "language": "yaml",
+          "code": "  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "PR code can change the local action and Cargo build-time execution. persist-credentials:false protects checkout credentials, not host isolation."
+        },
+        {
+          "id": "ci-private-cache",
+          "label": "Private cache trust assumption",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "language": "yaml",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines",
+          "explanation": "A client read-only policy and private-network location are not an isolation boundary for arbitrary runner code. Actual server authorization is unverified."
+        },
+        {
+          "id": "ci-persistent-state",
+          "label": "Runner state persists across jobs",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 27,
+          "endLine": 38,
+          "language": "yaml",
+          "code": "    # Every job on a runner builds in the same checkout, so mbx always counts\n    # that checkout's managed target as the most recently used and never\n    # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few\n    # hours and filled the disk the four runners share. Each job now starts\n    # from an empty target, restored from the store and the cache server,\n    # and each runner's store keeps to a fixed share of the disk.\n    - name: bound mbx's disk use\n      shell: bash\n      run: |\n        echo \"MBX_GC_MAX_TOTAL_SIZE=20GiB\" >> \"$GITHUB_ENV\"\n        mbx clean --under \"$GITHUB_WORKSPACE\"\n        MBX_GC_MAX_TOTAL_SIZE=20GiB mbx gc",
+          "explanation": "Clearing the build target is not complete runner reimaging or separation of other writable persistent state."
+        }
+      ],
+      "rootCause": {
+        "summary": "Contributor-controlled execution is assigned to persistent self-hosted infrastructure sharing trusted private resources without a repository-declared isolation/trust gate.",
+        "evidenceRefs": [
+          "ci-pr-trigger",
+          "ci-untrusted-runner",
+          "ci-private-cache",
+          "ci-persistent-state"
+        ]
+      },
+      "remediation": "Run contributor PRs on fresh isolated GitHub-hosted or ephemeral unprivileged runners with no access to trusted persistent caches/private networks. Segregate trusted main/release runners and cache namespaces with server-enforced authorization; do not rely on PR-writable local actions or client flags for that boundary.",
+      "validation": {
+        "counterEvidence": [
+          "contents:read and persist-credentials:false limit normal GitHub credentials.",
+          "External fork-workflow approval may prevent jobs from starting until approved.",
+          "mbx comments say PRs read cache while protected pushes publish; no server-side authorizer was inspected and cache write compromise is not asserted as proven.",
+          "Some test matrix jobs use GitHub-hosted runners; finding concerns self-hosted legs."
+        ],
+        "limitations": [
+          "Runner provisioning/lifecycle, runner groups, approval policy and actual private cache API controls unknown.",
+          "No claim of root/Docker-host escape, stolen production secrets or successful cache poisoning."
+        ],
+        "method": "Offline static workflow validation",
+        "status": "validated",
+        "summary": "Parent verified unrestricted pull_request events, self-hosted jobs, checkout/local-action/test execution and private/persistent cache declarations across CI, docs, adoption and Markdown workflows. All share the same trust-boundary failure."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Contributor pull request -> checked-out PR code/local action -> self-hosted shell/Cargo execution -> runner account filesystem and configured private cache network.",
+          "evidenceRefs": [
+            "ci-pr-trigger",
+            "ci-untrusted-runner",
+            "ci-private-cache",
+            "ci-persistent-state"
+          ]
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Potential integrity compromise of persistent build environment and subsequent trusted job state."
+        },
+        "likelihood": {
+          "level": "unknown",
+          "rationale": "External job approvals and runner isolation are not inspectable in repository source."
+        },
+        "reachability": {
+          "summary": "Applies when GitHub permits the PR workflow/job to run on an eligible self-hosted runner. CI lint/test/coverage and related docs/adoption/roundtrip jobs execute repository code.",
+          "attacker": "A contributor whose pull-request workflow is permitted to start.",
+          "preconditions": [
+            "A PR job starts on configured self-hosted infrastructure.",
+            "Persistent state/private network match repository's documented setup."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Statically assert all PR-executing jobs use isolated ephemeral runner routing and cannot target trusted runner groups.",
+        "Verify server-side cache authorization and teardown in infrastructure integration checks without granting contributor code persistent credentials."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0020-selfhosted-pr",
+        "workerLabel": "discovery-0020",
+        "discoveredBy": "bindings; independently validated by parent",
+        "originalCandidates": [
+          {
+            "source": "bindings",
+            "originalEvidence": ".github/workflows/ci.yml pull_request:16 shares self-hosted runners with push(main), checks out PR merge code and executes cargo/build scripts/local mbx action at :36+,77+,116+. .github/actions/mbx/action.yml:8-12,20-33 describes private Docker network, unauthenticated HTTP mbx-cache:7543 and persistent same checkout/store. Additional entrypoints docs.yml:42-68,82-99; adoption.yml:19-31,51-99; md-roundtrip.yml:15,31-39. GitHub job approvals and external runner controls unknown; only jobs permitted to start are claimed."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "bindings",
+          "originalEvidence": ".github/workflows/ci.yml pull_request:16 shares self-hosted runners with push(main), checks out PR merge code and executes cargo/build scripts/local mbx action at :36+,77+,116+. .github/actions/mbx/action.yml:8-12,20-33 describes private Docker network, unauthenticated HTTP mbx-cache:7543 and persistent same checkout/store. Additional entrypoints docs.yml:42-68,82-99; adoption.yml:19-31,51-99; md-roundtrip.yml:15,31-39. GitHub job approvals and external runner controls unknown; only jobs permitted to start are claimed."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-740bce3cc13c4d58",
+        "label": "DOCX table rendering span allocation",
+        "disposition": "reported",
+        "notes": "Validated table span numeric allocation failure; includes gridSpan, gridBefore and gridAfter siblings. Original baseline evidence retained in finding validation and source evidence.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-300827c3770d3dad",
+        "label": "HTML altChunk table colspan expansion",
+        "disposition": "reported",
+        "notes": "Parent validated src/convert/altchunk.rs:469-490,562-566 and convert/mod.rs:789-798. Grouped into table-grid finding because the same absent semantic span budget governs numeric amplification; both independent parser/control locations and original candidate evidence retained.",
+        "candidateId": "discovery-0020-altchunk-colspan",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-3c018d3297bb8e01",
+        "label": "Python and npm edit-plan staging",
+        "disposition": "reported",
+        "notes": "Local predictable staging symlink overwrite independently validated in Python and npm. Native record writer is counterevidence and uses exclusive publication.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-07f24078f85e77b7",
+        "label": "Renderer numbering level range and counters",
+        "disposition": "reported",
+        "notes": "Validated dense level search and counter-allocation sinks; original baseline evidence also includes Chicago label expansion, retained separately pending sibling trace.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-3cd968f70c54d28b",
+        "label": "Contributor PR execution on persistent self-hosted CI",
+        "disposition": "reported",
+        "notes": "Validated permitted PR code execution with documented persistent state/private cache access across CI/docs/adoption/roundtrip; external runner/approval controls unknown.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "deferred-4876f5700724382b",
+        "reason": "Full scope review and file coverage reconciliation in progress across baseline, architecture, bindings and parent."
+      },
+      {
+        "id": "discovery-0020-altchunk-colspan",
+        "candidateId": "discovery-0020-altchunk-colspan",
+        "reason": "Baseline sibling candidate pending parent validation of generated XML amplification and grouping.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "src/convert/altchunk.rs:562-566 parses arbitrary usize colspan; end_table 469-490 sums spans then emits one <w:gridCol> per column. Internal HTML altChunk table td colspan='1000000000' can cause tens of GB XML generation. with_layout 773-798 admits original DOCX then expands altChunk and directly DOM-parses generated output; budgets do not cover expansion."
+        }
+      },
+      {
+        "id": "discovery-0020-chicago-label",
+        "candidateId": "discovery-0020-chicago-label",
+        "reason": "Level iteration/counter expansion validated and reported; original candidate also contains Chicago label expansion, which remains under validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "src/convert/mod.rs num_pr:12711-12714 parses arbitrary u32 ilvl; Numbering::resolve_ilvl:5529-5532 scans (0..ilvl).rev() with hash lookups. Huge explicit level load_numbering:6618-6644 reaches next_marker:5610-5627 inserting counters for every lower level. chicago_label:6015-6018 repeats n/4+1 marks; start:6750-6753 accepts u32, format_num:5861 dispatches. Potential billions of iterations or GBs of label output."
+        }
+      },
+      {
+        "candidateId": "discovery-0020-auxiliary-xml-policy",
+        "reason": "Baseline and focused investigator independently identified extension-based auxiliary XML admission bypass; parent validation pending.",
+        "candidate": {
+          "source": "baseline and architecture followup",
+          "originalEvidence": [
+            "Baseline: admission.rs:534 gates .xml/.rels plus main at556; read_package:282-379 does not validate .bin XML. Header rid resolves header.bin at convert/mod.rs:20759-20781; chrome_part_xml:20794-20799 raw parses then collect_hf_runs:21589-21623 -> collect_hf_rec -> collect_hf_rev_runs:22526-22528 unbounded recursion. Deep nested hyperlinks in header.bin can exhaust stack; part_string only lossy UTF8.",
+            "Architecture: with_layout admits at:773; admission suffix filter:534-543 and main:556-569; EndnoteBag::load relationship-selected endnotes raw parse:8524-8527; collect_blocks:7750. Raw XML parse_element recurses without depth guard at xmllinq/parse.rs:555-661. strict_translation.rs:810 suffix filter also skips .bin."
+          ]
+        },
+        "id": "discovery-0020-auxiliary-xml-policy"
+      }
+    ]
+  }
+}

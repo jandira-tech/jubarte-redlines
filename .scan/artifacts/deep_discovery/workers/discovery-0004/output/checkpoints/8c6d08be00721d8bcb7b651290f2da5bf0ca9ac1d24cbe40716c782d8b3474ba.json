@@ -1,0 +1,294 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "unsafe-filesystem-publication.symlink-following",
+      "title": "Python and npm CLIs can overwrite unrelated files through output and staging symlinks",
+      "summary": "Both filesystem CLI adapters check whether an output exists, then open its pathname for a truncating write. They also record edit plans through predictable PID-named partial files opened without exclusive creation. A local attacker who can write the selected output/plan directory can redirect these writes to another file writable by the victim process. Ordinary output redirection requires a race when the referent exists; plan partial-file planting can be done before its write. This affects Python and npm CLI paths, while native publication and MCP use separate controls.",
+      "severity": {
+        "level": "low",
+        "rationale": "Medium integrity impact with medium likelihood: this is a local shared-directory attack requiring victim CLI execution in an attacker-writable directory, plus successful name replacement or prediction/observation of the PID-based staging name. No remote exposure or privileged execution is established.",
+        "changeConditions": "Higher impact requires a victim with greater filesystem privileges and an exploitable writable target; private non-writable output directories remove the attacker prerequisite."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly shows nonexclusive, symlink-following writes after preflight and predictable plan staging in both adapters; platform behavior was assessed statically, with no exploit executed."
+      },
+      "taxonomy": {
+        "category": "Unsafe filesystem publication / symbolic link following",
+        "cwe": [
+          "CWE-61"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "endLine": 80,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "endLine": 112,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "endLine": 425,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 137,
+          "endLine": 153,
+          "role": "entrypoint"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 539,
+          "endLine": 552,
+          "role": "supporting"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 101,
+          "endLine": 103,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "endLine": 133,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "endLine": 413,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 420,
+          "endLine": 423,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "npm-preflight",
+          "label": "npm preflight follows links and does not reserve the name",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "code": "function ensureWritable(file, force) {\n  if (fs.existsSync(file) && !force) {\n    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);\n  }\n}",
+          "explanation": "The pathname is checked independently of the write; a dangling symlink also appears absent."
+        },
+        {
+          "id": "npm-write",
+          "label": "npm sink truncates the path it opens",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "code": "function write(file, data) {\n  try {\n    fs.writeFileSync(file, data);",
+          "explanation": "Default writeFileSync flags follow a substituted symlink and truncate its writable referent."
+        },
+        {
+          "id": "npm-partial",
+          "label": "npm plan staging is predictable and nonexclusive",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 420,
+          "code": "const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+          "explanation": "A planted partial-file link is followed before rename, corrupting the referent even though the final step renames a link."
+        },
+        {
+          "id": "python-write",
+          "label": "Python output sink follows pathname links",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "code": "def _write(path: Path, data: bytes | str) -> int:\n    \"\"\"Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written.\"\"\"\n    raw = data.encode(\"utf-8\") if isinstance(data, str) else data\n    try:\n        path.write_bytes(raw)",
+          "explanation": "The separate exists check is not an atomic authorization of the opened file."
+        },
+        {
+          "id": "python-partial",
+          "label": "Python plan staging repeats the same flaw",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 407,
+          "code": "target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)",
+          "explanation": "Resolving the intended plan target does not protect the newly derived partial pathname."
+        }
+      ],
+      "rootCause": {
+        "summary": "Filesystem adapters implement output authorization as pathname preflight followed by ordinary truncating writes, and create predictable staging files without exclusive/no-follow semantics. They bypass the hardened native publication mechanism.",
+        "evidenceRefs": [
+          "npm-preflight",
+          "npm-write",
+          "npm-partial",
+          "python-write",
+          "python-partial"
+        ]
+      },
+      "remediation": "Route Python and npm output, bundle, report and plan publication through a shared safe publisher: hold the destination directory, stage into exclusively created private storage, never follow staging symlinks, and install with atomic no-clobber semantics unless overwrite was explicitly requested. For intentional plan-symlink targets, resolve the authorized target first, then use exclusive staging beside it.",
+      "validation": {
+        "counterEvidence": [
+          "The local attacker must have write access to the actual selected directory. Ordinary authorized --force behavior alone is not a vulnerability.",
+          "recordPlan/_record intentionally resolve an explicitly selected plan symlink; the independently attacker-planted partial symlink is the vulnerability.",
+          "src/publication.rs:472-505,558-569 hardens native publication; jubarte-python/python/jubarte_redlines/mcp_server.py:101-108 delegates to confined native publication. These are separate paths."
+        ],
+        "limitations": [
+          "No live filesystem race or privileged victim scenario was reproduced."
+        ],
+        "method": "Offline source tracing; no runtime execution",
+        "status": "validated",
+        "summary": "Parent verified both output helpers, plan-recording entrypoints and staging sinks. The plan is previewed but that controls edit validity, not the filesystem object opened. Native publication uses UUID private staging, create_new and no-clobber hard links; MCP uses that separate OutputRoot, so neither mitigates these CLI adapter sinks."
+      },
+      "attackPath": {
+        "controls": [
+          "Private output directories deny the necessary directory mutation. Native/MCP publishers are independently hardened."
+        ],
+        "dataflow": {
+          "summary": "Attacker-controlled directory entries replace the CLI output after exists preflight, or precreate .<plan>.<pid>.partial. writeFileSync/write_bytes follows the link with victim privileges, writes generated bytes to the referent, then plan recording renames the partial pathname."
+        },
+        "impact": "Corruption or unauthorized creation of a file outside the selected output location using victim filesystem authority.",
+        "likelihood": "Conditional local attack; no remote or default shared deployment asserted.",
+        "reachability": {
+          "summary": "Python _run_edit calls _record for --plan plus operation flags; npm runEdit calls recordPlan. Compare/convert/diff/edit and side-report paths use ordinary write helpers. A local attacker needs writable output/plan directory and a victim executing a writing command.",
+          "attacker": "Unprivileged local user with write access to the selected output or plan directory",
+          "entrypoint": "Python/npm CLI writing operations and --plan recording",
+          "preconditions": [
+            "Victim executes a successful writing command in an attacker-writable directory.",
+            "Victim process can create/truncate the symlink referent.",
+            "Attacker can replace the output name during preflight/write or plant/replace the predictable PID staging name."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Integration: preplant a symlink at the plan partial path and assert its referent remains unchanged.",
+        "Integration: replace an output between preflight and publication and assert no unrelated referent is modified.",
+        "Verify atomic no-clobber and existing/dangling symlink handling for ordinary outputs, reports and edit bundles in both CLI adapters."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0004-npm-output-race",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "npm CLI output preflight can race with symlink replacement",
+          "locations": [
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 78,
+              "endLine": 82
+            },
+            {
+              "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+              "startLine": 108,
+              "endLine": 113
+            }
+          ],
+          "source": "baseline",
+          "evidence": "Baseline reports ensureWritable uses fs.existsSync before later fs.writeFileSync(file,data), without atomic no-clobber or symlink defense.",
+          "counterevidence": "Requires attacker write access to chosen output directory; native publication uses a separate hardened path. Reportability and exact wrappers not yet parent-validated.",
+          "additionalEvidence": {
+            "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+            "startLine": 420,
+            "endLine": 423,
+            "code": "const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);",
+            "explanation": "Baseline additionally found predictable temporary pathname opened for truncating write without exclusive/no-follow flags; attacker with write access to plan directory can preplant a symlink."
+          },
+          "pythonEvidence": {
+            "locations": [
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 101,
+                "endLine": 103
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 126,
+                "endLine": 133
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+                "startLine": 407,
+                "endLine": 411
+              }
+            ],
+            "explanation": "Baseline reports the same exists-check then write_bytes publication and predictable PID partial staging, without exclusive/no-follow creation. MCP instead uses native OutputRoot."
+          }
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-8d2c9342cb837b3d",
+        "label": "Python/npm CLI filesystem publication",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Local filesystem integrity",
+        "notes": "Validated discovery-0004-npm-output-race across ordinary outputs, edit bundles, reports and PID staging. Parent verified sinks; native publication and MCP use separate controls."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0004-altchunk-colspan",
+        "reason": "Awaiting parent source validation of investigator-reported post-admission HTML colspan expansion.",
+        "candidate": {
+          "title": "Unbounded altChunk HTML colspan expands into billions of grid columns",
+          "source": "parser_conversion",
+          "locations": [
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 566,
+              "endLine": 570
+            },
+            {
+              "path": "src/convert/altchunk.rs",
+              "startLine": 465,
+              "endLine": 491
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 773,
+              "endLine": 798
+            }
+          ],
+          "evidence": "Investigator traced td colspan parsed as unbounded usize to end_table sum and one gridCol emission per span. Tiny HTML <table><tr><td colspan=\"1000000000\">x</td></tr></table> can cause billions of iterations / tens of GB generated output. with_layout admission checks original package only.",
+          "counterevidence": "Input archive is admitted with size/depth/tag controls; derived markup expansion still needs parent verification. Native gridSpan sibling under investigation."
+        },
+        "id": "discovery-0004-altchunk-colspan"
+      },
+      {
+        "candidateId": "discovery-0004-docx-table-grid",
+        "reason": "Awaiting parent validation of native DOCX table span and grid offset allocations reported by investigator.",
+        "candidate": {
+          "title": "Native DOCX grid spans and row offsets control unbounded table allocations",
+          "source": "parser_conversion",
+          "evidence": "w:gridSpan w:val=\"1000000000\" is parsed as usize in cell_span; table_block computes occupancy=sum(colspan) and allocates vec![each; occupancy]/resize. w:gridBefore/w:gridAfter feed same occupancy. Later column_prefs and resolve_table_merges allocate again.",
+          "locations": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 14209,
+              "endLine": 14213
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 13599,
+              "endLine": 13615
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 14343
+            }
+          ],
+          "counterevidence": "Original XML has admission size and depth bounds but no semantic span/count bound; independent native path without HTML. Parent must verify."
+        },
+        "id": "discovery-0004-docx-table-grid"
+      }
+    ]
+  }
+}

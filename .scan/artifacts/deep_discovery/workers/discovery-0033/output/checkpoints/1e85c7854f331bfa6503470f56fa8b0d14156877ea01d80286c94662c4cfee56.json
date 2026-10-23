@@ -1,0 +1,86 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline static audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null; worker discovery-0033.",
+    "runtimeStatus": "not_executed",
+    "validationMode": "offline_static",
+    "limitations": [
+      "Application code and vulnerability-triggering inputs are not executed; network and Git history excluded."
+    ]
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [
+      {
+        "pattern": ".git/**",
+        "reason": "Only authorized current source state is reviewed; Git history is excluded."
+      }
+    ],
+    "deferred": [
+      {
+        "id": "candidate-image-decode-limits",
+        "candidateId": "image-decode-limits",
+        "reason": "Unvalidated candidate: conversion image decoding must be checked against decoder defaults, upstream guards and entrypoint controls.",
+        "candidate": {
+          "title": "Potential image decompression resource amplification",
+          "paths": [
+            "src/convert/mod.rs",
+            "src/convert/raster.rs"
+          ],
+          "evidence": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 20289,
+              "code": "let img = image::load_from_memory(&bytes).ok()?;"
+            },
+            {
+              "path": "src/convert/raster.rs",
+              "startLine": 383,
+              "code": "if let Ok(img) = image::load_from_memory(bytes) {"
+            }
+          ],
+          "question": "Does package admission or the decoder enforce decoded pixel/allocation limits, and do retained decoded images allow attacker-amplified memory use?"
+        }
+      },
+      {
+        "id": "review-remaining-scope",
+        "reason": "Baseline, architecture and focused parser review are in progress; remaining in-scope files are not yet fully audited."
+      },
+      {
+        "id": "candidate-table-span",
+        "candidateId": "table-span",
+        "reason": "Baseline candidate awaits independent parent source validation.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Attacker-controlled DOCX/HTML table spans allocate unbounded columns",
+          "evidence": [
+            "src/convert/mod.rs:14212-14217 cell_span parses gridSpan as usize, only .max(1); table_block:13466 uses it; 13599-13615 sums spans into occupancy then vec![each; occupancy] or cols.resize(occupancy.max(1),80.0). gridSpan=2147483647 requests about 8GiB; usize::MAX causes capacity overflow.",
+            "src/convert/mod.rs:14340-14346 row_grid_skip parses gridBefore/gridAfter usize without cap.",
+            "src/convert/altchunk.rs:562-567 parses colspan usize without cap; 477-482 sums columns; 500-502 loops 0..cols generating WML. colspan=2147483647 generates tens of GiB.",
+            "src/convert/mod.rs:591 render -> with_layout:769-806 admits then parses; :792-799 altchunk expansion occurs after admission."
+          ],
+          "counterevidence": "Package/XML byte/depth budgets exist but do not inspect these semantic numeric values; no execution performed."
+        }
+      },
+      {
+        "id": "candidate-numbering-level",
+        "candidateId": "numbering-level",
+        "reason": "Baseline candidate awaits independent parent source validation.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Unbounded numbering levels drive billion-iteration scans or counter allocation",
+          "evidence": [
+            "src/convert/mod.rs:12711-12715 num_pr parses paragraph ilvl as u32 without upper bound.",
+            "src/convert/mod.rs:5518-5532 resolve_ilvl scans (0..ilvl).rev() for existing parent; ilvl=4294967295 with only level 0 requires billions of hash lookups.",
+            "src/convert/mod.rs:5610-5627 next_marker inserts counters for each 0..resolved when matching huge abstract level exists."
+          ],
+          "counterevidence": "Admission is prior to conversion but does not constrain numeric ilvl; public render is input boundary. No application execution performed."
+        }
+      }
+    ],
+    "openQuestions": []
+  }
+}

@@ -1,0 +1,2401 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX comparison/edit/inspection/rendering engine exposed through native CLI, PyO3 Python facade/CLI, WASM byte APIs/Node CLI, and an optional Python stdio MCP server (src/lib.rs:5-35; jubarte-python/pyproject.toml:42-49; jubarte-wasm/cli/package.json:33-46).",
+    "assets": [
+      "Document contents, revisions, comments, metadata, generated DOCX/PDF/PNG, edit snapshots and reports; host input/output files and engine process availability.",
+      "Installed executable and release integrity; updater selects jandira-tech/jubarte-redlines assets and SHA256SUMS.txt, with currently empty RELEASE_KEYS and no FIRST_SIGNED_RELEASE (src/update.rs:25-48,198-210,245-257)."
+    ],
+    "trustBoundaries": [
+      "Untrusted package bytes enter bounded admission before document operations; default input budgets are 64 MiB compressed/per part, 256 MiB inflated, 10000 entries and XML depth 256; compare budgets instead allow 512 MiB compressed/per part and 2 GiB inflated (src/admission.rs:63-100).",
+      "MCP stdio clients obtain document I/O under operator-selected --root (default cwd); _OutputRoot holds a cap-std directory handle for relative reads/publication; read/write ToolAnnotations are hints, while capability-relative I/O enforces containment (jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199).",
+      "Native CLI publish_paths has ambient filesystem authority, held parent handles and staged per-file commits; OutputRoot is a separately confined interface (src/publication.rs:203-225,421-569)."
+    ],
+    "attackerCapabilities": [
+      "A sender can provide malicious DOCX/DOC/XML/font/image bytes and edit or Markdown content to a willing caller; no remote listener or tenant identity is inferred.",
+      "An MCP client can request supported tools and overwrite=true inside the granted root; it does not thereby possess operator environment, release signing keys, or repository publish authority (jubarte-python/python/jubarte_redlines/mcp_server.py:152-160,258-277,373-381)."
+    ],
+    "securityObjectives": [
+      "Preserve bounded parsing, package identity, safe path handling, and checked XML policy before materializing untrusted input; callers own OS memory/CPU confinement (SECURITY.md:35-79).",
+      "Confine MCP document reads and outputs to held root authority; never confuse read-only tool hints with enforcement (src/publication.rs:146-199; jubarte-python/python/jubarte_redlines/mcp_server.py:54-108)."
+    ],
+    "assumptions": [
+      "No deployment context or authoritative threat model supplied; userContext is null. Analysis is offline and current-state-only.",
+      "Native rendering additionally reads installed fonts and persists font-index.tsv beside the user font folder, with JUBARTE_FONT_INDEX overriding or disabling; MCP --root does not encompass those independent native renderer operations (src/convert/font.rs:2633-2652,3095-3107,3213-3229).",
+      "Byte-in/byte-out library docs say no temp files (src/lib.rs:8-11), but native font indexing writes a sibling tsv.<pid>.tmp then renames; retain this qualification, not a vulnerability claim (src/convert/font.rs:3213-3229)."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current source architecture; partial boundary mapping, not audit coverage"
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-expansion.html-colspan",
+      "title": "Rendering an HTML altChunk can exhaust memory through its colspan",
+      "summary": "Rendering a DOCX with a related HTML table containing `colspan=1000000000` makes the converter append one billion XML grid columns. The input stays tiny and passes archive admission, but PDF, PNG, and layout-report operations can consume excessive CPU and memory or terminate their host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can drive enormous allocation during ordinary rendering without control of local files or configuration. The established consequence is process availability loss; no remote service or broader compromise is assumed. Caller-enforced process CPU/memory limits contain impact.",
+        "changeConditions": "A deployed shared rendering service would increase operational impact; enforcing a cumulative expansion budget before the loop would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source traces public rendering through admitted package bytes to HTML parsing, unchecked numeric span and its allocation loop; no runtime trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "alt-expand",
+          "label": "Resolve and translate HTML bytes",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 28,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let end = if open.ends_with(\"/>\") {\n            open_end + 1\n        } else {\n            tail.find(\"</w:altChunk>\")\n                .map_or(open_end + 1, |i| i + \"</w:altChunk>\".len())\n        };\n        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "The document relationship ID selects package bytes; `chunk_html` decodes them and calls `html_to_wml`."
+        },
+        {
+          "id": "alt-span",
+          "label": "Accept unbounded HTML colspan",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Attacker-controlled `colspan` is parsed as `usize` with only a lower bound, then stored in the cell span stack."
+        },
+        {
+          "id": "alt-grid",
+          "label": "Emit one XML column per numeric span",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 463,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn end_table(&mut self) {\n        self.close_open_cell();\n        self.flush();\n        let Some(table) = self.tables.pop() else {\n            return;\n        };\n        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "`end_table` sums the stored spans and emits `cols` grid records into an expanding String without a column or output-byte budget."
+        },
+        {
+          "id": "alt-tag-dispatch",
+          "label": "Dispatch each parsed HTML tag",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 671,
+          "endLine": 678,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        if closing {\n            b.end(&name);\n        } else {\n            b.start(&name, tag_src);\n            if inner.ends_with('/') && name != \"br\" {\n                b.end(&name);\n            }\n        }",
+          "explanation": "The HTML tokenizer forwards opening cell and closing table tags to the builder, preserving numeric attribute input."
+        },
+        {
+          "id": "alt-end-dispatch",
+          "label": "Close tables through end_table",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 589,
+          "endLine": 598,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    fn end(&mut self, tag: &str) {\n        if let Some(i) = self.fmts.iter().rposition(|(t, _)| t == tag) {\n            self.fmts.truncate(i);\n        }\n        match tag {\n            t if BLOCKS.contains(&t) => self.flush(),\n            \"td\" | \"th\" if self.in_open_cell() => self.end_cell(),\n            \"td\" | \"th\" => {}\n            \"table\" => self.end_table(),\n            _ => {}",
+          "explanation": "A closing table tag triggers the expansion loop in `end_table`."
+        }
+      ],
+      "rootCause": {
+        "summary": "Package admission bounds archive bytes, inflated parts, and XML syntax, but HTML-to-WML expansion occurs afterwards. `Builder::start` accepts arbitrarily large representable `colspan`, stores it in `cell_spans`, and `end_table` uses the row span sum as the exact count of XML grid records to generate. The expanded output has no resource budget.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ]
+      },
+      "remediation": "Apply a small maximum HTML colspan and cumulative table-column budget before storing spans, use checked arithmetic for row sums, and enforce a cumulative generated-WML byte budget with a typed refusal before allocating.",
+      "validation": {
+        "counterEvidence": [
+          "Archive admission runs before expansion and limits actual input bytes, not the numeric span or generated XML (src/admission.rs:531-551).",
+          "Existing tests handle invalid, negative and zero spans and ordinary span 2, but show no maximum-span rejection (src/convert/altchunk.rs:1026-1054).",
+          "SECURITY.md requires hosts to apply process CPU/memory limits; these mitigate host scope but do not bound this loop."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ],
+        "limitations": [
+          "No application execution or vulnerability-triggering input was used in this static audit."
+        ],
+        "method": "read-only static source trace",
+        "status": "validated",
+        "summary": "`with_layout` resolves a related package part and invokes `expand`; `expand` routes HTML/MHT to `html_to_wml`. The tokenizer dispatches a `td` to `Builder::start`, whose positive usize span has no upper bound. Closing `table` invokes `end_table`, which writes one record per span before parsing the resulting XML. `1000000000` fits both 32-bit and 64-bit usize and avoids relying on integer overflow."
+      },
+      "attackPath": {
+        "controls": [
+          "Archive byte/XML limits apply before expansion.",
+          "Host process limits can contain a worker failure."
+        ],
+        "dataflow": {
+          "summary": "DOCX bytes -> `with_layout` -> package relationship -> `expand` -> `html_to_wml` -> numeric `cell_spans` -> `end_table` XML expansion",
+          "source": "Document-controlled HTML cell attribute",
+          "sink": "Growing WML String inside end_table",
+          "outcome": "Excessive CPU/memory consumption and possible process termination",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-tag-dispatch",
+            "alt-span",
+            "alt-end-dispatch",
+            "alt-grid"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering process availability and memory budget are affected."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short representable numeric attribute directly controls the expansion count."
+        },
+        "reachability": {
+          "summary": "Any caller exposing supported PDF/PNG/layout APIs to documents from another party can trigger this path; no service deployment, special flag, local file write, or raised input limits is required.",
+          "attacker": "Untrusted document provider",
+          "entrypoint": "convert::docx_to_pdf / render / docx_render_report",
+          "preconditions": [
+            "Victim renders a supplied DOCX with an internal HTML altChunk relationship."
+          ],
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-span",
+            "alt-grid"
+          ]
+        },
+        "summary": "Provide a valid DOCX with `w:altChunk` referencing a short HTML table whose single cell has a very large positive `colspan`, then have a caller render it."
+      },
+      "remediationTests": [
+        "Reject huge representable positive colspan through public rendering while retaining ordinary span behavior.",
+        "Verify many bounded spans cannot exceed the cumulative table/output budget.",
+        "Verify row-span sum overflow returns a refusal on native and wasm32."
+      ],
+      "preventiveControls": [
+        "Budget derived representations before materialization, including post-admission HTML/MHT expansion."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-altchunk-colspan",
+        "producer": "discovery-0017",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-altchunk-colspan",
+            "title": "HTML altChunk colspan expands without a bound during rendering",
+            "attacker": "Provider of a DOCX containing a related HTML/MHT altChunk",
+            "evidence": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "code": "self.cell_spans.push(\n    attr(open, \"colspan\")\n        .and_then(|s| s.trim().parse::<usize>().ok())\n        .unwrap_or(1)\n        .max(1),\n);"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "code": "let cols = table.rows.iter().map(|r| r.iter().map(|c| c.span).sum::<usize>()).max().unwrap_or(1).max(1);\nfor _ in 0..cols {\n    let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n}"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 798,
+                "description": "with_layout admits original package, resolves related altChunk bytes, then expands before DOM construction."
+              }
+            ],
+            "impact": "A short numeric colspan may cause effectively unbounded generated XML and CPU/memory consumption despite archive admission.",
+            "unresolved": "Check complete HTML dispatch, valid routing and admission counterevidence before retaining."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-allocation.table-grid",
+      "title": "Rendering a tiny table can allocate billions of columns",
+      "summary": "A DOCX containing a cell with `w:gridSpan=2147483647`, or an equivalent `w:gridBefore`/`w:gridAfter`, drives the renderer to allocate approximately 8 GiB for a column-width vector. Archive admission accepts these short numeric attributes, so PDF, PNG and layout operations can exhaust memory or terminate their embedding process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document provider controls the count that reaches allocation during ordinary rendering. Process availability is the demonstrated impact and likelihood is high; no remotely exposed service is assumed. Caller process limits restrict blast radius.",
+        "changeConditions": "Shared-service deployment would increase impact; a semantic table-column budget checked before arithmetic/allocation would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly connects the three numeric span fields through RawCell occupancy to vec allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13199,
+          "endLine": 13216,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13554,
+          "endLine": 13560,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "grid-span",
+          "label": "Parse cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)",
+          "explanation": "A DOCX `w:gridSpan/@w:val` becomes an unrestricted positive usize returned to table parsing."
+        },
+        {
+          "id": "grid-skips",
+          "label": "Parse row skip spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14338,
+          "endLine": 14352,
+          "language": "rust",
+          "role": "root_control",
+          "code": "/// A row's `w:gridBefore`/`w:gridAfter` (`side` \"Before\"/\"After\"): the\n/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.\nfn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))",
+          "explanation": "`gridBefore` and `gridAfter` share this unrestricted usize parser and become placeholder cell spans."
+        },
+        {
+          "id": "grid-skip-flow",
+          "label": "Carry leading skip into a cell",
+          "path": "src/convert/mod.rs",
+          "startLine": 13196,
+          "endLine": 13218,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let mut grid_at = 0usize;\n        let mut cells = Vec::new();\n        let mut row_has_cell_del = false;\n        let (grid_before, grid_after) = (\n            row_grid_skip(dom, row, \"Before\"),\n            row_grid_skip(dom, row, \"After\"),\n        );\n        // A skip without a wBefore/wAfter is as wide as the grid columns\n        // it leaves empty (ed36b607e8: a 5-twip first column a row skips\n        // keeps Word's 0.25pt; an auto width fitted it to a cell's\n        // margins, 10.8pt, and pushed the row's text in).\n        let grid_width = |at: usize, span: usize| -> PrefWidth {\n            PrefWidth::Dxa(cols.iter().skip(at).take(span).sum())\n        };\n        if let Some((span, pref)) = grid_before {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n            grid_at += span;\n        }\n        for cell in wrapped_children(dom, row, \"tc\") {",
+          "explanation": "The table parser turns the unbounded leading skip into a RawCell whose span contributes to row occupancy."
+        },
+        {
+          "id": "grid-cell-flow",
+          "label": "Carry authored cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 13461,
+          "endLine": 13486,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            // 0129b302's auto-spaced \"1.300.000\" cell is 14pt apart, not 28.\n            fold_stacked_spacing(\n                cell_paras.iter_mut().map(|p| &mut p.style).collect(),\n                &nested_at,\n            );\n            let (colspan, vmerge) = cell_span(dom, cell);\n            let last_col = grid_at + colspan.max(1) >= cols.len();\n            let at = |b: TblBorders| {\n                row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)\n            };\n            // tcBorders overrides only the edges it names (004599833e's\n            // cells name just tl2br / tr2bl): the rest keep the row's\n            // tblPrEx rules, else the table's.\n            let borders = match parse_tc_border_spec(dom, cell) {\n                Some([top, bottom, left, right]) => {\n                    let inherit = row_borders.or(table_borders).map(at).unwrap_or_default();\n                    Some(CellBorders {\n                        top: top.unwrap_or(inherit.top),\n                        bottom: bottom.unwrap_or(inherit.bottom),\n                        left: left.unwrap_or(inherit.left),\n                        right: right.unwrap_or(inherit.right),\n                    })\n                }\n                None => row_borders.map(at),\n            };\n            grid_at += colspan.max(1);",
+          "explanation": "The table parser receives `colspan` from `cell_span` without a cap."
+        },
+        {
+          "id": "grid-raw-cell",
+          "label": "Retain span in raw row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13527,
+          "endLine": 13542,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            {\n                cell_paras.pop();\n            }\n            cells.push(RawCell {\n                paras: cell_paras,\n                nested,\n                nested_at,\n                pref: cell_pref_width(dom, cell),\n                colspan,\n                vmerge,\n                fill: cell_fill(dom, cell),\n                fill_explicit: first_named(dom, cell, \"tcPr\")\n                    .and_then(|pr| first_named(dom, pr, \"shd\"))\n                    .is_some(),\n                valign_center: cell_valign_is(dom, cell, \"center\"),\n                valign_bottom: cell_valign_is(dom, cell, \"bottom\"),",
+          "explanation": "The unbounded `colspan` is stored in RawCell for later occupancy summation."
+        },
+        {
+          "id": "grid-allocate",
+          "label": "Allocate column vector from numeric occupancy",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "language": "rust",
+          "role": "sink",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);\n    let pref = column_prefs(&raw_rows, &cols, fixed);",
+          "explanation": "The maximum row span sum directly controls a f32 column vector allocation or resize."
+        },
+        {
+          "id": "grid-after",
+          "label": "Carry trailing skip into row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13550,
+          "endLine": 13565,
+          "language": "rust",
+          "role": "propagation",
+          "code": "                hide_mark,\n                grid_skip: false,\n                borders,\n            });\n        }\n        if let Some((span, pref)) = grid_after {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n        }\n        // Word All Markup appends a “Deleted Cells” column when the\n        // row has live w:cellDel (addition_removal remnant). Do not\n        // rewrite trPr/del rows — that was mini 59 (−5 ITT).\n        if row_has_cell_del {",
+          "explanation": "The trailing skip becomes another RawCell contributing to the same allocation count."
+        },
+        {
+          "id": "grid-skip-value",
+          "label": "Placeholder retains numeric span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14376,
+          "endLine": 14384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        nested: Vec::new(),\n        nested_at: Vec::new(),\n        pref,\n        colspan: span,\n        vmerge: VMerge::None,\n        fill: None,\n        fill_explicit: false,\n        valign_center: false,\n        valign_bottom: false,",
+          "explanation": "`grid_skip_cell` copies the parsed span into `colspan` unchanged."
+        },
+        {
+          "id": "grid-stretch",
+          "label": "Stale span repair does not reduce oversized spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14168,
+          "endLine": 14201,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// brings its width closer to the tcW: Word reads the row by its cell\n/// widths and the saved grid as a cache (25f1d311bd). A row whose cells\n/// fit their columns (within `STALE_SPAN_SLACK_PT`) is a short row and\n/// stays one.\nfn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {\n    const STALE_SPAN_SLACK_PT: f32 = 20.0;\n    for row in rows.iter_mut() {\n        let used: usize = row.iter().map(|c| c.colspan.max(1)).sum();\n        if used >= cols.len() {\n            continue;\n        }\n        let mut spare = cols.len() - used;\n        let mut col = 0usize;\n        for cell in row.iter_mut() {\n            let span = cell.colspan.max(1);\n            if let PrefWidth::Dxa(want) = cell.pref {\n                let mut covered: f32 = cols.iter().skip(col).take(span).sum();\n                let mut extra = 0usize;\n                while extra < spare\n                    && want - covered > STALE_SPAN_SLACK_PT\n                    && let Some(&next) = cols.get(col + span + extra)\n                    && (covered + next - want).abs() < (want - covered).abs()\n                {\n                    covered += next;\n                    extra += 1;\n                }\n                if extra > 0 {\n                    cell.colspan = span + extra;\n                    spare -= extra;\n                }\n            }\n            col += cell.colspan.max(1);\n        }\n    }",
+          "explanation": "Oversized authored spans skip this repair when `used >= cols.len()`; it does not clamp them."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span` and `row_grid_skip` accept numeric column counts without a semantic maximum. Table parsing retains them as RawCell spans, including before/after placeholder cells. `stretch_stale_spans` leaves an oversized row unchanged, and its span sum then controls column-vector allocation. Package input bounds do not bound this derived representation.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ]
+      },
+      "remediation": "Reject individual spans and cumulative table occupancy above a documented column budget before arithmetic or allocation. Use checked addition and return a typed conversion refusal for invalid numeric semantics.",
+      "validation": {
+        "counterEvidence": [
+          "Byte/XML admission does not validate numeric table semantics.",
+          "Markdown's separate table reader clamps spans to 64 (src/markdown/from_docx/mod.rs:3590-3595), but rendering does not call that reader.",
+          "SECURITY.md directs callers to process memory/CPU limits."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ],
+        "limitations": [
+          "Static-only validation; memory exhaustion was not triggered."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "The public rendering path admits and opens the document before table parsing. A positive 2147483647 fits usize on supported 32/64-bit targets. It is retained as `colspan`; the stale-span repair skips oversized rows. Occupancy reaches `vec![each; occupancy]` or `resize` without a maximum. Both row-skip fields independently feed the same sum via grid_skip_cell."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX table XML -> cell_span/row_grid_skip -> RawCell.colspan -> occupancy sum -> column vector allocation",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "grid-span",
+            "grid-cell-flow",
+            "grid-raw-cell",
+            "grid-skips",
+            "grid-skip-flow",
+            "grid-after",
+            "grid-skip-value",
+            "grid-allocate",
+            "grid-stretch"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering worker or embedding-process availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A tiny attribute deterministically controls allocation count."
+        },
+        "reachability": {
+          "summary": "A sender who controls a document consumed by supported render APIs can invoke the vulnerable path without raised input limits or filesystem authority.",
+          "attacker": "Untrusted DOCX provider",
+          "entrypoint": "Public render/PDF/PNG/layout APIs",
+          "outcome": "Memory exhaustion or process failure"
+        },
+        "summary": "Have a caller render a valid package with one visible table cell whose positive gridSpan is very large, or a row carrying a huge leading/trailing grid skip."
+      },
+      "remediationTests": [
+        "Reject oversized gridSpan, gridBefore and gridAfter through public rendering APIs.",
+        "Verify cumulative occupancy and integer-overflow refusal on native and wasm32.",
+        "Preserve valid merged-cell and row-skip layouts."
+      ],
+      "preventiveControls": [
+        "Use one semantic table-column policy for authored and synthesized cells."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-render-gridspan",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-render-gridspan",
+            "title": "Unbounded table spans expand a tiny DOCX into enormous allocations",
+            "cwe": "CWE-789",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "Attacker supplying a DOCX for rendering or layout through Rust, Python, WASM, CLI, or MCP.",
+            "violated_security_invariant": "Bounded admitted content must not control allocation independently of content size.",
+            "source_to_sink": "cell_span parses w:gridSpan directly to usize; parse_table sums spans into occupancy and vec![each; occupancy] / cols.resize. row_grid_skip also accepts unrestricted gridBefore/gridAfter.",
+            "impact": "gridSpan=2147483647 requests about 8 GiB for first f32 columns vector; larger values cause capacity overflow.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14204,
+                "endLine": 14223
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13600,
+                "endLine": 13618
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14352
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 799
+              }
+            ],
+            "supporting_source_evidence": [
+              "cell_span parses then unwrap_or(1).max(1)",
+              "occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());",
+              "cols = vec![each; occupancy]; cols.resize(occupancy.max(1), 80.0);",
+              "row_grid_skip unrestricted positive usize"
+            ],
+            "counterevidence": [
+              "Admission limits bytes/XML syntax but not numeric spans.",
+              "Markdown reader clamps span to 64; renderer does not.",
+              "Host CPU/memory limits contain impact."
+            ],
+            "recommended_remediation": "Validate individual and cumulative table spans, checked sums, typed refusal."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-iteration.numbering-level",
+      "title": "Rendering extreme list levels performs billions of operations",
+      "summary": "A DOCX paragraph with `w:ilvl=4294967295` and an ordinary numbering definition forces a reverse scan over billions of undefined levels. Defining a very high abstract level or override additionally makes the renderer initialize a counter for every lower level, exhausting CPU and memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can force extreme work with a tiny numeric field during normal layout. The established impact is worker/process availability loss; no remote deployment is inferred. Host process limits can contain the failure.",
+        "changeConditions": "Exposure as a shared document service increases operational impact; bounded supported levels and key-based parent lookup remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source establishes unrestricted paragraph, abstract and override levels and all numeric-range loops; no timing or allocation trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Excessive iteration",
+        "cwe": [
+          "CWE-834"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5545,
+          "endLine": 5559,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5584,
+          "endLine": 5591,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5729,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6617,
+          "endLine": 6646,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6670,
+          "endLine": 6688,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "ilvl-input",
+          "label": "Paragraph list level is unbounded",
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {\n    let Some(num) = first_named(dom, ppr, \"numPr\") else {\n        return (None, 0);\n    };\n    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);\n    let num_id = first_named(dom, num, \"numId\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .map(str::to_string);\n    (num_id, ilvl)",
+          "explanation": "Direct and style paragraph numbering reads `ilvl` as arbitrary u32 and retains it."
+        },
+        {
+          "id": "ilvl-resolve",
+          "label": "Resolve parent by scanning numeric range",
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn resolve_ilvl(&self, abs: &str, ilvl: u32) -> u32 {\n        let Some(lvls) = self.levels.get(abs) else {\n            return ilvl;\n        };\n        if lvls.contains_key(&ilvl) {\n            return ilvl;\n        }\n        // Word ignores a requested ilvl the abstract never defined\n        // (potpourri / file_170 ListNumber only has ilvl=0). Continue\n        // the parent level so Sift is \"3.\" at the same hanging as\n        // Preheat, not a synthesized nested \"1.\" at +18pt.\n        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "An undefined high level makes `resolve_ilvl` inspect every lower integer until a defined parent is found."
+        },
+        {
+          "id": "ilvl-ensure",
+          "label": "Synthesize level through another numeric scan",
+          "path": "src/convert/mod.rs",
+          "startLine": 5545,
+          "endLine": 5559,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn ensure_level(&mut self, abs: &str, ilvl: u32) -> Option<NumLevel> {\n        if let Some(lvl) = self.levels.get(abs).and_then(|m| m.get(&ilvl)).cloned() {\n            return Some(lvl);\n        }\n        let parent_ilvl = (0..ilvl)\n            .rev()\n            .find(|&i| self.levels.get(abs).is_some_and(|m| m.contains_key(&i)))?;\n        let parent = self.levels.get(abs)?.get(&parent_ilvl)?.clone();\n        if parent.fmt == NumFmt::Bullet {\n            return None;\n        }\n        let step = (ilvl - parent_ilvl) as f32;\n        let synth = NumLevel {\n            fmt: NumFmt::Decimal,\n            text: format!(\"%{}.\", ilvl + 1),",
+          "explanation": "`ensure_level` repeats a reverse parent search over the unbounded level range when a direct level is absent."
+        },
+        {
+          "id": "ilvl-next",
+          "label": "Marker dispatch preserves resolved level",
+          "path": "src/convert/mod.rs",
+          "startLine": 5584,
+          "endLine": 5591,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    fn next_marker(&mut self, num_id: &str, ilvl: u32) -> String {\n        let Some(abs) = self.instances.get(num_id).cloned() else {\n            return String::new();\n        };\n        let resolved = self.resolve_ilvl(&abs, ilvl);\n        let Some(lvl) = self.ensure_level(&abs, resolved) else {\n            return String::new();\n        };",
+          "explanation": "`next_marker` passes the arbitrary resolved level to subsequent counter initialization."
+        },
+        {
+          "id": "ilvl-counters",
+          "label": "Initialize a counter for every lower number",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "language": "rust",
+          "role": "sink",
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }\n            let first = self\n                .starts\n                .get(&(num_id.to_string(), level))\n                .copied()\n                .or_else(|| {\n                    self.levels\n                        .get(&abs)\n                        .and_then(|m| m.get(&level))\n                        .map(|l| l.start)\n                })\n                .unwrap_or(1)\n                .max(1);\n            self.counters\n                .insert((num_id.to_string(), level), first.saturating_add(1));",
+          "explanation": "An explicitly defined high level makes this loop grow the counters map for all lower integers."
+        },
+        {
+          "id": "ilvl-render-loop",
+          "label": "Render scans levels again",
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5729,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let mut out = lvl.text.clone();\n        for i in 0..=ilvl {\n            let token = format!(\"%{}\", i + 1);\n            if !out.contains(&token) {\n                continue;\n            }",
+          "explanation": "Marker rendering also enumerates all levels up to an unbounded ilvl."
+        },
+        {
+          "id": "ilvl-def",
+          "label": "Abstract numbering levels accept high indices",
+          "path": "src/convert/mod.rs",
+          "startLine": 6617,
+          "endLine": 6646,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let mut lvls = HashMap::new();\n        for lvl in dom.descendants(abs, Some(&W::name(\"lvl\"))) {\n            let ilvl = attr_any(&dom, lvl, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);\n            if let Some(v) = first_named(&dom, lvl, \"lvlRestart\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n            {\n                numbering.restarts.insert((aid.to_string(), ilvl), v);\n            }\n            if first_named(&dom, lvl, \"isLgl\").is_some_and(|n| !val_is_false(&dom, Some(n))) {\n                numbering.is_lgl.insert((aid.to_string(), ilvl));\n            }\n            if let Some(ps) =\n                first_named(&dom, lvl, \"pStyle\").and_then(|n| attr_any(&dom, n, \"val\"))\n            {\n                numbering\n                    .lvl_pstyle\n                    .insert((aid.to_string(), ilvl), ps.to_string());\n            }\n            if let Some(pic) = first_named(&dom, lvl, \"lvlPicBulletId\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n            {\n                numbering.lvl_pic.insert((aid.to_string(), ilvl), pic);\n            }\n            lvls.insert(ilvl, parse_num_level(&dom, lvl));\n        }\n        numbering.levels.insert(aid.to_string(), lvls);",
+          "explanation": "Parsed abstract `ilvl` keys enter the numbering map without a supported-range check."
+        },
+        {
+          "id": "ilvl-override",
+          "label": "Overrides accept high indices",
+          "path": "src/convert/mod.rs",
+          "startLine": 6670,
+          "endLine": 6688,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        // Full `lvlOverride/w:lvl` replacements give this num its own level\n        // table (014caa99 \"PART %2\" over the abstract's \"%2.\").\n        let overrides: Vec<(u32, NumLevel)> = dom\n            .descendants(num, Some(&W::name(\"lvlOverride\")))\n            .into_iter()\n            .filter_map(|ov| {\n                let ilvl = attr_any(&dom, ov, \"ilvl\")\n                    .and_then(|s| s.parse().ok())\n                    .unwrap_or(0);\n                first_named(&dom, ov, \"lvl\").map(|lvl| (ilvl, parse_num_level(&dom, lvl)))\n            })\n            .collect();\n        let aid = if overrides.is_empty() {\n            aid\n        } else {\n            let own = format!(\"{aid}@{nid}\");\n            let mut lvls = numbering.levels.get(&aid).cloned().unwrap_or_default();\n            lvls.extend(overrides);\n            numbering.levels.insert(own.clone(), lvls);",
+          "explanation": "Full level overrides independently preserve arbitrary level indices in the effective level map."
+        }
+      ],
+      "rootCause": {
+        "summary": "`num_pr` retains arbitrary u32 paragraph levels, and abstract/override parsers accept the same unsupported index range. `resolve_ilvl` and `ensure_level` search integer ranges rather than defined levels. For a high defined level, `next_marker` creates every missing lower counter, and marker rendering enumerates the range again.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "ilvl-input",
+          "ilvl-resolve",
+          "ilvl-ensure",
+          "ilvl-next",
+          "ilvl-counters",
+          "ilvl-render-loop",
+          "ilvl-def",
+          "ilvl-override"
+        ]
+      },
+      "remediation": "Enforce the supported numbering level range at paragraph, style, abstract and override boundaries, normally 0 through 8. Resolve parents by examining defined keys, and bound all counter initialization and rendering loops.",
+      "validation": {
+        "counterEvidence": [
+          "XML depth bounds are independent of numeric level values.",
+          "Markdown separately clamps ilvl to 8 (src/markdown/from_docx/mod.rs:2655-2664); renderer uses its own Numbering implementation.",
+          "Host CPU/memory limits can terminate or constrain a worker."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "ilvl-input",
+          "ilvl-resolve",
+          "ilvl-ensure",
+          "ilvl-next",
+          "ilvl-counters",
+          "ilvl-render-loop",
+          "ilvl-def",
+          "ilvl-override"
+        ],
+        "limitations": [
+          "Static validation only; billions of operations were not executed."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Paragraph numbering and style inheritance use num_pr without an ilvl cap (src/convert/mod.rs:12683-12718,12834-12879). An undefined u32-max paragraph level reaches resolve_ilvl's reverse scan with an ordinary level-zero parent. A defined high level bypasses that search but reaches the counters loop. Abstract levels and full overrides have no upper-bound check, so both paths remain reachable after admission."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Paragraph/style numPr or abstract/override XML -> arbitrary ilvl -> Numbering resolution -> numeric-range hash lookups / counter insertion / marker rendering",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "ilvl-input",
+            "ilvl-resolve",
+            "ilvl-ensure",
+            "ilvl-next",
+            "ilvl-counters",
+            "ilvl-render-loop",
+            "ilvl-def",
+            "ilvl-override"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering worker availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Short numeric input directly drives large ranges."
+        },
+        "reachability": {
+          "summary": "Supported render/layout APIs process document-supplied numbering without any feature flag or raised admission limit.",
+          "attacker": "Untrusted DOCX provider",
+          "outcome": "CPU saturation and possibly large counter-map allocation"
+        },
+        "summary": "Provide a DOCX list paragraph requesting a very high numeric level and have a caller render or lay it out."
+      },
+      "remediationTests": [
+        "Reject or safely normalize u32-max paragraph, abstract and override levels.",
+        "Verify sparse definitions do not trigger iteration proportional to an undefined numeric index.",
+        "Retain ordinary multilevel numbering behavior."
+      ],
+      "preventiveControls": [
+        "Use a validated bounded numbering-level type throughout the renderer."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-numbering-ilvl",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-numbering-ilvl",
+            "title": "Attacker-controlled list levels cause billions of numbering operations",
+            "cwe": "CWE-834",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "DOCX provider to layout engine",
+            "violated_security_invariant": "List-level resolution must be bounded by defined levels.",
+            "source_to_sink": "num_pr parses arbitrary u32 ilvl; resolve_ilvl evaluates (0..ilvl).rev().find(|i| lvls.contains_key(i)); next_marker iterates 0..resolved and inserts counters. Abstract and override levels also unrestricted.",
+            "impact": "ilvl=4294967295 with level zero requires about 4.29 billion hash lookups; explicitly high defined levels drive map memory growth.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 12707,
+                "endLine": 12718
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5518,
+                "endLine": 5532
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5610,
+                "endLine": 5627
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6617,
+                "endLine": 6646
+              }
+            ],
+            "supporting_source_evidence": [
+              "num_pr v.parse::<u32>().ok()",
+              "(0..ilvl).rev().find(|i| lvls.contains_key(i))",
+              "for level in 0..resolved inserts counters",
+              "parse_numbering_xml inserts parsed ilvl into levels"
+            ],
+            "counterevidence": [
+              "Markdown separately caps ilvl.min(8)",
+              "XML depth does not bound numeric ilvl"
+            ],
+            "recommended_remediation": "Enforce level 0..8 everywhere; inspect defined map keys instead of arbitrary numeric range."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.chicago-numbering",
+      "title": "Reading or rendering Chicago numbering can allocate gigabyte labels",
+      "summary": "A small DOCX list using `chicago` numbering and start `2147483647` requests 536870912 double-dagger symbols, about 1.5 GiB for one label. Reading the agent view, including MCP `docx_text`, and rendering reach the same unchecked formatter. Endnote and page-label starts provide additional rendering routes.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can exhaust process memory through ordinary reading or rendering using a short numeric field. This affects process availability; filesystem confinement does not constrain memory allocation. No remote service is assumed.",
+        "changeConditions": "A shared service or multi-document host increases operational impact; a shared maximum generated-label budget removes all identified routes."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both independent readers and rendering consumers pass document counters into a direct unbounded String::repeat; proof is source-only."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 2074,
+          "endLine": 2090,
+          "role": "user_input"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3023,
+          "endLine": 3030,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "startLine": 131,
+          "endLine": 144,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6713,
+          "endLine": 6727,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8652,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8675,
+          "endLine": 8685,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 32020,
+          "endLine": 32032,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chi-parse",
+          "label": "Read numeric list start",
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {\n    let fmt = first_named(dom, lvl, \"numFmt\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"decimal\");\n    let text = first_named(dom, lvl, \"lvlText\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"%1.\")\n        .to_string();\n    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "An authored numbering level supplies both `numFmt` and arbitrary positive start, retained for later formatting."
+        },
+        {
+          "id": "chi-counter",
+          "label": "Select effective counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let start = self\n            .starts\n            .get(&(num_id.to_string(), resolved))\n            .copied()\n            .unwrap_or(lvl.start)\n            .max(1);\n        let cur = *self\n            .counters\n            .entry((num_id.to_string(), resolved))\n            .or_insert(start);\n        self.counters\n            .insert((num_id.to_string(), resolved), cur.saturating_add(1));\n        self.render(&abs, num_id, resolved, &lvl, cur)",
+          "explanation": "The instance override or level start becomes `cur`, which is sent to Numbering::render."
+        },
+        {
+          "id": "chi-token",
+          "label": "Resolve marker placeholder counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5751,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let mut out = lvl.text.clone();\n        for i in 0..=ilvl {\n            let token = format!(\"%{}\", i + 1);\n            if !out.contains(&token) {\n                continue;\n            }\n            let val = if i == ilvl {\n                this\n            } else {\n                self.counters\n                    .get(&(num_id.to_string(), i))\n                    .map(|v| (*v).saturating_sub(1).max(1))\n                    // An unused parent slot shows this instance's\n                    // startOverride before the abstract start.\n                    .or_else(|| self.starts.get(&(num_id.to_string(), i)).copied())\n                    .or_else(|| {\n                        self.levels\n                            .get(abs)\n                            .and_then(|m| m.get(&i))\n                            .map(|l| l.start.max(1))\n                    })\n                    .unwrap_or(1)\n            };\n            let fmt = self\n                .levels\n                .get(abs)\n                .and_then(|m| m.get(&i))\n                .map_or(lvl.fmt, |l| l.fmt);",
+          "explanation": "The marker uses the current or parent counter and obtains its selected format."
+        },
+        {
+          "id": "chi-format-call",
+          "label": "Expand marker through shared formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5755,
+          "endLine": 5766,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            let lgl = self\n                .lgl_override\n                .get(&(num_id.to_string(), ilvl))\n                .copied()\n                .unwrap_or_else(|| self.is_lgl.contains(&(abs.to_string(), ilvl)));\n            let fmt = if lgl || (lvl.fmt == NumFmt::DecimalZero && i != ilvl) {\n                NumFmt::Decimal\n            } else {\n                fmt\n            };\n            out = out.replace(&token, &format_num(fmt, val));\n        }",
+          "explanation": "A placeholder is replaced by format_num(fmt,val), reaching the Chicago label constructor."
+        },
+        {
+          "id": "chi-public-shared",
+          "label": "Shared Chicago formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5847,
+          "endLine": 5861,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// A list counter in a `w:numFmt` (`lowerLetter`, `upperRoman`, …), as the\n/// layout prints it; for the agent view's id lines.\npub(crate) fn list_number(num_fmt: &str, n: u32) -> String {\n    format_num(parse_num_fmt(num_fmt), n)\n}\n\nfn format_num(fmt: NumFmt, n: u32) -> String {\n    match fmt {\n        NumFmt::Decimal => n.to_string(),\n        NumFmt::DecimalZero => format!(\"{n:02}\"),\n        NumFmt::CardinalText => cardinal_label(n),\n        NumFmt::Ordinal => ordinal_label(n),\n        NumFmt::OrdinalText => ordinal_text_label(n),\n        NumFmt::Hex => format!(\"{n:X}\"),\n        NumFmt::Chicago => chicago_label(n),",
+          "explanation": "Both list_number and rendering route the Chicago enum to chicago_label."
+        },
+        {
+          "id": "chi-allocate",
+          "label": "Repeat a symbol proportional to counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)\n}",
+          "explanation": "No label-length bound precedes repeat(i/4+1), so a tiny numeric counter produces gigabytes of output."
+        },
+        {
+          "id": "chi-md-parse",
+          "label": "Markdown reader accepts numeric start",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 2074,
+          "endLine": 2090,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn level_of(lvl: &Element) -> Level {\n    Level {\n        format: lvl\n            .child(\"numFmt\")\n            .and_then(|f| f.attr(\"val\"))\n            .unwrap_or(\"decimal\")\n            .to_string(),\n        start: lvl\n            .child(\"start\")\n            .and_then(|s| s.attr(\"val\"))\n            .and_then(|v| v.parse().ok())\n            .unwrap_or(1),\n        text: lvl\n            .child(\"lvlText\")\n            .and_then(|t| t.attr(\"val\"))\n            .map(str::to_string),\n    }",
+          "explanation": "The separate reading pipeline independently accepts document numbering starts without a maximum."
+        },
+        {
+          "id": "chi-md-label",
+          "label": "Reading invokes same formatter",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3023,
+          "endLine": 3030,
+          "language": "rust",
+          "role": "sink",
+          "code": "            let Some((_, at)) = self.numbering.level(num_id, k) else {\n                continue;\n            };\n            let n = counters[k].unwrap_or(i64::from(at.start));\n            label.push_str(&crate::convert::list_number(\n                &at.format,\n                u32::try_from(n.max(0)).unwrap_or(u32::MAX),\n            ));",
+          "explanation": "The agent-view list marker passes the effective unbounded counter to convert::list_number."
+        },
+        {
+          "id": "chi-mcp",
+          "label": "MCP read tool exposes agent view",
+          "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "startLine": 131,
+          "endLine": 144,
+          "language": "python",
+          "role": "entrypoint",
+          "code": "    @mcp.tool(annotations=_READ)\n    def docx_text(path: str) -> str:\n        \"\"\"The agent view `jubarte read` prints: a header (sha256, counts, page\n        setup), then Markdown with a <!-- pN --> id line before each paragraph\n        and every revision (r12) and comment (c5) with its id.\n\n        Those ids are the coordinates an edit plan uses (`p12` as written).\n        Read before you edit. Warnings follow the view, one per line.\n        \"\"\"\n        from . import _native\n\n        doc = load(path)\n        markdown, warnings = engine(lambda: _native.read_view(doc.to_bytes(), source=Path(path).name))\n        return markdown + \"\".join(f\"warning: {w}\\n\" for w in warnings)",
+          "explanation": "An MCP docx_text request reads a root-confined document and calls native read_view, whose output formatting reaches the reader."
+        },
+        {
+          "id": "chi-override",
+          "label": "Start override remains unbounded",
+          "path": "src/convert/mod.rs",
+          "startLine": 6713,
+          "endLine": 6727,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        for ov in dom.descendants(num, Some(&W::name(\"lvlOverride\"))) {\n            let ilvl = attr_any(&dom, ov, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);\n            let start = first_named(&dom, ov, \"startOverride\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n                .or_else(|| {\n                    first_named(&dom, ov, \"lvl\")\n                        .and_then(|lvl| first_named(&dom, lvl, \"start\"))\n                        .and_then(|n| attr_any(&dom, n, \"val\"))\n                        .and_then(|s| s.parse().ok())\n                });\n            if let Some(start) = start {\n                numbering.starts.insert((nid.to_string(), ilvl), start);",
+          "explanation": "An instance startOverride or full level replacement stores an unbounded start in the effective counter table."
+        },
+        {
+          "id": "chi-endnote-input",
+          "label": "Endnote start and format",
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8652,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn endnote_num_format(pkg: &PartFs, dom: &Dom, sects: &[NodeId]) -> (NumFmt, u32) {\n    let read = |dom: &Dom, pr: NodeId| {\n        let val = |name: &str| first_named(dom, pr, name).and_then(|n| attr_any(dom, n, \"val\"));\n        (\n            val(\"numFmt\").map(parse_num_fmt),\n            val(\"numStart\").and_then(|v| v.parse::<u32>().ok()),\n        )\n    };",
+          "explanation": "Section/settings endnote properties provide arbitrary u32 start and Chicago format."
+        },
+        {
+          "id": "chi-endnote-sink",
+          "label": "Endnote invokes same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 8675,
+          "endLine": 8685,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn number_endnote_refs(blocks: &mut [Block], (fmt, start): (NumFmt, u32)) {\n    let mut labels: HashMap<String, String> = HashMap::new();\n    visit_runs_mut(blocks, |run| {\n        let Some(id) = run.endnote_id.as_deref().filter(|id| !id.is_empty()) else {\n            return;\n        };\n        let next = start + labels.len() as u32;\n        let label = labels\n            .entry(id.to_string())\n            .or_insert_with(|| format_num(fmt, next));\n        run.text.clone_from(label);",
+          "explanation": "The first referenced endnote formats start plus its position, reaching Chicago repetition."
+        },
+        {
+          "id": "chi-page-input",
+          "label": "Page start and Chicago format",
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    if let Some(num) = first_named(dom, sect, \"pgNumType\") {\n        if let Some(start) = attr_any(dom, num, \"start\").and_then(|s| s.parse::<u32>().ok()) {\n            // 0 is a start Word honours (3936a8fe56 numbers its title\n            // page 0 and its third page 2).\n            page.page_num_start = Some(start);\n        }\n        page.page_num_fmt = match attr_any(dom, num, \"fmt\").unwrap_or(\"\") {\n            \"lowerRoman\" => PageNumFmt::LowerRoman,\n            \"upperRoman\" => PageNumFmt::UpperRoman,\n            \"lowerLetter\" => PageNumFmt::LowerLetter,\n            \"upperLetter\" => PageNumFmt::UpperLetter,\n            \"decimalZero\" => PageNumFmt::DecimalZero,\n            \"cardinalText\" => PageNumFmt::CardinalText,\n            \"ordinal\" => PageNumFmt::Ordinal,\n            \"ordinalText\" => PageNumFmt::OrdinalText,\n            \"hex\" => PageNumFmt::Hex,\n            \"chicago\" => PageNumFmt::Chicago,",
+          "explanation": "Section pgNumType accepts arbitrary u32 start and selects Chicago formatting."
+        },
+        {
+          "id": "chi-page-state",
+          "label": "Retain starting page counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 23157,
+          "endLine": 23165,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            last_after: 0.0,\n            compat_mode,\n            last_break_was_section: false,\n            tab_stops: Vec::new(),\n            tab_shift: 0.0,\n            section_page: page.page_num_start.unwrap_or(1),\n            chapter: String::new(),\n            header_rest: hf.header_rest,\n            footer_rest: hf.footer_rest,",
+          "explanation": "The layout stores the authored page start as section_page without reducing its magnitude."
+        },
+        {
+          "id": "chi-page-sink",
+          "label": "Page labels invoke same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 32020,
+          "endLine": 32032,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn section_page_label(&self) -> String {\n        match self.page.page_num_fmt {\n            PageNumFmt::Decimal => self.section_page.to_string(),\n            PageNumFmt::LowerRoman => format_num(NumFmt::LowerRoman, self.section_page),\n            PageNumFmt::UpperRoman => format_num(NumFmt::UpperRoman, self.section_page),\n            PageNumFmt::LowerLetter => format_num(NumFmt::LowerLetter, self.section_page),\n            PageNumFmt::UpperLetter => format_num(NumFmt::UpperLetter, self.section_page),\n            PageNumFmt::DecimalZero => format_num(NumFmt::DecimalZero, self.section_page),\n            PageNumFmt::CardinalText => format_num(NumFmt::CardinalText, self.section_page),\n            PageNumFmt::Ordinal => format_num(NumFmt::Ordinal, self.section_page),\n            PageNumFmt::OrdinalText => format_num(NumFmt::OrdinalText, self.section_page),\n            PageNumFmt::Hex => format_num(NumFmt::Hex, self.section_page),\n            PageNumFmt::Chicago => format_num(NumFmt::Chicago, self.section_page),",
+          "explanation": "section_page_label sends the authored numeric page count to the same Chicago formatter."
+        }
+      ],
+      "rootCause": {
+        "summary": "`chicago_label` calculates repetitions directly from an unrestricted u32 counter and allocates the entire result. Rendering list starts/overrides, the separate Markdown list reader, endnote starts and page-number starts all preserve high document-controlled counter values and reach this common formatter. Existing alphabetic/Roman label limits do not protect Chicago labels.",
+        "evidenceRefs": [
+          "chi-parse",
+          "chi-override",
+          "chi-counter",
+          "chi-token",
+          "chi-format-call",
+          "chi-public-shared",
+          "chi-allocate",
+          "chi-md-parse",
+          "chi-md-label",
+          "chi-mcp",
+          "chi-endnote-input",
+          "chi-endnote-sink",
+          "chi-page-input",
+          "chi-page-state",
+          "chi-page-sink"
+        ]
+      },
+      "remediation": "Enforce a shared maximum label length before repetition, using checked byte-size arithmetic. Apply a documented bounded Chicago counter policy or typed refusal so all reading, page, note and list consumers share the same protection.",
+      "validation": {
+        "counterEvidence": [
+          "The Markdown reader clamps nesting to eight but does not cap the counter's start magnitude.",
+          "Other formats have bounded Roman/alphabetic policies; Chicago's constructor lacks them.",
+          "Archive and XML budgets constrain the tiny source representation, not its label expansion.",
+          "Host CPU/memory limits can contain worker failure."
+        ],
+        "evidenceRefs": [
+          "chi-parse",
+          "chi-override",
+          "chi-counter",
+          "chi-token",
+          "chi-format-call",
+          "chi-public-shared",
+          "chi-allocate",
+          "chi-md-parse",
+          "chi-md-label",
+          "chi-mcp",
+          "chi-endnote-input",
+          "chi-endnote-sink",
+          "chi-page-input",
+          "chi-page-state",
+          "chi-page-sink"
+        ],
+        "limitations": [
+          "No allocation trigger executed; shared-service deployment is not established."
+        ],
+        "method": "static source trace and numeric size analysis",
+        "status": "validated",
+        "summary": "For n=2147483647, i=n-1=2147483646; i%4=2 selects the three-byte double dagger, and i/4+1=536870912 produces 1610612736 bytes before copies. List starts, startOverride, reader starts, endnote numStart and page pgNumType.start are parsed without a maximum. Both Numbering::render and the agent reader call the shared formatter. The native read_view adapter calls markdown::read (jubarte-python/src/lib.rs:899-901)."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Numbering/start overrides, reader levels, endnote or page XML -> effective u32 counter -> format_num/list_number -> chicago_label -> String::repeat",
+          "evidenceRefs": [
+            "chi-parse",
+            "chi-override",
+            "chi-counter",
+            "chi-token",
+            "chi-format-call",
+            "chi-public-shared",
+            "chi-allocate",
+            "chi-md-parse",
+            "chi-md-label",
+            "chi-mcp",
+            "chi-endnote-input",
+            "chi-endnote-sink",
+            "chi-page-input",
+            "chi-page-state",
+            "chi-page-sink"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Document-processing availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short counter deterministically controls output size."
+        },
+        "reachability": {
+          "summary": "Untrusted document input is sufficient for a normal reading/rendering operation; MCP root containment remains intact while docx_text can still reach unbounded label formatting.",
+          "attacker": "Untrusted DOCX provider",
+          "entrypoint": "Agent-view reading and render/layout APIs",
+          "outcome": "Gigabyte allocations and possible host-process termination"
+        },
+        "summary": "Have a caller read or render a DOCX whose numbering level selects Chicago format and a huge positive start; alternatively use authored endnote or page-label starts when rendered."
+      },
+      "remediationTests": [
+        "Reject huge Chicago list starts and overrides through reading and rendering APIs.",
+        "Cover page and endnote Chicago starts as sibling routes.",
+        "Keep ordinary Chicago symbol cycles and existing Roman/alphabetic behavior."
+      ],
+      "preventiveControls": [
+        "Every numeric-to-text formatter should have an explicit output-size bound."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-chicago-label",
+        "producer": "independent baseline, with parent sibling-consumer validation",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-chicago-label",
+            "title": "Chicago numbering expands a short start value into a multi-gigabyte label",
+            "cwe": "CWE-789",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "DOCX numbering provider to reading or rendering interfaces",
+            "violated_security_invariant": "Formatting untrusted counters must have bounded output.",
+            "source_to_sink": "parse_num_level retains unrestricted u32 start; format_num Chicago routes to chicago_label; mark.repeat(i/4+1). Renderer Numbering::render and Markdown list_marker reach same formatter, including MCP docx_text.",
+            "impact": "start=2147483647 repeats 3-byte double dagger 536870912 times (~1.5 GiB); max u32 requests ~3 GiB.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6742,
+                "endLine": 6766
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5847,
+                "endLine": 5861
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6015,
+                "endLine": 6018
+              },
+              {
+                "path": "src/markdown/from_docx/mod.rs",
+                "startLine": 3023,
+                "endLine": 3030
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+                "startLine": 131,
+                "endLine": 144
+              }
+            ],
+            "supporting_source_evidence": [
+              "parse_num_level parses w:start without upper bound",
+              "NumFmt::Chicago => chicago_label(n)",
+              "let i = n.saturating_sub(1) as usize; MARKS[i % 4].repeat(i / 4 + 1)",
+              "Markdown list_marker invokes crate::convert::list_number"
+            ],
+            "counterevidence": [
+              "Roman/alpha labels already cap counts",
+              "Markdown level clamp does not bound start",
+              "Archive/XML permits short trigger"
+            ],
+            "recommended_remediation": "Bound numbering-label bytes before allocation across all consumers."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "insecure-temporary-file.plan-recording",
+      "title": "Recording plans through binding CLIs can corrupt a symlink target",
+      "summary": "When an operator records a plan in a directory writable by another local user, that user can precreate `.<plan-name>.<pid>.partial` as a symlink. Python and Node write the plan JSON through that link before renaming it, corrupting an unrelated file writable by the operator.",
+      "severity": {
+        "level": "low",
+        "rationale": "The impact is corruption of operator-writable files outside the chosen shared directory. Exploitation requires local directory-entry access, a predictable target/PID and a platform configuration that allows symlink following; trusted private plan directories prevent it. No document-only attack or arbitrary executable payload is established.",
+        "changeConditions": "Routine privileged recording into attacker-writable directories would increase likelihood and impact; exclusive private staging eliminates this path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both adapters explicitly derive the predictable path and perform default symlink-following writes; native code and its regression show the intended safe alternative."
+      },
+      "taxonomy": {
+        "category": "Insecure temporary file",
+        "cwe": [
+          "CWE-377"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 403,
+          "endLine": 414,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 408,
+          "endLine": 427,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "plan-python",
+          "label": "Python opens predictable staging name",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 403,
+          "endLine": 414,
+          "language": "python",
+          "role": "root_control",
+          "code": "    if not dry_run:\n        # Through a symbolic link to the file it names, written yet or not;\n        # via a hidden partial file named for this process, removed if the\n        # write fails; bytes as they are, so no platform newline translation.\n        target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)\n        except OSError as exc:\n            partial.unlink(missing_ok=True)\n            raise CliError(f\"writing {plan}: {exc}\") from exc",
+          "explanation": "The operator-selected plan path is resolved, but the separate PID-derived partial path is opened by write_bytes without exclusive creation, so a preexisting symlink redirects the truncating write."
+        },
+        {
+          "id": "plan-node",
+          "label": "Node opens predictable staging name",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 408,
+          "endLine": 427,
+          "language": "javascript",
+          "role": "root_control",
+          "code": "  if (!o.dry_run) {\n    // Through a symbolic link to the file it names, written yet or not; via a hidden partial\n    // file named for this process, removed if the write fails.\n    let target = o.plan;\n    try {\n      target = fs.realpathSync(o.plan);\n    } catch {\n      // A link to a plan not written yet names where it goes.\n      try {\n        target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));\n      } catch {}\n    }\n    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);\n    } catch (e) {\n      fs.rmSync(partial, { force: true });\n      throw new CliError(`writing ${o.plan}: ${osError(e)}`);\n    }",
+          "explanation": "The same deterministic partial name is passed to default writeFileSync before rename, which follows a preexisting symlink."
+        },
+        {
+          "id": "plan-native-control",
+          "label": "Native recorder uses secure publication",
+          "path": "src/edit/record.rs",
+          "startLine": 142,
+          "endLine": 167,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// Legacy temporary-name helper, retained for API compatibility. Recordings\n/// no longer open this predictable path; publication creates exclusive staging.\n/// Concurrent recordings remain last-writer-wins, not a serialized append.\npub fn partial_path(target: &Path) -> PathBuf {\n    let name = target\n        .file_name()\n        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());\n    target.with_file_name(format!(\".{name}.{}.partial\", std::process::id()))\n}\n\n/// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:\n/// a precommit error leaves the plan as it was. Returns staging cleanup warnings\n/// after successful installation; publication errors retain their warning payload.\n///\n/// # Errors\n///\n/// The I/O error when the partial file cannot be written beside the plan or\n/// renamed into place (a missing directory, no permission). After a successful\n/// commit, a durability error explicitly reports the committed plan.\npub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {\n    #[cfg(not(target_arch = \"wasm32\"))]\n    {\n        let target = plan_target(plan);\n        crate::publication::publish_paths(&[(target, json.as_bytes())], true)\n            .map(|report| report.warnings)\n            .map_err(|error| std::io::Error::new(error.source.kind(), error))",
+          "explanation": "The native equivalent uses secure staging; the existing regression protects this behavior only for the native recorder."
+        },
+        {
+          "id": "plan-regression",
+          "label": "Existing native regression preserves symlink referent",
+          "path": "tests/cli_plan_record.rs",
+          "startLine": 2278,
+          "endLine": 2288,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "#[cfg(unix)]\n#[test]\nfn audit_d13_recording_never_opens_a_predictable_partial_link() {\n    let dir = tempfile::tempdir().unwrap();\n    let plan = dir.path().join(\"plan.json\");\n    let victim = dir.path().join(\"victim.json\");\n    std::fs::write(&victim, \"keep\").unwrap();\n    std::os::unix::fs::symlink(&victim, jubarte::edit::record::partial_path(&plan)).unwrap();\n    jubarte::edit::record::write_plan(&plan, \"{}\\n\").unwrap();\n    assert_eq!(std::fs::read_to_string(victim).unwrap(), \"keep\");\n    assert!(!plan.symlink_metadata().unwrap().is_symlink());",
+          "explanation": "The native equivalent uses secure staging; the existing regression protects this behavior only for the native recorder."
+        }
+      ],
+      "rootCause": {
+        "summary": "Resolving the intended plan destination does not secure a second sibling name. Both adapters use a PID-based partial path and ordinary truncating writes without exclusive creation or no-follow protection. A precreated staging symlink therefore transfers the operator's write authority to its referent before rename.",
+        "evidenceRefs": [
+          "plan-python",
+          "plan-node",
+          "plan-native-control",
+          "plan-regression"
+        ]
+      },
+      "remediation": "Use secure exclusive private staging in both binding adapters. Expose/reuse native plan publication from Python and implement equivalent exclusive staging and atomic replacement for Node; never truncate an existing PID-derived partial path.",
+      "validation": {
+        "counterEvidence": [
+          "Requires an attacker-writable plan parent and permitted symlink following; private parent directories prevent exploitation.",
+          "Only recorded plan JSON is written; no arbitrary-code payload or remote entry is established.",
+          "MCP and the native Rust CLI use separate secure publication."
+        ],
+        "evidenceRefs": [
+          "plan-python",
+          "plan-node",
+          "plan-native-control",
+          "plan-regression"
+        ],
+        "limitations": [
+          "No filesystem-race/symlink reproduction was executed."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Python `partial.write_bytes` and Node `fs.writeFileSync` use default creation/truncation behavior after constructing the same predictable name. No code checks the staging object's identity. Preview runs first but does not constrain that file. Native `write_plan` now delegates to secure publication, and a current regression explicitly verifies it does not open the legacy partial symlink."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Operator plan path -> deterministic sibling partial name -> ordinary write -> symlink referent corruption -> rename of link",
+          "evidenceRefs": [
+            "plan-python",
+            "plan-node",
+            "plan-native-control",
+            "plan-regression"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "File integrity outside the attacker's direct authority can be lost."
+        },
+        "likelihood": {
+          "level": "low",
+          "why": "Requires local shared-directory and symlink-following prerequisites."
+        },
+        "reachability": {
+          "summary": "A lower-privilege local directory writer can cross into an operator-writable file outside that directory; controlling document contents alone is insufficient.",
+          "attacker": "Local writer of entries in the plan parent directory",
+          "outcome": "Unrelated file is truncated and replaced with plan JSON",
+          "preconditions": [
+            "Victim records a plan in that shared directory.",
+            "Platform protections permit the symlink-following write."
+          ]
+        },
+        "summary": "Precreate the expected partial filename in a shared plan directory as a link to a file the victim operator can write, then wait for a successful plan-recording command."
+      },
+      "remediationTests": [
+        "Precreate the predicted partial as a symlink and verify both adapters preserve the referent.",
+        "Verify intended plan symlink semantics and cleanup remain correct."
+      ],
+      "preventiveControls": [
+        "Keep filesystem publication policy shared across native and binding CLIs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-plan-staging-symlink",
+        "producer": "bindings_investigator",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-plan-staging-symlink",
+            "title": "Binding CLI plan recording follows predictable temporary-file symlinks",
+            "originalWorkerEvidence": "Early candidate: both binding CLIs still record --plan through predictable .<plan-name>.<pid>.partial followed by ordinary write (Python __main__.py:407-411; npm mjs:420-423). A local attacker who can create entries in the chosen/shared plan directory can precreate that partial as symlink to victim-writable file elsewhere; ordinary write follows it and truncates unrelated file before rename. Native src/edit/record.rs:143 explicitly says callers no longer open this predictable path because publication now uses exclusive staging, but Python/npm duplicate old path. Assessing concrete privilege preconditions; document/plan content alone cannot exploit it.",
+            "source": "bindings_investigator"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "toctou.binding-output-publication",
+      "title": "Binding CLI output races can overwrite files without force",
+      "summary": "While Python or Node renders a PDF into a shared output directory, a local directory writer can replace the previously absent output with a symlink. The later ordinary write follows it and overwrites an unrelated operator-writable file even when `--force` was omitted.",
+      "severity": {
+        "level": "low",
+        "rationale": "The impact is loss of file integrity outside the attacker's direct authority, but triggering requires local write access to the selected output directory and winning a replacement window. Trusted private output directories prevent this attack. No document-only or MCP-only exploitation is established.",
+        "changeConditions": "A service or privileged workflow routinely publishing into attacker-writable directories would increase risk; atomic no-clobber installation and replacement of entries remove it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both adapters show separate existence checks, a render interval, and default truncating writes; native publication demonstrates the missing atomic control."
+      },
+      "taxonomy": {
+        "category": "Time-of-check time-of-use race",
+        "cwe": [
+          "CWE-367"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 101,
+          "endLine": 103,
+          "role": "propagation"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "endLine": 133,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 740,
+          "endLine": 757,
+          "role": "entrypoint"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "endLine": 80,
+          "role": "propagation"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "endLine": 112,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 148,
+          "endLine": 153,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "out-python-check",
+          "label": "Python checks path existence",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 101,
+          "endLine": 103,
+          "language": "python",
+          "role": "propagation",
+          "code": "def _ensure_writable(path: Path, force: bool) -> None:\n    if path.exists() and not force:\n        raise CliError(f\"output '{path}' already exists (use --force to overwrite)\")",
+          "explanation": "An existence check only describes the destination at this moment; it does not reserve the pathname for the eventual write."
+        },
+        {
+          "id": "out-python-sink",
+          "label": "Python later truncates by pathname",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 126,
+          "endLine": 133,
+          "language": "python",
+          "role": "root_control",
+          "code": "def _write(path: Path, data: bytes | str) -> int:\n    \"\"\"Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written.\"\"\"\n    raw = data.encode(\"utf-8\") if isinstance(data, str) else data\n    try:\n        path.write_bytes(raw)\n    except OSError as exc:\n        raise CliError(f\"writing {path}: {_os(exc)}\") from exc\n    return len(raw)",
+          "explanation": "This writer opens the path with default truncating behavior, so an entry inserted after preflight is followed and overwritten."
+        },
+        {
+          "id": "out-python-render",
+          "label": "Rendering occurs between check and write",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 740,
+          "endLine": 757,
+          "language": "python",
+          "role": "entrypoint",
+          "code": "    if want_pdf:\n        _ensure_writable(output, args.force)\n    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if png else None, options=_pdf_options(args), pages=selected)\n    pages = rendered.report.page_count\n    # Each PNG is named by its document page, padded to the document's page\n    # count. The pages are known only now; check every PNG path before the\n    # first write so a refused page leaves no partial bundle.\n    numbered = rendered.report.pages[: len(rendered.pngs)]\n    png_paths = [output.parent / _png_name(output.stem, p.number - 1, rendered.report.document_pages) for p in numbered]\n    for path in png_paths:\n        _ensure_writable(path, args.force)\n        # `-o r.png --report r-page-01.png` would write the page, then the\n        # report over it.\n        for side, flag in ((getattr(args, \"font_report\", None), \"--font-report\"), (getattr(args, \"report\", None), \"--report\")):\n            if side is not None and _same_file(side, path):\n                raise CliError(f\"{flag} '{side}' is the same file as the PNG output\")\n    if rendered.pdf is not None:\n        _write(output, rendered.pdf)",
+          "explanation": "A caller-selected output is checked, then document rendering runs before the shared write helper reopens the destination by name."
+        },
+        {
+          "id": "out-node-check",
+          "label": "Node checks path existence",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 76,
+          "endLine": 80,
+          "language": "javascript",
+          "role": "propagation",
+          "code": "function ensureWritable(file, force) {\n  if (fs.existsSync(file) && !force) {\n    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);\n  }\n}",
+          "explanation": "An existence check only describes the destination at this moment; it does not reserve the pathname for the eventual write."
+        },
+        {
+          "id": "out-node-sink",
+          "label": "Node later truncates by pathname",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 106,
+          "endLine": 112,
+          "language": "javascript",
+          "role": "root_control",
+          "code": "function write(file, data) {\n  try {\n    fs.writeFileSync(file, data);\n  } catch (e) {\n    throw new CliError(`writing ${file}: ${osError(e)}`);\n  }\n}",
+          "explanation": "This writer opens the path with default truncating behavior, so an entry inserted after preflight is followed and overwritten."
+        },
+        {
+          "id": "out-node-render",
+          "label": "Node rendering leaves replacement interval",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 148,
+          "endLine": 153,
+          "language": "javascript",
+          "role": "entrypoint",
+          "code": "/** `docx` drawn as the PDF `output`, with the task's render flags. */\nfunction renderTo(o, docx, output) {\n  ensureWritable(output, o.force);\n  const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions ?? undefined, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_pages));\n  write(output, pdf);\n  wrote(o, output, \"pdf\", pdf.length, wasm.pdfPageCount(pdf));",
+          "explanation": "A caller-selected output is checked, then document rendering runs before the shared write helper reopens the destination by name."
+        },
+        {
+          "id": "out-native-control",
+          "label": "Native commit enforces atomic overwrite policy",
+          "path": "src/publication.rs",
+          "startLine": 558,
+          "endLine": 569,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "            Phase::Commit if staged.overwrite => staged\n                .scratch\n                .as_ref()\n                .expect(\"open staging directory\")\n                .rename(\"bytes\", &staged.parent, &staged.target),\n            // hard_link is an atomic no-clobber installation, including when a\n            // hostile writer creates the target after the initial check.\n            Phase::Commit => staged\n                .scratch\n                .as_ref()\n                .expect(\"open staging directory\")\n                .hard_link(\"bytes\", &staged.parent, &staged.target),",
+          "explanation": "The native publisher installs bytes atomically and uses hard-link no-clobber rather than truncating a pathname checked earlier."
+        }
+      ],
+      "rootCause": {
+        "summary": "`_ensure_writable`/`ensureWritable` reject existing outputs only during preflight. The shared `_write`/`write` helpers later reopen the caller-selected pathname with truncation and no exclusive creation or atomic replace. A competing entry or symlink introduced during rendering therefore bypasses no-force protection and can redirect the operator's write authority.",
+        "evidenceRefs": [
+          "out-python-check",
+          "out-python-sink",
+          "out-python-render",
+          "out-node-check",
+          "out-node-sink",
+          "out-node-render",
+          "out-native-control"
+        ]
+      },
+      "remediation": "Stage generated bytes securely and install with atomic no-clobber semantics when force is false. With force, replace the destination entry atomically rather than opening its referent. Reuse native publication in Python and equivalent held-directory/exclusive publication in Node.",
+      "validation": {
+        "counterEvidence": [
+          "Local directory-entry control is required; document bytes alone cannot insert the symlink.",
+          "Platform symlink protections can prevent some shared-directory configurations.",
+          "Native CLI and MCP use atomic capability-backed publication; they are not affected by these helper implementations."
+        ],
+        "evidenceRefs": [
+          "out-python-check",
+          "out-python-sink",
+          "out-python-render",
+          "out-node-check",
+          "out-node-sink",
+          "out-node-render",
+          "out-native-control"
+        ],
+        "limitations": [
+          "Race was not executed; no particular shared-directory deployment was asserted."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Python checks output at lines 740-741, renders at 742, then calls its pathname writer at 757; Node performs the same sequence at 149-152. Neither writer receives or enforces the force policy. Existing symlinks to files are usually caught before rendering, but this does not protect against replacement afterwards. A same-directory attacker's ability to replace an entry does not imply permission to modify the symlink's external referent."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Output selection -> existence check -> render -> pathname reopen -> truncation of replacement referent",
+          "evidenceRefs": [
+            "out-python-check",
+            "out-python-sink",
+            "out-python-render",
+            "out-node-check",
+            "out-node-sink",
+            "out-node-render",
+            "out-native-control"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Integrity of a file outside direct attacker write access is lost."
+        },
+        "likelihood": {
+          "level": "low",
+          "why": "Requires local shared directory access and replacement timing."
+        },
+        "reachability": {
+          "summary": "The attacker must control entries in the chosen output parent while lacking direct write permission on the target file. Ordinary output helper calls share the missing atomic commit control.",
+          "attacker": "Lower-privilege local shared-directory writer",
+          "outcome": "Unrelated file overwritten by generated output"
+        },
+        "summary": "Wait for a victim to publish into a shared directory; after its absent-output check, insert a symlink to an existing file writable by the victim, before its render finishes."
+      },
+      "remediationTests": [
+        "Insert an output symlink between preflight and commit; verify no-force refuses it and preserves the referent.",
+        "Verify forced publication replaces the entry without modifying its symlink referent.",
+        "Apply checks to PDF/PNG, edited outputs, read exports, comparison and report publication."
+      ],
+      "preventiveControls": [
+        "Enforce overwrite policy at the commit operation, never only at a prior existence check."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-output-toctou",
+        "producer": "bindings_investigator",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-output-toctou",
+            "title": "Binding CLI output checks race with ordinary symlink-following writes",
+            "source": "bindings_investigator",
+            "originalWorkerEvidence": "Separate binding gap: ordinary output paths use exists()/existsSync() preflight followed by Path.write_bytes/fs.writeFileSync without exclusive create or no-follow. E.g Python _render_to checks PDF at :740-742, renders untrusted doc, then _write at :757 -> :130; npm renderTo checks at :157, renders at :158 then write -> :110. A lower-privilege local writer in shared output directory can insert symlink to an existing victim-only writable file during render, causing overwrite despite no --force. This requires directory-entry control; plan/document content alone is insufficient, and trusted private output directories are not exploitable. Native publication hard_link is counterexample."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "untrusted-code.self-hosted-pr",
+      "title": "Permitted pull-request runs gain shared self-hosted runner authority",
+      "summary": "CI, Markdown roundtrip, Adoption and Docs check out pull-request changes and execute their local actions, build code or scripts on self-hosted runners. A permitted malicious PR run can execute arbitrary shell code as the runner account, with access to source-described shared state and a private cache network.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Compromise of runner-accessible files and private-network authority is high impact. Likelihood is medium because GitHub contributor-approval settings, runner lifecycle/isolation and actual deployment are not visible in the repository. Read-only workflow tokens do not contain the process. No root, release-key or Docker-socket access is claimed.",
+        "changeConditions": "Verified automatic untrusted-fork execution on persistent unsandboxed shared runners would raise likelihood and severity; disposable isolated runners without shared state/private network would lower or remove impact."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Workflow and local action source prove the configured path and shared infrastructure claims; live approvals and host isolation were not inspected."
+      },
+      "taxonomy": {
+        "category": "Execution of untrusted pull-request code",
+        "cwe": [
+          "CWE-829"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 27,
+          "role": "user_input"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 33,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 99,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 138,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 165,
+          "endLine": 176,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "role": "user_input"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 16,
+          "endLine": 32,
+          "role": "user_input"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 47,
+          "endLine": 74,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 88,
+          "endLine": 99,
+          "role": "sink"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 42,
+          "endLine": 67,
+          "role": "user_input"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 100,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 32,
+          "role": "outcome"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 186,
+          "endLine": 219,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 227,
+          "endLine": 310,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "pr-ci-event",
+          "label": "Untrusted pull-request event",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 27,
+          "language": "yaml",
+          "role": "user_input",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:\n\n# Every job only reads the repo; anything not listed here is `none`.\n# One run per PR (or branch): a new push cancels the PR's older run, and\n# on main a newer commit replaces any run still waiting. The self-hosted\n# runners are few, so superseded runs must not hold the queue.\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n\npermissions:\n  contents: read",
+          "explanation": "Pull requests invoke the workflow; read-only GITHUB_TOKEN permissions do not restrict OS code."
+        },
+        {
+          "id": "pr-ci-lint",
+          "label": "CI executes checked-out local action on self-hosted runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 33,
+          "endLine": 48,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "jobs:\n  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "The lint job checks out proposed changes then loads their repository-local action and Cargo code on self-hosted authority."
+        },
+        {
+          "id": "pr-ci-test",
+          "label": "CI test matrix includes self-hosted execution",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 99,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "  test:\n    name: test (${{ matrix.os }})\n    strategy:\n      fail-fast: false\n      matrix:\n        os: [self-hosted, macos-latest, windows-latest]\n    runs-on: ${{ matrix.os }}\n    steps:\n      # tests/corpus keeps the bench's file names, some past Windows'\n      # 260-character path limit.\n      - run: git config --global core.longpaths true\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - if: matrix.os == 'self-hosted'\n        uses: ./.github/actions/mbx\n      - if: matrix.os != 'self-hosted'\n        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2\n      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01\n        with:\n          tool: cargo-nextest\n      # Every failing test, not just the first binary's (the `ci` profile\n      # does not fail fast), with JUnit XML for Codecov's test results.\n      # The strict Markdown round trip is red until the reader work lands\n      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job\n      # keeps reporting every other test.\n      - run: cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'",
+          "explanation": "The self-hosted test leg also loads proposed action/code without a source trust guard."
+        },
+        {
+          "id": "pr-ci-coverage",
+          "label": "Coverage runs proposed tests on self-hosted runner",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 138,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "  coverage:\n    name: coverage\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01\n        with:\n          toolchain: nightly\n          # Branch instrumentation and doctest coverage require nightly.\n          # Production remains supported by the separate stable/MSRV jobs.\n          components: llvm-tools-preview\n      - uses: ./.github/actions/mbx\n      # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).\n      # install-action picks the tool from the ref (`@cargo-llvm-cov`) or, as\n      # here with the ref pinned to a commit SHA, from the `tool` input.\n      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01\n        with:\n          tool: cargo-llvm-cov\n\n      - name: Generate coverage (lcov)\n        # Run every test, including doctests. Only cfg(test) implementation\n        # is excluded from instrumentation; all production code is counted.\n        run: cargo llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info -- --skip markdown_and_docx_round_trip_exactly",
+          "explanation": "The coverage job executes the checked-out local action and tests with runner OS authority."
+        },
+        {
+          "id": "pr-ci-msrv",
+          "label": "MSRV job uses same trust boundary",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 165,
+          "endLine": 176,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "  msrv:\n    name: MSRV (1.94)\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      # master branch: the toolchain comes from the input below, not the ref.\n      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01\n        with:\n          toolchain: \"1.94\"\n      - uses: ./.github/actions/mbx",
+          "explanation": "The MSRV job independently selects self-hosted, checks out the proposal and loads its local action."
+        },
+        {
+          "id": "pr-md-event",
+          "label": "Markdown workflow accepts pull requests",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "language": "yaml",
+          "role": "user_input",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "A separate workflow accepts proposed changes."
+        },
+        {
+          "id": "pr-md-job",
+          "label": "Markdown tests execute on self-hosted runner",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "jobs:\n  roundtrip:\n    name: md -> docx -> md, exact\n    runs-on: self-hosted\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - run: cargo test --all-features --test md_fixed_point",
+          "explanation": "The proposed local action and tests execute on self-hosted infrastructure."
+        },
+        {
+          "id": "pr-adoption-event",
+          "label": "Adoption workflow accepts matching pull requests",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 16,
+          "endLine": 32,
+          "language": "yaml",
+          "role": "user_input",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:\n    paths:\n      - \"src/**\"\n      - \"tests/adoption.rs\"\n      - \"tests/common/**\"\n      - \"Cargo.toml\"\n      - \"Cargo.lock\"\n      - \"tests/legacy_doc_convert.rs\"\n      - \"tests/fixtures/legacy/**\"\n      - \"examples/adoption/**\"\n      - \"jubarte-python/**\"\n      - \"docs/adoption/**\"\n      - \".github/workflows/adoption.yml\"\n  workflow_dispatch:",
+          "explanation": "Source/example changes trigger an independently reachable workflow."
+        },
+        {
+          "id": "pr-adoption-jobs",
+          "label": "Adoption builds and examples use self-hosted runners",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 47,
+          "endLine": 74,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "\njobs:\n  claims:\n    name: adoption claims (tests/adoption.rs)\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - name: one test per adoption-page row, and the .doc reader\n        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc\n\n  examples:\n    name: side-by-side examples (examples/adoption)\n    runs-on: self-hosted\n    needs: claims\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      - run: cargo build --release --bin jubarte\n      # The examples' input generators (make_input.py and the like) import\n      # python-docx under `set -e`; 1.2.0 is the version the committed",
+          "explanation": "Both jobs check out and execute proposed source/local action on the self-hosted pool."
+        },
+        {
+          "id": "pr-adoption-exec",
+          "label": "Execute proposed example scripts",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 88,
+          "endLine": 99,
+          "language": "yaml",
+          "role": "sink",
+          "code": "      - name: run every example\n        env:\n          JUBARTE: ${{ github.workspace }}/target/release/jubarte\n          # 17-mcp serves this checkout's Python package, not the PyPI release.\n          JUBARTE_MCP_FROM: jubarte-redlines[mcp] @ ${{ github.workspace }}/jubarte-python\n        run: |\n          failed=0\n          for script in examples/adoption/*/run.sh; do\n            echo \"::group::$script\"\n            if bash \"$script\"; then echo \"ok: $script\"; else echo \"::error file=$script::exited $?\"; failed=1; fi\n            echo \"::endgroup::\"\n          done",
+          "explanation": "Repository-controlled run.sh files are invoked by bash with the runner account's authority."
+        },
+        {
+          "id": "pr-docs-event",
+          "label": "Docs accepts matching pull requests",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 42,
+          "endLine": 67,
+          "language": "yaml",
+          "role": "user_input",
+          "code": "  pull_request:\n    paths:\n      - .github/workflows/docs.yml\n      - src/**\n      - jubarte-python/**\n      - jubarte-wasm/**\n      - docs/rust.md\n      - docs/python.md\n      - docs/javascript.md\n      - README.md\n      - README.crates.md\n      - \"**/README.fragment.md\"\n      - scripts/library_readmes.py\n      - scripts/gen_docs.sh\n      - scripts/gen_cli_docs.py\n      - scripts/gen_python_api.py\n      - scripts/gen_wasm_api.py\n      - scripts/cli_flags.sh\n      - scripts/cli_locations.py\n      - scripts/cli_id_sources.py\n      - examples/cli_flags.rs\n      - Cargo.toml\n      - Cargo.lock\n      - docs/flags_datetime.md\n      - docs/locations.md\n      - tests/fixtures/**",
+          "explanation": "Matching proposed source/script changes invoke the docs job."
+        },
+        {
+          "id": "pr-docs-job",
+          "label": "Docs executes proposed generator on self-hosted runner",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 100,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "jobs:\n  drift:\n    name: generated docs drift\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against\n      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares\n      # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's\n      # system node predates ESM (`import` is a SyntaxError), so a real node is\n      # set up here instead of trusting the image.\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version: \"24\"\n      - name: Regenerate and compare\n        run: scripts/gen_docs.sh --check",
+          "explanation": "A self-hosted job checks out and executes the local action and generator script."
+        },
+        {
+          "id": "pr-cache",
+          "label": "Shared private cache and runner state",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 32,
+          "language": "yaml",
+          "role": "outcome",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines\n        # Linked test binaries are the largest outputs by far: with\n        # them cached, one test job left an 84 GiB store and a 79 GiB target\n        # on 2026-10-17, and uploads drained at 1 MB/s. Cache compilations only.\n        cache-links: \"false\"\n    # Every job on a runner builds in the same checkout, so mbx always counts\n    # that checkout's managed target as the most recently used and never\n    # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few\n    # hours and filled the disk the four runners share. Each job now starts\n    # from an empty target, restored from the store and the cache server,\n    # and each runner's store keeps to a fixed share of the disk.",
+          "explanation": "Source describes the runners' shared private Docker network, unauthenticated HTTP cache and reused checkout/disk state; it does not prove a cache-poisoning protocol."
+        }
+      ],
+      "rootCause": {
+        "summary": "The workflows select shared self-hosted runners for pull_request events and execute code from the proposed checkout without a visible trusted-source gate or job-level isolation. A contributor can alter the repository-local composite action or build/test/example scripts. GitHub-token read permissions limit API authority but not the runner account's filesystem and network capabilities.",
+        "evidenceRefs": [
+          "pr-ci-event",
+          "pr-ci-lint",
+          "pr-ci-test",
+          "pr-ci-coverage",
+          "pr-ci-msrv",
+          "pr-md-event",
+          "pr-md-job",
+          "pr-adoption-event",
+          "pr-adoption-jobs",
+          "pr-adoption-exec",
+          "pr-docs-event",
+          "pr-docs-job",
+          "pr-cache"
+        ]
+      },
+      "remediation": "Move untrusted PR jobs to GitHub-hosted or disposable isolated runners with no reusable writable state, credentials or private network. Reserve shared self-hosted runners for trusted protected-branch events and apply the boundary consistently across all affected workflows.",
+      "validation": {
+        "counterEvidence": [
+          "GITHUB_TOKEN is read-only and checkout does not persist credentials; neither is an OS sandbox.",
+          "GitHub approval settings can prevent individual runs; their current configuration was not queried.",
+          "Cache clients say PRs read only; arbitrary proposal code need not use that client, but server write behavior was not inspected and cache poisoning is not claimed.",
+          "External runner setup could add isolation absent from workflow source."
+        ],
+        "evidenceRefs": [
+          "pr-ci-event",
+          "pr-ci-lint",
+          "pr-ci-test",
+          "pr-ci-coverage",
+          "pr-ci-msrv",
+          "pr-md-event",
+          "pr-md-job",
+          "pr-adoption-event",
+          "pr-adoption-jobs",
+          "pr-adoption-exec",
+          "pr-docs-event",
+          "pr-docs-job",
+          "pr-cache"
+        ],
+        "limitations": [
+          "No PR submitted, runner contacted or code executed; infrastructure configuration remains unverified."
+        ],
+        "method": "static workflow and local-action source trace",
+        "status": "validated",
+        "summary": "CI and Markdown roundtrip accept all pull requests; Adoption and Docs accept relevant path changes. Each selects self-hosted and checks out the proposal before executing local action/build/script content. Additional CI fuzz, package, Python and script jobs share this exposure. The mbx action expressly describes shared private Docker networking, a tokenless HTTP cache, reused checkout state and a shared disk. No fork/actor guard analogous to the Jules workflows is present in these jobs."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Pull-request checkout -> local composite action/Cargo/test/bash script -> self-hosted process -> runner files and private-network access",
+          "evidenceRefs": [
+            "pr-ci-event",
+            "pr-ci-lint",
+            "pr-ci-test",
+            "pr-ci-coverage",
+            "pr-ci-msrv",
+            "pr-md-event",
+            "pr-md-job",
+            "pr-adoption-event",
+            "pr-adoption-jobs",
+            "pr-adoption-exec",
+            "pr-docs-event",
+            "pr-docs-job",
+            "pr-cache"
+          ]
+        },
+        "impact": {
+          "level": "high",
+          "why": "Runner-accessible state and private infrastructure can be reached."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Approval and host-isolation settings are outside visible source."
+        },
+        "reachability": {
+          "summary": "An external contributor needs GitHub to permit the run; they do not need repository merge or runner-administration authority. The source-described shared resources distinguish this from isolated disposable CI execution.",
+          "attacker": "Pull-request contributor without infrastructure authority",
+          "outcome": "Arbitrary code under runner account authority",
+          "preconditions": [
+            "The PR workflow run is allowed by repository approvals.",
+            "Assigned runner retains the shared filesystem/network authority described in source."
+          ]
+        },
+        "summary": "Submit a relevant PR modifying a local action, build script or invoked example; if its workflow run is permitted, code executes in the self-hosted job."
+      },
+      "remediationTests": [
+        "Check that fork/proposal events cannot select the shared self-hosted pool.",
+        "Validate trusted branch jobs preserve intended build/cache behavior."
+      ],
+      "preventiveControls": [
+        "Separate proposed-code execution from persistent/private build infrastructure."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-pr-self-hosted",
+        "producer": "bindings_investigator",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-pr-self-hosted",
+            "title": "Pull requests run repository-controlled code on self-hosted runners",
+            "source": "bindings_investigator",
+            "originalWorkerEvidence": "adoption.yml and docs.yml run pull_request code unconditionally on runs-on:self-hosted (adoption :19-31, :49-59 and :61-99; docs :42-67, :80-99), checking out PR merge/head then executing repository-local action/build/scripts. No fork/actor guard unlike Jules workflows. A contributor whose PR workflow runs (subject to GitHub's external approval settings) can execute arbitrary code as persistent self-hosted runner user. Reviewing ci/md-roundtrip/security and local mbx action for concrete host/cache authority; no claim of network/secrets beyond source.",
+            "additionalWorkerEvidence": "ci.yml:16 triggers all PRs; self-hosted jobs :36,:77-78,:116,:167 checkout/execute PR code/local .github/actions/mbx; :144 says public repo. mbx/action.yml:8-13 describes private Docker network/cache requiring no token; :21-22 HTTP mbx-cache:7543 shared namespace. No server protocol inspected; cache poisoning not established.",
+            "finalWorkerEvidence": "Full source review confirms independently reachable pull_request workflows CI, Markdown roundtrip, Adoption and Docs. CI loads PR-controlled local .github/actions/mbx; read-only token/persist-credentials:false do not confine OS code. Shared private Docker network/cache described in mbx action 8-13,21-32. GitHub contributor approval settings and actual ephemeral host isolation not queried. No root/Docker-socket/release-key access asserted."
+          },
+          {
+            "candidateId": "discovery-0017-pr-self-hosted",
+            "title": "Pull requests run repository-controlled code on self-hosted runners",
+            "source": "bindings_investigator",
+            "originalWorkerEvidence": "adoption.yml and docs.yml run pull_request code unconditionally on runs-on:self-hosted (adoption :19-31, :49-59 and :61-99; docs :42-67, :80-99), checking out PR merge/head then executing repository-local action/build/scripts. No fork/actor guard unlike Jules workflows. A contributor whose PR workflow runs (subject to GitHub's external approval settings) can execute arbitrary code as persistent self-hosted runner user. Reviewing ci/md-roundtrip/security and local mbx action for concrete host/cache authority; no claim of network/secrets beyond source.",
+            "additionalWorkerEvidence": "ci.yml:16 triggers all PRs; self-hosted jobs :36,:77-78,:116,:167 checkout/execute PR code/local .github/actions/mbx; :144 says public repo. mbx/action.yml:8-13 describes private Docker network/cache requiring no token; :21-22 HTTP mbx-cache:7543 shared namespace. No server protocol inspected; cache poisoning not established."
+          },
+          {
+            "candidateId": "discovery-0017-pr-self-hosted",
+            "title": "Pull requests run repository-controlled code on self-hosted runners",
+            "source": "bindings_investigator",
+            "originalWorkerEvidence": "adoption.yml and docs.yml run pull_request code unconditionally on runs-on:self-hosted (adoption :19-31, :49-59 and :61-99; docs :42-67, :80-99), checking out PR merge/head then executing repository-local action/build/scripts. No fork/actor guard unlike Jules workflows. A contributor whose PR workflow runs (subject to GitHub's external approval settings) can execute arbitrary code as persistent self-hosted runner user. Reviewing ci/md-roundtrip/security and local mbx action for concrete host/cache authority; no claim of network/secrets beyond source."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "parser-differential.zip-entry-budget",
+      "title": "A false ZIP footer bypasses the archive entry-count budget",
+      "summary": "A valid DOCX can hide a false EOCD footer with entry count zero and an invalid central-directory offset in its ZIP comment. The admission precheck trusts that footer, while zip 9.0.5 falls back to the real one. The package can exceed `max_entries` and still be indexed and processed.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An untrusted package directly bypasses an explicit admission resource limit and can amplify metadata/index work with many small or empty entries. Likelihood is high for the source-backed construction; compressed-byte and actual inflation budgets remain effective, so unlimited decompression or arbitrary file access is not claimed.",
+        "changeConditions": "Practical host-memory measurements would refine impact; selecting the same validated footer before indexing and rechecking actual counts would close the bypass."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Repository precheck and consumers were traced against the installed zip 9.0.5 EOCD fallback implementation and matching committed lockfile; no crafted archive was executed."
+      },
+      "taxonomy": {
+        "category": "Inconsistent archive input validation",
+        "cwe": [
+          "CWE-20"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 439,
+          "endLine": 455,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 397,
+          "endLine": 407,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 580,
+          "endLine": 602,
+          "role": "root_control"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 289,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/opc/archive.rs",
+          "startLine": 20,
+          "endLine": 31,
+          "role": "propagation"
+        },
+        {
+          "path": "src/opc/archive.rs",
+          "startLine": 463,
+          "endLine": 475,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "zip-input",
+          "label": "Open archive after precheck",
+          "path": "src/admission.rs",
+          "startLine": 439,
+          "endLine": 455,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {\n    use AdmissionErrorKind as K;\n\n    sniff(bytes)?;\n\n    let declared = preindex_budget(bytes, limits)?;\n    // The shared open (`crate::opc::open_archive`) runs this same check, but\n    // as a plain zip error; admission opens unchecked so the refusal keeps\n    // its typed kind.\n    let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))\n        .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"not a ZIP file: {e}\")))?;\n    // The reader keys entries by name, so exact duplicates collapse into one.\n    if (archive.len() as u64) < declared {\n        return Err(AdmissionError::new(\n            K::DuplicatePart,\n            \"two ZIP entries have the same name\",\n        ));",
+          "explanation": "The public admit entry accepts input bytes, trusts preindex count, opens the archive and only compares actual count in the undercount direction."
+        },
+        {
+          "id": "zip-preindex",
+          "label": "Entry budget trusts selected declaration",
+          "path": "src/admission.rs",
+          "startLine": 397,
+          "endLine": 407,
+          "language": "rust",
+          "role": "root_control",
+          "code": "/// Check the input size and EOCD/ZIP64 entry count without building an index.\n/// Returns the declared count so admission can also detect lost duplicates.\npub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {\n    if bytes.len() as u64 > limits.max_compressed_bytes {\n        return Err(input_over_compressed(bytes.len() as u64, &limits));\n    }\n    let declared = declared_entry_count(bytes)?;\n    if declared > limits.max_entries as u64 {\n        return Err(input_over_entries(declared, &limits));\n    }\n    Ok(declared)",
+          "explanation": "Preindex admission rejects only the declared count from its independent EOCD parser."
+        },
+        {
+          "id": "zip-eocd",
+          "label": "Take last EOCD signature without validation",
+          "path": "src/admission.rs",
+          "startLine": 580,
+          "endLine": 602,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {\n    const EOCD: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];\n    const LOCATOR: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];\n    const EOCD64: [u8; 4] = [0x50, 0x4b, 0x06, 0x06];\n    let invalid = |what: &str| {\n        AdmissionError::new(\n            AdmissionErrorKind::InvalidPackage,\n            format!(\"not a ZIP file: {what}\"),\n        )\n    };\n    let floor = bytes.len().saturating_sub(22 + usize::from(u16::MAX));\n    let at = (floor..=bytes.len().saturating_sub(22))\n        .rev()\n        .find(|&i| bytes.get(i..).is_some_and(|tail| tail.starts_with(&EOCD)))\n        .ok_or_else(|| invalid(\"no end-of-central-directory record\"))?;\n    let total = bytes\n        .get(at.saturating_add(10)..at.saturating_add(12))\n        .and_then(|field| <[u8; 2]>::try_from(field).ok())\n        .map(u16::from_le_bytes)\n        .ok_or_else(|| invalid(\"truncated end-of-central-directory record\"))?;\n    if total != u16::MAX {\n        return Ok(u64::from(total));\n    }",
+          "explanation": "A later signature in the real ZIP comment wins even if its offset/structure would be rejected by the ZIP reader."
+        },
+        {
+          "id": "zip-opc",
+          "label": "Direct package loader uses same precheck",
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 289,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {\n    crate::admission::preindex_budget(bytes, limits).map_err(refused)?;\n    let mut archive = open_archive(Cursor::new(bytes))?;\n    let mut parts = HashMap::new();\n    let mut source_order = HashMap::new();\n    let mut identities = HashSet::new();\n    let mut total = 0u64;\n    for index in 0..archive.len() {",
+          "explanation": "The second package-loading path also trusts preindex_budget before opening and iterating the actual archive."
+        },
+        {
+          "id": "zip-opener",
+          "label": "Use ZIP reader's candidate selection",
+          "path": "src/opc/archive.rs",
+          "startLine": 20,
+          "endLine": 31,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn open_archive_unchecked<R: Read + Seek + Clone>(\n    reader: R,\n) -> ZipResult<ZipArchive<R>> {\n    // zip 9's offset detection scans the payload even for ordinary packages.\n    let config = Config {\n        archive_offset: ArchiveOffset::Known(0),\n    };\n    if let Ok(archive) = ZipArchive::with_config(config, reader.clone()) {\n        Ok(archive)\n    } else {\n        ZipArchive::new(reader)\n    }",
+          "explanation": "The dependency builds its own ZIP index from its validated/fallback-selected EOCD rather than the precheck's chosen signature."
+        },
+        {
+          "id": "zip-defects",
+          "label": "Allocate and walk all indexed entries",
+          "path": "src/opc/archive.rs",
+          "startLine": 463,
+          "endLine": 475,
+          "language": "rust",
+          "role": "sink",
+          "code": "pub(crate) fn zip_defects<R: Read + Seek>(\n    archive: &ZipArchive<R>,\n    reader: &mut R,\n) -> Vec<ZipDefect> {\n    let mut defects = Vec::new();\n    let mut extents: Vec<(usize, String, u64, u64)> = Vec::with_capacity(archive.len());\n    for i in 0..archive.len() {\n        // The central metadata only: `by_index_raw` would read the local\n        // header itself and fail on the very entry this check must name.\n        let Ok(entry) = archive.by_index_data(i) else {\n            continue;\n        };\n        let (central_at, local_at) = (entry.central_header_start(), entry.header_start());",
+          "explanation": "The actual indexed length drives structural metadata allocations and iteration before any actual entry-count budget check."
+        },
+        {
+          "id": "zip-version",
+          "label": "Locked ZIP implementation",
+          "path": "Cargo.lock",
+          "startLine": 3662,
+          "endLine": 3667,
+          "language": "toml",
+          "role": "expected_control",
+          "code": "name = \"zip\"\nversion = \"9.0.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e\"\ndependencies = [\n \"crc32fast\",",
+          "explanation": "The current engine lock pins zip 9.0.5, whose inspected offline implementation retries invalid EOCD candidates."
+        }
+      ],
+      "rootCause": {
+        "summary": "`declared_entry_count` takes the last signature and count without validating its footer framing or directory offset. The actual ZIP reader rejects invalid candidates and can select an earlier valid footer. Neither `admit` nor the direct package loader caps the resulting actual indexed count, so the preindex limit governs a different interpretation from the one processed.",
+        "evidenceRefs": [
+          "zip-input",
+          "zip-preindex",
+          "zip-eocd",
+          "zip-opener",
+          "zip-defects",
+          "zip-opc",
+          "zip-version"
+        ]
+      },
+      "remediation": "Validate/select the same EOCD and ZIP64 structure as the actual reader before index construction, including fallback behavior. Also enforce max_entries against the actual index immediately after opening and before structural processing; retain a reliable raw count for duplicate detection.",
+      "validation": {
+        "counterEvidence": [
+          "Compressed-size limits still constrain input and actual inflated-byte limits remain enforced.",
+          "Matching real headers/extents do not fix a count mismatch chosen by a different footer parser.",
+          "No archive extraction or external relationship fetch is involved."
+        ],
+        "evidenceRefs": [
+          "zip-input",
+          "zip-preindex",
+          "zip-eocd",
+          "zip-opener",
+          "zip-defects",
+          "zip-opc",
+          "zip-version"
+        ],
+        "limitations": [
+          "No archive constructed or parsed dynamically; no host-memory benchmark performed."
+        ],
+        "method": "static repository and installed dependency source trace",
+        "status": "validated",
+        "summary": "A false 22-byte EOCD at the end of the real archive's comment can declare count 0 and directory offset 0xffffffff. The precheck returns 0 immediately. The matching zip 9.0.5 source rejects an empty footer whose central offset exceeds its position and continues searching; its archive metadata loop retries candidates. The real archive's unique, safe empty entries can then pass header/extent/CRC checks while actual count exceeds max_entries. `admit` checks only actual<declared, and read_package has no actual-count rejection.",
+        "supportingDependencyEvidence": [
+          {
+            "path": "/Users/arthrod/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zip-9.0.5/src/format/find_central_directory.rs",
+            "startLine": 147,
+            "endLine": 155,
+            "fact": "For number_of_files==0, an offset past the EOCD sets parsing_error and continues to earlier candidates."
+          },
+          {
+            "path": "/Users/arthrod/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zip-9.0.5/src/read/zip_archive.rs",
+            "startLine": 196,
+            "endLine": 231,
+            "fact": "Metadata decoding finds and retries candidate EOCD structures."
+          }
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Attacker ZIP bytes -> last-signature precheck count -> zip reader selects earlier real EOCD -> actual index -> all-entry structural and package processing",
+          "evidenceRefs": [
+            "zip-input",
+            "zip-preindex",
+            "zip-eocd",
+            "zip-opener",
+            "zip-defects",
+            "zip-opc",
+            "zip-version"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Defeats entry-count resource protection while other size limits remain."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short false footer makes the two source parsers choose different counts."
+        },
+        "reachability": {
+          "summary": "Public admission and direct PartFs loading expose the differential to document providers; no raised budget or special feature is required.",
+          "attacker": "Untrusted DOCX/OPC provider",
+          "outcome": "Entry-count policy bypass and excess metadata/index processing"
+        },
+        "summary": "Supply a package with more entries than the active count budget and a comment containing the invalid zero-count footer that only the precheck trusts."
+      },
+      "remediationTests": [
+        "Reject over-budget archives with a false zero-count EOCD in the real comment.",
+        "Cover ordinary/ZIP64 candidate fallback and true duplicate detection.",
+        "Verify direct PartFs and public admission enforce the same active count budget."
+      ],
+      "preventiveControls": [
+        "Use a single validated archive interpretation for pre-admission and consumption."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-eocd-budget",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-eocd-budget",
+            "title": "EOCD selection differential may bypass archive entry-count admission budget",
+            "source": "baseline",
+            "originalWorkerEvidence": "src/admission.rs declared_entry_count (580-624) trusts the last EOCD signature without validating its directory fields/comment framing. zip 9.0.5 actual reader (local dependency read/zip_archive.rs 196-231) retries earlier EOCD candidates after invalid central-header parsing. A fake later EOCD advertising count 0 but invalid directory can make preindex_budget accept, then ZipArchive indexes the earlier real archive; admit only checks archive.len() < declared, never > max_entries after open. Investigating exact payload and PartFs counterpart statically; likely admission entry-budget bypass.",
+            "additionalWorkerEvidence": "Static candidate confirmed: put a 22-byte fake EOCD in real archive comment, count=0, central_directory_offset=0xffffffff, remaining fields zero. admission::declared_entry_count returns 0 (580-602), but zip 9.0.5 find_central_directory.rs 147-155 rejects fake because its central offset is past EOCD and continues to real EOCD. admit accepts archive.len()>limit (451 only detects len<declared); PartFs read_package 282-289 same precheck and no post-open count. Real unique empty entries pass header/name/stream checks. Bypasses max_entries/preindex allocation protection; default64MB can carry hundreds of thousands of empty entries."
+          },
+          {
+            "candidateId": "discovery-0017-eocd-budget",
+            "title": "EOCD selection differential may bypass archive entry-count admission budget",
+            "source": "baseline",
+            "originalWorkerEvidence": "src/admission.rs declared_entry_count (580-624) trusts the last EOCD signature without validating its directory fields/comment framing. zip 9.0.5 actual reader (local dependency read/zip_archive.rs 196-231) retries earlier EOCD candidates after invalid central-header parsing. A fake later EOCD advertising count 0 but invalid directory can make preindex_budget accept, then ZipArchive indexes the earlier real archive; admit only checks archive.len() < declared, never > max_entries after open. Investigating exact payload and PartFs counterpart statically; likely admission entry-budget bypass."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-27af9a1e1d45135a",
+        "label": "Document rendering and HTML altChunk expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated positive HTML colspan -> end_table unbounded XML expansion after package admission; original evidence retained in finding."
+      },
+      {
+        "id": "surface-2ffd4a3bc2b0cb5d",
+        "label": "Python and Node edit-plan staging",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated predictable partial symlink writes in both binding CLIs; calibrated low severity for local shared-directory prerequisites. Native recorder mitigated."
+      },
+      {
+        "id": "surface-39567b51d14ddcad",
+        "label": "Renderer table grid semantics",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated gridSpan, gridBefore and gridAfter allocation paths; Markdown clamp is separate and does not mitigate rendering."
+      },
+      {
+        "id": "surface-88cc4117a03d9fd4",
+        "label": "Renderer numbering level resolution",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated arbitrary numeric ilvl -> reverse scans, counter map growth and marker loops; paragraph, abstract and full override inputs retained."
+      },
+      {
+        "id": "surface-aa85c8896e13aed7",
+        "label": "Chicago numbering labels across reading and rendering",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated list starts/overrides, Markdown agent reading/MCP text, endnote and page-label consumers of the shared unchecked formatter."
+      },
+      {
+        "id": "surface-9f3bc08a6f0b098e",
+        "label": "Python and Node output publication",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated shared writer TOCTOU; local shared-directory prerequisites make severity low. Native/MCP publisher has atomic commit protection."
+      },
+      {
+        "id": "surface-7eb0340658da720d",
+        "label": "Pull-request CI execution on self-hosted infrastructure",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Configured untrusted checkout -> shared runner path validated across CI/roundtrip/adoption/docs; approval/lifecycle deployment unknowns retained, medium severity."
+      },
+      {
+        "label": "ZIP entry-count preindex admission",
+        "disposition": "reported",
+        "notes": "Validated false EOCD differential against installed zip9.0.5; actual inflation budgets remain enforced.",
+        "id": "surface-282b91268cf0da8b",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0017-duplicate-rels",
+        "candidateId": "discovery-0017-duplicate-rels",
+        "reason": "Awaiting independent validation of identical-duplicate relationship repair complexity.",
+        "paths": [
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-duplicate-rels",
+          "source": "baseline",
+          "title": "Identical duplicate relationship repair performs quadratic comparisons",
+          "originalWorkerEvidence": "src/opc/mod.rs drop_repeated_relationships 99-124 hashes first-seen IDs but checks repaired.contains(&item.id) (116) for every identical duplicate. A .rels containing IDs1..N once followed by same IDs1..N makes repaired growN and performs N(N-1)/2 linear string comparisons. read_relationships (222-250) preserves all records; PartFs::open_within (524-540) invokes repair. Multi-MiB .rels allowed; XML per-tag/ZIP budgets do not bound record count. Tests confirm identical duplicates accepted."
+        }
+      },
+      {
+        "id": "discovery-0017-font-alias-amplification",
+        "candidateId": "discovery-0017-font-alias-amplification",
+        "reason": "Embedded-font ownership/deduplication validation pending.",
+        "paths": [
+          "src/convert/font_table.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-font-alias-amplification",
+          "source": "architecture (focused audit continuation)",
+          "title": "Embedded font aliases may amplify one part into many retained font buffers",
+          "originalWorkerEvidence": "src/convert/font_table.rs:205-229 iterates every unique w:font name, resolves each embed relationship, then deobfuscate_odttf(raw,..) clones entire same part (179-193) and stores independent owned Arc per (family,bold,italic). No deduplication by part/digest or cumulative decoded-font budget visible. with_layout unconditionally loads whole table (mod.rs:807) before text usage. One valid embedded font part and many distinct family aliases -> O(alias count × font size) live memory, charged once in admission; downstream checks pending."
+        }
+      },
+      {
+        "id": "discovery-0017-math-assembly",
+        "candidateId": "discovery-0017-math-assembly",
+        "reason": "Unvalidated font metric/target amplification; awaiting a source-complete feasible construction and bounding-counterevidence review.",
+        "paths": [
+          "src/convert/math_layout.rs",
+          "src/convert/math_font.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-math-assembly",
+          "source": "architecture focused audit",
+          "title": "Math assembly may repeat glyphs according to unbounded target/font metrics",
+          "originalWorkerEvidence": "math_layout.rs:654-677 computes reps from (height-fixed+overlap*parts.len)/(ext_adv-overlap) then pushes MathGlyph per repetition (678-694). MathConstants script_percent unvalidated u16/100 (math_font.rs:245-249); nested inline fractions multiply font size by it (math_layout.rs:233-242). Malicious embedded Cambria Math with <=64-depth OMML may inflate target and reps. convert/mod.rs:806-807,878-894 loads/resolves math bytes; font.rs:3481-3497 catalogue skips lack exact Cambria Math. Feasible simpler construction still under investigation."
+        }
+      },
+      {
+        "id": "discovery-0017-wmf-record-boundary",
+        "candidateId": "discovery-0017-wmf-record-boundary",
+        "reason": "Awaiting independent validation of variable-length WMF branch bounds and source-to-render reachability.",
+        "paths": [
+          "src/convert/metafile.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-wmf-record-boundary",
+          "source": "architecture focused audit",
+          "title": "WMF variable-length records may repeatedly consume following records",
+          "originalWorkerEvidence": "raster_wmf validates declared size2 at metafile.rs:477-487, but POLYGON reads n and coordinates against entire data, not data[off..off+size2] (628-637); POLYPOLYGON similarly 644-657. Tiny declared 8-byte polygon may claim n=65535 and consume following records as coordinates; many such records re-read/allocate overlapping data. Work record count × point count; fill_polygon rescans points per canvas row (181-225). Existing stroke clipping/coordinate arithmetic controls do not enforce per-record lengths."
+        }
+      }
+    ],
+    "openQuestions": [
+      "Remaining source groups are under review."
+    ]
+  },
+  "scope": {
+    "summary": "Read-only offline Standard scan of the supplied target and scope .",
+    "runtimeStatus": "Application code not executed per core scan procedure.",
+    "validationMode": "static source analysis",
+    "context": "Generated source-backed threat model; exact userContext null; three subagents assigned."
+  }
+}

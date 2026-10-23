@@ -1,0 +1,31 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Document XML admission and relationship-selected converter parts",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate awaiting independent local-source validation; source review is ongoing.",
+        "id": "surface-d4ce8105918c5e67",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0002-xml-part-extension",
+        "reason": "Baseline candidate received; parent has not yet independently validated full admission-to-parser dataflow.",
+        "candidate": {
+          "title": "Non-XML suffix styles part bypasses admission XML depth enforcement",
+          "source": "baseline",
+          "evidence": "Admission scans XML only by .xml/.rels suffix (src/admission.rs:533-543), while converter follows arbitrary styles relationship targets (load_stylesheet, main_rel_part) into unchecked recursive Dom parser. A deeply nested styles.bin bypasses max_xml_depth and reaches recursive parse_element, likely process stack exhaustion.",
+          "status": "unvalidated"
+        },
+        "id": "discovery-0002-xml-part-extension"
+      }
+    ]
+  }
+}

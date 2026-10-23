@@ -1,0 +1,52 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application execution or network requests.",
+    "validationMode": "static source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-aa8f55b1964c304d",
+        "label": "HTML altChunk table expansion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Baseline candidate awaiting independent parent source validation."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0022-altchunk-colspan",
+        "candidateId": "discovery-0022-altchunk-colspan",
+        "reason": "Baseline candidate awaiting independent parent validation; original evidence retained.",
+        "candidate": {
+          "candidateId": "discovery-0022-altchunk-colspan",
+          "title": "Unbounded HTML colspan expands into excessive generated XML",
+          "source": "baseline",
+          "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+          "status": "awaiting parent source validation"
+        }
+      },
+      {
+        "id": "deferred-f098098c4baf4acc",
+        "reason": "Whole current repository review and independent architecture/other worker investigations remain in progress."
+      },
+      {
+        "candidateId": "discovery-0022-xml-entity-scan",
+        "reason": "Investigator lead pending tokenizer and parent source validation.",
+        "candidate": {
+          "title": "Potential quadratic entity scanning in permissive XML DOM",
+          "source": "archive_xml",
+          "originalEvidence": "admission check_xml_depth ignores Event::GeneralRef (src/admission.rs:798-820), while permissive DOM unescape_xml_text scans to next ';' from every '&' and rebuilds body/decode char Vec per attempt (src/xmllinq/parse.rs:768-793). A compressed XML text run of repeated '&' ending in ';' may pass tolerant admission then trigger quadratic work.",
+          "counterEvidence": "quick-xml GeneralRef tokenization and reachable callers still under investigation."
+        },
+        "id": "discovery-0022-xml-entity-scan"
+      }
+    ]
+  }
+}

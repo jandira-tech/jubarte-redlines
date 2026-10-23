@@ -1,0 +1,91 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline static audit of supplied current target /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application code or tests executed.",
+    "validationMode": "static source trace"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-a7b9170a2ae4ec37",
+        "label": "Embedded image decoding and conversion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Candidate awaiting dependency and caller-path validation."
+      },
+      {
+        "label": "Legacy DOC logical piece expansion",
+        "disposition": "needs_follow_up",
+        "notes": "Original investigator evidence retained; parent validation pending.",
+        "id": "surface-b0fc8c7e20b74787",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0024-image-decoding",
+        "candidateId": "discovery-0024-image-decoding",
+        "reason": "Awaiting parent validation of decoder limits, public reachability and concrete resource impact.",
+        "paths": [
+          "src/convert/mod.rs",
+          "src/convert/raster.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-image-decoding",
+          "title": "Embedded images may exhaust memory during PDF/PNG conversion",
+          "cwe_ids": [
+            "CWE-400"
+          ],
+          "attacker": "Document supplier",
+          "evidence": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 20289,
+              "endLine": 20294,
+              "code": "    let img = image::load_from_memory(&bytes).ok()?;\n    if img.color().has_alpha() {\n        let rgba = img.to_rgba8();\n        let (width, height) = (rgba.width(), rgba.height());\n        let mut rgb = Vec::with_capacity((width * height * 3) as usize);\n        let mut alpha = Vec::with_capacity((width * height) as usize);"
+            },
+            {
+              "path": "src/convert/raster.rs",
+              "startLine": 383,
+              "endLine": 384,
+              "code": "            if let Ok(img) = image::load_from_memory(bytes) {\n                let rgba = img.to_rgba8();"
+            }
+          ],
+          "counterevidence": [
+            "Dependency image may enforce default decoder allocation limits; not yet inspected.",
+            "SECURITY.md assigns process CPU/memory limits to caller; archive admission bounds compressed image bytes, not decoded pixels."
+          ]
+        }
+      },
+      {
+        "candidateId": "discovery-0024-legacy-piece-expansion",
+        "reason": "Focused investigator candidate awaiting independent parent source validation.",
+        "paths": [
+          "src/legacy_doc.rs",
+          "src/bin/jubarte.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-legacy-piece-expansion",
+          "title": "Bound expanded main-story characters before decoding legacy DOC pieces",
+          "severity": "high",
+          "cwe": "CWE-789",
+          "path": "src/legacy_doc.rs",
+          "line_start": 1181,
+          "line_end": 1187,
+          "source_snippet": "for piece in pieces { ... let end = piece.cp_end.min(ccp_text); ... for cp in piece.cp_start..end {",
+          "description": "A supplied OLE DOC can encode increasing contiguous logical CP ranges while repeatedly pointing each piece.fc at the same small valid WordDocument byte range. main_text verifies logical continuity (1154-1174) and each source offset (1188-1202), but neither total logical characters nor repeated source consumption. It appends one StoryChar per logical CP (1221); Fib::parse trusts attacker ccp_text from the FIB (925), up to u32::MAX. A small source range reused by a modest piece table can request billions of StoryChar records, exhausting caller memory before DOCX admission.",
+          "reachability": "public legacy_doc::read (180-189), doc_to_docx (235-236); CLI run_convert_any reads and dispatches OLE to doc_to_docx (src/bin/jubarte.rs:3125-3131) before any admit_word, whose later branch explicitly excludes legacy (3142-3143). Even read_document's refusal-hint path invokes legacy_doc::read before returning error (2742-2753).",
+          "prerequisites": "Victim processes attacker-supplied legacy DOC through convert/public legacy reader (or CLI rejection hint). Structurally readable OLE/FIB and contiguous CP piece table with valid reused source extents, without encryption.",
+          "counterevidence": "OLE FAT/mini-FAT chains bounded by input sectors; source offsets checked; pieces cover ccp_text and nondecreasing. They do not bind logical output to source bytes. Caller CPU/memory isolation limits impact to process DoS.",
+          "validation": "Worker static source reasoning; pending parent validation."
+        },
+        "id": "discovery-0024-legacy-piece-expansion"
+      }
+    ]
+  }
+}

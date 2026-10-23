@@ -1,0 +1,832 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.table-spans",
+      "title": "Rendering a small table can allocate gigabytes from an unchecked span",
+      "summary": "Rendering an admitted DOCX trusts `gridSpan`, `gridBefore` and `gridAfter` as allocation dimensions. A span of 1073741824 requests a 4 GiB column vector; embedded HTML `colspan` independently generates that many XML columns.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded logical table dimensions",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "span-input",
+          "label": "DOCX span parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "The document's positive span becomes a usize without an upper bound."
+        },
+        {
+          "id": "skip-input",
+          "label": "Skipped column parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14345,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;",
+          "explanation": "Before/after placeholders carry the same unchecked dimension."
+        },
+        {
+          "id": "span-allocation",
+          "label": "Column allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];",
+          "explanation": "Summed spans directly determine f32 vector length."
+        },
+        {
+          "id": "html-span",
+          "label": "HTML span parsing",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "user_input",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "An embedded chunk supplies a positive usize colspan."
+        },
+        {
+          "id": "html-columns",
+          "label": "HTML column generation",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");",
+          "explanation": "The requested logical width sets loop iterations and generated XML size."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span()` and `row_grid_skip()` parse positive document-controlled integers without a logical-column cap. `table_block()` sums those spans into `occupancy` and passes it to vector allocation. The HTML importer repeats the same missing column-bound control before generating one `gridCol` per column.",
+        "evidenceRefs": [
+          "span-input",
+          "skip-input",
+          "span-allocation",
+          "html-span",
+          "html-columns"
+        ]
+      },
+      "remediation": "Apply a supported logical-column cap to DOCX and HTML spans and row skip counts, checked-sum row occupancy, and refuse over-budget tables before allocation or XML generation.",
+      "validation": {
+        "counterEvidence": [
+          "Admission limits archive/XML sizes and depth, but not numeric table spans.",
+          "stretch_stale_spans skips rows whose used span already exceeds the grid; it does not clamp the attack.",
+          "PNG raster limits occur after layout. SECURITY.md recommends external process limits, whose presence is not established."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "DOCX table attributes -> cell_span/row_grid_skip -> RawCell.colspan -> summed occupancy -> vec!/resize; embedded HTML colspan -> cell_spans -> end_table -> unbounded gridCol generation."
+      },
+      "attackPath": {
+        "controls": [
+          "Admission limits archive/XML sizes and depth, but not numeric table spans.",
+          "stretch_stale_spans skips rows whose used span already exceeds the grid; it does not clamp the attack.",
+          "PNG raster limits occur after layout. SECURITY.md recommends external process limits, whose presence is not established."
+        ],
+        "dataflow": {
+          "summary": "DOCX table attributes -> cell_span/row_grid_skip -> RawCell.colspan -> summed occupancy -> vec!/resize; embedded HTML colspan -> cell_spans -> end_table -> unbounded gridCol generation."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Host-process memory exhaustion or termination, including Python/WASM embeddings; no code execution or file disclosure established."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed."
+        },
+        "reachability": {
+          "summary": "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "An untrusted document producer supplies a table to the public PDF/PNG renderer or a wrapper that invokes layout; no release, filesystem or configuration control is needed."
+          ]
+        },
+        "summary": "Rendering an admitted DOCX trusts `gridSpan`, `gridBefore` and `gridAfter` as allocation dimensions. A span of 1073741824 requests a 4 GiB column vector; embedded HTML `colspan` independently generates that many XML columns."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-table-span"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.numbering-level",
+      "title": "Rendering one numbered paragraph can perform billions of iterations",
+      "summary": "A DOCX paragraph can set `ilvl` to 4000000000. The renderer searches every lower integer for a defined numbering level; supplying an oversized definition instead makes it populate billions of counters.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded numbering-level work",
+        "cwe": [
+          "CWE-834"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "level-input",
+          "label": "Paragraph numbering level",
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {\n    let Some(num) = first_named(dom, ppr, \"numPr\") else {\n        return (None, 0);\n    };\n    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);\n    let num_id = first_named(dom, num, \"numId\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .map(str::to_string);\n    (num_id, ilvl)",
+          "explanation": "Caller-controlled w:ilvl is parsed as an unrestricted u32."
+        },
+        {
+          "id": "level-definition",
+          "label": "Numbering definitions",
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        for lvl in dom.descendants(abs, Some(&W::name(\"lvl\"))) {\n            let ilvl = attr_any(&dom, lvl, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);",
+          "explanation": "An attacker may also define the oversized level."
+        },
+        {
+          "id": "level-search",
+          "label": "Numeric parent search",
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    fn resolve_ilvl(&self, abs: &str, ilvl: u32) -> u32 {\n        let Some(lvls) = self.levels.get(abs) else {\n            return ilvl;\n        };\n        if lvls.contains_key(&ilvl) {\n            return ilvl;\n        }\n        // Word ignores a requested ilvl the abstract never defined\n        // (potpourri / file_170 ListNumber only has ilvl=0). Continue\n        // the parent level so Sift is \"3.\" at the same hanging as\n        // Preheat, not a synthesized nested \"1.\" at +18pt.\n        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "Fallback probes every lower integer instead of defined levels."
+        },
+        {
+          "id": "level-counters",
+          "label": "Counter materialization",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "language": "rust",
+          "role": "sink",
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }\n            let first = self\n                .starts\n                .get(&(num_id.to_string(), level))\n                .copied()\n                .or_else(|| {\n                    self.levels\n                        .get(&abs)\n                        .and_then(|m| m.get(&level))\n                        .map(|l| l.start)\n                })\n                .unwrap_or(1)\n                .max(1);\n            self.counters\n                .insert((num_id.to_string(), level), first.saturating_add(1));",
+          "explanation": "A defined huge level bypasses fallback but causes one insertion per lower level."
+        }
+      ],
+      "rootCause": {
+        "summary": "`num_pr()` and numbering-definition loading accept unbounded u32 levels. `resolve_ilvl()` searches the numeric interval rather than actual definitions; `next_marker()` materializes every lower counter when the huge level is defined.",
+        "evidenceRefs": [
+          "level-input",
+          "level-definition",
+          "level-search",
+          "level-counters"
+        ]
+      },
+      "remediation": "Validate paragraph, style, abstract-level and override indices against the supported list-level range. Find parents among existing definitions and avoid creating counters for nonexistent levels.",
+      "validation": {
+        "counterEvidence": [
+          "The Markdown reader separately clamps levels to eight, so this finding concerns the renderer.",
+          "Archive/XML depth/attribute byte limits do not restrict the numeric value.",
+          "External CPU/memory limits can contain process impact; no such deployment was provided."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "Paragraph w:ilvl/numbering lvl -> u32 -> resolve_ilvl numeric-range search -> next_marker range insertion and render range loop."
+      },
+      "attackPath": {
+        "controls": [
+          "The Markdown reader separately clamps levels to eight, so this finding concerns the renderer.",
+          "Archive/XML depth/attribute byte limits do not restrict the numeric value.",
+          "External CPU/memory limits can contain process impact; no such deployment was provided."
+        ],
+        "dataflow": {
+          "summary": "Paragraph w:ilvl/numbering lvl -> u32 -> resolve_ilvl numeric-range search -> next_marker range insertion and render range loop."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "CPU exhaustion from billions of hashmap probes; defined oversized levels also exhaust memory."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission."
+        },
+        "reachability": {
+          "summary": "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "A document producer supplies a numbered paragraph referencing an ordinary numbering instance and level-zero definition to a public rendering API; the value survives package admission."
+          ]
+        },
+        "summary": "A DOCX paragraph can set `ilvl` to 4000000000. The renderer searches every lower integer for a defined numbering level; supplying an oversized definition instead makes it populate billions of counters."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-numbering-depth"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.chicago-numbering",
+      "title": "Reading a Chicago-numbered list can allocate a gigabyte-sized label",
+      "summary": "A single Chicago list starting at 2147483647 produces the three-byte `‡` symbol 536870912 times, a 1.5 GiB marker. Both document rendering and Markdown/agent reading use this shared formatter.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded generated numbering label",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5847,
+          "endLine": 5861,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3022,
+          "endLine": 3030,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "marker-start",
+          "label": "Numbering start",
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {\n    let fmt = first_named(dom, lvl, \"numFmt\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"decimal\");\n    let text = first_named(dom, lvl, \"lvlText\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"%1.\")\n        .to_string();\n    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "The start value comes directly from document XML."
+        },
+        {
+          "id": "marker-dispatch",
+          "label": "Shared formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5847,
+          "endLine": 5861,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// A list counter in a `w:numFmt` (`lowerLetter`, `upperRoman`, …), as the\n/// layout prints it; for the agent view's id lines.\npub(crate) fn list_number(num_fmt: &str, n: u32) -> String {\n    format_num(parse_num_fmt(num_fmt), n)\n}\n\nfn format_num(fmt: NumFmt, n: u32) -> String {\n    match fmt {\n        NumFmt::Decimal => n.to_string(),\n        NumFmt::DecimalZero => format!(\"{n:02}\"),\n        NumFmt::CardinalText => cardinal_label(n),\n        NumFmt::Ordinal => ordinal_label(n),\n        NumFmt::OrdinalText => ordinal_text_label(n),\n        NumFmt::Hex => format!(\"{n:X}\"),\n        NumFmt::Chicago => chicago_label(n),",
+          "explanation": "Reader and renderer share the Chicago formatter."
+        },
+        {
+          "id": "marker-repeat",
+          "label": "Unbounded symbol repetition",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)\n}",
+          "explanation": "The counter controls allocation length without a generated-output budget."
+        },
+        {
+          "id": "marker-reader",
+          "label": "Agent/Markdown reader sink",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3022,
+          "endLine": 3030,
+          "language": "rust",
+          "role": "sink",
+          "code": "            let k = k as usize - 1;\n            let Some((_, at)) = self.numbering.level(num_id, k) else {\n                continue;\n            };\n            let n = counters[k].unwrap_or(i64::from(at.start));\n            label.push_str(&crate::convert::list_number(\n                &at.format,\n                u32::try_from(n.max(0)).unwrap_or(u32::MAX),\n            ));",
+          "explanation": "The reader appends the same large formatted label."
+        }
+      ],
+      "rootCause": {
+        "summary": "Unrestricted document-controlled start values reach `format_num()` and `chicago_label()`, whose repeat length is proportional to the numeric counter. Markdown's bounded list depth does not bound the counter or generated label.",
+        "evidenceRefs": [
+          "marker-start",
+          "marker-dispatch",
+          "marker-repeat",
+          "marker-reader"
+        ]
+      },
+      "remediation": "Enforce a maximum generated-label byte length in the shared numbering formatter and return a controlled refusal or bounded representation for excessive Chicago counters.",
+      "validation": {
+        "counterEvidence": [
+          "Other alphabetic/Roman formatters reduce counter ranges; Chicago does not.",
+          "Markdown clamps depth but forwards the large counter into list_number.",
+          "Input size and XML depth budgets allow the ten-digit start value."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "Numbering start/startOverride -> list counter -> format_num/list_number -> chicago_label -> str.repeat -> rendering/Markdown label copies."
+      },
+      "attackPath": {
+        "controls": [
+          "Other alphabetic/Roman formatters reduce counter ranges; Chicago does not.",
+          "Markdown clamps depth but forwards the large counter into list_number.",
+          "Input size and XML depth budgets allow the ten-digit start value."
+        ],
+        "dataflow": {
+          "summary": "Numbering start/startOverride -> list counter -> format_num/list_number -> chicago_label -> str.repeat -> rendering/Markdown label copies."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Memory exhaustion and host-process termination from a tiny numeric attribute, with additional copying/layout CPU cost."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "An untrusted document producer supplies a level-zero Chicago numbering definition and a paragraph using it; reading or rendering the document reaches the formatter without special host configuration."
+        },
+        "reachability": {
+          "summary": "An untrusted document producer supplies a level-zero Chicago numbering definition and a paragraph using it; reading or rendering the document reaches the formatter without special host configuration.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "An untrusted document producer supplies a level-zero Chicago numbering definition and a paragraph using it; reading or rendering the document reaches the formatter without special host configuration."
+          ]
+        },
+        "summary": "A single Chicago list starting at 2147483647 produces the three-byte `‡` symbol 536870912 times, a 1.5 GiB marker. Both document rendering and Markdown/agent reading use this shared formatter."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-chicago-marker"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.altchunk-expansion",
+      "title": "Rendering repeated altChunks expands admitted content beyond package budgets",
+      "summary": "Rendering admits the original ZIP, then expands every HTML/MHT chunk reference without an expanded-output budget. Repeating 1000 references to one 10 MiB HTML part can create over 10 GiB of XML before DOM construction.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood deterministic denial of service at an untrusted document/library boundary; impact is host availability, with remote deployment and blast radius unspecified."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded imported-document expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 15,
+          "endLine": 43,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 543,
+          "endLine": 551,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13224,
+          "endLine": 13238,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "import-order",
+          "label": "Admission and expanded DOM",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Admission precedes expansion, and generated XML is parsed without another policy check."
+        },
+        {
+          "id": "import-expand",
+          "label": "Repeated import expansion",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 15,
+          "endLine": 43,
+          "language": "rust",
+          "role": "root_control",
+          "code": "pub(crate) fn expand(xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> String {\n    let mut out = String::with_capacity(xml.len());\n    let mut rest = xml;\n    while let Some(at) = rest.find(\"<w:altChunk\") {\n        out.push_str(&rest[..at]);\n        let tail = &rest[at..];\n        let Some(open_end) = tail.find('>') else {\n            // The prefix has already been copied; retain only the unfinished\n            // chunk suffix when this diagnostic input cannot be expanded.\n            out.push_str(tail);\n            return out;\n        };\n        let open = &tail[..=open_end];\n        let end = if open.ends_with(\"/>\") {\n            open_end + 1\n        } else {\n            tail.find(\"</w:altChunk>\")\n                .map_or(open_end + 1, |i| i + \"</w:altChunk>\".len())\n        };\n        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);\n        rest = &tail[end..];\n    }\n    out.push_str(rest);\n    out",
+          "explanation": "Every reference independently converts and appends the shared part."
+        },
+        {
+          "id": "import-nesting",
+          "label": "HTML table nesting",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 543,
+          "endLine": 551,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            \"table\" => {\n                self.flush();\n                let border = attr(open, \"border\").is_some_and(|b| b.trim() != \"0\");\n                self.tables.push(Table {\n                    border,\n                    rows: Vec::new(),\n                    depth: self.sinks.len(),\n                });\n            }",
+          "explanation": "Builder stacks preserve nesting that original XML admission never examined."
+        },
+        {
+          "id": "import-recursion",
+          "label": "Nested table recursion",
+          "path": "src/convert/mod.rs",
+          "startLine": 13224,
+          "endLine": 13238,
+          "language": "rust",
+          "role": "sink",
+          "code": "            let mut blank_bookmarks = Vec::new();\n            // The empty paragraphs whose mark is hidden: they take no line.\n            let mut hidden_at: Vec<usize> = Vec::new();\n            // Document order, with w:sdt content unwrapped in place.\n            let mut ordered = Vec::new();\n            cell_children_in_order(dom, cell, &mut ordered);\n            for child in ordered {\n                if dom.name_is(child, &W::tbl()) {\n                    let block = table_block(dom, child, sheet, numbering, authors, comments, media);\n                    if !block_is_blank(&block) {\n                        nested.push(std::rc::Rc::new(block));\n                        nested_at.push(cell_paras.len());\n                    }\n                    continue;\n                }",
+          "explanation": "Generated nested WML reaches recursive layout."
+        }
+      ],
+      "rootCause": {
+        "summary": "`with_layout()` performs package admission before `altchunk::expand()`. Expansion reloads, converts and appends each referenced chunk with no cumulative output/node/depth limit, then passes the resulting XML to the infallible DOM parser without rechecking policy.",
+        "evidenceRefs": [
+          "import-order",
+          "import-expand",
+          "import-nesting",
+          "import-recursion"
+        ]
+      },
+      "remediation": "Make altChunk import fallible, budget cumulative generated bytes/nodes and import depth while building output, and apply active checked XML depth/tag policy before DOM construction.",
+      "validation": {
+        "counterEvidence": [
+          "Original ZIP compressed/per-part/aggregate sizes remain bounded.",
+          "No cache or cumulative generated XML limit exists in expand; even caching conversion would not bound copies.",
+          "The control is independent of oversized colspan: normal content repeated by reference suffices."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "Admitted DOCX -> repeated altChunk relationship IDs -> internal HTML/MHT bytes -> html_to_wml per occurrence -> unbounded String append -> unchecked DOM -> recursive table layout."
+      },
+      "attackPath": {
+        "controls": [
+          "Original ZIP compressed/per-part/aggregate sizes remain bounded.",
+          "No cache or cumulative generated XML limit exists in expand; even caching conversion would not bound copies.",
+          "The control is independent of oversized colspan: normal content repeated by reference suffices."
+        ],
+        "dataflow": {
+          "summary": "Admitted DOCX -> repeated altChunk relationship IDs -> internal HTML/MHT bytes -> html_to_wml per occurrence -> unbounded String append -> unchecked DOM -> recursive table layout."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Memory/CPU exhaustion before layout; deeply nested HTML also bypasses the source XML depth cap when converted to generated WML."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "An input producer supplies one internal HTML part and multiple small chunk references to a rendering API. Ordinary span-one tables or paragraphs suffice; no external resource fetch is needed."
+        },
+        "reachability": {
+          "summary": "An input producer supplies one internal HTML part and multiple small chunk references to a rendering API. Ordinary span-one tables or paragraphs suffice; no external resource fetch is needed.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "An input producer supplies one internal HTML part and multiple small chunk references to a rendering API. Ordinary span-one tables or paragraphs suffice; no external resource fetch is needed."
+          ]
+        },
+        "summary": "Rendering admits the original ZIP, then expands every HTML/MHT chunk reference without an expanded-output budget. Repeating 1000 references to one 10 MiB HTML part can create over 10 GiB of XML before DOM construction."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-altchunk-expansion"
+      }
+    },
+    {
+      "ruleId": "information-disclosure.scrub-part-discovery",
+      "title": "Sharing a scrubbed DOCX can retain authors and metadata at valid alternate part paths",
+      "summary": "`scrub` advertises removing authors and identifying metadata before sharing, but discovers author-bearing parts only under `word/` with `.xml` names and properties only at fixed `docProps` filenames. Valid relationship-selected alternate parts remain unsanitized in the returned package.",
+      "severity": {
+        "level": "low",
+        "rationale": "Selected confidential metadata survives a user-invoked sharing workflow; impact and exposure are conditional and limited to identifiers."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced actual current source, checked relevant controls and sibling operations; no application code or exploit input was executed."
+      },
+      "taxonomy": {
+        "category": "Incomplete sensitive metadata removal",
+        "cwe": [
+          "CWE-200"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/scrub.rs",
+          "startLine": 109,
+          "endLine": 140,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 211,
+          "endLine": 216,
+          "role": "root_control"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 271,
+          "endLine": 289,
+          "role": "propagation"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 353,
+          "endLine": 385,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "scrub-entry",
+          "label": "Scrub processing",
+          "path": "src/scrub.rs",
+          "startLine": 109,
+          "endLine": 140,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn scrub(docx: &[u8], options: &ScrubOptions) -> Result<Vec<u8>, ScrubError> {\n    let mut pkg = PartFs::open(docx).map_err(|e| ScrubError::Package(e.to_string()))?;\n    if pkg\n        .main_document_part()\n        .is_none_or(|main| pkg.part_bytes(&main).is_none())\n    {\n        return Err(ScrubError::Invalid(\n            \"the package has no main document part\".into(),\n        ));\n    }\n    if let Some(alias) = &options.author_alias\n        && (alias.trim().is_empty() || alias.chars().any(char::is_control))\n    {\n        return Err(ScrubError::Invalid(\n            \"author_alias must be a nonempty name without control characters\".into(),\n        ));\n    }\n    let before = crate::validate::validate(docx).map_err(|e| ScrubError::Package(e.to_string()))?;\n    if options.comments {\n        remove_comments(&mut pkg);\n    }\n    if let Some(alias) = &options.author_alias {\n        alias_authors(&mut pkg, alias);\n    }\n    if options.rsids {\n        remove_rsids(&mut pkg);\n    }\n    if options.docprops {\n        scrub_properties(&mut pkg);\n    }\n    let out = pkg\n        .to_zip()",
+          "explanation": "Relationship-selected main existence is accepted before selected privacy operations run."
+        },
+        {
+          "id": "scrub-filter",
+          "label": "Lexical part filter",
+          "path": "src/scrub.rs",
+          "startLine": 211,
+          "endLine": 216,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn word_parts(pkg: &PartFs) -> Vec<String> {\n    pkg.parts()\n        .into_iter()\n        .filter(|p| p.starts_with(\"word/\") && p.ends_with(\".xml\"))\n        .collect()\n}",
+          "explanation": "Non-word paths and non-xml extensions are excluded despite supported OPC naming."
+        },
+        {
+          "id": "scrub-authors",
+          "label": "Author iteration",
+          "path": "src/scrub.rs",
+          "startLine": 271,
+          "endLine": 289,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let initials_name = W::name(\"initials\");\n    let short = initials(alias);\n    for name in word_parts(pkg) {\n        if name == \"word/people.xml\" {\n            continue;\n        }\n        let Some(mut part) = Part::load(pkg, &name) else {\n            continue;\n        };\n        let mut changed = false;\n        for node in part.dom.descendants_and_self(part.root, None) {\n            if part\n                .dom\n                .attribute(node, &author)\n                .is_some_and(|a| a != alias)\n            {\n                part.dom.set_attribute_value(node, &author, Some(alias));\n                changed = true;\n            }",
+          "explanation": "Alias replacement only visits the filtered names."
+        },
+        {
+          "id": "scrub-properties",
+          "label": "Fixed property locations",
+          "path": "src/scrub.rs",
+          "startLine": 353,
+          "endLine": 385,
+          "language": "rust",
+          "role": "sink",
+          "code": "}\n\n/// Drop the people and dates of the core and extended properties, and the\n/// custom properties part.\nfn scrub_properties(pkg: &mut PartFs) {\n    if let Some(mut core) = Part::load(pkg, CORE) {\n        let names = [\n            XName::get(\"creator\", DC),\n            XName::get(\"lastModifiedBy\", CP),\n            XName::get(\"revision\", CP),\n            XName::get(\"lastPrinted\", CP),\n            XName::get(\"created\", DCTERMS),\n            XName::get(\"modified\", DCTERMS),\n        ];\n        if remove_children(&mut core, &names) {\n            core.store(pkg);\n        }\n    }\n    if let Some(mut app) = Part::load(pkg, APP) {\n        let names = [\n            XName::get(\"Manager\", EXTENDED),\n            XName::get(\"Company\", EXTENDED),\n        ];\n        if remove_children(&mut app, &names) {\n            app.store(pkg);\n        }\n    }\n    if pkg.part_bytes(CUSTOM).is_some() {\n        pkg.remove_part(CUSTOM);\n        pkg.remove_package_relationships_by_type(CUSTOM_REL);\n        pkg.remove_content_type_override(&format!(\"/{CUSTOM}\"));\n    }\n}",
+          "explanation": "Missing conventional property parts are skipped and alternate targets remain."
+        }
+      ],
+      "rootCause": {
+        "summary": "`scrub()` opens an OPC package and checks only that its relationship-selected main part exists. `alias_authors()` filters lexical `word/*.xml`; `scrub_properties()` loads conventional constants instead of relationship targets/content types. Absent conventional parts are silently skipped, and validation only rejects newly introduced findings rather than proving identifiers were removed.",
+        "evidenceRefs": [
+          "scrub-entry",
+          "scrub-filter",
+          "scrub-authors",
+          "scrub-properties"
+        ]
+      },
+      "remediation": "Discover relevant story, people and property parts through relationships/content types rather than conventional filenames or extensions; sanitize the selected semantic categories and fail closed if they cannot be inspected.",
+      "validation": {
+        "counterEvidence": [
+          "The Rust module describes its narrower word/ implementation, but CLI/Python advertise removal for every author and metadata before sharing.",
+          "Text, revision dates and unselected categories intentionally remain; they are outside this finding.",
+          "No remote exposure or public repository access is assumed. Input may be nonmalicious and merely use alternate names."
+        ],
+        "limitations": [
+          "No runtime reproduction; deployment isolation and externally imposed quotas were not supplied."
+        ],
+        "method": "independent static source validation",
+        "status": "validated",
+        "summary": "Valid DOCX with main part content/main.xml (or word/main.dat), author-bearing revisions and relocated metadata -> PartFs -> lexical scrub selectors skip those parts -> to_zip preserves them -> user shares successful output -> recipient reads original identifiers."
+      },
+      "attackPath": {
+        "controls": [
+          "The Rust module describes its narrower word/ implementation, but CLI/Python advertise removal for every author and metadata before sharing.",
+          "Text, revision dates and unselected categories intentionally remain; they are outside this finding.",
+          "No remote exposure or public repository access is assumed. Input may be nonmalicious and merely use alternate names."
+        ],
+        "dataflow": {
+          "summary": "Valid DOCX with main part content/main.xml (or word/main.dat), author-bearing revisions and relocated metadata -> PartFs -> lexical scrub selectors skip those parts -> to_zip preserves them -> user shares successful output -> recipient reads original identifiers."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Disclosure of reviewer identities, edit-session identifiers and creator/company/custom-property information the caller asked to remove."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "A recipient of an output generated through CLI scrub, Python Document.scrub or WASM scrubDocument can recover selected identifiers when the input uses valid alternate OPC part names; operator publication of the returned document is required."
+        },
+        "reachability": {
+          "summary": "A recipient of an output generated through CLI scrub, Python Document.scrub or WASM scrubDocument can recover selected identifiers when the input uses valid alternate OPC part names; operator publication of the returned document is required.",
+          "attacker": "Producer of lower-trust document input, or recipient of a successfully scrubbed output.",
+          "preconditions": [
+            "A recipient of an output generated through CLI scrub, Python Document.scrub or WASM scrubDocument can recover selected identifiers when the input uses valid alternate OPC part names; operator publication of the returned document is required."
+          ]
+        },
+        "summary": "`scrub` advertises removing authors and identifying metadata before sharing, but discovers author-bearing parts only under `word/` with `.xml` names and properties only at fixed `docProps` filenames. Valid relationship-selected alternate parts remain unsanitized in the returned package."
+      },
+      "remediationTests": [
+        "Use a small deterministic document with extreme semantic values or alternate valid OPC paths and assert controlled refusal or complete selected sanitization before expensive processing."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "scrub-opc-location"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-87e131495b8ce5d9",
+        "label": "Native file publication and MCP root confinement",
+        "disposition": "no_issue_found",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-924aa4b0d019bb93",
+        "label": "Document semantic resource limits and privacy scrub",
+        "disposition": "reported",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-59fc88e1be67624b",
+        "label": "ZIP entry budget and EOCD interpretation",
+        "disposition": "needs_follow_up",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-6269990b80a6df3a",
+        "label": "Legacy DOC and strict-format probing",
+        "disposition": "needs_follow_up",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "zip-eocd-entry-budget",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "zip-eocd-entry-budget",
+          "title": "False EOCD record bypasses pre-index entry budget",
+          "originalEvidence": "Investigator: src/admission.rs:580-610 selects last raw EOCD signature without validating record; zip9.0.5 get_metadata scans backward to earlier valid EOCD on metadata/header failure (read/zip_archive.rs199-235). False low-count EOCD inside real comment with mismatched disk fields passes preindex; real ZipArchive loads >max_entries. admit:450 only tests archive.len()<declared; actual >max_entries absent. Parent validation pending."
+        },
+        "id": "zip-eocd-entry-budget"
+      },
+      {
+        "candidateId": "strict-probe-inflate",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "strict-probe-inflate",
+          "originalEvidence": "Investigator: public strict_translation::main_part_is_strict src/strict_translation.rs670-725 opens archive without preindex/admission; unbounded read word/document.xml. Long XML comment prefix head retained from '<' at0 and rescanned every16KiB at695-709 yields unbounded inflation/memory and quadratic work. Public export lib.rs144, no internal caller; library boundary only."
+        },
+        "id": "strict-probe-inflate"
+      },
+      {
+        "candidateId": "legacy-piece-expansion",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "legacy-piece-expansion",
+          "originalEvidence": "Investigator: src/legacy_doc.rs1148-1226 main_text expands each piece.cp_start..end into StoryChar; parsed pieces1054-1112 allow same physical FC range referenced repeatedly, ccp_text attacker FIB. Sequential CPs pass, 1000 pieces reusing1MiB yield billion StoryChar/tensGB from1MiB. No logical character cap."
+        },
+        "id": "legacy-piece-expansion"
+      },
+      {
+        "candidateId": "legacy-nested-fields",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "legacy-nested-fields",
+          "originalEvidence": "Investigator: src/legacy_doc.rs1598 onward Story::blocks fields.iter().any per char. Repeated field begin/result characters nest N false fields, O(N) per char O(N²); no field depth cap."
+        },
+        "id": "legacy-nested-fields"
+      }
+    ],
+    "openQuestions": [
+      "Architecture model pending; remaining repository source coverage unresolved.",
+      "Architecture review in progress; scoped source coverage not yet reconciled."
+    ]
+  }
+}

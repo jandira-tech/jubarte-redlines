@@ -1,0 +1,123 @@
+diff --git a/src/legacy_doc.rs b/src/legacy_doc.rs
+index 1881053a..418f40b3 100644
+--- a/src/legacy_doc.rs
++++ b/src/legacy_doc.rs
+@@ -572,10 +572,42 @@ fn render_spans(spans: &[Span]) -> String {
+     out.trim().to_string()
+ }
+ 
++// Characters examined by the pass that keeps [`escape_line`]'s
++// all-digits-prefix answer current, counted on this thread for the tests:
++// the running flag examines each character of the line exactly once, while
++// re-reading the whole prefix at every `.` or `)` delimiter examines
++// O(length × delimiters) characters on digits-plus-periods text. The tests
++// use the count to reject the quadratic path. It is per thread, so tests
++// running side by side under `cargo test` do not disturb each other's
++// count.
++#[cfg(test)]
++thread_local! {
++    static LIST_PREFIX_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
++/// Count `steps` characters of the prefix pass. Test-only; an empty inline
++/// function in production builds, so the runtime cost is zero.
++#[cfg(test)]
++#[cfg_attr(all(coverage_nightly, test), coverage(off))]
++#[inline]
++fn count_list_prefix_steps(steps: usize) {
++    LIST_PREFIX_STEPS.with(|total| total.set(total.get() + steps));
++}
++
++#[cfg(not(test))]
++#[cfg_attr(all(coverage_nightly, test), coverage(off))]
++#[inline]
++fn count_list_prefix_steps(_steps: usize) {}
++
+ /// Escape one line of text so Markdown reads it back as the same text.
+ fn escape_line(text: &str) -> String {
+     let text = text.trim();
+     let mut out = String::with_capacity(text.len());
++    // Whether every character before the current one is an ASCII digit:
++    // `1.` or `1)` opens a list only when nothing else precedes it, and
++    // carrying the answer through the pass decides each delimiter in
++    // constant time instead of re-reading the prefix at every one.
++    let mut prefix_is_digits = true;
+     for (index, ch) in text.char_indices() {
+         let at_start = index == 0;
+         let escape = match ch {
+@@ -584,8 +616,7 @@ fn escape_line(text: &str) -> String {
+             '-' | '+' | '=' => at_start,
+             '.' | ')' => {
+                 // `1.` or `1)` at the start of a line opens a list.
+-                let before = text.get(..index).unwrap_or("");
+-                !before.is_empty() && before.chars().all(|c| c.is_ascii_digit())
++                prefix_is_digits && !at_start
+             }
+             _ => false,
+         };
+@@ -593,6 +624,11 @@ fn escape_line(text: &str) -> String {
+             out.push('\\');
+         }
+         out.push(ch);
++        // One character of the pass: keep the all-digits answer current.
++        count_list_prefix_steps(1);
++        if !ch.is_ascii_digit() {
++            prefix_is_digits = false;
++        }
+     }
+     out
+ }
+@@ -1737,6 +1773,53 @@ mod tests {
+     }
+ 
+     #[test]
++    fn escapes_list_delimiters_only_after_sole_digit_runs() {
++        // `1.` or `1)` opens a list only when nothing but digits precedes
++        // it; a delimiter after that first one is literal text.
++        assert_eq!(escape_line("12) not a list"), "12\\) not a list");
++        assert_eq!(escape_line("1.2."), "1\\.2.");
++        assert_eq!(escape_line("3.14)"), "3\\.14)");
++        assert_eq!(escape_line("."), ".");
++        assert_eq!(escape_line(")."), ").");
++        // Only ASCII digits count: `٣` does not open a list.
++        assert_eq!(escape_line("٣."), "٣.");
++    }
++
++    #[test]
++    fn list_prefix_scan_stays_linear() {
++        // Pathological input: 60,000 digits then 30,000 `1.` pairs. The
++        // pre-fix decision re-read the whole digit prefix at every
++        // delimiter — about 1.8 billion character examinations for this
++        // input — while the single pass with the running all-digits flag
++        // examines each character exactly once.
++        let digits = 60_000;
++        let pairs = 30_000;
++        let mut text = "7".repeat(digits);
++        text.push('.');
++        text.push_str(&"1.".repeat(pairs - 1));
++        let chars = text.chars().count();
++        let delimiters = text.chars().filter(|&c| matches!(c, '.' | ')')).count();
++        assert_eq!(delimiters, pairs);
++        LIST_PREFIX_STEPS.with(|steps| steps.set(0));
++        let escaped = escape_line(&text);
++        let steps = LIST_PREFIX_STEPS.with(std::cell::Cell::get);
++        // Linear-time bound: a small constant times the text length. The
++        // pre-fix prefix re-scan is Θ(digits × delimiters), which dwarfs
++        // any linear bound by ~4 orders of magnitude.
++        const C: usize = 4;
++        let bound = C * chars;
++        assert!(
++            steps <= bound,
++            "escaping {delimiters} delimiters examined {steps} characters; \
++             a single pass examines at most {bound}"
++        );
++        // The escapes themselves are unchanged: only the first delimiter
++        // follows a pure digit run.
++        let expected = format!("{}\\.{}", "7".repeat(digits), "1.".repeat(pairs - 1));
++        assert_eq!(escaped, expected);
++    }
++
++    #[test]
+     fn compressed_text_maps_windows_1252() {
+         assert_eq!(cp1252(0x93), '\u{201C}');
+         assert_eq!(cp1252(0x80), '\u{20AC}');

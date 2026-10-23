@@ -1,0 +1,149 @@
+[
+ {
+  "findingId": "csf_0e2b085a251b34412cd71a4c",
+  "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+  "severity": "medium",
+  "summary": "An attacker-authored Word 97\u20132003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint. Assigned discovery-0031 supplies a balanced result-state framing with approximately 100000 nested fields in a few hundred kilobytes, implying billions of boolean inspections. This is heap-stack scanning CPU cost, not recursive call-stack overflow.",
+  "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint."
+ },
+ {
+  "findingId": "csf_09abb95061370ae3d7d342ca",
+  "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+  "severity": "medium",
+  "summary": "The redact operation can return successful clean and redline documents while a supported BOM-marked UTF-16LE/BE auxiliary XML part still contains the same confidential text. Its XML leak branch uses lossy UTF-8 and misses the retained copy, which a recipient can recover after sharing. Even the scanner's no-root fallback searches the already lossily decoded string, so it cannot recover a multi-character value split by UTF-16 NUL bytes.",
+  "remediation": "Decode every XML part with the same BOM-aware policy as admission before semantic leak scanning. Fail closed on unsupported/undecodable/unparseable representations and retain raw UTF8 and both UTF16 byte-order checks as defense in depth. Use the same decoding across leak checks and package validation."
+ },
+ {
+  "findingId": "csf_de54caf2d47d7e03bce741e0",
+  "title": "Metadata scrub leaves property parts under alternate names",
+  "severity": "medium",
+  "summary": "With docprops enabled, scrub removes metadata only from three conventional filenames. A document using alternate package relationship targets can retain creators, editors, dates, company/manager or custom properties while scrub returns success. The custom-properties branch additionally skips relationship/content-type removal when docProps/custom.xml is absent, leaving an active relationship to a relocated target such as metadata/private.xml.",
+  "remediation": "Resolve all core, extended and custom property parts through authoritative package relationships and content types, sanitize every applicable internal target according to docprops selection, and remove corresponding custom-property parts/relationships/content-type records coherently. Verify the selected privacy postcondition; refuse unsupported or ambiguous layouts rather than returning a successfully scrubbed copy. Preserve intentional title/subject/application and revision-date retention. Missing/invalid selected targets require explicit refusal or documented safe handling; default public and CLI callers must enforce the same postcondition. Include supported Strict property relationship variants and regression cases containing both conventional and relocated targets; every active property target must satisfy the requested postcondition."
+ },
+ {
+  "findingId": "csf_e317a396f5a5264629caef58",
+  "title": "Redacting a numeric identifier can leave its custom XML attribute intact",
+  "severity": "medium",
+  "summary": "The final redaction leak scan exempts numeric-looking attributes by local name alone. A sensitive value such as a customer or account identifier in custom XML `id` is ignored, allowing visible redaction to succeed while the value remains recoverable in the returned DOCX.",
+  "remediation": "Remove numeric exemptions from strict redaction verification, or restrict them to verified OOXML namespace/element/attribute combinations representing exclusively generated layout state. Always scan arbitrary custom XML business attributes."
+ },
+ {
+  "findingId": "csf_cac980ab6041d4ec91b39fd1",
+  "title": "Repeated relationship IDs trigger quadratic repair work",
+  "severity": "medium",
+  "summary": "Opening a package repairs identical duplicate relationship IDs. For n distinct IDs each repeated identically, each repair linearly searches an increasingly long Vec, producing quadratic CPU work on shallow metadata that fits existing byte and attribute limits. Assigned discovery-0031 supplies approximately 200000 shallow Relationship records with 100000 distinct identical duplicate pairs within a 64 MiB part, implying about five billion membership comparisons. Conflicting duplicates remain promptly refused; counts are static.",
+  "remediation": "Track already-reported duplicate IDs in a HashSet or alongside seen-map state, retaining a Vec only for deterministic reporting order. Optionally cap relationship-record/work totals before repair; test many distinct identical duplicate pairs while preserving deterministic repaired-ID order and conflicting-duplicate refusals. Apply an active relationship-record/work budget at metadata admission in addition to making duplicate membership near-linear."
+ },
+ {
+  "findingId": "csf_6a40bc41bdf34a737ceac40d",
+  "title": "Entity decoding repeatedly scans the input suffix",
+  "severity": "medium",
+  "summary": "HTML altChunk text with bare ampersands and the public XML entity decoder repeatedly search the remaining suffix for ';', yielding quadratic CPU work. A valid admitted .rels Target containing repeated &amp; is normalized upstream and redundantly decoded by PartFs, reaching the same XML sink during rendering, inspection, revision processing or comparison even when the target part does not exist. An additional admitted-main-XML route uses an unquoted value whose first character never reappears: the DOM consumes through EOF and decodes a bare-ampersand comment as an attribute, reaching the same quadratic XML decoder. Ordinary bare-ampersand text is rejected upstream and is not this proof. The same HTML decoder is also reached by Markdown-to-DOCX raw HTML blocks and attribute values; its ten-byte accepted-entity bound is applied after the unbounded search. Assigned discovery-0031 corroborates both established decoders independently: ordinary HTML/MHT paragraph text reaches the HTML helper even when script/style content is skipped, while an internal fontTable target reaches redundant XML decoding before any absent-part lookup. Its supplied offline dependency evidence identifies oxml-opc 0.14.2 and quick-xml 0.41.0 attribute normalization, independently supported by the repository target round-trip test. No reducer dependency inspection occurred.",
+  "remediation": "Scan entities once without revisiting suffixes. In HTML, bound the search to the supported entity-length window before looking for ';'; give XML decoding a monotonic parser or bounded entity grammar. Remove PartFs's redundant relationship decoding when upstream supplies normalized attributes; retain the linear XML-helper repair for its other callers and the separate bounded HTML-helper repair. Preserve canonical literal '&amp;' part names and one-time entity normalization through round trips. Preserve the standalone XML helper's documented permissive output for unsupported or unterminated references while making its work linear. Apply practical relationship-target length/work bounds as defense in depth, preserving exactly one normalization pass and the standalone helper's linear permissive behavior. Align admission/DOM attribute token boundaries or reject unsupported unquoted syntax as defense in depth. Preserve the linear XML decoder fix for this comment-to-attribute route; removing only the redundant relationship decode does not cover it. Apply the bounded HTML helper consistently to Markdown raw-HTML block text and attribute consumers, using UTF-8-safe bounded lookahead and preserving recognized entities, malformed literal retention and multibyte text."
+ },
+ {
+  "findingId": "csf_85e0853b68d29e45897292e3",
+  "title": "Converting legacy DOC text with a long numeric prefix causes quadratic work",
+  "severity": "medium",
+  "summary": "For each period or closing parenthesis, the Markdown escaper rescans the full preceding text. A long digit prefix followed by many periods repeatedly scans the same digits, consuming disproportionate CPU on a small legacy DOC.",
+  "remediation": "Track a running all-ASCII-digits prefix flag while iterating once, or identify the sole initial numeric-list delimiter once. Preserve escaping behavior with linear work."
+ },
+ {
+  "findingId": "csf_d7cf4e4a5f04c299b9dd8730",
+  "title": "Mixed edit plans repeat redacted text in another operation's report",
+  "severity": "medium",
+  "summary": "A successful plan that redacts sensitive text and edits nearby words can remove the text from both DOCX files while retaining it in the adjacent edit's source-context field. The generated report and report-bearing MCP response disclose that text despite the documented privacy guarantee.",
+  "remediation": "Apply redaction-aware sanitization to every report, refusal and diagnostic field after resolving the full plan, including other operations' contexts. Check the final serialized reports for all redaction needles before publication, omitting unsafe context when needed."
+ },
+ {
+  "findingId": "csf_7bd64146a8b40f28ac601665",
+  "title": "Inspecting many alternating-format runs repeatedly scans the whole paragraph prefix",
+  "severity": "medium",
+  "summary": "A document author can place many short runs with alternating formatting in a single paragraph. The inspector repeatedly counts characters from the paragraph start for every span boundary, causing quadratic CPU work in public inspection and downstream editing views.",
+  "remediation": "Convert sorted byte boundaries to character offsets in one forward pass, or construct a byte-to-character index once, then look up every span boundary."
+ },
+ {
+  "findingId": "csf_c2ab52b1c8614c7fd5356cf8",
+  "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+  "severity": "low",
+  "summary": "The Python and Node CLIs write plans through a predictable .<plan>.<PID>.partial pathname using nonexclusive truncating writes. A local actor who can create entries in the plan directory can preplace a symlink there and make the victim overwrite another file it can write, before the intended plan replacement.\n Assigned discovery-0032 corroborates both non-dry-run recorders after successful plan preview. Intentional final-plan symlink resolution is distinct from the independently substituted staging entry.",
+  "remediation": "Use exclusive, unpredictable staging owned by a private directory, hold the opened handle through writing, and rename that verified file. Reuse the native publication design or equivalent mkstemp/exclusive wx APIs and never follow existing staging entries. Python can reuse native publication; Node needs equivalent secure publication semantics. Preserve intentional final-plan symlink resolution to its authorized resolved target while securing the separate staging object; successful recording installs a verified regular plan file and failure preserves prior output.\nAdditional retained remediation detail: Use an exclusively created private staging directory/file held by handle, verify staged bytes, and atomically publish to the authorized plan target. Refuse preexisting staging objects and preserve intended final-plan symlink semantics without following a staging symlink."
+ },
+ {
+  "findingId": "csf_00beee9df9b14ad1518f06ce",
+  "title": "Legacy edit-anchor searches compare long prefixes at every character",
+  "severity": "low",
+  "summary": "Legacy plan resolution searches for an anchor with starts_with at every character position, including its normalized fallback. A repetitive paragraph paired with a long near-matching anchor can force quadratic CPU work before the plan is refused or applied.",
+  "remediation": "Use a linear-time substring matcher for exact and normalized legacy anchors, reusing the v2 KMP approach, while preserving overlapping-hit semantics and source-offset mapping. Add explicit cumulative matching-work limits where needed."
+ },
+ {
+  "findingId": "csf_27ca2e0d965d8b1341a32909",
+  "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+  "severity": "medium",
+  "summary": "An attacker-authored Word 97\u20132003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint.",
+  "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work."
+ },
+ {
+  "findingId": "csf_bff2c0151aeb6ffaa6f96d4a",
+  "title": "Repeated relationship IDs trigger quadratic repair work",
+  "severity": "medium",
+  "summary": "Opening a package repairs identical duplicate relationship IDs. For n distinct IDs each repeated identically, each repair linearly searches an increasingly long Vec, producing quadratic CPU work on shallow metadata that fits existing byte and attribute limits.",
+  "remediation": "Track already-reported duplicate IDs in a HashSet or alongside seen-map state, retaining a Vec only for deterministic reporting order. Optionally cap relationship-record/work totals before repair; test many distinct identical duplicate pairs while preserving deterministic repaired-ID order and conflicting-duplicate refusals."
+ },
+ {
+  "findingId": "csf_3ec09f0cecec11243e8a8f5e",
+  "title": "Entity decoding repeatedly scans the input suffix",
+  "severity": "medium",
+  "summary": "HTML altChunk text with bare ampersands and the public XML entity decoder repeatedly search the remaining suffix for ';', yielding quadratic CPU work. A valid admitted .rels Target containing repeated &amp; is normalized upstream and redundantly decoded by PartFs, reaching the same XML sink during rendering, inspection, revision processing or comparison even when the target part does not exist.",
+  "remediation": "Scan entities once without revisiting suffixes. In HTML, bound the search to the supported entity-length window before looking for ';'; give XML decoding a monotonic parser or bounded entity grammar. Remove PartFs's redundant relationship decoding when upstream supplies normalized attributes; retain the linear XML-helper repair for its other callers and the separate bounded HTML-helper repair. Preserve canonical literal '&amp;' part names and one-time entity normalization through round trips."
+ },
+ {
+  "findingId": "csf_6054d1763a69fc51bf4be2b2",
+  "title": "Mixed edit plans repeat redacted text in another operation's report",
+  "severity": "medium",
+  "summary": "A successful plan that redacts sensitive text and edits nearby words can remove the text from both DOCX files while retaining it in the adjacent edit's source-context field. The generated report and report-bearing MCP response disclose that text despite the documented privacy guarantee.",
+  "remediation": "Apply redaction-aware sanitization to every report, refusal and diagnostic field after resolving the full plan, including other operations' contexts. Check the final serialized reports for all redaction needles before publication, omitting unsafe context when needed."
+ },
+ {
+  "findingId": "csf_4b64ae60e06cc87420036fe5",
+  "title": "Metadata scrub leaves property parts under alternate names",
+  "severity": "medium",
+  "summary": "With docprops enabled, scrub removes metadata only from three conventional filenames. A document using alternate package relationship targets can retain creators, editors, dates, company/manager or custom properties while scrub returns success. The custom-properties branch additionally skips relationship/content-type removal when docProps/custom.xml is absent, leaving an active relationship to a relocated target such as metadata/private.xml.",
+  "remediation": "Resolve all core, extended and custom property parts through authoritative package relationships and content types, sanitize every applicable internal target according to docprops selection, and remove corresponding custom-property parts/relationships/content-type records coherently. Verify the selected privacy postcondition; refuse unsupported or ambiguous layouts rather than returning a successfully scrubbed copy. Preserve intentional title/subject/application and revision-date retention. Missing/invalid selected targets require explicit refusal or documented safe handling; default public and CLI callers must enforce the same postcondition. Include supported Strict property relationship variants and regression cases containing both conventional and relocated targets; every active property target must satisfy the requested postcondition."
+ },
+ {
+  "findingId": "csf_b0aa536248aea0f44dd30d47",
+  "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+  "severity": "medium",
+  "summary": "An attacker-authored Word 97\u20132003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint.",
+  "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint."
+ },
+ {
+  "findingId": "csf_f1c7e6e8877805d7436a18fa",
+  "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+  "severity": "low",
+  "summary": "The Python and Node CLIs write plans through a predictable .<plan>.<PID>.partial pathname using nonexclusive truncating writes. A local actor who can create entries in the plan directory can preplace a symlink there and make the victim overwrite another file it can write, before the intended plan replacement.",
+  "remediation": "Use exclusive, unpredictable staging owned by a private directory, hold the opened handle through writing, and rename that verified file. Reuse the native publication design or equivalent mkstemp/exclusive wx APIs and never follow existing staging entries. Python can reuse native publication; Node needs equivalent secure publication semantics."
+ },
+ {
+  "findingId": "csf_32d60b431e9d66bf961b0a29",
+  "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+  "severity": "medium",
+  "summary": "The redact operation can return successful clean and redline documents while a supported BOM-marked UTF-16LE/BE auxiliary XML part still contains the same confidential text. Its XML leak branch uses lossy UTF-8 and misses the retained copy, which a recipient can recover after sharing. Even the scanner's no-root fallback searches the already lossily decoded string, so it cannot recover a multi-character value split by UTF-16 NUL bytes.",
+  "remediation": "Decode every XML part with the same BOM-aware policy as admission before semantic leak scanning. Fail closed on unsupported/undecodable/unparseable representations and retain raw UTF8 and both UTF16 byte-order checks as defense in depth. Use the same decoding across leak checks and package validation."
+ },
+ {
+  "findingId": "csf_88d031991ca3e20e4aae2f24",
+  "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+  "severity": "medium",
+  "summary": "An attacker-authored Word 97\u20132003 DOC can repeatedly begin fields and enter their result sections, leaving an increasingly long all-false field stack. Story::blocks scans the entire stack before every input character, giving quadratic CPU work during reading/conversion and even the native Word-input refusal hint. Assigned discovery-0031 supplies a balanced result-state framing with approximately 100000 nested fields in a few hundred kilobytes, implying billions of boolean inspections. This is heap-stack scanning CPU cost, not recursive call-stack overflow.",
+  "remediation": "Maintain an O(1) active-code-frame count, updating it correctly on begin, separator and end while preserving suppression under any code ancestor. Enforce explicit field-nesting and processing-work budgets for balanced and malformed legacy field streams before excessive work. Keep legacy diagnostic probes cheap and bounded, or enforce the same field/work budgets before invoking the full reader solely for a refusal hint."
+ },
+ {
+  "findingId": "csf_eb94605aebd8f08907c46e8c",
+  "title": "Entity decoding repeatedly scans the input suffix",
+  "severity": "medium",
+  "summary": "HTML altChunk text with bare ampersands and the public XML entity decoder repeatedly search the remaining suffix for ';', yielding quadratic CPU work. A valid admitted .rels Target containing repeated &amp; is normalized upstream and redundantly decoded by PartFs, reaching the same XML sink during rendering, inspection, revision processing or comparison even when the target part does not exist. An additional admitted-main-XML route uses an unquoted value whose first character never reappears: the DOM consumes through EOF and decodes a bare-ampersand comment as an attribute, reaching the same quadratic XML decoder. Ordinary bare-ampersand text is rejected upstream and is not this proof. The same HTML decoder is also reached by Markdown-to-DOCX raw HTML blocks and attribute values; its ten-byte accepted-entity bound is applied after the unbounded search. Assigned discovery-0031 corroborates both established decoders independently: ordinary HTML/MHT paragraph text reaches the HTML helper even when script/style content is skipped, while an internal fontTable target reaches redundant XML decoding before any absent-part lookup. Its supplied offline dependency evidence identifies oxml-opc 0.14.2 and quick-xml 0.41.0 attribute normalization, independently supported by the repository target round-trip test. No reducer dependency inspection occurred.",
+  "remediation": "Scan entities once without revisiting suffixes. In HTML, bound the search to the supported entity-length window before looking for ';'; give XML decoding a monotonic parser or bounded entity grammar. Remove PartFs's redundant relationship decoding when upstream supplies normalized attributes; retain the linear XML-helper repair for its other callers and the separate bounded HTML-helper repair. Preserve canonical literal '&amp;' part names and one-time entity normalization through round trips. Preserve the standalone XML helper's documented permissive output for unsupported or unterminated references while making its work linear. Apply practical relationship-target length/work bounds as defense in depth, preserving exactly one normalization pass and the standalone helper's linear permissive behavior. Align admission/DOM attribute token boundaries or reject unsupported unquoted syntax as defense in depth. Preserve the linear XML decoder fix for this comment-to-attribute route; removing only the redundant relationship decode does not cover it. Apply the bounded HTML helper consistently to Markdown raw-HTML block text and attribute consumers, using UTF-8-safe bounded lookahead and preserving recognized entities, malformed literal retention and multibyte text."
+ }
+]

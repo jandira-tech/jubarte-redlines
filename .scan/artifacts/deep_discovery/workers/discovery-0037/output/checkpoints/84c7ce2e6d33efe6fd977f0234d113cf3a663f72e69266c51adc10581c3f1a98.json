@@ -1,0 +1,601 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0037; three subagents.",
+    "runtimeStatus": "No application execution, tests, network access, or credential use.",
+    "validationMode": "static source analysis",
+    "context": "userContext=null; no supplied threat model or knowledge base. Generated model retained from independent architecture review with source-backed resource/deployment facts; material consumer verification in progress."
+  },
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX processing engine with native CLI, PyO3 Python APIs/CLI/MCP stdio server, and wasm-bindgen browser/Node APIs plus an npm CLI. Inputs include DOCX ZIP/XML, legacy OLE DOC, Markdown, JSON edit plans, embedded drawings/images/fonts, and caller-provided conversion options. The engine compares, edits, resolves revisions, inspects, repairs, scrubs, appends, and renders documents into DOCX/PDF/PNG/text/reports (src/lib.rs:7-35,96-165; src/legacy_doc.rs:13-50). Package admission and checked XML parsing precede sensitive parser work on representative engine routes; comparison has larger configurable budgets than ordinary admission (src/admission.rs:63-98,439-470,511-550; src/document_comparer.rs:4907-4927,6530-6559). Native rendering additionally discovers host fonts and maintains a persistent host font index. MCP confines explicitly supplied file paths through a held native directory capability, whereas native CLI/Python/Node command adapters have ambient local filesystem authority (src/publication.rs:146-205; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-55,106-108). Network access and executable replacement form a separate optional native self-update workflow; release signing/publication are privileged maintainer workflows (src/update.rs:186-258; .github/workflows/release.yml:230-369; scripts/release.sh:875-919,1039-1069).",
+    "assets": [
+      "Confidential document content, authors/comments, revision history, embedded media and generated readable views, patches, reports, DOCX/PDF/PNG outputs. The MCP server returns text, snapshots and reports to its connected stdio client and publishes named files under its configured root (jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,185-218,234-255).",
+      "Integrity of source snapshots, exact anchored edits and output-role separation. Edit plans optionally bind source bytes using SHA-256; native typed delivery rechecks source/plan/text payload and output identities before commit (src/edit.rs:2081-2089; src/bin/jubarte/edit_typed.rs:673-699).",
+      "Host filesystem contents and MCP's caller-granted root directory capability. Native OutputRoot grants the configured existing root once and confines subsequent reads/writes; ambient publish_paths instead operates on operator-authorized local parents (src/publication.rs:146-205).",
+      "Host CPU/memory availability during archive inflation, XML parsing, comparison/layout, images/fonts and legacy DOC conversion. Default admission permits 64 MiB compressed and per part, 256 MiB total inflated, 10,000 entries and depth 256; compare permits 512 MiB compressed/per part and 2 GiB inflated with the same entry/depth defaults (src/admission.rs:63-98).",
+      "Native installed-font bytes and font-index metadata. JUBARTE_FONT_DIR overrides platform font roots; otherwise macOS uses $HOME/Library/Application Support/jubarte/fonts, Linux uses $XDG_DATA_HOME/jubarte/fonts or $HOME/.local/share/jubarte/fonts, Windows uses $APPDATA/jubarte/fonts. JUBARTE_FONT_INDEX overrides the index path, empty/off disables it, otherwise the index is parent(font directory)/font-index.tsv; writes use a sibling with extension tsv.<pid>.tmp then rename (src/convert/font.rs:2633-2652,3090-3107,3182-3229).",
+      "Installed native executable and trusted release channel. Updater selects jandira-tech/jubarte-redlines, SHA256SUMS.txt and jubarte-<version>-<platform>/jubarte[.exe]; current compiled RELEASE_KEYS is empty and FIRST_SIGNED_RELEASE is None, so installations are checksum-only (src/update.rs:25-48,91-108,198-210,245-257).",
+      "Release signing key and publication authority: ZIPSIGN_PRIVATE_KEY is consumed only by the signing step, decoded into $RUNNER_TEMP/zipsign.<random>/keyN and removed by an EXIT trap; GitHub release publication uses the job's contents:write GITHUB_TOKEN. Local release additionally consumes existing Cargo/npm credentials and UV_PUBLISH_TOKEN for separate registries (.github/workflows/release.yml:230-239,261-309,356-369; scripts/release.sh:904-919,932-958,1039-1069)."
+    ],
+    "trustBoundaries": [
+      "Untrusted document producer to engine parser: ZIP names/headers, XML and embedded payloads cross into in-process allocation and parsing. Admission prechecks declared budgets, rejects duplicate identities and structural ZIP defects, and bounds actual inflation/XML before downstream processing; shared production archive opens also run zip_defects. These are input/resource controls, not OS isolation (src/admission.rs:439-470,511-550; src/opc/archive.rs:34-51; SECURITY.md:70-74).",
+      "Raw XML caller to checked versus unchecked DOM APIs: try_parse_xdocument_with_limits validates before construction; parse_xdocument deliberately does not enforce input policy. Direct callers must choose the checked API for untrusted XML; package admission is a separate gate (src/xmllinq/parse.rs:91-134; SECURITY.md:54-65).",
+      "Untrusted Markdown to package construction and optional external-resource callback: the library defaults to no image loader, supports inline drawing/data payloads, and delegates named-image resolution to the supplied callback. Native CLI's own callback resolves URLs/percent escapes and uses a root capability restricted to --resource-path or the Markdown source parent; caller-supplied library callbacks own their own authority (src/markdown/mod.rs:159-170,196-198; src/markdown/write.rs:4183-4221; src/bin/jubarte.rs:2811-2871,2936-2943).",
+      "MCP client to root-scoped document operations: --root defaults to cwd, is expanded/resolved and opened once in _OutputRoot. load uses capability-relative native reads, publication uses the same capability, output symlinks/conflicts are rejected and overwrite is explicit. Tool annotations describe behavior; the native capability owns filesystem confinement. The stdio client receives both read and write tools without separate per-tool principal authorization in this adapter (jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,126-168,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199,447-463).",
+      "Native rendering to ambient host fonts/cache: renderer extracts document font names and invokes installed-face discovery; the font subsystem reads system/user/Office fonts and the persistent font index using std::fs, independently of MCP OutputRoot. macOS cloud-font child paths are restricted to a single normal family-name component, but the index and host font filesystem authority belong to the process (src/convert/mod.rs:806-809,857-867; src/convert/font.rs:2225-2235,2258-2276,2633-2652,3090-3107,3155-3169,3211-3229,3395-3447).",
+      "Native CLI to local document/report publication: explicit output parents are held open; bytes are written, flushed, synced and read back in private staging before per-file atomic replacement or atomic no-clobber hard link. Multi-file publication can partially commit and reports committed state; Windows directory synchronization is intentionally a no-op. Typed edit bundle delivery instead stages a directory and renames the bundle (src/publication.rs:168-174,203-209,387-394,419-514,534-570; src/bin/jubarte/edit_typed.rs:701-747).",
+      "Python and npm CLI host authority is distinct from native CLI publication: Python path reads/write_bytes and Node readFileSync/writeFileSync use ambient host paths. Their supported-operation checks reject unavailable options; sharing the Rust grammar does not establish identical I/O controls (jubarte-python/python/jubarte_redlines/document.py:136-145; jubarte-python/python/jubarte_redlines/__main__.py:101-130,1048-1064; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-78,106-108,713-730).",
+      "Edit plan to document mutation: plan schema/author/source guard and exact operation resolution protect document integrity; signed or macro-bearing packages are refused by Transaction::start. Optional source_sha256 is an integrity precondition, not authentication or user approval (src/edit.rs:2072-2105; src/bin/jubarte/edit_typed.rs:605-612,673-699).",
+      "Operator to native executable update: explicit command and interactive confirmation/--yes gate executable replacement, --check avoids install, explicit --version may downgrade. Platform archive selection, release checksum and regular-file verification precede delegated replacement. The current empty trusted-key set means release-asset control remains release-installation authority; signatures are supported but not currently required (src/update.rs:44-48,91-108,120-125,144-160,186-258,299-321; docs/SELF_UPDATE.md:57-82).",
+      "Maintainer-controlled tag/build to public artifacts and registries: tag version must match Cargo.toml; binary/wheel builders have read-only contents permission, while the release publisher has contents:write. Signing consumes a separately scoped secret and verifies against committed public keys when present. Local release confirms the version unless --yes, checks the generated engine stamp, and invokes independent Cargo/npm/PyPI publication before a separate app-release handoff (.github/workflows/release.yml:15-49,51-89,230-309,356-369; scripts/release.sh:870-919,932-958,1039-1069,1104-1113)."
+    ],
+    "attackerCapabilities": [
+      "A document producer can control document bytes, relationship strings, part names, XML structure, embedded images/fonts and Markdown including inline payloads. They do not thereby control trusted environment variables, server root selection, installed host fonts/index, release signing keys or publication credentials.",
+      "A library caller may supply input limits, edit plans and an image callback. That caller already owns its process authority; an embedded document causing access beyond the selected callback/root or consuming additional shared resources would be a meaningful boundary failure. No observed remotely hosted multi-tenant deployment is established.",
+      "An MCP client can invoke the registered read/mutation tools and supply relative paths, output directories and overwrite=true within the operator-granted root. Root access is intentionally shared across that server's tools; client access to files elsewhere, or unintended use of ambient rendering resources, would require separate analysis.",
+      "An attacker controlling only malformed input can target parser availability and generated output integrity, but cannot be assumed to possess the operator account, writable trusted font cache, private release infrastructure or registry credentials.",
+      "An attacker controlling release assets could supply an executable accepted by checksum-only updates if able to replace the archive and matching sums. This is a conditional release-channel prerequisite, not a finding that such control exists (src/update.rs:44-48,198-210,245-257; docs/SELF_UPDATE.md:59-80).",
+      "Repository/tag writers and release operators possess existing build/publication authority. CI/release scenarios must identify additional credential, workflow or artifact authority gained rather than treating authorized release actions as exploitation."
+    ],
+    "securityObjectives": [
+      "Refuse malformed, ambiguous, unsupported or over-budget package/XML input before expensive downstream work where the checked entry point promises admission; maintain explicit refusal behavior for unchecked developer APIs and debug triage (src/admission.rs:439-470,511-550; src/opc/archive.rs:15-19,34-51; SECURITY.md:54-74).",
+      "Keep untrusted document relationships and Markdown names from causing unintended network or filesystem access. Native CLI's named-image reads must remain within the effective resource root; library callbacks remain caller-owned capabilities (src/bin/jubarte.rs:2811-2871; src/markdown/mod.rs:159-170,196-198; SECURITY.md:70-74).",
+      "Confine MCP argument-derived input/output operations to the held root capability, preserve existing outputs unless overwrite is granted, and accurately distinguish renderer ambient cache/font effects from root-confined document publication (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/publication.rs:146-199,447-463; src/convert/font.rs:3090-3107,3182-3229).",
+      "Bind edits and delivery to the intended immutable source/payload, refuse output aliases, preserve refusal atomicity before publication, and accurately report partial commits/durability limitations (src/edit.rs:2081-2089; src/bin/jubarte/edit_typed.rs:605-612,673-747; src/publication.rs:168-174,387-394,534-570).",
+      "Preserve document confidentiality across generated views, patches, logs and exports; the caller selects recipients and storage. Scrub/repair/Word-fidelity claims require operation-specific verification and do not imply general sanitization or safe opening in third-party document applications.",
+      "Permit executable replacement only through the explicit operator update workflow, selected platform/release and effective checksum/signature policy; protect signing and registry credentials in their respective privileged workflows (src/update.rs:186-258,299-321; .github/workflows/release.yml:261-309,356-369; scripts/release.sh:875-919,1039-1069)."
+    ],
+    "assumptions": [
+      "This is an independent source-backed architecture pass, not completed security-audit coverage or a vulnerability assessment. No application code, tests, malicious inputs or external services were executed. Current authorized checkout HEAD was observed as 4e10eca69c42211651ca907f38b74b6d19e6928c; directory naming does not pin source revision.",
+      "The engine supplies no application authentication/tenant system. The MCP implementation inspected serves stdio; remote exposure, multiple mutually distrustful clients, authentication and OS resource sandboxing would be deployment assumptions, not established features (SECURITY.md:70-85; jubarte-python/python/jubarte_redlines/mcp_server.py:373-381).",
+      "Admission limits are not complete CPU/memory isolation. Compare defaults allow 2 GiB inflated input, and WASM binding documentation expressly tells browser hosts to lower the budget. Actual host memory/CPU ceilings remain caller-owned (src/admission.rs:85-98; jubarte-wasm/src/lib.rs:63-97; SECURITY.md:70-74).",
+      "Documentation/current-code disagreement: src/lib.rs:7-11 describes the toolkit as complete-package byte operations with no temporary files; native rendering actually reads host fonts, persists parent(font directory)/font-index.tsv and writes a sibling tsv.<pid>.tmp before rename (src/convert/mod.rs:806-809,857-867; src/convert/font.rs:3090-3107,3182-3229). This is an architectural side effect; attacker impact requires a separately established access/integrity consequence.",
+      "Documentation/control qualification: MCP's module/build_server wording says tools only touch root files and every path must remain under root (jubarte-python/python/jubarte_redlines/mcp_server.py:5-9,67-68), and actual argument-derived document I/O is capability confined (75-108). Its rendering tool calls the native renderer, whose font/index accesses are ambient and may lie outside root (234-250; src/convert/font.rs:2633-2652,3090-3107,3182-3229). No claim of exploitable root escape follows solely from this cache behavior.",
+      "Documentation/current dependency disagreement: SECURITY.md:89-95 names rdocx-opc 0.2 and patched quick-xml 0.41; current Cargo.toml:104-117 consumes oxml-opc 0.14.2 with optional cryptography disabled, quick-xml 0.42 for checked parsing and renamed quick-xml 0.41 for OPC error compatibility. The policy's intended advisory requirements and current dependency graph must be assessed separately.",
+      "Documentation/updater configuration disagreement: docs/SELF_UPDATE.md:22-24 says GH_TOKEN/GITHUB_TOKEN lift lookup limits. src/update.rs:198-210 sets neither auth_token nor auth_token_from_env. Supporting locally installed self_update 1.3.1 source has opt-in environment-token setters and defaults auth_token to None; the inspected updater configuration does not consume these token variables. Dependency source is supporting evidence outside the repository.",
+      "Current updater signing behavior agrees with staged-signing documentation: RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None mean checksum-only installation, while signing workflow and documentation support future keys (src/update.rs:44-48,245-285; docs/SELF_UPDATE.md:67-82; .github/workflows/release.yml:261-309). Repository secrets and external protection rules were not inspected.",
+      "The separate app repository invoked by scripts/release.sh:1104-1113 is absent from this architecture review. Its deployment accounts, app signing, frontend hosting and publication controls remain unresolved external handoff details.",
+      "Generated WASM packages were inventoried, but this architecture pass did not independently prove committed generated artifacts match current Rust sources. Build provenance and runtime parity remain separate verification tasks."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Architecture of current files in /Users/arthrod/temp/T/jubarte-redlines; supporting installed self_update 1.3.1 source inspected only to resolve updater defaults."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-number-label-expansion",
+      "title": "Document numbering values allocate multi-gigabyte Chicago labels",
+      "summary": "A small admitted DOCX can set a list start or endnote numStart to 4294967295 with Chicago numbering. The renderer converts that numeric value directly into 1,073,741,824 repeated double-daggers, allocating 3 GiB before subsequent layout and copies. Document suppliers can exhaust a consuming process without a large archive or deep XML.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-supplied document input deterministically amplifies a tiny numeric field into gigabytes, threatening process availability. No shared production service is assumed; policy recommends external CPU/memory isolation.",
+        "changeConditions": "A network-facing shared conversion deployment raises exposure; strict worker memory/time limits constrain the blast radius to a worker."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source establishes unchecked u32 parsing, direct counter propagation, and unconditional repeat; no runtime or deployment proof is required for the public parser boundary."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6018,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6750,
+          "endLine": 6753,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5765,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8685,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 448,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chicago-repeat",
+          "label": "Numeric value controls allocation length",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6018,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)",
+          "explanation": "At u32::MAX, the selected 3-byte mark is repeated 2^30 times with no output budget."
+        },
+        {
+          "id": "chicago-start",
+          "label": "Untrusted list start accepts full u32 range",
+          "path": "src/convert/mod.rs",
+          "startLine": 6750,
+          "endLine": 6753,
+          "language": "rust",
+          "code": "    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "The parsed start feeds NumLevel.start, next_marker and render without a semantic maximum."
+        },
+        {
+          "id": "chicago-render",
+          "label": "Marker formatter runs before label replacement",
+          "path": "src/convert/mod.rs",
+          "startLine": 5765,
+          "language": "rust",
+          "code": "            out = out.replace(&token, &format_num(fmt, val));",
+          "explanation": "The placeholder path materializes the entire label; layout or output clipping occurs later."
+        },
+        {
+          "id": "chicago-note",
+          "label": "Endnote format and start use the same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 8681,
+          "endLine": 8685,
+          "language": "rust",
+          "code": "        let next = start + labels.len() as u32;\n        let label = labels\n            .entry(id.to_string())\n            .or_insert_with(|| format_num(fmt, next));\n        run.text.clone_from(label);",
+          "explanation": "The endnote numStart/numFmt sibling operation also reaches the unbounded formatter."
+        }
+      ],
+      "rootCause": {
+        "summary": "Numeric numbering parameters are treated as output sizes; chicago_label applies str::repeat without checking the expanded marker byte length.",
+        "evidenceRefs": [
+          "chicago-repeat",
+          "chicago-start"
+        ]
+      },
+      "remediation": "Enforce a finite expanded-marker byte budget before allocation for every numeric-format consumer. Refuse or safely fall back when start/counter values exceed format-specific limits; propagate a typed refusal instead of allocating. Cover list starts, startOverride, and endnote numbering.",
+      "validation": {
+        "counterEvidence": [
+          "src/convert/mod.rs:773-774 admits the input first; src/admission.rs:63-76 bounds archive sizes and XML depth, but no semantic number/output bound exists on this path.",
+          "SECURITY.md advises CPU/memory-limited workers; no guarantee against all denial of service is claimed."
+        ],
+        "limitations": [
+          "No vulnerability-triggering input or runtime reproduction executed.",
+          "No shared-service deployment is established."
+        ],
+        "method": "offline static source trace",
+        "status": "validated",
+        "summary": "Independently validated from public PDF entry through with_layout admission, list start parsing, counter propagation and render/format_num; endnote numStart reaches the same sink. Archive/XML budgets bound input bytes and structure, not numeric expansion."
+      },
+      "attackPath": {
+        "controls": [
+          "Input admission",
+          "Caller-owned process limits"
+        ],
+        "dataflow": {
+          "summary": "word/numbering.xml w:start (or endnotePr/numStart) -> u32 start -> Numbering counter/endnote counter -> format_num(Chicago,n) -> chicago_label -> str::repeat."
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Process memory exhaustion, OOM termination or prolonged CPU/memory pressure."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Direct deterministic numeric-to-allocation path under default parsing; exploitation depends on victim processing the document."
+        },
+        "reachability": {
+          "summary": "Public docx_to_pdf[_with/_report] accepts caller-provided bytes, admits the package, loads numbering, and formats the first matching numbered paragraph; a normal %1 placeholder is sufficient.",
+          "attacker": "Supplier of a DOCX processed by another user's application",
+          "preconditions": [
+            "Victim converts or renders attacker-controlled DOCX containing an active Chicago numbered paragraph or endnote.",
+            "No trusted configuration changes, large payload, or prior host access are needed."
+          ]
+        },
+        "summary": "Document author crosses the untrusted DOCX-to-renderer boundary using small numeric attributes to consume host memory."
+      },
+      "remediationTests": [
+        "Use deterministic formatter tests at the maximum accepted marker size and just beyond it, including u32::MAX, without allocating the oversized string.",
+        "Add integration fixtures with small Chicago list starts/startOverride and endnote numStart that exceed the output budget; assert bounded refusal."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0037-chicago-label-amplification",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "Possible Chicago numeric-format allocation amplification",
+          "originalEvidence": "Baseline: src/convert/mod.rs:6015-6018 chicago_label(n:u32) repeats up to ~1B symbols (3GB UTF-8) from a numeric list or note start. Tracing effective controls now.",
+          "baselineValidation": "parse_num_level reads unbounded u32 start at src/convert/mod.rs:6750-6753; Numbering next_marker uses it at 5629-5641; render calls format_num at 5765; Chicago at 5861 calls 6015-6018. start=4294967295 yields 1,073,741,824 double-daggers (~3GiB), tiny admitted DOCX."
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-numbering-level-iteration",
+      "title": "Attacker-controlled list levels cause billions of iterations and counter allocations",
+      "summary": "DOCX paragraph, style, and numbering definitions accept arbitrary u32 list levels. An undefined level near u32::MAX drives a descending search through billions of integers; defining that level instead makes next_marker create a counter for every lower level. A tiny document can monopolize CPU or exhaust memory during rendering.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can reliably deny availability to a consuming renderer through a small numeric field. The source establishes process-level impact; a shared service is conditional and policy recommends external process limits.",
+        "changeConditions": "Dedicated time/memory-limited conversion workers reduce cross-request impact; a shared network-facing process increases exposure."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced unbounded u32 parsing to numeric-range loops and per-level HashMap insertion with no range guard."
+      },
+      "taxonomy": {
+        "category": "Unchecked input controlling resource-consuming loops",
+        "cwe": [
+          "CWE-606"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5549,
+          "endLine": 5551,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5725,
+          "endLine": 5728,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6672,
+          "endLine": 6679,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12828,
+          "endLine": 12879,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "level-parse",
+          "label": "Paragraph list level accepts full u32",
+          "path": "src/convert/mod.rs",
+          "startLine": 12711,
+          "endLine": 12714,
+          "code": "    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);",
+          "explanation": "A ten-digit attribute controls the work count; normal XML/ZIP limits do not restrict the semantic value."
+        },
+        {
+          "id": "level-search",
+          "label": "Undefined levels scan every smaller integer",
+          "path": "src/convert/mod.rs",
+          "startLine": 5529,
+          "endLine": 5532,
+          "code": "        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "With only level 0 defined, ilvl=4294967294 makes roughly four billion membership checks."
+        },
+        {
+          "id": "level-counters",
+          "label": "Defined high levels materialize every parent",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5613,
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }",
+          "explanation": "The loop eventually inserts a counter for every lower level at lines 5626-5627, even when no such numbering definition exists."
+        }
+      ],
+      "rootCause": {
+        "summary": "List levels are not constrained to the supported finite domain, and lookup/counter/render logic iterates numeric ranges rather than existing level definitions.",
+        "evidenceRefs": [
+          "level-parse",
+          "level-search",
+          "level-counters"
+        ]
+      },
+      "remediation": "Validate paragraph, style, abstract-level and override ilvl values against the supported numbering-level range before storing or using them. Iterate only bounded known levels for lookup, counters and placeholders; reject unsupported values with a typed error.",
+      "validation": {
+        "counterEvidence": [
+          "Input admission at src/convert/mod.rs:773 checks archive/XML budgets; it does not schema-validate or cap ilvl.",
+          "Missing numId/abstract definitions return early; the attack supplies a valid instance and level-0 definition or a matching high-level definition.",
+          "Caller CPU/memory limits bound worker damage but do not prevent the per-request exhaustion."
+        ],
+        "limitations": [
+          "No application execution or exploit fixture was run.",
+          "No remote shared deployment is assumed."
+        ],
+        "method": "offline static source trace",
+        "status": "validated",
+        "summary": "Validated paragraph num_pr -> list_marker -> next_revised/next_marker -> resolve_ilvl; high definitions also survive parse_numbering_xml and reach eager parent-counter insertion. The equivalent ensure_level search and render loop share the same missing level-domain control."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "word/document.xml or styles.xml w:ilvl -> u32 num_pr -> list_marker -> Numbering.resolve_ilvl/ensure_level/next_marker/render -> billions of loop iterations or counter insertions. Numbering.xml lvl/lvlOverride accepts the matching high-level definitions."
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Renderer CPU saturation and memory exhaustion."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Source-supported deterministic loops scale with attacker-controlled u32, not input size."
+        },
+        "reachability": {
+          "summary": "Public PDF/PNG/render entry points load the untrusted package and format active list paragraphs. Supplying a valid numbering instance plus a very high ilvl reaches the loops under default options.",
+          "attacker": "DOCX supplier",
+          "preconditions": [
+            "Victim renders a document containing an active numbered paragraph and its numbering instance."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Add deterministic bounded tests for ilvl at the last supported value and just outside it, plus u32::MAX-1.",
+        "Exercise undefined high-level lookup and explicitly defined high-level counters; assert prompt refusal without iterating the numeric range."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0037-numbering-level-amplification",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "Unbounded numbering level triggers billions of iterations or counter insertions",
+          "originalEvidence": "Baseline: direct ilvl u32 at 12711-12714 feeds resolve_ilvl 5518-5532 looping 0..ilvl in reverse, so ilvl=4294967294 with only normal level 0 performs ~4B hash lookups. If malicious numbering defines that high ilvl, next_marker loops 0..resolved inserting billions of HashMap counters (5610-5627). No value range validation seen."
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-altchunk-colspan-expansion",
+      "title": "HTML altChunk colspan causes unbounded generated XML expansion",
+      "summary": "An attacker-supplied DOCX can include a small HTML table whose colspan is an arbitrary usize. Conversion adds all spans and writes one gridCol element for each resulting column without an output or work budget. Large numeric spans cause excessive CPU and memory use after input admission has already succeeded.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A small supported document input causes deterministic process availability loss; no remote shared service is assumed, and external worker resource limits mitigate wider impact.",
+        "changeConditions": "A shared long-lived conversion process increases blast radius; strict per-document worker limits reduce it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified HTML attribute parsing, span propagation, per-column output loop and its public conversion caller."
+      },
+      "taxonomy": {
+        "category": "Unchecked input controlling resource-consuming loops",
+        "cwe": [
+          "CWE-606"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 563,
+          "endLine": 566,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 15,
+          "endLine": 39,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 793,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "colspan-input",
+          "label": "HTML span is parsed without semantic cap",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 563,
+          "endLine": 566,
+          "code": "                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+          "explanation": "The input limits only impose a lower bound of one, allowing huge values on both native and WASM word sizes."
+        },
+        {
+          "id": "colspan-count",
+          "label": "Column count is total attacker span",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 475,
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);",
+          "explanation": "The count can be enormous from a single cell; multiple spans also use unchecked summation."
+        },
+        {
+          "id": "colspan-loop",
+          "label": "Every column is emitted to an in-memory String",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 489,
+          "endLine": 491,
+          "code": "        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "Even a span of one billion, representable on 32-bit WASM and native platforms, demands billions of XML elements."
+        }
+      ],
+      "rootCause": {
+        "summary": "The HTML-to-WML transformation trusts colspan as a work/output size and lacks bounds before expansion; original-package byte admission cannot constrain generated XML.",
+        "evidenceRefs": [
+          "colspan-input",
+          "colspan-count",
+          "colspan-loop"
+        ]
+      },
+      "remediation": "Bound colspan and the total table column count before iteration, use checked arithmetic, and enforce a cumulative generated-WML/output budget across each HTML chunk and document. Return a typed input-limit refusal before allocating oversized output.",
+      "validation": {
+        "counterEvidence": [
+          "External relationships are not needed; the HTML part is internal.",
+          "The archive and original XML are admitted first (src/convert/mod.rs:773-774), but HTML expansion occurs later at :790-793.",
+          "All source fields are escaped in generated XML; this finding concerns resource expansion rather than XML injection.",
+          "Caller CPU/memory isolation limits impact to its worker."
+        ],
+        "limitations": [
+          "No malicious input was created or executed.",
+          "Actual peak memory and termination behavior were not measured."
+        ],
+        "method": "offline static source trace",
+        "status": "validated",
+        "summary": "Independently traced with_layout -> admitted package -> internal altChunk relationship -> chunk_html/html_to_wml -> Builder.start/end_cell/end_table. An ordinary table/tr/td closing sequence reaches the emission loop; no network fetching or special trusted options are needed."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Internal HTML chunk td/th colspan -> usize cell.span -> row span sum -> cols -> unbounded for loop appending gridCol elements to String."
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Unbounded generated XML consumes memory and CPU until worker failure."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The attacker controls the loop bound through a small numeric attribute on the supported import path."
+        },
+        "reachability": {
+          "summary": "Public conversion/rendering accepts caller-controlled DOCX; a body w:altChunk with an internal HTML relationship is expanded before normal layout.",
+          "attacker": "Supplier of a DOCX rendered by another user's process",
+          "preconditions": [
+            "Victim processes a DOCX with an HTML altChunk table."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Cover maximum allowed colspan, one above it, usize::MAX, and multiple spans whose sum overflows.",
+        "Test small admitted packages with oversized HTML spans and repeated chunks; assert bounded refusal under default limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0037-altchunk-colspan",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "Unbounded HTML colspan expansion",
+          "originalEvidence": "Baseline: src/convert/altchunk.rs:563-566 parses HTML td colspan as unrestricted usize; end_table computes cols as sum spans (469-475), emits one gridCol per col (489-490). HTML td colspan=\"18446744073709551615\" can drive unbounded string allocation; mod.rs:773 admits original archive, then 790-793 expands HTML with no output budget."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-cb72fe95bbd18916",
+        "label": "Engine document parsing and rendering",
+        "disposition": "needs_follow_up",
+        "notes": "Validated Chicago numeric-label memory amplification; remaining engine audit and numbering-level candidate pending.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-1f22bf056ad79c1e",
+        "label": "Python/MCP and WASM interfaces",
+        "disposition": "needs_follow_up",
+        "notes": "Focused investigation in progress.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-9d0f5f4165ed863e",
+        "label": "Native publication and self-update",
+        "disposition": "needs_follow_up",
+        "notes": "Parent source review in progress.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0037-npm-plan-symlink",
+        "reason": "Focused investigator candidate awaiting independent source validation and severity calibration.",
+        "paths": [
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "title": "Predictable plan staging follows symlinks",
+          "originalEvidence": "Investigator: recordPlan constructs .<plan basename>.<process.pid>.partial then fs.writeFileSync without exclusive/no-follow flags (lines 423-425), allowing a local attacker able to populate plan directory to pre-place a symlink and truncate a victim before rename. Independently reachable from plan-recording (--plan plus operation flags). Local-directory-write precondition; no document-only path escape found.",
+          "siblingEvidence": "Investigator: Python __main__.py:407-411 also uses predictable .<name>.<pid>.partial then write_bytes/os.replace. Native src/edit/record.rs:142-165 documents legacy helper and instead uses safe publication. Python output no-clobber uses exists then write_bytes at :101-103,:126-130."
+        },
+        "id": "discovery-0037-npm-plan-symlink"
+      },
+      {
+        "candidateId": "discovery-0037-auxiliary-xml-policy-bypass",
+        "reason": "Baseline parser-policy candidate awaiting complete source trace and independent parent validation.",
+        "paths": [
+          "src/admission.rs",
+          "src/convert/mod.rs",
+          "src/xmllinq/parse.rs",
+          "src/strict_translation.rs"
+        ],
+        "candidate": {
+          "title": "Relationship-selected auxiliary XML bypasses policy when suffix is non-XML",
+          "originalEvidence": "Baseline: admission.rs:533-543 checks .xml/.rels extensions; :556-569 special-cases extensionless main only. convert/mod.rs main_rel_part:21310-21319 resolves arbitrary internal numbering/styles target, load_numbering:6557-6569 DOM parses it without check. Deep word/numbering.bin bypasses depth budget then recursion at xmllinq/parse.rs:660-662 may overflow stack. strict_translation.rs:810 scans only .rels/.xml suffixes."
+        },
+        "id": "discovery-0037-auxiliary-xml-policy-bypass"
+      },
+      {
+        "candidateId": "discovery-0037-plan-permission-loss",
+        "reason": "Focused investigator candidate awaiting source-backed permission and reachability validation.",
+        "paths": [
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "jubarte-python/python/jubarte_redlines/__main__.py"
+        ],
+        "candidate": {
+          "title": "Recording replaces private plans with default-permission files",
+          "originalEvidence": "Investigator: npm writeFileSync(partial) and Python partial.write_bytes create new files with 0666 filtered by umask, rename over existing 0600 plan loses permissions. Under 022 umask and traversable directory plan becomes 0644. Native publication captures/reapplies existing permissions."
+        },
+        "id": "discovery-0037-plan-permission-loss"
+      },
+      {
+        "candidateId": "discovery-0037-doctype-parser-differential",
+        "reason": "Baseline candidate awaiting independent parser-differential validation.",
+        "paths": [
+          "src/admission.rs",
+          "src/xmllinq/parse.rs"
+        ],
+        "candidate": {
+          "title": "DOCTYPE scanner differential bypasses XML nesting limits",
+          "originalEvidence": "Baseline: admission::check_xml_depth ignores Event::DocType at admission.rs:819. DOM parse_document skips <! declarations only to first > at xmllinq/parse.rs:539-543. A DTD internal entity literal containing deep <a> tags is invisible to admission but DOM resumes inside the quoted literal and recursively parses subsequent tags at 660-662. tests/inspect_paragraphs.rs:232-243 accepts custom XML DTDs; checked validate_xml rejects DTD at parse.rs:954. No external entity fetch; depth/abort concern."
+        },
+        "id": "discovery-0037-doctype-parser-differential"
+      }
+    ]
+  }
+}

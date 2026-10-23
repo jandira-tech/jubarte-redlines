@@ -1,0 +1,350 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "uncontrolled-recursion.drawing-dependencies",
+      "title": "Converting cyclic Markdown drawings can crash the host process",
+      "summary": "A Markdown image with a `drawing:` payload can provide a self-referential dependency index. `markdown_to_docx()` accepts the decoded graph and `dep_part()` recurses without cycle or depth checks, exhausting the process stack before returning an error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can reliably deny availability of the conversion process through the public default parser boundary. No privileges, network exposure or deployment were assumed; impact is process availability rather than code execution or disclosure.",
+        "changeConditions": "A shared remotely reachable conversion deployment would increase operational impact; process isolation limits blast radius."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent source trace confirms direct deserialization, public conversion dispatch and unconditional recursive self-index traversal. No runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursive dependency expansion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1970,
+          "endLine": 1974,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4189,
+          "endLine": 4197,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "drawing-input",
+          "label": "Markdown parser accepts drawing payload",
+          "path": "src/markdown/write.rs",
+          "startLine": 4187,
+          "endLine": 4201,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        // A `drawing:` destination is a whole element and its parts,\n        // spliced back as it was; a payload that does not read is alt text.\n        if url.starts_with(\"drawing:\") {\n            match super::from_docx::drawing::decode(&url) {\n                Ok(drawing) => {\n                    self.document.drawings.push(drawing);\n                    let index = self.document.drawings.len() - 1;\n                    if self.box_names.insert(id.clone(), index).is_some() {\n                        self.box_duplicates.insert(id);\n                    }\n                    self.push(Content::Drawing(index));\n                }\n                Err(_) => self.plain(alt.trim()),\n            }\n            return;\n",
+          "explanation": "Attacker-controlled image destination is decoded and retained as a Drawing with no dependency-graph validation."
+        },
+        {
+          "id": "drawing-decode",
+          "label": "Payload JSON defines dependency references",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))\n",
+          "explanation": "Base64 decoding and serde deserialization preserve caller-supplied part indexes."
+        },
+        {
+          "id": "drawing-dispatch",
+          "label": "Package writer materializes the payload",
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let drawing = self.document.drawings.get(index)?;\n        let existing: HashSet<String> = self.package.parts().into_iter().collect();\n        let xml = super::from_docx::drawing::materialize(\n            drawing,\n            self.package,\n            &self.part,\n            &existing,\n            &mut self.media.used,\n            next_doc_pr,\n        )?;\n",
+          "explanation": "The accepted drawing is passed to materialize during package assembly."
+        },
+        {
+          "id": "drawing-root",
+          "label": "Root relationships enter dependent parts",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1900,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),\n            _ => return None,\n        };\n        let rid = relate(package, part, &kind, &target, external);\n",
+          "explanation": "A root part index within bounds starts traversal of the same dependency array."
+        },
+        {
+          "id": "drawing-recurse",
+          "label": "Recursive materializer lacks cycle tracking",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1983,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;\n                (\n                    rel.kind.clone(),\n                    relative_rel_target(&name, &inner_name),\n                    false,\n                )\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),\n            _ => return None,\n        };\n",
+          "explanation": "A dependency relationship pointing to its own index passes the length check and recurses before producing a part. used tracks output names, not visited indexes."
+        },
+        {
+          "id": "drawing-capture-control",
+          "label": "Capture memoizes before recursion",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 591,
+          "endLine": 612,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    /// first use; `None` when the part is absent.\n    fn dep_for(&mut self, package: &mut Package<'_>, target: &str) -> Option<usize> {\n        if let Some(&index) = self.index.get(target) {\n            return Some(index);\n        }\n        if self.parts.len() >= MAX_DEPS {\n            self.failed = Some(format!(\"more than {MAX_DEPS} dependent parts\"));\n            return None;\n        }\n        let bytes = match package.read(target) {\n            Ok(Some(bytes)) if bytes.len() as u64 <= MAX_DEP_BYTES => bytes,\n            Ok(Some(_)) => {\n                self.failed = Some(format!(\"{target} exceeds {MAX_DEP_BYTES} bytes\"));\n                return None;\n            }\n            _ => return None,\n        };\n        let index = self.parts.len();\n        self.parts.push(Dep::default());\n        self.index.insert(target.to_string(), index);\n        let rels = package.rels(target).unwrap_or_default();\n        let mut pay_rels = Vec::new();\n",
+          "explanation": "The DOCX capture side tracks indexes, unlike the inverse materializer; its count cap does not make the graph acyclic."
+        }
+      ],
+      "rootCause": {
+        "summary": "`picture()` accepts the image destination as an encoded `Drawing`; `decode()` performs only base64/JSON decoding, preserving arbitrary `rels[].part` indexes. Package assembly calls `materialize()`, which enters `dep_part()` for any in-range root index. Each dependent relation invokes `dep_part()` again for any in-range child index without an in-progress set or depth bound. A child pointing back to index zero therefore recurses forever; the `used` set only renames parts and cannot break the cycle.",
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-dispatch",
+          "drawing-root",
+          "drawing-recurse"
+        ]
+      },
+      "remediation": "Validate the decoded dependency graph before materialization; track in-progress and completed dependency indexes, reject cycles and enforce depth/work budgets, and memoize each completed part for shared DAGs.",
+      "validation": {
+        "counterEvidence": [
+          "Capture uses a memoized index and caps dependent parts/relations, but decode/materialize do not enforce acyclicity; a one-node graph fits all count limits.",
+          "Package part equality is checked only after recursive traversal; it cannot stop self-reference."
+        ],
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-dispatch",
+          "drawing-root",
+          "drawing-recurse",
+          "drawing-capture-control"
+        ],
+        "limitations": [
+          "No application execution or crash reproduction; no remote service deployment established."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "A flat JSON envelope with one root relation to dependency zero and dependency zero relating to itself passes the only index bounds checks. Recursive descent occurs before base64/XML output or deduplication, so even a small input reaches nonterminating recursion. Capture limits and serde JSON nesting limits do not constrain a cycle represented as flat integer indexes."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown image -> picture() -> decode() -> package drawing() -> materialize() -> recursive dep_part()",
+          "source": "Untrusted Markdown drawing payload",
+          "sink": "Unbounded recursive dependency traversal",
+          "outcome": "Stack exhaustion terminates or traps the calling process/runtime",
+          "evidenceRefs": [
+            "drawing-input",
+            "drawing-decode",
+            "drawing-dispatch",
+            "drawing-root",
+            "drawing-recurse"
+          ]
+        },
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-recurse"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "Loss of conversion-process availability; no source-supported confidentiality or execution gain."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A single small self-referential graph passes in-range checks under the default public API."
+        },
+        "reachability": {
+          "summary": "Any caller processing supplier-controlled Markdown through `markdown_to_docx()` reaches this path without special flags or operator configuration.",
+          "attacker": "Document/Markdown supplier",
+          "entrypoint": "Public `markdown_to_docx(markdown, &DocxOptions::default())`",
+          "outcome": "Denial of service in the caller process",
+          "preconditions": [
+            "The victim converts attacker-supplied Markdown containing the supported drawing payload syntax."
+          ]
+        },
+        "summary": "Supply a Markdown image whose URL-safe base64 `drawing:` JSON has root `part:0` and `deps[0].rels[0].part:0`; invoke the default public Markdown-to-DOCX conversion."
+      },
+      "remediationTests": [
+        "Convert a self-cycle and a two-node cycle and assert a typed refusal without recursion.",
+        "Convert a deeply nested chain and a shared-dependency DAG under bounded work and ensure valid parts retain expected identity."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-drawing-cycle",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "baseline",
+        "baselineCounterEvidence": [
+          "MAX_DEPS/MAX_DEP_RELS/MAX_DEP_BYTES constrain capture, not decode; a single-node cycle fits.",
+          "Nested drawing/text-box XML checks do not validate dependency cycles.",
+          "Malformed JSON refuses safely; cyclic envelope uses valid flat JSON."
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-5bd1c07e4dad3466",
+        "label": "Markdown drawing dependency materialization",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Parser availability",
+        "notes": "Validated uncontrolled recursion through default public conversion; capture-side count limits do not enforce graph acyclicity. src/markdown/from_docx/drawing.rs:1397-1408,1889-1900,1964-1983; src/markdown/write.rs:4189-4201.",
+        "candidateId": "discovery-0005-drawing-cycle"
+      },
+      {
+        "id": "surface-1935c19630995f8c",
+        "label": "Legacy DOC repeated logical CP candidate",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "notes": "Rejected proposed duplicate 0..N CP pieces: pieces() reads adjacent CP[i],CP[i+1] endpoints (src/legacy_doc.rs:1091-1094), and main_text rejects every decreasing interval (1154-1156), so restarting at zero creates a rejected decreasing bridge. Original source evidence retained. A distinct physical-FC alias expansion remains under validation.",
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        }
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        },
+        "id": "discovery-0005-doc-piece-amplification"
+      },
+      {
+        "candidateId": "discovery-0005-wmf-record-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "WMF record text reads cross declared record extents and retain amplified text",
+          "originalMessage": "Second concrete candidate in WMF: raster_wmf validates size2 versus whole file but passes whole data to record field/string reads. META_EXTTEXTOUT at 604-612 reads n bytes via data.get(at..at+n), without at+n <= off+size2. Thousands of 14-byte records each claiming n=65535 can copy overlapping suffixes into retained MetaText strings, yielding multi-GB allocation from ~1MB media. Same extent gap exists POLYGON/POLYPOLYGON/TEXTOUT; EMF point reader does enforce off+size. Tracing referenced media callers and exact lines.",
+          "evidence": [
+            {
+              "path": "src/convert/metafile.rs",
+              "startLine": 604,
+              "endLine": 612,
+              "description": "EXTTEXTOUT accepts text bytes beyond record boundary"
+            }
+          ]
+        },
+        "id": "discovery-0005-wmf-record-amplification"
+      },
+      {
+        "candidateId": "discovery-0005-doc-fc-alias",
+        "reason": "Independent baseline and focused investigator identify physical FC alias expansion; parent validation pending",
+        "candidate": {
+          "source": "baseline,parser_investigator",
+          "title": "Legacy DOC logical character expansion through repeated physical FC ranges",
+          "cwe": "CWE-400",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "DOC file supplier",
+          "source_to_sink": "CLI run_convert_any -> doc_to_docx -> read -> Fib::parse/pieces -> main_text -> Vec<StoryChar>::push",
+          "evidence": [
+            "Fib::parse reads ccp_text without logical budget at src/legacy_doc.rs:919-941.",
+            "pieces accepts independent repeated physical FCs at 1091-1107.",
+            "main_text verifies contiguous increasing CPs but expands each logical character without allocation/work limit at 1148-1225.",
+            "1024 compressed consecutive 1 MiB logical ranges can share one physical 1MiB text slice: ~12KiB piece records request >1 billion StoryChars.",
+            "CLI calls doc_to_docx before DOCX admission at src/bin/jubarte.rs:3125-3144."
+          ],
+          "counterevidence": [
+            "Physical sector chains, arithmetic and accesses are bounded but logical repeated references are not.",
+            "Host process limits contain damage but do not give controlled refusal."
+          ],
+          "remediation": "Apply explicit logical characters/pieces/work budget in public legacy reader.",
+          "validation": "Static only; no runtime execution"
+        },
+        "id": "discovery-0005-doc-fc-alias"
+      },
+      {
+        "candidateId": "discovery-0005-embedded-font-alias",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Embedded font aliases duplicate large decoded font allocations",
+          "originalMessage": "Third concrete amplification in embedded-font loading: every distinct w:font row referencing the same embedded part calls deobfuscate_odttf(raw)->bytes.to_vec() and retains a fresh Arc in EmbeddedFonts keyed by attacker name. No source-part sharing; runs need not use those fonts. Thousands of aliases of one valid ~300KB font create GBs from a small admitted DOCX; entry/ZIP byte budgets count original part once. Exact sink src/convert/font_table.rs:220-228; load runs unconditionally at mod.rs:806-807 before rendering. Reviewing full font_table (550 lines) and counterevidence."
+        },
+        "id": "discovery-0005-embedded-font-alias"
+      },
+      {
+        "candidateId": "discovery-0005-ci-cache-authority",
+        "reason": "Private-cache write/validation implementation is absent from authorized source, so effective cache-poisoning impact cannot be established offline",
+        "paths": [
+          ".github/workflows/ci.yml",
+          ".github/actions/mbx/action.yml"
+        ],
+        "candidate": {
+          "source": "architecture",
+          "title": "PR code executes with network reachability to unauthenticated private mbx cache",
+          "originalMessage": "Concrete candidate boundary established: pull_request runs .github/workflows/ci.yml self-hosted lint/test/etc; these execute PR-controlled Cargo/tests after local .github/actions/mbx, whose documented unauthenticated private resource is http://mbx-cache:7543 namespace jandira-tech/jubarte-redlines (action.yml:8-22). 'Only protected pushes publish; PRs read' is stated client policy, but arbitrary PR code on the same reachable runner can bypass client selection. Source lacks cache server/routes/config, so actual write API, validation/auth and trusted-consumer poisoning feasibility remain prerequisites; cannot claim cache-poisoning finding from comments alone yet."
+        },
+        "id": "discovery-0005-ci-cache-authority"
+      },
+      {
+        "candidateId": "discovery-0005-utf16-redaction-leak",
+        "reason": "Independent baseline candidate awaiting parent validation and output-preservation trace",
+        "candidate": {
+          "source": "baseline",
+          "title": "UTF-16 auxiliary XML bypasses redaction leak checking",
+          "originalMessage": "New supported candidate: src/scrub.rs:472-477 leaks_within treats .xml/.rels as String::from_utf8_lossy, then xml_holds, with NO UTF-16 decoding or raw UTF-16 fallback for XML. Admission explicitly supports UTF-16 XML (src/admission.rs:764-780 and test1845+ customXml). An admitted UTF-16LE/BE customXml/item.xml retaining the exact redacted text contains NUL-separated characters after lossy UTF-8 decoding, so xml_holds never sees the needle. edit.check_redactions at src/edit.rs:4727-4740 trusts leaks over clean/redline; attacker-provided doc can retain secret in UTF-16 auxiliary XML while redaction succeeds. Gathering non-rewrite path to confirm output preserves auxiliary bytes."
+        },
+        "id": "discovery-0005-utf16-redaction-leak"
+      }
+    ]
+  }
+}

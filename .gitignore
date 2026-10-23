@@ -125,3 +125,6 @@ report.json
 
 # uv-managed virtualenv (created by `uv sync` in eval/cli-v2-pilot/)
 .venv/
+
+# redline-bench struggle reports (generated every 5 min by /tmp/rb_gw/jub_report.py)
+bench-reports/

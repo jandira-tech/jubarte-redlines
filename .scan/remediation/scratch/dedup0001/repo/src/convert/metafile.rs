@@ -1,0 +1,2293 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Rasterize placeable WMF and EMF to RGB (Strict01 cliparts).
+//!
+//! Not a full GDI replay. Enough records to paint image1.bin (polygons)
+//! and image2.emf (pen strokes + PATCOPY 1px BITBLT).
+
+use std::collections::HashMap;
+
+const PLACEABLE_KEY: [u8; 4] = [0xD7, 0xCD, 0xC6, 0x9A];
+const EMF_SIGNATURE: &[u8] = b" EMF";
+const MAX_SIDE: usize = 384;
+const WHITE: [u8; 3] = [255, 255, 255];
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+fn rasterize(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    render(bytes).map(|(w, h, rgb, _)| (w, h, rgb))
+}
+
+/// The picture's raster and the text it writes. Word's PDF keeps a
+/// metafile's text as text, so it is painted over the raster, not into it.
+pub(crate) fn render(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)> {
+    if looks_like_wmf(bytes) {
+        return raster_wmf(bytes);
+    }
+    if looks_like_emf(bytes) {
+        return raster_emf(bytes).map(|(w, h, rgb)| (w, h, rgb, Vec::new()));
+    }
+    None
+}
+
+/// A string a metafile writes (`META_EXTTEXTOUT` / `META_TEXTOUT`), placed
+/// as fractions of the picture: `x` from its left, `y` from its top, and
+/// `size` (the font's `lfHeight`) of its height.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MetaText {
+    pub(crate) text: String,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) size: f32,
+    /// `lfHeight` > 0 is the cell height (ascent + descent), else the em.
+    pub(crate) cell: bool,
+    pub(crate) family: String,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) color: [u8; 3],
+    /// `SETTEXTALIGN`: `y` is the text's top (0), baseline (24) or
+    /// bottom (8); `x` its left (0), centre (6) or right (2).
+    pub(crate) align: u16,
+    /// Logical width over height units: the picture's drawn aspect
+    /// against it stretches the glyphs.
+    pub(crate) aspect: f32,
+}
+
+fn looks_like_wmf(bytes: &[u8]) -> bool {
+    bytes.len() >= 22 && bytes[..4] == PLACEABLE_KEY
+}
+
+fn looks_like_emf(bytes: &[u8]) -> bool {
+    bytes.len() >= 44 && bytes[40..44] == *EMF_SIGNATURE
+}
+
+struct Canvas {
+    w: usize,
+    h: usize,
+    px: Vec<u8>,
+}
+
+impl Canvas {
+    fn new(w: usize, h: usize) -> Self {
+        let w = w.max(1);
+        let h = h.max(1);
+        Self {
+            w,
+            h,
+            px: vec![255; w * h * 3],
+        }
+    }
+
+    fn put(&mut self, x: i32, y: i32, color: [u8; 3]) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (x, y) = (x as usize, y as usize);
+        if x >= self.w || y >= self.h {
+            return;
+        }
+        let i = (y * self.w + x) * 3;
+        self.px[i] = color[0];
+        self.px[i + 1] = color[1];
+        self.px[i + 2] = color[2];
+    }
+
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: [u8; 3]) {
+        let x1 = x.max(0);
+        let y1 = y.max(0);
+        let x2 = x.saturating_add(w.max(1)).min(self.w as i32);
+        let y2 = y.saturating_add(h.max(1)).min(self.h as i32);
+        for yy in y1..y2 {
+            for xx in x1..x2 {
+                self.put(xx, yy, color);
+            }
+        }
+    }
+
+    fn stroke_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 3], width: i32) {
+        // A pen wider than the canvas paints the same pixels as one exactly
+        // canvas-sized; capping keeps the per-step fill_rect bounded.
+        let w = width.max(1).min(MAX_SIDE as i32);
+        // Liang-Barsky clip to the canvas rectangle (grown by the pen
+        // radius) BEFORE walking: mapped endpoints from a hostile metafile
+        // sit up to i32::MIN..i32::MAX apart, and the walk must be
+        // proportional to the canvas, not to the coordinate span.
+        let r = f64::from(w / 2 + 1);
+        let (min_x, min_y) = (-r, -r);
+        let (max_x, max_y) = (self.w as f64 + r, self.h as f64 + r);
+        let (fx0, fy0) = (f64::from(x0), f64::from(y0));
+        let (fdx, fdy) = (f64::from(x1) - fx0, f64::from(y1) - fy0);
+        let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+        for (p, q) in [
+            (-fdx, fx0 - min_x),
+            (fdx, max_x - fx0),
+            (-fdy, fy0 - min_y),
+            (fdy, max_y - fy0),
+        ] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return; // parallel and fully outside
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    if t > t1 {
+                        return;
+                    }
+                    t0 = t0.max(t);
+                } else {
+                    if t < t0 {
+                        return;
+                    }
+                    t1 = t1.min(t);
+                }
+            }
+        }
+        let x0 = (fx0 + t0 * fdx).round() as i32;
+        let y0 = (fy0 + t0 * fdy).round() as i32;
+        let x1 = (fx0 + t1 * fdx).round() as i32;
+        let y1 = (fy0 + t1 * fdy).round() as i32;
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let mut x = x0;
+        let mut y = y0;
+        loop {
+            if w <= 1 {
+                self.put(x, y, color);
+            } else {
+                let r = w / 2;
+                self.fill_rect(x.saturating_sub(r), y.saturating_sub(r), w, w, color);
+            }
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    fn fill_polygon(&mut self, pts: &[(i32, i32)], color: [u8; 3]) {
+        if pts.len() < 3 {
+            return;
+        }
+        let min_y = pts.iter().map(|p| p.1).min().unwrap_or(0).max(0);
+        let max_y = pts
+            .iter()
+            .map(|p| p.1)
+            .max()
+            .unwrap_or(0)
+            .min(self.h as i32 - 1);
+        for y in min_y..=max_y {
+            let mut xs = Vec::new();
+            for i in 0..pts.len() {
+                let (x0, y0) = pts[i];
+                let (x1, y1) = pts[(i + 1) % pts.len()];
+                if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
+                    let dy = i128::from(y1) - i128::from(y0);
+                    if dy != 0 {
+                        // Full-range i32 coords overflow the i32 product — and
+                        // the i32 *subtraction* too: mapped points saturate to
+                        // i32::MIN/MAX (`px.round() as i32`), so `y - y0` with
+                        // `y0 == i32::MIN` panics in debug and wraps to a wrong
+                        // intersection in release. Widen before subtracting;
+                        // the product of two ~2^32 spans needs i128.
+                        let x = i128::from(x0)
+                            + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0))
+                                / dy;
+                        xs.push(x.clamp(-1, self.w as i128) as i32);
+                    }
+                }
+            }
+            xs.sort_unstable();
+            for pair in xs.chunks(2) {
+                if pair.len() < 2 {
+                    break;
+                }
+                // Clamp the span to the canvas so the walk is bounded by
+                // the canvas width, not the coordinate span.
+                let a = pair[0].min(pair[1]).max(0);
+                let b = pair[0].max(pair[1]).min(self.w as i32 - 1);
+                for x in a..=b {
+                    self.put(x, y, color);
+                }
+            }
+        }
+    }
+
+    /// Fill every subpath of a path as one shape: even-odd (ALTERNATE)
+    /// keeps letter counters open; `winding` is the nonzero rule.
+    fn fill_path(&mut self, subpaths: &[Vec<(i32, i32)>], color: [u8; 3], winding: bool) {
+        let edges: Vec<((i32, i32), (i32, i32))> = subpaths
+            .iter()
+            .filter(|sp| sp.len() >= 2)
+            .flat_map(|sp| (0..sp.len()).map(move |i| (sp[i], sp[(i + 1) % sp.len()])))
+            .collect();
+        if edges.is_empty() {
+            return;
+        }
+        let min_y = edges
+            .iter()
+            .map(|(a, b)| a.1.min(b.1))
+            .min()
+            .unwrap_or(0)
+            .max(0);
+        let max_y = edges
+            .iter()
+            .map(|(a, b)| a.1.max(b.1))
+            .max()
+            .unwrap_or(0)
+            .min(self.h as i32 - 1);
+        for y in min_y..=max_y {
+            // (x, direction) crossings at the pixel row's centre line.
+            let mut xs: Vec<(i64, i32)> = Vec::new();
+            for &((x0, y0), (x1, y1)) in &edges {
+                if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
+                    // i128: saturated points put the product past i64::MAX.
+                    let dy = i128::from(y1) - i128::from(y0);
+                    let x = i128::from(x0)
+                        + (i128::from(y) - i128::from(y0)) * (i128::from(x1) - i128::from(x0)) / dy;
+                    let x = x.clamp(-1, self.w as i128) as i64;
+                    xs.push((x, if y1 > y0 { 1 } else { -1 }));
+                }
+            }
+            xs.sort_unstable();
+            let mut inside = 0_i32;
+            let mut start: Option<i64> = None;
+            for (x, dir) in xs {
+                inside += if winding { dir } else { 1 };
+                let on = if winding {
+                    inside != 0
+                } else {
+                    inside % 2 != 0
+                };
+                match (start, on) {
+                    (None, true) => start = Some(x),
+                    (Some(a), false) => {
+                        let a = (a as i32).max(0);
+                        let b = (x as i32).min(self.w as i32 - 1);
+                        for px in a..=b {
+                            self.put(px, y, color);
+                        }
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn finish(self) -> (u32, u32, Vec<u8>) {
+        (self.w as u32, self.h as u32, self.px)
+    }
+}
+
+struct Map {
+    org_x: f32,
+    org_y: f32,
+    ext_x: f32,
+    ext_y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl Map {
+    /// A pen `width` in logical units as canvas pixels, at least one.
+    fn pen_px(&self, width: i32) -> i32 {
+        if self.ext_x.abs() < f32::EPSILON {
+            return 1;
+        }
+        ((width as f32 * self.w / self.ext_x.abs()).round() as i32).max(1)
+    }
+
+    fn map(&self, x: i32, y: i32) -> (i32, i32) {
+        let sx = if self.ext_x.abs() < f32::EPSILON {
+            1.0
+        } else {
+            self.w / self.ext_x
+        };
+        let sy = if self.ext_y.abs() < f32::EPSILON {
+            1.0
+        } else {
+            self.h / self.ext_y
+        };
+        let px = (x as f32 - self.org_x) * sx;
+        let py = (y as f32 - self.org_y) * sy;
+        (px.round() as i32, py.round() as i32)
+    }
+}
+
+fn sized_canvas(bw: i32, bh: i32) -> (usize, usize) {
+    let bw = bw.unsigned_abs().max(1) as usize;
+    let bh = bh.unsigned_abs().max(1) as usize;
+    if bw >= bh {
+        let w = bw.min(MAX_SIDE);
+        let h = (((bh as u64 * w as u64) / bw as u64).max(1)) as usize;
+        (w, h)
+    } else {
+        let h = bh.min(MAX_SIDE);
+        let w = (((bw as u64 * h as u64) / bh as u64).max(1)) as usize;
+        (w, h)
+    }
+}
+
+fn colorref(c: u32) -> [u8; 3] {
+    // COLORREF is 0x00BBGGRR; WMF CREATEBRUSHINDIRECT packs hatch in the
+    // high byte (image1.bin: `dadada02`). Mask to 24-bit or the CRT fill
+    // becomes (218,218,2) instead of gray.
+    let c = c & 0x00FF_FFFF;
+    [
+        (c & 0xFF) as u8,
+        ((c >> 8) & 0xFF) as u8,
+        ((c >> 16) & 0xFF) as u8,
+    ]
+}
+
+fn read_u16(data: &[u8], off: usize) -> Option<u16> {
+    let b: [u8; 2] = data.get(off..off + 2)?.try_into().ok()?;
+    Some(u16::from_le_bytes(b))
+}
+
+fn read_i16(data: &[u8], off: usize) -> Option<i16> {
+    let b: [u8; 2] = data.get(off..off + 2)?.try_into().ok()?;
+    Some(i16::from_le_bytes(b))
+}
+
+fn read_u32(data: &[u8], off: usize) -> Option<u32> {
+    let b: [u8; 4] = data.get(off..off + 4)?.try_into().ok()?;
+    Some(u32::from_le_bytes(b))
+}
+
+fn read_i32(data: &[u8], off: usize) -> Option<i32> {
+    let b: [u8; 4] = data.get(off..off + 4)?.try_into().ok()?;
+    Some(i32::from_le_bytes(b))
+}
+
+#[derive(Clone)]
+enum GdiObj {
+    Empty,
+    Brush([u8; 3]),
+    /// `BS_NULL`: fills nothing.
+    NullBrush,
+    Font(std::rc::Rc<WmfFont>),
+    Pen {
+        color: [u8; 3],
+        width: i32,
+    },
+    /// A palette, font, region or pattern brush: it holds its table slot
+    /// but paints nothing we replay.
+    Other,
+}
+
+/// `META_CREATEFONTINDIRECT`'s `LogFont`.
+#[derive(Debug, PartialEq)]
+struct WmfFont {
+    height: i16,
+    weight: i16,
+    italic: bool,
+    face: String,
+}
+
+impl WmfFont {
+    fn parse(data: &[u8], at: usize) -> Option<Self> {
+        let face = data.get(at + 18..)?;
+        let face = &face[..face
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(face.len())
+            .min(32)];
+        Some(Self {
+            height: read_i16(data, at)?,
+            weight: read_i16(data, at + 8)?,
+            italic: *data.get(at + 10)? != 0,
+            face: face.iter().map(|&b| char::from(b)).collect(),
+        })
+    }
+}
+
+/// The device context `META_SAVEDC` keeps.
+#[derive(Clone)]
+struct WmfState {
+    brush: Option<[u8; 3]>,
+    pen: Option<([u8; 3], i32)>,
+    font: Option<std::rc::Rc<WmfFont>>,
+    text_color: [u8; 3],
+    text_align: u16,
+}
+
+/// Windows-1252 text, one byte a character.
+fn ansi_text(bytes: &[u8]) -> String {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž',
+        '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}',
+        'ž', 'Ÿ',
+    ];
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0x9F => HIGH[usize::from(b - 0x80)],
+            _ => char::from(b),
+        })
+        .collect()
+}
+
+fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)> {
+    if data.len() < 40 {
+        return None;
+    }
+    let left = i16::from_le_bytes(data[6..8].try_into().ok()?) as i32;
+    let top = i16::from_le_bytes(data[8..10].try_into().ok()?) as i32;
+    let right = i16::from_le_bytes(data[10..12].try_into().ok()?) as i32;
+    let bottom = i16::from_le_bytes(data[12..14].try_into().ok()?) as i32;
+    let (cw, ch) = sized_canvas(right - left, bottom - top);
+    let mut canvas = Canvas::new(cw, ch);
+    let mut map = Map {
+        org_x: left as f32,
+        org_y: top as f32,
+        ext_x: (right - left) as f32,
+        ext_y: (bottom - top) as f32,
+        w: cw as f32,
+        h: ch as f32,
+    };
+    let nobj = read_u16(data, 22 + 10).unwrap_or(4) as usize;
+    let mut objects = vec![GdiObj::Empty; nobj.clamp(1, 64)];
+    // A new DC: white brush, black pen, black text at the top left.
+    let mut dc = WmfState {
+        brush: Some(WHITE),
+        pen: Some(([0, 0, 0], 1)),
+        font: None,
+        text_color: [0, 0, 0],
+        text_align: 0,
+    };
+    let mut saved: Vec<WmfState> = Vec::new();
+    let mut texts: Vec<MetaText> = Vec::new();
+    let mut winding = false;
+    let mut off = 22 + 18;
+    while off + 6 <= data.len() {
+        let size = read_u32(data, off)? as usize;
+        let func = read_u16(data, off + 4)?;
+        // checked_mul: `size` is untrusted and `usize` is 32-bit on wasm32;
+        // comparing against the remaining length keeps `off` from ever
+        // moving past (or wrapping around) the buffer end.
+        let Some(size2) = size.checked_mul(2) else {
+            break;
+        };
+        if size < 3 || size2 > data.len() - off {
+            break;
+        }
+        let payload = off + 6;
+        match func {
+            0x0000 => break,
+            0x020B => {
+                let y = read_i16(data, payload)? as i32;
+                let x = read_i16(data, payload + 2)? as i32;
+                map.org_x = x as f32;
+                map.org_y = y as f32;
+            }
+            0x020C => {
+                let y = read_i16(data, payload)? as i32;
+                let x = read_i16(data, payload + 2)? as i32;
+                if x != 0 {
+                    map.ext_x = x as f32;
+                }
+                if y != 0 {
+                    map.ext_y = y as f32;
+                }
+            }
+            0x02FC => {
+                let style = read_u16(data, payload).unwrap_or(0);
+                let color = colorref(read_u32(data, payload + 2).unwrap_or(0));
+                let slot = objects.iter().position(|o| matches!(o, GdiObj::Empty));
+                if let Some(i) = slot {
+                    // BS_NULL (1) is hollow: the boxes of 5a6c's reprint
+                    // diagram fill white only through their own brush.
+                    objects[i] = if style == 1 {
+                        GdiObj::NullBrush
+                    } else {
+                        GdiObj::Brush(color)
+                    };
+                }
+            }
+            0x02FA => {
+                let style = read_u16(data, payload).unwrap_or(0);
+                let color = colorref(read_u32(data, payload + 6).unwrap_or(0));
+                let width = read_i16(data, payload + 2).unwrap_or(1) as i32;
+                if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    // PS_NULL (5) strokes nothing: width 0.
+                    objects[i] = GdiObj::Pen {
+                        color,
+                        width: if style & 0x0F == 5 { 0 } else { width.max(1) },
+                    };
+                }
+            }
+            0x02FB => {
+                if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    objects[i] = WmfFont::parse(data, payload)
+                        .map_or(GdiObj::Other, |f| GdiObj::Font(std::rc::Rc::new(f)));
+                }
+            }
+            // CreatePalette / PatternBrush / DIBPatternBrush / Region take
+            // the lowest free slot like a brush or pen, so later handles
+            // count them (Strict01's palette is slot 0).
+            0x00F7 | 0x01F9 | 0x0142 | 0x06FF => {
+                if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    objects[i] = GdiObj::Other;
+                }
+            }
+            0x0106 => winding = read_u16(data, payload).unwrap_or(1) == 2,
+            0x012D => {
+                // Object handles are 0-based table indices (b88ac900).
+                let idx = read_u16(data, payload).unwrap_or(0) as usize;
+                if let Some(obj) = objects.get(idx) {
+                    match obj {
+                        GdiObj::Brush(c) => dc.brush = Some(*c),
+                        GdiObj::NullBrush => dc.brush = None,
+                        GdiObj::Pen { color, width } => {
+                            dc.pen = (*width > 0).then_some((*color, *width));
+                        }
+                        GdiObj::Font(f) => dc.font = Some(f.clone()),
+                        GdiObj::Empty | GdiObj::Other => {}
+                    }
+                }
+            }
+            0x001E => saved.push(dc.clone()),
+            // RESTOREDC -n pops n states (5a6c's diagram: -1 after each box).
+            0x0127 => {
+                let n = read_i16(data, payload).unwrap_or(-1);
+                let keep = if n < 0 {
+                    saved.len().saturating_sub(usize::from(n.unsigned_abs()))
+                } else {
+                    usize::from(n.unsigned_abs()).saturating_sub(1)
+                };
+                if keep < saved.len() {
+                    dc = saved[keep].clone();
+                    saved.truncate(keep);
+                }
+            }
+            0x0209 => dc.text_color = colorref(read_u32(data, payload).unwrap_or(0)),
+            0x012E => dc.text_align = read_u16(data, payload).unwrap_or(0),
+            // RECTANGLE / ROUNDRECT: bottom, right, top, left; filled with
+            // the brush, outlined with the pen.
+            0x041B | 0x061C => {
+                let at = if func == 0x061C { payload + 4 } else { payload };
+                let bottom = read_i16(data, at)? as i32;
+                let right = read_i16(data, at + 2)? as i32;
+                let top = read_i16(data, at + 4)? as i32;
+                let left = read_i16(data, at + 6)? as i32;
+                let (x0, y0) = map.map(left, top);
+                let (x1, y1) = map.map(right, bottom);
+                let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                if let Some(fill) = dc.brush {
+                    canvas.fill_polygon(&corners, fill);
+                }
+                if let Some((color, width)) = dc.pen {
+                    let w = map.pen_px(width);
+                    for i in 0..4 {
+                        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                        canvas.stroke_line(a.0, a.1, b.0, b.1, color, w);
+                    }
+                }
+            }
+            // EXTTEXTOUT: y, x, count, options, [rect], string.
+            0x0A32 => {
+                let y = read_i16(data, payload)?;
+                let x = read_i16(data, payload + 2)?;
+                let n = usize::from(read_u16(data, payload + 4)?);
+                let opts = read_u16(data, payload + 6)?;
+                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };
+                if let Some(bytes) = data.get(at..at + n) {
+                    texts.extend(wmf_text(&dc, &map, x, y, bytes));
+                }
+            }
+            // TEXTOUT: count, string (word-padded), y, x.
+            0x0521 => {
+                let n = usize::from(read_u16(data, payload)?);
+                let at = payload + 2 + n.next_multiple_of(2);
+                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);
+                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {
+                    texts.extend(wmf_text(&dc, &map, x, y, bytes));
+                }
+            }
+            0x01F0 => {
+                let idx = read_u16(data, payload).unwrap_or(0) as usize;
+                if let Some(slot) = objects.get_mut(idx) {
+                    *slot = GdiObj::Empty;
+                }
+            }
+            0x0324 => {
+                let n = read_u16(data, payload).unwrap_or(0) as usize;
+                let mut pts = Vec::with_capacity(n);
+                let mut p = payload + 2;
+                for _ in 0..n {
+                    let x = read_i16(data, p)? as i32;
+                    let y = read_i16(data, p + 2)? as i32;
+                    pts.push(map.map(x, y));
+                    p += 4;
+                }
+                if let Some(fill) = dc.brush {
+                    canvas.fill_polygon(&pts, fill);
+                }
+            }
+            // META_POLYPOLYGON: ring count, each ring's point count, then
+            // every ring's points, filled as one shape (b88ac900's logo).
+            0x0538 => {
+                let rings = read_u16(data, payload).unwrap_or(0) as usize;
+                let mut p = payload + 2 + 2 * rings;
+                let mut subpaths = Vec::with_capacity(rings);
+                for r in 0..rings {
+                    let n = read_u16(data, payload + 2 + 2 * r)? as usize;
+                    let mut ring = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        let x = read_i16(data, p)? as i32;
+                        let y = read_i16(data, p + 2)? as i32;
+                        ring.push(map.map(x, y));
+                        p += 4;
+                    }
+                    subpaths.push(ring);
+                }
+                if let Some(fill) = dc.brush {
+                    canvas.fill_path(&subpaths, fill, winding);
+                }
+            }
+            0x0325 => {
+                let Some((pen, pen_w)) = dc.pen else {
+                    off += size2;
+                    continue;
+                };
+                let n = read_u16(data, payload).unwrap_or(0) as usize;
+                let mut prev: Option<(i32, i32)> = None;
+                let mut p = payload + 2;
+                for _ in 0..n {
+                    let x = read_i16(data, p)? as i32;
+                    let y = read_i16(data, p + 2)? as i32;
+                    let cur = map.map(x, y);
+                    if let Some(pr) = prev {
+                        canvas.stroke_line(pr.0, pr.1, cur.0, cur.1, pen, map.pen_px(pen_w));
+                    }
+                    prev = Some(cur);
+                    p += 4;
+                }
+            }
+            _ => {}
+        }
+        off += size2;
+    }
+    let (w, h, rgb) = canvas.finish();
+    Some((w, h, rgb, texts))
+}
+
+/// One string of a WMF text record, in the DC's font, colour and
+/// alignment; blank strings write nothing.
+fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {
+    let text = ansi_text(bytes);
+    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {
+        return None;
+    }
+    let font = dc.font.as_deref();
+    let height = font.map_or(0, |f| f.height);
+    Some(MetaText {
+        text,
+        x: (f32::from(x) - map.org_x) / map.ext_x,
+        y: (f32::from(y) - map.org_y) / map.ext_y,
+        // lfHeight 0 is the default font, 12pt at 96 dpi of a 1440 inch.
+        size: if height == 0 {
+            0.0
+        } else {
+            f32::from(height.unsigned_abs()) / map.ext_y.abs()
+        },
+        cell: height > 0,
+        family: font.map_or_else(String::new, |f| f.face.clone()),
+        bold: font.is_some_and(|f| f.weight >= 600),
+        italic: font.is_some_and(|f| f.italic),
+        color: dc.text_color,
+        align: dc.text_align,
+        aspect: (map.ext_x / map.ext_y).abs(),
+    })
+}
+
+/// EMF logical → device coordinates (SETMAPMODE / window / viewport).
+/// MM_TEXT and the fixed metric modes translate only; MM_ISOTROPIC (7) and
+/// MM_ANISOTROPIC (8) also scale window extents onto viewport extents.
+struct Xform {
+    mode: u32,
+    win_org: (f32, f32),
+    win_ext: (f32, f32),
+    vp_org: (f32, f32),
+    vp_ext: (f32, f32),
+}
+
+impl Xform {
+    fn dev(&self, x: i32, y: i32) -> (i32, i32) {
+        let (mut dx, mut dy) = (x as f32 - self.win_org.0, y as f32 - self.win_org.1);
+        if matches!(self.mode, 7 | 8)
+            && self.win_ext.0.abs() > f32::EPSILON
+            && self.win_ext.1.abs() > f32::EPSILON
+        {
+            dx *= self.vp_ext.0 / self.win_ext.0;
+            dy *= self.vp_ext.1 / self.win_ext.1;
+        }
+        (
+            (dx + self.vp_org.0).round() as i32,
+            (dy + self.vp_org.1).round() as i32,
+        )
+    }
+}
+
+/// A cubic Bézier from `p0` flattened to line points (excluding `p0`).
+fn flatten_bezier(
+    p0: (i32, i32),
+    c1: (i32, i32),
+    c2: (i32, i32),
+    p3: (i32, i32),
+) -> Vec<(i32, i32)> {
+    const STEPS: i32 = 12;
+    (1..=STEPS)
+        .map(|k| {
+            let t = k as f32 / STEPS as f32;
+            let u = 1.0 - t;
+            let f = |a: i32, b: i32, c: i32, d: i32| {
+                u * u * u * a as f32
+                    + 3.0 * u * u * t * b as f32
+                    + 3.0 * u * t * t * c as f32
+                    + t * t * t * d as f32
+            };
+            (
+                f(p0.0, c1.0, c2.0, p3.0).round() as i32,
+                f(p0.1, c1.1, c2.1, p3.1).round() as i32,
+            )
+        })
+        .collect()
+}
+
+fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if data.len() < 108 {
+        return None;
+    }
+    let left = read_i32(data, 8)?;
+    let top = read_i32(data, 12)?;
+    let right = read_i32(data, 16)?;
+    let bottom = read_i32(data, 20)?;
+    let (cw, ch) = sized_canvas(right.saturating_sub(left), bottom.saturating_sub(top));
+    let mut canvas = Canvas::new(cw, ch);
+    let map = Map {
+        org_x: left as f32,
+        org_y: top as f32,
+        ext_x: right.saturating_sub(left).max(1) as f32,
+        ext_y: bottom.saturating_sub(top).max(1) as f32,
+        w: cw as f32,
+        h: ch as f32,
+    };
+    let mut xf = Xform {
+        mode: 1,
+        win_org: (0.0, 0.0),
+        win_ext: (1.0, 1.0),
+        vp_org: (0.0, 0.0),
+        vp_ext: (1.0, 1.0),
+    };
+    // Logical point → canvas pixel.
+    let px = |xf: &Xform, x: i32, y: i32| {
+        let (dx, dy) = xf.dev(x, y);
+        map.map(dx, dy)
+    };
+    let mut objects: HashMap<u32, GdiObj> = HashMap::new();
+    let mut brush = [0_u8, 0, 0];
+    let mut pen = [0_u8, 0, 0];
+    let mut pen_w = 1_i32;
+    let mut cx = 0_i32;
+    let mut cy = 0_i32;
+    let mut winding = false;
+    let mut in_path = false;
+    // Paths and polylines in logical coordinates.
+    let mut subpaths: Vec<Vec<(i32, i32)>> = Vec::new();
+    // EMR_CLOSEFIGURE ended the last figure: the next line starts another.
+    let mut figure_closed = false;
+    let stroke_poly =
+        |canvas: &mut Canvas, xf: &Xform, pts: &[(i32, i32)], pen: [u8; 3], w: i32| {
+            if w <= 0 {
+                return;
+            }
+            for &[(ax, ay), (bx, by)] in pts.array_windows() {
+                let a = px(xf, ax, ay);
+                let b = px(xf, bx, by);
+                canvas.stroke_line(a.0, a.1, b.0, b.1, pen, w);
+            }
+        };
+    let mut off = read_u32(data, 4)? as usize;
+    while off + 8 <= data.len() {
+        let typ = read_u32(data, off)?;
+        let size = read_u32(data, off + 4)? as usize;
+        if size < 8 || size > data.len() - off {
+            break;
+        }
+        match typ {
+            14 => break,
+            9..=12 if size >= 16 => {
+                let v = (
+                    read_i32(data, off + 8)? as f32,
+                    read_i32(data, off + 12)? as f32,
+                );
+                match typ {
+                    9 => xf.win_ext = v,
+                    10 => xf.win_org = v,
+                    11 => xf.vp_ext = v,
+                    _ => xf.vp_org = v,
+                }
+            }
+            17 if size >= 12 => xf.mode = read_u32(data, off + 8)?,
+            19 if size >= 12 => winding = read_u32(data, off + 8)? == 2,
+            59 => {
+                in_path = true;
+                subpaths.clear();
+                figure_closed = false;
+            }
+            // EMR_CLOSEFIGURE: a line back to the figure's start, which
+            // becomes the current position.
+            61 if in_path => {
+                if let Some(sp) = subpaths.last_mut()
+                    && sp.len() > 1
+                    && let Some(&first) = sp.first()
+                {
+                    sp.push(first);
+                    (cx, cy) = first;
+                    figure_closed = true;
+                }
+            }
+            60 => in_path = false,
+            27 if size >= 16 => {
+                cx = read_i32(data, off + 8)?;
+                cy = read_i32(data, off + 12)?;
+                if in_path {
+                    subpaths.push(vec![(cx, cy)]);
+                    figure_closed = false;
+                }
+            }
+            54 if size >= 16 => {
+                let x = read_i32(data, off + 8)?;
+                let y = read_i32(data, off + 12)?;
+                if in_path {
+                    if subpaths.is_empty() || figure_closed {
+                        subpaths.push(vec![(cx, cy)]);
+                        figure_closed = false;
+                    }
+                    if let Some(sp) = subpaths.last_mut() {
+                        sp.push((x, y));
+                    }
+                } else {
+                    stroke_poly(&mut canvas, &xf, &[(cx, cy), (x, y)], pen, pen_w);
+                }
+                cx = x;
+                cy = y;
+            }
+            // EMR_POLYBEZIERTO(16) / EMR_POLYLINETO(16): continue from the
+            // current point; EMR_POLYBEZIER(16) / EMR_POLYLINE(16) start at
+            // their first point.
+            2 | 4 | 5 | 6 | 85 | 87 | 88 | 89 if size >= 28 => {
+                let pts16 = matches!(typ, 85 | 87 | 88 | 89);
+                let Some(pts) = read_emf_points(data, off, size, pts16) else {
+                    off += size;
+                    continue;
+                };
+                let bezier = matches!(typ, 2 | 5 | 85 | 88);
+                let to = matches!(typ, 5 | 6 | 88 | 89);
+                let (start, rest) = if to {
+                    ((cx, cy), &pts[..])
+                } else if let Some((first, rest)) = pts.split_first() {
+                    (*first, rest)
+                } else {
+                    off += size;
+                    continue;
+                };
+                let mut line = vec![start];
+                if bezier {
+                    let mut p0 = start;
+                    for &[c1, c2, end] in rest.as_chunks::<3>().0 {
+                        line.extend(flatten_bezier(p0, c1, c2, end));
+                        p0 = end;
+                    }
+                } else {
+                    line.extend_from_slice(rest);
+                }
+                if to && let Some(&(x, y)) = line.last() {
+                    cx = x;
+                    cy = y;
+                }
+                if in_path {
+                    if to
+                        && !figure_closed
+                        && let Some(sp) = subpaths.last_mut()
+                    {
+                        sp.extend_from_slice(&line[1..]);
+                    } else {
+                        subpaths.push(line);
+                    }
+                    figure_closed = false;
+                } else {
+                    stroke_poly(&mut canvas, &xf, &line, pen, pen_w);
+                }
+            }
+            // EMR_FILLPATH / EMR_STROKEANDFILLPATH / EMR_STROKEPATH
+            62..=64 => {
+                if typ != 64 {
+                    let dev: Vec<Vec<(i32, i32)>> = subpaths
+                        .iter()
+                        .map(|sp| sp.iter().map(|&(x, y)| px(&xf, x, y)).collect())
+                        .collect();
+                    canvas.fill_path(&dev, brush, winding);
+                }
+                // GDI strokes each figure as built: only EMR_CLOSEFIGURE
+                // closes one.
+                if typ != 62 {
+                    for sp in &subpaths {
+                        stroke_poly(&mut canvas, &xf, sp, pen, pen_w);
+                    }
+                }
+                subpaths.clear();
+            }
+            37 if size >= 12 => {
+                let id = read_u32(data, off + 8)?;
+                if id & 0x8000_0000 != 0 {
+                    apply_stock(id, &mut brush, &mut pen);
+                } else if let Some(obj) = objects.get(&id) {
+                    match *obj {
+                        GdiObj::Brush(c) => brush = c,
+                        GdiObj::Pen { color, width } => {
+                            pen = color;
+                            pen_w = width;
+                        }
+                        GdiObj::Empty | GdiObj::Other | GdiObj::NullBrush | GdiObj::Font(_) => {}
+                    }
+                }
+            }
+            38 if size >= 28 => {
+                let id = read_u32(data, off + 8)?;
+                let width = read_i32(data, off + 16).unwrap_or(1);
+                let color = colorref(read_u32(data, off + 24).unwrap_or(0));
+                objects.insert(
+                    id,
+                    GdiObj::Pen {
+                        color,
+                        width: width.max(1),
+                    },
+                );
+            }
+            // EMR_EXTCREATEPEN: LOGPEN_EX after the four bitmap fields.
+            95 if size >= 44 => {
+                let id = read_u32(data, off + 8)?;
+                let style = read_u32(data, off + 28).unwrap_or(0);
+                let color = colorref(read_u32(data, off + 40).unwrap_or(0));
+                // PS_NULL draws nothing.
+                let width = if style & 0xF == 5 { 0 } else { 1 };
+                objects.insert(id, GdiObj::Pen { color, width });
+            }
+            39 if size >= 24 => {
+                let id = read_u32(data, off + 8)?;
+                let style = read_u32(data, off + 12).unwrap_or(0);
+                let color = colorref(read_u32(data, off + 16).unwrap_or(0));
+                objects.insert(
+                    id,
+                    if style == 1 {
+                        GdiObj::Brush(WHITE)
+                    } else {
+                        GdiObj::Brush(color)
+                    },
+                );
+            }
+            40 if size >= 12 => {
+                objects.remove(&read_u32(data, off + 8)?);
+            }
+            76 if size >= 40 => {
+                // EMR_BITBLT — Strict01 uses PATCOPY 1px rules.
+                let x = read_i32(data, off + 24)?;
+                let y = read_i32(data, off + 28)?;
+                let w = read_i32(data, off + 32)?;
+                let h = read_i32(data, off + 36)?;
+                let a = px(&xf, x, y);
+                let b = px(&xf, x.saturating_add(w.max(1)), y.saturating_add(h.max(1)));
+                canvas.fill_rect(
+                    a.0.min(b.0),
+                    a.1.min(b.1),
+                    b.0.saturating_sub(a.0).saturating_abs().max(1),
+                    b.1.saturating_sub(a.1).saturating_abs().max(1),
+                    brush,
+                );
+            }
+            3 | 86 if size >= 28 => {
+                // EMR_POLYGON / EMR_POLYGON16
+                // Inside a path bracket it is a closed figure of the path and
+                // paints nothing until FILLPATH / STROKEPATH.
+                if let Some(mut pts) = read_emf_points(data, off, size, typ == 86) {
+                    if in_path {
+                        if let Some(&first) = pts.first() {
+                            pts.push(first);
+                        }
+                        subpaths.push(pts);
+                        figure_closed = true;
+                    } else {
+                        let mapped: Vec<(i32, i32)> =
+                            pts.iter().map(|&(x, y)| px(&xf, x, y)).collect();
+                        canvas.fill_polygon(&mapped, brush);
+                    }
+                }
+            }
+            _ => {}
+        }
+        off += size;
+    }
+    Some(canvas.finish())
+}
+
+fn apply_stock(id: u32, brush: &mut [u8; 3], pen: &mut [u8; 3]) {
+    match id & 0xFF {
+        0 => *brush = WHITE,
+        4 => *brush = [0, 0, 0],
+        5 => *brush = WHITE,
+        6 => *pen = WHITE,
+        7 => *pen = [0, 0, 0],
+        _ => {}
+    }
+}
+
+fn read_emf_points(data: &[u8], off: usize, size: usize, pts16: bool) -> Option<Vec<(i32, i32)>> {
+    let count = read_u32(data, off + 24)? as usize;
+    let mut pts = Vec::with_capacity(count.min(4096));
+    let mut p = off + 28;
+    for _ in 0..count {
+        if pts16 {
+            if p + 4 > off + size {
+                break;
+            }
+            let x = read_i16(data, p)? as i32;
+            let y = read_i16(data, p + 2)? as i32;
+            pts.push((x, y));
+            p += 4;
+        } else {
+            if p + 8 > off + size {
+                break;
+            }
+            pts.push((read_i32(data, p)?, read_i32(data, p + 4)?));
+            p += 8;
+        }
+    }
+    Some(pts)
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod hostile_input_tests {
+    //! CR PR#4 review: crafted WMF/EMF must terminate quickly without
+    //! panicking — coordinate spans and record sizes are attacker-chosen.
+    use super::*;
+
+    fn emf_header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes()); // first record offset
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn rec(d: &mut Vec<u8>, typ: u32, fields: &[i32]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + 4 * fields.len()) as u32).to_le_bytes());
+        for f in fields {
+            d.extend_from_slice(&f.to_le_bytes());
+        }
+    }
+
+    /// A polygon edge starting at `i32::MIN` after mapping: the scanline
+    /// subtraction `y - y0` must not overflow i32 (debug panic / release
+    /// wrap-around to a wrong intersection).
+    #[test]
+    fn emf_polygon_with_extreme_edge_does_not_overflow_scanline() {
+        let mut d = emf_header(0, 0, 64, 64);
+        // EMR_POLYGON: bounds[4], count, then full-range i32 points.
+        let pts: [i32; 8] = [0, i32::MIN, 32, i32::MAX, 64, 0, 0, 0];
+        let mut fields: Vec<i32> = vec![0, 0, 64, 64, 4];
+        fields.extend_from_slice(&pts);
+        rec(&mut d, 3, &fields);
+        rec(&mut d, 14, &[]); // EMR_EOF
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// Full-range header bounds: `right - left` must not overflow.
+    #[test]
+    fn emf_extreme_header_bounds_terminate() {
+        let mut d = emf_header(i32::MIN, i32::MIN, i32::MAX, i32::MAX);
+        rec(&mut d, 14, &[]); // EMR_EOF
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// A line whose mapped endpoints sit ~2^31 pixels apart: the walk must
+    /// be clipped to the canvas, and the Bresenham deltas must not overflow.
+    #[test]
+    fn emf_offcanvas_line_terminates() {
+        let big = 1 << 30;
+        let mut d = emf_header(0, 0, 384, 384);
+        rec(&mut d, 27, &[-big, -big]); // EMR_MOVETOEX
+        rec(&mut d, 54, &[big, big]); // EMR_LINETO
+        rec(&mut d, 14, &[]);
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// Polygon with full-range vertices: the scanline intersection product
+    /// must be computed in i64 and the span clamped to the canvas.
+    #[test]
+    fn emf_offcanvas_polygon_terminates() {
+        let big = 1 << 30;
+        let mut d = emf_header(0, 0, 384, 384);
+        // EMR_POLYGON: bounds rect (4 fields), count, then points.
+        rec(&mut d, 3, &[0, 0, 0, 0, 3, -big, -big, big, -big, 0, big]);
+        rec(&mut d, 14, &[]);
+        assert!(rasterize(&d).is_some());
+    }
+
+    /// WMF record size near u32::MAX: `size * 2` wraps a 32-bit usize
+    /// (wasm32). Natively this documents the guard; the checked_mul keeps
+    /// wasm from looping forever on a wrapped offset.
+    #[test]
+    fn wmf_huge_record_size_terminates() {
+        let mut d = vec![0u8; 40];
+        d[0..4].copy_from_slice(&[0xD7, 0xCD, 0xC6, 0x9A]);
+        d.extend_from_slice(&0x8000_0001u32.to_le_bytes()); // size (words)
+        d.extend_from_slice(&0u16.to_le_bytes()); // func
+        d.extend_from_slice(&[0u8; 32]);
+        assert!(rasterize(&d).is_some());
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod emf_text_tests {
+    //! Strict01 OLE previews (image2.emf / image3.emf) store the Excel
+    //! grid as EMR_EXTTEXTOUTW digits. Skipping those records leaves
+    //! rules without 1–9/12/15/18. Not the xlsx-Calibri-grid ITT-neg.
+    use super::*;
+
+    fn emf_header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes());
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn exttextout_w(d: &mut Vec<u8>, x: i32, y: i32, text: &str) {
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let n = utf16.len() as u32;
+        let off_string = 76u32;
+        let str_bytes = n as usize * 2;
+        let rec_size = (76 + str_bytes).next_multiple_of(4) as u32;
+        d.extend_from_slice(&84u32.to_le_bytes());
+        d.extend_from_slice(&rec_size.to_le_bytes());
+        d.extend_from_slice(&0i32.to_le_bytes()); // bounds
+        d.extend_from_slice(&0i32.to_le_bytes());
+        d.extend_from_slice(&64i32.to_le_bytes());
+        d.extend_from_slice(&64i32.to_le_bytes());
+        d.extend_from_slice(&1u32.to_le_bytes()); // iGraphicsMode
+        d.extend_from_slice(&0u32.to_le_bytes()); // exScale
+        d.extend_from_slice(&0u32.to_le_bytes()); // eyScale
+        d.extend_from_slice(&x.to_le_bytes());
+        d.extend_from_slice(&y.to_le_bytes());
+        d.extend_from_slice(&n.to_le_bytes());
+        d.extend_from_slice(&off_string.to_le_bytes());
+        d.extend_from_slice(&0u32.to_le_bytes()); // fOptions
+        for _ in 0..4 {
+            d.extend_from_slice(&0i32.to_le_bytes()); // rcl
+        }
+        d.extend_from_slice(&0u32.to_le_bytes()); // offDx
+        for u in utf16 {
+            d.extend_from_slice(&u.to_le_bytes());
+        }
+        while !d.len().is_multiple_of(4) {
+            d.push(0);
+        }
+    }
+
+    fn dark_samples(rgb: &[u8]) -> usize {
+        rgb.chunks(3)
+            .filter(|px| px.iter().any(|&c| c < 200))
+            .count()
+    }
+
+    #[test]
+    fn emf_exttextoutw_stays_unpainted_after_mini_365() {
+        // Strict01 OLE image2.emf stores 1–9/12/15/18 as EXTTEXTOUTW.
+        // 5×7 bitmap digits (mini 365) were Word-shaped but ITT-neg:
+        // Strict01 family −0.0056 / NR mean −0.0006 vs Quartz Calibri.
+        // Not xlsx Calibri grid (also ITT-neg). Keep rules-only raster.
+        let mut d = emf_header(0, 0, 64, 64);
+        exttextout_w(&mut d, 8, 8, "8");
+        d.extend_from_slice(&14u32.to_le_bytes());
+        d.extend_from_slice(&8u32.to_le_bytes());
+        let (_, _, rgb) = rasterize(&d).expect("raster EMF text lock");
+        assert_eq!(
+            dark_samples(&rgb),
+            0,
+            "mini 365 EXTTEXTOUTW bitmap ITT-neg; dark={}",
+            dark_samples(&rgb)
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod emf_path_tests {
+    //! fixtures_500 000ebd12: the Riksdag header logo is an EMF of filled
+    //! Bézier paths (BEGINPATH … POLYBEZIERTO16 … FILLPATH) under a
+    //! window/viewport mapping. We rasterized none of it.
+    use super::*;
+
+    #[test]
+    fn saturated_edges_cross_where_the_line_does() {
+        // PR #167 review: mapped points saturate to i32::MIN/MAX, and the
+        // crossing product (y - y0) * (x1 - x0) then passes i64::MAX. The
+        // diagonal from (MIN, MIN) to (MAX, MAX) crosses row y at x = y.
+        let tri = [
+            (i32::MIN, i32::MIN),
+            (i32::MAX, i32::MAX),
+            (i32::MIN, i32::MAX),
+        ];
+        let ink = |c: &Canvas, x: usize, y: usize| c.px[(y * c.w + x) * 3] == 0;
+        let mut poly = Canvas::new(64, 64);
+        poly.fill_polygon(&tri, [0, 0, 0]);
+        let mut path = Canvas::new(64, 64);
+        path.fill_path(&[tri.to_vec()], [0, 0, 0], false);
+        for c in [&poly, &path] {
+            assert!(ink(c, 5, 40), "left of the diagonal is inside");
+            assert!(!ink(c, 60, 20), "right of the diagonal is outside");
+        }
+    }
+
+    fn header(left: i32, top: i32, right: i32, bottom: i32) -> Vec<u8> {
+        let mut d = vec![0u8; 108];
+        d[0..4].copy_from_slice(&1u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108u32.to_le_bytes());
+        d[8..12].copy_from_slice(&left.to_le_bytes());
+        d[12..16].copy_from_slice(&top.to_le_bytes());
+        d[16..20].copy_from_slice(&right.to_le_bytes());
+        d[20..24].copy_from_slice(&bottom.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn rec(d: &mut Vec<u8>, typ: u32, body: &[u8]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        d.extend_from_slice(body);
+    }
+
+    fn ints(v: &[i32]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    /// EMR_POLYBEZIERTO16 / EMR_POLYLINETO16: bounds, count, 16-bit points.
+    fn pts16(pts: &[(i16, i16)]) -> Vec<u8> {
+        let mut b = ints(&[0, 0, 0, 0, pts.len() as i32]);
+        for (x, y) in pts {
+            b.extend_from_slice(&x.to_le_bytes());
+            b.extend_from_slice(&y.to_le_bytes());
+        }
+        b
+    }
+
+    fn square(d: &mut Vec<u8>, x0: i16, y0: i16, x1: i16, y1: i16) {
+        rec(d, 27, &ints(&[i32::from(x0), i32::from(y0)]));
+        rec(d, 89, &pts16(&[(x1, y0), (x1, y1), (x0, y1)]));
+        rec(d, 61, &[]);
+    }
+
+    fn dark(rgb: &[u8], w: u32, x: u32, y: u32) -> bool {
+        let i = ((y * w + x) * 3) as usize;
+        rgb[i] < 128
+    }
+
+    #[test]
+    fn a_stroked_path_closes_only_the_figures_closefigure_closes() {
+        // PR #167 review: EMR_STROKEPATH closed every subpath, so an open
+        // polyline gained a chord back to its start. GDI closes a figure
+        // only on EMR_CLOSEFIGURE, which also moves the pen to the
+        // figure's start for the next LINETO.
+        let stroked = |close: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 59, &[]);
+            rec(&mut d, 27, &ints(&[10, 10]));
+            rec(&mut d, 54, &ints(&[90, 10]));
+            if close {
+                rec(&mut d, 61, &[]);
+                rec(&mut d, 54, &ints(&[10, 90]));
+            } else {
+                rec(&mut d, 54, &ints(&[90, 90]));
+            }
+            rec(&mut d, 60, &[]);
+            rec(&mut d, 64, &ints(&[0, 0, 0, 0]));
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, open) = stroked(false);
+        assert!(dark(&open, w, 50, 10), "the open figure's first edge inks");
+        assert!(!dark(&open, w, 50, 50), "no chord back to the start");
+        let (w, _, closed) = stroked(true);
+        assert!(
+            dark(&closed, w, 10, 50),
+            "after the close, LINETO starts at the figure start"
+        );
+        assert!(
+            !dark(&closed, w, 50, 50),
+            "not from the last point (90, 10)"
+        );
+    }
+
+    #[test]
+    fn a_polygon_inside_a_path_bracket_joins_the_path() {
+        // PR #167 review: EMR_POLYGON between BEGINPATH and ENDPATH is a
+        // closed figure of the path and paints nothing itself; only the
+        // path's FILLPATH inks it (a clip-only path never does).
+        let polygon_path = |fill: bool| {
+            let mut d = header(0, 0, 100, 100);
+            rec(&mut d, 39, &ints(&[1, 0, 0, 0]));
+            rec(&mut d, 37, &ints(&[1]));
+            rec(&mut d, 59, &[]);
+            rec(
+                &mut d,
+                86,
+                &pts16(&[(10, 10), (90, 10), (90, 90), (10, 90)]),
+            );
+            rec(&mut d, 60, &[]);
+            if fill {
+                rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+            }
+            rec(&mut d, 14, &ints(&[0, 0, 0]));
+            rasterize(&d).expect("raster")
+        };
+        let (w, _, unfilled) = polygon_path(false);
+        assert!(
+            !dark(&unfilled, w, 50, 50),
+            "a path polygon paints nothing on its own"
+        );
+        let (w, _, filled) = polygon_path(true);
+        assert!(
+            dark(&filled, w, 50, 50),
+            "FILLPATH fills the polygon figure"
+        );
+    }
+
+    #[test]
+    fn a_mapped_bezier_path_fills() {
+        // Device bounds 0..100; logical window 0..1000 mapped onto it.
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 17, &ints(&[8])); // MM_ANISOTROPIC
+        rec(&mut d, 9, &ints(&[1000, 1000])); // window ext
+        rec(&mut d, 11, &ints(&[100, 100])); // viewport ext
+        rec(&mut d, 39, &ints(&[1, 0, 0, 0])); // black solid brush #1
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 59, &[]);
+        rec(&mut d, 27, &ints(&[100, 500]));
+        rec(&mut d, 88, &pts16(&[(100, 100), (900, 100), (900, 500)]));
+        rec(&mut d, 88, &pts16(&[(900, 900), (100, 900), (100, 500)]));
+        rec(&mut d, 61, &[]);
+        rec(&mut d, 60, &[]);
+        rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+        rec(&mut d, 14, &ints(&[0, 0, 0]));
+        let (w, h, rgb) = rasterize(&d).expect("raster");
+        assert!(
+            dark(&rgb, w, w / 2, h / 2),
+            "the filled path inks its centre"
+        );
+        assert!(!dark(&rgb, w, 2, 2), "outside the path stays white");
+    }
+
+    #[test]
+    fn an_even_odd_path_keeps_its_hole() {
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 19, &ints(&[1])); // ALTERNATE
+        rec(&mut d, 39, &ints(&[1, 0, 0, 0]));
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 59, &[]);
+        square(&mut d, 10, 10, 90, 90);
+        square(&mut d, 40, 40, 60, 60);
+        rec(&mut d, 60, &[]);
+        rec(&mut d, 62, &ints(&[0, 0, 0, 0]));
+        rec(&mut d, 14, &ints(&[0, 0, 0]));
+        let (w, h, rgb) = rasterize(&d).expect("raster");
+        assert!(dark(&rgb, w, w / 5, h / 2), "the ring inks");
+        assert!(!dark(&rgb, w, w / 2, h / 2), "the counter stays open");
+    }
+    fn exact_pixel(rgb: &[u8], w: u32, x: usize, y: usize) -> [u8; 3] {
+        let offset = (y * w as usize + x) * 3;
+        rgb[offset..offset + 3].try_into().unwrap()
+    }
+
+    #[test]
+    fn extended_null_pen_does_not_stroke_and_deleted_handle_keeps_current_pen() {
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 95, &ints(&[1, 0, 0, 0, 0, 5, 3, 0, 0x00FF]));
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 27, &ints(&[10, 10]));
+        rec(&mut d, 54, &ints(&[90, 10]));
+        rec(&mut d, 95, &ints(&[2, 0, 0, 0, 0, 0, 3, 0, 0x00FF]));
+        rec(&mut d, 37, &ints(&[2]));
+        // EMR_POLYLINE16 starts from its own first point, not the current point.
+        rec(&mut d, 87, &pts16(&[(10, 20), (90, 20)]));
+        rec(&mut d, 40, &ints(&[2]));
+        rec(&mut d, 37, &ints(&[2]));
+        rec(&mut d, 27, &ints(&[10, 30]));
+        rec(&mut d, 54, &ints(&[90, 30]));
+        let (w, h, rgb) = rasterize(&d).unwrap();
+        assert_eq!((w, h), (100, 100));
+        for y in 0..100 {
+            for x in 0..100 {
+                let expected = if (y == 20 || y == 30) && (10..=90).contains(&x) {
+                    [255, 0, 0]
+                } else {
+                    WHITE
+                };
+                assert_eq!(exact_pixel(&rgb, w, x, y), expected, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn hollow_brush_bitblt_restores_white_over_a_colored_fill() {
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 39, &ints(&[1, 0, 0x030201, 0]));
+        rec(&mut d, 37, &ints(&[1]));
+        rec(&mut d, 76, &ints(&[0, 0, 0, 0, 10, 10, 80, 80]));
+        rec(&mut d, 39, &ints(&[2, 1, 0x090807, 0]));
+        rec(&mut d, 37, &ints(&[2]));
+        rec(&mut d, 76, &ints(&[0, 0, 0, 0, 30, 30, 40, 40]));
+        let (w, h, rgb) = rasterize(&d).unwrap();
+        assert_eq!((w, h), (100, 100));
+        for y in 0..100 {
+            for x in 0..100 {
+                let outer = (10..90).contains(&x) && (10..90).contains(&y);
+                let inner = (30..70).contains(&x) && (30..70).contains(&y);
+                let expected = if outer && !inner { [1, 2, 3] } else { WHITE };
+                assert_eq!(exact_pixel(&rgb, w, x, y), expected, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn short_records_empty_polylines_and_close_without_a_figure_are_ignored() {
+        let mut d = header(0, 0, 100, 100);
+        for typ in [9, 17, 19, 27, 54, 2, 37, 38, 95, 39, 40, 76, 3] {
+            rec(&mut d, typ, &[]);
+        }
+        rec(&mut d, 61, &[]);
+        rec(&mut d, 87, &pts16(&[]));
+        rec(&mut d, 59, &[]);
+        rec(&mut d, 61, &[]);
+        rec(&mut d, 27, &ints(&[10, 50]));
+        rec(&mut d, 61, &[]);
+        rec(&mut d, 54, &ints(&[90, 50]));
+        rec(&mut d, 60, &[]);
+        rec(&mut d, 64, &[]);
+        let (w, h, rgb) = rasterize(&d).unwrap();
+        assert_eq!((w, h), (100, 100));
+        for y in 0..100 {
+            for x in 0..100 {
+                let expected = if y == 50 && (10..=90).contains(&x) {
+                    [0, 0, 0]
+                } else {
+                    WHITE
+                };
+                assert_eq!(exact_pixel(&rgb, w, x, y), expected, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_emf_sizes_stop_replay_after_the_last_complete_stroke() {
+        let mut d = header(0, 0, 100, 100);
+        rec(&mut d, 27, &ints(&[10, 50]));
+        rec(&mut d, 54, &ints(&[90, 50]));
+        let expected = rasterize(&d).unwrap();
+        for size in [4_u32, u32::MAX] {
+            let mut broken = d.clone();
+            broken.extend_from_slice(&54u32.to_le_bytes());
+            broken.extend_from_slice(&size.to_le_bytes());
+            assert_eq!(rasterize(&broken).unwrap(), expected);
+        }
+        for extra in [vec![54], vec![54, 0, 0, 0]] {
+            let mut tail = d.clone();
+            tail.extend(extra);
+            assert_eq!(rasterize(&tail).unwrap(), expected);
+        }
+        assert_eq!(exact_pixel(&expected.2, expected.0, 50, 50), [0, 0, 0]);
+        assert_eq!(exact_pixel(&expected.2, expected.0, 50, 49), WHITE);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod wmf_object_tests {
+    //! English corpus b88ac900: the kennel logo's clipart is a placeable
+    //! WMF of META_POLYPOLYGON records selecting brushes by 0-based
+    //! object-table index. We skipped the records (a blank picture) and
+    //! read index n as slot n-1.
+    use super::*;
+
+    fn wmf(records: &[(u16, Vec<u16>)], nobj: u16) -> Vec<u8> {
+        let mut d = vec![0u8; 22];
+        d[0..4].copy_from_slice(&PLACEABLE_KEY);
+        for (i, v) in [0_i16, 0, 100, 100].iter().enumerate() {
+            d[6 + 2 * i..8 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
+        d[14..16].copy_from_slice(&1440u16.to_le_bytes());
+        let mut header = vec![0u8; 18];
+        header[0..2].copy_from_slice(&1u16.to_le_bytes());
+        header[2..4].copy_from_slice(&9u16.to_le_bytes());
+        header[10..12].copy_from_slice(&nobj.to_le_bytes());
+        d.extend_from_slice(&header);
+        for (func, params) in records.iter().chain([(0_u16, Vec::new())].iter()) {
+            d.extend_from_slice(&(3 + params.len() as u32).to_le_bytes());
+            d.extend_from_slice(&func.to_le_bytes());
+            for p in params {
+                d.extend_from_slice(&p.to_le_bytes());
+            }
+        }
+        d
+    }
+
+    fn brush(r: u8, g: u8, b: u8) -> (u16, Vec<u16>) {
+        (0x02FC, vec![0, u16::from_le_bytes([r, g]), u16::from(b), 0])
+    }
+
+    #[test]
+    fn a_polypolygon_fills_with_the_brush_selected_by_zero_based_index() {
+        let square = vec![1, 4, 10, 10, 90, 10, 90, 90, 10, 90];
+        let d = wmf(
+            &[
+                brush(255, 0, 0),
+                (0x012D, vec![0]),
+                // PS_NULL pen into slot 1.
+                (0x02FA, vec![5, 0, 0, 0, 0]),
+                (0x012D, vec![1]),
+                brush(0, 0, 255),
+                (0x012D, vec![2]),
+                (0x01F0, vec![0]),
+                (0x0106, vec![2]),
+                (0x0538, square),
+            ],
+            3,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(
+            at(50, 50),
+            [0, 0, 255],
+            "the square fills with the blue brush"
+        );
+        assert_eq!(at(5, 5), [255, 255, 255], "outside stays white");
+    }
+    /// `META_CREATEFONTINDIRECT` words for an `lfHeight`, weight, italic
+    /// flag and face.
+    fn font(height: i16, weight: u16, italic: bool, face: &str) -> (u16, Vec<u16>) {
+        let mut b = vec![0_u8; 18];
+        b[0..2].copy_from_slice(&height.to_le_bytes());
+        b[8..10].copy_from_slice(&weight.to_le_bytes());
+        b[10] = u8::from(italic);
+        b.extend_from_slice(face.as_bytes());
+        b.resize(18 + 32, 0);
+        (
+            0x02FB,
+            b.chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        )
+    }
+
+    /// `META_EXTTEXTOUT` at (x, y), no options.
+    fn ext_text(x: i16, y: i16, text: &str) -> (u16, Vec<u16>) {
+        let mut b = Vec::new();
+        for v in [y, x, text.len() as i16, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(text.as_bytes());
+        if b.len() % 2 == 1 {
+            b.push(0);
+        }
+        (
+            0x0A32,
+            b.chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_rectangle_fills_with_the_brush_and_is_outlined_with_the_pen() {
+        // 5a6c's reprint diagram: each box a META_RECTANGLE under a white
+        // brush and a grey pen; we skipped the record (no boxes at all).
+        let d = wmf(
+            &[
+                brush(0, 255, 0),
+                (0x012D, vec![0]),
+                // A 4-unit grey pen.
+                (0x02FA, vec![0, 4, 0, 0x8080, 0x0280]),
+                (0x012D, vec![1]),
+                // Bottom, right, top, left.
+                (0x041B, vec![80, 80, 20, 20]),
+            ],
+            2,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(at(50, 50), [0, 255, 0], "the brush fills the box");
+        assert_eq!(at(20, 50), [128, 128, 128], "the pen outlines it");
+        assert_eq!(at(10, 10), [255, 255, 255], "outside stays white");
+    }
+
+    #[test]
+    fn a_null_brush_rectangle_only_outlines() {
+        let d = wmf(
+            &[
+                brush(255, 0, 0),
+                (0x012D, vec![0]),
+                (0x041B, vec![90, 90, 10, 10]),
+                // BS_NULL into slot 1, then a second box inside the first.
+                (0x02FC, vec![1, 0, 0, 0]),
+                (0x012D, vec![1]),
+                (0x041B, vec![70, 70, 30, 30]),
+            ],
+            2,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(
+            at(50, 50),
+            [255, 0, 0],
+            "the hollow box keeps the red under it"
+        );
+        assert_eq!(at(30, 50), [0, 0, 0], "and draws its black outline");
+    }
+
+    #[test]
+    fn text_records_come_out_as_text_in_the_selected_font() {
+        let d = wmf(
+            &[
+                (0x020B, vec![0, 0]),
+                (0x020C, vec![200, 400]),
+                font(-25, 400, false, "Times New Roman"),
+                (0x012D, vec![0]),
+                (0x0209, vec![0x00FF, 0]),
+                ext_text(40, 20, "Act as first "),
+                (0x001E, vec![]),
+                font(-25, 700, true, "Arial"),
+                (0x012D, vec![1]),
+                ext_text(200, 100, "Reprints"),
+                (0x0127, vec![0xFFFF]),
+                ext_text(40, 150, "restored"),
+                ext_text(40, 180, "  "),
+            ],
+            2,
+        );
+        let (_, _, _, texts) = render(&d).expect("wmf");
+        assert_eq!(texts.len(), 3, "blank strings write nothing: {texts:?}");
+        let first = &texts[0];
+        assert_eq!(first.text, "Act as first ");
+        assert_eq!((first.x, first.y, first.size), (0.1, 0.1, 0.125));
+        assert_eq!(first.family, "Times New Roman");
+        assert_eq!(first.color, [255, 0, 0]);
+        assert!(!first.bold && !first.italic && !first.cell);
+        assert_eq!(first.aspect, 2.0);
+        assert!(texts[1].bold && texts[1].italic && texts[1].family == "Arial");
+        assert_eq!(
+            texts[2].family, "Times New Roman",
+            "RESTOREDC brings the font back"
+        );
+    }
+    fn sample_rgb(rgb: &[u8], w: u32, x: usize, y: usize) -> [u8; 3] {
+        let offset = (y * w as usize + x) * 3;
+        rgb[offset..offset + 3].try_into().unwrap()
+    }
+
+    #[test]
+    fn exhausted_and_invalid_object_handles_cannot_replace_the_selected_brush() {
+        let bytes = wmf(
+            &[
+                brush(220, 10, 30),
+                (0x012D, vec![0]),
+                brush(0, 0, 255),
+                (0x02FA, vec![0, 3, 0, 0, 0]),
+                font(10, 700, true, "Arial"),
+                (0x00F7, vec![]),
+                (0x012D, vec![99]),
+                (0x01F0, vec![99]),
+                (0x041B, vec![80, 80, 20, 20]),
+            ],
+            1,
+        );
+        let (w, h, rgb, text) = render(&bytes).unwrap();
+        assert_eq!((w, h), (100, 100));
+        assert!(text.is_empty());
+        assert_eq!(sample_rgb(&rgb, w, 50, 50), [220, 10, 30]);
+        assert_eq!(sample_rgb(&rgb, w, 20, 50), [0, 0, 0]);
+        assert_eq!(sample_rgb(&rgb, w, 10, 10), WHITE);
+    }
+
+    #[test]
+    fn positive_restore_dc_restores_the_selected_font_color_and_alignment() {
+        for restore in [0, 1] {
+            let bytes = wmf(
+                &[
+                    font(20, 700, true, "Arial"),
+                    (0x012D, vec![0]),
+                    (0x0209, vec![0x0201, 3]),
+                    (0x012E, vec![26]),
+                    (0x001E, vec![]),
+                    (0x0209, vec![0x0504, 6]),
+                    (0x012E, vec![0]),
+                    (0x001E, vec![]),
+                    (0x0209, vec![0x0807, 9]),
+                    (0x0127, vec![restore]),
+                    (0x0127, vec![99]),
+                    ext_text(40, 20, "restored"),
+                ],
+                1,
+            );
+            let (_, _, rgb, text) = render(&bytes).unwrap();
+            assert!(rgb.iter().all(|&channel| channel == 255));
+            assert_eq!(
+                text,
+                vec![MetaText {
+                    text: "restored".into(),
+                    x: 0.4,
+                    y: 0.2,
+                    size: 0.2,
+                    cell: true,
+                    family: "Arial".into(),
+                    bold: true,
+                    italic: true,
+                    color: [1, 2, 3],
+                    align: 26,
+                    aspect: 1.0,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn textout_and_clipped_exttext_keep_default_font_geometry_and_ansi_text() {
+        let textout = (
+            0x0521,
+            vec![
+                3,
+                u16::from_le_bytes([b'A', 0x80]),
+                u16::from_le_bytes([b'B', 0]),
+                20,
+                40,
+            ],
+        );
+        let clipped = (
+            0x0A32,
+            vec![
+                20,
+                40,
+                3,
+                6,
+                1,
+                2,
+                3,
+                4,
+                u16::from_le_bytes(*b"AB"),
+                u16::from_le_bytes([b'C', 0]),
+            ],
+        );
+        let mut truncated = ext_text(40, 20, "missing");
+        truncated.1[2] = 500;
+        let bytes = wmf(&[(0x020C, vec![0, 0]), textout, clipped, truncated], 1);
+        let (_, _, rgb, text) = render(&bytes).unwrap();
+        assert!(rgb.iter().all(|&channel| channel == 255));
+        assert_eq!(text.len(), 2);
+        for (text, expected) in text.iter().zip(["A€B", "ABC"]) {
+            assert_eq!(
+                text,
+                &MetaText {
+                    text: expected.into(),
+                    x: 0.4,
+                    y: 0.2,
+                    size: 0.0,
+                    cell: false,
+                    family: String::new(),
+                    bold: false,
+                    italic: false,
+                    color: [0, 0, 0],
+                    align: 0,
+                    aspect: 1.0,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn hollow_shapes_and_null_polylines_leave_the_raster_untouched() {
+        let bytes = wmf(
+            &[
+                (0x02FC, vec![1, 0, 0, 0]),
+                (0x012D, vec![0]),
+                (0x02FA, vec![5, 0, 0, 0, 0]),
+                (0x012D, vec![1]),
+                (0x061C, vec![4, 4, 80, 80, 20, 20]),
+                (0x0324, vec![4, 20, 20, 80, 20, 80, 80, 20, 80]),
+                (0x0538, vec![1, 4, 20, 20, 80, 20, 80, 80, 20, 80]),
+                (0x0325, vec![2, 20, 20, 80, 80]),
+                (0x01F0, vec![1]),
+                (0x02FA, vec![0, 1, 0, 0x00FF, 0]),
+                (0x012D, vec![1]),
+                (0x0325, vec![3, 10, 50, 50, 50, 90, 50]),
+            ],
+            2,
+        );
+        let (w, h, rgb, text) = render(&bytes).unwrap();
+        assert!(text.is_empty());
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let expected = if y == 50 && (10..=90).contains(&x) {
+                    [255, 0, 0]
+                } else {
+                    WHITE
+                };
+                assert_eq!(sample_rgb(&rgb, w, x, y), expected, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_record_sizes_stop_replay_without_erasing_prior_paint() {
+        let bytes = wmf(
+            &[
+                brush(3, 4, 5),
+                (0x012D, vec![0]),
+                (0x041B, vec![80, 80, 20, 20]),
+            ],
+            1,
+        );
+        let expected = render(&bytes).unwrap();
+        for size in [2_u32, u32::MAX] {
+            let mut bad = bytes[..bytes.len() - 6].to_vec();
+            bad.extend_from_slice(&size.to_le_bytes());
+            bad.extend_from_slice(&0x0324u16.to_le_bytes());
+            assert_eq!(render(&bad).unwrap(), expected);
+        }
+        assert_eq!(render(&bytes[..bytes.len() - 6]).unwrap(), expected);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod coverage_boundary_tests {
+    use super::*;
+
+    fn pixel(c: &Canvas, x: usize, y: usize) -> &[u8] {
+        &c.px[(y * c.w + x) * 3..(y * c.w + x) * 3 + 3]
+    }
+
+    #[test]
+    fn clipping_never_changes_pixels_outside_the_intersection() {
+        let mut c = Canvas::new(4, 4);
+        for (x, y) in [(-1, 1), (1, -1), (4, 1), (1, 4)] {
+            c.put(x, y, [0, 0, 0]);
+        }
+        assert!(c.px.iter().all(|v| *v == 255));
+        c.fill_rect(-2, -2, 4, 4, [3, 4, 5]);
+        for y in 0..4 {
+            for x in 0..4 {
+                let expected = if x < 2 && y < 2 { [3, 4, 5] } else { WHITE };
+                assert_eq!(pixel(&c, x, y), expected);
+            }
+        }
+        let c = Canvas::new(0, 0);
+        assert_eq!(c.finish(), (1, 1, vec![255; 3]));
+    }
+
+    #[test]
+    fn winding_rule_fills_nested_same_direction_figures_and_even_odd_keeps_a_hole() {
+        let outer = vec![(1, 1), (10, 1), (10, 10), (1, 10)];
+        let inner = vec![(3, 3), (8, 3), (8, 8), (3, 8)];
+        for (winding, expected) in [(true, [0, 0, 0]), (false, WHITE)] {
+            let mut c = Canvas::new(12, 12);
+            c.fill_path(&[outer.clone(), inner.clone()], [0, 0, 0], winding);
+            assert_eq!(pixel(&c, 5, 5), expected);
+            assert_eq!(pixel(&c, 2, 2), [0, 0, 0]);
+            assert_eq!(pixel(&c, 0, 0), WHITE);
+        }
+        let mut c = Canvas::new(12, 12);
+        let mut reversed = inner;
+        reversed.reverse();
+        c.fill_path(&[outer, reversed], [0, 0, 0], true);
+        assert_eq!(pixel(&c, 5, 5), WHITE);
+        c.fill_path(&[vec![], vec![(1, 1)]], [0, 0, 0], true);
+        assert_eq!(pixel(&c, 0, 0), WHITE);
+    }
+
+    #[test]
+    fn map_handles_zero_and_reflected_extents() {
+        let mut map = Map {
+            org_x: 10.0,
+            org_y: 20.0,
+            ext_x: 0.0,
+            ext_y: 0.0,
+            w: 40.0,
+            h: 80.0,
+        };
+        assert_eq!(map.map(13, 24), (3, 4));
+        assert_eq!(map.pen_px(100), 1);
+        map.ext_x = -20.0;
+        map.ext_y = -40.0;
+        assert_eq!(map.map(13, 24), (-6, -8));
+        assert_eq!(map.pen_px(2), 4);
+        assert_eq!(map.pen_px(-2), 1);
+        for (input, expected) in [
+            ((0, 0), (1, 1)),
+            ((100, 50), (100, 50)),
+            ((-50, -100), (50, 100)),
+            ((i32::MIN, 1), (MAX_SIDE, 1)),
+            ((1, i32::MIN), (1, MAX_SIDE)),
+        ] {
+            assert_eq!(sized_canvas(input.0, input.1), expected);
+        }
+    }
+
+    #[test]
+    fn device_transform_only_scales_anisotropic_and_isotropic_modes() {
+        let mut xf = Xform {
+            mode: 1,
+            win_org: (10.0, 20.0),
+            win_ext: (2.0, 4.0),
+            vp_org: (3.0, 5.0),
+            vp_ext: (6.0, 8.0),
+        };
+        for mode in [1, 7, 8] {
+            xf.mode = mode;
+            assert_eq!(xf.dev(12, 24), if mode == 1 { (5, 9) } else { (9, 13) });
+        }
+        xf.win_ext.0 = 0.0;
+        assert_eq!(xf.dev(12, 24), (5, 9));
+        xf.win_ext = (2.0, 0.0);
+        assert_eq!(xf.dev(12, 24), (5, 9));
+    }
+
+    #[test]
+    fn truncated_integer_reads_and_point_records_are_bounded_by_the_record() {
+        assert_eq!(read_u16(&[0x34, 0x12], 0), Some(0x1234));
+        assert_eq!(read_i16(&[0xff, 0xff], 0), Some(-1));
+        assert_eq!(read_u32(&[1, 2, 3, 4], 0), Some(0x04030201));
+        assert_eq!(read_i32(&[0xff; 4], 0), Some(-1));
+        assert_eq!(read_u16(&[0], 0), None);
+        assert_eq!(read_i16(&[], 0), None);
+        assert_eq!(read_u32(&[0; 3], 0), None);
+        assert_eq!(read_i32(&[0; 4], 1), None);
+        assert_eq!(read_emf_points(&[], 0, 28, false), None);
+        for short in [false, true] {
+            let mut d = vec![0; 28];
+            d[24..28].copy_from_slice(&2u32.to_le_bytes());
+            if short {
+                d.extend_from_slice(&(-2i16).to_le_bytes());
+                d.extend_from_slice(&3i16.to_le_bytes());
+            } else {
+                d.extend_from_slice(&(-2i32).to_le_bytes());
+                d.extend_from_slice(&3i32.to_le_bytes());
+            }
+            assert_eq!(read_emf_points(&d, 0, d.len(), short), Some(vec![(-2, 3)]));
+            assert_eq!(read_emf_points(&d[..28], 0, d.len(), short), None);
+        }
+    }
+
+    #[test]
+    fn font_records_preserve_cell_height_and_limit_unterminated_face_names() {
+        assert_eq!(WmfFont::parse(&[0; 17], 0), None);
+        let mut d = vec![0; 18];
+        d[..2].copy_from_slice(&(-12i16).to_le_bytes());
+        d[8..10].copy_from_slice(&700i16.to_le_bytes());
+        d[10] = 1;
+        d.extend_from_slice(b"Arial\0ignored");
+        let font = WmfFont::parse(&d, 0).unwrap();
+        assert_eq!(
+            (font.height, font.weight, font.italic, font.face.as_str()),
+            (-12, 700, true, "Arial")
+        );
+        d.truncate(18);
+        d.extend_from_slice(&[b'X'; 40]);
+        assert_eq!(WmfFont::parse(&d, 0).unwrap().face, "X".repeat(32));
+        assert_eq!(ansi_text(&[b'A', 0x80, 0x91, 0x92, 0x97, 0xff]), "A€‘’—ÿ");
+        assert_eq!(colorref(0xff123456), [0x56, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn stock_gdi_objects_change_only_the_selected_tool() {
+        for (id, expected_brush, expected_pen) in [
+            (0, WHITE, [4, 5, 6]),
+            (4, [0; 3], [4, 5, 6]),
+            (5, WHITE, [4, 5, 6]),
+            (6, [1, 2, 3], WHITE),
+            (7, [1, 2, 3], [0; 3]),
+            (99, [1, 2, 3], [4, 5, 6]),
+        ] {
+            let (mut brush, mut pen) = ([1, 2, 3], [4, 5, 6]);
+            apply_stock(0x80000000 | id, &mut brush, &mut pen);
+            assert_eq!((brush, pen), (expected_brush, expected_pen));
+        }
+    }
+
+    #[test]
+    fn format_detection_refuses_truncated_headers_without_guessing() {
+        assert_eq!(render(&[]), None);
+        let mut wmf = vec![0; 22];
+        wmf[..4].copy_from_slice(&PLACEABLE_KEY);
+        assert!(looks_like_wmf(&wmf));
+        assert_eq!(render(&wmf), None);
+        let mut emf = vec![0; 44];
+        emf[40..44].copy_from_slice(EMF_SIGNATURE);
+        assert!(looks_like_emf(&emf));
+        assert_eq!(render(&emf), None);
+    }
+    #[test]
+    fn fully_outside_lines_and_degenerate_polygons_never_paint() {
+        let mut canvas = Canvas::new(8, 8);
+        // Parallel rejection plus both endpoint-order clipping rejections.
+        for (a, b) in [
+            ((-10, 0), (-10, 7)),
+            ((-10, -10), (-8, -8)),
+            ((20, 20), (18, 18)),
+        ] {
+            canvas.stroke_line(a.0, a.1, b.0, b.1, [0, 0, 0], 1);
+        }
+        for polygon in [vec![], vec![(2, 2)], vec![(2, 2), (6, 6)]] {
+            canvas.fill_polygon(&polygon, [0, 0, 0]);
+        }
+        assert_eq!(canvas.finish(), (8, 8, vec![255; 8 * 8 * 3]));
+    }
+
+    #[test]
+    fn text_with_zero_logical_extents_is_omitted_without_infinite_geometry() {
+        let state = WmfState {
+            brush: None,
+            pen: None,
+            font: None,
+            text_color: [1, 2, 3],
+            text_align: 24,
+        };
+        for (x, y) in [(0.0, 100.0), (100.0, 0.0)] {
+            let map = Map {
+                org_x: 0.0,
+                org_y: 0.0,
+                ext_x: x,
+                ext_y: y,
+                w: 100.0,
+                h: 100.0,
+            };
+            assert_eq!(wmf_text(&state, &map, 10, 10, b"visible"), None);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod residual_current_point_contract_tests {
+    use super::*;
+
+    fn header() -> Vec<u8> {
+        let mut d = vec![0; 108];
+        d[0..4].copy_from_slice(&1_u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108_u32.to_le_bytes());
+        d[16..20].copy_from_slice(&100_i32.to_le_bytes());
+        d[20..24].copy_from_slice(&100_i32.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn record(d: &mut Vec<u8>, typ: u32, body: &[u8]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        d.extend_from_slice(body);
+    }
+
+    fn ints(values: &[i32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn points(values: &[(i16, i16)], short: bool) -> Vec<u8> {
+        let mut data = ints(&[0, 0, 0, 0, values.len() as i32]);
+        for &(x, y) in values {
+            if short {
+                data.extend_from_slice(&x.to_le_bytes());
+                data.extend_from_slice(&y.to_le_bytes());
+            } else {
+                data.extend_from_slice(&i32::from(x).to_le_bytes());
+                data.extend_from_slice(&i32::from(y).to_le_bytes());
+            }
+        }
+        data
+    }
+
+    fn pixel(rgb: &[u8], w: u32, x: u32, y: u32) -> &[u8] {
+        let i = ((y * w + x) * 3) as usize;
+        &rgb[i..i + 3]
+    }
+
+    #[test]
+    fn clipped_corner_misses_paint_no_pixels_in_either_endpoint_order() {
+        let mut canvas = Canvas::new(8, 8);
+        for (a, b) in [
+            ((-10, 0), (0, -10)),
+            ((10, -10), (20, 0)),
+            ((-10, 10), (0, 20)),
+        ] {
+            for (start, end) in [(a, b), (b, a)] {
+                canvas.stroke_line(start.0, start.1, end.0, end.1, [12, 34, 56], 1);
+                assert!(canvas.px.iter().all(|&v| v == 255));
+            }
+        }
+        canvas.stroke_line(-10, -10, 20, 20, [12, 34, 56], 1);
+        for y in 0..8 {
+            for x in 0..8 {
+                assert_eq!(
+                    pixel(&canvas.px, 8, x, y),
+                    if x == y {
+                        &[12, 34, 56][..]
+                    } else {
+                        &WHITE[..]
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn path_line_and_polyline_to_start_at_the_default_current_point() {
+        // A device context starts at (0,0); BEGINPATH does not require MOVETO.
+        for typ in [54, 6, 89] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            let body = if typ == 54 {
+                ints(&[20, 0])
+            } else {
+                points(&[(10, 0), (20, 0)], typ == 89)
+            };
+            record(&mut source, typ, &body);
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            for y in 0..h {
+                for x in 0..w {
+                    assert_eq!(
+                        pixel(&rgb, w, x, y),
+                        if y == 0 && x <= 20 {
+                            &[0, 0, 0][..]
+                        } else {
+                            &WHITE[..]
+                        },
+                        "record {typ}, pixel {x},{y}"
+                    );
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+
+    #[test]
+    fn path_bezier_to_retains_the_current_origin_without_an_initial_move_record() {
+        for typ in [5, 88] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            record(
+                &mut source,
+                typ,
+                &points(&[(0, 20), (20, 20), (20, 0)], typ == 88),
+            );
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            // The independent cubic midpoint is (10,15); the endpoints
+            // remain at (0,0) and (20,0), with no fill below the open curve.
+            for (x, y) in [(0, 0), (10, 15), (20, 0)] {
+                assert_eq!(pixel(&rgb, w, x, y), &[0, 0, 0]);
+            }
+            for (x, y) in [(10, 0), (0, 15), (20, 15), (10, 16), (21, 0)] {
+                assert_eq!(pixel(&rgb, w, x, y), &WHITE);
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    if x > 20 || y > 15 {
+                        assert_eq!(pixel(&rgb, w, x, y), &WHITE);
+                    }
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+
+    #[test]
+    fn closing_a_figure_restarts_polyline_to_at_the_closed_figures_origin() {
+        for typ in [6, 89] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            record(&mut source, 27, &ints(&[10, 10]));
+            record(
+                &mut source,
+                89,
+                &points(&[(20, 10), (20, 20), (10, 20)], true),
+            );
+            record(&mut source, 61, &[]);
+            record(&mut source, typ, &points(&[(30, 30)], typ == 89));
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            for y in 0..h {
+                for x in 0..w {
+                    let edge = ((x == 10 || x == 20) && (10..=20).contains(&y))
+                        || ((y == 10 || y == 20) && (10..=20).contains(&x));
+                    let diagonal = x == y && (10..=30).contains(&x);
+                    assert_eq!(
+                        pixel(&rgb, w, x, y),
+                        if edge || diagonal {
+                            &[0, 0, 0][..]
+                        } else {
+                            &WHITE[..]
+                        },
+                        "record {typ}, pixel {x},{y}"
+                    );
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+}

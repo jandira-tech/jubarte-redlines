@@ -1,0 +1,295 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of supplied target /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null. Current repository inventory 2900 tracked/unignored files; source review in progress.",
+    "runtimeStatus": "No application execution or network access.",
+    "validationMode": "static source review"
+  },
+  "findings": [
+    {
+      "ruleId": "xml-policy.relationship-part-extension-bypass",
+      "title": "Rendering a renamed XML story bypasses depth admission and can abort the host",
+      "summary": "A document author can point a header or footer relationship at a non-.xml internal part containing deeply nested XML. Admission skips XML policy for that filename, but rendering recursively parses the part and can exhaust the process stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-supplied document bytes cross a public parser boundary and can terminate the rendering host with a small input; no remote service exposure is assumed. Process CPU/memory limits do not prevent a per-process stack-overflow abort.",
+        "changeConditions": "Isolated disposable conversion processes reduce the application-level impact; a shared conversion service would increase impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source trace establishes the filename-only gate, main-only fallback, relationship-selected bytes and unbounded recursive parser. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "XML admission bypass / uncontrolled recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 534,
+          "endLine": 543,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 558,
+          "endLine": 569,
+          "role": "expected_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20768,
+          "endLine": 20795,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21301,
+          "endLine": 21305,
+          "role": "propagation"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 662,
+          "role": "outcome"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-input",
+          "label": "Caller-controlled package reaches layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "`docx_to_pdf` and PNG/report paths share `with_layout`; the package is admitted and opened before header processing."
+        },
+        {
+          "id": "extension-check",
+          "label": "Admission chooses policy by suffix",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 550,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())",
+          "explanation": "The inflated part receives XML policy checks only when its name ends in .xml or .rels. An internal header.bin is counted in byte budgets but skipped by XML policy."
+        },
+        {
+          "id": "main-only",
+          "label": "Only the main document gets a second check",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 570,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;\n    }",
+          "explanation": "The explicit fallback protects a renamed main part; it does not validate other relationship-selected XML consumers."
+        },
+        {
+          "id": "header-reference",
+          "label": "Header reference selected from the document",
+          "path": "src/convert/mod.rs",
+          "startLine": 20726,
+          "endLine": 20729,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    let rid = inherited_ref_id(dom, sect, local, want);\n    let page = apply_sect_pr(dom, sect, &sheet.defaults.page);\n    let text_w = page.width - page.margin_l - page.margin_r;\n    let background = local == \"headerReference\" && page_background(dom, sect);",
+          "explanation": "An attacker-controlled section reference selects a relationship ID passed to `load_chrome_part`."
+        },
+        {
+          "id": "header-load",
+          "label": "Arbitrary internal target read as XML",
+          "path": "src/convert/mod.rs",
+          "startLine": 20768,
+          "endLine": 20781,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let Some(path) = rel_target_path(pkg, main, rid) else {\n        return empty_chrome();\n    };\n    let Some(bytes) = pkg.part_bytes(&path) else {\n        return empty_chrome();\n    };\n    let mut xml = String::from_utf8_lossy(bytes).into_owned();\n    // The page background's anchor paragraph: af0035cc's one-paragraph\n    // header (Normal, after=10 at 1.15) runs two lines deep in Word and\n    // pushes the body 14.8pt below its 72pt margin.\n    if background && let Some(end) = xml.rfind(\"</w:hdr>\") {\n        xml.insert_str(end, \"<w:p/>\");\n    }\n    chrome_part_xml(pkg, &path, &xml, local, sheet, text_w)",
+          "explanation": "The selected target bytes are decoded as UTF-8 and forwarded to `chrome_part_xml` without a policy check."
+        },
+        {
+          "id": "header-parse",
+          "label": "Header/footer raw parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 20786,
+          "endLine": 20798,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn chrome_part_xml(\n    pkg: &PartFs,\n    path: &str,\n    xml: &str,\n    local: &str,\n    sheet: &StyleSheet,\n    text_w: f32,\n) -> ChromePart {\n    let mut part_dom = Dom::new();\n    let doc = part_dom.parse_xdocument(xml);\n    let Some(root) = part_dom.root(doc) else {\n        return empty_chrome();\n    };",
+          "explanation": "`chrome_part_xml` directly invokes the recursive infallible DOM parser on bytes skipped by the admission XML checks."
+        },
+        {
+          "id": "relationship-target",
+          "label": "Relationship controls target path",
+          "path": "src/convert/mod.rs",
+          "startLine": 21301,
+          "endLine": 21305,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {\n    let rels = pkg.read_rels_for(source)?;\n    let rel = rels.items.iter().find(|item| item.id == rid)?;\n    Some(pkg.resolve_rel_target(source, &rel.target))\n}",
+          "explanation": "The document relationship ID selects the package target without a filename-extension or content-type restriction."
+        },
+        {
+          "id": "recursive-parse",
+          "label": "DOM nesting consumes call stack",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "outcome",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Each nested element recurses into `parse_element`; this path has no depth budget, so sufficiently deep XML exhausts the host stack."
+        }
+      ],
+      "rootCause": {
+        "summary": "The policy gate classifies XML by archive filename, then checks only a renamed main document as a special case. Rendering instead selects header/footer parts by relationships and interprets their bytes as XML regardless of name. The downstream raw DOM parser relies on prior admission and recurses once per element, leaving renamed story parts outside the depth invariant.",
+        "evidenceRefs": [
+          "render-input",
+          "extension-check",
+          "header-reference",
+          "relationship-target",
+          "header-load",
+          "header-parse",
+          "recursive-parse",
+          "main-only"
+        ]
+      },
+      "remediation": "Enforce the active XML policy before parsing every XML relationship target irrespective of extension, or enumerate typed XML parts during admission. Make the raw DOM parser iterative or depth-bounded as defense in depth.",
+      "validation": {
+        "counterEvidence": [
+          "Normal .xml/.rels parts receive XML checks, and renamed main documents are explicitly rechecked.",
+          "Raw parse_xdocument is documented as unchecked; the defect is its use behind a supposedly admitted package boundary, not the existence of that API.",
+          "External relationships are not needed; this exploit uses internal package bytes."
+        ],
+        "evidenceRefs": [
+          "extension-check",
+          "main-only",
+          "header-load",
+          "header-parse",
+          "recursive-parse"
+        ],
+        "limitations": [
+          "No application code or malicious input was executed; exact crash depth depends on platform and stack size."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "Confirmed that a valid minimal main document and its shallow .rels can select a header.bin payload; default archive and byte budgets still allow many thousands of short nested tags. Strict-to-transitional conversion preserves non-XML parts (src/strict_translation.rs:809-831), and PartFs::open bounds bytes rather than applying XML depth (src/opc/mod.rs:282-350). The raw header parser therefore receives the unbounded nesting."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> with_layout -> admit -> suffix-based XML check skips header.bin -> internal relationship resolution -> chrome_part_xml -> recursive parse_element -> stack exhaustion",
+          "evidenceRefs": [
+            "render-input",
+            "extension-check",
+            "relationship-target",
+            "header-load",
+            "header-parse",
+            "recursive-parse"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Host-process availability; no confidentiality, arbitrary file write or code-execution claim."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Default parser path accepts the internally linked renamed payload; deep nesting is directly attacker-controlled."
+        },
+        "reachability": {
+          "summary": "A document author needs only to have the consumer render the supplied package; no operator configuration change, filesystem access or network access is needed.",
+          "attacker": "supplier of an untrusted DOCX",
+          "entrypoint": "convert::docx_to_pdf / shared with_layout pipeline",
+          "outcome": "rendering process abort or equivalent stack exhaustion"
+        },
+        "summary": "Supply a DOCX with an ordinary main part, a section headerReference, an internal header relationship targeting header.bin, and a deeply nested well-formed XML payload at that target; render via the public PDF/PNG APIs or their wrappers."
+      },
+      "remediationTests": [
+        "An internal header/footer target named .bin with nesting above max_xml_depth must return INVALID_XML before DOM construction.",
+        "Repeat with custom part names and raised/lowered InputLimits; ordinary shallow parts must remain supported."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-xml-extension-bypass",
+        "originalCandidates": [
+          {
+            "source": "baseline subagent",
+            "message": "Confirmed candidate: admission scans XML policy only when archive entry lower.ends_with('.xml'|'.rels') (src/admission.rs:534-545), special-cases only main_part missing extension (558-569). Renderer loads arbitrary header/footer relationship target without extension constraint (src/convert/mod.rs:20762-20779), passes directly to unbounded recursive Dom::parse_xdocument at 20794-20795; parse_element recursively invokes itself at src/xmllinq/parse.rs:660-662. An attacker can target word/header.bin and put deeply nested well-formed XML there, bypass max_xml_depth=256 and crash converter host via stack exhaustion. Investigating all entrypoint controls before final."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "relationship-xml-admission",
+        "label": "Relationship-selected XML admission",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Uncontrolled recursion",
+        "notes": "Parent validated header/footer route; comparison/style/note/chart sibling mapping remains under investigation.",
+        "candidateId": "discovery-0014-xml-extension-bypass"
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "deferred-8a045ecef07e2678",
+        "reason": "Repository-wide source audit remains in progress; baseline, architecture and focused document-input workers active.",
+        "paths": [
+          "."
+        ]
+      },
+      {
+        "id": "discovery-0014-doc-piece-amplification",
+        "candidateId": "discovery-0014-doc-piece-amplification",
+        "reason": "Focused investigator candidate awaiting parent validation; investigator is finishing counterevidence.",
+        "candidate": {
+          "source": "document_inputs subagent",
+          "message": "Distinct source-backed candidate: legacy DOC piece-table amplification. legacy_doc::read at180-197 calls pieces then main_text with attacker FIB ccp_text, no InputLimits. main_text1154-1183 only validates increasing contiguous CP coverage, then1191-1222 loops each CP and pushes StoryChar; repeated pieces may point to same WordDocument byte range (fc unrestricted except per-byte get). A modest Word stream plus many contiguous CP pieces that each reuse its same 64KiB range can claim ~2^32 main chars and allocate tens of GiB from a small DOC. No total decoded-character cap. CompoundFile chain caps are input-sized but do not bound this logical expansion. CLI convert src/bin/jubarte.rs3129-3131 routes OLE directly to doc_to_docx. Continuing counterevidence/callers and sibling extension paths."
+        }
+      },
+      {
+        "id": "discovery-0014-relationship-dedup-quadratic",
+        "candidateId": "discovery-0014-relationship-dedup-quadratic",
+        "reason": "Focused investigator candidate awaiting parent validation and likelihood assessment.",
+        "candidate": {
+          "source": "document_inputs subagent",
+          "message": "Second distinct candidate: drop_repeated_relationships src/opc/mod.rs99-125 tracks seen in HashMap, but for each duplicate line117 `if !repaired.contains(&item.id)` scans every previously repaired distinct ID; attacker .rels with N distinct IDs each repeated twice triggers Θ(N²) strings comparisons. PartFs::open_within lines536-557 runs for package/part rels; admission only caps XML bytes/tag width/depth, no relationship count, and duplicate-RID inputs intentionally repaired. Can fit hundreds of thousands of short 2x records in default64MiB part /256MiB total and tiny compressed file. Continuing concrete caller proof and counterevidence."
+        }
+      },
+      {
+        "id": "discovery-0014-table-grid-allocation",
+        "candidateId": "discovery-0014-table-grid-allocation",
+        "reason": "Baseline candidate awaiting parent validation of numeric metadata and allocation sites.",
+        "candidate": {
+          "source": "baseline subagent",
+          "message": "Second confirmed candidate: unbounded table span allocation in render. src/convert/mod.rs cell_span:14211-14216 parses attacker w:gridSpan/@w:val as usize, only max(1), row_grid_skip:14340-14345 likewise parses gridBefore/gridAfter. table_block occupancy sums colspan at 13601-13603 then vec![each; occupancy]/resize at 13608-13615; resolve_table_merges additionally open.resize(col+span,None) at 14637-14639. A tiny DOCX single cell gridSpan=4294967295 requests ~16 GiB column vector (or usize::MAX gives capacity overflow panic); XML/ZIP budgets don't limit numeric metadata. Traced with_layout admission at 775-780; no schema/span cap. Also checking Chicago numbering start amplification (chicago_label at 6015-6018 repeats n/4; w:start parsed u32)."
+        }
+      },
+      {
+        "candidateId": "discovery-0014-drawing-dependency-cycle",
+        "reason": "Baseline candidate awaiting parent validation and focused sibling graph-control review.",
+        "candidate": {
+          "source": "baseline subagent",
+          "message": "Third confirmed high-confidence candidate in Markdown drawing payloads: Drawing decode src/markdown/from_docx/drawing.rs:1397-1408 base64-decodes directly via serde_json::from_slice, no graph validation. write.rs:4190-4197 accepts drawing: destination and package.rs:1705 materializes. drawing.rs:1973-1974 recursively dep_part(inner) with no visited/depth guard. Payload {\"xml\":\"<w:drawing/>\",\"rels\":[{\"sym\":\"r1\",\"t\":\"x\",\"part\":0}],\"deps\":[{\"name\":\"word/a.xml\",\"xml\":\"<a/>\",\"rels\":[{\"sym\":\"d0.1\",\"t\":\"x\",\"part\":0}]}]} causes unbounded recursion self-cycle. MAX_DEPS/RELS/BYTES constants apply only capture (Deps::dep_for:596+) and aren't enforced by decode; even 1 dep cycles. Public markdown_to_docx Rust/Python/WASM/CLI reachable. No code executed."
+        },
+        "id": "discovery-0014-drawing-dependency-cycle"
+      }
+    ],
+    "openQuestions": []
+  }
+}

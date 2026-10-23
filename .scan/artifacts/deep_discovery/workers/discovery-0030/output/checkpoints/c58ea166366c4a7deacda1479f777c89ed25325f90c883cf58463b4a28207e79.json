@@ -1,0 +1,43 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and tests are not executed during this audit.",
+    "validationMode": "static source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Current-source security audit",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline, independent architecture review and interface/rendering investigator active.",
+        "id": "surface-171d48ebb36e4127",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "auxiliary-xml-admission-depth",
+        "reason": "Baseline lead awaiting source evidence and parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "Reviewed production admission/legacy CFB paths. Investigating two possible DoS paths: auxiliary XML named without .xml/.rels bypasses admission depth before unchecked DOM parse; legacy nested field stack scans via fields.iter().any per character are quadratic. No findings confirmed yet. Root policy explicitly exempts direct parse_xdocument from input limits."
+        },
+        "id": "auxiliary-xml-admission-depth"
+      },
+      {
+        "candidateId": "legacy-field-stack-complexity",
+        "reason": "Baseline lead awaiting source evidence and parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "legacy nested field stack scans via fields.iter().any per character are quadratic. No findings confirmed yet."
+        },
+        "id": "legacy-field-stack-complexity"
+      }
+    ]
+  }
+}

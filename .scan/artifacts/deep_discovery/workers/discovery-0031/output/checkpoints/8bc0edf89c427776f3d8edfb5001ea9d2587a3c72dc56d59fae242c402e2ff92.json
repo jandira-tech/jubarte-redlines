@@ -1,0 +1,1063 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Word document processing engine exposed through Rust byte APIs, a native CLI, Python/PyO3 APIs and CLI, a Python stdio MCP server, and JavaScript/WASM APIs plus a Node CLI. It admits DOCX packages, parses XML into an arena DOM, compares or edits documents, and produces DOCX, Markdown, inspection reports, PDF and PNG output. Legacy DOC conversion is a separate OLE parser. Rendering uses bundled, embedded and native installed fonts. Filesystem authority belongs to host adapters: the MCP adapter grants a persistent directory capability, whereas local CLIs use ambient process authority. The native CLI additionally offers an explicit GitHub self-update operation. Tag-triggered CI publishes release artifacts; a separate maintainer script publishes package registries. Sources: src/lib.rs:7-35,96-165; src/legacy_doc.rs:13-50; jubarte-python/pyproject.toml:42-49; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21; src/update.rs:186-257; .github/workflows/release.yml:15-21,230-369.",
+    "assets": [
+      "Confidential document text, authors, comments, tracked changes, embedded media and derived reports. Inspection/rendering intentionally disclose selected content to the invoking caller; hosts protect reports, patches and storage/client access. src/lib.rs:15-29; jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,185-217.",
+      "Integrity of source documents, requested edits and produced artifacts. V1 plans optionally pin source_sha256; mismatches refuse STALE_SOURCE. Preparation binds source, normalized request and actual primary output with separate SHA-256 digests. src/edit.rs:97-106,2073-2089; src/edit/prepared.rs:202-234.",
+      "Host filesystem authority: MCP document I/O uses an opened root directory; native CLI selected output paths carry ambient authority. Native installed-font reads and font-index cache have independent process authority. src/publication.rs:146-205; jubarte-python/python/jubarte_redlines/mcp_server.py:69-108; src/convert/font.rs:2258-2276,2633-2652,3090-3107,3213-3227.",
+      "Embedding process/service/agent availability. Default limits: 64 MiB compressed/per part,256 MiB inflated,10000 entries,depth256; comparer/renderer:512 MiB compressed/per part,2GiB inflated,same count/depth. src/admission.rs:63-99; src/document_comparer.rs:4926-4927; src/convert/mod.rs:769-778.",
+      "Installed executable and distribution integrity. Updater effective trust is HTTPS plus co-located SHA256SUMS.txt, no active keys. Release job has contents-write token; optional signing uses secret reference ZIPSIGN_PRIVATE_KEY. src/update.rs:25-48,198-210,245-257; Cargo.toml:self_update features; .github/workflows/release.yml:230-264,277-309,356-369."
+    ],
+    "trustBoundaries": [
+      "Untrusted document producer -> engine bytes: representative comparison/rendering admits container budgets, safe part identities, compression, inflated bytes and XML policy; normal opens check ZIP structure. Debug intentionally uses unchecked opener for diagnostic reporting. src/admission.rs:13-28,399-424,439-569; src/document_comparer.rs:4903-4918,6530-6567; src/convert/mod.rs:769-778; src/opc/archive.rs:15-51.",
+      "Raw XML -> public parser: parse_xdocument is permissive, no input policy; try_parse_xdocument_with_limits validates before DOM. Callers must choose checked API for untrusted XML. src/xmllinq/parse.rs:19-36,84-135.",
+      "Agent edit requests -> document mutation: optional source digest mismatch refuses, operations resolve before application, candidate checked, preview/application share preparation. These are integrity controls, not authentication or human approval. src/edit.rs:5-24,88-106,2073-2094; src/edit/prepared.rs:202-234.",
+      "MCP stdio client -> held root: --root defaults cwd, expanduser/resolve then opens _OutputRoot once; cap-std actual reads/publication back Python diagnostics. All clients share server root; annotations are descriptions rather than independent authorization. jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199.",
+      "Artifacts -> filesystem: OutputRoot validates portable relative names and rejects output symlinks; CLI publish_paths grants ambient selected parents. Both stage,flush,sync,readback before per-file commits; no-clobber hard-link or overwrite rename. Sets can partially commit and errors report committed paths; Windows parent sync is no-op. src/publication.rs:83-143,168-270,387-405,419-505,533-565.",
+      "Markdown images -> native local reads: --resource-path else Markdown parent else '.'; percent-decoded names reject schemes and must remain canonical-root-contained; actual OutputRoot read preserves confinement. Library ImageLoader callback has caller authority and default is absent. src/bin/jubarte.rs:2835-2876,2936-2943; src/markdown/mod.rs:159-170,196-198.",
+      "Document font requests -> native host: system/Word/cloud/user font lookup and chosen-path index; JUBARTE_FONT_DIR overrides user fonts; JUBARTE_FONT_INDEX direct path or empty/off disables, default parent(user_font_dir)/font-index.tsv, PID-qualified sibling temporary file then rename. Applies to MCP native rendering independently of document root. src/convert/font.rs:2225-2235,2258-2315,2633-2652,2855-2862,3090-3107,3154-3188,3213-3247,3395-3432; jubarte-python/python/jubarte_redlines/mcp_server.py:185-188,234-255.",
+      "WASM bytes -> JS host: exported bytes/JSON APIs have no native publication; Node wrapper adds ambient fs.readFileSync/fs.writeFileSync, ensureWritable existence checks and native-only-option refusals. No inferred native cap-std parity. src/lib.rs:163-165; jubarte-wasm/src/lib.rs:233-272; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-79,106-110,712-740.",
+      "Operator -> self-update: explicit preflight terminal/--yes/--check, supported platform/GitHub release selection, confirmation unless yes; check stops before installation. self_update handles HTTPS/checksum/binary replacement with regular-file hook. RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None disable signature requirement. src/update.rs:25-48,87-125,186-257.",
+      "Maintainer/tag -> distribution: v* tag release builds have contents-read, publishing contents-write, no checkout credential persistence; dist artifacts optionally signed from RUNNER_TEMP/zipsign.XXXXXX private key directory with EXIT cleanup, checksummed and gh-published with secrets.GITHUB_TOKEN. Separate scripts/release.sh uses authenticated local registries. .github/workflows/release.yml:15-21,40-89,230-321,356-369; scripts/release.sh:72-105,150-168.",
+      "Untrusted fork PR -> self-hosted execution: CI/docs/adoption/roundtrip check out PR code and execute local actions/builds/scripts; runner network has documented mbx-cache:7543, with reusable checkout/cache behavior. GitHub approval policy, runner isolation/lifetime and server-side cache authority unknown. .github/workflows/ci.yml:13-48; docs.yml:42-99; adoption.yml:19-100; md-roundtrip.yml:13-39; .github/actions/mbx/action.yml:8-38."
+    ],
+    "attackerCapabilities": [
+      "Document producer chooses ZIP records,XML,relationships,images,embedded fonts,Markdown and legacy DOC, without authority over host environment,MCP startup root,installed fonts,release secrets or operator-selected paths. SECURITY.md:38-85; src/admission.rs:13-28; src/legacy_doc.rs:13-50.",
+      "Connected MCP client invokes registered read/mutation tools and chooses paths,plans,outputs,overwrite within the granted root. No per-user ownership or human gate established; stdio launcher/client is boundary. Authority outside root cannot be assumed. jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,152-168,220-277,373-381.",
+      "Concurrent hostile filesystem writer requires write access to relevant parent,staging location or granted root; document control alone gives no such ability. src/publication.rs:146-148,353-381,448-505,558-565.",
+      "GitHub release-asset controller supplies archives/matching checksums under current documented checksum-only trust; ordinary document author,MCP client or unauthenticated network peer lacks that authority. src/update.rs:25-48,198-210,245-257; docs/SELF_UPDATE.md:59-80.",
+      "Repository/tag/package publishers are privileged operators; their credential access is not an attacker power without compromise evidence. Benchmark stdin uses ambient path authority as developer harness, not established network service. .github/workflows/release.yml:15-21,230-264; scripts/release.sh:98-105; jubarte-rust-inproc/src/main.rs:5-20,91-98.",
+      "External fork contributor may submit PR code, but workflow execution depends on actual Actions approval policy. Private-network or persistence impact additionally depends on runner provisioning/isolation."
+    ],
+    "securityObjectives": [
+      "Admit untrusted packages before processing, preserve typed refusal, reject inconsistent ZIP, enforce active XML limits before checked DOM construction; host CPU/memory isolation remains required. SECURITY.md:38-74; src/admission.rs:399-569; src/opc/archive.rs:34-51; src/xmllinq/parse.rs:111-135.",
+      "No external relationship fetch or embedded execution; inert metadata differs from explicitly granted Markdown loaders and local font discovery. src/admission.rs:16-22; SECURITY.md:70-85; src/markdown/mod.rs:159-170; src/convert/font.rs:2258-2315.",
+      "MCP document I/O confined to held root, honor overwrite=false, refuse unsafe export paths, report partial sets; native font I/O is outside document capability. mcp_server.py:67-108 in jubarte-python/python/jubarte_redlines; src/publication.rs:83-199,228-270; src/convert/font.rs:3090-3107,3213-3227.",
+      "Apply resolved edits to supplied source, honor optional SHA256 and preparation-output binding; author labels/hashes do not authenticate callers. src/edit.rs:5-24,97-108,2073-2094; src/edit/prepared.rs:202-234.",
+      "Executable replacement only through explicit configured checksum/signature workflow with correct platform member. Do not claim signatures active with no keys. src/update.rs:25-48,87-125,186-257.",
+      "Limit release secrets to intended steps/jobs and bind artifacts to tag/version/checksums; never reproduce credentials in analysis. .github/workflows/release.yml:40-49,230-321,356-369."
+    ],
+    "assumptions": [
+      "Exact authorized live target reviewed, no historical git-show: HEAD observed 4e10eca69c42211651ca907f38b74b6d19e6928c, scan folder labels9a0423c22ce6e195c32b886a3f45ccc48087d1dc. Findings must not be silently attributed to labeled historical revision.",
+      "src/lib.rs:7-11 broadly promises byte APIs/no temporary files; native renderer writes font-index.tsv and PID-qualified temporary sibling when lookup records entries (src/convert/font.rs:3090-3107,3192-3229). This is auxiliary font state rather than package extraction.",
+      "MCP tools-only-under-root claim (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108) covers capability document I/O but rendering additionally accesses native font folders/index (src/convert/font.rs:2258-2315,3090-3107,3213-3247). Impact depends on configured paths,cache,permissions and lookups; no arbitrary path attack inferred.",
+      "Checksum-only current state agrees with docs/SELF_UPDATE.md:69-80 and empty keys/start-version src/update.rs:44-48. Signing capability does not prove enforcement.",
+      "Native/Python/Node CLIs use operator ambient filesystem authority. Python _write uses Path.write_bytes (jubarte-python/python/jubarte_redlines/__main__.py:126-133), Node fs.writeFileSync (jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-110); command parity does not prove staged-write parity.",
+      "No deployed HTTP listener,tenant population,mounts,effective env,ACLs or client authentication supplied. MCP uses stdio (jubarte-python/python/jubarte_redlines/mcp_server.py:373-381); remote exposure needs another wrapper.",
+      "Root capability and input budgets are distinct controls, not whole-process sandbox; SECURITY.md:70-74 requires CPU/memory host limits.",
+      "Architecture mapping alone is not completed security coverage. self_update extraction/replacement internals,cap-std platform internals and external pinned action implementations were not fully inspected.",
+      "Normal CI optionally signs and requires secret if committed public keys exist (.github/workflows/release.yml:252-321); fallback release_from_artifacts (scripts/release.sh:976-1012) checksums/publishes without same signing step. Current empty trusted keys make this conditional future signing discrepancy rather than active bypass.",
+      "Fork approvals,self-hosted worker isolation/lifetime,private-network policy and independent cache-server authorization were not supplied. No host-root,Docker socket,cache-write,secret theft or persistence inferred."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Architecture of authorized live repository /Users/arthrod/temp/T/jubarte-redlines; live HEAD observed 4e10eca69c42211651ca907f38b74b6d19e6928c, distinct from scan-directory label 9a0423c22ce6e195c32b886a3f45ccc48087d1dc."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.table-grid",
+      "identity": {
+        "anchor": "src/convert/mod.rs",
+        "instance": "wml-grid"
+      },
+      "title": "Unbounded DOCX table spans trigger multi-gigabyte renderer allocations",
+      "summary": "Admitted DOCX gridSpan, gridBefore and gridAfter values become allocation lengths without a semantic column or derived-work budget. A tiny table can exhaust the rendering process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High-likelihood document-controlled process denial of service; impact is availability of the embedding renderer, with deployment-wide impact unknown. Host memory/CPU isolation can limit the blast radius."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The complete input-to-allocation path and absence of semantic bounds were independently confirmed in current source; no dynamic exploit was run."
+      },
+      "taxonomy": {
+        "category": "Unbounded allocation from untrusted table dimensions",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14216,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14354,
+          "role": "input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13603,
+          "endLine": 13615,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14638,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admission",
+          "label": "Renderer admission and altChunk expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 802,
+          "language": "rust",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);\n    let root = dom.root(doc).ok_or(ConvertError::MissingDocument)?;\n    let body = dom\n        .descendants(root, Some(&W::body()))\n        .into_iter()",
+          "explanation": "Renderer admission and altChunk expansion"
+        },
+        {
+          "id": "wml-span",
+          "label": "Unbounded WML span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14216,
+          "language": "rust",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {",
+          "explanation": "Unbounded WML span"
+        },
+        {
+          "id": "wml-skip",
+          "label": "Unbounded row grid skips",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14354,
+          "language": "rust",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))\n}\n",
+          "explanation": "Unbounded row grid skips"
+        },
+        {
+          "id": "grid-allocation",
+          "label": "Document-sized grid allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13599,
+          "endLine": 13615,
+          "language": "rust",
+          "code": "    // first 84pt column; 91 corpus documents carry such a row.\n    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];",
+          "explanation": "Document-sized grid allocation"
+        },
+        {
+          "id": "merge-allocation",
+          "label": "Document-sized merge tracking",
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14642,
+          "language": "rust",
+          "code": "            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;",
+          "explanation": "Document-sized merge tracking"
+        }
+      ],
+      "rootCause": {
+        "summary": "Numeric table spans are parsed as usize with only a positive minimum, then summed into occupancy and used directly by vec!/resize.",
+        "evidenceRefs": [
+          "wml-span",
+          "wml-skip",
+          "grid-allocation",
+          "merge-allocation"
+        ]
+      },
+      "remediation": "Enforce a maximum effective table-column count and aggregate derived-memory/work budget before any allocation. Use checked arithmetic for span sums and col+span; return a typed refusal for oversized gridSpan/gridBefore/gridAfter.",
+      "validation": {
+        "assertions": [
+          "A gridSpan of 1000000000 fits a tiny shallow XML part yet requests a 4,000,000,000-byte f32 column vector.",
+          "gridBefore and gridAfter synthesize RawCells with the same unchecked span, and merge tracking adds another span-sized allocation."
+        ],
+        "counterEvidence": [
+          "Package compressed/inflated bytes, entry count and XML depth/tag limits are enforced.",
+          "SECURITY.md recommends process resource limits; those limits constrain hosting impact but do not bound per-table derived allocations.",
+          "Markdown projection's span clamp does not control the PDF/PNG table pipeline."
+        ],
+        "limitations": [
+          "No runtime reproduction; no shared-service deployment supplied."
+        ],
+        "method": "Independent static source trace",
+        "summary": "Public PDF/PNG/report rendering reaches with_layout admission, collect_blocks/walk_container/table_block, then the unbounded semantic grid sinks. Admission checks bytes/depth/tags rather than WML numeric span values."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> admit_package -> with_layout DOM -> table_block -> cell_span/row_grid_skip -> occupancy -> cols.resize/open.resize",
+          "source": "Untrusted WML table attributes",
+          "sink": "Column and merge tracking vectors",
+          "outcome": "Excessive memory use or allocation abort",
+          "evidenceRefs": [
+            "render-admission",
+            "wml-span",
+            "wml-skip",
+            "grid-allocation",
+            "merge-allocation"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Crashes or resource starvation affect the renderer process; wider deployment impact is not established."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "One ordinary untrusted document field directly determines large allocations under default and compare admission budgets."
+        },
+        "reachability": {
+          "summary": "Reachable through Rust PDF/PNG/render/report APIs and wrappers; requires the victim to render attacker-supplied DOCX. No operator configuration control is needed.",
+          "attacker": "Untrusted document producer",
+          "entrypoint": "docx_to_pdf_with, docx_to_png, render/report and binding/MCP render consumers",
+          "outcome": "Renderer process availability loss",
+          "preconditions": [
+            "Victim renders the supplied DOCX"
+          ]
+        },
+        "summary": "A document supplier sends a small DOCX containing a huge positive table span to any renderer consumer, causing allocation proportional to the numeric value."
+      },
+      "remediationTests": [
+        "Small admitted documents with oversized gridSpan, gridBefore and gridAfter must fail before allocating proportional buffers.",
+        "Verify cumulative spans exceeding the column/work budget are refused, including integer-overflow cases."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0031-table-grid-allocation",
+        "worker": "baseline; independently validated by discovery-0031 parent"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.table-expansion",
+      "identity": {
+        "anchor": "src/convert/altchunk.rs",
+        "instance": "altchunk-table-expansion"
+      },
+      "title": "HTML altChunk colspan expands tiny input into enormous intermediate XML",
+      "summary": "Unbounded positive HTML colspan determines the number of generated gridCol elements before any policy check on transformed XML. colspan=1000000000 in one small HTML table attempts tens of gigabytes of generated XML and sustained CPU before layout.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document-controlled availability impact is directly reachable with high likelihood when the victim processes the input; impact is the embedding process, while service-wide exposure and resource isolation are unknown."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent parent source trace verified the input transformations, effective controls, sink and counterevidence; no application execution performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded intermediate representation expansion",
+        "cwe": [
+          "CWE-770"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 559,
+          "endLine": 568,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "role": "supporting"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 489,
+          "endLine": 493,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admission",
+          "label": "Renderer admission and altChunk expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 802,
+          "language": "rust",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);\n    let root = dom.root(doc).ok_or(ConvertError::MissingDocument)?;\n    let body = dom\n        .descendants(root, Some(&W::body()))\n        .into_iter()",
+          "explanation": "Renderer admission and altChunk expansion"
+        },
+        {
+          "id": "html-grid-count",
+          "label": "HTML column count",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "language": "rust",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "HTML column count"
+        },
+        {
+          "id": "html-grid-expansion",
+          "label": "Repeated intermediate XML generation",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 489,
+          "endLine": 493,
+          "language": "rust",
+          "code": "        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }\n        s.push_str(\"</w:tblGrid>\");\n        for row in &table.rows {",
+          "explanation": "Repeated intermediate XML generation"
+        },
+        {
+          "id": "html-span",
+          "label": "Unbounded HTML colspan",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 559,
+          "endLine": 568,
+          "language": "rust",
+          "code": "                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );\n                let mut fmt = self.fmt();",
+          "explanation": "Unbounded HTML colspan"
+        }
+      ],
+      "rootCause": {
+        "summary": "Unbounded positive HTML colspan determines the number of generated gridCol elements before any policy check on transformed XML.",
+        "evidenceRefs": [
+          "render-admission",
+          "html-span",
+          "html-grid-count",
+          "html-grid-expansion"
+        ]
+      },
+      "remediation": "Bound positive HTML colspans and checked cumulative column counts before generation; charge generated bytes/nodes to an aggregate import budget and refuse before materializing oversized output.",
+      "validation": {
+        "counterEvidence": [
+          "Original package bytes/inflated entries/depth/attributes are bounded.",
+          "Malformed/negative/zero HTML spans fall back to one; valid large positive integers remain unbounded.",
+          "Native WML allocation and pre-DOM HTML generation are independent failure points; both require a semantic column budget."
+        ],
+        "limitations": [
+          "No dynamic exploit or application tests were run; exact failure thresholds depend on architecture, allocator and host process limits."
+        ],
+        "method": "Independent static current-source trace",
+        "summary": "DOCX -> admitted HTML/MHT altChunk -> html_to_wml -> colspan usize -> end_table column sum -> one gridCol per column -> unchecked DOM. colspan=1000000000 in one small HTML table attempts tens of gigabytes of generated XML and sustained CPU before layout."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX -> admitted HTML/MHT altChunk -> html_to_wml -> colspan usize -> end_table column sum -> one gridCol per column -> unchecked DOM",
+          "source": "Attacker-supplied document bytes and internal metadata",
+          "sink": "Unbounded intermediate representation expansion",
+          "outcome": "colspan=1000000000 in one small HTML table attempts tens of gigabytes of generated XML and sustained CPU before layout.",
+          "evidenceRefs": [
+            "render-admission",
+            "html-span",
+            "html-grid-count",
+            "html-grid-expansion"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of rendering or conversion process; no code execution or data exfiltration claimed."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Ordinary supported untrusted document input directly reaches the faulty operation without privileged configuration control."
+        },
+        "reachability": {
+          "summary": "Public PDF/PNG/render-report pipeline expands internal HTML/MHT chunks after admission; document supplier controls HTML colspan.",
+          "attacker": "Untrusted document producer",
+          "entrypoint": "Public rendering APIs and binding/CLI/MCP consumers",
+          "outcome": "colspan=1000000000 in one small HTML table attempts tens of gigabytes of generated XML and sustained CPU before layout."
+        },
+        "summary": "Public PDF/PNG/render-report pipeline expands internal HTML/MHT chunks after admission; document supplier controls HTML colspan."
+      },
+      "remediationTests": [
+        "Oversized and cumulatively oversized HTML colspans must be refused before grid XML generation."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0031-altchunk-table-expansion",
+        "worker": "baseline and parser_investigator; validated by discovery-0031 parent"
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "baseline",
+          "title": "Unbounded HTML altChunk colspan expands XML before rendering",
+          "evidence": [
+            "src/convert/altchunk.rs:563-568 accepts unbounded usize colspan",
+            "src/convert/altchunk.rs:469-476 sums spans",
+            "src/convert/altchunk.rs:490-492 emits gridCol for each column"
+          ],
+          "attackInput": "<table><tr><td colspan='1000000000'>A</td></tr></table>",
+          "impact": "About 23 GB intermediate XML before DOM",
+          "counterevidence": "Package admission has byte/entry/depth/attribute budgets, HTML chunk is non-XML; no execution performed."
+        }
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.embedded-font-aliases",
+      "identity": {
+        "anchor": "src/convert/font_table.rs",
+        "instance": "font-alias-amplification"
+      },
+      "title": "Embedded font aliases retain separate copies of the same font resource",
+      "summary": "load_embedded_fonts eagerly clones and retains an entire font resource for every unique family/style alias without part/key deduplication or retained-byte budget. Thousands of aliases to one multi-megabyte valid font retain gigabytes of copied font bytes, even if those aliases are unused.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document-controlled availability impact is directly reachable with high likelihood when the victim processes the input; impact is the embedding process, while service-wide exposure and resource isolation are unknown."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent parent source trace verified the input transformations, effective controls, sink and counterevidence; no application execution performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded retained font resource amplification",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 205,
+          "endLine": 231,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 179,
+          "endLine": 195,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "font-copy",
+          "label": "Deobfuscation clones entire font",
+          "path": "src/convert/font_table.rs",
+          "startLine": 179,
+          "endLine": 195,
+          "language": "rust",
+          "code": "pub(crate) fn deobfuscate_odttf(bytes: &[u8], font_key: &str) -> Vec<u8> {\n    let mut data = bytes.to_vec();\n    let plain_sfnt = [\n        &[0x00, 0x01, 0x00, 0x00][..],\n        b\"OTTO\",\n        b\"true\",\n        b\"typ1\",\n        b\"ttcf\",\n    ]\n    .iter()\n    .any(|tag| data.starts_with(tag));\n    if !plain_sfnt && let Some(key) = parse_font_key(font_key) {\n        deobfuscate_font(&mut data, &key);\n    }\n    data\n}\n",
+          "explanation": "Deobfuscation clones entire font"
+        },
+        {
+          "id": "font-alias-loop",
+          "label": "Every font alias retains a separate decoded copy",
+          "path": "src/convert/font_table.rs",
+          "startLine": 205,
+          "endLine": 231,
+          "language": "rust",
+          "code": "pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::font::EmbeddedFonts {\n    let mut out = HashMap::new();\n    let part = font_table_part(pkg);\n    let rels = pkg.read_rels_for(&part);\n    for entry in table.iter() {\n        if super::font::catalogue_paints_family(&entry.name) {\n            continue;\n        }\n        for (slot, (bold, italic)) in entry.embedded.iter().zip(EMBED_STYLES) {\n            let Some((rid, font_key)) = slot else {\n                continue;\n            };\n            let Some(rel) = rels.and_then(|r| r.items.iter().find(|item| item.id == *rid)) else {\n                continue;\n            };\n            let path = pkg.resolve_rel_target(&part, &rel.target);\n            let Some(raw) = pkg.part_bytes(&path) else {\n                continue;\n            };\n            let data = deobfuscate_odttf(raw, font_key);\n            if ttf_parser::Face::parse(&data, 0).is_err() {\n                continue;\n            }\n            out.insert((entry.name.to_ascii_lowercase(), bold, italic), data.into());\n        }\n    }\n    out",
+          "explanation": "Every font alias retains a separate decoded copy"
+        },
+        {
+          "id": "font-storage",
+          "label": "Font buffers stored in independent Arc values",
+          "path": "src/convert/font.rs",
+          "startLine": 1445,
+          "endLine": 1450,
+          "language": "rust",
+          "code": "/// A document's decoded embedded fonts (`.odttf`), keyed by\n/// (family, bold, italic). The conversion owns them; [`Fonts`] borrows.\n/// Values are shared: installed faces come from a process-wide cache and\n/// one face can answer to a family and its altName.\npub(crate) type EmbeddedFonts = HashMap<(String, bool, bool), Arc<[u8]>>;\n",
+          "explanation": "Font buffers stored in independent Arc values"
+        },
+        {
+          "id": "font-caller",
+          "label": "Renderer eagerly loads embedded fonts",
+          "path": "src/convert/mod.rs",
+          "startLine": 805,
+          "endLine": 808,
+          "language": "rust",
+          "code": "\n    let table = font_table::load_font_table(&pkg);\n    let mut embedded = font_table::load_embedded_fonts(&pkg, &table);\n    let mut family_names = rfont_names(&xml);",
+          "explanation": "Renderer eagerly loads embedded fonts"
+        }
+      ],
+      "rootCause": {
+        "summary": "load_embedded_fonts eagerly clones and retains an entire font resource for every unique family/style alias without part/key deduplication or retained-byte budget.",
+        "evidenceRefs": [
+          "font-caller",
+          "font-alias-loop",
+          "font-copy",
+          "font-storage"
+        ]
+      },
+      "remediation": "Deduplicate decoded font buffers by resolved part and effective font key, share immutable buffers across aliases, load only needed faces, and enforce an aggregate retained-font-byte budget.",
+      "validation": {
+        "counterEvidence": [
+          "Malformed font bytes fail Face::parse and known catalogue families are skipped.",
+          "Attacker-selected distinct invented family names avoid the catalogue exclusion.",
+          "Buffers are conversion-scoped, and the later u16 face-index limit does not guard earlier eager copies."
+        ],
+        "limitations": [
+          "No dynamic exploit or application tests were run; exact failure thresholds depend on architecture, allocator and host process limits."
+        ],
+        "method": "Independent static current-source trace",
+        "summary": "DOCX font table names/relationships -> eager alias loop -> same package font -> bytes.to_vec -> valid face -> independent Arc per family/style. Thousands of aliases to one multi-megabyte valid font retain gigabytes of copied font bytes, even if those aliases are unused."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX font table names/relationships -> eager alias loop -> same package font -> bytes.to_vec -> valid face -> independent Arc per family/style",
+          "source": "Attacker-supplied document bytes and internal metadata",
+          "sink": "Unbounded retained font resource amplification",
+          "outcome": "Thousands of aliases to one multi-megabyte valid font retain gigabytes of copied font bytes, even if those aliases are unused.",
+          "evidenceRefs": [
+            "font-caller",
+            "font-alias-loop",
+            "font-copy",
+            "font-storage"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of rendering or conversion process; no code execution or data exfiltration claimed."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Ordinary supported untrusted document input directly reaches the faulty operation without privileged configuration control."
+        },
+        "reachability": {
+          "summary": "Renderer loads all font-table entries before determining the requested families; document author controls distinct names and internal references to a valid font.",
+          "attacker": "Untrusted document producer",
+          "entrypoint": "Public rendering APIs and binding/CLI/MCP consumers",
+          "outcome": "Thousands of aliases to one multi-megabyte valid font retain gigabytes of copied font bytes, even if those aliases are unused."
+        },
+        "summary": "Renderer loads all font-table entries before determining the requested families; document author controls distinct names and internal references to a valid font."
+      },
+      "remediationTests": [
+        "Many aliases to one font must share one decoded allocation or refuse at the aggregate font budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0031-font-alias-amplification",
+        "worker": "parser_investigator; validated by discovery-0031 parent"
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "parser_investigator",
+          "title": "Embedded font aliases amplify a single package font into repeated allocations",
+          "evidence": [
+            "src/convert/font_table.rs:209-229 iterates distinct font/style entries, resolves same payload per alias",
+            "src/convert/font_table.rs:180 clones font bytes in deobfuscate_odttf",
+            "src/convert/mod.rs:806-807 unconditionally loads embedded font table"
+          ],
+          "attacker": "DOCX supplier chooses distinct font family names and internal relationship targets",
+          "impact": "1000 aliases to one 10MB valid/padded font could retain about 10GB",
+          "counterevidence": "Known catalogue font families skipped; actual parser validity and aggregate controls still under investigation."
+        }
+      }
+    },
+    {
+      "ruleId": "xml-policy.auxiliary-extension-bypass",
+      "identity": {
+        "anchor": "src/admission.rs",
+        "instance": "auxiliary-xml-admission"
+      },
+      "title": "Non-XML auxiliary filenames bypass XML depth admission before recursive parsing",
+      "summary": "Admission selects XML policy by .xml/.rels extension with only a main-part exception; relationship-selected auxiliary XML is parsed regardless of extension using unchecked recursive DOM construction. A modest highly compressible auxiliary part with tens of thousands of nested elements bypasses max_xml_depth=256 and can exhaust native/WASM call stacks, terminating the renderer.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document-controlled availability impact is directly reachable with high likelihood when the victim processes the input; impact is the embedding process, while service-wide exposure and resource isolation are unknown."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent parent source trace verified the input transformations, effective controls, sink and counterevidence; no application execution performed."
+      },
+      "taxonomy": {
+        "category": "XML depth-policy bypass before recursive parser",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 550,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 81,
+          "role": "supporting"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 654,
+          "endLine": 661,
+          "role": "supporting"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21308,
+          "endLine": 21320,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admission",
+          "label": "Renderer admission and altChunk expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 802,
+          "language": "rust",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);\n    let root = dom.root(doc).ok_or(ConvertError::MissingDocument)?;\n    let body = dom\n        .descendants(root, Some(&W::body()))\n        .into_iter()",
+          "explanation": "Renderer admission and altChunk expansion"
+        },
+        {
+          "id": "admission-extension",
+          "label": "Admission chooses XML policy by extension",
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 550,
+          "language": "rust",
+          "code": "        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())",
+          "explanation": "Admission chooses XML policy by extension"
+        },
+        {
+          "id": "admission-main-exception",
+          "label": "Only main part receives non-extension check",
+          "path": "src/admission.rs",
+          "startLine": 557,
+          "endLine": 571,
+          "language": "rust",
+          "code": "    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;\n    }\n    Ok(AdmittedPackage {",
+          "explanation": "Only main part receives non-extension check"
+        },
+        {
+          "id": "aux-target",
+          "label": "Auxiliary targets may use arbitrary part names",
+          "path": "src/convert/mod.rs",
+          "startLine": 21308,
+          "endLine": 21320,
+          "language": "rust",
+          "code": "/// (`…/relationships/<kind>`, transitional or strict), falling back to\n/// Word's conventional name. Other producers may name these parts freely.\npub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())\n}",
+          "explanation": "Auxiliary targets may use arbitrary part names"
+        },
+        {
+          "id": "font-xml-parse",
+          "label": "Font XML consumer uses unchecked parser",
+          "path": "src/convert/font_table.rs",
+          "startLine": 66,
+          "endLine": 81,
+          "language": "rust",
+          "code": "fn font_table_part(pkg: &PartFs) -> String {\n    super::main_rel_part(pkg, \"fontTable\", \"word/fontTable.xml\")\n}\n\npub(crate) fn load_font_table(pkg: &PartFs) -> FontTable {\n    pkg.part_string(&font_table_part(pkg))\n        .map(|xml| parse_font_table_xml(&xml))\n        .unwrap_or_default()\n}\n\npub(crate) fn parse_font_table_xml(xml: &str) -> FontTable {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);\n    let Some(root) = dom.root(doc) else {\n        return FontTable::default();\n    };",
+          "explanation": "Font XML consumer uses unchecked parser"
+        },
+        {
+          "id": "recursive-dom",
+          "label": "Unchecked DOM recursively descends",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 654,
+          "endLine": 661,
+          "language": "rust",
+          "code": "            }\n            if self.starts_with(\"<?\") {\n                let pi = self.parse_pi_node();\n                self.dom.add(el, pi);\n                continue;\n            }\n            if self.cur() == '<' {\n                let child = self.parse_element(scope);",
+          "explanation": "Unchecked DOM recursively descends"
+        },
+        {
+          "id": "strict-extension",
+          "label": "Strict translation extension gate",
+          "path": "src/strict_translation.rs",
+          "startLine": 809,
+          "endLine": 824,
+          "language": "rust",
+          "code": "        // Fast path: only text parts carrying the Strict marker can change.\n        if name.ends_with(\".rels\") || name.ends_with(\".xml\") {\n            let text = String::from_utf8_lossy(&buf);\n            if text.contains(STRICT_MARKER) {\n                let (table, site) = if name.ends_with(\".rels\") {\n                    (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)\n                } else {\n                    (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)\n                };\n                let translated = translate(&text, table, site);\n                if translated != text.as_ref() {\n                    any_changed = true;\n                    buf = translated.into_bytes();\n                }\n            }\n        }",
+          "explanation": "Strict translation extension gate"
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission selects XML policy by .xml/.rels extension with only a main-part exception; relationship-selected auxiliary XML is parsed regardless of extension using unchecked recursive DOM construction.",
+        "evidenceRefs": [
+          "admission-extension",
+          "admission-main-exception",
+          "render-admission",
+          "aux-target",
+          "font-xml-parse",
+          "recursive-dom",
+          "strict-extension"
+        ]
+      },
+      "remediation": "Validate every consumed XML part with active limits immediately before DOM construction, regardless of filename. Identify XML via content types/relationships during admission and use checked DOM entrypoints for auxiliary consumers.",
+      "validation": {
+        "counterEvidence": [
+          "Conventional .xml/.rels parts and nonstandard-named main parts are checked.",
+          "Inflated-byte limits still apply but deep nesting needs little data.",
+          "Raw parse_xdocument deliberately documents caller validation obligations; the report concerns the package renderer that fails to apply them, not raw API design."
+        ],
+        "limitations": [
+          "No dynamic exploit or application tests were run; exact failure thresholds depend on architecture, allocator and host process limits."
+        ],
+        "method": "Independent static current-source trace",
+        "summary": "DOCX main fontTable relationship -> fonts.bin omitted from XML admission -> strict translation passes non-XML name unchanged -> main_rel_part -> load_font_table -> parse_xdocument -> recursive parse_element. A modest highly compressible auxiliary part with tens of thousands of nested elements bypasses max_xml_depth=256 and can exhaust native/WASM call stacks, terminating the renderer."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX main fontTable relationship -> fonts.bin omitted from XML admission -> strict translation passes non-XML name unchanged -> main_rel_part -> load_font_table -> parse_xdocument -> recursive parse_element",
+          "source": "Attacker-supplied document bytes and internal metadata",
+          "sink": "XML depth-policy bypass before recursive parser",
+          "outcome": "A modest highly compressible auxiliary part with tens of thousands of nested elements bypasses max_xml_depth=256 and can exhaust native/WASM call stacks, terminating the renderer.",
+          "evidenceRefs": [
+            "admission-extension",
+            "admission-main-exception",
+            "render-admission",
+            "aux-target",
+            "font-xml-parse",
+            "recursive-dom",
+            "strict-extension"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of rendering or conversion process; no code execution or data exfiltration claimed."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Ordinary supported untrusted document input directly reaches the faulty operation without privileged configuration control."
+        },
+        "reachability": {
+          "summary": "A valid shallow main DOCX can reference an internal font-table XML part named fonts.bin; DOM construction happens before selection of relevant font rows.",
+          "attacker": "Untrusted document producer",
+          "entrypoint": "Public rendering APIs and binding/CLI/MCP consumers",
+          "outcome": "A modest highly compressible auxiliary part with tens of thousands of nested elements bypasses max_xml_depth=256 and can exhaust native/WASM call stacks, terminating the renderer."
+        },
+        "summary": "A valid shallow main DOCX can reference an internal font-table XML part named fonts.bin; DOM construction happens before selection of relevant font rows."
+      },
+      "remediationTests": [
+        "A fontTable relationship targeting deeply nested fonts.bin must fail with the same depth refusal as fonts.xml."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0031-auxiliary-xml-admission",
+        "worker": "baseline; validated by discovery-0031 parent"
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "baseline",
+          "title": "Non-XML-named auxiliary parts bypass XML admission",
+          "evidence": [
+            "src/admission.rs:533-550 checks only .xml/.rels; main-only exception at557-571",
+            "src/convert/mod.rs:21308-21320 resolves arbitrary auxiliary relationship targets",
+            "src/convert/font_table.rs:66-78 loads arbitrary fontTable target into unchecked parser",
+            "src/xmllinq/parse.rs:555-681 recursive parse_element",
+            "src/strict_translation.rs:810 only checks .xml/.rels"
+          ],
+          "impact": "Deep auxiliary XML may exhaust call stack despite max_xml_depth=256",
+          "validation": "Static source only; not yet parent validated."
+        }
+      }
+    },
+    {
+      "ruleId": "algorithmic-complexity.html-entities",
+      "identity": {
+        "anchor": "src/convert/altchunk.rs",
+        "instance": "html-entity-cpu"
+      },
+      "title": "HTML entity decoder rescans the full suffix for every unterminated ampersand",
+      "summary": "decode_entities applies its ten-character entity limit after an unbounded tail.find(';') and advances only one ampersand when no entity is decoded. n consecutive ampersands without semicolons require approximately n(n-1)/2 scanned bytes. A few MiB produces trillions of bytes of synchronous search work and monopolizes the rendering worker.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Document-controlled availability impact is directly reachable with high likelihood when the victim processes the input; impact is the embedding process, while service-wide exposure and resource isolation are unknown."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent parent source trace verified the input transformations, effective controls, sink and counterevidence; no application execution performed."
+      },
+      "taxonomy": {
+        "category": "Quadratic HTML entity parsing",
+        "cwe": [
+          "CWE-407"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 724,
+          "endLine": 762,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 405,
+          "endLine": 407,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-admission",
+          "label": "Renderer admission and altChunk expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 802,
+          "language": "rust",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);\n    let root = dom.root(doc).ok_or(ConvertError::MissingDocument)?;\n    let body = dom\n        .descendants(root, Some(&W::body()))\n        .into_iter()",
+          "explanation": "Renderer admission and altChunk expansion"
+        },
+        {
+          "id": "entity-loop",
+          "label": "Entity decoder rescans suffix",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 724,
+          "endLine": 762,
+          "language": "rust",
+          "code": "pub(crate) fn decode_entities(s: &str) -> String {\n    if !s.contains('&') {\n        return s.to_string();\n    }\n    let mut out = String::with_capacity(s.len());\n    let mut rest = s;\n    while let Some(a) = rest.find('&') {\n        out.push_str(&rest[..a]);\n        let tail = &rest[a..];\n        let semi = tail.find(';').filter(|&e| e <= 10);\n        let decoded = semi.and_then(|e| {\n            let ent = &tail[1..e];\n            let ch = match ent {\n                \"amp\" => Some('&'),\n                \"lt\" => Some('<'),\n                \"gt\" => Some('>'),\n                \"quot\" => Some('\"'),\n                \"apos\" => Some('\\''),\n                \"nbsp\" => Some('\\u{a0}'),\n                _ if ent.starts_with(\"#x\") || ent.starts_with(\"#X\") => {\n                    u32::from_str_radix(&ent[2..], 16)\n                        .ok()\n                        .and_then(char::from_u32)\n                }\n                _ if ent.starts_with('#') => ent[1..].parse().ok().and_then(char::from_u32),\n                _ => None,\n            };\n            ch.map(|c| (c, e))\n        });\n        if let Some((c, e)) = decoded {\n            out.push(c);\n            rest = &tail[e + 1..];\n        } else {\n            out.push('&');\n            rest = &tail[1..];\n        }\n    }\n    out.push_str(rest);\n    out",
+          "explanation": "Entity decoder rescans suffix"
+        },
+        {
+          "id": "entity-caller",
+          "label": "HTML text invokes entity decoder",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 405,
+          "endLine": 407,
+          "language": "rust",
+          "code": "    fn text(&mut self, raw: &str) {\n        let collapsed = collapse_ws(&decode_entities(raw));\n        if collapsed.is_empty() {",
+          "explanation": "HTML text invokes entity decoder"
+        }
+      ],
+      "rootCause": {
+        "summary": "decode_entities applies its ten-character entity limit after an unbounded tail.find(';') and advances only one ampersand when no entity is decoded.",
+        "evidenceRefs": [
+          "render-admission",
+          "entity-caller",
+          "entity-loop"
+        ]
+      },
+      "remediation": "Search only a bounded prefix for an entity terminator or use a linear single-pass scanner, respecting UTF-8 boundaries. Preserve unknown-entity behavior without repeated suffix scans.",
+      "validation": {
+        "counterEvidence": [
+          "Decoder intends to limit entity length to ten characters but filters only after scanning.",
+          "Archive and per-part budgets cap input n but allow severe quadratic amplification.",
+          "Output remains linear, so output-size bounds alone do not fix CPU work."
+        ],
+        "limitations": [
+          "No dynamic exploit or application tests were run; exact failure thresholds depend on architecture, allocator and host process limits."
+        ],
+        "method": "Independent static current-source trace",
+        "summary": "Admitted HTML/MHT altChunk paragraph text -> Builder::text -> decode_entities -> full suffix semicolon search for each '&'. n consecutive ampersands without semicolons require approximately n(n-1)/2 scanned bytes. A few MiB produces trillions of bytes of synchronous search work and monopolizes the rendering worker."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Admitted HTML/MHT altChunk paragraph text -> Builder::text -> decode_entities -> full suffix semicolon search for each '&'",
+          "source": "Attacker-supplied document bytes and internal metadata",
+          "sink": "Quadratic HTML entity parsing",
+          "outcome": "n consecutive ampersands without semicolons require approximately n(n-1)/2 scanned bytes. A few MiB produces trillions of bytes of synchronous search work and monopolizes the rendering worker.",
+          "evidenceRefs": [
+            "render-admission",
+            "entity-caller",
+            "entity-loop"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability of rendering or conversion process; no code execution or data exfiltration claimed."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Ordinary supported untrusted document input directly reaches the faulty operation without privileged configuration control."
+        },
+        "reachability": {
+          "summary": "Ordinary paragraph text in an internal HTML/MHT altChunk reaches this decoder; script/style skipping does not affect the demonstrated route.",
+          "attacker": "Untrusted document producer",
+          "entrypoint": "Public rendering APIs and binding/CLI/MCP consumers",
+          "outcome": "n consecutive ampersands without semicolons require approximately n(n-1)/2 scanned bytes. A few MiB produces trillions of bytes of synchronous search work and monopolizes the rendering worker."
+        },
+        "summary": "Ordinary paragraph text in an internal HTML/MHT altChunk reaches this decoder; script/style skipping does not affect the demonstrated route."
+      },
+      "remediationTests": [
+        "Use a deterministic comparison/work counter to establish linear bounded scanning for long runs of unterminated ampersands."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0031-html-entity-cpu",
+        "worker": "baseline; validated by discovery-0031 parent"
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "baseline",
+          "title": "HTML entity decoding repeatedly scans the entire remaining input",
+          "evidence": [
+            "src/convert/altchunk.rs:724-762 tail.find(';') before <=10 filter",
+            "src/convert/altchunk.rs:406 Builder::text invokes decode_entities",
+            "src/convert/mod.rs:789-795 expands admitted HTML"
+          ],
+          "impact": "Repeated ampersands without semicolons incur quadratic scanning",
+          "validation": "Static source only; not yet parent validated."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-d95e1f1173948b28",
+        "label": "DOCX renderer table-grid allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated native WML gridSpan/gridBefore/gridAfter allocation failure; source at src/convert/mod.rs:14211-14216,14340-14354,13603-13615,14637-14638. Baseline severity calibrated to medium for process availability under unknown deployment."
+      },
+      {
+        "id": "surface-fb7d3a38b8810c8a",
+        "label": "HTML altChunk colspan expands tiny input into enormous intermediate XML",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated discovery-0031-altchunk-table-expansion through src/convert/mod.rs:773, src/convert/altchunk.rs:559, src/convert/altchunk.rs:469, src/convert/altchunk.rs:489. Original package bytes/inflated entries/depth/attributes are bounded. Malformed/negative/zero HTML spans fall back to one; valid large positive integers remain unbounded. Native WML allocation and pre-DOM HTML generation are independent failure points; both require a semantic column budget."
+      },
+      {
+        "id": "surface-bb39fda6e320994e",
+        "label": "Embedded font aliases retain separate copies of the same font resource",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated discovery-0031-font-alias-amplification through src/convert/mod.rs:805, src/convert/font_table.rs:205, src/convert/font_table.rs:179, src/convert/font.rs:1445. Malformed font bytes fail Face::parse and known catalogue families are skipped. Attacker-selected distinct invented family names avoid the catalogue exclusion. Buffers are conversion-scoped, and the later u16 face-index limit does not guard earlier eager copies."
+      },
+      {
+        "id": "surface-529ee585140cc796",
+        "label": "Non-XML auxiliary filenames bypass XML depth admission before recursive parsing",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated discovery-0031-auxiliary-xml-admission through src/admission.rs:533, src/admission.rs:557, src/convert/mod.rs:773, src/convert/mod.rs:21308, src/convert/font_table.rs:66, src/xmllinq/parse.rs:654, src/strict_translation.rs:809. Conventional .xml/.rels parts and nonstandard-named main parts are checked. Inflated-byte limits still apply but deep nesting needs little data. Raw parse_xdocument deliberately documents caller validation obligations; the report concerns the package renderer that fails to apply them, not raw API design."
+      },
+      {
+        "label": "HTML entity decoder rescans the full suffix for every unterminated ampersand",
+        "disposition": "reported",
+        "notes": "Validated discovery-0031-html-entity-cpu through src/convert/mod.rs:773, src/convert/altchunk.rs:405, src/convert/altchunk.rs:724. Decoder intends to limit entity length to ten characters but filters only after scanning. Archive and per-part budgets cap input n but allow severe quadratic amplification. Output remains linear, so output-size bounds alone do not fix CPU work.",
+        "id": "surface-93d00f92d8c7f0af",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0031-legacy-piece-expansion",
+        "candidateId": "discovery-0031-legacy-piece-expansion",
+        "reason": "Returned source-backed candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Legacy DOC logical pieces repeatedly expand overlapping physical text",
+          "evidence": [
+            "src/legacy_doc.rs:1090-1110 accepts overlapping physical ranges",
+            "src/legacy_doc.rs:1154-1175 validates CP continuity",
+            "src/legacy_doc.rs:1181-1221 appends each logical character"
+          ],
+          "impact": "Thousands of logical pieces alias same physical stream, generating billions of StoryChars",
+          "validation": "Static source only; not yet parent validated."
+        }
+      },
+      {
+        "id": "discovery-0031-legacy-field-cpu",
+        "candidateId": "discovery-0031-legacy-field-cpu",
+        "reason": "Returned source-backed candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Legacy DOC nested field state incurs quadratic scans",
+          "evidence": [
+            "src/legacy_doc.rs:1604 scans fields.iter().any for each character",
+            "Repeated 0x13 0x14 leaves growing false field states"
+          ],
+          "impact": "Sub-MB input can force quadratic synchronous CPU",
+          "validation": "Static source only; not yet parent validated."
+        }
+      },
+      {
+        "id": "discovery-0031-image-reference-amplification",
+        "candidateId": "discovery-0031-image-reference-amplification",
+        "reason": "Returned source-backed candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated drawings independently retain decoded copies of the same image",
+          "evidence": [
+            "src/convert/mod.rs:20011-20013 copies image relationship target bytes",
+            "src/convert/mod.rs:18403 decodes per drawing;18425+ retains independent ImageKind::Rgb",
+            "src/convert/mod.rs:3035-3050 image owns pixel Vec",
+            "src/convert/raster.rs:26/39 bounds destination canvas only"
+          ],
+          "impact": "1000 references to one small solid 2048x2048 PNG may retain about12GiB RGB",
+          "validation": "Static source only; not yet parent validated."
+        }
+      },
+      {
+        "id": "discovery-0031-wmf-record-boundary",
+        "candidateId": "discovery-0031-wmf-record-boundary",
+        "reason": "Returned source-backed candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "WMF polygon coordinates read past record boundaries",
+          "evidence": [
+            "src/convert/metafile.rs:477-492 checks declared record bounds",
+            "src/convert/metafile.rs:628-641 and665-681 iterate attacker point counts against whole media buffer",
+            "EMF read_emf_points at1067+ uses record end checks"
+          ],
+          "impact": "Many short overlapping WMF records force billions of point reads/raster operations",
+          "validation": "Static source only; not yet parent validated."
+        }
+      },
+      {
+        "id": "discovery-0031-self-hosted-pr",
+        "candidateId": "discovery-0031-self-hosted-pr",
+        "reason": "Architecture/distribution investigator returned conditional runner-isolation finding; parent source validation pending, deployment isolation unknown.",
+        "candidate": {
+          "source": "architecture distribution investigator",
+          "title": "Fork pull requests execute repository-controlled code on shared self-hosted runners",
+          "severity": "high",
+          "confidence": "medium",
+          "cwe": "CWE-829",
+          "attacker": "External fork contributor once workflow execution is approved",
+          "evidence": [
+            ".github/workflows/ci.yml:13-16,34-48,72-99,114-138,165-184,186-219,227-236,250-264,266-310",
+            ".github/workflows/docs.yml:42-67,79-99",
+            ".github/workflows/md-roundtrip.yml:13-16,28-39",
+            ".github/workflows/adoption.yml:19-31,48-72,88-100",
+            ".github/actions/mbx/action.yml:8-22 documents shared private unauthenticated cache network;27-38 reused checkouts",
+            "CONTRIBUTING.md:9-17 invites public fork PRs"
+          ],
+          "impact": "Code executes as self-hosted runner account with private-network connectivity; host state, future jobs and shared infrastructure impact depends on isolation",
+          "counterevidence": [
+            "contents:read and persist-credentials:false reduce token exposure",
+            "Fork run approvals not supplied",
+            "Cache server authorization/provisioning not inspected; do not claim cache write, host-root, Docker socket, secrets or persistence"
+          ]
+        }
+      },
+      {
+        "id": "discovery-0031-legacy-placeholder-cpu",
+        "candidateId": "discovery-0031-legacy-placeholder-cpu",
+        "reason": "Additional legacy-conversion candidate returned during full-file coverage; parent validation pending.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Legacy DOC empty-paragraph token selection repeatedly scans all text",
+          "evidence": [
+            "src/legacy_doc.rs:243 unconditionally calls empty_paragraph_token",
+            "src/legacy_doc.rs:312-324 increments predictable token and searches all block text for each candidate"
+          ],
+          "impact": "Dense sequential token values can force quadratic searches",
+          "status": "Reachability/control review in progress"
+        }
+      },
+      {
+        "id": "discovery-0031-legacy-table-padding",
+        "candidateId": "discovery-0031-legacy-table-padding",
+        "reason": "Additional legacy-conversion candidate returned during full-file coverage; parent validation pending.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Legacy DOC ragged table conversion amplifies sparse rows into dense XML",
+          "evidence": [
+            "src/legacy_doc.rs:512-525 pads every row to maximum row width",
+            "Existing ragged table behavior tests do not bound row/column product"
+          ],
+          "impact": "O(rows+columns) input cells can produce O(rows*max_columns) output cells",
+          "status": "Reachability/control review in progress"
+        }
+      },
+      {
+        "id": "discovery-0031-opc-entity-cpu",
+        "candidateId": "discovery-0031-opc-entity-cpu",
+        "reason": "Baseline returned a new decoded-relationship entity scanning candidate; independent parent verification pending.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Already decoded OPC relationship targets trigger quadratic XML entity rescanning",
+          "evidence": [
+            "src/opc/mod.rs:677-681 unescape_xml_text on relationship target",
+            "src/xmllinq/parse.rs:764-786 rescans remaining chars for semicolon per ampersand",
+            "oxml-opc0.14.2 relationship.rs:924-951 decoded_and_normalized_value; quick-xml0.41 attributes.rs:168-211 decodes &amp;"
+          ],
+          "attackInput": "XML-valid target '&amp;' repeated to produce many literal ampersands",
+          "impact": "About5MB encoded target can cause about5e11 character comparisons when resolving an absent font-table target"
+        }
+      }
+    ]
+  }
+}

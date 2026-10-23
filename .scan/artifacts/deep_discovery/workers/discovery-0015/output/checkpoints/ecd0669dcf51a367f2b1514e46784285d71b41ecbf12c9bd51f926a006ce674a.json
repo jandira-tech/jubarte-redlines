@@ -1,0 +1,38 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of the supplied current repository and scope '.'; userContext is null.",
+    "runtimeStatus": "Application code and tests are not executed during this audit.",
+    "validationMode": "static source analysis"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "candidate-altchunk-colspan",
+        "reason": "Baseline candidate received; awaiting independent parent validation and full caller/control trace.",
+        "paths": [
+          "src/convert/altchunk.rs"
+        ],
+        "candidate": {
+          "producer": "baseline",
+          "title": "Unbounded HTML altChunk colspan expands table grid",
+          "originalEvidence": "altChunk HTML table parser accepts attacker colspan as arbitrary usize at src/convert/altchunk.rs:566-572 and end_table() computes column count from spans then loops 0..cols emitting grid cells at ~459-489. Tiny HTML <table><tr><td colspan=\"18446744073709551615\">x</td></tr></table> inside a valid DOCX altChunk drives effectively unbounded allocation, bypassing archive byte/depth limits.",
+          "validationStatus": "Caller/control trace still pending"
+        },
+        "id": "candidate-altchunk-colspan"
+      },
+      {
+        "reason": "Source review and independent architecture review remain in progress.",
+        "paths": [
+          "."
+        ],
+        "id": "deferred-dc32abf1f1564c4c"
+      }
+    ]
+  }
+}

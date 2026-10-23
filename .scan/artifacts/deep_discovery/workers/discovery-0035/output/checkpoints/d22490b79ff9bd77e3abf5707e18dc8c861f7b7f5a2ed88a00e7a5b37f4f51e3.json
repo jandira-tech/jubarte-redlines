@@ -1,0 +1,74 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0035; userContext null; three delegated reviewers.",
+    "runtimeStatus": "Application code and tests not executed.",
+    "validationMode": "static source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "candidate-xml-part-suffix",
+        "candidateId": "xml-part-suffix",
+        "reason": "Baseline candidate awaiting parent validation and complete source payload.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "Found a concrete admission bypass candidate: admission.rs:531-550 gates XML by .xml/.rels suffix, plus main part only; converter resolves styles/theme/settings by relationship to arbitrary name (main_rel_part at convert/mod.rs:21310), then uses unchecked recursive Dom parser (styles at 3497, theme 3317). A styles relationship targeting word/styles.bin carries >256 nesting past admission into parse_element recursion at xmllinq/parse.rs:661. Verifying remaining controls and collecting exact evidence."
+        }
+      },
+      {
+        "id": "candidate-wmf-record-boundary",
+        "candidateId": "wmf-record-boundary",
+        "reason": "Rendering investigator candidate awaiting complete source trace and parent validation.",
+        "candidate": {
+          "source": "rendering",
+          "originalEvidence": "Confirmed a promising WMF record-boundary flaw: record size is checked only against overall buffer; TEXTOUT/EXTTEXTOUT and polygon counts read subsequent records as payload. Repeated tiny records can repeatedly materialize 65,535-byte text or 65,535-point polygons from shared trailing bytes, causing major amplification below ZIP admission. Verifying concrete construction and sibling controls; also reviewing legacy length/count logic and font/relationship paths."
+        }
+      },
+      {
+        "id": "candidate-legacy-piece-amplification",
+        "candidateId": "legacy-piece-amplification",
+        "reason": "Rendering investigator candidate pending complete evidence and parent validation.",
+        "candidate": {
+          "source": "rendering",
+          "originalEvidence": "main_text validates each piece against stream bytes but permits arbitrarily many successive CP ranges to reuse the same FC range, expanding a ~1 MiB Word stream plus ~48 KiB piece table to ~4 GiB characters (StoryChar overhead much larger); no legacy admission/output budget."
+        }
+      },
+      {
+        "id": "candidate-legacy-field-stack-complexity",
+        "candidateId": "legacy-field-stack-complexity",
+        "reason": "Rendering investigator candidate pending complete evidence and parent validation.",
+        "candidate": {
+          "source": "rendering",
+          "originalEvidence": "Story::blocks additionally scans the entire field stack with fields.iter().any() for every character; repeating field-start + separator leaves all previous frames false and makes nesting quadratic on a small valid story."
+        }
+      },
+      {
+        "id": "candidate-redaction-utf16-xml",
+        "candidateId": "redaction-utf16-xml",
+        "reason": "Baseline candidate pending full evidence and parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "redact fail-closed leak check misses valid UTF-16 XML copies. admission::part_text (admission.rs:774-789) explicitly transcodes UTF-16LE/BE BOM XML, so customXml/item1.xml with UTF-16 text secret is admitted. scrub::leaks_within at scrub.rs:469-473 chooses .xml/.rels then String::from_utf8_lossy; xml_holds root-none fallback (535-540) only does decoded_utf8.contains(needle), so interleaved NUL UTF-16 secret is missed. Raw UTF-16LE scan exists only in non-XML branch. edit::check_redactions (4727-4739) accepts when leaks returns empty, while PartFs preserves untouched customXml bytes."
+        }
+      },
+      {
+        "id": "candidate-font-alias-amplification",
+        "candidateId": "font-alias-amplification",
+        "reason": "Rendering investigator candidate pending complete dataflow and independent validation.",
+        "candidate": {
+          "source": "rendering",
+          "originalEvidence": "font_table::load_embedded_fonts eagerly loops every attacker-controlled distinct font name, resolves each embedRegular to package bytes, deobfuscate_odttf calls bytes.to_vec(), Face::parse validates, then stores a new owned copy by (name,bold,italic). Thousands of unique aliases referencing the same valid 1 MiB font create thousands of MiB despite small admitted package; no used-family filter or per-target cache."
+        }
+      }
+    ],
+    "openQuestions": [
+      "Source-wide review and independent architecture review are in progress."
+    ]
+  }
+}

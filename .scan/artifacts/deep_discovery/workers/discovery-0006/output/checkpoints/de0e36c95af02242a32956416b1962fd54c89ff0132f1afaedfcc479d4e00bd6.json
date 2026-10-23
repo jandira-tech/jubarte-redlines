@@ -1,0 +1,56 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline static audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application execution, tests, network requests, or vulnerability-triggering inputs.",
+    "validationMode": "read-only offline source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Document metadata scrubbing",
+        "disposition": "needs_follow_up",
+        "riskArea": "privacy / metadata disclosure",
+        "notes": "Candidate requires parent validation of relationship-target handling.",
+        "id": "surface-6a1888e197dc9fc5",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0006-scrub-part-location",
+        "reason": "Does a valid admitted DOCX with metadata at nonconventional relationship targets retain private author/custom-property data after scrub? Need trace admission, validation, OPC preservation and privacy guarantee.",
+        "candidate": {
+          "candidateId": "discovery-0006-scrub-part-location",
+          "title": "Scrubbing metadata uses conventional part paths rather than relationship targets",
+          "originalEvidence": [
+            {
+              "path": "src/scrub.rs",
+              "startLine": 38,
+              "endLine": 42,
+              "code": "const CORE: &str = \"docProps/core.xml\";\nconst APP: &str = \"docProps/app.xml\";\nconst CUSTOM: &str = \"docProps/custom.xml\";"
+            },
+            {
+              "path": "src/scrub.rs",
+              "startLine": 357,
+              "endLine": 387,
+              "description": "scrub_properties loads CORE/APP and removes CUSTOM only by hard-coded names; no package relationship resolution."
+            },
+            {
+              "path": "src/scrub.rs",
+              "startLine": 285,
+              "endLine": 293,
+              "description": "alias_authors iterates word_parts, restricted to word/*.xml."
+            }
+          ],
+          "question": "Does a valid admitted DOCX with metadata at nonconventional relationship targets retain private author/custom-property data after scrub? Need trace admission, validation, OPC preservation and privacy guarantee."
+        },
+        "id": "discovery-0006-scrub-part-location"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1157 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Rust document-processing engine for DOCX comparison, tracked edits, revision settlement, inspection, validation, scrubbing, Markdown conversion and PDF/PNG rendering. Rust CLI, Python/PyO3 and WASM interfaces share engine code; Python and Node add their own local filesystem adapters. The optional Python MCP server exposes document tools over stdio and grants a persistent directory capability rooted at --root, defaulting to the server working directory. Native rendering additionally accesses host font resources and a persistent font index. Explicit self-update and maintainer release/review automation have separate network, credential and publication authority. This is a source-backed architecture map, not completed security-audit coverage. Evidence: Cargo.toml:57-58, Cargo.toml:102-128, src/lib.rs:96-165, jubarte-python/pyproject.toml:43-49, jubarte-python/Cargo.toml:35-37, jubarte-wasm/Cargo.toml:18-19, jubarte-python/python/jubarte_redlines/mcp_server.py:373-381.",
+    "assets": [
+      "Confidential input documents, document text, comments, authorship and revision history; derived clean/redline DOCX files, Markdown patches, JSON reports and rendered PDF/PNG artifacts. MCP edit writes <root>/<out_dir>/clean.docx, redline.docx, patch.diff and report.json, with optional redline.pdf and redline-page-NN.png. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:152-205.",
+      "Integrity of caller-selected local files and the MCP server's granted document directory. The directory capability is held open, while ambient CLI publication intentionally accepts local paths outside any common root. Evidence: src/publication.rs:146-217.",
+      "Host memory and CPU used by archive decompression, XML parsing, document comparison, legacy DOC parsing, fonts, image decoding and rendering. Default admission limits are 64 MiB compressed, 10,000 entries, 64 MiB per part, 256 MiB inflated and XML depth 256; comparison limits raise compressed/per-part bounds to 512 MiB and aggregate inflated bytes to 2 GiB. Evidence: src/admission.rs:39-100.",
+      "Native renderer font files and persistent index metadata. The index defaults to ~/Library/Application Support/jubarte/font-index.tsv on macOS, $XDG_DATA_HOME/jubarte/font-index.tsv or ~/.local/share/jubarte/font-index.tsv on Linux, and %APPDATA%\\jubarte\\font-index.tsv on Windows; JUBARTE_FONT_DIR changes its default parent and JUBARTE_FONT_INDEX overrides or disables it. Evidence: src/convert/font.rs:2633-2652, src/convert/font.rs:3098-3107, src/convert/font.rs:3182-3229.",
+      "Installed CLI executable, release archives/checksums, package-registry identities and publication credentials. Current updater trusted signing keys are empty and the first signed release is unset. Evidence: src/update.rs:25-48, src/update.rs:198-258, scripts/release.sh:374-380, scripts/release.sh:919-959, scripts/release.sh:1063-1069.",
+      "GitHub release-write authority, optional release signing private key, Jules API credentials and delegated review/remediation capabilities. These are privileged development workflows, separate from document processing. Evidence: .github/workflows/release.yml:230-307, .github/workflows/release.yml:356-369, .github/workflows/jules-review.yml:17-41, .github/workflows/jules-el-conejo-review.yml:259-324."
+    ],
+    "trustBoundaries": [
+      "Document producer -> Rust package/XML consumers: caller-controlled ZIP records, part names, compressed data and XML cross into trusted process memory. Admission checks central/local ZIP consistency, special-entry defects, case-folded duplicate names, encryption/compression policy, streamed inflated-byte budgets and XML checks. InputLimitOverrides rejects unknown configuration fields. Evidence: src/admission.rs:103-138, src/admission.rs:439-553, src/opc/archive.rs:34-51. The library forbids unsafe Rust in its own code: src/lib.rs:86.",
+      "Library caller -> raw XML parser: parse_xdocument is intentionally permissive and allocates a character vector without applying input policy; try_parse_xdocument_with_limits validates before constructing its DOM. Callers choosing the raw API own prior admission and process limits. Evidence: src/xmllinq/parse.rs:88-135. Default tag limits are 1,024 attributes, 1,024-byte qualified attribute names, 64 MiB attribute values and 128 MiB start tags: src/xmllinq/parse.rs:48-57.",
+      "Legacy DOC producer -> legacy parser: supported conversion follows the separate compound-file/WordDocument/FIB/table pipeline rather than DOCX ZIP admission. Stream structure and encryption checks belong to legacy_doc, and process resource limits remain a host obligation. Evidence: src/legacy_doc.rs:174-216, src/legacy_doc.rs:765-795.",
+      "Edit-plan producer -> document transaction: version-1 source SHA-256 is checked when supplied; version-2 source SHA-256 is mandatory and checked after plan validation. Version-1 editing refuses packages containing XML signatures or vbaProject.bin. These integrity checks bind source bytes, not authenticated identity or human approval. Evidence: src/edit.rs:2072-2104, src/edit/v2_apply.rs:75-100.",
+      "MCP client -> document filesystem: all connected clients receive the tools installed by build_server, with document reads/publication mediated by _native._OutputRoot and cap_std::fs::Dir. --root defaults to Path.cwd(); expanded/resolved root is opened once. Python resolution checks provide diagnostics, while actual reads and writes use the persistent capability. No per-user authentication or tenant partition is implemented by this stdio adapter. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-108, jubarte-python/python/jubarte_redlines/mcp_server.py:373-381, jubarte-python/src/lib.rs:1244-1276, src/publication.rs:146-199.",
+      "MCP mutation -> output publication: output paths must pass portable-relative-name validation; target symlinks/directories are refused, and overwrite=false uses atomic hard-link installation. All bytes are staged and verified before any commit; atomicity is per file, and errors can report an already committed subset. Unix staging directories use mode 0700; Windows inherits platform access controls. Evidence: src/publication.rs:83-143, src/publication.rs:168-199, src/publication.rs:228-245, src/publication.rs:431-512, src/publication.rs:535-570.",
+      "Local CLI caller -> ambient filesystem: native publish_paths holds destination-parent handles and stages outputs, but deliberately grants ambient local-path authority. Python CLI _write uses Path.write_bytes; Node CLI write uses fs.writeFileSync. Their preflight existence checks are distinct from native publication enforcement and must be reviewed independently. Evidence: src/bin/jubarte.rs:261-273, src/publication.rs:203-225, jubarte-python/python/jubarte_redlines/__main__.py:101-103, jubarte-python/python/jubarte_redlines/__main__.py:126-133, jubarte-wasm/cli/bin/jubarte-redlines.mjs:76-79, jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111.",
+      "Markdown image names -> native CLI resource loader: the trusted root is explicit --resource-path or the Markdown file's parent, falling back to '.'. URL schemes are refused, percent escapes are decoded before policy checks, canonicalized targets must remain under the root, and actual reads use OutputRoot. The general Markdown library instead accepts a caller-provided image callback, absent by default. Evidence: src/bin/jubarte.rs:2811-2878, src/bin/jubarte.rs:2936-2943, src/markdown/mod.rs:196-198, src/markdown/mod.rs:216-226.",
+      "Document font requests -> ambient native font discovery/index: document family names select parsed host fonts, including system, Word and cloud-cache locations and configured user fonts. Cloud-family names must be one normal path component. The persistent index records source paths and timestamps, reloads matching files and saves through a process-specific temporary filename followed by rename. These operations do not use the MCP OutputRoot. Evidence: src/convert/font.rs:2225-2236, src/convert/font.rs:2263-2315, src/convert/font.rs:2633-2652, src/convert/font.rs:3154-3172, src/convert/font.rs:3182-3229.",
+      "Operator -> updater -> installed executable: explicit self-update resolves releases from jandira-tech/jubarte-redlines, selects one platform archive and inner jubarte binary, requires checksum verification and registers an extracted-regular-file verification hook. Noninteractive installation needs --yes; --check only resolves availability; explicitly requested versions can downgrade. Signature verification is implemented but inactive with the current empty key list. Extraction, HTTP behavior and executable replacement are delegated to self_update and were not independently inspected here. Evidence: src/update.rs:25-48, src/update.rs:88-124, src/update.rs:144-161, src/update.rs:186-258, src/update.rs:307-321.",
+      "Maintainer/CI -> release consumers: tag-driven GitHub builds have contents:read, while the release job alone has contents:write. Optional ZIPSIGN_PRIVATE_KEY reaches the signing step and temporary $RUNNER_TEMP/zipsign.XXXXXX/keyN files; checksums are generated after signing. A separate local release script can publish crates.io, two npm packages, PyPI and a GitHub fallback release using operator credentials. Its typed version confirmation can be bypassed with the explicit --yes option, and security-check.sh runs even with --skip-gates. Evidence: .github/workflows/release.yml:15-25, .github/workflows/release.yml:51-89, .github/workflows/release.yml:230-321, scripts/release.sh:374-380, scripts/release.sh:655-660, scripts/release.sh:875-899, scripts/release.sh:919-959, scripts/release.sh:976-1012, scripts/release.sh:1039-1069.",
+      "PR content -> privileged review/remediation automation: one pinned reviewer receives JULES_API_KEY and a GitHub token with contents:read, pull-requests:write and checks:write, gated to same-repository non-Dependabot PRs, without local checkout. A different pinned companion-remediation action receives JULES_API_KEY and starts only for trusted arthrod author/dispatcher conditions; its requested mode is AUTO_CREATE_PR with require_plan_approval:false. Companion workflow document gates and prompts do not establish what the external action or Jules service enforces. Evidence: .github/workflows/jules-review.yml:17-50, .github/workflows/jules-el-conejo-review.yml:46-54, .github/workflows/jules-el-conejo-review.yml:65-102, .github/workflows/jules-el-conejo-review.yml:259-324."
+    ],
+    "attackerCapabilities": [
+      "A document supplier can control DOCX ZIP/XML, embedded media/fonts, Markdown text/image references or supported legacy DOC bytes that a caller elects to process. They do not thereby control trusted process environment, CLI arguments, MCP root selection, host filesystem permissions or release credentials.",
+      "An MCP client can invoke the registered read/write tools and select paths within the operator-granted root, including overwrite=true. All clients sharing this server share that capability; a meaningful boundary failure would add access outside that grant, rather than merely exercise permitted edits. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108, jubarte-python/python/jubarte_redlines/mcp_server.py:152-168.",
+      "A library caller may supply permissive XML, increased limits or an image callback; those choices are caller authority, not proof that an untrusted document can alter policy. Resource-exhaustion impact on a shared service requires a host deployment and workload access not supplied here. Evidence: src/admission.rs:103-164, src/xmllinq/parse.rs:88-135, src/markdown/mod.rs:196-198.",
+      "A release-asset attacker would need write access to release artifacts or a separate transport/provider compromise. The current checksum-only updater cannot distinguish coordinated archive/checksum replacement using an independent signing identity, as the documentation explicitly explains. Evidence: docs/SELF_UPDATE.md:59-80, src/update.rs:44-48.",
+      "PR authors control reviewed source and PR metadata within their GitHub permissions. Fork authors are excluded from the privileged Jules paths inspected here; same-repository authors and the trusted companion-remediation trigger have different authority. No claim is made that PR text alone can acquire repository write authority. Evidence: .github/workflows/jules-review.yml:19-31, .github/workflows/jules-el-conejo-review.yml:65-82, .github/workflows/jules-el-conejo-review.yml:259-324."
+    ],
+    "securityObjectives": [
+      "Bound untrusted package/XML resource use and reject unsafe or ambiguous package representations before protected processing; preserve explicit caller-configured limits. Raw permissive parsing and maintainer debug inspection must remain distinguishable from checked admission. Evidence: src/admission.rs:39-164, src/admission.rs:439-553, src/opc/archive.rs:15-19, src/xmllinq/parse.rs:88-135.",
+      "Keep MCP document reads and publication within the persistent root capability despite symlink/path replacement, preserve overwrite opt-in and report partial publication accurately. Evidence: src/publication.rs:83-199, src/publication.rs:431-570.",
+      "Bind prepared edits to the intended source and expose refusal outcomes; do not treat a content digest, selected author string or model-visible tool annotation as authenticated authority. Evidence: src/edit.rs:2081-2092, src/edit/v2_apply.rs:84-100, jubarte-python/python/jubarte_redlines/mcp_server.py:54-55.",
+      "Prevent Markdown image references from gaining arbitrary host-file or network read authority in the native CLI loader; caller-provided library callbacks own their additional authority. Evidence: src/bin/jubarte.rs:2811-2878, src/markdown/mod.rs:196-198.",
+      "Install only the explicitly selected release's intended regular executable, with the configured checksum/signature policy and operator confirmation semantics. Preserve the distinction between implemented signing support and active trusted signing keys. Evidence: src/update.rs:104-124, src/update.rs:198-258, src/update.rs:307-321.",
+      "Keep release signing, registry publication, review comments and companion PR creation as separately authorized capabilities. Bind published versions/artifacts and constrain credentials to their intended consumers. Evidence: .github/workflows/release.yml:31-49, .github/workflows/release.yml:230-307, scripts/release.sh:875-899, .github/workflows/jules-review.yml:28-39, .github/workflows/jules-el-conejo-review.yml:259-324."
+    ],
+    "assumptions": [
+      "Authorized scope is the current repository at '.', with no supplied deployment context, threat model or knowledge base. Source inspection was offline and read-only; application code and tests were not executed. Ignored dependency/build directories and the target symlink were not followed. Only root SECURITY.md was found in the nonignored source inventory.",
+      "No public web service, tenant deployment or external authentication layer was established. MCP is stdio-only in the inspected entrypoint; client authentication, subprocess sandboxing, memory/CPU quotas and filesystem ACLs remain host responsibilities. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; SECURITY.md documents process limits as a caller obligation.",
+      "Documentation/control qualification: build_server describes tools as only touching files under root, and explicit document I/O does use OutputRoot. Native render font discovery and font-index persistence instead use ambient host paths, potentially outside that root. Thus the root is a document-I/O capability boundary, not an established process-wide filesystem sandbox. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108, src/convert/font.rs:2633-2652, src/convert/font.rs:3098-3107, src/convert/font.rs:3154-3229.",
+      "Signing is staged rather than currently mandatory: docs describe signature protection after activation and explicitly disclose checksum-only operation before that point; actual RELEASE_KEYS is empty and FIRST_SIGNED_RELEASE is None. No deployed secret or release state was queried. Evidence: docs/SELF_UPDATE.md:59-87, src/update.rs:44-48.",
+      "The local release fallback assembles downloaded CI artifacts and directly creates a release after checksumming, without the release workflow's signing block. Current empty trusted keys make this compatible with current updater policy; behavior after future signing activation needs separate review. Evidence: scripts/release.sh:976-1012, .github/workflows/release.yml:252-307, src/update.rs:44-48.",
+      "Dependency documentation has drifted: SECURITY.md discusses rdocx-opc 0.2 and quick-xml 0.41; the inspected manifest actually names oxml-opc 0.14.2, direct quick-xml 0.42 and a separate 0.41 alias for OPC error compatibility. Treat the manifest/lockfile dependency graph as current implementation evidence rather than assuming the older package name describes it. Evidence: Cargo.toml:131-149.",
+      "self_update implementation, external pinned GitHub actions, Jules service authorization and the external app release-engine.sh are not present in the inspected source surfaces. Their endpoint credential forwarding, extraction/replacement mechanics, actual branch-write grants and publication approval controls remain unresolved. Evidence: src/update.rs:198-258, .github/workflows/jules-review.yml:35-41, .github/workflows/jules-el-conejo-review.yml:272-324, scripts/release.sh:382-389.",
+      "The general Python Document facade stores bytes without parsing on construction; native operations perform validation. Loading a Document is therefore not itself proof of admission. Evidence: jubarte-python/python/jubarte_redlines/document.py:116-145.",
+      "Native, Python and Node CLIs share engine semantics but not a single filesystem writer. Do not infer native staged publication guarantees for Python Path.write_bytes or Node fs.writeFileSync. Evidence: src/bin/jubarte.rs:261-273, jubarte-python/python/jubarte_redlines/__main__.py:126-133, jubarte-wasm/cli/bin/jubarte-redlines.mjs:106-111."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current repository; architecture mapping is not full source-audit coverage."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.markdown-table-range",
+      "title": "Tiny Markdown table metadata can trigger unbounded cell allocation",
+      "summary": "A caller-controlled cells paragraph range is converted into an unbounded count and used to append padding cells. A tiny Markdown table with a range such as p0-p1000000000 causes roughly a billion padding entries to be allocated before DOCX assembly, exhausting CPU and memory in Rust, Python, or WASM conversion hosts.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A small untrusted Markdown input can exhaust or terminate its processing host. Reachability is direct through public byte/string APIs; remote or multi-user service exposure is conditional, and there is no confidentiality or integrity compromise.",
+        "changeConditions": "Process memory/CPU limits and worker isolation constrain impact; a shared remotely exposed conversion service would increase operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source tracing establishes the unchecked numeric count, default public conversion path, and count-driven Vec growth; runtime exhaustion was deliberately not executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/view_notes.rs",
+          "startLine": 1011,
+          "endLine": 1022,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 1265,
+          "endLine": 1269,
+          "role": "sink"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 59,
+          "endLine": 86,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 1096,
+          "endLine": 1122,
+          "role": "supporting"
+        },
+        {
+          "path": "jubarte-python/src/lib.rs",
+          "startLine": 1204,
+          "endLine": 1218,
+          "role": "entrypoint"
+        },
+        {
+          "path": "jubarte-wasm/src/lib.rs",
+          "startLine": 1438,
+          "endLine": 1448,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "range-count",
+          "label": "Table cell range has no amplification bound",
+          "path": "src/markdown/view_notes.rs",
+          "startLine": 1011,
+          "endLine": 1022,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        parsed.row_paragraphs = words\n            .chunks(2)\n            .map(|pair| {\n                let range = pair.get(1)?;\n                let (first, last) = range.split_once('-').unwrap_or((range, range));\n                let first = crate::ids::short_number(first, 'p')?;\n                let last = crate::ids::short_number(last, 'p')?;\n                last.checked_sub(first)?\n                    .checked_add(1)\n                    .map(|count| (first, count))\n            })\n            .collect();",
+          "explanation": "Checked arithmetic prevents overflow but accepts arbitrarily large representable cell counts."
+        },
+        {
+          "id": "pad-loop",
+          "label": "Declared count directly drives vector growth",
+          "path": "src/markdown/write.rs",
+          "startLine": 1265,
+          "endLine": 1269,
+          "language": "rust",
+          "role": "sink",
+          "code": "                let mut pad = pad;\n                if breaks == 0 {\n                    while count + pad.len() < n {\n                        pad.push((1, None));\n                    }",
+          "explanation": "For a table row without break markers, padding grows until the attacker-selected n; actual Markdown cells do not bound it."
+        },
+        {
+          "id": "public-convert",
+          "label": "Public conversion calls parser before output assembly",
+          "path": "src/markdown/write.rs",
+          "startLine": 80,
+          "endLine": 86,
+          "language": "rust",
+          "code": "    if !is_date(&options.date) {\n        return Err(MarkdownError::Package(format!(\n            \"date {:?} is no timestamp such as 2026-10-01T09:00:00Z\",\n            options.date\n        )));\n    }\n    let document = read(markdown, options);",
+          "explanation": "Normal valid conversion options reach read(), whose line 155 computes table_plans before event-level view filtering."
+        },
+        {
+          "id": "sibling-cap",
+          "label": "Sibling paragraph range already has an explicit limit",
+          "path": "src/markdown/view_notes.rs",
+          "startLine": 1028,
+          "endLine": 1033,
+          "language": "rust",
+          "code": "fn paragraph_range(id: &str) -> Option<(usize, usize)> {\n    let (first, last) = id.split_once('-').unwrap_or((id, id));\n    let first = crate::ids::short_number(first, 'p')?;\n    let last = crate::ids::short_number(last, 'p')?;\n    let count = last.checked_sub(first)?.checked_add(1)?;\n    (count <= MOST_EMPTY).then_some((first, count))",
+          "explanation": "MOST_EMPTY exists but is not applied to row_paragraphs."
+        }
+      ],
+      "rootCause": {
+        "summary": "Table metadata range parsing omits the existing per-range bound and the table planner trusts the resulting count for allocation.",
+        "evidenceRefs": [
+          "range-count",
+          "pad-loop",
+          "sibling-cap"
+        ]
+      },
+      "remediation": "Validate row_paragraphs with the same bounded range helper used elsewhere, impose a total table/output cell budget before allocation, and return a structured refusal rather than silently processing an oversized range.",
+      "validation": {
+        "counterEvidence": [
+          "checked_sub and checked_add reject descending/overflowing ranges but do not limit large valid ranges.",
+          "The count branch requires one metadata range per actual table row and no break marker; a single-header-row table can satisfy both.",
+          "Sibling paragraph_range caps MOST_EMPTY at 100000, but this branch does not call it.",
+          "SECURITY.md recommends process limits; these limit blast radius without preventing the input amplification."
+        ],
+        "limitations": [
+          "No application code or resource-exhaustion proof was executed.",
+          "Actual remote/shared service deployment is not established."
+        ],
+        "method": "Offline static source inspection",
+        "status": "validated",
+        "summary": "Independently traced metadata collection in table_plans, checked range parsing, the no-break row branch, and Rust/Python/WASM public conversion callers. No range or output budget intervenes before padding allocation."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "markdown_to_docx(markdown) -> read -> table_plans -> view_notes::table_line -> row_paragraphs count -> plan_table -> pad.push until n."
+        },
+        "impact": {
+          "level": "high",
+          "summary": "Memory/CPU exhaustion or process/worker termination."
+        },
+        "likelihood": {
+          "level": "medium",
+          "summary": "Deterministic input amplification; attacker access to a shared conversion host is deployment-dependent."
+        },
+        "reachability": {
+          "summary": "Rust markdown_to_docx and Python/WASM wrappers accept caller-controlled text; ordinary valid options reach the table planner without admitting a DOCX archive first.",
+          "attacker": "Document supplier to an application that converts untrusted Markdown",
+          "entrypoint": "src/markdown/write.rs:59; jubarte-python/src/lib.rs:1206; jubarte-wasm/src/lib.rs:1483",
+          "sink": "src/markdown/write.rs:1267-1268",
+          "preconditions": [
+            "The host converts attacker-supplied Markdown.",
+            "Metadata contains one range per table row, with a large valid range and no paragraph break in the affected row."
+          ]
+        },
+        "summary": "Untrusted Markdown range metadata crosses into unchecked output cardinality."
+      },
+      "remediationTests": [
+        "With a tiny one-row table, a range exceeding the configured table budget must fail promptly without allocating proportional output.",
+        "Cover valid ranges at the inclusive limit, descending/overflow ranges, multiple rows, and ranges with and without break markers across the shared public API."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0008-markdown-table-range",
+        "workerLabel": "discovery-0008",
+        "discoveredBy": "baseline"
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.document-table-span",
+      "title": "Unbounded document table spans exhaust memory during rendering",
+      "summary": "Untrusted DOCX table gridSpan and HTML/MHT altChunk colspan values become unrestricted output column counts. A tiny document can request a billion columns, causing layout-vector allocation or generated XML expansion before any output budget, exhausting memory and CPU despite package admission.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Public render/convert APIs accept untrusted documents and a tiny accepted input produces arbitrarily large generated XML. Impact is availability of the processing host; remote/shared exposure depends on the embedding application.",
+        "changeConditions": "Memory/CPU-limited isolated workers constrain impact; shared conversion service exposure increases affected availability."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source establishes package admission followed by HTML expansion, unrestricted colspan parsing, and direct count-driven XML generation; no destructive runtime proof was run."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "role": "supporting"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14642,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "colspan-parse",
+          "label": "Colspan has no upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "language": "rust",
+          "role": "root_control",
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "A small HTML attribute can select any positive representable span."
+        },
+        {
+          "id": "grid-growth",
+          "label": "One output element per declared column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "Attacker-controlled spans become output column count."
+        },
+        {
+          "id": "grid-loop",
+          "label": "Unbounded XML expansion loop",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "Even a single cell can cause billions of grid elements to be allocated."
+        },
+        {
+          "id": "altchunk-consumer",
+          "label": "Rendering expands relationship-selected HTML",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Input admission precedes expansion, so its inflated input-byte budgets do not bound generated XML."
+        },
+        {
+          "id": "gridspan-parse",
+          "label": "OOXML span accepts huge positive values",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "Raw DOCX tables can reach the same unrestricted numeric cardinality without an altChunk."
+        },
+        {
+          "id": "column-vector",
+          "label": "Span totals directly size layout vectors",
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13612,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }",
+          "explanation": "A tiny gridSpan value represented by a short decimal string can trigger gigabytes of column allocation."
+        },
+        {
+          "id": "merge-vector",
+          "label": "Merge bookkeeping also grows with span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14642,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;",
+          "explanation": "The unbounded count also propagates into merge-state allocation and iteration."
+        }
+      ],
+      "rootCause": {
+        "summary": "DOCX gridSpan and imported HTML colspan are trusted as output column cardinalities with only a lower bound. Both document-table paths lack a shared grid/output budget before generation and allocation.",
+        "evidenceRefs": [
+          "colspan-parse",
+          "grid-growth",
+          "grid-loop",
+          "gridspan-parse",
+          "column-vector",
+          "merge-vector"
+        ]
+      },
+      "remediation": "Enforce a common total table/grid budget for direct OOXML spans and HTML/MHT import before output generation or vector allocation. Reject excessive spans and use checked cumulative totals, returning a typed conversion refusal.",
+      "validation": {
+        "counterEvidence": [
+          "Archive inflation and XML input limits apply to original package bytes, which can remain tiny.",
+          "The parser defaults invalid/zero spans to one but valid huge positive spans remain unrestricted.",
+          "Process resource limits recommended by SECURITY.md constrain host impact without rejecting the expansion."
+        ],
+        "limitations": [
+          "No resource-exhaustion execution or observed service deployment."
+        ],
+        "method": "Offline static source tracing",
+        "status": "validated",
+        "summary": "Verified actual caller with_layout admits the package then expands internal altChunk bytes via html_to_wml; Builder accepts and stores the full span, and end_table emits cols grid elements before DOM parsing. Independently verified direct OOXML gridSpan parsing (14211-14215), column occupancy allocation (13601-13615), and merge vector resize (14637-14642); they share the missing bounded table cardinality control."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX main document w:altChunk r:id -> relationship target part -> chunk_html -> html_to_wml -> Builder::start(td,colspan) -> end_table cols -> XML output loop. Ordinary OOXML path: w:gridSpan/@w:val -> cell_span -> RawCell.colspan -> occupancy -> cols allocation -> merge-state resize."
+        },
+        "impact": {
+          "level": "high",
+          "summary": "Processing-host memory exhaustion or prolonged CPU use."
+        },
+        "likelihood": {
+          "level": "medium",
+          "summary": "The expansion is deterministic; exposure to untrusted callers depends on the embedding host."
+        },
+        "reachability": {
+          "summary": "Public docx_to_png, render, report and PDF/layout paths call with_layout; attacker only needs to supply package bytes accepted by existing admission.",
+          "attacker": "Untrusted DOCX supplier",
+          "entrypoint": "src/convert/mod.rs:769",
+          "sink": "src/convert/altchunk.rs:489",
+          "preconditions": [
+            "A host renders/converts an attacker-controlled DOCX containing either a large w:gridSpan or an internal HTML/MHT chunk with a large colspan."
+          ]
+        }
+      },
+      "remediationTests": [
+        "A tiny altChunk with colspan 1000000000 must fail before large output allocation.",
+        "Cover inclusive limits, cumulative spans across cells, integer overflow, nested tables, and both HTML and MHT import.",
+        "Cover direct OOXML gridSpan with tiny/no initial tblGrid, gridBefore/gridAfter variants, and merge bookkeeping as well as imported colspan."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0008-altchunk-colspan",
+        "workerLabel": "discovery-0008",
+        "discoveredBy": "parent",
+        "corroboratedBy": "baseline",
+        "relatedCandidateIds": [
+          "discovery-0008-docx-gridspan"
+        ],
+        "originalCandidates": [
+          {
+            "producer": "baseline",
+            "originalMessage": "convert/mod.rs::cell_span lines14213-14220 parses <w:gridSpan w:val=\"1000000000\"/> to usize with only max(1). parse_table sums raw row colspans into occupancy at13599-13604, then vec![each; occupancy]/cols.resize(occupancy,80.0) at13609-13615, later open.resize(col+span,None)14638. Suggest one broader converter table-span finding covering both OOXML gridSpan and HTML colspan; byte/XML-depth admission doesn't bound numeric expansion."
+          }
+        ],
+        "previousFindings": [
+          {
+            "ruleId": "resource-exhaustion.altchunk-colspan",
+            "title": "Unbounded HTML colspan exhausts memory during DOCX rendering",
+            "summary": "An untrusted DOCX can reference a tiny HTML altChunk with a billion-column colspan. The converter accepts the integer without an upper bound and emits one grid-column XML element per declared column before parsing the expanded body, exhausting memory and CPU despite package admission.",
+            "severity": {
+              "level": "medium",
+              "rationale": "Public render/convert APIs accept untrusted documents and a tiny accepted input produces arbitrarily large generated XML. Impact is availability of the processing host; remote/shared exposure depends on the embedding application.",
+              "changeConditions": "Memory/CPU-limited isolated workers constrain impact; shared conversion service exposure increases affected availability."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Source establishes package admission followed by HTML expansion, unrestricted colspan parsing, and direct count-driven XML generation; no destructive runtime proof was run."
+            },
+            "taxonomy": {
+              "category": "Uncontrolled resource consumption",
+              "cwe": [
+                "CWE-400"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 567,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "role": "sink"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 773,
+                "endLine": 798,
+                "role": "entrypoint"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 34,
+                "endLine": 39,
+                "role": "supporting"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "colspan-parse",
+                "label": "Colspan has no upper bound",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 567,
+                "language": "rust",
+                "role": "root_control",
+                "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+                "explanation": "A small HTML attribute can select any positive representable span."
+              },
+              {
+                "id": "grid-growth",
+                "label": "One output element per declared column",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 476,
+                "language": "rust",
+                "role": "sink",
+                "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+                "explanation": "Attacker-controlled spans become output column count."
+              },
+              {
+                "id": "grid-loop",
+                "label": "Unbounded XML expansion loop",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 488,
+                "endLine": 491,
+                "language": "rust",
+                "role": "sink",
+                "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+                "explanation": "Even a single cell can cause billions of grid elements to be allocated."
+              },
+              {
+                "id": "altchunk-consumer",
+                "label": "Rendering expands relationship-selected HTML",
+                "path": "src/convert/mod.rs",
+                "startLine": 789,
+                "endLine": 798,
+                "language": "rust",
+                "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+                "explanation": "Input admission precedes expansion, so its inflated input-byte budgets do not bound generated XML."
+              }
+            ],
+            "rootCause": {
+              "summary": "HTML table import interprets untrusted colspan as an unrestricted output cardinality, without column or generated-output budgets.",
+              "evidenceRefs": [
+                "colspan-parse",
+                "grid-growth",
+                "grid-loop"
+              ]
+            },
+            "remediation": "Reject or cap colspan before storing it, use checked totals, and enforce a total generated grid/output budget before expanding HTML/MHT chunks. Return a typed conversion refusal for oversized tables.",
+            "validation": {
+              "counterEvidence": [
+                "Archive inflation and XML input limits apply to original package bytes, which can remain tiny.",
+                "The parser defaults invalid/zero spans to one but valid huge positive spans remain unrestricted.",
+                "Process resource limits recommended by SECURITY.md constrain host impact without rejecting the expansion."
+              ],
+              "limitations": [
+                "No resource-exhaustion execution or observed service deployment."
+              ],
+              "method": "Offline static source tracing",
+              "status": "validated",
+              "summary": "Verified actual caller with_layout admits the package then expands internal altChunk bytes via html_to_wml; Builder accepts and stores the full span, and end_table emits cols grid elements before DOM parsing."
+            },
+            "attackPath": {
+              "dataflow": {
+                "summary": "DOCX main document w:altChunk r:id -> relationship target part -> chunk_html -> html_to_wml -> Builder::start(td,colspan) -> end_table cols -> XML output loop."
+              },
+              "impact": {
+                "level": "high",
+                "summary": "Processing-host memory exhaustion or prolonged CPU use."
+              },
+              "likelihood": {
+                "level": "medium",
+                "summary": "The expansion is deterministic; exposure to untrusted callers depends on the embedding host."
+              },
+              "reachability": {
+                "summary": "Public docx_to_png, render, report and PDF/layout paths call with_layout; attacker only needs to supply package bytes accepted by existing admission.",
+                "attacker": "Untrusted DOCX supplier",
+                "entrypoint": "src/convert/mod.rs:769",
+                "sink": "src/convert/altchunk.rs:489",
+                "preconditions": [
+                  "A host renders/converts an attacker-controlled DOCX with a relationship to an HTML/MHT chunk."
+                ]
+              }
+            },
+            "remediationTests": [
+              "A tiny altChunk with colspan 1000000000 must fail before large output allocation.",
+              "Cover inclusive limits, cumulative spans across cells, integer overflow, nested tables, and both HTML and MHT import."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "candidateId": "discovery-0008-altchunk-colspan",
+              "workerLabel": "discovery-0008",
+              "discoveredBy": "parent",
+              "corroboratedBy": "baseline",
+              "originalCandidates": [
+                {
+                  "producer": "parent",
+                  "title": "Unbounded altChunk HTML table colspan",
+                  "locations": [
+                    {
+                      "path": "src/convert/altchunk.rs",
+                      "startLine": 563,
+                      "endLine": 566
+                    },
+                    {
+                      "path": "src/convert/altchunk.rs",
+                      "startLine": 469,
+                      "endLine": 490
+                    }
+                  ],
+                  "evidence": "attr(open,\"colspan\").parse::<usize>().unwrap_or(1).max(1) becomes cell.span; end_table sums spans into cols and loops for _ in 0..cols to write w:gridCol, with no max bound in these functions.",
+                  "baselineCorroboration": "src/convert/altchunk.rs accepts HTML <td colspan='1000000000'> as usize with .max(1) only; end_table sums cell.span into cols then for _ in 0..cols emits one w:gridCol. with_layout expands attacker-controlled aFChunk HTML before parsing at convert/mod.rs:787-795. A tiny DOCX/HTML part triggers billions of output nodes / OOM before generated-XML validation."
+                },
+                {
+                  "producer": "parent",
+                  "title": "Unbounded altChunk HTML table colspan",
+                  "locations": [
+                    {
+                      "path": "src/convert/altchunk.rs",
+                      "startLine": 563,
+                      "endLine": 566
+                    },
+                    {
+                      "path": "src/convert/altchunk.rs",
+                      "startLine": 469,
+                      "endLine": 490
+                    }
+                  ],
+                  "evidence": "attr(open,\"colspan\").parse::<usize>().unwrap_or(1).max(1) becomes cell.span; end_table sums spans into cols and loops for _ in 0..cols to write w:gridCol, with no max bound in these functions."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "xml-admission.auxiliary-extension-bypass",
+      "title": "Auxiliary XML parts bypass depth limits when named with another extension",
+      "summary": "Package admission scans .xml/.rels and specially checks the main document, but relationship-selected auxiliary parts can have other extensions. Rendering resolves a styles relationship to styles.bin and parses its deeply nested XML with the unchecked recursive DOM parser, permitting stack exhaustion.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled document data can exhaust CPU/memory or terminate its processing host through a public parser/conversion boundary. Shared or remote deployment is conditional; impact is availability.",
+        "changeConditions": "Isolated workers with process CPU/memory limits constrain impact; shared untrusted document services increase affected availability."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently inspected the cited source and actual caller/control path. Exploit inputs and resource exhaustion were not executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursion / XML policy bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 550,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "role": "supporting"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "discovery-0008-styles-extension-depth-e0",
+          "label": "Extension-based admission",
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 550,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())",
+          "explanation": "Extension-based admission supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-styles-extension-depth-e1",
+          "label": "Main-only exception",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "language": "rust",
+          "role": "supporting",
+          "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;",
+          "explanation": "Main-only exception supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-styles-extension-depth-e2",
+          "label": "Unchecked styles consumer",
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let Some(xml) = pkg.part_string(&main_rel_part(pkg, \"styles\", \"word/styles.xml\")) else {\n        return StyleSheet {\n            defaults,\n            by_id: HashMap::new(),\n            tables: HashMap::new(),\n            theme,\n            latent: true,\n            default_table: false,\n        };\n    };\n    let linked = settings_link_styles(pkg);\n    let xml = if linked {\n        link_template_styles(&xml)\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Unchecked styles consumer supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-styles-extension-depth-e3",
+          "label": "Relationship-selected target",
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())",
+          "explanation": "Relationship-selected target supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-styles-extension-depth-e4",
+          "label": "Recursive DOM construction",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Recursive DOM construction supports the validated source-to-sink trace."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission classifies auxiliary XML by filename extension while consumers classify it by relationship role; the unchecked consumer does not apply active XML policy.",
+        "evidenceRefs": [
+          "discovery-0008-styles-extension-depth-e0"
+        ]
+      },
+      "remediation": "Apply active XML limits at every relationship-selected XML consumer before DOM construction, or admit all XML-bearing parts by their content type/role regardless of extension.",
+      "validation": {
+        "counterEvidence": [
+          "Ordinary XML filenames and the main part are depth checked.",
+          "Compressed/inflated limits still apply, but deep XML fits a small part.",
+          "The raw parser is deliberately permissive; the vulnerable consumer relies on incomplete prior admission."
+        ],
+        "limitations": [
+          "No application/test/PoC execution or deployed-service access."
+        ],
+        "method": "Offline static source and dataflow analysis",
+        "status": "validated",
+        "summary": "Independently verified Attacker DOCX styles relationship -> main_rel_part -> part_string(styles.bin) -> load_stylesheet -> Dom::parse_xdocument -> recursive parse_element."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Attacker DOCX styles relationship -> main_rel_part -> part_string(styles.bin) -> load_stylesheet -> Dom::parse_xdocument -> recursive parse_element."
+        },
+        "impact": {
+          "level": "high",
+          "summary": "Processing-host CPU or memory exhaustion, including stack exhaustion where recursion applies."
+        },
+        "likelihood": {
+          "level": "medium",
+          "summary": "Deterministic attacker-selected input mechanism; access to an embedding shared service is not established."
+        },
+        "reachability": {
+          "summary": "Untrusted DOCX supplier controls the document bytes reaching the cited public entrypoint; the listed controls do not bound the failing operation.",
+          "attacker": "Untrusted DOCX supplier",
+          "entrypoint": "src/convert/mod.rs:21310",
+          "sink": "src/admission.rs:533; src/convert/mod.rs:3480; src/xmllinq/parse.rs:660",
+          "preconditions": [
+            "The host renders/converts attacker-supplied DOCX.",
+            "A non-external styles relationship references an auxiliary XML part with a non-.xml/.rels filename; its bytes remain inside archive limits."
+          ]
+        }
+      },
+      "remediationTests": [
+        "A styles relationship to deep styles.bin must refuse under max_xml_depth just like styles.xml.",
+        "Cover fontTable, settings, themes and story relationship consumers under renamed auxiliary parts and explicit raised limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0008-styles-extension-depth",
+        "workerLabel": "discovery-0008",
+        "discoveredBy": "baseline",
+        "originalCandidates": [
+          {
+            "producer": "baseline",
+            "originalMessage": "admission XML policy only checks `.xml`/`.rels` plus main part, but `convert::load_stylesheet` resolves arbitrary relationship targets then recursively parses with unchecked Dom. A styles part `word/styles.bin` containing deep XML bypasses depth cap and stack-overflows via parse_element recursion. Evidence admission.rs:533-550, 557-570; convert/mod.rs:3481-3497, 21310-21320; xmllinq/parse.rs:661."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "xml-admission.doctype-parser-differential",
+      "title": "DOCTYPE parser differential bypasses XML depth admission",
+      "summary": "Admission ignores quick-xml DocType events, whereas the custom DOM parser skips a declaration only to its first literal >. A legal internal-subset comment can conceal thousands of nested-looking tags from admission and expose them to recursive DOM parsing, exhausting the hosting thread stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled document data can exhaust CPU/memory or terminate its processing host through a public parser/conversion boundary. Shared or remote deployment is conditional; impact is availability.",
+        "changeConditions": "Isolated workers with process CPU/memory limits constrain impact; shared untrusted document services increase affected availability."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently inspected the cited source and actual caller/control path. Exploit inputs and resource exhaustion were not executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursion / XML policy bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 798,
+          "endLine": 820,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 539,
+          "endLine": 547,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "role": "sink"
+        },
+        {
+          "path": "src/wml_document.rs",
+          "startLine": 50,
+          "endLine": 58,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/wml_document.rs",
+          "startLine": 85,
+          "endLine": 95,
+          "role": "sink"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 950,
+          "endLine": 959,
+          "role": "supporting"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e0",
+          "label": "Admission ignores non-element events",
+          "path": "src/admission.rs",
+          "startLine": 798,
+          "endLine": 820,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        match reader.read_event() {\n            Ok(Event::Start(tag)) => {\n                policy.open(&tag).map_err(invalid)?;\n                depth = depth.saturating_add(1);\n                if depth > max_depth {\n                    return Err(invalid(format!(\"XML nests deeper than {max_depth}\")));\n                }\n            }\n            Ok(Event::Empty(tag)) => {\n                policy.empty(&tag).map_err(invalid)?;\n            }\n            Ok(Event::End(_)) => {\n                depth = depth\n                    .checked_sub(1)\n                    .ok_or_else(|| invalid(\"end tag with no open element\".to_string()))?;\n                policy.close();\n            }\n            Ok(Event::Eof) if depth > 0 => {\n                return Err(invalid(format!(\"{depth} element(s) left unclosed\")));\n            }\n            Ok(Event::Eof) => return Ok(()),\n            Ok(_) => {}\n            Err(e) => return Err(invalid(e.to_string())),",
+          "explanation": "Admission ignores non-element events supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e1",
+          "label": "DOCTYPE stops at first literal delimiter",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 539,
+          "endLine": 547,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            if self.starts_with(\"<!\") {\n                // DOCTYPE — skip\n                let end = self.index_of(\">\", self.pos);\n                self.pos = end.map(|e| e + 1).unwrap_or(len);\n                continue;\n            }\n            if self.cur() == '<' {\n                let el = self.parse_element(&mut scope);\n                self.dom.add(doc, el);",
+          "explanation": "DOCTYPE stops at first literal delimiter supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e2",
+          "label": "Unbounded recursive child parsing",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Unbounded recursive child parsing supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e3",
+          "label": "Admitted package entry",
+          "path": "src/wml_document.rs",
+          "startLine": 50,
+          "endLine": 58,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError> {\n        admit(bytes, InputLimits::compare()).map_err(refused)?;\n        Ok(WmlDocument {\n            document_byte_array: bytes.to_vec(),\n            file_name: String::new(),\n            part_fs: PartFs::open(bytes)?,\n            dom: Dom::new(),\n            main_doc: None,\n        })",
+          "explanation": "Admitted package entry supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e4",
+          "label": "Unchecked main-part DOM consumer",
+          "path": "src/wml_document.rs",
+          "startLine": 85,
+          "endLine": 95,
+          "language": "rust",
+          "role": "sink",
+          "code": "    pub fn main_document(&mut self) -> Result<NodeId, OpcError> {\n        if let Some(id) = self.main_doc {\n            return Ok(id);\n        }\n        let name = self.main_document_part_name();\n        let xml = self\n            .part_fs\n            .part_string(&name)\n            .ok_or_else(|| OpcError::PartNotFound(name.clone()))?;\n        let doc = self.dom.parse_xdocument(&xml);\n        self.main_doc = Some(doc);",
+          "explanation": "Unchecked main-part DOM consumer supports the validated source-to-sink trace."
+        },
+        {
+          "id": "discovery-0008-dtd-depth-bypass-e5",
+          "label": "Checked-parser DTD refusal",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 950,
+          "endLine": 959,
+          "language": "rust",
+          "role": "supporting",
+          "code": "            Event::End(_) => {\n                depth = depth.checked_sub(1).ok_or(\"unmatched XML end tag\")?;\n                policy.close();\n            }\n            Event::DocType(_) => return Err(\"DTD declarations are unsupported\".to_string()),\n            Event::GeneralRef(reference) => {\n                let name: &str = &reference;\n                if depth == 0 || decode_entity(name).is_none() {\n                    return Err(format!(\"unsupported XML entity reference: {name}\"));\n                }",
+          "explanation": "Checked-parser DTD refusal supports the validated source-to-sink trace."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission and the recursive DOM consumer interpret DOCTYPE boundaries differently; admission accepts DTDs that checked XML validation explicitly rejects.",
+        "evidenceRefs": [
+          "discovery-0008-dtd-depth-bypass-e0",
+          "discovery-0008-dtd-depth-bypass-e1"
+        ]
+      },
+      "remediation": "Reject DocType during package admission consistently with checked XML validation; add an explicit recursion limit or iterative DOM construction as defense in depth.",
+      "validation": {
+        "counterEvidence": [
+          "validate_xml_with_limits rejects DTDs and protects callers that use it.",
+          "Raw parse_xdocument is intentionally permissive, but WmlDocument relies on package admission.",
+          "Upstream quick-xml 0.42.0 DtdParser explicitly tracks internal subsets and comments, confirming the admission side treats the hidden tags as DTD content.",
+          "Input byte limits and process isolation constrain blast radius, not parser recursion."
+        ],
+        "limitations": [
+          "No application/test/PoC execution or deployed-service access."
+        ],
+        "method": "Offline static source and dataflow analysis",
+        "status": "validated",
+        "summary": "Independently verified DOCX main part with internal-subset comment -> admission quick-xml DocType ignored -> WmlDocument::main_document -> parse_document first-> skip -> hidden <a> strings -> recursive parse_element."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX main part with internal-subset comment -> admission quick-xml DocType ignored -> WmlDocument::main_document -> parse_document first-> skip -> hidden <a> strings -> recursive parse_element."
+        },
+        "impact": {
+          "level": "high",
+          "summary": "Processing-host CPU or memory exhaustion, including stack exhaustion where recursion applies."
+        },
+        "likelihood": {
+          "level": "medium",
+          "summary": "Deterministic attacker-selected input mechanism; access to an embedding shared service is not established."
+        },
+        "reachability": {
+          "summary": "Untrusted DOCX supplier controls the document bytes reaching the cited public entrypoint; the listed controls do not bound the failing operation.",
+          "attacker": "Untrusted DOCX supplier",
+          "entrypoint": "src/wml_document.rs:50",
+          "sink": "src/admission.rs:798; src/xmllinq/parse.rs:539; src/xmllinq/parse.rs:660; src/wml_document.rs:85",
+          "preconditions": [
+            "The host uses an admitted-package DOM consumer, such as WmlDocument::from_bytes followed by main_document.",
+            "DTD comment begins with a literal > and contains many <a> strings before its closing comment/subset; no entity resolution is needed."
+          ]
+        }
+      },
+      "remediationTests": [
+        "A DOCTYPE internal-subset comment containing > and deeply nested-looking tags must refuse before DOM recursion.",
+        "Cover quoted > and internal subset comment/PI variants through WmlDocument and render/compare consumers."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0008-dtd-depth-bypass",
+        "workerLabel": "discovery-0008",
+        "discoveredBy": "parser_investigation",
+        "originalCandidates": [
+          {
+            "producer": "parser_investigation",
+            "originalMessage": "admission::check_xml_depth ignores Event::DocType (admission.rs:788-823), while parse_document skips a DOCTYPE only through the first literal '>' (xmllinq/parse.rs:539-543). A legal DTD internal-subset comment can contain `<!-->` followed by thousands of `<a>` strings, then `-->]>` and the ordinary document root. Admission sees one DocType and shallow real root; custom parser exits the DTD at the comment's first '>', recursively parses hidden `<a>` strings through parse_element:663-665, bypassing max_xml_depth and overflowing the call stack. WmlDocument::from_bytes -> main_document is direct admitted-byte path (wml_document.rs:52-58,85-95); strict validate_xml would reject DTD, but that path does not invoke it.",
+            "finalWorkerEvidence": {
+              "title": "DOCTYPE parser differential bypasses XML depth admission and permits stack exhaustion",
+              "cwe": "CWE-674",
+              "severity": "medium",
+              "confidence": "medium",
+              "source_to_sink": "admit scans XML with quick-xml, but check_xml_depth ignores DocType events. Custom DOM parser subsequently skips a DOCTYPE only through its first literal >. Internal-subset comment can hide thousands of <a> strings from admission while exposing them as recursive elements. WmlDocument::from_bytes admits package and main_document invokes parser without strict validation.",
+              "counterevidence": [
+                "validate_xml_with_limits rejects DocType at parse.rs:954, protecting checked XML callers.",
+                "Unchecked parser is intentionally documented; package admission fails to establish safe prior gating.",
+                "Archive byte budgets and process resource limits do not prevent recursion differential."
+              ],
+              "witness": "<!DOCTYPE w:document [<!--> + <a> repeated + -->]> followed by ordinary w:document root. Static witness not executed.",
+              "remediation": "Reject DocType or use shared lexer and add recursion bound."
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-a75307181e36dbf7",
+        "label": "Markdown table metadata admission",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated unbounded row range -> padding allocation; src/markdown/view_notes.rs:1011-1022 and src/markdown/write.rs:1265-1269. Existing MOST_EMPTY cap applies only to sibling parser."
+      },
+      {
+        "id": "surface-0d00476adc386dc2",
+        "label": "Legacy DOC overlapping text-piece amplification",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "notes": "Independent inspection rejects this candidate: pieces() derives adjacent CP boundaries from the same array (src/legacy_doc.rs:1092-1094), and main_text rejects any decreasing adjacent CP pair (1154-1155). This prevents the proposed repeated overlapping ranges even though coverage validation stops at the story boundary.",
+        "candidateId": "discovery-0008-legacy-overlapping-pieces",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "legacy_doc::main_text validates contiguous pieces only until `covered >= ccp_text` (lines1161-1175) but second pass iterates all pieces with cp_start<ccp_text (1181-1229). Repeated overlapping pieces after the first complete piece duplicate the same story bytes N times, enabling O(file_size²) memory/CPU expansion."
+        }
+      },
+      {
+        "id": "surface-9b0c4a28f900133c",
+        "label": "DOCX and HTML/MHT table-span cardinality",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated direct gridSpan allocation (src/convert/mod.rs:14211-14215,13601-13615,14637-14642) and imported colspan expansion (src/convert/altchunk.rs:562-567,469-491), consolidated under missing document-table cardinality control.",
+        "candidateId": "discovery-0008-altchunk-colspan",
+        "relatedCandidateIds": [
+          "discovery-0008-docx-gridspan"
+        ]
+      },
+      {
+        "id": "surface-da1d50542bd098e3",
+        "label": "Auxiliary XML parts bypass depth limits when named with another extension",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Attacker DOCX styles relationship -> main_rel_part -> part_string(styles.bin) -> load_stylesheet -> Dom::parse_xdocument -> recursive parse_element. Controls and counterevidence: Ordinary XML filenames and the main part are depth checked. Compressed/inflated limits still apply, but deep XML fits a small part. The raw parser is deliberately permissive; the vulnerable consumer relies on incomplete prior admission.",
+        "candidateId": "discovery-0008-styles-extension-depth"
+      },
+      {
+        "label": "DOCTYPE parser differential bypasses XML depth admission",
+        "disposition": "reported",
+        "notes": "DOCX main part with internal-subset comment -> admission quick-xml DocType ignored -> WmlDocument::main_document -> parse_document first-> skip -> hidden <a> strings -> recursive parse_element. Controls and counterevidence: validate_xml_with_limits rejects DTDs and protects callers that use it. Raw parse_xdocument is intentionally permissive, but WmlDocument relies on package admission. Upstream quick-xml 0.42.0 DtdParser explicitly tracks internal subsets and comments, confirming the admission side treats the hidden tags as DTD content. Input byte limits and process isolation constrain blast radius, not parser recursion.",
+        "candidateId": "discovery-0008-dtd-depth-bypass",
+        "id": "surface-507de665b9d0592b",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0008-xml-entity-tail",
+        "candidateId": "discovery-0008-xml-entity-tail",
+        "reason": "Parser investigator is tracing whether repeated unrecognized '&' reaches quadratic unescape through checked APIs.",
+        "candidate": {
+          "producer": "parser_investigation",
+          "originalMessage": "Source review has identified two availability candidates for deeper checking: xmllinq::unescape_xml_text repeatedly scans the remaining tail for ';' for each unrecognized '&' (src/xmllinq/parse.rs:764-790), while package admission ignores GeneralRef events; and drop_repeated_relationships uses repaired.contains per duplicate ID (src/opc/mod.rs:115), potentially quadratic on many pairs of distinct repeated IDs. Continuing to trace entry paths and controls. No code execution/network.",
+          "locations": [
+            {
+              "path": "src/xmllinq/parse.rs",
+              "startLine": 764,
+              "endLine": 790
+            }
+          ],
+          "siblingEvidence": "Baseline: altchunk.rs::decode_entities lines723-760 also uses unbounded tail.find(';').filter(|&e| e <= 10) per ampersand. HTML chunks with many '&' and no ';' may cause quadratic scans."
+        }
+      },
+      {
+        "id": "discovery-0008-relationship-dedup",
+        "candidateId": "discovery-0008-relationship-dedup",
+        "reason": "Parser investigator is checking reachability and effective limits of quadratic duplicate-relationship repair.",
+        "candidate": {
+          "producer": "parser_investigation",
+          "originalMessage": "drop_repeated_relationships uses repaired.contains per duplicate ID (src/opc/mod.rs:115), potentially quadratic on many pairs of distinct repeated IDs.",
+          "locations": [
+            {
+              "path": "src/opc/mod.rs",
+              "startLine": 115
+            }
+          ],
+          "finalWorkerEvidence": {
+            "title": "Repairing repeated relationship IDs performs quadratic work",
+            "cwe": "CWE-407",
+            "confidence": "high",
+            "severity": "medium",
+            "source_to_sink": "read_relationships preserves duplicate records. PartFs::open_within calls drop_repeated_relationships for package and every part. n distinct IDs each repeated identically cause n(n-1)/2 comparisons in repaired.contains.",
+            "counterevidence": [
+              "Conflicting duplicates rejected before search.",
+              "Inflated-byte and 256-attribute limits do not tightly bound relationship-record count.",
+              "Process CPU limits recommended."
+            ],
+            "locations": [
+              "src/opc/mod.rs:99-124",
+              "src/opc/mod.rs:222-251",
+              "src/opc/mod.rs:520-540",
+              "src/opc/mod.rs:1067-1090"
+            ],
+            "remediation": "Track repaired IDs using a HashSet or state in existing seen map."
+          }
+        }
+      },
+      {
+        "id": "discovery-0008-legacy-field-depth",
+        "candidateId": "discovery-0008-legacy-field-depth",
+        "reason": "Parser investigator candidate awaiting independent validation of nested field scan amplification.",
+        "candidate": {
+          "producer": "parser_investigation",
+          "originalMessage": "legacy_doc::Story::blocks scans fields.iter().any every character; main story pattern (FIELD_BEGIN, FIELD_SEPARATOR)^n leaves n false booleans, forcing Θ(n²) scans without a field-depth bound (legacy_doc.rs:1595-1622). Public read/doc_to_* reach it and CLI convert calls doc_to_docx before admission (bin/jubarte.rs:3125-3144).",
+          "finalWorkerEvidence": {
+            "title": "Nested legacy DOC field results trigger quadratic scans",
+            "cwe": "CWE-407",
+            "confidence": "high",
+            "severity": "medium",
+            "source_to_sink": "read -> Story::blocks; fields.iter().any runs before every character, BEGIN pushes true, SEPARATOR changes top to false, END pops. n nested result fields produce quadratic scans including closure.",
+            "witness": "(U+0013 U+0014)^n, text, U+0015^n; 100000 pairs lead to billions of inspections.",
+            "locations": [
+              "src/legacy_doc.rs:180-215",
+              "src/legacy_doc.rs:225-236",
+              "src/legacy_doc.rs:1591-1620",
+              "src/bin/jubarte.rs:3125-3144"
+            ],
+            "counterevidence": [
+              "Container bounds and encrypted-document rejection protect different mechanisms.",
+              "No field-nesting cap; process CPU limits recommended."
+            ],
+            "remediation": "Maintain active code-field count for O(1) in_code and add nesting budget."
+          }
+        }
+      },
+      {
+        "id": "discovery-0008-numbering-level",
+        "candidateId": "discovery-0008-numbering-level",
+        "reason": "Baseline candidate pending independent validation of numeric numbering-level bounds.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "Numbering::resolve_ilvl at convert/mod.rs:5530-5534 iterates (0..ilvl).rev().find(...) with unbounded u32 supplied by paragraph w:ilvl; a paragraph requesting ilvl=4294967295 while numbering defines only level0 causes ~4.29b hash lookups. If numbering itself defines that high level, next_marker for level in 0..resolved (5610) inserts billions counters instead."
+        }
+      },
+      {
+        "id": "discovery-0008-chicago-label",
+        "candidateId": "discovery-0008-chicago-label",
+        "reason": "Baseline candidate pending parent validation of start-counter parsing and label expansion.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "chicago_label at src/convert/mod.rs:6016-6019 repeats selected mark n/4+1; parse_num_level reads unrestricted w:start at6753-6757. w:start u32 can force over a billion repeated symbols. Alpha counter claim rejected by worker because alpha_label is bounded by modulo ALPHA_LABEL_MAX at6502."
+        }
+      },
+      {
+        "id": "discovery-0008-embedded-font-alias",
+        "candidateId": "discovery-0008-embedded-font-alias",
+        "reason": "Baseline candidate pending validation of eager per-alias copies and aggregate font budget.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "src/convert/font_table.rs:205-233 loops every unique attacker font-table name and style, resolves same r:id/part, deobfuscate_odttf unconditionally bytes.to_vec() at177 then inserts a fresh Arc at232. Tiny fontTable with thousands of distinct rare aliases all referencing one valid large TTF makes copies N×font_size; with_layout eagerly loads all atconvert/mod.rs:806-807 before checking actually used names. No cache by part/key or aggregate decoded-font budget. Fonts::for_document keeps all EmbeddedFonts; investigating downstream dedup."
+        }
+      },
+      {
+        "id": "discovery-0008-docx-gridspan",
+        "candidateId": "discovery-0008-docx-gridspan",
+        "reason": "Baseline found sibling numeric span amplification in DOCX layout; independent validation pending before combining with the altChunk finding.",
+        "candidate": {
+          "producer": "baseline",
+          "originalMessage": "convert/mod.rs::cell_span lines14213-14220 parses <w:gridSpan w:val=\"1000000000\"/> to usize with only max(1). parse_table sums raw row colspans into occupancy at13599-13604, then vec![each; occupancy]/cols.resize(occupancy,80.0) at13609-13615, later open.resize(col+span,None)14638. Suggest one broader converter table-span finding covering both OOXML gridSpan and HTML colspan; byte/XML-depth admission doesn't bound numeric expansion."
+        }
+      }
+    ]
+  }
+}

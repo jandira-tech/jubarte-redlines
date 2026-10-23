@@ -1,0 +1,1071 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "ci.untrusted-code-self-hosted-runner",
+      "title": "Pull-request code runs on shared self-hosted infrastructure",
+      "summary": "A lower-trust PR admitted to run can change a local action, build script, test or generator and execute it with self-hosted runner privileges. Four workflows share this missing isolation boundary; the local cache action documents private tokenless cache connectivity and reused checkout/disk.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Runner-account code execution and private network access can compromise shared CI state. High potential impact has medium likelihood because GitHub PR approvals and external runner isolation are unknown. Confirmed disposable provisioning without shared authority would lower severity; automatic untrusted runs with trusted state would raise it."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Source establishes PR execution and shared cache/disk; actual runner lifecycle and external PR approval policy were not inspected."
+      },
+      "taxonomy": {
+        "category": "CI isolation of untrusted code",
+        "cwe": [
+          "CWE-829"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 36,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 77,
+          "endLine": 99,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 116,
+          "endLine": 138,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 167,
+          "endLine": 184,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 188,
+          "endLine": 219,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 229,
+          "endLine": 236,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 240,
+          "endLine": 247,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 252,
+          "endLine": 264,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 268,
+          "endLine": 310,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 51,
+          "endLine": 59,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 63,
+          "endLine": 97,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 82,
+          "endLine": 99,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 31,
+          "endLine": 39,
+          "role": "affected_operation"
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 32,
+          "role": "affected_operation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ci-pr",
+          "label": "CI PR trigger",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 17,
+          "language": "yaml",
+          "role": "input",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:\n",
+          "explanation": "A lower-trust PR can trigger jobs, subject to platform approval."
+        },
+        {
+          "id": "ci-runner",
+          "label": "PR checkout executes on self-hosted",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "The checkout supplies the local action and Cargo/build inputs to a self-hosted runner."
+        },
+        {
+          "id": "ci-tests",
+          "label": "Self-hosted test leg",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 99,
+          "language": "yaml",
+          "role": "sensitive_operation",
+          "code": "  test:\n    name: test (${{ matrix.os }})\n    strategy:\n      fail-fast: false\n      matrix:\n        os: [self-hosted, macos-latest, windows-latest]\n    runs-on: ${{ matrix.os }}\n    steps:\n      # tests/corpus keeps the bench's file names, some past Windows'\n      # 260-character path limit.\n      - run: git config --global core.longpaths true\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - if: matrix.os == 'self-hosted'\n        uses: ./.github/actions/mbx\n      - if: matrix.os != 'self-hosted'\n        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2\n      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01\n        with:\n          tool: cargo-nextest\n      # Every failing test, not just the first binary's (the `ci` profile\n      # does not fail fast), with JUnit XML for Codecov's test results.\n      # The strict Markdown round trip is red until the reader work lands\n      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job\n      # keeps reporting every other test.\n      - run: cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'",
+          "explanation": "PR test code executes in the self-hosted matrix leg."
+        },
+        {
+          "id": "adoption-pr",
+          "label": "Adoption PR trigger",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 19,
+          "endLine": 31,
+          "language": "yaml",
+          "role": "input",
+          "code": "  pull_request:\n    paths:\n      - \"src/**\"\n      - \"tests/adoption.rs\"\n      - \"tests/common/**\"\n      - \"Cargo.toml\"\n      - \"Cargo.lock\"\n      - \"tests/legacy_doc_convert.rs\"\n      - \"tests/fixtures/legacy/**\"\n      - \"examples/adoption/**\"\n      - \"jubarte-python/**\"\n      - \"docs/adoption/**\"\n      - \".github/workflows/adoption.yml\"",
+          "explanation": "Source and example changes trigger this workflow."
+        },
+        {
+          "id": "adoption-runner",
+          "label": "Adoption self-hosted checkout",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 61,
+          "endLine": 72,
+          "language": "yaml",
+          "role": "affected_operation",
+          "code": "  examples:\n    name: side-by-side examples (examples/adoption)\n    runs-on: self-hosted\n    needs: claims\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      - run: cargo build --release --bin jubarte",
+          "explanation": "The examples job checks out and builds PR code on self-hosted."
+        },
+        {
+          "id": "adoption-exec",
+          "label": "PR shell scripts execute",
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 88,
+          "endLine": 100,
+          "language": "yaml",
+          "role": "sensitive_operation",
+          "code": "      - name: run every example\n        env:\n          JUBARTE: ${{ github.workspace }}/target/release/jubarte\n          # 17-mcp serves this checkout's Python package, not the PyPI release.\n          JUBARTE_MCP_FROM: jubarte-redlines[mcp] @ ${{ github.workspace }}/jubarte-python\n        run: |\n          failed=0\n          for script in examples/adoption/*/run.sh; do\n            echo \"::group::$script\"\n            if bash \"$script\"; then echo \"ok: $script\"; else echo \"::error file=$script::exited $?\"; failed=1; fi\n            echo \"::endgroup::\"\n          done\n          exit \"$failed\"",
+          "explanation": "All checked-out example run.sh files execute with runner authority."
+        },
+        {
+          "id": "docs-pr",
+          "label": "Docs PR trigger",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 42,
+          "endLine": 58,
+          "language": "yaml",
+          "role": "input",
+          "code": "  pull_request:\n    paths:\n      - .github/workflows/docs.yml\n      - src/**\n      - jubarte-python/**\n      - jubarte-wasm/**\n      - docs/rust.md\n      - docs/python.md\n      - docs/javascript.md\n      - README.md\n      - README.crates.md\n      - \"**/README.fragment.md\"\n      - scripts/library_readmes.py\n      - scripts/gen_docs.sh\n      - scripts/gen_cli_docs.py\n      - scripts/gen_python_api.py\n      - scripts/gen_wasm_api.py",
+          "explanation": "A PR can change the generator."
+        },
+        {
+          "id": "docs-exec",
+          "label": "Self-hosted docs execution",
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99,
+          "language": "yaml",
+          "role": "affected_operation",
+          "code": "jobs:\n  drift:\n    name: generated docs drift\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0\n      # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against\n      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares\n      # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's\n      # system node predates ESM (`import` is a SyntaxError), so a real node is\n      # set up here instead of trusting the image.\n      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0\n        with:\n          node-version: \"24\"\n      - name: Regenerate and compare\n        run: scripts/gen_docs.sh --check",
+          "explanation": "PR-owned local action and generator execute on self-hosted."
+        },
+        {
+          "id": "roundtrip-pr",
+          "label": "Roundtrip PR trigger",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "language": "yaml",
+          "role": "input",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "Another PR-reachable workflow."
+        },
+        {
+          "id": "roundtrip-exec",
+          "label": "Roundtrip self-hosted execution",
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39,
+          "language": "yaml",
+          "role": "affected_operation",
+          "code": "jobs:\n  roundtrip:\n    name: md -> docx -> md, exact\n    runs-on: self-hosted\n    timeout-minutes: 30\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n      - uses: ./.github/actions/mbx\n      - run: cargo test --all-features --test md_fixed_point",
+          "explanation": "The local action and PR-owned test/build code execute on self-hosted."
+        },
+        {
+          "id": "shared-cache",
+          "label": "Shared private cache and reused disk",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 32,
+          "language": "yaml",
+          "role": "impact_context",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines\n        # Linked test binaries are the largest outputs by far: with\n        # them cached, one test job left an 84 GiB store and a 79 GiB target\n        # on 2026-10-17, and uploads drained at 1 MB/s. Cache compilations only.\n        cache-links: \"false\"\n    # Every job on a runner builds in the same checkout, so mbx always counts\n    # that checkout's managed target as the most recently used and never\n    # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few\n    # hours and filled the disk the four runners share. Each job now starts\n    # from an empty target, restored from the store and the cache server,\n    # and each runner's store keeps to a fixed share of the disk.",
+          "explanation": "The cache is tokenless and reachable from runners, shares main namespace, and comments describe shared checkouts/disk. Server enforcement is unavailable."
+        }
+      ],
+      "rootCause": {
+        "summary": "PR-triggered jobs execute the PR checkout on shared self-hosted infrastructure without a source-enforced trusted-ref gate or disposable isolation. Token restrictions do not constrain arbitrary runner processes.",
+        "evidenceRefs": [
+          "ci-pr",
+          "ci-runner",
+          "ci-tests",
+          "adoption-pr",
+          "adoption-runner",
+          "adoption-exec",
+          "docs-pr",
+          "docs-exec",
+          "roundtrip-pr",
+          "roundtrip-exec",
+          "shared-cache"
+        ]
+      },
+      "remediation": "Run lower-trust PR builds/tests/generators on GitHub-hosted or one-job disposable runners without trusted writable state or private infrastructure connectivity. Separate trusted main runners and enforce cache write authorization server-side. Apply consistently to ci, adoption, docs and md-roundtrip.",
+      "validation": {
+        "counterEvidence": [
+          "contents:read and persist-credentials:false restrict GitHub token use, not runner process authority.",
+          "Fork PR approval is an external execution prerequisite.",
+          "Disposable runner configuration and server-side cache read/write enforcement are not available.",
+          "Release uses hosted runners; no direct release compromise is asserted."
+        ],
+        "evidenceRefs": [
+          "ci-pr",
+          "ci-runner",
+          "ci-tests",
+          "adoption-exec",
+          "docs-exec",
+          "roundtrip-exec",
+          "shared-cache"
+        ],
+        "limitations": [
+          "Persistence/cache poisoning are conditional, not demonstrated.",
+          "Actual GitHub approvals and runner lifecycle remain unknown."
+        ],
+        "method": "offline source review",
+        "status": "validated",
+        "summary": "Parent independently read all four workflows and the composite action, verified all PR triggers and affected runner/script selections, and confirmed documented shared resources. No live CI/cache probe was performed."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "PR-owned checkout -> local action/Cargo/test/docs/example script -> self-hosted runner process -> runner filesystem/private network.",
+          "source": "lower-trust PR code",
+          "sink": "runner process authority",
+          "outcome": "arbitrary runner-account execution and private CI network reachability",
+          "evidenceRefs": [
+            "ci-pr",
+            "ci-runner",
+            "adoption-exec",
+            "docs-exec",
+            "roundtrip-exec",
+            "shared-cache"
+          ]
+        },
+        "evidenceRefs": [
+          "ci-pr",
+          "ci-runner",
+          "adoption-exec",
+          "docs-exec",
+          "roundtrip-exec",
+          "shared-cache"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "Potential trusted CI compromise from persistent state/private infrastructure access."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "PR admission and actual external isolation are unknown."
+        },
+        "reachability": {
+          "summary": "A contributor submits a PR and any required platform approval allows the run. No repository write permission or privileged GitHub token is required after code executes.",
+          "attacker": "lower-trust PR author",
+          "entrypoint": "pull_request workflows",
+          "preconditions": [
+            "PR execution is allowed.",
+            "Configured self-hosted resources exist; external isolation determines persistence impact."
+          ]
+        },
+        "summary": "An allowed PR changes a local action, build script, test or generator; workflow checkout executes it on self-hosted and exposes runner-account resources."
+      },
+      "remediationTests": [
+        "Verify every PR-reachable job selects isolated runner infrastructure.",
+        "Verify PR runners cannot access trusted cache writes or retained trusted-job state."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "baseline-ci-self-hosted",
+        "worker": "discovery-0010/baseline",
+        "originalCandidate": {
+          "candidateId": "baseline-ci-self-hosted",
+          "title": "Untrusted pull-request code executes on self-hosted runner with shared cache access",
+          "originalEvidence": "Baseline initial candidate: .github/workflows/ci.yml triggers unrestricted pull_request lines 13-17; lint/test/coverage/MSRV/fuzz/package/python use self-hosted and execute PR-controlled ./.github/actions/mbx and cargo/test code (36,46-48;77-99). .github/actions/mbx/action.yml documents shared private Docker cache at unauthenticated http://mbx-cache:7543 with namespace shared with main. No fork/trusted-author gate or disposable isolation in reviewed source.",
+          "counterEvidence": "External GitHub approval settings and actual runner lifecycle are unknown; conditional exposure requires a lower-trust PR being permitted to run.",
+          "producer": "baseline"
+        },
+        "originalWorkerSeverity": "high",
+        "originalWorkerConfidence": "high",
+        "parentCalibration": "medium severity/confidence due unverified isolation and PR-run admission."
+      }
+    },
+    {
+      "ruleId": "zip.eocd-entry-budget-differential",
+      "title": "False trailing EOCD bypasses the pre-index entry budget",
+      "summary": "A false EOCD in a ZIP comment can supply a low entry count to admission while zip skips it and indexes the earlier larger directory, bypassing max_entries.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Input-count policy bypass allows excess index allocation and processing under retained byte caps. Medium impact with high conditional likelihood once the malicious file is opened yields medium severity; measured host exhaustion could increase impact, an entry-limited indexer would remove it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced the entry, transformation, control and sink in current source and inspected the installed dependency implementation. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "ZIP input-limit validation bypass",
+        "cwe": [
+          "CWE-20"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 399,
+          "endLine": 407,
+          "role": "input"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 590,
+          "endLine": 601,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 439,
+          "endLine": 456,
+          "role": "sensitive_operation"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 290,
+          "role": "affected_operation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "admission-preindex",
+          "label": "Entry budget gate",
+          "path": "src/admission.rs",
+          "startLine": 399,
+          "endLine": 407,
+          "language": "rust",
+          "role": "input",
+          "code": "pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {\n    if bytes.len() as u64 > limits.max_compressed_bytes {\n        return Err(input_over_compressed(bytes.len() as u64, &limits));\n    }\n    let declared = declared_entry_count(bytes)?;\n    if declared > limits.max_entries as u64 {\n        return Err(input_over_entries(declared, &limits));\n    }\n    Ok(declared)",
+          "explanation": "The gate trusts declared_entry_count before opening the archive."
+        },
+        {
+          "id": "eocd-count",
+          "label": "Unvalidated EOCD selection",
+          "path": "src/admission.rs",
+          "startLine": 590,
+          "endLine": 601,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let floor = bytes.len().saturating_sub(22 + usize::from(u16::MAX));\n    let at = (floor..=bytes.len().saturating_sub(22))\n        .rev()\n        .find(|&i| bytes.get(i..).is_some_and(|tail| tail.starts_with(&EOCD)))\n        .ok_or_else(|| invalid(\"no end-of-central-directory record\"))?;\n    let total = bytes\n        .get(at.saturating_add(10)..at.saturating_add(12))\n        .and_then(|field| <[u8; 2]>::try_from(field).ok())\n        .map(u16::from_le_bytes)\n        .ok_or_else(|| invalid(\"truncated end-of-central-directory record\"))?;\n    if total != u16::MAX {\n        return Ok(u64::from(total));",
+          "explanation": "Only last magic/count is inspected, so a false record controls the budget."
+        },
+        {
+          "id": "admission-open",
+          "label": "Selected archive lacks upper count check",
+          "path": "src/admission.rs",
+          "startLine": 439,
+          "endLine": 456,
+          "language": "rust",
+          "role": "sensitive_operation",
+          "code": "pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {\n    use AdmissionErrorKind as K;\n\n    sniff(bytes)?;\n\n    let declared = preindex_budget(bytes, limits)?;\n    // The shared open (`crate::opc::open_archive`) runs this same check, but\n    // as a plain zip error; admission opens unchecked so the refusal keeps\n    // its typed kind.\n    let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))\n        .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"not a ZIP file: {e}\")))?;\n    // The reader keys entries by name, so exact duplicates collapse into one.\n    if (archive.len() as u64) < declared {\n        return Err(AdmissionError::new(\n            K::DuplicatePart,\n            \"two ZIP entries have the same name\",\n        ));\n    }",
+          "explanation": "Only archive.len()<declared is refused after zip selects its actual directory."
+        },
+        {
+          "id": "package-preindex",
+          "label": "Independent package reader shares gate",
+          "path": "src/opc/mod.rs",
+          "startLine": 282,
+          "endLine": 290,
+          "language": "rust",
+          "role": "affected_operation",
+          "code": "fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {\n    crate::admission::preindex_budget(bytes, limits).map_err(refused)?;\n    let mut archive = open_archive(Cursor::new(bytes))?;\n    let mut parts = HashMap::new();\n    let mut source_order = HashMap::new();\n    let mut identities = HashSet::new();\n    let mut total = 0u64;\n    for index in 0..archive.len() {\n        let mut entry = archive.by_index(index)?;",
+          "explanation": "PartFs uses the same precheck and then indexes all selected entries."
+        }
+      ],
+      "rootCause": {
+        "summary": "The preliminary parser accepts a different EOCD from the ZIP implementation. It never validates the selected directory offset/comment or bounds all possible reader candidates before allocation, and neither admission nor PartFs enforces a larger selected index count.",
+        "evidenceRefs": [
+          "admission-preindex",
+          "eocd-count",
+          "admission-open",
+          "package-preindex"
+        ]
+      },
+      "remediation": "Unify budget and ZIP-reader EOCD selection, enforcing entry limits before any candidate directory can be indexed. Add an actual selected-count check as defense in depth in both admission and PartFs.",
+      "validation": {
+        "counterEvidence": [
+          "Compressed/per-part/aggregate inflated-byte and ZIP local-header/extent checks remain effective.",
+          "A normal final EOCD declaring excess count is refused.",
+          "A post-open check alone would stop processing but not restore pre-index allocation bounds."
+        ],
+        "evidenceRefs": [
+          "admission-preindex",
+          "eocd-count",
+          "admission-open",
+          "package-preindex"
+        ],
+        "limitations": [
+          "No archive was created or executed; exact allocation/time amplification was not measured."
+        ],
+        "method": "offline static source and dependency review",
+        "status": "validated",
+        "summary": "Parent confirmed declared_entry_count selects bare last EOCD magic, zip9.0.5 continues past impossible directory offsets, and actual index counts are not bounded by max_entries after selection. A real well-formed directory with unique entries and consistent local headers is unaffected by the other checks.",
+        "dependencyEvidence": [
+          "Installed zip9.0.5 format/find_central_directory.rs100-117,163-167 continues over invalid trailing EOCDs; read/zip_archive.rs199-235 retries;271-316 collects and allocates metadata for the selected larger count. Parent read these offline."
+        ]
+      },
+      "attackPath": {
+        "controls": [
+          "Compressed/per-part/aggregate inflated-byte and ZIP local-header/extent checks remain effective.",
+          "A normal final EOCD declaring excess count is refused.",
+          "A post-open check alone would stop processing but not restore pre-index allocation bounds."
+        ],
+        "dataflow": {
+          "summary": "DOCX comment false EOCD with low nonzero count -> preindex_budget accepts -> zip rejects false offset and selects real EOCD -> larger index allocated -> admission/PartFs iterate real entries.",
+          "source": "attacker-supplied DOCX bytes",
+          "sink": "ZIP index construction",
+          "outcome": "A false EOCD in a ZIP comment can supply a low entry count to admission while zip skips it and indexes the earlier larger directory, bypassing max_entries.",
+          "evidenceRefs": [
+            "admission-preindex",
+            "eocd-count",
+            "admission-open",
+            "package-preindex"
+          ]
+        },
+        "evidenceRefs": [
+          "admission-preindex",
+          "eocd-count",
+          "admission-open",
+          "package-preindex"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "More metadata allocation and processing than the configured admission count permits."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Attacker controls package contents at an explicitly untrusted document boundary; no operator credentials are required once processing begins."
+        },
+        "limitations": [
+          "No archive was created or executed; exact allocation/time amplification was not measured."
+        ],
+        "reachability": {
+          "summary": "A document supplier controls the archive comment and directory. A false 22-byte record with a small count and impossible directory offset bypasses default or tighter count budgets when the victim opens the package.",
+          "attacker": "untrusted document producer",
+          "entrypoint": "public document/package API",
+          "preconditions": [
+            "The victim processes the supplied document."
+          ]
+        },
+        "summary": "A document supplier controls the archive comment and directory. A false 22-byte record with a small count and impossible directory offset bypasses default or tighter count budgets when the victim opens the package."
+      },
+      "remediationTests": [
+        "Add deterministic regression inputs for the source-supported differential and assert a typed bounded refusal.",
+        "Verify ordinary compatible documents still process under unchanged limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "parser-eocd-entry-limit",
+        "worker": "discovery-0010/parser_investigator",
+        "originalCandidate": {
+          "candidateId": "parser-eocd-entry-limit",
+          "producer": "parser_investigator",
+          "title": "EOCD preindex selection may bypass max_entries",
+          "originalEvidence": "Parser review candidate: admission preindex_budget selects last bare EOCD magic/count without validating it (src/admission.rs:590-601), while zip 9.0.5 reportedly skips invalid EOCD candidates and retries earlier records. A 22-byte fake EOCD in real comment with low count and impossible central directory offset may pass max_entries then index real overlimit archive; archive.len() only checked for less than declared at449-455.",
+          "counterEvidence": "Parent has not verified dependency selection semantics; static tracing in progress, no reproduction.",
+          "finalWorkerResult": {
+            "title": "A trailing false EOCD bypasses the ZIP entry-count budget",
+            "cwe": "CWE-20",
+            "severity": "medium",
+            "confidence": "high",
+            "sourceToSink": "preindex_budget399-407 -> last EOCD590-601 -> open_archive20-31 zip fallback -> archive.len<declared450-455 only; PartFs282-289 shares gap",
+            "originalEvidenceRefs": [
+              "admission-preindex",
+              "eocd-count",
+              "admission-open",
+              "package-preindex"
+            ],
+            "dependencyEvidence": [
+              "zip-9.0.5/src/format/find_central_directory.rs100-117,163-167 skips invalid candidates",
+              "zip-9.0.5/src/read/zip_archive.rs199-235 retry;271-316 count controls allocation"
+            ],
+            "counterevidence": [
+              "Compressed/inflated/header/extent checks remain.",
+              "Genuine final EOCD excess refused.",
+              "Post-open count check cannot restore pre-index bound."
+            ],
+            "proofGaps": "Static only; no archive created or memory measurement."
+          },
+          "originalSourceEvidence": [
+            {
+              "id": "admission-preindex",
+              "path": "src/admission.rs",
+              "startLine": 399,
+              "endLine": 407,
+              "code": "pub(crate) fn preindex_budget(bytes: &[u8], limits: InputLimits) -> Result<u64, AdmissionError> {\n    if bytes.len() as u64 > limits.max_compressed_bytes {\n        return Err(input_over_compressed(bytes.len() as u64, &limits));\n    }\n    let declared = declared_entry_count(bytes)?;\n    if declared > limits.max_entries as u64 {\n        return Err(input_over_entries(declared, &limits));\n    }\n    Ok(declared)"
+            },
+            {
+              "id": "eocd-count",
+              "path": "src/admission.rs",
+              "startLine": 590,
+              "endLine": 601,
+              "code": "    let floor = bytes.len().saturating_sub(22 + usize::from(u16::MAX));\n    let at = (floor..=bytes.len().saturating_sub(22))\n        .rev()\n        .find(|&i| bytes.get(i..).is_some_and(|tail| tail.starts_with(&EOCD)))\n        .ok_or_else(|| invalid(\"no end-of-central-directory record\"))?;\n    let total = bytes\n        .get(at.saturating_add(10)..at.saturating_add(12))\n        .and_then(|field| <[u8; 2]>::try_from(field).ok())\n        .map(u16::from_le_bytes)\n        .ok_or_else(|| invalid(\"truncated end-of-central-directory record\"))?;\n    if total != u16::MAX {\n        return Ok(u64::from(total));"
+            },
+            {
+              "id": "admission-open",
+              "path": "src/admission.rs",
+              "startLine": 439,
+              "endLine": 456,
+              "code": "pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {\n    use AdmissionErrorKind as K;\n\n    sniff(bytes)?;\n\n    let declared = preindex_budget(bytes, limits)?;\n    // The shared open (`crate::opc::open_archive`) runs this same check, but\n    // as a plain zip error; admission opens unchecked so the refusal keeps\n    // its typed kind.\n    let mut archive = crate::opc::open_archive_unchecked(Cursor::new(bytes))\n        .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"not a ZIP file: {e}\")))?;\n    // The reader keys entries by name, so exact duplicates collapse into one.\n    if (archive.len() as u64) < declared {\n        return Err(AdmissionError::new(\n            K::DuplicatePart,\n            \"two ZIP entries have the same name\",\n        ));\n    }"
+            },
+            {
+              "id": "package-preindex",
+              "path": "src/opc/mod.rs",
+              "startLine": 282,
+              "endLine": 290,
+              "code": "fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<PartFs, OpcError> {\n    crate::admission::preindex_budget(bytes, limits).map_err(refused)?;\n    let mut archive = open_archive(Cursor::new(bytes))?;\n    let mut parts = HashMap::new();\n    let mut source_order = HashMap::new();\n    let mut identities = HashSet::new();\n    let mut total = 0u64;\n    for index in 0..archive.len() {\n        let mut entry = archive.by_index(index)?;"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ruleId": "xml.doctype-admission-parser-differential",
+      "title": "DTD markup bypasses package XML depth checks",
+      "summary": "Package admission ignores a whole DTD event, while the DOM skips only to its first greater-than character and recursively parses markup inside its quoted replacement text. This defeats depth/tag limits and can exhaust the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An opened document can terminate the processing process or fail the WASM instance through excessive recursion within normal byte budgets. The library boundary establishes reachability; remote service deployment is not assumed. Scope is process availability, so medium severity; external containment can reduce operational impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced the entry, transformation, control and sink in current source and inspected the installed dependency implementation. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "XML admission bypass / uncontrolled recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/wml_document.rs",
+          "startLine": 50,
+          "endLine": 58,
+          "role": "input"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 788,
+          "endLine": 821,
+          "role": "root_control"
+        },
+        {
+          "path": "src/wml_document.rs",
+          "startLine": 85,
+          "endLine": 96,
+          "role": "affected_operation"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 539,
+          "endLine": 550,
+          "role": "transformation"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 637,
+          "endLine": 663,
+          "role": "sensitive_operation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "doc-from-bytes",
+          "label": "Admitted document constructor",
+          "path": "src/wml_document.rs",
+          "startLine": 50,
+          "endLine": 58,
+          "language": "rust",
+          "role": "input",
+          "code": "    pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError> {\n        admit(bytes, InputLimits::compare()).map_err(refused)?;\n        Ok(WmlDocument {\n            document_byte_array: bytes.to_vec(),\n            file_name: String::new(),\n            part_fs: PartFs::open(bytes)?,\n            dom: Dom::new(),\n            main_doc: None,\n        })",
+          "explanation": "Public constructor admits package before storing PartFs."
+        },
+        {
+          "id": "admission-doctype",
+          "label": "DTD falls through policy",
+          "path": "src/admission.rs",
+          "startLine": 788,
+          "endLine": 821,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {\n    let invalid =\n        |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!(\"{name}: {why}\"));\n    let text = part_text(xml);\n    let mut reader = Reader::from_str(&text);\n    reader.config_mut().check_end_names = true;\n    let max_depth = limits.max_xml_depth;\n    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant(limits);\n    let mut depth = 0usize;\n    loop {\n        match reader.read_event() {\n            Ok(Event::Start(tag)) => {\n                policy.open(&tag).map_err(invalid)?;\n                depth = depth.saturating_add(1);\n                if depth > max_depth {\n                    return Err(invalid(format!(\"XML nests deeper than {max_depth}\")));\n                }\n            }\n            Ok(Event::Empty(tag)) => {\n                policy.empty(&tag).map_err(invalid)?;\n            }\n            Ok(Event::End(_)) => {\n                depth = depth\n                    .checked_sub(1)\n                    .ok_or_else(|| invalid(\"end tag with no open element\".to_string()))?;\n                policy.close();\n            }\n            Ok(Event::Eof) if depth > 0 => {\n                return Err(invalid(format!(\"{depth} element(s) left unclosed\")));\n            }\n            Ok(Event::Eof) => return Ok(()),\n            Ok(_) => {}\n            Err(e) => return Err(invalid(e.to_string())),\n        }",
+          "explanation": "Start/Empty enforce policy, but DocType reaches Ok(_) and is ignored."
+        },
+        {
+          "id": "doc-main",
+          "label": "Lazy main DOM parse",
+          "path": "src/wml_document.rs",
+          "startLine": 85,
+          "endLine": 96,
+          "language": "rust",
+          "role": "affected_operation",
+          "code": "    pub fn main_document(&mut self) -> Result<NodeId, OpcError> {\n        if let Some(id) = self.main_doc {\n            return Ok(id);\n        }\n        let name = self.main_document_part_name();\n        let xml = self\n            .part_fs\n            .part_string(&name)\n            .ok_or_else(|| OpcError::PartNotFound(name.clone()))?;\n        let doc = self.dom.parse_xdocument(&xml);\n        self.main_doc = Some(doc);\n        Ok(doc)",
+          "explanation": "Admitted main part is passed to the permissive parser."
+        },
+        {
+          "id": "dom-doctype",
+          "label": "First-greater-than declaration skip",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 539,
+          "endLine": 550,
+          "language": "rust",
+          "role": "transformation",
+          "code": "            if self.starts_with(\"<!\") {\n                // DOCTYPE — skip\n                let end = self.index_of(\">\", self.pos);\n                self.pos = end.map(|e| e + 1).unwrap_or(len);\n                continue;\n            }\n            if self.cur() == '<' {\n                let el = self.parse_element(&mut scope);\n                self.dom.add(doc, el);\n                continue;\n            }\n            break;",
+          "explanation": "An internal quoted > ends this skip even though DTD event continues upstream."
+        },
+        {
+          "id": "dom-recurse",
+          "label": "Unchecked recursive descent",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 637,
+          "endLine": 663,
+          "language": "rust",
+          "role": "sensitive_operation",
+          "code": "            if self.starts_with(\"<!--\") {\n                let end = self.index_of(\"-->\", self.pos);\n                let body = self.slice(self.pos + 4, end.unwrap_or(len));\n                let cm = self.dom.new_comment(&body);\n                self.dom.add(el, cm);\n                self.pos = end.map(|e| e + 3).unwrap_or(len);\n                continue;\n            }\n            if self.starts_with(\"<![CDATA[\") {\n                let end = self.index_of(\"]]>\", self.pos);\n                let body = self.slice(self.pos + 9, end.unwrap_or(len));\n                // Line-end normalization (§2.11) applies inside CDATA too;\n                // entities do not.\n                let t = self.dom.new_text(&normalize_raw_text_end_of_line(body));\n                self.dom.add(el, t);\n                self.pos = end.map(|e| e + 3).unwrap_or(len);\n                continue;\n            }\n            if self.starts_with(\"<?\") {\n                let pi = self.parse_pi_node();\n                self.dom.add(el, pi);\n                continue;\n            }\n            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Remaining nested replacement markup becomes recursive element calls."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission and the DOM disagree on declaration boundaries. quick-xml hides quote-sensitive DTD contents in DocType, which admission ignores; the permissive parser resumes within that content and applies no independent recursion limit.",
+        "evidenceRefs": [
+          "doc-from-bytes",
+          "admission-doctype",
+          "doc-main",
+          "dom-doctype",
+          "dom-recurse"
+        ]
+      },
+      "remediation": "Reject DocType in package admission as the checked XML API already does. Also enforce active depth policy in DOM construction or make declaration handling identical across the parsers.",
+      "validation": {
+        "counterEvidence": [
+          "Strict validate_xml_with_limits rejects Event::DocType at parse.rs954.",
+          "Ordinary element nesting is bounded.",
+          "Direct parse_xdocument intentionally unchecked is not itself this finding.",
+          "Caller process CPU/memory containment remains recommended."
+        ],
+        "evidenceRefs": [
+          "doc-from-bytes",
+          "admission-doctype",
+          "doc-main",
+          "dom-doctype",
+          "dom-recurse"
+        ],
+        "limitations": [
+          "Static proof only; exact native/WASM stack threshold and runtime crash not measured.",
+          "No external entity fetch or code execution is asserted."
+        ],
+        "method": "offline static source and dependency review",
+        "status": "validated",
+        "summary": "Parent read admission's event match, installed quick-xml0.42 quote-sensitive DTD state, WmlDocument constructor/main parse, and DOM declaration/recursive branches. A quoted replacement beginning with > then nested markup is not counted as elements by admission but is consumed by DOM recursion. Checked raw-XML validation rejects DTDs and is not the affected entry.",
+        "dependencyEvidence": [
+          "Installed quick-xml0.42 parser/dtd.rs28-59,194-201,262-265 treats ENTITY quotes as quote-sensitive; reader/state.rs163-173 emits a single DocType. Parent verified offline."
+        ]
+      },
+      "attackPath": {
+        "controls": [
+          "Strict validate_xml_with_limits rejects Event::DocType at parse.rs954.",
+          "Ordinary element nesting is bounded.",
+          "Direct parse_xdocument intentionally unchecked is not itself this finding.",
+          "Caller process CPU/memory containment remains recommended."
+        ],
+        "dataflow": {
+          "summary": "DOCX main XML DTD quoted nested markup -> quick-xml DocType ignored by admission -> WmlDocument main_document -> parse_document skips first > inside quote -> parse_element recurses on hidden markup.",
+          "source": "attacker-supplied DOCX bytes",
+          "sink": "recursive XML DOM construction",
+          "outcome": "Package admission ignores a whole DTD event, while the DOM skips only to its first greater-than character and recursively parses markup inside its quoted replacement text. This defeats depth/tag limits and can exhaust the host stack.",
+          "evidenceRefs": [
+            "doc-from-bytes",
+            "admission-doctype",
+            "doc-main",
+            "dom-doctype",
+            "dom-recurse"
+          ]
+        },
+        "evidenceRefs": [
+          "doc-from-bytes",
+          "admission-doctype",
+          "doc-main",
+          "dom-doctype",
+          "dom-recurse"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "Caller process availability can be exhausted by input within byte budgets."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Attacker controls package contents at an explicitly untrusted document boundary; no operator credentials are required once processing begins."
+        },
+        "limitations": [
+          "Static proof only; exact native/WASM stack threshold and runtime crash not measured.",
+          "No external entity fetch or code execution is asserted."
+        ],
+        "reachability": {
+          "summary": "An untrusted DOCX producer can place this DTD in the main part. WmlDocument::from_bytes followed by main_document crosses the advertised package-admission boundary without requiring callers to invoke an unchecked API directly.",
+          "attacker": "untrusted document producer",
+          "entrypoint": "public document/package API",
+          "preconditions": [
+            "The victim processes the supplied document."
+          ]
+        },
+        "summary": "An untrusted DOCX producer can place this DTD in the main part. WmlDocument::from_bytes followed by main_document crosses the advertised package-admission boundary without requiring callers to invoke an unchecked API directly."
+      },
+      "remediationTests": [
+        "Add deterministic regression inputs for the source-supported differential and assert a typed bounded refusal.",
+        "Verify ordinary compatible documents still process under unchanged limits."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "parser-doctype-dom-differential",
+        "worker": "discovery-0010/parser_investigator",
+        "originalCandidate": {
+          "candidateId": "parser-doctype-dom-differential",
+          "producer": "parser_investigator",
+          "title": "DTD contents may bypass XML policy before permissive DOM recursion",
+          "originalEvidence": "Admission ignores Event::DocType at src/admission.rs:798-820; permissive DOM skips <!… only through first > (src/xmllinq/parse.rs:539-543). quick-xml0.42 DtdParser reportedly keeps quoted <!ENTITY> contents inside one DocType event. Quoted entity replacement text containing nested markup may be uncounted by max_xml_depth/tag policy then recursively parsed by parse_element:660-662 via WmlDocument::main_document:94.",
+          "counterEvidence": "Static candidate only; parent verification and detailed reachability/counterevidence in progress; no triggering input executed.",
+          "finalWorkerResult": {
+            "title": "DTD contents bypass admission depth and tag limits before recursive DOM parsing",
+            "cwe": "CWE-674",
+            "severity": "high",
+            "confidence": "high",
+            "sourceToSink": "WmlDocument50-55 admission -> check_xml_depth788-820 ignores DocType -> main_document85-95 -> DOM skip first >539-543 -> recurse660-662",
+            "originalEvidenceRefs": [
+              "admission-doctype",
+              "dom-doctype",
+              "dom-recurse",
+              "doc-from-bytes",
+              "doc-main"
+            ],
+            "dependencyEvidence": [
+              "quick-xml0.42 parser/dtd.rs28-59,194-201,262-265 quote-aware ENTITY",
+              "reader/state.rs163-171 emits DocType"
+            ],
+            "counterevidence": [
+              "Direct checked validator rejects DTD954.",
+              "Unchecked API is intentional; finding uses admitted package boundary.",
+              "Ordinary nesting bounded."
+            ],
+            "impact": "Quoted DTD nested markup becomes DOM recursion beyond depth256 and can terminate host/WASM.",
+            "proofGaps": "Static only, platform recursion threshold not measured."
+          },
+          "originalSourceEvidence": [
+            {
+              "id": "admission-doctype",
+              "path": "src/admission.rs",
+              "startLine": 788,
+              "endLine": 821,
+              "code": "fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {\n    let invalid =\n        |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!(\"{name}: {why}\"));\n    let text = part_text(xml);\n    let mut reader = Reader::from_str(&text);\n    reader.config_mut().check_end_names = true;\n    let max_depth = limits.max_xml_depth;\n    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant(limits);\n    let mut depth = 0usize;\n    loop {\n        match reader.read_event() {\n            Ok(Event::Start(tag)) => {\n                policy.open(&tag).map_err(invalid)?;\n                depth = depth.saturating_add(1);\n                if depth > max_depth {\n                    return Err(invalid(format!(\"XML nests deeper than {max_depth}\")));\n                }\n            }\n            Ok(Event::Empty(tag)) => {\n                policy.empty(&tag).map_err(invalid)?;\n            }\n            Ok(Event::End(_)) => {\n                depth = depth\n                    .checked_sub(1)\n                    .ok_or_else(|| invalid(\"end tag with no open element\".to_string()))?;\n                policy.close();\n            }\n            Ok(Event::Eof) if depth > 0 => {\n                return Err(invalid(format!(\"{depth} element(s) left unclosed\")));\n            }\n            Ok(Event::Eof) => return Ok(()),\n            Ok(_) => {}\n            Err(e) => return Err(invalid(e.to_string())),\n        }"
+            },
+            {
+              "id": "dom-doctype",
+              "path": "src/xmllinq/parse.rs",
+              "startLine": 539,
+              "endLine": 550,
+              "code": "            if self.starts_with(\"<!\") {\n                // DOCTYPE — skip\n                let end = self.index_of(\">\", self.pos);\n                self.pos = end.map(|e| e + 1).unwrap_or(len);\n                continue;\n            }\n            if self.cur() == '<' {\n                let el = self.parse_element(&mut scope);\n                self.dom.add(doc, el);\n                continue;\n            }\n            break;"
+            },
+            {
+              "id": "dom-recurse",
+              "path": "src/xmllinq/parse.rs",
+              "startLine": 637,
+              "endLine": 663,
+              "code": "            if self.starts_with(\"<!--\") {\n                let end = self.index_of(\"-->\", self.pos);\n                let body = self.slice(self.pos + 4, end.unwrap_or(len));\n                let cm = self.dom.new_comment(&body);\n                self.dom.add(el, cm);\n                self.pos = end.map(|e| e + 3).unwrap_or(len);\n                continue;\n            }\n            if self.starts_with(\"<![CDATA[\") {\n                let end = self.index_of(\"]]>\", self.pos);\n                let body = self.slice(self.pos + 9, end.unwrap_or(len));\n                // Line-end normalization (§2.11) applies inside CDATA too;\n                // entities do not.\n                let t = self.dom.new_text(&normalize_raw_text_end_of_line(body));\n                self.dom.add(el, t);\n                self.pos = end.map(|e| e + 3).unwrap_or(len);\n                continue;\n            }\n            if self.starts_with(\"<?\") {\n                let pi = self.parse_pi_node();\n                self.dom.add(el, pi);\n                continue;\n            }\n            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;"
+            },
+            {
+              "id": "doc-from-bytes",
+              "path": "src/wml_document.rs",
+              "startLine": 50,
+              "endLine": 58,
+              "code": "    pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError> {\n        admit(bytes, InputLimits::compare()).map_err(refused)?;\n        Ok(WmlDocument {\n            document_byte_array: bytes.to_vec(),\n            file_name: String::new(),\n            part_fs: PartFs::open(bytes)?,\n            dom: Dom::new(),\n            main_doc: None,\n        })"
+            },
+            {
+              "id": "doc-main",
+              "path": "src/wml_document.rs",
+              "startLine": 85,
+              "endLine": 96,
+              "code": "    pub fn main_document(&mut self) -> Result<NodeId, OpcError> {\n        if let Some(id) = self.main_doc {\n            return Ok(id);\n        }\n        let name = self.main_document_part_name();\n        let xml = self\n            .part_fs\n            .part_string(&name)\n            .ok_or_else(|| OpcError::PartNotFound(name.clone()))?;\n        let doc = self.dom.parse_xdocument(&xml);\n        self.main_doc = Some(doc);\n        Ok(doc)"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "ci-runner-boundary",
+        "label": "Pull-request CI and private shared cache",
+        "disposition": "reported",
+        "riskArea": "CI isolation",
+        "notes": "ci.yml, adoption.yml, docs.yml, md-roundtrip.yml execute PR checkout on self-hosted. Root action8-32 documents shared cache/disk. External approval/isolation unknown.",
+        "candidateId": "baseline-ci-self-hosted",
+        "receiptRefs": []
+      },
+      {
+        "id": "legacy-piece-order",
+        "label": "Legacy piece-table amplification hypothesis",
+        "disposition": "rejected",
+        "riskArea": "Malformed DOC memory amplification",
+        "notes": "Rejected by parent/source: pieces() src/legacy_doc.rs1091-1094 uses adjacent values of one PLC CP array, so piece[i].cp_end equals piece[i+1].cp_start. Resetting a later start necessarily introduces a decreasing interval, rejected globally by main_text1154-1156. Arbitrary internal Piece arrays are not attacker-reachable.",
+        "candidateId": "legacy-piece-amplification",
+        "candidate": {
+          "candidateId": "legacy-piece-amplification",
+          "producer": "architecture",
+          "title": "Repeated legacy pieces after covered prefix amplify decoded text",
+          "originalEvidence": "main_text legacy_doc.rs1157-1175 stops coverage validation when covered>=ccp_text; decoding1181-1221 iterates remaining pieces until cp_start>=ccp_text. Repeated [cp_start0,cp_endM,fcX] with ccp_textM reportedly passes first-piece coverage and decodes M chars N times; check1154 only cp_end<cp_start, no later ordering validation.",
+          "counterEvidence": "Parent verifying piece table grammar, which may enforce shared cp boundary; no trigger executed."
+        },
+        "receiptRefs": []
+      },
+      {
+        "id": "parser-eocd-entry-limit",
+        "label": "False trailing EOCD bypasses the pre-index entry budget",
+        "disposition": "reported",
+        "riskArea": "ZIP input-limit validation bypass",
+        "notes": "Parent confirmed declared_entry_count selects bare last EOCD magic, zip9.0.5 continues past impossible directory offsets, and actual index counts are not bounded by max_entries after selection. A real well-formed directory with unique entries and consistent local headers is unaffected by the other checks.",
+        "candidateId": "parser-eocd-entry-limit",
+        "receiptRefs": []
+      },
+      {
+        "id": "parser-doctype-dom-differential",
+        "label": "DTD markup bypasses package XML depth checks",
+        "disposition": "reported",
+        "riskArea": "XML admission bypass / uncontrolled recursion",
+        "notes": "Parent read admission's event match, installed quick-xml0.42 quote-sensitive DTD state, WmlDocument constructor/main parse, and DOM declaration/recursive branches. A quoted replacement beginning with > then nested markup is not counted as elements by admission but is consumed by DOM recursion. Checked raw-XML validation rejects DTDs and is not the affected entry.",
+        "candidateId": "parser-doctype-dom-differential",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "parser-auxiliary-extension-policy",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "parser-auxiliary-extension-policy",
+          "title": "Relationship-selected XML with non-XML suffix bypasses admission XML policy",
+          "producer": "parser_investigator",
+          "originalEvidence": "Admission scans .xml/.rels only at src/admission.rs533-544 and separately nonstandard main at556-569. Auxiliary XML relationship target arbitrary suffix may pass as binary: document_comparer.rs4724-4750 resolves footnote/endnote by relationship type then part_string and unchecked parse; deeply nested word/notes.bin may reach recursive DOM despite max_xml_depth.",
+          "counterEvidence": "Parent validation and sibling revision paths pending; no runtime input created.",
+          "finalWorkerResult": {
+            "title": "Auxiliary XML parts with non-XML suffixes bypass admission policy",
+            "cwe": "CWE-674",
+            "severity": "high",
+            "confidence": "high",
+            "sourceToSink": "admit suffix-only533-544/main-only exception556-569 -> accept_revisions4961-4964 -> relationship bucket3699-3713 -> RevisionIds3787-3792 and process_part3736-3740; compare notes4724-4750",
+            "originalEvidenceRefs": [
+              "admission-extension",
+              "admission-main",
+              "revision-parts",
+              "revision-parse",
+              "revision-ids",
+              "compare-notes"
+            ],
+            "counterevidence": [
+              "Main part special-cased.",
+              "Normal .xml/.rels checked.",
+              "PartFs byte limits remain; external relations skipped."
+            ],
+            "impact": "XML word/notes.dat/header/footer/comments/styles parsed without depth/tag check, allowing stack exhaustion.",
+            "proofGaps": "Static only, no malicious package, recursion threshold unmeasured."
+          },
+          "originalSourceEvidence": [
+            {
+              "id": "admission-extension",
+              "path": "src/admission.rs",
+              "startLine": 531,
+              "endLine": 553,
+              "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?\n        };\n        tally_inflated(&mut total, read, &name, cap, &limits)?;"
+            },
+            {
+              "id": "admission-main",
+              "path": "src/admission.rs",
+              "startLine": 556,
+              "endLine": 570,
+              "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;\n    }"
+            },
+            {
+              "id": "revision-parts",
+              "path": "src/revision_processor.rs",
+              "startLine": 3699,
+              "endLine": 3714,
+              "code": "    if let Some(rels) = pkg.read_rels_for(&main) {\n        for r in &rels.items {\n            if r.target_mode.as_deref() == Some(\"External\") {\n                continue;\n            }\n            let bucket = match r.rel_type.rsplit('/').next().unwrap_or(\"\") {\n                \"header\" => &mut headers,\n                \"footer\" => &mut footers,\n                \"endnotes\" => &mut endnotes,\n                \"footnotes\" => &mut footnotes,\n                \"comments\" => &mut comments,\n                \"styles\" => &mut styles,\n                _ => continue,\n            };\n            bucket.push(pkg.resolve_rel_target(&main, &r.target));\n        }"
+            },
+            {
+              "id": "revision-parse",
+              "path": "src/revision_processor.rs",
+              "startLine": 3732,
+              "endLine": 3748,
+              "code": "fn process_part<F>(pkg: &mut crate::opc::PartFs, part: &str, f: F)\nwhere\n    F: FnOnce(&mut Dom, NodeId) -> Option<NodeId>,\n{\n    let Some(xml) = pkg.part_string(part) else {\n        return;\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);\n    let Some(root) = dom.root(doc) else {\n        return;\n    };\n    let Some(new_root) = f(&mut dom, root) else {\n        return;\n    };\n    dom.replace_with(root, &[new_root]);\n    pkg.set_part(part, dom.serialize_document(doc).into_bytes());"
+            },
+            {
+              "id": "revision-ids",
+              "path": "src/revision_processor.rs",
+              "startLine": 3785,
+              "endLine": 3794,
+              "code": "    pub(crate) fn new(pkg: &crate::opc::PartFs) -> Self {\n        let mut used = HashSet::new();\n        for (part, _) in revision_bearing_parts(pkg) {\n            let Some(xml) = pkg.part_string(&part) else {\n                continue;\n            };\n            let mut dom = Dom::new();\n            let doc = dom.parse_xdocument(&xml);\n            let Some(root) = dom.root(doc) else { continue };\n            for node in dom.descendants_and_self(root, None) {"
+            },
+            {
+              "id": "compare-notes",
+              "path": "src/document_comparer.rs",
+              "startLine": 4724,
+              "endLine": 4751,
+              "code": "    if let Some(rels) = pkg.read_rels_for(&main) {\n        for r in &rels.items {\n            if r.target_mode.as_deref() == Some(\"External\") {\n                continue;\n            }\n            match r.rel_type.rsplit('/').next().unwrap_or(\"\") {\n                \"footnotes\" => fn_part = Some(pkg.resolve_rel_target(&main, &r.target)),\n                \"endnotes\" => en_part = Some(pkg.resolve_rel_target(&main, &r.target)),\n                _ => {}\n            }\n        }\n    }\n\n    let Some(main_xml) = pkg.part_string(&main) else {\n        return Ok(Vec::new());\n    };\n    let fn_xml = fn_part.as_deref().and_then(|p| pkg.part_string(p));\n    let en_xml = en_part.as_deref().and_then(|p| pkg.part_string(p));\n\n    let mut dom = Dom::new();\n    let main_doc = dom.parse_xdocument(&main_xml);\n    let Some(main_root) = dom.root(main_doc) else {\n        return Ok(Vec::new());\n    };\n    let fn_doc = fn_xml.as_deref().map(|x| dom.parse_xdocument(x));\n    let fn_root = fn_doc.and_then(|d| dom.root(d));\n    let en_doc = en_xml.as_deref().map(|x| dom.parse_xdocument(x));\n    let en_root = en_doc.and_then(|d| dom.root(d));"
+            }
+          ]
+        },
+        "id": "parser-auxiliary-extension-policy"
+      },
+      {
+        "candidateId": "parser-relationship-entity-quadratic",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "parser-relationship-entity-quadratic",
+          "producer": "parser_investigator",
+          "title": "Decoded relationship targets reach quadratic entity unescaper",
+          "originalEvidence": "oxml-opc0.14.2 relationship.rs929-948 decoded_and_normalized_value decodes &amp; in Target; PartFs::resolve_rel_target src/opc/mod.rs677-681 decodes again via unescape_xml_text, whose remaining suffix ';' search restarts for every '&' when none exists (src/xmllinq/parse.rs770-783). Well-formed bounded .rels with many &amp; allegedly passes admission then compare4730/revision3713 resolves before target existence.",
+          "counterEvidence": "Parent independent validation pending; no timing run.",
+          "finalWorkerResult": {
+            "title": "Relationship target double decoding exposes quadratic entity scanning",
+            "cwe": "CWE-407",
+            "severity": "medium",
+            "confidence": "high",
+            "sourceToSink": "read_relationships222-233 -> upstream decoded Target -> revision selection3699-3713 -> PartFs resolver677-681 double decode -> unescape770-783 suffix rescan",
+            "originalEvidenceRefs": [
+              "rel-decode",
+              "revision-parts",
+              "rel-resolver",
+              "entity-rescan",
+              "compare-notes"
+            ],
+            "dependencyEvidence": [
+              "oxml-opc0.14.2/src/relationship.rs924-948 decoded_and_normalized_value assigns Target",
+              "quick-xml0.41/events/attributes.rs205-211,256-273 entity normalization"
+            ],
+            "impact": "One million decoded & from ~5MB encoded &amp; creates ~500billion comparisons; target need not exist.",
+            "counterevidence": [
+              "Bare malformed XML & route discarded; valid escaped input required.",
+              "Ordinary complete entities advance normally.",
+              "Byte/process caps remain."
+            ],
+            "proofGaps": "Static complexity only, no benchmark or malicious input."
+          },
+          "originalSourceEvidence": [
+            {
+              "id": "rel-decode",
+              "path": "src/opc/mod.rs",
+              "startLine": 222,
+              "endLine": 234,
+              "code": "fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {\n    let mut rels = Relationships::new();\n    let mut items = Vec::new();\n    for record in metadata_records(\n        xml,\n        \"Relationships\",\n        \"http://schemas.openxmlformats.org/package/2006/relationships\",\n        &[\"Relationship\"],\n    )? {\n        for item in oxml_opc::Relationships::from_xml(&record)?.items {\n            items.push(item);\n        }\n    }"
+            },
+            {
+              "id": "revision-parts",
+              "path": "src/revision_processor.rs",
+              "startLine": 3699,
+              "endLine": 3714,
+              "code": "    if let Some(rels) = pkg.read_rels_for(&main) {\n        for r in &rels.items {\n            if r.target_mode.as_deref() == Some(\"External\") {\n                continue;\n            }\n            let bucket = match r.rel_type.rsplit('/').next().unwrap_or(\"\") {\n                \"header\" => &mut headers,\n                \"footer\" => &mut footers,\n                \"endnotes\" => &mut endnotes,\n                \"footnotes\" => &mut footnotes,\n                \"comments\" => &mut comments,\n                \"styles\" => &mut styles,\n                _ => continue,\n            };\n            bucket.push(pkg.resolve_rel_target(&main, &r.target));\n        }"
+            },
+            {
+              "id": "rel-resolver",
+              "path": "src/opc/mod.rs",
+              "startLine": 672,
+              "endLine": 682,
+              "code": "    /// `resolveRelTarget(sourcePart, relTarget)` — the part a rel target names,\n    /// relative to its source part, as a canonical part name: no leading slash\n    /// (the form `parts()` returns) and `.`/`..` segments resolved. An echoed\n    /// absolute target (\"/word/footer1.xml\") was later re-prefixed into a\n    /// \"//word/…\" relationship, and \"word/../customXml/item1.xml\" named no part.\n    pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {\n        // PartFs receives raw relationship attributes; DOM consumers already\n        // decoded XML entities and call the pure resolver directly.\n        let target = crate::xmllinq::parse::unescape_xml_text(rel_target);\n        resolve_rel_target(source_part, &target)\n    }"
+            },
+            {
+              "id": "entity-rescan",
+              "path": "src/xmllinq/parse.rs",
+              "startLine": 764,
+              "endLine": 789,
+              "code": "pub fn unescape_xml_text(s: &str) -> String {\n    if !s.contains('&') {\n        return s.to_string();\n    }\n    let chars: Vec<char> = s.chars().collect();\n    let mut out = String::with_capacity(s.len());\n    let mut i = 0;\n    while i < chars.len() {\n        if chars[i] == '&' {\n            // find ';'\n            if let Some(semi_rel) = chars[i + 1..].iter().position(|&c| c == ';') {\n                let body: String = chars[i + 1..i + 1 + semi_rel].iter().collect();\n                if let Some(decoded) = decode_entity(&body) {\n                    out.push_str(&decoded);\n                    i = i + 1 + semi_rel + 1;\n                    continue;\n                }\n            }\n            out.push('&');\n            i += 1;\n        } else {\n            out.push(chars[i]);\n            i += 1;\n        }\n    }\n    out"
+            },
+            {
+              "id": "compare-notes",
+              "path": "src/document_comparer.rs",
+              "startLine": 4724,
+              "endLine": 4751,
+              "code": "    if let Some(rels) = pkg.read_rels_for(&main) {\n        for r in &rels.items {\n            if r.target_mode.as_deref() == Some(\"External\") {\n                continue;\n            }\n            match r.rel_type.rsplit('/').next().unwrap_or(\"\") {\n                \"footnotes\" => fn_part = Some(pkg.resolve_rel_target(&main, &r.target)),\n                \"endnotes\" => en_part = Some(pkg.resolve_rel_target(&main, &r.target)),\n                _ => {}\n            }\n        }\n    }\n\n    let Some(main_xml) = pkg.part_string(&main) else {\n        return Ok(Vec::new());\n    };\n    let fn_xml = fn_part.as_deref().and_then(|p| pkg.part_string(p));\n    let en_xml = en_part.as_deref().and_then(|p| pkg.part_string(p));\n\n    let mut dom = Dom::new();\n    let main_doc = dom.parse_xdocument(&main_xml);\n    let Some(main_root) = dom.root(main_doc) else {\n        return Ok(Vec::new());\n    };\n    let fn_doc = fn_xml.as_deref().map(|x| dom.parse_xdocument(x));\n    let fn_root = fn_doc.and_then(|d| dom.root(d));\n    let en_doc = en_xml.as_deref().map(|x| dom.parse_xdocument(x));\n    let en_root = en_doc.and_then(|d| dom.root(d));"
+            }
+          ]
+        },
+        "id": "parser-relationship-entity-quadratic"
+      },
+      {
+        "candidateId": "legacy-field-stack-quadratic",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "legacy-field-stack-quadratic",
+          "producer": "architecture",
+          "title": "Legacy field stack may cause quadratic work",
+          "originalEvidence": "Story::blocks legacy_doc.rs1604 calls fields.iter().any per character; repeated begin U+0013/separator U+0014 grows all-false stack at1606-1613 and scans 1+2+...+n before body text. No field nesting cap observed.",
+          "counterEvidence": "Parent validation and policy calibration pending. CFB chains themselves have physical-sector/entry traversal bounds681-704,765-835."
+        },
+        "id": "legacy-field-stack-quadratic"
+      },
+      {
+        "candidateId": "wmf-record-span-amplification",
+        "reason": "Awaiting parent validation.",
+        "candidate": {
+          "candidateId": "wmf-record-span-amplification",
+          "producer": "architecture",
+          "title": "WMF text record reads beyond its record boundary and amplifies memory",
+          "originalEvidence": "raster_wmf only checks size>=3/size*2<=remaining at metafile.rs477-489; EXTTEXTOUT603-610 reads string using whole data, not off+size2. Six-byte size3 records alternating func0x0A32 and unknown0xFFFF can read n0xFFFF from next header and clone65535 following bytes per12 bytes advanced. texts.extend owns strings; wmf_text/ansi_text429-442,692-715. decode_image calls metafile first convert/mod.rs20247-20261 before image default limits.",
+          "counterEvidence": "Parent validation and DOCX image-relationship caller trace pending. No attack input executed."
+        },
+        "id": "wmf-record-span-amplification"
+      }
+    ]
+  }
+}

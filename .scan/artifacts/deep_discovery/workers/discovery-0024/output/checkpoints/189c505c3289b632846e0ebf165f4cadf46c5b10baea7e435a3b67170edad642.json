@@ -1,0 +1,185 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline static audit of supplied current target /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application code or tests executed.",
+    "validationMode": "static source trace"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-a7b9170a2ae4ec37",
+        "label": "Embedded image decoding and conversion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Candidate awaiting dependency and caller-path validation."
+      },
+      {
+        "id": "surface-b0fc8c7e20b74787",
+        "label": "Legacy DOC logical piece expansion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Original investigator evidence retained; parent validation pending."
+      },
+      {
+        "id": "surface-ee51bc08b16f5fc0",
+        "label": "Table layout and Python/npm file publication",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Three baseline candidate payloads saved pending parent validation."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0024-image-decoding",
+        "candidateId": "discovery-0024-image-decoding",
+        "reason": "Awaiting parent validation of decoder limits, public reachability and concrete resource impact.",
+        "paths": [
+          "src/convert/mod.rs",
+          "src/convert/raster.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-image-decoding",
+          "title": "Embedded images may exhaust memory during PDF/PNG conversion",
+          "cwe_ids": [
+            "CWE-400"
+          ],
+          "attacker": "Document supplier",
+          "evidence": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 20289,
+              "endLine": 20294,
+              "code": "    let img = image::load_from_memory(&bytes).ok()?;\n    if img.color().has_alpha() {\n        let rgba = img.to_rgba8();\n        let (width, height) = (rgba.width(), rgba.height());\n        let mut rgb = Vec::with_capacity((width * height * 3) as usize);\n        let mut alpha = Vec::with_capacity((width * height) as usize);"
+            },
+            {
+              "path": "src/convert/raster.rs",
+              "startLine": 383,
+              "endLine": 384,
+              "code": "            if let Ok(img) = image::load_from_memory(bytes) {\n                let rgba = img.to_rgba8();"
+            }
+          ],
+          "counterevidence": [
+            "Dependency image may enforce default decoder allocation limits; not yet inspected.",
+            "SECURITY.md assigns process CPU/memory limits to caller; archive admission bounds compressed image bytes, not decoded pixels."
+          ]
+        }
+      },
+      {
+        "id": "discovery-0024-legacy-piece-expansion",
+        "candidateId": "discovery-0024-legacy-piece-expansion",
+        "reason": "Focused investigator candidate awaiting independent parent source validation.",
+        "paths": [
+          "src/legacy_doc.rs",
+          "src/bin/jubarte.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-legacy-piece-expansion",
+          "title": "Bound expanded main-story characters before decoding legacy DOC pieces",
+          "severity": "high",
+          "cwe": "CWE-789",
+          "path": "src/legacy_doc.rs",
+          "line_start": 1181,
+          "line_end": 1187,
+          "source_snippet": "for piece in pieces { ... let end = piece.cp_end.min(ccp_text); ... for cp in piece.cp_start..end {",
+          "description": "A supplied OLE DOC can encode increasing contiguous logical CP ranges while repeatedly pointing each piece.fc at the same small valid WordDocument byte range. main_text verifies logical continuity (1154-1174) and each source offset (1188-1202), but neither total logical characters nor repeated source consumption. It appends one StoryChar per logical CP (1221); Fib::parse trusts attacker ccp_text from the FIB (925), up to u32::MAX. A small source range reused by a modest piece table can request billions of StoryChar records, exhausting caller memory before DOCX admission.",
+          "reachability": "public legacy_doc::read (180-189), doc_to_docx (235-236); CLI run_convert_any reads and dispatches OLE to doc_to_docx (src/bin/jubarte.rs:3125-3131) before any admit_word, whose later branch explicitly excludes legacy (3142-3143). Even read_document's refusal-hint path invokes legacy_doc::read before returning error (2742-2753).",
+          "prerequisites": "Victim processes attacker-supplied legacy DOC through convert/public legacy reader (or CLI rejection hint). Structurally readable OLE/FIB and contiguous CP piece table with valid reused source extents, without encryption.",
+          "counterevidence": "OLE FAT/mini-FAT chains bounded by input sectors; source offsets checked; pieces cover ccp_text and nondecreasing. They do not bind logical output to source bytes. Caller CPU/memory isolation limits impact to process DoS.",
+          "validation": "Worker static source reasoning; pending parent validation."
+        }
+      },
+      {
+        "id": "discovery-0024-table-grid-allocation",
+        "candidateId": "discovery-0024-table-grid-allocation",
+        "reason": "Baseline candidate awaiting independent parent validation; original evidence retained.",
+        "candidate": {
+          "candidateId": "discovery-0024-table-grid-allocation",
+          "title": "Unbounded table grid spans allocate attacker-selected columns",
+          "cwe_ids": [
+            "CWE-789"
+          ],
+          "evidence": "src/convert/mod.rs cell_span 14211-14215 parses untrusted w:gridSpan val as usize with max(1), no upper cap; table_block 13466,13486 stores span; occupancy max sum 13601-13605 -> vec![each; occupancy] or cols.resize at 13606-13615. Single-cell gridSpan=4294967295 requests >=16GiB column vector after normal admission. row_grid_skip 14340-14345 also parses unlimited gridBefore/After."
+        }
+      },
+      {
+        "id": "discovery-0024-plan-temp-symlink",
+        "candidateId": "discovery-0024-plan-temp-symlink",
+        "reason": "Baseline candidate awaiting independent parent validation; original evidence retained.",
+        "candidate": {
+          "candidateId": "discovery-0024-plan-temp-symlink",
+          "title": "Predictable plan staging paths follow precreated symlinks",
+          "cwe_ids": [
+            "CWE-377"
+          ],
+          "evidence": "Python __main__.py 407-411 and npm CLI 420-423 create predictable .PLAN.PID.partial using Path.write_bytes/fs.writeFileSync (no exclusive create/no-follow), then rename. Precreated symlink causes victim-privilege arbitrary target truncation and installs symlink as plan. Native src/edit/record.rs 142-166 explicitly fixed this via publication."
+        }
+      },
+      {
+        "id": "discovery-0024-binding-output-race",
+        "candidateId": "discovery-0024-binding-output-race",
+        "reason": "Baseline candidate awaiting independent parent validation; original evidence retained.",
+        "candidate": {
+          "candidateId": "discovery-0024-binding-output-race",
+          "title": "Binding file adapters race no-overwrite checks",
+          "cwe_ids": [
+            "CWE-367"
+          ],
+          "evidence": "Python direct _ensure_writable 101-103 followed _write 126-130; npm ensureWritable76-79 followed write106-108 check-then-unconditional-truncate, race/symlink overwrite in attacker-writable output dir. More tentative than table allocation and predictable staging; can consolidate publication classes."
+        }
+      },
+      {
+        "id": "discovery-0024-relationship-entity-rescan",
+        "candidateId": "discovery-0024-relationship-entity-rescan",
+        "reason": "Focused investigator transformed-input candidate awaiting parent validation.",
+        "paths": [
+          "src/opc/mod.rs",
+          "src/xmllinq/parse.rs",
+          "src/inspect.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-relationship-entity-rescan",
+          "title": "Avoid quadratic entity rescans on decoded relationship targets",
+          "severity": "high",
+          "cwe": "CWE-407",
+          "path": "src/opc/mod.rs",
+          "line_start": 677,
+          "line_end": 681,
+          "source_snippet": "let target = crate::xmllinq::parse::unescape_xml_text(rel_target);",
+          "description": "PartFs::read_relationships passes each record to oxml_opc::Relationships::from_xml (src/opc/mod.rs:231-242); pinned oxml-opc 0.14.2 parse_relationship decodes each attribute with decoded_and_normalized_value (relationship.rs:924-937). XML-valid Target with repeated &amp; becomes repeated bare ampersands before resolve_rel_target runs a SECOND decoder. unescape_xml_text scans chars[i+1..] to the next semicolon for every '&' (src/xmllinq/parse.rs:771-783); without semicolons this is quadratic.",
+          "reachability": "inspect Opened::open_within admits first (src/inspect.rs:615), opens PartFs (619), summary calls related (674-681), and related passes rel.target to resolver (766-775); public CLI/bindings reachable. Resolution precedes missing-target refusal.",
+          "prerequisites": "Victim inspects/converts/compares attacker DOCX with followed internal relationship kind. No actual target part needed.",
+          "counterevidence": "Admission rejects raw dangling ampersands but valid raw &amp; is transformed by upstream first. One attribute and modest input fit limits. CPU isolation confines process impact.",
+          "validation": "Worker static trace; pending parent validation."
+        }
+      },
+      {
+        "candidateId": "discovery-0024-legacy-field-stack",
+        "reason": "Nested-field stack candidate awaiting independent parent source validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0024-legacy-field-stack",
+          "title": "Track nested field code state without rescanning the full field stack",
+          "severity": "medium",
+          "cwe": "CWE-407",
+          "path": "src/legacy_doc.rs",
+          "line_start": 1602,
+          "line_end": 1604,
+          "source_snippet": "for story in chars {\n    let in_code = fields.iter().any(|&code| code);",
+          "description": "Repeated field begin 0x13 and result separator 0x14 leave all ancestor fields unclosed with false code flags. Every following character scans the accumulated false stack. n nested result fields plus n result characters requires quadratic comparisons, without field-depth/work limits.",
+          "reachability": "legacy_doc::read -> Story::blocks (180-216); native conversion (3125-3131) and refusal hint (2745).",
+          "prerequisites": "Structurally valid unencrypted legacy DOC; attacker controls main-story field bytes. No repeated physical pieces needed.",
+          "counterevidence": "Physical offset and sector bounds limit source input, not field-stack work; caller CPU isolation limits process DoS.",
+          "validation": "Worker source trace, pending parent validation."
+        },
+        "id": "discovery-0024-legacy-field-stack"
+      }
+    ]
+  }
+}

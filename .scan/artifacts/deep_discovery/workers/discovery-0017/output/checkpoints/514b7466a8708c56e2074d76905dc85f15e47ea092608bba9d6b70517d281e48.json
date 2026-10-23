@@ -1,0 +1,778 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX comparison/edit/inspection/rendering engine exposed through native CLI, PyO3 Python facade/CLI, WASM byte APIs/Node CLI, and an optional Python stdio MCP server (src/lib.rs:5-35; jubarte-python/pyproject.toml:42-49; jubarte-wasm/cli/package.json:33-46).",
+    "assets": [
+      "Document contents, revisions, comments, metadata, generated DOCX/PDF/PNG, edit snapshots and reports; host input/output files and engine process availability.",
+      "Installed executable and release integrity; updater selects jandira-tech/jubarte-redlines assets and SHA256SUMS.txt, with currently empty RELEASE_KEYS and no FIRST_SIGNED_RELEASE (src/update.rs:25-48,198-210,245-257)."
+    ],
+    "trustBoundaries": [
+      "Untrusted package bytes enter bounded admission before document operations; default input budgets are 64 MiB compressed/per part, 256 MiB inflated, 10000 entries and XML depth 256; compare budgets instead allow 512 MiB compressed/per part and 2 GiB inflated (src/admission.rs:63-100).",
+      "MCP stdio clients obtain document I/O under operator-selected --root (default cwd); _OutputRoot holds a cap-std directory handle for relative reads/publication; read/write ToolAnnotations are hints, while capability-relative I/O enforces containment (jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199).",
+      "Native CLI publish_paths has ambient filesystem authority, held parent handles and staged per-file commits; OutputRoot is a separately confined interface (src/publication.rs:203-225,421-569)."
+    ],
+    "attackerCapabilities": [
+      "A sender can provide malicious DOCX/DOC/XML/font/image bytes and edit or Markdown content to a willing caller; no remote listener or tenant identity is inferred.",
+      "An MCP client can request supported tools and overwrite=true inside the granted root; it does not thereby possess operator environment, release signing keys, or repository publish authority (jubarte-python/python/jubarte_redlines/mcp_server.py:152-160,258-277,373-381)."
+    ],
+    "securityObjectives": [
+      "Preserve bounded parsing, package identity, safe path handling, and checked XML policy before materializing untrusted input; callers own OS memory/CPU confinement (SECURITY.md:35-79).",
+      "Confine MCP document reads and outputs to held root authority; never confuse read-only tool hints with enforcement (src/publication.rs:146-199; jubarte-python/python/jubarte_redlines/mcp_server.py:54-108)."
+    ],
+    "assumptions": [
+      "No deployment context or authoritative threat model supplied; userContext is null. Analysis is offline and current-state-only.",
+      "Native rendering additionally reads installed fonts and persists font-index.tsv beside the user font folder, with JUBARTE_FONT_INDEX overriding or disabling; MCP --root does not encompass those independent native renderer operations (src/convert/font.rs:2633-2652,3095-3107,3213-3229).",
+      "Byte-in/byte-out library docs say no temp files (src/lib.rs:8-11), but native font indexing writes a sibling tsv.<pid>.tmp then renames; retain this qualification, not a vulnerability claim (src/convert/font.rs:3213-3229)."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current source architecture; partial boundary mapping, not audit coverage"
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-expansion.html-colspan",
+      "title": "Rendering an HTML altChunk can exhaust memory through its colspan",
+      "summary": "Rendering a DOCX with a related HTML table containing `colspan=1000000000` makes the converter append one billion XML grid columns. The input stays tiny and passes archive admission, but PDF, PNG, and layout-report operations can consume excessive CPU and memory or terminate their host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can drive enormous allocation during ordinary rendering without control of local files or configuration. The established consequence is process availability loss; no remote service or broader compromise is assumed. Caller-enforced process CPU/memory limits contain impact.",
+        "changeConditions": "A deployed shared rendering service would increase operational impact; enforcing a cumulative expansion budget before the loop would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source traces public rendering through admitted package bytes to HTML parsing, unchecked numeric span and its allocation loop; no runtime trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "alt-expand",
+          "label": "Resolve and translate HTML bytes",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 28,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let end = if open.ends_with(\"/>\") {\n            open_end + 1\n        } else {\n            tail.find(\"</w:altChunk>\")\n                .map_or(open_end + 1, |i| i + \"</w:altChunk>\".len())\n        };\n        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "The document relationship ID selects package bytes; `chunk_html` decodes them and calls `html_to_wml`."
+        },
+        {
+          "id": "alt-span",
+          "label": "Accept unbounded HTML colspan",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Attacker-controlled `colspan` is parsed as `usize` with only a lower bound, then stored in the cell span stack."
+        },
+        {
+          "id": "alt-grid",
+          "label": "Emit one XML column per numeric span",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 463,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn end_table(&mut self) {\n        self.close_open_cell();\n        self.flush();\n        let Some(table) = self.tables.pop() else {\n            return;\n        };\n        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "`end_table` sums the stored spans and emits `cols` grid records into an expanding String without a column or output-byte budget."
+        },
+        {
+          "id": "alt-tag-dispatch",
+          "label": "Dispatch each parsed HTML tag",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 671,
+          "endLine": 678,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        if closing {\n            b.end(&name);\n        } else {\n            b.start(&name, tag_src);\n            if inner.ends_with('/') && name != \"br\" {\n                b.end(&name);\n            }\n        }",
+          "explanation": "The HTML tokenizer forwards opening cell and closing table tags to the builder, preserving numeric attribute input."
+        },
+        {
+          "id": "alt-end-dispatch",
+          "label": "Close tables through end_table",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 589,
+          "endLine": 598,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    fn end(&mut self, tag: &str) {\n        if let Some(i) = self.fmts.iter().rposition(|(t, _)| t == tag) {\n            self.fmts.truncate(i);\n        }\n        match tag {\n            t if BLOCKS.contains(&t) => self.flush(),\n            \"td\" | \"th\" if self.in_open_cell() => self.end_cell(),\n            \"td\" | \"th\" => {}\n            \"table\" => self.end_table(),\n            _ => {}",
+          "explanation": "A closing table tag triggers the expansion loop in `end_table`."
+        }
+      ],
+      "rootCause": {
+        "summary": "Package admission bounds archive bytes, inflated parts, and XML syntax, but HTML-to-WML expansion occurs afterwards. `Builder::start` accepts arbitrarily large representable `colspan`, stores it in `cell_spans`, and `end_table` uses the row span sum as the exact count of XML grid records to generate. The expanded output has no resource budget.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ]
+      },
+      "remediation": "Apply a small maximum HTML colspan and cumulative table-column budget before storing spans, use checked arithmetic for row sums, and enforce a cumulative generated-WML byte budget with a typed refusal before allocating.",
+      "validation": {
+        "counterEvidence": [
+          "Archive admission runs before expansion and limits actual input bytes, not the numeric span or generated XML (src/admission.rs:531-551).",
+          "Existing tests handle invalid, negative and zero spans and ordinary span 2, but show no maximum-span rejection (src/convert/altchunk.rs:1026-1054).",
+          "SECURITY.md requires hosts to apply process CPU/memory limits; these mitigate host scope but do not bound this loop."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ],
+        "limitations": [
+          "No application execution or vulnerability-triggering input was used in this static audit."
+        ],
+        "method": "read-only static source trace",
+        "status": "validated",
+        "summary": "`with_layout` resolves a related package part and invokes `expand`; `expand` routes HTML/MHT to `html_to_wml`. The tokenizer dispatches a `td` to `Builder::start`, whose positive usize span has no upper bound. Closing `table` invokes `end_table`, which writes one record per span before parsing the resulting XML. `1000000000` fits both 32-bit and 64-bit usize and avoids relying on integer overflow."
+      },
+      "attackPath": {
+        "controls": [
+          "Archive byte/XML limits apply before expansion.",
+          "Host process limits can contain a worker failure."
+        ],
+        "dataflow": {
+          "summary": "DOCX bytes -> `with_layout` -> package relationship -> `expand` -> `html_to_wml` -> numeric `cell_spans` -> `end_table` XML expansion",
+          "source": "Document-controlled HTML cell attribute",
+          "sink": "Growing WML String inside end_table",
+          "outcome": "Excessive CPU/memory consumption and possible process termination",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-tag-dispatch",
+            "alt-span",
+            "alt-end-dispatch",
+            "alt-grid"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering process availability and memory budget are affected."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short representable numeric attribute directly controls the expansion count."
+        },
+        "reachability": {
+          "summary": "Any caller exposing supported PDF/PNG/layout APIs to documents from another party can trigger this path; no service deployment, special flag, local file write, or raised input limits is required.",
+          "attacker": "Untrusted document provider",
+          "entrypoint": "convert::docx_to_pdf / render / docx_render_report",
+          "preconditions": [
+            "Victim renders a supplied DOCX with an internal HTML altChunk relationship."
+          ],
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-span",
+            "alt-grid"
+          ]
+        },
+        "summary": "Provide a valid DOCX with `w:altChunk` referencing a short HTML table whose single cell has a very large positive `colspan`, then have a caller render it."
+      },
+      "remediationTests": [
+        "Reject huge representable positive colspan through public rendering while retaining ordinary span behavior.",
+        "Verify many bounded spans cannot exceed the cumulative table/output budget.",
+        "Verify row-span sum overflow returns a refusal on native and wasm32."
+      ],
+      "preventiveControls": [
+        "Budget derived representations before materialization, including post-admission HTML/MHT expansion."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-altchunk-colspan",
+        "producer": "discovery-0017",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-altchunk-colspan",
+            "title": "HTML altChunk colspan expands without a bound during rendering",
+            "attacker": "Provider of a DOCX containing a related HTML/MHT altChunk",
+            "evidence": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "code": "self.cell_spans.push(\n    attr(open, \"colspan\")\n        .and_then(|s| s.trim().parse::<usize>().ok())\n        .unwrap_or(1)\n        .max(1),\n);"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "code": "let cols = table.rows.iter().map(|r| r.iter().map(|c| c.span).sum::<usize>()).max().unwrap_or(1).max(1);\nfor _ in 0..cols {\n    let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n}"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 798,
+                "description": "with_layout admits original package, resolves related altChunk bytes, then expands before DOM construction."
+              }
+            ],
+            "impact": "A short numeric colspan may cause effectively unbounded generated XML and CPU/memory consumption despite archive admission.",
+            "unresolved": "Check complete HTML dispatch, valid routing and admission counterevidence before retaining."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-allocation.table-grid",
+      "title": "Rendering a tiny table can allocate billions of columns",
+      "summary": "A DOCX containing a cell with `w:gridSpan=2147483647`, or an equivalent `w:gridBefore`/`w:gridAfter`, drives the renderer to allocate approximately 8 GiB for a column-width vector. Archive admission accepts these short numeric attributes, so PDF, PNG and layout operations can exhaust memory or terminate their embedding process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document provider controls the count that reaches allocation during ordinary rendering. Process availability is the demonstrated impact and likelihood is high; no remotely exposed service is assumed. Caller process limits restrict blast radius.",
+        "changeConditions": "Shared-service deployment would increase impact; a semantic table-column budget checked before arithmetic/allocation would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly connects the three numeric span fields through RawCell occupancy to vec allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13199,
+          "endLine": 13216,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13554,
+          "endLine": 13560,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "grid-span",
+          "label": "Parse cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)",
+          "explanation": "A DOCX `w:gridSpan/@w:val` becomes an unrestricted positive usize returned to table parsing."
+        },
+        {
+          "id": "grid-skips",
+          "label": "Parse row skip spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14338,
+          "endLine": 14352,
+          "language": "rust",
+          "role": "root_control",
+          "code": "/// A row's `w:gridBefore`/`w:gridAfter` (`side` \"Before\"/\"After\"): the\n/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.\nfn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))",
+          "explanation": "`gridBefore` and `gridAfter` share this unrestricted usize parser and become placeholder cell spans."
+        },
+        {
+          "id": "grid-skip-flow",
+          "label": "Carry leading skip into a cell",
+          "path": "src/convert/mod.rs",
+          "startLine": 13196,
+          "endLine": 13218,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let mut grid_at = 0usize;\n        let mut cells = Vec::new();\n        let mut row_has_cell_del = false;\n        let (grid_before, grid_after) = (\n            row_grid_skip(dom, row, \"Before\"),\n            row_grid_skip(dom, row, \"After\"),\n        );\n        // A skip without a wBefore/wAfter is as wide as the grid columns\n        // it leaves empty (ed36b607e8: a 5-twip first column a row skips\n        // keeps Word's 0.25pt; an auto width fitted it to a cell's\n        // margins, 10.8pt, and pushed the row's text in).\n        let grid_width = |at: usize, span: usize| -> PrefWidth {\n            PrefWidth::Dxa(cols.iter().skip(at).take(span).sum())\n        };\n        if let Some((span, pref)) = grid_before {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n            grid_at += span;\n        }\n        for cell in wrapped_children(dom, row, \"tc\") {",
+          "explanation": "The table parser turns the unbounded leading skip into a RawCell whose span contributes to row occupancy."
+        },
+        {
+          "id": "grid-cell-flow",
+          "label": "Carry authored cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 13461,
+          "endLine": 13486,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            // 0129b302's auto-spaced \"1.300.000\" cell is 14pt apart, not 28.\n            fold_stacked_spacing(\n                cell_paras.iter_mut().map(|p| &mut p.style).collect(),\n                &nested_at,\n            );\n            let (colspan, vmerge) = cell_span(dom, cell);\n            let last_col = grid_at + colspan.max(1) >= cols.len();\n            let at = |b: TblBorders| {\n                row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)\n            };\n            // tcBorders overrides only the edges it names (004599833e's\n            // cells name just tl2br / tr2bl): the rest keep the row's\n            // tblPrEx rules, else the table's.\n            let borders = match parse_tc_border_spec(dom, cell) {\n                Some([top, bottom, left, right]) => {\n                    let inherit = row_borders.or(table_borders).map(at).unwrap_or_default();\n                    Some(CellBorders {\n                        top: top.unwrap_or(inherit.top),\n                        bottom: bottom.unwrap_or(inherit.bottom),\n                        left: left.unwrap_or(inherit.left),\n                        right: right.unwrap_or(inherit.right),\n                    })\n                }\n                None => row_borders.map(at),\n            };\n            grid_at += colspan.max(1);",
+          "explanation": "The table parser receives `colspan` from `cell_span` without a cap."
+        },
+        {
+          "id": "grid-raw-cell",
+          "label": "Retain span in raw row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13527,
+          "endLine": 13542,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            {\n                cell_paras.pop();\n            }\n            cells.push(RawCell {\n                paras: cell_paras,\n                nested,\n                nested_at,\n                pref: cell_pref_width(dom, cell),\n                colspan,\n                vmerge,\n                fill: cell_fill(dom, cell),\n                fill_explicit: first_named(dom, cell, \"tcPr\")\n                    .and_then(|pr| first_named(dom, pr, \"shd\"))\n                    .is_some(),\n                valign_center: cell_valign_is(dom, cell, \"center\"),\n                valign_bottom: cell_valign_is(dom, cell, \"bottom\"),",
+          "explanation": "The unbounded `colspan` is stored in RawCell for later occupancy summation."
+        },
+        {
+          "id": "grid-allocate",
+          "label": "Allocate column vector from numeric occupancy",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "language": "rust",
+          "role": "sink",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);\n    let pref = column_prefs(&raw_rows, &cols, fixed);",
+          "explanation": "The maximum row span sum directly controls a f32 column vector allocation or resize."
+        },
+        {
+          "id": "grid-after",
+          "label": "Carry trailing skip into row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13550,
+          "endLine": 13565,
+          "language": "rust",
+          "role": "propagation",
+          "code": "                hide_mark,\n                grid_skip: false,\n                borders,\n            });\n        }\n        if let Some((span, pref)) = grid_after {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n        }\n        // Word All Markup appends a “Deleted Cells” column when the\n        // row has live w:cellDel (addition_removal remnant). Do not\n        // rewrite trPr/del rows — that was mini 59 (−5 ITT).\n        if row_has_cell_del {",
+          "explanation": "The trailing skip becomes another RawCell contributing to the same allocation count."
+        },
+        {
+          "id": "grid-skip-value",
+          "label": "Placeholder retains numeric span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14376,
+          "endLine": 14384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        nested: Vec::new(),\n        nested_at: Vec::new(),\n        pref,\n        colspan: span,\n        vmerge: VMerge::None,\n        fill: None,\n        fill_explicit: false,\n        valign_center: false,\n        valign_bottom: false,",
+          "explanation": "`grid_skip_cell` copies the parsed span into `colspan` unchanged."
+        },
+        {
+          "id": "grid-stretch",
+          "label": "Stale span repair does not reduce oversized spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14168,
+          "endLine": 14201,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// brings its width closer to the tcW: Word reads the row by its cell\n/// widths and the saved grid as a cache (25f1d311bd). A row whose cells\n/// fit their columns (within `STALE_SPAN_SLACK_PT`) is a short row and\n/// stays one.\nfn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {\n    const STALE_SPAN_SLACK_PT: f32 = 20.0;\n    for row in rows.iter_mut() {\n        let used: usize = row.iter().map(|c| c.colspan.max(1)).sum();\n        if used >= cols.len() {\n            continue;\n        }\n        let mut spare = cols.len() - used;\n        let mut col = 0usize;\n        for cell in row.iter_mut() {\n            let span = cell.colspan.max(1);\n            if let PrefWidth::Dxa(want) = cell.pref {\n                let mut covered: f32 = cols.iter().skip(col).take(span).sum();\n                let mut extra = 0usize;\n                while extra < spare\n                    && want - covered > STALE_SPAN_SLACK_PT\n                    && let Some(&next) = cols.get(col + span + extra)\n                    && (covered + next - want).abs() < (want - covered).abs()\n                {\n                    covered += next;\n                    extra += 1;\n                }\n                if extra > 0 {\n                    cell.colspan = span + extra;\n                    spare -= extra;\n                }\n            }\n            col += cell.colspan.max(1);\n        }\n    }",
+          "explanation": "Oversized authored spans skip this repair when `used >= cols.len()`; it does not clamp them."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span` and `row_grid_skip` accept numeric column counts without a semantic maximum. Table parsing retains them as RawCell spans, including before/after placeholder cells. `stretch_stale_spans` leaves an oversized row unchanged, and its span sum then controls column-vector allocation. Package input bounds do not bound this derived representation.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ]
+      },
+      "remediation": "Reject individual spans and cumulative table occupancy above a documented column budget before arithmetic or allocation. Use checked addition and return a typed conversion refusal for invalid numeric semantics.",
+      "validation": {
+        "counterEvidence": [
+          "Byte/XML admission does not validate numeric table semantics.",
+          "Markdown's separate table reader clamps spans to 64 (src/markdown/from_docx/mod.rs:3590-3595), but rendering does not call that reader.",
+          "SECURITY.md directs callers to process memory/CPU limits."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ],
+        "limitations": [
+          "Static-only validation; memory exhaustion was not triggered."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "The public rendering path admits and opens the document before table parsing. A positive 2147483647 fits usize on supported 32/64-bit targets. It is retained as `colspan`; the stale-span repair skips oversized rows. Occupancy reaches `vec![each; occupancy]` or `resize` without a maximum. Both row-skip fields independently feed the same sum via grid_skip_cell."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX table XML -> cell_span/row_grid_skip -> RawCell.colspan -> occupancy sum -> column vector allocation",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "grid-span",
+            "grid-cell-flow",
+            "grid-raw-cell",
+            "grid-skips",
+            "grid-skip-flow",
+            "grid-after",
+            "grid-skip-value",
+            "grid-allocate",
+            "grid-stretch"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering worker or embedding-process availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A tiny attribute deterministically controls allocation count."
+        },
+        "reachability": {
+          "summary": "A sender who controls a document consumed by supported render APIs can invoke the vulnerable path without raised input limits or filesystem authority.",
+          "attacker": "Untrusted DOCX provider",
+          "entrypoint": "Public render/PDF/PNG/layout APIs",
+          "outcome": "Memory exhaustion or process failure"
+        },
+        "summary": "Have a caller render a valid package with one visible table cell whose positive gridSpan is very large, or a row carrying a huge leading/trailing grid skip."
+      },
+      "remediationTests": [
+        "Reject oversized gridSpan, gridBefore and gridAfter through public rendering APIs.",
+        "Verify cumulative occupancy and integer-overflow refusal on native and wasm32.",
+        "Preserve valid merged-cell and row-skip layouts."
+      ],
+      "preventiveControls": [
+        "Use one semantic table-column policy for authored and synthesized cells."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-render-gridspan",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-render-gridspan",
+            "title": "Unbounded table spans expand a tiny DOCX into enormous allocations",
+            "cwe": "CWE-789",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "Attacker supplying a DOCX for rendering or layout through Rust, Python, WASM, CLI, or MCP.",
+            "violated_security_invariant": "Bounded admitted content must not control allocation independently of content size.",
+            "source_to_sink": "cell_span parses w:gridSpan directly to usize; parse_table sums spans into occupancy and vec![each; occupancy] / cols.resize. row_grid_skip also accepts unrestricted gridBefore/gridAfter.",
+            "impact": "gridSpan=2147483647 requests about 8 GiB for first f32 columns vector; larger values cause capacity overflow.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14204,
+                "endLine": 14223
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13600,
+                "endLine": 13618
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14352
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 799
+              }
+            ],
+            "supporting_source_evidence": [
+              "cell_span parses then unwrap_or(1).max(1)",
+              "occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());",
+              "cols = vec![each; occupancy]; cols.resize(occupancy.max(1), 80.0);",
+              "row_grid_skip unrestricted positive usize"
+            ],
+            "counterevidence": [
+              "Admission limits bytes/XML syntax but not numeric spans.",
+              "Markdown reader clamps span to 64; renderer does not.",
+              "Host CPU/memory limits contain impact."
+            ],
+            "recommended_remediation": "Validate individual and cumulative table spans, checked sums, typed refusal."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-27af9a1e1d45135a",
+        "label": "Document rendering and HTML altChunk expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated positive HTML colspan -> end_table unbounded XML expansion after package admission; original evidence retained in finding."
+      },
+      {
+        "id": "surface-2ffd4a3bc2b0cb5d",
+        "label": "Python and Node edit-plan staging",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Worker candidate received; validation pending."
+      },
+      {
+        "label": "Renderer table grid semantics",
+        "disposition": "reported",
+        "notes": "Validated gridSpan, gridBefore and gridAfter allocation paths; Markdown clamp is separate and does not mitigate rendering.",
+        "id": "surface-39567b51d14ddcad",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0017-plan-staging-symlink",
+        "candidateId": "discovery-0017-plan-staging-symlink",
+        "reason": "Awaiting independent validation of local shared-directory attacker prerequisites and symlink-following writes.",
+        "paths": [
+          "jubarte-python/python/jubarte_redlines/__main__.py",
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-plan-staging-symlink",
+          "title": "Binding CLI plan recording follows predictable temporary-file symlinks",
+          "originalWorkerEvidence": "Early candidate: both binding CLIs still record --plan through predictable .<plan-name>.<pid>.partial followed by ordinary write (Python __main__.py:407-411; npm mjs:420-423). A local attacker who can create entries in the chosen/shared plan directory can precreate that partial as symlink to victim-writable file elsewhere; ordinary write follows it and truncates unrelated file before rename. Native src/edit/record.rs:143 explicitly says callers no longer open this predictable path because publication now uses exclusive staging, but Python/npm duplicate old path. Assessing concrete privilege preconditions; document/plan content alone cannot exploit it.",
+          "source": "bindings_investigator"
+        }
+      },
+      {
+        "id": "discovery-0017-output-toctou",
+        "candidateId": "discovery-0017-output-toctou",
+        "reason": "Independent validation pending; requires shared output directory write access, distinct from control of a document.",
+        "paths": [
+          "jubarte-python/python/jubarte_redlines/__main__.py",
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-output-toctou",
+          "title": "Binding CLI output checks race with ordinary symlink-following writes",
+          "source": "bindings_investigator",
+          "originalWorkerEvidence": "Separate binding gap: ordinary output paths use exists()/existsSync() preflight followed by Path.write_bytes/fs.writeFileSync without exclusive create or no-follow. E.g Python _render_to checks PDF at :740-742, renders untrusted doc, then _write at :757 -> :130; npm renderTo checks at :157, renders at :158 then write -> :110. A lower-privilege local writer in shared output directory can insert symlink to an existing victim-only writable file during render, causing overwrite despite no --force. This requires directory-entry control; plan/document content alone is insufficient, and trusted private output directories are not exploitable. Native publication hard_link is counterexample."
+        }
+      },
+      {
+        "id": "discovery-0017-numbering-ilvl",
+        "candidateId": "discovery-0017-numbering-ilvl",
+        "reason": "Independent baseline candidate received; parent source validation pending.",
+        "paths": [
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-numbering-ilvl",
+          "title": "Attacker-controlled list levels cause billions of numbering operations",
+          "cwe": "CWE-834",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "DOCX provider to layout engine",
+          "violated_security_invariant": "List-level resolution must be bounded by defined levels.",
+          "source_to_sink": "num_pr parses arbitrary u32 ilvl; resolve_ilvl evaluates (0..ilvl).rev().find(|i| lvls.contains_key(i)); next_marker iterates 0..resolved and inserts counters. Abstract and override levels also unrestricted.",
+          "impact": "ilvl=4294967295 with level zero requires about 4.29 billion hash lookups; explicitly high defined levels drive map memory growth.",
+          "locations": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 12707,
+              "endLine": 12718
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 5518,
+              "endLine": 5532
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 5610,
+              "endLine": 5627
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 6617,
+              "endLine": 6646
+            }
+          ],
+          "supporting_source_evidence": [
+            "num_pr v.parse::<u32>().ok()",
+            "(0..ilvl).rev().find(|i| lvls.contains_key(i))",
+            "for level in 0..resolved inserts counters",
+            "parse_numbering_xml inserts parsed ilvl into levels"
+          ],
+          "counterevidence": [
+            "Markdown separately caps ilvl.min(8)",
+            "XML depth does not bound numeric ilvl"
+          ],
+          "recommended_remediation": "Enforce level 0..8 everywhere; inspect defined map keys instead of arbitrary numeric range."
+        }
+      },
+      {
+        "id": "discovery-0017-chicago-label",
+        "candidateId": "discovery-0017-chicago-label",
+        "reason": "Independent baseline candidate received; parent source validation pending.",
+        "paths": [
+          "src/convert/mod.rs",
+          "src/markdown/from_docx/mod.rs",
+          "jubarte-python/python/jubarte_redlines/mcp_server.py"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-chicago-label",
+          "title": "Chicago numbering expands a short start value into a multi-gigabyte label",
+          "cwe": "CWE-789",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "DOCX numbering provider to reading or rendering interfaces",
+          "violated_security_invariant": "Formatting untrusted counters must have bounded output.",
+          "source_to_sink": "parse_num_level retains unrestricted u32 start; format_num Chicago routes to chicago_label; mark.repeat(i/4+1). Renderer Numbering::render and Markdown list_marker reach same formatter, including MCP docx_text.",
+          "impact": "start=2147483647 repeats 3-byte double dagger 536870912 times (~1.5 GiB); max u32 requests ~3 GiB.",
+          "locations": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 6742,
+              "endLine": 6766
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 5847,
+              "endLine": 5861
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 6015,
+              "endLine": 6018
+            },
+            {
+              "path": "src/markdown/from_docx/mod.rs",
+              "startLine": 3023,
+              "endLine": 3030
+            },
+            {
+              "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+              "startLine": 131,
+              "endLine": 144
+            }
+          ],
+          "supporting_source_evidence": [
+            "parse_num_level parses w:start without upper bound",
+            "NumFmt::Chicago => chicago_label(n)",
+            "let i = n.saturating_sub(1) as usize; MARKS[i % 4].repeat(i / 4 + 1)",
+            "Markdown list_marker invokes crate::convert::list_number"
+          ],
+          "counterevidence": [
+            "Roman/alpha labels already cap counts",
+            "Markdown level clamp does not bound start",
+            "Archive/XML permits short trigger"
+          ],
+          "recommended_remediation": "Bound numbering-label bytes before allocation across all consumers."
+        }
+      },
+      {
+        "id": "discovery-0017-pr-self-hosted",
+        "candidateId": "discovery-0017-pr-self-hosted",
+        "reason": "Pending validation of PR execution trust and self-hosted runner prerequisites.",
+        "paths": [
+          ".github/workflows/adoption.yml",
+          ".github/workflows/docs.yml"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-pr-self-hosted",
+          "title": "Pull requests run repository-controlled code on self-hosted runners",
+          "source": "bindings_investigator",
+          "originalWorkerEvidence": "adoption.yml and docs.yml run pull_request code unconditionally on runs-on:self-hosted (adoption :19-31, :49-59 and :61-99; docs :42-67, :80-99), checking out PR merge/head then executing repository-local action/build/scripts. No fork/actor guard unlike Jules workflows. A contributor whose PR workflow runs (subject to GitHub's external approval settings) can execute arbitrary code as persistent self-hosted runner user. Reviewing ci/md-roundtrip/security and local mbx action for concrete host/cache authority; no claim of network/secrets beyond source.",
+          "additionalWorkerEvidence": "ci.yml:16 triggers all PRs; self-hosted jobs :36,:77-78,:116,:167 checkout/execute PR code/local .github/actions/mbx; :144 says public repo. mbx/action.yml:8-13 describes private Docker network/cache requiring no token; :21-22 HTTP mbx-cache:7543 shared namespace. No server protocol inspected; cache poisoning not established."
+        }
+      },
+      {
+        "id": "discovery-0017-eocd-budget",
+        "candidateId": "discovery-0017-eocd-budget",
+        "reason": "Awaiting validation of dependency EOCD retry behavior and impact of entry-count underdeclaration.",
+        "paths": [
+          "src/admission.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-eocd-budget",
+          "title": "EOCD selection differential may bypass archive entry-count admission budget",
+          "source": "baseline",
+          "originalWorkerEvidence": "src/admission.rs declared_entry_count (580-624) trusts the last EOCD signature without validating its directory fields/comment framing. zip 9.0.5 actual reader (local dependency read/zip_archive.rs 196-231) retries earlier EOCD candidates after invalid central-header parsing. A fake later EOCD advertising count 0 but invalid directory can make preindex_budget accept, then ZipArchive indexes the earlier real archive; admit only checks archive.len() < declared, never > max_entries after open. Investigating exact payload and PartFs counterpart statically; likely admission entry-budget bypass."
+        }
+      }
+    ],
+    "openQuestions": [
+      "Remaining source groups are under review."
+    ]
+  },
+  "scope": {
+    "summary": "Read-only offline Standard scan of the supplied target and scope .",
+    "runtimeStatus": "Application code not executed per core scan procedure.",
+    "validationMode": "static source analysis",
+    "context": "Generated source-backed threat model; exact userContext null; three subagents assigned."
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0037; three subagents.",
+    "runtimeStatus": "No application execution, tests, network access, or credential use.",
+    "validationMode": "static source analysis",
+    "context": "userContext is null. Generated architecture review is pending."
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Engine document parsing and rendering",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline audit in progress.",
+        "id": "surface-cb72fe95bbd18916",
+        "receiptRefs": []
+      },
+      {
+        "label": "Python/MCP and WASM interfaces",
+        "disposition": "needs_follow_up",
+        "notes": "Focused investigation in progress.",
+        "id": "surface-1f22bf056ad79c1e",
+        "receiptRefs": []
+      },
+      {
+        "label": "Native publication and self-update",
+        "disposition": "needs_follow_up",
+        "notes": "Parent source review in progress.",
+        "id": "surface-9d0f5f4165ed863e",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0037-chicago-label-amplification",
+        "reason": "Baseline candidate awaiting source trace and independent parent validation.",
+        "paths": [
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "Possible Chicago numeric-format allocation amplification",
+          "originalEvidence": "Baseline: src/convert/mod.rs:6015-6018 chicago_label(n:u32) repeats up to ~1B symbols (3GB UTF-8) from a numeric list or note start. Tracing effective controls now."
+        },
+        "id": "discovery-0037-chicago-label-amplification"
+      }
+    ]
+  }
+}

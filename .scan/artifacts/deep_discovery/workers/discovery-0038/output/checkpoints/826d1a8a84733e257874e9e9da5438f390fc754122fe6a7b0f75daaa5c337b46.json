@@ -1,0 +1,39 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Standard static security scan of /Users/arthrod/temp/T/jubarte-redlines, scope '.', userContext null.",
+    "validationMode": "Offline current-source review; no application execution or network access."
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0038-plan-staging",
+        "reason": "Independent baseline candidate awaiting parent source validation and severity calibration.",
+        "candidate": {
+          "title": "Predictable sidecar plan staging follows attacker symlinks",
+          "taxonomy": {
+            "cwe": [
+              "CWE-377"
+            ]
+          },
+          "producer": "baseline",
+          "paths": [
+            "jubarte-python/python/jubarte_redlines/__main__.py:407-411",
+            "jubarte-wasm/cli/bin/jubarte-redlines.mjs:420-423"
+          ],
+          "originalEvidence": "Baseline reports ordinary truncating write to .<plan basename>.<pid>.partial, followed by rename; attacker in shared writable plan directory can preplant symlink to victim-writable file. Rust src/edit/record.rs:142-175 uses exclusive staging. Parent validation pending.",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "local writer of shared plan directory",
+          "impact": "arbitrary file corruption with victim authority"
+        },
+        "id": "discovery-0038-plan-staging"
+      }
+    ]
+  }
+}

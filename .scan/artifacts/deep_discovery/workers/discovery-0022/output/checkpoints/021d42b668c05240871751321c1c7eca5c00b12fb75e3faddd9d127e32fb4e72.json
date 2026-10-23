@@ -1,0 +1,810 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application execution or network requests.",
+    "validationMode": "static source review"
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.html-colspan-expansion",
+      "title": "HTML altChunk colspan can exhaust rendering memory",
+      "summary": "A small DOCX HTML altChunk can declare an arbitrarily large colspan. Rendering expands it into one generated XML grid column per value without an output budget, allowing document suppliers to exhaust CPU/memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High process availability impact with medium deployment-dependent likelihood: the public renderer accepts caller-supplied documents, but a shared service deployment is not established. Caller OS resource limits reduce blast radius.",
+        "changeConditions": "Severity rises where an exposed shared renderer handles attacker-controlled documents without process isolation or quotas; strict worker CPU/memory limits reduce impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source establishes direct numeric parsing and unbounded proportional output before DOM construction; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Resource Exhaustion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "colspan-input",
+          "label": "Attacker-controlled span has no upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+          "explanation": "Any positive usize HTML span is retained; only invalid and zero values fall back to one."
+        },
+        {
+          "id": "colspan-expansion",
+          "label": "One output node is appended per declared column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "cols is the maximum sum of attacker-controlled spans in a row (469-475). A span of one billion requests one billion generated XML elements."
+        },
+        {
+          "id": "colspan-reachable",
+          "label": "Expansion occurs after source admission and before DOM parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "with_layout admits original bytes at 773-774, then resolves an internal chunk and builds expanded XML. Original compressed/inflated input limits do not bound generated output."
+        }
+      ],
+      "rootCause": {
+        "summary": "HTML colspan directly determines generated grid XML length without a column or output budget.",
+        "evidenceRefs": [
+          "colspan-input",
+          "colspan-expansion"
+        ]
+      },
+      "remediation": "Bound imported HTML colspan and aggregate column sums using checked arithmetic; enforce a generated XML/work budget and return a typed refusal before expansion.",
+      "validation": {
+        "counterEvidence": [
+          "Original DOCX package is admitted before rendering (src/convert/mod.rs:773-774), but this limits input bytes rather than the numeric expansion.",
+          "Internal relationship resolution avoids network access; arbitrary network reads are not claimed.",
+          "SECURITY.md recommends process CPU/memory limits, which bound host impact but do not prevent the renderer from exhausting its worker budget."
+        ],
+        "limitations": [
+          "No runtime reproduction, exploit input, or shared deployment verification was performed."
+        ],
+        "method": "offline static source review",
+        "status": "validated",
+        "summary": "Parent independently traced altChunk parsing, end_table, and with_layout; no bound exists between numeric parsing and the append loop."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX -> with_layout -> internal altChunk -> chunk_html/html_to_wml -> colspan parse -> end_table -> generated XML append per column -> exhaustion."
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Exhaustion or termination of the rendering process and its current work."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Direct public parser boundary, but exposed multi-user service deployment is conditional."
+        },
+        "reachability": {
+          "summary": "Public rendering APIs share with_layout, which expands internal HTML/MHT chunks after source admission and before DOM parsing.",
+          "attacker": "Supplier of a document rendered by another caller",
+          "entrypoint": "src/convert/mod.rs:422,710,769",
+          "sink": "src/convert/altchunk.rs:489-490",
+          "preconditions": [
+            "Victim renders an attacker-supplied DOCX; either internal HTML/MHT altChunk or native OOXML table spans carry the numeric cardinality."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Use small deterministic HTML fixtures to verify a large numeric colspan is rejected before output construction; test exact column-budget boundaries, overflow of aggregate spans, and normal merged-cell behavior.",
+        "Test native gridSpan, gridBefore/gridAfter and combined-row occupancy at and beyond the budget, as well as aggregate arithmetic overflow."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0022/baseline",
+        "candidateId": "discovery-0022-altchunk-colspan",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0022-altchunk-colspan",
+            "title": "Unbounded HTML colspan expands into excessive generated XML",
+            "source": "baseline",
+            "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+            "status": "awaiting parent source validation"
+          }
+        ],
+        "previousFindings": [
+          {
+            "ruleId": "resource-exhaustion.html-colspan-expansion",
+            "title": "HTML altChunk colspan can exhaust rendering memory",
+            "summary": "A small DOCX HTML altChunk can declare an arbitrarily large colspan. Rendering expands the numeric span into one generated XML grid column per value before any generated-output budget, allowing a document supplier to exhaust CPU and memory in a process rendering untrusted documents.",
+            "severity": {
+              "level": "medium",
+              "rationale": "High process availability impact with medium deployment-dependent likelihood: the public renderer accepts caller-supplied documents, but a shared service deployment is not established. Caller OS resource limits reduce blast radius.",
+              "changeConditions": "Severity rises where an exposed shared renderer handles attacker-controlled documents without process isolation or quotas; strict worker CPU/memory limits reduce impact."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Static source establishes direct numeric parsing and unbounded proportional output before DOM construction; no runtime exploit was executed."
+            },
+            "taxonomy": {
+              "category": "Resource Exhaustion",
+              "cwe": [
+                "CWE-400"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 773,
+                "endLine": 798,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "colspan-input",
+                "label": "Attacker-controlled span has no upper bound",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+                "explanation": "Any positive usize HTML span is retained; only invalid and zero values fall back to one."
+              },
+              {
+                "id": "colspan-expansion",
+                "label": "One output node is appended per declared column",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 488,
+                "endLine": 491,
+                "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+                "explanation": "cols is the maximum sum of attacker-controlled spans in a row (469-475). A span of one billion requests one billion generated XML elements."
+              },
+              {
+                "id": "colspan-reachable",
+                "label": "Expansion occurs after source admission and before DOM parsing",
+                "path": "src/convert/mod.rs",
+                "startLine": 789,
+                "endLine": 798,
+                "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+                "explanation": "with_layout admits original bytes at 773-774, then resolves an internal chunk and builds expanded XML. Original compressed/inflated input limits do not bound generated output."
+              }
+            ],
+            "rootCause": {
+              "summary": "HTML table spans are parsed as unrestricted usize values and directly determine generated grid length without a column, work, or output-byte budget.",
+              "evidenceRefs": [
+                "colspan-input",
+                "colspan-expansion"
+              ]
+            },
+            "remediation": "Reject excessive positive colspan values, cap aggregate columns per row with checked arithmetic, and enforce a generated XML/work budget during chunk expansion. Return a typed refusal before constructing large output.",
+            "validation": {
+              "counterEvidence": [
+                "Original DOCX package is admitted before rendering (src/convert/mod.rs:773-774), but this limits input bytes rather than the numeric expansion.",
+                "Internal relationship resolution avoids network access; arbitrary network reads are not claimed.",
+                "SECURITY.md recommends process CPU/memory limits, which bound host impact but do not prevent the renderer from exhausting its worker budget."
+              ],
+              "limitations": [
+                "No runtime reproduction, exploit input, or shared deployment verification was performed."
+              ],
+              "method": "offline static source review",
+              "status": "validated",
+              "summary": "Parent independently traced the complete altChunk parsing and table construction plus the shared with_layout caller. No bound intervenes between span parsing and the append loop; existing tests cover invalid/zero spans and normal colspan=2 only."
+            },
+            "attackPath": {
+              "dataflow": {
+                "summary": "Attacker-supplied DOCX -> with_layout -> internal altChunk relationship bytes -> chunk_html/html_to_wml -> Builder::start parses colspan -> end_table sums span -> unbounded String append loop -> memory/CPU exhaustion."
+              },
+              "impact": {
+                "level": "high",
+                "rationale": "Exhaustion or termination of the rendering process and its current work."
+              },
+              "likelihood": {
+                "level": "medium",
+                "rationale": "Direct public parser boundary, but exposed multi-user service deployment is conditional."
+              },
+              "reachability": {
+                "summary": "Public docx_to_pdf/docx_to_png/render entry points share with_layout. Any caller that renders a supplied document containing an internal HTML/MHT altChunk reaches expansion without a special option.",
+                "attacker": "Supplier of a document rendered by another caller",
+                "entrypoint": "src/convert/mod.rs:422,710,769",
+                "sink": "src/convert/altchunk.rs:489-490",
+                "preconditions": [
+                  "Victim invokes document rendering on the supplied package.",
+                  "Document includes a valid internal altChunk relationship to an HTML table."
+                ]
+              }
+            },
+            "remediationTests": [
+              "Use small deterministic HTML fixtures to verify a large numeric colspan is rejected before output construction; test exact column-budget boundaries, overflow of aggregate spans, and normal merged-cell behavior."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "workerLabel": "discovery-0022/baseline",
+              "candidateId": "discovery-0022-altchunk-colspan",
+              "originalCandidates": [
+                {
+                  "candidateId": "discovery-0022-altchunk-colspan",
+                  "title": "Unbounded HTML colspan expands into excessive generated XML",
+                  "source": "baseline",
+                  "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+                  "status": "awaiting parent source validation"
+                }
+              ]
+            }
+          },
+          {
+            "ruleId": "resource-exhaustion.html-colspan-expansion",
+            "title": "HTML altChunk colspan can exhaust rendering memory",
+            "summary": "A small DOCX HTML altChunk can declare an arbitrarily large colspan. Rendering expands the numeric span into one generated XML grid column per value before any generated-output budget, allowing a document supplier to exhaust CPU and memory in a process rendering untrusted documents.",
+            "severity": {
+              "level": "medium",
+              "rationale": "High process availability impact with medium deployment-dependent likelihood: the public renderer accepts caller-supplied documents, but a shared service deployment is not established. Caller OS resource limits reduce blast radius.",
+              "changeConditions": "Severity rises where an exposed shared renderer handles attacker-controlled documents without process isolation or quotas; strict worker CPU/memory limits reduce impact."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Static source establishes direct numeric parsing and unbounded proportional output before DOM construction; no runtime exploit was executed."
+            },
+            "taxonomy": {
+              "category": "Resource Exhaustion",
+              "cwe": [
+                "CWE-400"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "role": "source"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 773,
+                "endLine": 798,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "colspan-input",
+                "label": "Attacker-controlled span has no upper bound",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+                "explanation": "Any positive usize HTML span is retained; only invalid and zero values fall back to one."
+              },
+              {
+                "id": "colspan-expansion",
+                "label": "One output node is appended per declared column",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 488,
+                "endLine": 491,
+                "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+                "explanation": "cols is the maximum sum of attacker-controlled spans in a row (469-475). A span of one billion requests one billion generated XML elements."
+              },
+              {
+                "id": "colspan-reachable",
+                "label": "Expansion occurs after source admission and before DOM parsing",
+                "path": "src/convert/mod.rs",
+                "startLine": 789,
+                "endLine": 798,
+                "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+                "explanation": "with_layout admits original bytes at 773-774, then resolves an internal chunk and builds expanded XML. Original compressed/inflated input limits do not bound generated output."
+              }
+            ],
+            "rootCause": {
+              "summary": "HTML table spans are parsed as unrestricted usize values and directly determine generated grid length without a column, work, or output-byte budget.",
+              "evidenceRefs": [
+                "colspan-input",
+                "colspan-expansion"
+              ]
+            },
+            "remediation": "Reject excessive positive colspan values, cap aggregate columns per row with checked arithmetic, and enforce a generated XML/work budget during chunk expansion. Return a typed refusal before constructing large output.",
+            "validation": {
+              "counterEvidence": [
+                "Original DOCX package is admitted before rendering (src/convert/mod.rs:773-774), but this limits input bytes rather than the numeric expansion.",
+                "Internal relationship resolution avoids network access; arbitrary network reads are not claimed.",
+                "SECURITY.md recommends process CPU/memory limits, which bound host impact but do not prevent the renderer from exhausting its worker budget."
+              ],
+              "limitations": [
+                "No runtime reproduction, exploit input, or shared deployment verification was performed."
+              ],
+              "method": "offline static source review",
+              "status": "validated",
+              "summary": "Parent independently traced the complete altChunk parsing and table construction plus the shared with_layout caller. No bound intervenes between span parsing and the append loop; existing tests cover invalid/zero spans and normal colspan=2 only."
+            },
+            "attackPath": {
+              "dataflow": {
+                "summary": "Attacker-supplied DOCX -> with_layout -> internal altChunk relationship bytes -> chunk_html/html_to_wml -> Builder::start parses colspan -> end_table sums span -> unbounded String append loop -> memory/CPU exhaustion."
+              },
+              "impact": {
+                "level": "high",
+                "rationale": "Exhaustion or termination of the rendering process and its current work."
+              },
+              "likelihood": {
+                "level": "medium",
+                "rationale": "Direct public parser boundary, but exposed multi-user service deployment is conditional."
+              },
+              "reachability": {
+                "summary": "Public docx_to_pdf/docx_to_png/render entry points share with_layout. Any caller that renders a supplied document containing an internal HTML/MHT altChunk reaches expansion without a special option.",
+                "attacker": "Supplier of a document rendered by another caller",
+                "entrypoint": "src/convert/mod.rs:422,710,769",
+                "sink": "src/convert/altchunk.rs:489-490",
+                "preconditions": [
+                  "Victim invokes document rendering on the supplied package.",
+                  "Document includes a valid internal altChunk relationship to an HTML table."
+                ]
+              }
+            },
+            "remediationTests": [
+              "Use small deterministic HTML fixtures to verify a large numeric colspan is rejected before output construction; test exact column-budget boundaries, overflow of aggregate spans, and normal merged-cell behavior."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "workerLabel": "discovery-0022/baseline",
+              "candidateId": "discovery-0022-altchunk-colspan"
+            }
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0022-altchunk-colspan",
+            "title": "Unbounded HTML colspan expands into excessive generated XML",
+            "source": "baseline",
+            "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+            "status": "awaiting parent source validation"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.table-column-expansion",
+      "title": "Native OOXML table spans drive unbounded rendering allocations",
+      "summary": "A small admitted OOXML table can declare an enormous gridSpan. The renderer directly sizes its column widths and merge state from the numeric span, allowing a document supplier to exhaust process memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High process availability impact with medium deployment-dependent likelihood: the public renderer accepts caller-supplied documents, but a shared service deployment is not established. Caller OS resource limits reduce blast radius.",
+        "changeConditions": "Severity rises where an exposed shared renderer handles attacker-controlled documents without process isolation or quotas; strict worker CPU/memory limits reduce impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source establishes direct numeric parsing and unbounded proportional output before DOM construction; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Resource Exhaustion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14638,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "native-table-span",
+          "label": "Native OOXML span is unrestricted",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "Cell span becomes a usize with no cardinality cap."
+        },
+        {
+          "id": "native-table-allocation",
+          "label": "Span occupancy determines allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13603,
+          "endLine": 13612,
+          "code": "    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }",
+          "explanation": "A one-cell table with a billion-column span requests roughly 4 GB for f32 column widths alone; resolve_table_merges subsequently resizes its per-column open vector at 14637-14638."
+        }
+      ],
+      "rootCause": {
+        "summary": "Native table occupancy and merge vectors are sized from unrestricted gridSpan/grid-skip values without a table column budget.",
+        "evidenceRefs": [
+          "native-table-span",
+          "native-table-allocation"
+        ]
+      },
+      "remediation": "Enforce an aggregate column budget on native gridSpan, gridBefore and gridAfter before column/merge allocation; use checked span arithmetic and return a typed refusal.",
+      "validation": {
+        "counterEvidence": [
+          "Original DOCX package is admitted before rendering (src/convert/mod.rs:773-774), but this limits input bytes rather than the numeric expansion.",
+          "Internal relationship resolution avoids network access; arbitrary network reads are not claimed.",
+          "SECURITY.md recommends process CPU/memory limits, which bound host impact but do not prevent the renderer from exhausting its worker budget."
+        ],
+        "limitations": [
+          "No runtime reproduction, exploit input, or shared deployment verification was performed."
+        ],
+        "method": "offline static source review",
+        "status": "validated",
+        "summary": "Parent traced table_block -> cell_span -> RawCell.colspan -> occupancy -> cols allocation; resolve_table_merges also resizes per-column state. No numeric cap intervenes."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Admitted DOCX -> with_layout -> table_block -> cell_span/grid skip -> occupancy -> cols allocation and resolve_table_merges open.resize."
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Exhaustion or termination of the rendering process and its current work."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Direct public parser boundary, but exposed multi-user service deployment is conditional."
+        },
+        "reachability": {
+          "summary": "Default PDF/PNG/report rendering traverses native tables. A large positive gridSpan with one ordinary cell reaches allocation without HTML import.",
+          "attacker": "Supplier of a document rendered by another caller",
+          "entrypoint": "src/convert/mod.rs:422,710,769",
+          "sink": "src/convert/altchunk.rs:489-490",
+          "preconditions": [
+            "Victim renders an attacker-supplied DOCX with a large native table span."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Use small deterministic HTML fixtures to verify a large numeric colspan is rejected before output construction; test exact column-budget boundaries, overflow of aggregate spans, and normal merged-cell behavior.",
+        "Test native gridSpan, gridBefore/gridAfter and combined-row occupancy at and beyond the budget, as well as aggregate arithmetic overflow."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0022/baseline",
+        "candidateId": "discovery-0022-ooxml-gridspan",
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalEvidence": "src/convert/mod.rs cell_span 14212-14217 parses w:gridSpan/@w:val to unbounded usize, raw_rows occupancy at 13601-13615 then vec![each; occupancy]/resize allocates attacker-selected columns; resolve_table_merges additionally resizes open to col+span at 14637-14638. Tiny table with gridSpan=1000000000 allocates 4GB before subsequent column processing. These share missing table column cap with HTML colspan."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalEvidence": "src/convert/mod.rs cell_span 14212-14217 parses w:gridSpan/@w:val to unbounded usize, raw_rows occupancy at 13601-13615 then vec![each; occupancy]/resize allocates attacker-selected columns; resolve_table_merges additionally resizes open to col+span at 14637-14638. Tiny table with gridSpan=1000000000 allocates 4GB before subsequent column processing. These share missing table column cap with HTML colspan."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.table-column-expansion",
+      "title": "Unbounded document table spans exhaust rendering memory",
+      "summary": "DOCX rendering trusts HTML colspan and native OOXML gridSpan/grid-skip cardinalities. Small document attributes drive enormous generated XML or column/merge vectors after admission, allowing document suppliers to exhaust rendering CPU and memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High process availability impact with medium deployment-dependent likelihood: the public renderer accepts caller-supplied documents, but a shared service deployment is not established. Caller OS resource limits reduce blast radius.",
+        "changeConditions": "Severity rises where an exposed shared renderer handles attacker-controlled documents without process isolation or quotas; strict worker CPU/memory limits reduce impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source establishes direct numeric parsing and unbounded proportional output before DOM construction; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Resource Exhaustion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13601,
+          "endLine": 13615,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14638,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "colspan-input",
+          "label": "Attacker-controlled span has no upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+          "explanation": "Any positive usize HTML span is retained; only invalid and zero values fall back to one."
+        },
+        {
+          "id": "colspan-expansion",
+          "label": "One output node is appended per declared column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "cols is the maximum sum of attacker-controlled spans in a row (469-475). A span of one billion requests one billion generated XML elements."
+        },
+        {
+          "id": "colspan-reachable",
+          "label": "Expansion occurs after source admission and before DOM parsing",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "with_layout admits original bytes at 773-774, then resolves an internal chunk and builds expanded XML. Original compressed/inflated input limits do not bound generated output."
+        },
+        {
+          "id": "native-table-span",
+          "label": "Native OOXML span is unrestricted",
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "code": "    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);",
+          "explanation": "Cell span becomes a usize with no cardinality cap."
+        },
+        {
+          "id": "native-table-allocation",
+          "label": "Span occupancy determines allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13603,
+          "endLine": 13612,
+          "code": "    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }",
+          "explanation": "A one-cell table with a billion-column span requests roughly 4 GB for f32 column widths alone; resolve_table_merges subsequently resizes its per-column open vector at 14637-14638."
+        }
+      ],
+      "rootCause": {
+        "summary": "Table cardinality has no enforced maximum across HTML span import and native OOXML gridSpan/grid-skip ingestion. Numeric spans directly size generated XML and column/merge allocations without checked aggregate budgets.",
+        "evidenceRefs": [
+          "colspan-input",
+          "colspan-expansion"
+        ]
+      },
+      "remediation": "Enforce one explicit table-column budget at all native OOXML span/grid-skip and HTML colspan boundaries; use checked aggregate arithmetic and reject before generated XML, column vectors or merge state are allocated. Enforce a generated-output/work budget during HTML expansion.",
+      "validation": {
+        "counterEvidence": [
+          "Original DOCX package is admitted before rendering (src/convert/mod.rs:773-774), but this limits input bytes rather than the numeric expansion.",
+          "Internal relationship resolution avoids network access; arbitrary network reads are not claimed.",
+          "SECURITY.md recommends process CPU/memory limits, which bound host impact but do not prevent the renderer from exhausting its worker budget."
+        ],
+        "limitations": [
+          "No runtime reproduction, exploit input, or shared deployment verification was performed."
+        ],
+        "method": "offline static source review",
+        "status": "validated",
+        "summary": "Parent independently traced the complete altChunk parsing and table construction plus the shared with_layout caller. No bound intervenes between span parsing and the append loop; existing tests cover invalid/zero spans and normal colspan=2 only. Parent also traced native table_block -> cell_span -> raw_rows occupancy -> column allocation and resolve_table_merges resize; this bypass does not require altChunk."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Attacker-supplied DOCX -> with_layout -> internal altChunk relationship bytes -> chunk_html/html_to_wml -> Builder::start parses colspan -> end_table sums span -> unbounded String append loop -> memory/CPU exhaustion. Independent native route: admitted DOCX table -> table_block/cell_span -> raw_rows colspan -> occupancy -> cols allocation and resolve_table_merges open.resize."
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Exhaustion or termination of the rendering process and its current work."
+        },
+        "likelihood": {
+          "level": "medium",
+          "rationale": "Direct public parser boundary, but exposed multi-user service deployment is conditional."
+        },
+        "reachability": {
+          "summary": "Public docx_to_pdf/docx_to_png/render entry points share with_layout. Any caller that renders a supplied document containing an internal HTML/MHT altChunk reaches expansion without a special option. A native OOXML table with one cell and large gridSpan reaches allocation through the same shared rendering pipeline.",
+          "attacker": "Supplier of a document rendered by another caller",
+          "entrypoint": "src/convert/mod.rs:422,710,769",
+          "sink": "src/convert/altchunk.rs:489-490",
+          "preconditions": [
+            "Victim renders an attacker-supplied DOCX; either internal HTML/MHT altChunk or native OOXML table spans carry the numeric cardinality."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Use small deterministic HTML fixtures to verify a large numeric colspan is rejected before output construction; test exact column-budget boundaries, overflow of aggregate spans, and normal merged-cell behavior.",
+        "Test native gridSpan, gridBefore/gridAfter and combined-row occupancy at and beyond the budget, as well as aggregate arithmetic overflow."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0022/baseline",
+        "candidateId": "discovery-0022-altchunk-colspan",
+        "relatedCandidateIds": [
+          "discovery-0022-ooxml-gridspan"
+        ],
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0022-altchunk-colspan",
+            "title": "Unbounded HTML colspan expands into excessive generated XML",
+            "source": "baseline",
+            "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+            "status": "awaiting parent source validation"
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0022-altchunk-colspan",
+            "title": "Unbounded HTML colspan expands into excessive generated XML",
+            "source": "baseline",
+            "originalEvidence": "src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.",
+            "status": "awaiting parent source validation"
+          },
+          {
+            "source": "baseline",
+            "originalEvidence": "src/convert/mod.rs cell_span 14212-14217 parses w:gridSpan/@w:val to unbounded usize, raw_rows occupancy at 13601-13615 then vec![each; occupancy]/resize allocates attacker-selected columns; resolve_table_merges additionally resizes open to col+span at 14637-14638. Tiny table with gridSpan=1000000000 allocates 4GB before subsequent column processing. These share missing table column cap with HTML colspan."
+          }
+        ],
+        "candidateIds": [
+          "discovery-0022-altchunk-colspan",
+          "discovery-0022-ooxml-gridspan"
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-aa8f55b1964c304d",
+        "label": "HTML altChunk table expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Parent source validation confirms unbounded colspan expansion; source evidence and counterevidence retained in finding. Original candidate: {\"candidateId\":\"discovery-0022-altchunk-colspan\",\"title\":\"Unbounded HTML colspan expands into excessive generated XML\",\"source\":\"baseline\",\"originalEvidence\":\"src/convert/altchunk.rs parses HTML td/th colspan directly to usize at 564-569; end_table sums spans at 469 then loops 0..cols at 489 to build one XML gridCol per numeric value. A tiny embedded HTML altChunk with colspan='1000000000' yields ~21GB WML before any later DOM limit, bypassing archive byte/XML depth budgets; reachable via altchunk::expand in converter.\",\"status\":\"awaiting parent source validation\"}"
+      },
+      {
+        "id": "surface-7f54614524798ec3",
+        "label": "Native OOXML table column allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Parent validated native table allocation. Retained separately from HTML expansion because generated XML output and native column/merge vectors have distinct enforcing consumers. Original evidence: [{\"source\":\"baseline\",\"originalEvidence\":\"src/convert/mod.rs cell_span 14212-14217 parses w:gridSpan/@w:val to unbounded usize, raw_rows occupancy at 13601-13615 then vec![each; occupancy]/resize allocates attacker-selected columns; resolve_table_merges additionally resizes open to col+span at 14637-14638. Tiny table with gridSpan=1000000000 allocates 4GB before subsequent column processing. These share missing table column cap with HTML colspan.\"}]",
+        "candidateId": "discovery-0022-ooxml-gridspan"
+      },
+      {
+        "label": "Baseline credential and control review",
+        "disposition": "no_issue_found",
+        "notes": "Current unignored source including hidden config/docs/tests/examples searched for recognizable credentials/private keys; none identified. Updater has intentional documented checksum-only policy and regular-file hook; Markdown media checks dimensions/content-derived filenames. MCP diagnostics delegate I/O to native OutputRoot. Search-level review is not whole-file coverage.",
+        "id": "surface-3216084130c117ba",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "deferred-f098098c4baf4acc",
+        "reason": "Whole current repository review and independent architecture/other worker investigations remain in progress."
+      },
+      {
+        "id": "discovery-0022-xml-entity-scan",
+        "candidateId": "discovery-0022-xml-entity-scan",
+        "reason": "Investigator lead pending tokenizer and parent source validation.",
+        "candidate": {
+          "title": "Potential quadratic entity scanning in permissive XML DOM",
+          "source": "archive_xml",
+          "originalEvidence": "admission check_xml_depth ignores Event::GeneralRef (src/admission.rs:798-820), while permissive DOM unescape_xml_text scans to next ';' from every '&' and rebuilds body/decode char Vec per attempt (src/xmllinq/parse.rs:768-793). A compressed XML text run of repeated '&' ending in ';' may pass tolerant admission then trigger quadratic work.",
+          "counterEvidence": "quick-xml GeneralRef tokenization and reachable callers still under investigation."
+        }
+      },
+      {
+        "id": "discovery-0022-numbering-level",
+        "candidateId": "discovery-0022-numbering-level",
+        "reason": "Baseline candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Unbounded list level iteration/allocation",
+          "originalEvidence": "w:ilvl enters num_pr->list_marker->Numbering::resolve_ilvl at src/convert/mod.rs:5529-5532, scanning (0..ilvl).rev() via HashMap lookups; tiny normal numbering definition level0 plus paragraph ilvl=4294967295 forces ~4.3B iterations. If matching huge level defined in numbering.xml, next_marker at 5610-5627 allocates a counter for every lower level."
+        }
+      },
+      {
+        "id": "discovery-0022-chicago-number",
+        "candidateId": "discovery-0022-chicago-number",
+        "reason": "Baseline candidate awaiting independent parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Chicago numbering output amplification",
+          "originalEvidence": "w:start=4294967295 is parsed as u32 at src/convert/mod.rs:6750-6753; lvlText=%1 and numFmt=chicago reach format_num:5861 -> chicago_label:6015-6018 using symbol.repeat(i/4+1), potentially ~3.2GB for '‡' with 1,073,741,824 copies after admission."
+        }
+      },
+      {
+        "candidateId": "discovery-0022-eocd-count",
+        "reason": "Investigator source-backed candidate awaiting parent validation.",
+        "candidate": {
+          "source": "archive_xml",
+          "title": "ZIP entry-count preflight selects a different EOCD than parser",
+          "originalEvidence": "declared_entry_count selects last EOCD signature without validating comment length/central offset (src/admission.rs:590-601). zip 9.0.5 finder rejects malformed candidates and backtracks (find_central_directory.rs:100-117,163-166), opening earlier real EOCD with >limit entries. admit checks archive.len()<declared, never >max_entries (448-456); read_package trusts preindex only (src/opc/mod.rs:282-289). A trailing fake EOCD with small count/impossible comment length can make guard/parser disagree."
+        },
+        "id": "discovery-0022-eocd-count"
+      },
+      {
+        "candidateId": "discovery-0022-dtd-differential",
+        "reason": "Investigator source-backed candidate awaiting parent validation.",
+        "candidate": {
+          "source": "archive_xml",
+          "title": "DTD parser differential bypasses XML depth limits",
+          "originalEvidence": "quick-xml 0.42 DtdParser skips quoted ENTITY values including '>' and '<' (src/parser/dtd.rs:28-59,194-200,262-265); admission ignores DocType (src/admission.rs:819). DOM skips <! only to first '>' without quote awareness (src/xmllinq/parse.rs:539-543), recursively parses following '<...' (545-547,660-662). A quoted entity value beginning with '>' followed by deep tags is invisible to admission budgets but parsed as real recursive elements. WmlDocument::from_bytes/main_document (50-55,85-94) reaches it. Strict checked parser/inspect reject DTD, narrowing affected paths."
+        },
+        "id": "discovery-0022-dtd-differential"
+      }
+    ]
+  }
+}

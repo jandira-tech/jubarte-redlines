@@ -1,0 +1,1498 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of supplied target /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null. Current repository inventory 2900 tracked/unignored files; source review in progress.",
+    "runtimeStatus": "No application execution or network access.",
+    "validationMode": "static source review"
+  },
+  "threatModel": {
+    "summary": "Jubarte is a local Word-document processing engine providing Rust byte APIs, a native CLI, PyO3/Python interfaces, WASM interfaces, an npm CLI, and a stdio MCP server. Document packages, XML, legacy DOC data, embedded media, Markdown and edit plans cross into parsers and transformations; results return as bytes or are published to host files. The MCP adapter grants a persistent directory capability for explicit document reads and output publication. Native rendering additionally consumes ambient font resources and maintains a font index. Optional self-update and maintainer publication workflows introduce separate network, executable replacement and registry authority. Sources: src/lib.rs:7-35, src/lib.rs:163-165, jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381, jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21, src/update.rs:186-210. Architecture reflects inspected HEAD 4e10eca69c42211651ca907f38b74b6d19e6928c; architecture mapping is not completed audit coverage.",
+    "assets": [
+      "Confidential document text, comments, revisions, metadata, embedded media and derived reports/rendered pages. src/lib.rs:17-29; jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,161-218,229-250.",
+      "Original-document, source-snapshot and output integrity; optional source SHA-256 guard, staged byte verification and atomic per-file commits. src/edit.rs:97-106,2081-2088; src/publication.rs:168-174,535-569.",
+      "Host filesystem authority: ambient CLI paths; native cap-std root capability for MCP explicit document I/O; native font resources/index outside that capability. src/publication.rs:153-165,203-205; mcp_server.py:72-108 under jubarte-python/python/jubarte_redlines; src/convert/font.rs:2633-2652,3095-3106,3213-3229.",
+      "Host CPU/memory availability and browser WASM heaps; general and comparison admission budgets differ. src/admission.rs:63-99; jubarte-wasm/src/lib.rs:80-96; SECURITY.md:71-74.",
+      "Executable and publication authority: current updater checksum-only; separate GitHub/crates.io/npm/PyPI credentials. src/update.rs:25-48,198-210,245-257; .github/workflows/release.yml:230-235,356-369; scripts/release.sh:919-920,934-955,1063-1069."
+    ],
+    "trustBoundaries": [
+      "Untrusted bytes enter public APIs and adapters. Admission controls defaults64MiB compressed,10000 entries,64MiB part,256MiB aggregate,depth256; compare permits512MiB compressed/part and2GiB aggregate. Input controls do not isolate the process. src/admission.rs:13-28,63-99.",
+      "ZIP metadata passes regular open_archive/zip_defects refusal; unchecked opener is distinct and used for typed admission checks and maintainer debugging. src/opc/archive.rs:15-51.",
+      "MCP operator sets --root (default cwd), expanded/resolved once; Python lexical-path diagnostics precede native persistent _OutputRoot reads/publication. Read/write tools share stdio without distinct caller roles; annotations are hints. jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,126-159,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:153-199.",
+      "MCP root-relative writes reject nonportable names/output symlinks, stage every file, require overwrite=true for existing outputs, then atomically commit per file; later failure can leave prior commits. src/publication.rs:168-199,431-463,558-569.",
+      "Native and npm CLIs intentionally use ambient host authority; npm node:fs reads/writes caller paths and checks existing outputs. src/publication.rs:203-205; src/bin/jubarte.rs:261-273; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-79,106-110.",
+      "Native rendering consumes ambient installed font files and independently derived font index via std::fs, outside explicit MCP root I/O. Browser WASM uses byte rendering; native system/cloud font overrides are no-ops. src/convert/font.rs:2633-2652,2855-2876,3095-3106,3213-3229; jubarte-wasm/src/lib.rs:231-235,262-273.",
+      "Explicit self-update selects fixed GitHub owner/repo and platform release, delegates checksum/download/extraction/swap to self_update; RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None disable signature requirement. src/update.rs:25-48,120-125,198-221,234-257.",
+      "Privileged release tag workflow builds with contents:read, publishes with contents:write; signing secret only enters its step, decodes under RUNNER_TEMP and EXIT trap deletes keys. Local release script separately publishes registries. .github/workflows/release.yml:15-21,51-55,230-235,261-309,356-369; scripts/release.sh:919-955,1063-1069."
+    ],
+    "attackerCapabilities": [
+      "Input suppliers control DOCX/ZIP/XML, embedded fonts/images, legacy DOC, Markdown or edit-plan data supplied to corresponding APIs; no operator environment, filesystem ownership or registry credentials assumed. src/lib.rs:17-30; SECURITY.md:36-40.",
+      "An authorized MCP client chooses registered read/write operations, root-relative paths and overwrite flags, but native directory capability independently limits explicit path authority. jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,152-159; src/publication.rs:153-199.",
+      "Concurrent filesystem writers matter only when deployment grants access to affected directories; publication anticipates replacement races using held handles and no-clobber hard links. src/publication.rs:146-165,558-569.",
+      "Release-asset control can affect explicit checksum-only updates; requires publication compromise or defeat of download trust chain, not document input. src/update.rs:44-48,245-257; docs/SELF_UPDATE.md:59-80.",
+      "Embedding hosts can choose exposed InputLimitOverrides; caller policy authority itself is not a bypass. src/admission.rs:103-108,137-163; jubarte-wasm/src/lib.rs:80-96."
+    ],
+    "securityObjectives": [
+      "Reject unsafe package structures and bound ZIP/XML expansion with typed refusals before expensive work. src/admission.rs:13-28,63-99; src/opc/archive.rs:34-51.",
+      "Keep explicit MCP document reads/publication within startup directory capability under path replacement; require overwrite for existing outputs. jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/publication.rs:146-199,448-463,563-569.",
+      "Preserve old outputs on staging failure, verify staged bytes, accurately report partial commits. src/publication.rs:168-174,535-569.",
+      "Bind guarded edit plans to exact source SHA-256 when supplied; stale-source check is optional caller policy. src/edit.rs:97-106,2081-2088.",
+      "Do not fetch external relationships or execute macros; host owns CPU/memory isolation and downstream-consumer safety. SECURITY.md:71-74; src/admission.rs:13-22; src/document_comparer.rs:100-108.",
+      "Explicit updater invocation/confirmation/version decision precedes executable replacement; checksum configured, signatures required only when keys/threshold activate policy. src/update.rs:120-125,198-210,234-257,274-285."
+    ],
+    "assumptions": [
+      "No userContext, supplied threat model or KB. No remote HTTP exposure, multi-tenancy, or authentication assumed. MCP stdio: jubarte-python/python/jubarte_redlines/mcp_server.py:373-381; SECURITY.md:84-85.",
+      "Actual target HEAD observed4e10eca69c42211651ca907f38b74b6d19e6928c differs from enclosing scan-directory hash; supplied current target is authoritative.",
+      "MCP build_server says tools only touch files under root, but native font/index consumers have ambient access. Explicit I/O confinement is established; whole-process confinement is not. No arbitrary file capability inferred without additional attacker control. jubarte-python/python/jubarte_redlines/mcp_server.py:67-87,229-236; src/convert/font.rs:2633-2652,3095-3106,3213-3229.",
+      "Current checksum-only updater agrees with staged signing documentation; zipsign support is not active signature enforcement. SECURITY.md:79-83; docs/SELF_UPDATE.md:59-80; src/update.rs:44-48,245-257.",
+      "Library overview describes byte-in/out and no temporary files, but ambient font indexing uses a temporary save path. src/lib.rs:7-11; src/convert/font.rs:3095-3106,3213-3229.",
+      "Admission is not absolute DoS protection; comparison2GiB inflation exceeds practical browser heap, wrapper advises lower limits. src/admission.rs:39-40,81-99; jubarte-wasm/src/lib.rs:80-85; SECURITY.md:71-74.",
+      "Delegated self_update extraction, every generated bundle, every renderer/parser branch, and all privileged automation were not fully audited; unresolved coverage remains explicit.",
+      "Verified native font-resource chain: JUBARTE_FONT_DIR if nonempty, else macOS HOME/Library/Application Support/jubarte/fonts; Linux XDG_DATA_HOME/jubarte/fonts or HOME/.local/share/jubarte/fonts; Windows APPDATA/jubarte/fonts plus WINDIR or SystemRoot or C:\\Windows/Fonts and LOCALAPPDATA/Microsoft/Windows/Fonts. src/convert/font.rs:2633-2652,2855-2876.",
+      "Verified font-index consumer: JUBARTE_FONT_INDEX if set; empty/off disables; otherwise parent(user_font_dir)/font-index.tsv. Temporary save uses with_extension(tsv.<PID>.tmp), fs::write and rename. Records family paths/metadata; ambient permissions enforce access. src/convert/font.rs:3095-3112,3195-3229,3264-3301.",
+      "Verified MCP output consumer: root/out_dir/{clean.docx,redline.docx,patch.diff,report.json}, optional redline.pdf and redline-page-NN.png; native publisher stages private parent/.jubarte-UUID.partial/bytes, verifies bytes and commits atomically per file. jubarte-python/python/jubarte_redlines/mcp_server.py:152-218; src/publication.rs:431-569.",
+      "Verified updater resource: jandira-tech/jubarte-redlines release, member jubarte-<version>-<target>/jubarte[.exe], targets macos/linux aarch64/x86_64 and windows-x86_64, SHA256SUMS.txt; dependency selects installed executable location, extracted_binary_is_regular_file hook guards entry type. src/update.rs:25-48,91-108,198-210,234-257,310-329.",
+      "Verified signer resource: secret reference ZIPSIGN_PRIVATE_KEY -> RUNNER_TEMP/zipsign.<random>/keyN, 64-byte validation, optional keys/*.pub verification, EXIT cleanup; release publisher GH_TOKEN references secrets.GITHUB_TOKEN, contents:write publishes dist/* to GITHUB_REF_NAME in github.repository. .github/workflows/release.yml:261-309,317-322,356-369.",
+      "Verified registry consumers: cargo publish --locked, npm publish from jubarte-wasm/npm then jubarte-wasm/cli with optional NPM_OTP, uv publish using UV_PUBLISH_TOKEN and dist/pypi/*; provider account authorization required. scripts/release.sh:913-920,928-958,1051-1069."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ]
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "xml-policy.relationship-part-extension-bypass",
+      "title": "Rendering a renamed XML story bypasses depth admission and can abort the host",
+      "summary": "A document author can point a header or footer relationship at a non-.xml internal part containing deeply nested XML. Admission skips XML policy for that filename, but rendering recursively parses the part and can exhaust the process stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-supplied document bytes cross a public parser boundary and can terminate the rendering host with a small input; no remote service exposure is assumed. Process CPU/memory limits do not prevent a per-process stack-overflow abort.",
+        "changeConditions": "Isolated disposable conversion processes reduce the application-level impact; a shared conversion service would increase impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source trace establishes the filename-only gate, main-only fallback, relationship-selected bytes and unbounded recursive parser. No runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "XML admission bypass / uncontrolled recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 534,
+          "endLine": 543,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 558,
+          "endLine": 569,
+          "role": "expected_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20768,
+          "endLine": 20795,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21301,
+          "endLine": 21305,
+          "role": "propagation"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 662,
+          "role": "outcome"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-input",
+          "label": "Caller-controlled package reaches layout",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "`docx_to_pdf` and PNG/report paths share `with_layout`; the package is admitted and opened before header processing."
+        },
+        {
+          "id": "extension-check",
+          "label": "Admission chooses policy by suffix",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 550,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())",
+          "explanation": "The inflated part receives XML policy checks only when its name ends in .xml or .rels. An internal header.bin is counted in byte budgets but skipped by XML policy."
+        },
+        {
+          "id": "main-only",
+          "label": "Only the main document gets a second check",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 570,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;\n    }",
+          "explanation": "The explicit fallback protects a renamed main part; it does not validate other relationship-selected XML consumers."
+        },
+        {
+          "id": "header-reference",
+          "label": "Header reference selected from the document",
+          "path": "src/convert/mod.rs",
+          "startLine": 20726,
+          "endLine": 20729,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    let rid = inherited_ref_id(dom, sect, local, want);\n    let page = apply_sect_pr(dom, sect, &sheet.defaults.page);\n    let text_w = page.width - page.margin_l - page.margin_r;\n    let background = local == \"headerReference\" && page_background(dom, sect);",
+          "explanation": "An attacker-controlled section reference selects a relationship ID passed to `load_chrome_part`."
+        },
+        {
+          "id": "header-load",
+          "label": "Arbitrary internal target read as XML",
+          "path": "src/convert/mod.rs",
+          "startLine": 20768,
+          "endLine": 20781,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let Some(path) = rel_target_path(pkg, main, rid) else {\n        return empty_chrome();\n    };\n    let Some(bytes) = pkg.part_bytes(&path) else {\n        return empty_chrome();\n    };\n    let mut xml = String::from_utf8_lossy(bytes).into_owned();\n    // The page background's anchor paragraph: af0035cc's one-paragraph\n    // header (Normal, after=10 at 1.15) runs two lines deep in Word and\n    // pushes the body 14.8pt below its 72pt margin.\n    if background && let Some(end) = xml.rfind(\"</w:hdr>\") {\n        xml.insert_str(end, \"<w:p/>\");\n    }\n    chrome_part_xml(pkg, &path, &xml, local, sheet, text_w)",
+          "explanation": "The selected target bytes are decoded as UTF-8 and forwarded to `chrome_part_xml` without a policy check."
+        },
+        {
+          "id": "header-parse",
+          "label": "Header/footer raw parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 20786,
+          "endLine": 20798,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn chrome_part_xml(\n    pkg: &PartFs,\n    path: &str,\n    xml: &str,\n    local: &str,\n    sheet: &StyleSheet,\n    text_w: f32,\n) -> ChromePart {\n    let mut part_dom = Dom::new();\n    let doc = part_dom.parse_xdocument(xml);\n    let Some(root) = part_dom.root(doc) else {\n        return empty_chrome();\n    };",
+          "explanation": "`chrome_part_xml` directly invokes the recursive infallible DOM parser on bytes skipped by the admission XML checks."
+        },
+        {
+          "id": "relationship-target",
+          "label": "Relationship controls target path",
+          "path": "src/convert/mod.rs",
+          "startLine": 21301,
+          "endLine": 21305,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {\n    let rels = pkg.read_rels_for(source)?;\n    let rel = rels.items.iter().find(|item| item.id == rid)?;\n    Some(pkg.resolve_rel_target(source, &rel.target))\n}",
+          "explanation": "The document relationship ID selects the package target without a filename-extension or content-type restriction."
+        },
+        {
+          "id": "recursive-parse",
+          "label": "DOM nesting consumes call stack",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "outcome",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Each nested element recurses into `parse_element`; this path has no depth budget, so sufficiently deep XML exhausts the host stack."
+        }
+      ],
+      "rootCause": {
+        "summary": "The policy gate classifies XML by archive filename, then checks only a renamed main document as a special case. Rendering instead selects header/footer parts by relationships and interprets their bytes as XML regardless of name. The downstream raw DOM parser relies on prior admission and recurses once per element, leaving renamed story parts outside the depth invariant.",
+        "evidenceRefs": [
+          "render-input",
+          "extension-check",
+          "header-reference",
+          "relationship-target",
+          "header-load",
+          "header-parse",
+          "recursive-parse",
+          "main-only"
+        ]
+      },
+      "remediation": "Enforce the active XML policy before parsing every XML relationship target irrespective of extension, or enumerate typed XML parts during admission. Make the raw DOM parser iterative or depth-bounded as defense in depth.",
+      "validation": {
+        "counterEvidence": [
+          "Normal .xml/.rels parts receive XML checks, and renamed main documents are explicitly rechecked.",
+          "Raw parse_xdocument is documented as unchecked; the defect is its use behind a supposedly admitted package boundary, not the existence of that API.",
+          "External relationships are not needed; this exploit uses internal package bytes."
+        ],
+        "evidenceRefs": [
+          "extension-check",
+          "main-only",
+          "header-load",
+          "header-parse",
+          "recursive-parse"
+        ],
+        "limitations": [
+          "No application code or malicious input was executed; exact crash depth depends on platform and stack size."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "Confirmed that a valid minimal main document and its shallow .rels can select a header.bin payload; default archive and byte budgets still allow many thousands of short nested tags. Strict-to-transitional conversion preserves non-XML parts (src/strict_translation.rs:809-831), and PartFs::open bounds bytes rather than applying XML depth (src/opc/mod.rs:282-350). The raw header parser therefore receives the unbounded nesting."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> with_layout -> admit -> suffix-based XML check skips header.bin -> internal relationship resolution -> chrome_part_xml -> recursive parse_element -> stack exhaustion",
+          "evidenceRefs": [
+            "render-input",
+            "extension-check",
+            "relationship-target",
+            "header-load",
+            "header-parse",
+            "recursive-parse"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Host-process availability; no confidentiality, arbitrary file write or code-execution claim."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Default parser path accepts the internally linked renamed payload; deep nesting is directly attacker-controlled."
+        },
+        "reachability": {
+          "summary": "A document author needs only to have the consumer render the supplied package; no operator configuration change, filesystem access or network access is needed.",
+          "attacker": "supplier of an untrusted DOCX",
+          "entrypoint": "convert::docx_to_pdf / shared with_layout pipeline",
+          "outcome": "rendering process abort or equivalent stack exhaustion"
+        },
+        "summary": "Supply a DOCX with an ordinary main part, a section headerReference, an internal header relationship targeting header.bin, and a deeply nested well-formed XML payload at that target; render via the public PDF/PNG APIs or their wrappers."
+      },
+      "remediationTests": [
+        "An internal header/footer target named .bin with nesting above max_xml_depth must return INVALID_XML before DOM construction.",
+        "Repeat with custom part names and raised/lowered InputLimits; ordinary shallow parts must remain supported."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-xml-extension-bypass",
+        "originalCandidates": [
+          {
+            "source": "baseline subagent",
+            "message": "Confirmed candidate: admission scans XML policy only when archive entry lower.ends_with('.xml'|'.rels') (src/admission.rs:534-545), special-cases only main_part missing extension (558-569). Renderer loads arbitrary header/footer relationship target without extension constraint (src/convert/mod.rs:20762-20779), passes directly to unbounded recursive Dom::parse_xdocument at 20794-20795; parse_element recursively invokes itself at src/xmllinq/parse.rs:660-662. An attacker can target word/header.bin and put deeply nested well-formed XML there, bypass max_xml_depth=256 and crash converter host via stack exhaustion. Investigating all entrypoint controls before final."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.legacy-doc-piece-expansion",
+      "title": "Reading a small legacy DOC can expand repeated text pieces into billions of characters",
+      "summary": "A legacy DOC author can reuse the same physical WordDocument text range in many contiguous logical pieces. `main_text` expands every logical character into `StoryChar` without a decoded-character budget, exhausting host memory or CPU.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled parser input can deny availability through disproportionate work or allocation in default public paths. Impact is process availability with high likelihood for a crafted input; no remote exposure, confidentiality loss or code execution is assumed.",
+        "changeConditions": "A disposable process with strict CPU/memory budgets reduces application-level impact; shared long-lived processing increases it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static source trace confirms the input-to-sink control gap and strongest counterevidence; no application or exploit execution was performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded decoded-text expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1109,
+          "role": "user_input"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1154,
+          "endLine": 1176,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1203,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1219,
+          "endLine": 1225,
+          "role": "outcome"
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3135,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "legacy-entry",
+          "label": "Public legacy reader",
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {\n    let file = CompoundFile::open(bytes)?;\n    let word = file.stream(\"WordDocument\").ok_or_else(|| {\n        LegacyDocError::new(\n            \"no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password\",\n        )\n    })?;\n    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;",
+          "explanation": "Attacker-supplied streams provide the FIB and piece table passed directly to main_text."
+        },
+        {
+          "id": "legacy-piece",
+          "label": "Physical offsets and logical ranges",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1109,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    for i in 0..count {\n        let cp_at = i.checked_mul(4).ok_or_else(bad)?;\n        let cp_start = u32_at(plc, cp_at).ok_or_else(bad)?;\n        let cp_end = u32_at(plc, cp_at.checked_add(4).ok_or_else(bad)?).ok_or_else(bad)?;\n        let pcd = i\n            .checked_mul(8)\n            .and_then(|n| n.checked_add(pcd_base))\n            .ok_or_else(bad)?;\n        let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;\n        let compressed = raw & 0x4000_0000 != 0;\n        let fc = raw & 0x3FFF_FFFF;\n        let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;\n        let modifier = piece_modifier(prm, &prcs)?;\n        out.push(Piece {\n            cp_start,\n            cp_end,\n            fc: if compressed { fc / 2 } else { fc },\n            compressed,\n            modifier,",
+          "explanation": "Attacker CP endpoints and fc offsets become pieces; separate pieces may retain the same physical offset."
+        },
+        {
+          "id": "legacy-coverage",
+          "label": "Coverage without expansion budget",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1154,
+          "endLine": 1176,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    if pieces.iter().any(|piece| piece.cp_end < piece.cp_start) {\n        return Err(LegacyDocError::new(\"the piece table's CPs are decreasing\"));\n    }\n    let mut covered = 0u32;\n    for piece in pieces {\n        if covered >= ccp_text {\n            break;\n        }\n        // An empty piece (fast-saved files carry them) covers nothing.\n        if piece.cp_end == piece.cp_start {\n            continue;\n        }\n        if piece.cp_start != covered {\n            break;\n        }\n        covered = piece.cp_end;\n    }\n    if covered < ccp_text {\n        return Err(LegacyDocError::new(\n            \"the piece table does not cover the main story\",\n        ));\n    }\n    let mut out = Vec::new();",
+          "explanation": "Increasing contiguous logical ranges pass without constraining their total decoded length."
+        },
+        {
+          "id": "legacy-expand",
+          "label": "Expand every logical character",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1203,
+          "language": "rust",
+          "role": "sink",
+          "code": "    for piece in pieces {\n        if piece.cp_start >= ccp_text {\n            break;\n        }\n        let end = piece.cp_end.min(ccp_text);\n        let width: u32 = if piece.compressed { 1 } else { 2 };\n        for cp in piece.cp_start..end {\n            let fc = cp\n                .checked_sub(piece.cp_start)\n                .and_then(|n| n.checked_mul(width))\n                .and_then(|n| n.checked_add(piece.fc))\n                .ok_or_else(past)?;\n            let offset = index(fc).ok_or_else(past)?;\n            let here = StoryChar {\n                ch: '\\u{FFFD}',\n                cp,\n                fc,\n                modifier: piece.modifier,\n            };\n            let ch = if piece.compressed {\n                out.extend(pending_high.take().map(|(_, lone)| lone));\n                cp1252(*word.get(offset).ok_or_else(past)?)\n            } else {",
+          "explanation": "Each logical CP derives an in-bounds physical offset and is decoded even when earlier pieces already referenced those bytes."
+        },
+        {
+          "id": "legacy-push",
+          "label": "Retain expanded characters",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1219,
+          "endLine": 1225,
+          "language": "rust",
+          "role": "outcome",
+          "code": "                }\n            };\n            out.push(StoryChar { ch, ..here });\n        }\n    }\n    out.extend(pending_high.map(|(_, lone)| lone));\n    Ok(out)",
+          "explanation": "The decoder pushes a new StoryChar for every logical character without an output budget."
+        },
+        {
+          "id": "legacy-cli",
+          "label": "CLI routes OLE to converter",
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3135,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let raw =\n        std::fs::read(job.file).map_err(|e| format!(\"reading {}: {e}\", job.file.display()))?;\n    // A Word 97-2003 `.doc` is read into a `.docx` first; everything after\n    // sees that package. An encrypted document is still refused.\n    let legacy = jubarte::legacy_doc::is_compound_file(&raw);\n    let bytes = if legacy {\n        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!(\"convert failed: {e}\"))?\n    } else {\n        jubarte::admission::sniff(&raw)\n            .map_err(|refused| format!(\"{} is {}\", job.file.display(), refused.message))?;\n        raw",
+          "explanation": "OLE input reaches doc_to_docx before the later DOCX sniff/admission path."
+        }
+      ],
+      "rootCause": {
+        "summary": "`read` accepts the FIB main-story count and piece table, then passes them directly to `main_text`. Piece parsing permits each CP range to select the same physical fc range. The coverage check ensures contiguous increasing logical CPs but does not constrain their total decoded length relative to bytes or a resource limit. The per-character loop rereads the shared physical bytes and pushes a new StoryChar for every logical CP.",
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-piece",
+          "legacy-coverage",
+          "legacy-expand",
+          "legacy-push",
+          "legacy-cli"
+        ]
+      },
+      "remediation": "Apply a configurable maximum decoded-character/output-byte budget before expansion and during emission; refuse excessive logical story length even when repeated physical ranges are individually valid.",
+      "validation": {
+        "counterEvidence": [
+          "CFB sector-chain iteration is bounded by file size and invalid CP coverage is rejected.",
+          "No deployment exposure or measured allocation size is assumed; the exact StoryChar layout is platform dependent."
+        ],
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-piece",
+          "legacy-coverage",
+          "legacy-expand",
+          "legacy-push",
+          "legacy-cli"
+        ],
+        "limitations": [
+          "Static-only validation; no runtime measurement or deployed embedding assessment."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "Physical stream bounds, checked offset arithmetic and CFB chain limits prevent out-of-bounds reads and chain cycles, but do not limit logical text expansion. For example, 65,535 pieces each reusing a 64KiB compressed-text range describe about 4.29 billion decoded characters with under 1MiB of piece records. Every selected byte remains in bounds; the vector grows far beyond the input size. CLI legacy conversion routes OLE directly to doc_to_docx before DOCX admission."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "legacy DOC bytes -> CompoundFile streams/FIB -> pieces -> main_text logical CP iteration -> StoryChar vector -> memory/CPU exhaustion",
+          "evidenceRefs": [
+            "legacy-entry",
+            "legacy-piece",
+            "legacy-coverage",
+            "legacy-expand",
+            "legacy-push",
+            "legacy-cli"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "CPU, memory or stack availability of the consuming process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The default source path accepts the required attacker-controlled representation without a bound on the demonstrated expansion."
+        },
+        "reachability": {
+          "summary": "supplier of a legacy .doc consumed by legacy_doc::read, doc_to_markdown or doc_to_docx can trigger the affected public input path without changing trusted configuration.",
+          "attacker": "supplier of a legacy .doc consumed by legacy_doc::read, doc_to_markdown or doc_to_docx",
+          "entrypoint": "src/legacy_doc.rs",
+          "outcome": "Process unavailability or failed conversion through resource exhaustion"
+        },
+        "summary": "A legacy DOC author can reuse the same physical WordDocument text range in many contiguous logical pieces. `main_text` expands every logical character into `StoryChar` without a decoded-character budget, exhausting host memory or CPU."
+      },
+      "remediationTests": [
+        "A valid piece table with increasing CPs but many references to one short physical range must return a resource-limit error before allocating proportional to its claimed story.",
+        "Preserve legitimate repeated/fast-save pieces within the configured decoded-text limit."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-doc-piece-amplification",
+        "originalCandidate": {
+          "source": "document_inputs subagent",
+          "message": "Distinct source-backed candidate: legacy DOC piece-table amplification. legacy_doc::read at180-197 calls pieces then main_text with attacker FIB ccp_text, no InputLimits. main_text1154-1183 only validates increasing contiguous CP coverage, then1191-1222 loops each CP and pushes StoryChar; repeated pieces may point to same WordDocument byte range (fc unrestricted except per-byte get). A modest Word stream plus many contiguous CP pieces that each reuse its same 64KiB range can claim ~2^32 main chars and allocate tens of GiB from a small DOC. No total decoded-character cap. CompoundFile chain caps are input-sized but do not bound this logical expansion. CLI convert src/bin/jubarte.rs3129-3131 routes OLE directly to doc_to_docx. Continuing counterevidence/callers and sibling extension paths."
+        }
+      }
+    },
+    {
+      "ruleId": "algorithmic-complexity.relationship-repair",
+      "title": "Opening duplicate relationship records performs quadratic repair work",
+      "summary": "A DOCX author can include many distinct relationship IDs, each repeated identically. The package loader retains these records for repair, and each duplicate scans the growing repaired-ID vector, causing quadratic CPU work within normal archive limits.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled parser input can deny availability through disproportionate work or allocation in default public paths. Impact is process availability with high likelihood for a crafted input; no remote exposure, confidentiality loss or code execution is assumed.",
+        "changeConditions": "A disposable process with strict CPU/memory budgets reduces application-level impact; shared long-lived processing increases it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static source trace confirms the input-to-sink control gap and strongest counterevidence; no application or exploit execution was performed."
+      },
+      "taxonomy": {
+        "category": "Algorithmic complexity / CPU exhaustion",
+        "cwe": [
+          "CWE-407"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 222,
+          "endLine": 234,
+          "role": "user_input"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 520,
+          "endLine": 541,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 99,
+          "endLine": 125,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "rels-read",
+          "label": "Metadata retains all records",
+          "path": "src/opc/mod.rs",
+          "startLine": 222,
+          "endLine": 234,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn read_relationships(xml: &[u8]) -> Result<Relationships, OpcError> {\n    let mut rels = Relationships::new();\n    let mut items = Vec::new();\n    for record in metadata_records(\n        xml,\n        \"Relationships\",\n        \"http://schemas.openxmlformats.org/package/2006/relationships\",\n        &[\"Relationship\"],\n    )? {\n        for item in oxml_opc::Relationships::from_xml(&record)?.items {\n            items.push(item);\n        }\n    }",
+          "explanation": "The attacker-controlled relationship list is retained for later duplicate repair."
+        },
+        {
+          "id": "rels-open",
+          "label": "Every relationship set is repaired",
+          "path": "src/opc/mod.rs",
+          "startLine": 520,
+          "endLine": 541,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    pub(crate) fn open_within(\n        bytes: &[u8],\n        limits: crate::admission::InputLimits,\n    ) -> Result<Self, OpcError> {\n        let mut fs = read_package(bytes, limits)?;\n        let mut repaired_duplicate_ids: Vec<(String, String)> =\n            drop_repeated_relationships(&mut fs.package_rels)?\n                .into_iter()\n                .map(|id| (String::new(), id))\n                .collect();\n        let mut owners: Vec<&String> = fs.part_rels.keys().collect();\n        owners.sort();\n        let owners: Vec<String> = owners.into_iter().cloned().collect();\n        for owner in owners {\n            if let Some(rels) = fs.part_rels.get_mut(&owner) {\n                let part = owner.trim_start_matches('/').to_string();\n                repaired_duplicate_ids.extend(\n                    drop_repeated_relationships(rels)?\n                        .into_iter()\n                        .map(|id| (part.clone(), id)),\n                );\n            }",
+          "explanation": "Opening the package runs duplicate repair on both package and part relationship sets."
+        },
+        {
+          "id": "rels-repair",
+          "label": "Linear scan for every new duplicate",
+          "path": "src/opc/mod.rs",
+          "startLine": 99,
+          "endLine": 125,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn drop_repeated_relationships(rels: &mut Relationships) -> Result<Vec<String>, OpcError> {\n    let mut seen: HashMap<&str, &Relationship> = HashMap::new();\n    let mut repaired: Vec<String> = Vec::new();\n    let mut keep = Vec::with_capacity(rels.items.len());\n    for item in &rels.items {\n        match seen.get(item.id.as_str()) {\n            None => {\n                seen.insert(&item.id, item);\n                keep.push(true);\n            }\n            Some(first) => {\n                if first.rel_type != item.rel_type\n                    || first.target != item.target\n                    || first.target_mode != item.target_mode\n                {\n                    return Err(OpcError::InvalidRelationship);\n                }\n                if !repaired.contains(&item.id) {\n                    repaired.push(item.id.clone());\n                }\n                keep.push(false);\n            }\n        }\n    }\n    let mut keep = keep.into_iter();\n    rels.items.retain(|_| keep.next().unwrap_or(true));\n    Ok(repaired)",
+          "explanation": "Identical duplicate IDs bypass conflicting-record refusal and scan every previously repaired ID."
+        }
+      ],
+      "rootCause": {
+        "summary": "`read_relationships` preserves the record list and `PartFs::open_within` invokes `drop_repeated_relationships`. Its `seen` map finds duplicates efficiently, but each duplicate then uses `repaired.contains` over all previously repaired IDs. Repeating each of N distinct IDs twice requires roughly N(N-1)/2 string comparisons.",
+        "evidenceRefs": [
+          "rels-read",
+          "rels-open",
+          "rels-repair"
+        ]
+      },
+      "remediation": "Track repaired IDs in a HashSet while retaining a Vec only for ordered output, and optionally bound total metadata records.",
+      "validation": {
+        "counterEvidence": [
+          "Conflicting records under one ID are refused, but the attack uses identical pairs.",
+          "XML byte budgets bound input size, yet permit many records and do not bound quadratic work; process CPU limits can contain external impact."
+        ],
+        "evidenceRefs": [
+          "rels-read",
+          "rels-open",
+          "rels-repair"
+        ],
+        "limitations": [
+          "Static-only validation; no runtime measurement or deployed embedding assessment."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "Metadata parsing preserves duplicate IDs (`rels.items = items`), and identical duplicates are intentionally repaired rather than rejected. A large shallow .rels fits XML depth/tag/byte caps and uses only one ZIP entry; max_entries limits ZIP members, not relationship records. No record-count bound precedes the vector scan."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "attacker .rels records -> read_relationships items -> PartFs::open_within -> drop_repeated_relationships -> growing Vec::contains scan -> CPU exhaustion",
+          "evidenceRefs": [
+            "rels-read",
+            "rels-open",
+            "rels-repair"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "CPU, memory or stack availability of the consuming process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The default source path accepts the required attacker-controlled representation without a bound on the demonstrated expansion."
+        },
+        "reachability": {
+          "summary": "supplier of a DOCX opened through PartFs or public processing APIs can trigger the affected public input path without changing trusted configuration.",
+          "attacker": "supplier of a DOCX opened through PartFs or public processing APIs",
+          "entrypoint": "src/opc/mod.rs",
+          "outcome": "Process unavailability or failed conversion through resource exhaustion"
+        },
+        "summary": "A DOCX author can include many distinct relationship IDs, each repeated identically. The package loader retains these records for repair, and each duplicate scans the growing repaired-ID vector, causing quadratic CPU work within normal archive limits."
+      },
+      "remediationTests": [
+        "Many distinct IDs each repeated twice must preserve first records and report each repair once with work scaling linearly.",
+        "Conflicting duplicates must still be refused."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-relationship-dedup-quadratic",
+        "originalCandidate": {
+          "source": "document_inputs subagent",
+          "message": "Second distinct candidate: drop_repeated_relationships src/opc/mod.rs99-125 tracks seen in HashMap, but for each duplicate line117 `if !repaired.contains(&item.id)` scans every previously repaired distinct ID; attacker .rels with N distinct IDs each repeated twice triggers Θ(N²) strings comparisons. PartFs::open_within lines536-557 runs for package/part rels; admission only caps XML bytes/tag width/depth, no relationship count, and duplicate-RID inputs intentionally repaired. Can fit hundreds of thousands of short 2x records in default64MiB part /256MiB total and tiny compressed file. Continuing concrete caller proof and counterevidence."
+        }
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.table-grid-metadata",
+      "title": "Rendering a tiny table can allocate billions of columns",
+      "summary": "A DOCX author can set `w:gridSpan`, `w:gridBefore` or `w:gridAfter` to an enormous integer. Rendering uses that value as a column count and directly grows vectors, bypassing byte/depth admission budgets and exhausting memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled parser input can deny availability through disproportionate work or allocation in default public paths. Impact is process availability with high likelihood for a crafted input; no remote exposure, confidentiality loss or code execution is assumed.",
+        "changeConditions": "A disposable process with strict CPU/memory budgets reduces application-level impact; shared long-lived processing increases it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static source trace confirms the input-to-sink control gap and strongest counterevidence; no application or exploit execution was performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded allocation from numeric table metadata",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13619,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14644,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "grid-input",
+          "label": "Cell span accepts arbitrary usize",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)",
+          "explanation": "The numeric XML value becomes a colspan with a minimum only and no upper bound."
+        },
+        {
+          "id": "grid-skip",
+          "label": "Row skips accept arbitrary usize",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))",
+          "explanation": "Positive gridBefore/gridAfter counts become span metadata without an upper bound."
+        },
+        {
+          "id": "grid-alloc",
+          "label": "Unchecked occupancy sizes column vector",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13619,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);\n    let pref = column_prefs(&raw_rows, &cols, fixed);\n    let mut rows = resolve_table_merges(raw_rows);",
+          "explanation": "The sum of attacker spans becomes the vector length independently of XML byte limits."
+        },
+        {
+          "id": "grid-merge",
+          "label": "Merge tracking repeats allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 14637,
+          "endLine": 14644,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;\n            }\n            col += span;",
+          "explanation": "Per-column merge tracking grows to col+span from the same numeric metadata."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span` parses an attacker-controlled usize and only applies a minimum of one; row grid skips accept any positive usize. These counts become RawCell colspans. Table occupancy sums them and resizes or creates the f32 column vector. Merge resolution also resizes its per-column vector from the same unchecked span.",
+        "evidenceRefs": [
+          "grid-input",
+          "grid-skip",
+          "grid-alloc",
+          "grid-merge"
+        ]
+      },
+      "remediation": "Validate a practical total grid-column limit before accumulating or allocating, apply it to spans and skipped columns, and use checked arithmetic with typed refusal.",
+      "validation": {
+        "counterEvidence": [
+          "Malformed/non-numeric attributes fall back safely; the exploit uses a valid numeric value.",
+          "Default XML attribute-width and archive budgets accept the small input. Native memory limits or a WASM heap cap constrain the host impact to failed/terminated conversion."
+        ],
+        "evidenceRefs": [
+          "grid-input",
+          "grid-skip",
+          "grid-alloc",
+          "grid-merge"
+        ],
+        "limitations": [
+          "Static-only validation; no runtime measurement or deployed embedding assessment."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "A one-cell table with gridSpan=4294967295 requests approximately 16GiB for the f32 column vector on a 64-bit host. Larger accepted usize values can trigger capacity overflow. `stretch_stale_spans` skips rows already occupying at least the declared grid and does not clamp them. `with_layout` admission bounds archive/XML bytes and structure, not these numeric counts."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX table attributes -> cell_span/row_grid_skip -> RawCell colspan -> occupancy -> cols vec/resize and merge open.resize -> allocation failure",
+          "evidenceRefs": [
+            "grid-input",
+            "grid-skip",
+            "grid-alloc",
+            "grid-merge"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "CPU, memory or stack availability of the consuming process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The default source path accepts the required attacker-controlled representation without a bound on the demonstrated expansion."
+        },
+        "reachability": {
+          "summary": "supplier of a DOCX rendered by PDF/PNG/report APIs or adapters can trigger the affected public input path without changing trusted configuration.",
+          "attacker": "supplier of a DOCX rendered by PDF/PNG/report APIs or adapters",
+          "entrypoint": "src/convert/mod.rs",
+          "outcome": "Process unavailability or failed conversion through resource exhaustion"
+        },
+        "summary": "A DOCX author can set `w:gridSpan`, `w:gridBefore` or `w:gridAfter` to an enormous integer. Rendering uses that value as a column count and directly grows vectors, bypassing byte/depth admission budgets and exhausting memory."
+      },
+      "remediationTests": [
+        "Tiny tables with very large gridSpan, gridBefore and gridAfter must fail with a resource-limit error before vector allocation.",
+        "Test cumulative spans exceeding the limit and arithmetic overflow; retain supported ordinary merged tables."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-table-grid-allocation",
+        "originalCandidate": {
+          "source": "baseline subagent",
+          "message": "Second confirmed candidate: unbounded table span allocation in render. src/convert/mod.rs cell_span:14211-14216 parses attacker w:gridSpan/@w:val as usize, only max(1), row_grid_skip:14340-14345 likewise parses gridBefore/gridAfter. table_block occupancy sums colspan at 13601-13603 then vec![each; occupancy]/resize at 13608-13615; resolve_table_merges additionally open.resize(col+span,None) at 14637-14639. A tiny DOCX single cell gridSpan=4294967295 requests ~16 GiB column vector (or usize::MAX gives capacity overflow panic); XML/ZIP budgets don't limit numeric metadata. Traced with_layout admission at 775-780; no schema/span cap. Also checking Chicago numbering start amplification (chicago_label at 6015-6018 repeats n/4; w:start parsed u32)."
+        }
+      }
+    },
+    {
+      "ruleId": "uncontrolled-recursion.markdown-drawing-graph",
+      "title": "A cyclic Markdown drawing payload causes unbounded dependency recursion",
+      "summary": "A Markdown author can supply a `drawing:` image payload with a dependency pointing back to itself. Base64/JSON decoding accepts the graph and package reconstruction recursively follows it without cycle detection, exhausting the stack and host resources.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled parser input can deny availability through disproportionate work or allocation in default public paths. Impact is process availability with high likelihood for a crafted input; no remote exposure, confidentiality loss or code execution is assumed.",
+        "changeConditions": "A disposable process with strict CPU/memory budgets reduces application-level impact; shared long-lived processing increases it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static source trace confirms the input-to-sink control gap and strongest counterevidence; no application or exploit execution was performed."
+      },
+      "taxonomy": {
+        "category": "Unvalidated dependency graph / uncontrolled recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4183,
+          "endLine": 4201,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1395,
+          "endLine": 1408,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1900,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1987,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 60,
+          "endLine": 67,
+          "role": "expected_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "drawing-entry",
+          "label": "Markdown accepts drawing destination",
+          "path": "src/markdown/write.rs",
+          "startLine": 4183,
+          "endLine": 4201,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    fn picture(&mut self) {\n        let Some((url, id, alt, loose)) = self.image.take() else {\n            return;\n        };\n        // A `drawing:` destination is a whole element and its parts,\n        // spliced back as it was; a payload that does not read is alt text.\n        if url.starts_with(\"drawing:\") {\n            match super::from_docx::drawing::decode(&url) {\n                Ok(drawing) => {\n                    self.document.drawings.push(drawing);\n                    let index = self.document.drawings.len() - 1;\n                    if self.box_names.insert(id.clone(), index).is_some() {\n                        self.box_duplicates.insert(id);\n                    }\n                    self.push(Content::Drawing(index));\n                }\n                Err(_) => self.plain(alt.trim()),\n            }\n            return;",
+          "explanation": "A caller-supplied drawing URL decodes to stored content instead of ordinary alt text."
+        },
+        {
+          "id": "drawing-decode",
+          "label": "Syntax-only Drawing decoding",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1395,
+          "endLine": 1408,
+          "language": "rust",
+          "role": "root_control",
+          "code": "/// Decode the payload of `![label](drawing:PAYLOAD)`; `dest` is what\n/// [`at`] returns (`drawing:…`).\npub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))",
+          "explanation": "Base64 is parsed as a Drawing without validating graph topology or graph budgets."
+        },
+        {
+          "id": "drawing-pkg",
+          "label": "Package reconstruction materializes graph",
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let drawing = self.document.drawings.get(index)?;\n        let existing: HashSet<String> = self.package.parts().into_iter().collect();\n        let xml = super::from_docx::drawing::materialize(\n            drawing,\n            self.package,\n            &self.part,\n            &existing,\n            &mut self.media.used,\n            next_doc_pr,\n        )?;",
+          "explanation": "Stored attacker Drawing reaches materialize during DOCX emission."
+        },
+        {
+          "id": "drawing-root",
+          "label": "Top-level part index starts traversal",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1900,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),\n            _ => return None,\n        };\n        let rid = relate(package, part, &kind, &target, external);",
+          "explanation": "An in-range index dispatches directly to dep_part; no traversal state is established."
+        },
+        {
+          "id": "drawing-recursion",
+          "label": "Recursive dependency traversal",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1987,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;\n                (\n                    rel.kind.clone(),\n                    relative_rel_target(&name, &inner_name),\n                    false,\n                )\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),\n            _ => return None,\n        };\n        let rid = relate(package, &name, &kind, &target, external);\n        if !xml.is_empty() {\n            xml = xml.replace(&format!(\"\\\"d{index}.{}\\\"\", n + 1), &format!(\"\\\"{rid}\\\"\"));\n        }",
+          "explanation": "Each in-range inner index recurses, including an edge to its own currently active node."
+        },
+        {
+          "id": "drawing-caps",
+          "label": "Capture-side bounds",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 60,
+          "endLine": 67,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// The most dependent parts a `drawing:` payload holds.\nconst MAX_DEPS: usize = 64;\n/// The most relationships one part of a payload holds.\nconst MAX_DEP_RELS: usize = 64;\n/// The most bytes one dependent part holds.\nconst MAX_DEP_BYTES: u64 = 16 * 1024 * 1024;\n/// The most `drawing:` payloads one document queues.\nconst MAX_PENDING: usize = 4096;",
+          "explanation": "Constants describe bounded capture, but decode does not apply them to attacker-crafted graphs."
+        }
+      ],
+      "rootCause": {
+        "summary": "The writer accepts `drawing:` destinations and stores the decoded Drawing. `decode` validates base64/JSON syntax but not dependency edges or graph budgets. `materialize` dispatches top-level part indices to `dep_part`, which recursively traverses every in-range dependency without a visiting set, depth guard or memoized reconstruction. Capture-side MAX_DEPS/MAX_DEP_RELS/MAX_DEP_BYTES do not validate decoded Markdown.",
+        "evidenceRefs": [
+          "drawing-entry",
+          "drawing-decode",
+          "drawing-pkg",
+          "drawing-root",
+          "drawing-recursion",
+          "drawing-caps"
+        ]
+      },
+      "remediation": "Validate decoded graph size, edge indices, aggregate bytes and cycles before materialization; use bounded traversal with visiting/visited states and memoize completed dependency materialization.",
+      "validation": {
+        "counterEvidence": [
+          "Invalid base64/JSON becomes alt text, but a well-formed flat graph is accepted.",
+          "Capture from DOCX has bounds, which do not apply to crafted decoding. No external relationships or code execution are needed."
+        ],
+        "evidenceRefs": [
+          "drawing-entry",
+          "drawing-decode",
+          "drawing-pkg",
+          "drawing-root",
+          "drawing-recursion",
+          "drawing-caps"
+        ],
+        "limitations": [
+          "Static-only validation; no runtime measurement or deployed embedding assessment."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "A flat JSON graph containing one dependency with rel.part=0, reached by a top-level rel.part=0, passes index checks and immediately recurses on the same node forever. Serde's JSON nesting limit does not bound cycles represented as integer indices. `used` tracks output names, not visited dependency indices; late byte deduplication occurs only after recursive descent."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown image drawing: URL -> decode JSON -> Content::Drawing -> package drawing -> materialize -> recursive dep_part integer edges -> stack exhaustion",
+          "evidenceRefs": [
+            "drawing-entry",
+            "drawing-decode",
+            "drawing-pkg",
+            "drawing-root",
+            "drawing-recursion",
+            "drawing-caps"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "CPU, memory or stack availability of the consuming process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The default source path accepts the required attacker-controlled representation without a bound on the demonstrated expansion."
+        },
+        "reachability": {
+          "summary": "supplier of Markdown passed to markdown_to_docx or its bindings/CLI can trigger the affected public input path without changing trusted configuration.",
+          "attacker": "supplier of Markdown passed to markdown_to_docx or its bindings/CLI",
+          "entrypoint": "src/markdown/write.rs",
+          "outcome": "Process unavailability or failed conversion through resource exhaustion"
+        },
+        "summary": "A Markdown author can supply a `drawing:` image payload with a dependency pointing back to itself. Base64/JSON decoding accepts the graph and package reconstruction recursively follows it without cycle detection, exhausting the stack and host resources."
+      },
+      "remediationTests": [
+        "Self-cycles and two-node cycles in valid base64 Drawing payloads must return a typed error without recursion.",
+        "A bounded shared-child DAG should reconstruct each node once and ordinary captured drawings should round-trip."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-drawing-dependency-cycle",
+        "originalCandidate": {
+          "source": "baseline subagent",
+          "message": "Third confirmed high-confidence candidate in Markdown drawing payloads: Drawing decode src/markdown/from_docx/drawing.rs:1397-1408 base64-decodes directly via serde_json::from_slice, no graph validation. write.rs:4190-4197 accepts drawing: destination and package.rs:1705 materializes. drawing.rs:1973-1974 recursively dep_part(inner) with no visited/depth guard. Payload {\"xml\":\"<w:drawing/>\",\"rels\":[{\"sym\":\"r1\",\"t\":\"x\",\"part\":0}],\"deps\":[{\"name\":\"word/a.xml\",\"xml\":\"<a/>\",\"rels\":[{\"sym\":\"d0.1\",\"t\":\"x\",\"part\":0}]}]} causes unbounded recursion self-cycle. MAX_DEPS/RELS/BYTES constants apply only capture (Deps::dep_for:596+) and aren't enforced by decode; even 1 dep cycles. Public markdown_to_docx Rust/Python/WASM/CLI reachable. No code executed."
+        }
+      }
+    },
+    {
+      "ruleId": "xml-policy.admission-dom-parser-differential",
+      "title": "Tolerated XML syntax can hide recursive elements from admission",
+      "summary": "A DOCX author can place nested element text inside an XML comment after an unquoted attribute. Admission counts only shallow quick-xml events, while the permissive DOM parser consumes that attribute differently and recursively interprets the hidden tags. The normal .xml path can therefore exhaust the host stack despite max_xml_depth.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A small crafted document can reliably cause disproportionate allocation or stack use in a public parser path; impact is process availability, likelihood high when consumed. No remote deployment is assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source establishes the complete relevant branch/control/dataflow. Runtime execution and deployment-specific exposure were not tested."
+      },
+      "taxonomy": {
+        "category": "Parser interpretation conflict / XML depth bypass",
+        "cwe": [
+          "CWE-436",
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 788,
+          "endLine": 820,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 233,
+          "endLine": 241,
+          "role": "user_input"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 555,
+          "endLine": 585,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 531,
+          "endLine": 548,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "role": "sink"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 950,
+          "endLine": 955,
+          "role": "expected_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "xml-render-entry",
+          "label": "Admitted package reaches raw DOM",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The public conversion pipeline admits package bytes and later directly constructs the DOM."
+        },
+        {
+          "id": "xml-differential-policy",
+          "label": "Admission counts one parser's events",
+          "path": "src/admission.rs",
+          "startLine": 788,
+          "endLine": 820,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn check_xml_depth(name: &str, xml: &[u8], limits: InputLimits) -> Result<(), AdmissionError> {\n    let invalid =\n        |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!(\"{name}: {why}\"));\n    let text = part_text(xml);\n    let mut reader = Reader::from_str(&text);\n    reader.config_mut().check_end_names = true;\n    let max_depth = limits.max_xml_depth;\n    let mut policy = crate::xmllinq::parse::TagPolicy::tolerant(limits);\n    let mut depth = 0usize;\n    loop {\n        match reader.read_event() {\n            Ok(Event::Start(tag)) => {\n                policy.open(&tag).map_err(invalid)?;\n                depth = depth.saturating_add(1);\n                if depth > max_depth {\n                    return Err(invalid(format!(\"XML nests deeper than {max_depth}\")));\n                }\n            }\n            Ok(Event::Empty(tag)) => {\n                policy.empty(&tag).map_err(invalid)?;\n            }\n            Ok(Event::End(_)) => {\n                depth = depth\n                    .checked_sub(1)\n                    .ok_or_else(|| invalid(\"end tag with no open element\".to_string()))?;\n                policy.close();\n            }\n            Ok(Event::Eof) if depth > 0 => {\n                return Err(invalid(format!(\"{depth} element(s) left unclosed\")));\n            }\n            Ok(Event::Eof) => return Ok(()),\n            Ok(_) => {}\n            Err(e) => return Err(invalid(e.to_string())),",
+          "explanation": "The gate uses tolerant attributes and counts only element events; comments and DocType do not contribute depth."
+        },
+        {
+          "id": "xml-tolerant",
+          "label": "Unquoted attributes intentionally accepted",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 233,
+          "endLine": 241,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    /// The package admission scan's policy. The scan admits parts for the\n    /// permissive parser, which reads unquoted and valueless attributes, so\n    /// those pass here; the budgets and the duplicate checks still apply to\n    /// them.\n    pub(crate) fn tolerant(limits: InputLimits) -> Self {\n        TagPolicy {\n            html_attributes: true,\n            ..Self::new(limits)\n        }",
+          "explanation": "The package policy enables HTML-style unquoted/valueless attribute parsing."
+        },
+        {
+          "id": "xml-differential-value",
+          "label": "Raw parser consumes value as quoted",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 555,
+          "endLine": 585,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {\n        // at '<'\n        self.pos += 1; // consume '<'\n        let raw_name = self.read_name();\n        let mut raw_attrs: Vec<(String, String)> = Vec::new();\n        loop {\n            self.skip_ws();\n            if self.pos >= self.len() || self.cur() == '/' || self.cur() == '>' {\n                break;\n            }\n            let before_name = self.pos;\n            let aname = self.read_name();\n            if self.pos == before_name {\n                // Malformed delimiter (`<p a='x' ?>`): the permissive parser\n                // must still advance instead of spinning on the same byte.\n                break;\n            }\n            self.skip_ws();\n            let mut avalue = String::new();\n            if self.cur() == '=' {\n                self.pos += 1; // '='\n                self.skip_ws();\n                let quote = self.cur();\n                self.pos += 1; // opening quote\n                let vstart = self.pos;\n                while self.pos < self.len() && self.cur() != quote {\n                    self.pos += 1;\n                }\n                avalue = self.slice(vstart, self.pos);\n                self.pos += 1; // closing quote\n            }",
+          "explanation": "An unquoted first value character becomes a delimiter and can carry parsing across a start tag into comment text."
+        },
+        {
+          "id": "xml-differential-dtd",
+          "label": "DOCTYPE skip stops too early",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 531,
+          "endLine": 548,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            if self.starts_with(\"<!--\") {\n                let end = self.index_of(\"-->\", self.pos);\n                let body = self.slice(self.pos + 4, end.unwrap_or(len));\n                let cm = self.dom.new_comment(&body);\n                self.dom.add(doc, cm);\n                self.pos = end.map(|e| e + 3).unwrap_or(len);\n                continue;\n            }\n            if self.starts_with(\"<!\") {\n                // DOCTYPE — skip\n                let end = self.index_of(\">\", self.pos);\n                self.pos = end.map(|e| e + 1).unwrap_or(len);\n                continue;\n            }\n            if self.cur() == '<' {\n                let el = self.parse_element(&mut scope);\n                self.dom.add(doc, el);\n                continue;",
+          "explanation": "The raw parser skips only to the first >, allowing internal-subset literal text to become later element input."
+        },
+        {
+          "id": "xml-differential-recursion",
+          "label": "Interpreted elements recurse",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Tags hidden from admission become recursive parse_element calls without an independent depth guard."
+        },
+        {
+          "id": "xml-strict",
+          "label": "Strict gate refuses DTD",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 950,
+          "endLine": 955,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "            Event::End(_) => {\n                depth = depth.checked_sub(1).ok_or(\"unmatched XML end tag\")?;\n                policy.close();\n            }\n            Event::DocType(_) => return Err(\"DTD declarations are unsupported\".to_string()),\n            Event::GeneralRef(reference) => {",
+          "explanation": "The checked XML API explicitly rejects DTD events; the tolerant package scan lacks this branch."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission uses quick-xml events and TagPolicy::tolerant, which accepts unquoted attributes, and ignores comments/DTD events for element depth. The downstream parser assumes the first attribute-value character is a quote delimiter even when it is not a quote. It can consume across the start-tag boundary into a comment, then parse comment content as real elements. Its DOCTYPE skip also stops at the first > rather than the end of an internal subset, creating a related interpretation gap.",
+        "evidenceRefs": [
+          "xml-render-entry",
+          "xml-differential-policy",
+          "xml-tolerant",
+          "xml-differential-value",
+          "xml-differential-dtd",
+          "xml-differential-recursion",
+          "xml-strict"
+        ]
+      },
+      "remediation": "Make admission and DOM construction consume the same grammar, reject unsupported DTDs at package admission, parse unquoted values correctly or refuse them, and enforce a hard depth budget inside DOM construction.",
+      "validation": {
+        "counterEvidence": [
+          "Correctly quoted ordinary XML without DTD/comment interpretation gaps receives the expected depth check.",
+          "Standalone checked XML parsing rejects the unquoted route and DTD; the report concerns public package processing using tolerant admission and raw DOM construction.",
+          "No external entity resolution, network/file access or entity expansion is claimed."
+        ],
+        "evidenceRefs": [
+          "xml-render-entry",
+          "xml-differential-policy",
+          "xml-tolerant",
+          "xml-differential-value",
+          "xml-differential-dtd",
+          "xml-differential-recursion",
+          "xml-strict"
+        ],
+        "limitations": [
+          "No application code or malicious fixture executed; platform/runtime behavior was assessed from source."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "For the unquoted/comment route, `<r a=x><!-- x>` followed by nested tags and a comment close is a shallow root/comment sequence to admission; raw parse_element treats the first x as a quote and the x inside the comment as its close. It then reaches the nested tags without recognizing the comment opener it already consumed. No later depth guard exists before recursive parse_element. A DTD internal entity literal containing nested tags similarly falls under ignored DocType events but the raw skip consumes only the first >. These are grammar interpretation issues, not external-entity fetching. Strict validate_xml uses quoted attributes and explicitly refuses DTDs, but rendering's package-admission path does not invoke that strict gate."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX .xml bytes -> check_xml_depth quick-xml/tolerant attribute policy -> shallow event depth -> raw parse_xdocument attribute/DOCTYPE interpretation -> hidden element recursion -> stack exhaustion",
+          "evidenceRefs": [
+            "xml-render-entry",
+            "xml-differential-policy",
+            "xml-tolerant",
+            "xml-differential-value",
+            "xml-differential-dtd",
+            "xml-differential-recursion",
+            "xml-strict"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Process availability through stack exhaustion."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Correctly quoted ordinary XML without DTD/comment interpretation gaps receives the expected depth check. Standalone checked XML parsing rejects the unquoted route and DTD; the report concerns public package processing using tolerant admission and raw DOM construction. No external entity resolution, network/file access or entity expansion is claimed."
+        },
+        "reachability": {
+          "summary": "supplier of a DOCX rendered through public conversion APIs must trigger the described input path.",
+          "attacker": "supplier of a DOCX rendered through public conversion APIs",
+          "entrypoint": "src/convert/mod.rs",
+          "outcome": "Process availability through stack exhaustion."
+        },
+        "summary": "A DOCX author can place nested element text inside an XML comment after an unquoted attribute. Admission counts only shallow quick-xml events, while the permissive DOM parser consumes that attribute differently and recursively interprets the hidden tags. The normal .xml path can therefore exhaust the host stack despite max_xml_depth."
+      },
+      "remediationTests": [
+        "Package processing must safely refuse or correctly parse an unquoted attribute followed by a comment containing deeply nested tag text.",
+        "A DTD containing markup inside a quoted entity literal must be refused before raw DOM parsing; no external fetch should occur.",
+        "Run the same fixtures through admission and the actual consumer and assert matching structure/depth semantics."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-xml-parser-differential",
+        "originalCandidate": {
+          "message": "Focused investigator original evidence: even normal .xml bypasses depth using unquoted attribute accepted by TagPolicy::tolerant. `<r a=x><!-- x>` + many `<n>` + `--></r>`: quick_xml sees Start r with html attr a=x, opaque Comment, End r (depth1). Raw Parser::parse_element parse.rs571-585 treats first value char x as quote, skips to second x inside comment, consumes > and recursively interprets hidden <n> tags at660-662. admission.rs791-819 tolerant; strict validate rejects unquoted. Same differential with DTD: admission ignores DocType (Ok(_)819); raw parse_document539-543 skips <! only to first >, so internal entity literal with nested <n> can be parsed as elements without entity expansion. Source only; no execution."
+        }
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.chicago-number-label",
+      "title": "A large Chicago list or page number creates gigabytes of marker text",
+      "summary": "A DOCX author can set a Chicago numbering start near u32::MAX. Formatting repeats a symbol once per four counter values, allocating about 3GiB for one label and exhausting memory from a tiny input.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A small crafted document can reliably cause disproportionate allocation or stack use in a public parser path; impact is process availability, likelihood high when consumed. No remote deployment is assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source establishes the complete relevant branch/control/dataflow. Runtime execution and deployment-specific exposure were not tested."
+      },
+      "taxonomy": {
+        "category": "Unbounded numeric-to-string expansion",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5747,
+          "endLine": 5765,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 32026,
+          "endLine": 32035,
+          "role": "sink"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3021,
+          "endLine": 3030,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chicago-input",
+          "label": "Attacker numbering start",
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {\n    let fmt = first_named(dom, lvl, \"numFmt\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"decimal\");\n    let text = first_named(dom, lvl, \"lvlText\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"%1.\")\n        .to_string();\n    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "The level's format, template and unbounded numeric start become rendering metadata."
+        },
+        {
+          "id": "chicago-counter",
+          "label": "Start becomes live counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let start = self\n            .starts\n            .get(&(num_id.to_string(), resolved))\n            .copied()\n            .unwrap_or(lvl.start)\n            .max(1);\n        let cur = *self\n            .counters\n            .entry((num_id.to_string(), resolved))\n            .or_insert(start);\n        self.counters\n            .insert((num_id.to_string(), resolved), cur.saturating_add(1));\n        self.render(&abs, num_id, resolved, &lvl, cur)",
+          "explanation": "The initial marker uses the supplied start without a format-length cap."
+        },
+        {
+          "id": "chicago-format",
+          "label": "Counter formatted into marker",
+          "path": "src/convert/mod.rs",
+          "startLine": 5747,
+          "endLine": 5765,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            let fmt = self\n                .levels\n                .get(abs)\n                .and_then(|m| m.get(&i))\n                .map_or(lvl.fmt, |l| l.fmt);\n            // Word `Section 1.01`: decimalZero lvlText uses decimal for\n            // parent slots, not the parent's cardinalText (`Article One`).\n            // w:isLgl on this level forces every slot to Arabic (I.1 → 1.1).\n            let lgl = self\n                .lgl_override\n                .get(&(num_id.to_string(), ilvl))\n                .copied()\n                .unwrap_or_else(|| self.is_lgl.contains(&(abs.to_string(), ilvl)));\n            let fmt = if lgl || (lvl.fmt == NumFmt::DecimalZero && i != ilvl) {\n                NumFmt::Decimal\n            } else {\n                fmt\n            };\n            out = out.replace(&token, &format_num(fmt, val));",
+          "explanation": "The selected numbering format and counter reach format_num before output replacement."
+        },
+        {
+          "id": "chicago-sink",
+          "label": "Linear-in-number symbol repetition",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)\n}",
+          "explanation": "The numeric counter determines repeat count and therefore allocation size independently of input bytes."
+        },
+        {
+          "id": "chicago-page",
+          "label": "Section start uses same unbounded domain",
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    if let Some(num) = first_named(dom, sect, \"pgNumType\") {\n        if let Some(start) = attr_any(dom, num, \"start\").and_then(|s| s.parse::<u32>().ok()) {\n            // 0 is a start Word honours (3936a8fe56 numbers its title\n            // page 0 and its third page 2).\n            page.page_num_start = Some(start);\n        }\n        page.page_num_fmt = match attr_any(dom, num, \"fmt\").unwrap_or(\"\") {\n            \"lowerRoman\" => PageNumFmt::LowerRoman,\n            \"upperRoman\" => PageNumFmt::UpperRoman,\n            \"lowerLetter\" => PageNumFmt::LowerLetter,\n            \"upperLetter\" => PageNumFmt::UpperLetter,\n            \"decimalZero\" => PageNumFmt::DecimalZero,\n            \"cardinalText\" => PageNumFmt::CardinalText,\n            \"ordinal\" => PageNumFmt::Ordinal,\n            \"ordinalText\" => PageNumFmt::OrdinalText,\n            \"hex\" => PageNumFmt::Hex,\n            \"chicago\" => PageNumFmt::Chicago,",
+          "explanation": "Page start accepts an arbitrary u32 and Chicago format."
+        },
+        {
+          "id": "chicago-page-format",
+          "label": "Page labels share formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 32026,
+          "endLine": 32035,
+          "language": "rust",
+          "role": "sink",
+          "code": "            PageNumFmt::UpperLetter => format_num(NumFmt::UpperLetter, self.section_page),\n            PageNumFmt::DecimalZero => format_num(NumFmt::DecimalZero, self.section_page),\n            PageNumFmt::CardinalText => format_num(NumFmt::CardinalText, self.section_page),\n            PageNumFmt::Ordinal => format_num(NumFmt::Ordinal, self.section_page),\n            PageNumFmt::OrdinalText => format_num(NumFmt::OrdinalText, self.section_page),\n            PageNumFmt::Hex => format_num(NumFmt::Hex, self.section_page),\n            PageNumFmt::Chicago => format_num(NumFmt::Chicago, self.section_page),\n            PageNumFmt::IdeographDigital => format_num(NumFmt::IdeographDigital, self.section_page),\n            PageNumFmt::IdeographTraditional => {\n                format_num(NumFmt::IdeographTraditional, self.section_page)",
+          "explanation": "Chicago page labels route the section counter to format_num."
+        },
+        {
+          "id": "chicago-read",
+          "label": "Markdown labels share formatter",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3021,
+          "endLine": 3030,
+          "language": "rust",
+          "role": "sink",
+          "code": "            chars.next();\n            let k = k as usize - 1;\n            let Some((_, at)) = self.numbering.level(num_id, k) else {\n                continue;\n            };\n            let n = counters[k].unwrap_or(i64::from(at.start));\n            label.push_str(&crate::convert::list_number(\n                &at.format,\n                u32::try_from(n.max(0)).unwrap_or(u32::MAX),\n            ));",
+          "explanation": "DOCX-to-Markdown sends its counter to list_number, which uses the same Chicago expansion."
+        }
+      ],
+      "rootCause": {
+        "summary": "Numbering levels accept an uncapped u32 start and the counter renderer passes it to format_num. The Chicago formatter repeats its selected symbol n/4 times without a label-length budget. Page numbering and the DOCX-to-Markdown list view call the same formatter, so the same missing control affects distinct consumers.",
+        "evidenceRefs": [
+          "chicago-input",
+          "chicago-counter",
+          "chicago-format",
+          "chicago-sink",
+          "chicago-page",
+          "chicago-page-format",
+          "chicago-read"
+        ]
+      },
+      "remediation": "Apply a practical maximum formatted-label length before repeat with checked arithmetic and a typed refusal or documented bounded fallback; enforce it centrally for list, page and Markdown consumers.",
+      "validation": {
+        "counterEvidence": [
+          "Other numbering formats use bounded representations or wrapping; that does not constrain Chicago's String::repeat.",
+          "A process/WASM memory ceiling may terminate or reject the allocation but does not produce the expected typed input refusal."
+        ],
+        "evidenceRefs": [
+          "chicago-input",
+          "chicago-counter",
+          "chicago-format",
+          "chicago-sink",
+          "chicago-page",
+          "chicago-page-format",
+          "chicago-read"
+        ],
+        "limitations": [
+          "No application code or malicious fixture executed; platform/runtime behavior was assessed from source."
+        ],
+        "method": "independent offline static source trace",
+        "summary": "For n=4294967295, chicago_label computes i=4294967294 and repeats the three-byte double-dagger symbol 1073741824 times, requesting 3221225472 bytes before additional copies. A normal numbered paragraph with numFmt=chicago and lvlText=%1 reaches the list renderer. pgNumType/@start with fmt=chicago reaches the page-label branch, and Markdown list_marker delegates to list_number. ZIP/XML depth/byte bounds do not constrain the numeric expansion."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "numbering.xml w:start or section pgNumType start -> u32 counter -> format_num(Chicago,n) -> chicago_label String::repeat -> large allocation; Markdown list_marker also calls list_number",
+          "evidenceRefs": [
+            "chicago-input",
+            "chicago-counter",
+            "chicago-format",
+            "chicago-sink",
+            "chicago-page",
+            "chicago-page-format",
+            "chicago-read"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Memory availability, conversion failure or host-process termination."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Other numbering formats use bounded representations or wrapping; that does not constrain Chicago's String::repeat. A process/WASM memory ceiling may terminate or reject the allocation but does not produce the expected typed input refusal."
+        },
+        "reachability": {
+          "summary": "supplier of DOCX read/rendered by the corresponding public APIs must trigger the described input path.",
+          "attacker": "supplier of DOCX read/rendered by the corresponding public APIs",
+          "entrypoint": "src/convert/mod.rs",
+          "outcome": "Memory availability, conversion failure or host-process termination."
+        },
+        "summary": "A DOCX author can set a Chicago numbering start near u32::MAX. Formatting repeats a symbol once per four counter values, allocating about 3GiB for one label and exhausting memory from a tiny input."
+      },
+      "remediationTests": [
+        "Chicago values near u32::MAX must return a bounded result or typed resource-limit error without large allocation.",
+        "Exercise ordinary list labels, section page labels and DOCX-to-Markdown list markers through the same fixed helper."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0014-chicago-numbering-expansion",
+        "originalCandidate": {
+          "message": "Baseline original evidence: parse_num_level convert/mod.rs6750-6753 reads w:start into uncapped u32; next_marker5629-5641 -> render5751-5766 -> format_num5861 -> chicago_label6015-6018 returns MARKS[i%4].repeat(i/4+1). w:start=4294967295, numFmt=chicago, lvlText=%1 yields 1,073,741,824 copies of 3-byte mark (~3GiB). pgNumType/@start also reaches helper. Alpha/Roman helpers wrap counts; no runtime execution."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "relationship-xml-admission",
+        "label": "Relationship-selected XML admission",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Uncontrolled recursion",
+        "notes": "Parent validated header/footer route; comparison/style/note/chart sibling mapping remains under investigation.",
+        "candidateId": "discovery-0014-xml-extension-bypass"
+      },
+      {
+        "id": "resource-exhaustion-legacy-doc-piece-expansion",
+        "label": "Reading a small legacy DOC can expand repeated text pieces into billions of characters",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Unbounded decoded-text expansion",
+        "notes": "Physical stream bounds, checked offset arithmetic and CFB chain limits prevent out-of-bounds reads and chain cycles, but do not limit logical text expansion. For example, 65,535 pieces each reusing a 64KiB compressed-text range describe about 4.29 billion decoded characters with under 1MiB of piece records. Every selected byte remains in bounds; the vector grows far beyond the input size. CLI legacy conversion routes OLE directly to doc_to_docx before DOCX admission.",
+        "candidateId": "discovery-0014-doc-piece-amplification"
+      },
+      {
+        "id": "algorithmic-complexity-relationship-repair",
+        "label": "Opening duplicate relationship records performs quadratic repair work",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Algorithmic complexity / CPU exhaustion",
+        "notes": "Metadata parsing preserves duplicate IDs (`rels.items = items`), and identical duplicates are intentionally repaired rather than rejected. A large shallow .rels fits XML depth/tag/byte caps and uses only one ZIP entry; max_entries limits ZIP members, not relationship records. No record-count bound precedes the vector scan.",
+        "candidateId": "discovery-0014-relationship-dedup-quadratic"
+      },
+      {
+        "id": "resource-exhaustion-table-grid-metadata",
+        "label": "Rendering a tiny table can allocate billions of columns",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Unbounded allocation from numeric table metadata",
+        "notes": "A one-cell table with gridSpan=4294967295 requests approximately 16GiB for the f32 column vector on a 64-bit host. Larger accepted usize values can trigger capacity overflow. `stretch_stale_spans` skips rows already occupying at least the declared grid and does not clamp them. `with_layout` admission bounds archive/XML bytes and structure, not these numeric counts.",
+        "candidateId": "discovery-0014-table-grid-allocation"
+      },
+      {
+        "id": "uncontrolled-recursion-markdown-drawing-graph",
+        "label": "A cyclic Markdown drawing payload causes unbounded dependency recursion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Unvalidated dependency graph / uncontrolled recursion",
+        "notes": "A flat JSON graph containing one dependency with rel.part=0, reached by a top-level rel.part=0, passes index checks and immediately recurses on the same node forever. Serde's JSON nesting limit does not bound cycles represented as integer indices. `used` tracks output names, not visited dependency indices; late byte deduplication occurs only after recursive descent.",
+        "candidateId": "discovery-0014-drawing-dependency-cycle"
+      },
+      {
+        "id": "xml-policy-admission-dom-parser-differential",
+        "label": "Tolerated XML syntax can hide recursive elements from admission",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Parser interpretation conflict / XML depth bypass",
+        "notes": "For the unquoted/comment route, `<r a=x><!-- x>` followed by nested tags and a comment close is a shallow root/comment sequence to admission; raw parse_element treats the first x as a quote and the x inside the comment as its close. It then reaches the nested tags without recognizing the comment opener it already consumed. No later depth guard exists before recursive parse_element. A DTD internal entity literal containing nested tags similarly falls under ignored DocType events but the raw skip consumes only the first >. These are grammar interpretation issues, not external-entity fetching. Strict validate_xml uses quoted attributes and explicitly refuses DTDs, but rendering's package-admission path does not invoke that strict gate.",
+        "candidateId": "discovery-0014-xml-parser-differential"
+      },
+      {
+        "id": "resource-exhaustion-chicago-number-label",
+        "label": "A large Chicago list or page number creates gigabytes of marker text",
+        "disposition": "reported",
+        "riskArea": "Unbounded numeric-to-string expansion",
+        "notes": "For n=4294967295, chicago_label computes i=4294967294 and repeats the three-byte double-dagger symbol 1073741824 times, requesting 3221225472 bytes before additional copies. A normal numbered paragraph with numFmt=chicago and lvlText=%1 reaches the list renderer. pgNumType/@start with fmt=chicago reaches the page-label branch, and Markdown list_marker delegates to list_number. ZIP/XML depth/byte bounds do not constrain the numeric expansion.",
+        "candidateId": "discovery-0014-chicago-numbering-expansion",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "deferred-8a045ecef07e2678",
+        "reason": "Repository-wide source audit remains in progress; baseline, architecture and focused document-input workers active.",
+        "paths": [
+          "."
+        ]
+      },
+      {
+        "id": "discovery-0014-python-record-symlink",
+        "candidateId": "discovery-0014-python-record-symlink",
+        "reason": "Recovered returned candidate awaiting parent source validation after transient execution failure.",
+        "candidate": {
+          "message": "Baseline original evidence: Python CLI _record __main__.py407-411 uses predictable .{target.name}.{os.getpid()}.partial; Path.write_bytes follows existing symlink then os.replace. Local actor with shared-plan-directory write access can preplant symlink from predicted PID name to victim-writable file; edit/add --plan inline operation path overwrites referent with recorded JSON. Native staging uses UUID private dir/create_new instead. Shared-directory/PID prerequisite, not a document-only write."
+        }
+      }
+    ],
+    "openQuestions": []
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline static audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application execution, tests, network requests, or vulnerability-triggering inputs.",
+    "validationMode": "read-only offline source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-6a1888e197dc9fc5",
+        "label": "Document metadata scrubbing",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "riskArea": "privacy / metadata disclosure",
+        "notes": "Candidate requires parent validation of relationship-target handling."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0006-scrub-part-location",
+        "candidateId": "discovery-0006-scrub-part-location",
+        "reason": "Does a valid admitted DOCX with metadata at nonconventional relationship targets retain private author/custom-property data after scrub? Need trace admission, validation, OPC preservation and privacy guarantee.",
+        "candidate": {
+          "candidateId": "discovery-0006-scrub-part-location",
+          "title": "Scrubbing metadata uses conventional part paths rather than relationship targets",
+          "originalEvidence": [
+            {
+              "path": "src/scrub.rs",
+              "startLine": 38,
+              "endLine": 42,
+              "code": "const CORE: &str = \"docProps/core.xml\";\nconst APP: &str = \"docProps/app.xml\";\nconst CUSTOM: &str = \"docProps/custom.xml\";"
+            },
+            {
+              "path": "src/scrub.rs",
+              "startLine": 357,
+              "endLine": 387,
+              "description": "scrub_properties loads CORE/APP and removes CUSTOM only by hard-coded names; no package relationship resolution."
+            },
+            {
+              "path": "src/scrub.rs",
+              "startLine": 285,
+              "endLine": 293,
+              "description": "alias_authors iterates word_parts, restricted to word/*.xml."
+            }
+          ],
+          "question": "Does a valid admitted DOCX with metadata at nonconventional relationship targets retain private author/custom-property data after scrub? Need trace admission, validation, OPC preservation and privacy guarantee."
+        }
+      },
+      {
+        "id": "discovery-0006-wmf-record-bounds",
+        "candidateId": "discovery-0006-wmf-record-bounds",
+        "reason": "Confirm public DOCX conversion reachability, actual record grammar, sibling sinks, and effective memory budgets.",
+        "candidate": {
+          "candidateId": "discovery-0006-wmf-record-bounds",
+          "title": "WMF text counts read across record boundaries and amplify allocations",
+          "source": "parser_investigator",
+          "originalEvidence": {
+            "path": "src/convert/metafile.rs",
+            "declaredRecordCheck": "477-492 validates record extent against whole data",
+            "sink": "602-610 META_EXTTEXTOUT uses data.get(at..at+n) against whole metafile rather than record end",
+            "trigger": "14-byte size=7-word 0x0A32 record with count=65535; 10,000 records plus 65535-byte nonblank tail in about 205KB WMF",
+            "impact": "At least 655MB text copied, potentially up to 3x ANSI expansion; caller trace pending"
+          },
+          "question": "Confirm public DOCX conversion reachability, actual record grammar, sibling sinks, and effective memory budgets."
+        }
+      },
+      {
+        "id": "discovery-0006-altchunk-amplification",
+        "candidateId": "discovery-0006-altchunk-amplification",
+        "reason": "Validate public conversion path, HTML transformation, amplification size and any effective cumulative budget or reference cap.",
+        "candidate": {
+          "candidateId": "discovery-0006-altchunk-amplification",
+          "title": "Repeated altChunk references expand admitted input without cumulative limits",
+          "source": "parser_investigator",
+          "originalEvidence": {
+            "entrypoint": "src/convert/mod.rs:773-804 admits original DOCX before expanding each altChunk and constructing DOM",
+            "expansion": "src/convert/altchunk.rs:17-43 resolves same relationship on each reference, copies HTML-to-WML output and appends without cumulative budget or re-admission",
+            "trigger": "Many small same-rId w:altChunk references to a modest shared HTML part yield reference-count times chunk-size expanded XML"
+          },
+          "question": "Validate public conversion path, HTML transformation, amplification size and any effective cumulative budget or reference cap."
+        }
+      },
+      {
+        "candidateId": "discovery-0006-altchunk-colspan",
+        "reason": "Validate parsing grammar, controls, public conversion reachability and independence from cumulative expansion candidate.",
+        "candidate": {
+          "candidateId": "discovery-0006-altchunk-colspan",
+          "title": "HTML colspan controls unbounded generated table columns",
+          "source": "parser_investigator",
+          "originalEvidence": {
+            "input": "src/convert/altchunk.rs:563-571 parses td colspan to unrestricted usize",
+            "sink": "src/convert/altchunk.rs:461-485 sums spans and appends one w:gridCol per column",
+            "trigger": "<table><tr><td colspan=\"1000000000\">x</td></tr></table>",
+            "impact": "Billion iterations and tens of GB generated WML from tiny HTML part, admitted before expansion"
+          },
+          "question": "Validate parsing grammar, controls, public conversion reachability and independence from cumulative expansion candidate."
+        },
+        "id": "discovery-0006-altchunk-colspan"
+      }
+    ]
+  }
+}

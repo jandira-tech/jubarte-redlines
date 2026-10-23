@@ -1,0 +1,1263 @@
+@coderabbitai plan
+Please enrich, fix and assess the plan below.
+
+## Findings tackled
+csf_9e40f23e742aa43493a0fb92 | Rendering a small DOCX table can exhaust host memory | medium
+csf_8dcaf50784fd95a7f0c2ec28 | Processing renamed auxiliary XML bypasses XML depth limits | medium
+csf_0e2b085a251b34412cd71a4c | Reading or converting nested legacy DOC fields can monopolize the processing thread | medium
+csf_64b247931cd1f053217fde7a | Rendering an HTML chunk can allocate gigabytes from a single colspan value | medium
+csf_dc0d34a6ea9a964733efe547 | Aliased legacy DOC pieces expand small physical text into enormous logical stories | medium
+csf_4de0d1e5f809171f3b8323d9 | Repeated HTML chunk references bypass conversion memory budgets | medium
+csf_b45e3ea11925b4220c435786 | Python CLI output/plan and npm direct-output symlinks can overwrite unrelated files | low
+csf_cac980ab6041d4ec91b39fd1 | Repeated relationship IDs trigger quadratic repair work | medium
+csf_6a40bc41bdf34a737ceac40d | Entity decoding repeatedly scans the input suffix | medium
+csf_d7cf4e4a5f04c299b9dd8730 | Mixed edit plans repeat redacted text in another operation's report | medium
+csf_c2ab52b1c8614c7fd5356cf8 | Python and Node plan recording can overwrite unrelated files through staging symlinks | low
+csf_eb7afb96f6f0e2787081e030 | Redaction postcondition misses confidential phrases split across DrawingML runs | medium
+csf_6054d1763a69fc51bf4be2b2 | Mixed edit plans repeat redacted text in another operation's report | medium
+csf_5a86b3f5aa767e4e64bd9e71 | Rendering a small DOCX table can exhaust host memory | medium
+csf_b0aa536248aea0f44dd30d47 | Reading or converting nested legacy DOC fields can monopolize the processing thread | medium
+csf_91956fe2d99a3a2871c06916 | Aliased legacy DOC pieces expand small physical text into enormous logical stories | medium
+csf_f1c7e6e8877805d7436a18fa | Python and Node plan recording can overwrite unrelated files through staging symlinks | low
+csf_f756bbe5509c42bdcaa64921 | Processing renamed auxiliary XML bypasses XML depth limits | medium
+csf_88d031991ca3e20e4aae2f24 | Reading or converting nested legacy DOC fields can monopolize the processing thread | medium
+csf_32625277093e7f286a267e2b | Rendering an HTML chunk can allocate gigabytes from a single colspan value | medium
+csf_eb94605aebd8f08907c46e8c | Entity decoding repeatedly scans the input suffix | medium
+
+Full texts of the findings above (summary and remediation for every findingId) are posted as follow-up comments on this issue.
+The full TDD red/green plan is posted as a follow-up comment on this issue.
+
+## Patch
+```diff
+diff --git a/jubarte-python/python/jubarte_redlines/__main__.py b/jubarte-python/python/jubarte_redlines/__main__.py
+index 686d0f0..48a325c 100644
+--- a/jubarte-python/python/jubarte_redlines/__main__.py
++++ b/jubarte-python/python/jubarte_redlines/__main__.py
+@@ -32,6 +32,7 @@ from __future__ import annotations
+ import argparse
+ import json
+ import os
++import secrets
+ import sys
+ from dataclasses import asdict
+ from collections.abc import Sequence
+@@ -123,11 +124,32 @@ def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...]
+     _ensure_writable(side, force)
+ 
+ 
++def _staged_write(target: Path, data: bytes) -> None:
++    """Writes ``data`` through exclusive unpredictable staging and an atomic
++    rename, never truncating the final pathname: a symlink planted on an
++    output or plan name is replaced, not followed, so a local writer on the
++    directory cannot redirect the bytes to a file this process may write.
++    """
++    partial = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(8)}.partial")
++    try:
++        fd = os.open(
++            partial,
++            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
++            0o600,
++        )
++        with os.fdopen(fd, "wb") as f:
++            f.write(data)
++        os.replace(partial, target)
++    except OSError:
++        partial.unlink(missing_ok=True)
++        raise
++
++
+ def _write(path: Path, data: bytes | str) -> int:
+     """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written."""
+     raw = data.encode("utf-8") if isinstance(data, str) else data
+     try:
+-        path.write_bytes(raw)
++        _staged_write(path, raw)
+     except OSError as exc:
+         raise CliError(f"writing {path}: {_os(exc)}") from exc
+     return len(raw)
+@@ -402,15 +424,13 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
+             print(f"note: {note}")
+     if not dry_run:
+         # Through a symbolic link to the file it names, written yet or not;
+-        # via a hidden partial file named for this process, removed if the
+-        # write fails; bytes as they are, so no platform newline translation.
++        # via exclusive unpredictable staging (the native recorder's design),
++        # removed if the write fails; bytes as they are, so no platform
++        # newline translation.
+         target = Path(os.path.realpath(plan))
+-        partial = target.with_name(f".{target.name}.{os.getpid()}.partial")
+         try:
+-            partial.write_bytes(recorded["json"].encode("utf-8"))
+-            os.replace(partial, target)
++            _staged_write(target, recorded["json"].encode("utf-8"))
+         except OSError as exc:
+-            partial.unlink(missing_ok=True)
+             raise CliError(f"writing {plan}: {exc}") from exc
+     if not args.quiet:
+         print(recorded["summary"])
+diff --git a/jubarte-python/tests/test_cli.py b/jubarte-python/tests/test_cli.py
+index 62469a0..346a4bb 100644
+--- a/jubarte-python/tests/test_cli.py
++++ b/jubarte-python/tests/test_cli.py
+@@ -647,6 +647,26 @@ def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_pat
+     assert b"\r\n" not in (tmp_path / "plan.json").read_bytes()
+ 
+ 
++def test_an_output_name_planted_as_a_symlink_is_replaced_never_followed(tmp_path: Path) -> None:
++    # Publication goes through exclusive staging and an atomic rename, so a
++    # symlink planted on an output name never redirects the bytes: the link
++    # is replaced and its referent keeps its contents.
++    from jubarte_redlines.__main__ import _staged_write
++
++    victim = tmp_path / "victim.txt"
++    victim.write_text("kept")
++    out = tmp_path / "out.docx"
++    try:
++        out.symlink_to(victim)
++    except OSError:
++        pytest.skip("this account cannot create symlinks")
++    _staged_write(out, b"payload")
++    assert victim.read_text() == "kept"
++    assert not out.is_symlink()
++    assert out.read_bytes() == b"payload"
++    assert not list(tmp_path.glob(".*.partial"))
++
++
+ def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
+     # pi review av2 F16: `read FILE --track-changes` with no value is a usage error.
+     with pytest.raises(SystemExit) as exit:
+diff --git a/jubarte-wasm/cli/bin/jubarte-redlines.mjs b/jubarte-wasm/cli/bin/jubarte-redlines.mjs
+index 77f5325..fe8336f 100644
+--- a/jubarte-wasm/cli/bin/jubarte-redlines.mjs
++++ b/jubarte-wasm/cli/bin/jubarte-redlines.mjs
+@@ -13,6 +13,7 @@
+ // 3 edit plan refused (its per-operation report is on stdout; nothing was
+ // written).
+ 
++import crypto from "node:crypto";
+ import fs from "node:fs";
+ import { createRequire } from "node:module";
+ import path from "node:path";
+@@ -103,9 +104,37 @@ function markdownText(file, bytes) {
+   }
+ }
+ 
++/** Writes `data` through exclusive unpredictable staging and an atomic
++ * rename, never truncating the final pathname: a symlink planted on an
++ * output or plan name is replaced, not followed, so a local writer on the
++ * directory cannot redirect the bytes to a file this process may write. */
++function stagedWrite(file, data) {
++  const partial = path.join(
++    path.dirname(file),
++    `.${path.basename(file)}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.partial`
++  );
++  const fd = fs.openSync(partial, "wx");
++  try {
++    fs.writeFileSync(fd, data);
++    fs.closeSync(fd);
++  } catch (e) {
++    try {
++      fs.closeSync(fd);
++    } catch {}
++    fs.rmSync(partial, { force: true });
++    throw e;
++  }
++  try {
++    fs.renameSync(partial, file);
++  } catch (e) {
++    fs.rmSync(partial, { force: true });
++    throw e;
++  }
++}
++
+ function write(file, data) {
+   try {
+-    fs.writeFileSync(file, data);
++    stagedWrite(file, data);
+   } catch (e) {
+     throw new CliError(`writing ${file}: ${osError(e)}`);
+   }
+@@ -406,8 +430,9 @@ function recordPlan(verb, file, docx, o) {
+   if (!preview.ok) return printRefusal(preview);
+   if (!o.quiet) for (const note of recorded.notes) console.log(`note: ${note}`);
+   if (!o.dry_run) {
+-    // Through a symbolic link to the file it names, written yet or not; via a hidden partial
+-    // file named for this process, removed if the write fails.
++    // Through a symbolic link to the file it names, written yet or not; via
++    // exclusive unpredictable staging (the native recorder's design),
++    // removed if the write fails.
+     let target = o.plan;
+     try {
+       target = fs.realpathSync(o.plan);
+@@ -417,12 +442,9 @@ function recordPlan(verb, file, docx, o) {
+         target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));
+       } catch {}
+     }
+-    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);
+     try {
+-      fs.writeFileSync(partial, recorded.json);
+-      fs.renameSync(partial, target);
++      stagedWrite(target, recorded.json);
+     } catch (e) {
+-      fs.rmSync(partial, { force: true });
+       throw new CliError(`writing ${o.plan}: ${osError(e)}`);
+     }
+   }
+diff --git a/jubarte-wasm/cli/test/cli.test.mjs b/jubarte-wasm/cli/test/cli.test.mjs
+index ee06baf..19be6f6 100644
+--- a/jubarte-wasm/cli/test/cli.test.mjs
++++ b/jubarte-wasm/cli/test/cli.test.mjs
+@@ -1488,3 +1488,22 @@ test("edit -p rN --accept/--reject prints the resolved changes, as the binary do
+   assert.equal(pair.code, 0, pair.err);
+   assert.equal(pair.out, 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n');
+ });
++
++// An output name planted as a symlink is replaced, never followed:
++// publication stages exclusively and renames atomically, so a local writer
++// on the directory cannot redirect the bytes to the symlink's referent.
++test("an output name planted as a symlink is replaced, never followed", () => {
++  const victim = path.join(tmp, "planted-victim.txt");
++  fs.writeFileSync(victim, "kept");
++  const planted = path.join(tmp, "planted-output.docx");
++  fs.symlinkSync(victim, planted);
++  const plantedRun = run("compare", tracked, untracked, "-o", "planted-output.docx", "--force");
++  assert.equal(plantedRun.code, 0, plantedRun.err);
++  assert.equal(fs.readFileSync(victim, "utf8"), "kept");
++  assert.ok(!fs.lstatSync(planted).isSymbolicLink());
++  assert.ok(fs.statSync(planted).size > 0);
++  assert.deepEqual(
++    fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")),
++    []
++  );
++});
+diff --git a/src/convert/altchunk.rs b/src/convert/altchunk.rs
+index 7def5f9..bdb3c58 100644
+--- a/src/convert/altchunk.rs
++++ b/src/convert/altchunk.rs
+@@ -10,11 +10,29 @@
+ use std::collections::HashMap;
+ use std::fmt::Write as _;
+ 
++/// Columns one HTML `colspan` may claim, and the widest table the WML
++/// generator emits: `end_table` writes one `w:gridCol` per claimed column,
++/// so a document-supplied numeral is a generated-output budget, not a
++/// trusted count (Word's own tables stop at 63 columns).
++const MAX_COLSPAN: usize = 10_000;
++const MAX_TABLE_COLUMNS: usize = 10_000;
++
++/// Cumulative WML every `w:altChunk` expansion of one document may
++/// generate. Admission bounds each stored part once; it cannot bound a
++/// small chunk referenced many times, whose expanded copies multiply far
++/// past the package's own bytes. Past the budget the remaining chunks
++/// expand to nothing, as a missing chunk already does.
++pub(crate) const MAX_EXPANDED_WML_BYTES: usize = 64 * 1024 * 1024;
++
+ /// `xml` with every `w:altChunk` replaced by its chunk's paragraphs.
+ /// `load` returns a chunk's bytes by relationship id.
+ pub(crate) fn expand(xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> String {
+     let mut out = String::with_capacity(xml.len());
+     let mut rest = xml;
++    // The same relationship converts to the same WML: convert once, charge
++    // every copy to the budget.
++    let mut converted: HashMap<String, String> = HashMap::new();
++    let mut charged = 0usize;
+     while let Some(at) = rest.find("<w:altChunk") {
+         out.push_str(&rest[..at]);
+         let tail = &rest[at..];
+@@ -31,12 +49,23 @@ pub(crate) fn expand(xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> Strin
+             tail.find("</w:altChunk>")
+                 .map_or(open_end + 1, |i| i + "</w:altChunk>".len())
+         };
+-        let wml = attr(open, "id")
+-            .and_then(|rid| load(&rid))
+-            .and_then(|bytes| chunk_html(&bytes))
+-            .map(|html| html_to_wml(&html))
+-            .unwrap_or_default();
+-        out.push_str(&wml);
++        if let Some(rid) = attr(open, "id") {
++            let wml = match converted.get(&rid) {
++                Some(wml) => wml,
++                None => {
++                    let wml = load(&rid)
++                        .and_then(|bytes| chunk_html(&bytes))
++                        .map(|html| html_to_wml(&html))
++                        .unwrap_or_default();
++                    converted.insert(rid.clone(), wml);
++                    converted.get(&rid).expect("just inserted")
++                }
++            };
++            charged = charged.saturating_add(wml.len());
++            if charged <= MAX_EXPANDED_WML_BYTES {
++                out.push_str(wml);
++            }
++        }
+         rest = &tail[end..];
+     }
+     out.push_str(rest);
+@@ -469,10 +498,10 @@ impl Builder {
+         let cols = table
+             .rows
+             .iter()
+-            .map(|r| r.iter().map(|c| c.span).sum::<usize>())
++            .map(|r| r.iter().fold(0usize, |acc, c| acc.saturating_add(c.span)))
+             .max()
+             .unwrap_or(1)
+-            .max(1);
++            .clamp(1, MAX_TABLE_COLUMNS);
+         let col_w = 9360 / cols;
+         let mut s = String::from("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>");
+         if table.border {
+@@ -563,7 +592,7 @@ impl Builder {
+                     attr(open, "colspan")
+                         .and_then(|s| s.trim().parse::<usize>().ok())
+                         .unwrap_or(1)
+-                        .max(1),
++                        .clamp(1, MAX_COLSPAN),
+                 );
+                 let mut fmt = self.fmt();
+                 if tag == "th" {
+@@ -730,7 +759,15 @@ pub(crate) fn decode_entities(s: &str) -> String {
+     while let Some(a) = rest.find('&') {
+         out.push_str(&rest[..a]);
+         let tail = &rest[a..];
+-        let semi = tail.find(';').filter(|&e| e <= 10);
++        // The entity window bounds the delimiter search: a suffix of bare
++        // ampersands must not be rescanned to its end for every one of them.
++        // The window is min-bounded so an entity at the very end of the
++        // input (a short tail) still decodes exactly as before.
++        let bytes = tail.as_bytes();
++        let semi = bytes[1..bytes.len().min(11)]
++            .iter()
++            .position(|&b| b == b';')
++            .map(|at| at + 1);
+         let decoded = semi.and_then(|e| {
+             let ent = &tail[1..e];
+             let ch = match ent {
+@@ -1054,6 +1089,60 @@ mod tests {
+                 assert!(!wml.contains("<w:tblBorders>"));
+             }
+         }
++
++        #[test]
++        fn author_sized_colspan_clamps_instead_of_generating_gigabytes() {
++            // One document-supplied colspan wrote a gridCol per claimed
++            // column; a billion columns is generated output, not a table.
++            for span in ["1000000000", &usize::MAX.to_string()] {
++                let wml = html_to_wml(&format!(
++                    "<table border='0'><tr><td colspan='{span}'>A</td></tr></table>"
++                ));
++                assert_eq!(wml.matches("<w:gridCol ").count(), MAX_COLSPAN, "{span}");
++                assert!(
++                    wml.contains(&format!("<w:gridSpan w:val=\"{MAX_COLSPAN}\"/>")),
++                    "{span}: {wml}"
++                );
++            }
++        }
++
++        #[test]
++        fn repeated_chunk_references_are_bounded_by_the_expansion_budget() {
++            // Admission bounds the stored chunk once, not its multiplicative
++            // reuse: 40,000 references to one chunk convert once and stop
++            // expanding past the budget, and the content after them stays.
++            let chunk = "<html><body><p>Payload paragraph that converts to a few hundred bytes of WML per copy, repeated far past the expansion budget.</p></body></html>"
++                .repeat(64);
++            let refs: String = "<w:altChunk r:id='rId1'/>".repeat(40_000);
++            let xml = format!(
++                "<w:document xmlns:w='urn:wml'><w:body>{refs}                 <w:p><w:r><w:t>tail</w:t></w:r></w:p></w:body></w:document>"
++            );
++            let expanded = expand(&xml, |rid| {
++                (rid == "rId1").then(|| chunk.as_bytes().to_vec())
++            });
++            assert!(
++                expanded.len() < MAX_EXPANDED_WML_BYTES + chunk.len() + xml.len(),
++                "{}",
++                expanded.len()
++            );
++            assert!(expanded.contains("tail"));
++        }
++
++        #[test]
++        fn entity_search_is_bounded_to_its_window() {
++            // The ';' of an entity is sought only within the entity window:
++            // a suffix of bare ampersands, with and without a far-off
++            // semicolon, decodes linearly and stays literal instead of
++            // rescanning the whole suffix per '&'.
++            let bare = "&".repeat(200_000);
++            assert_eq!(decode_entities(&bare), bare);
++            let far = format!("{bare};");
++            assert_eq!(decode_entities(&far), far);
++            // The window is min-bounded: an entity at the very end of the
++            // input still decodes exactly as the unbounded search did.
++            assert_eq!(decode_entities("a &amp;"), "a &");
++            assert_eq!(decode_entities("&#X41;"), "A");
++        }
+     }
+ }
+ 
+diff --git a/src/convert/mod.rs b/src/convert/mod.rs
+index d900e05..7f812fa 100644
+--- a/src/convert/mod.rs
++++ b/src/convert/mod.rs
+@@ -13213,7 +13213,7 @@ fn table_block(
+                 p => p,
+             };
+             cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
+-            grid_at += span;
++            grid_at = grid_at.saturating_add(span);
+         }
+         for cell in wrapped_children(dom, row, "tc") {
+             row_has_cell_del |= cell_is_deleted(dom, cell);
+@@ -13464,7 +13464,7 @@ fn table_block(
+                 &nested_at,
+             );
+             let (colspan, vmerge) = cell_span(dom, cell);
+-            let last_col = grid_at + colspan.max(1) >= cols.len();
++            let last_col = grid_at.saturating_add(colspan.max(1)) >= cols.len();
+             let at = |b: TblBorders| {
+                 row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)
+             };
+@@ -13483,7 +13483,7 @@ fn table_block(
+                 }
+                 None => row_borders.map(at),
+             };
+-            grid_at += colspan.max(1);
++            grid_at = grid_at.saturating_add(colspan.max(1));
+             let (pad_l, pad_r) = cell_pad_h(dom, cell, tbl_pad_l, tbl_pad_r);
+             let (pad_t, pad_b) = cell_pad_tb(dom, cell, tbl_pad_t, tbl_pad_b);
+             // tblCellSpacing opens a gap above and below every cell
+@@ -13601,7 +13601,13 @@ fn table_block(
+     let mut occupancy = 0usize;
+     let grid_len = cols.len();
+     for row in &raw_rows {
+-        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());
++        // Checked accounting: the span caps bound each term, the saturating
++        // sum bounds the row, and the grid cap bounds every vector sized
++        // from the result.
++        let used: usize = row
++            .iter()
++            .fold(0usize, |acc, c| acc.saturating_add(c.colspan));
++        occupancy = occupancy.max(used.min(MAX_GRID_COLUMNS));
+     }
+     if cols.len() < occupancy {
+         if cols.len() == 1 && occupancy > 1 {
+@@ -14172,7 +14178,9 @@ fn cell_pad_tb(dom: &Dom, cell: NodeId, table_t: f32, table_b: f32) -> (f32, f32
+ fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
+     const STALE_SPAN_SLACK_PT: f32 = 20.0;
+     for row in rows.iter_mut() {
+-        let used: usize = row.iter().map(|c| c.colspan.max(1)).sum();
++        let used: usize = row
++            .iter()
++            .fold(0usize, |acc, c| acc.saturating_add(c.colspan.max(1)));
+         if used >= cols.len() {
+             continue;
+         }
+@@ -14196,11 +14204,22 @@ fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
+                     spare -= extra;
+                 }
+             }
+-            col += cell.colspan.max(1);
++            col = col
++                .saturating_add(cell.colspan.max(1))
++                .min(MAX_GRID_COLUMNS);
+         }
+     }
+ }
+ 
++/// Grid columns one `w:gridSpan`/`w:gridBefore`/`w:gridAfter` value may
++/// claim, and the widest grid a table may occupy. Word's own tables stop at
++/// 63 columns; the caps exist because these counts size column, preference
++/// and merge vectors directly, and an author-controlled numeral must not
++/// become a multi-gigabyte allocation. A value past the cap renders as the
++/// cap.
++const MAX_CELL_SPAN: usize = 10_000;
++const MAX_GRID_COLUMNS: usize = 100_000;
++
+ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
+     let Some(pr) = first_named(dom, cell, "tcPr") else {
+         return (1, VMerge::None);
+@@ -14212,7 +14231,7 @@ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
+         .and_then(|n| attr_any(dom, n, "val"))
+         .and_then(|s| s.parse().ok())
+         .unwrap_or(1)
+-        .max(1);
++        .clamp(1, MAX_CELL_SPAN);
+     let vmerge = match direct_named(dom, pr, "vMerge") {
+         None => VMerge::None,
+         Some(n) => match dom.attribute(n, &W::val()) {
+@@ -14270,10 +14289,10 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
+         // A gridBefore/gridAfter placeholder is no cell: its grid width is
+         // the row's own math, not a preference for the column.
+         if cell.grid_skip {
+-            col += span;
++            col = col.saturating_add(span).min(MAX_GRID_COLUMNS);
+             continue;
+         }
+-        let covered: f32 = (col..col + span)
++        let covered: f32 = (col..col.saturating_add(span))
+             .map(|i| grid.get(i).copied().unwrap_or(0.0))
+             .sum();
+         let share = |i: usize| {
+@@ -14293,7 +14312,7 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
+                 PrefWidth::Auto => {}
+             }
+         }
+-        col += span;
++        col = col.saturating_add(span).min(MAX_GRID_COLUMNS);
+     }
+     for row in raw_rows.iter().skip(1).filter(|_| fixed) {
+         let mut col = 0usize;
+@@ -14314,7 +14333,7 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
+                     _ => {}
+                 }
+             }
+-            col += span;
++            col = col.saturating_add(span).min(MAX_GRID_COLUMNS);
+         }
+     }
+     pref
+@@ -14342,7 +14361,8 @@ fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth
+     let span = direct_named(dom, pr, &format!("grid{side}"))
+         .and_then(|n| attr_any(dom, n, "val"))
+         .and_then(|v| v.parse::<usize>().ok())
+-        .filter(|n| *n > 0)?;
++        .filter(|n| *n > 0)
++        .map(|n| n.min(MAX_CELL_SPAN))?;
+     let pref = direct_named(dom, pr, &format!("w{side}"))
+         .filter(|n| attr_any(dom, *n, "type").is_none_or(|t| t == "dxa"))
+         .and_then(|n| attr_any(dom, n, "w"))
+@@ -14600,14 +14620,14 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
+     for (ri, row) in raw_rows.into_iter().enumerate() {
+         let mut col = 0usize;
+         for raw in row {
+-            let span = raw.colspan.max(1);
++            let span = raw.colspan.max(1).min(MAX_CELL_SPAN);
+             if raw.vmerge == VMerge::Continue {
+                 if let Some(&(_, or, oi)) = open.get(col).and_then(|s| s.as_ref())
+                     && let Some(origin) = origins.get_mut(or).and_then(|r| r.get_mut(oi))
+                 {
+                     origin.rowspan += 1;
+                 }
+-                col += span;
++                col = col.saturating_add(span).min(MAX_GRID_COLUMNS);
+                 continue;
+             }
+             let idx = origins[ri].len();
+@@ -14634,14 +14654,18 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
+                 borders: raw.borders,
+                 style_fill: false,
+             });
+-            if open.len() < col + span {
+-                open.resize(col + span, None);
++            // The merge vector grows only to the grid cap: an
++            // author-sized span cannot size it, and columns past the cap do
++            // not exist.
++            let end = col.saturating_add(span).min(MAX_GRID_COLUMNS);
++            if open.len() < end {
++                open.resize(end, None);
+             }
+             let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));
+-            for slot in open.iter_mut().skip(col).take(span) {
++            for slot in open.iter_mut().skip(col).take(end.saturating_sub(col)) {
+                 *slot = mark;
+             }
+-            col += span;
++            col = end;
+         }
+     }
+     origins
+@@ -65981,3 +66005,65 @@ mod chrome_collector_source_boundary_tests {
+         }
+     }
+ }
++
++#[cfg(test)]
++#[cfg_attr(all(coverage_nightly, test), coverage(off))]
++mod table_grid_budget_tests {
++    use super::*;
++
++    fn span_of(grid_span: &str) -> usize {
++        let mut dom = Dom::new();
++        let document = dom.parse_xdocument(&format!(
++            "<w:tc xmlns:w='{}'><w:tcPr><w:gridSpan w:val='{grid_span}'/></w:tcPr></w:tc>",
++            W::URI
++        ));
++        let root = dom.root(document).expect("cell");
++        cell_span(&dom, root).0
++    }
++
++    #[test]
++    fn author_sized_spans_cannot_size_the_grid_vectors() {
++        // Word's own tables stop at 63 columns; spans past the cap clamp
++        // instead of sizing column, preference and merge vectors by the
++        // numeral the document carries.
++        assert_eq!(span_of("1"), 1);
++        assert_eq!(span_of("63"), 63);
++        assert_eq!(span_of("4294967295"), MAX_CELL_SPAN);
++        assert_eq!(span_of(&usize::MAX.to_string()), MAX_CELL_SPAN);
++    }
++
++    #[test]
++    fn row_grid_skips_clamp_to_the_span_cap() {
++        let mut dom = Dom::new();
++        let document = dom.parse_xdocument(&format!(
++            "<w:tr xmlns:w='{}'><w:trPr><w:gridBefore w:val='2000000000'/></w:trPr></w:tr>",
++            W::URI
++        ));
++        let root = dom.root(document).expect("row");
++        let (span, _) = row_grid_skip(&dom, root, "Before").expect("gridBefore");
++        assert_eq!(span, MAX_CELL_SPAN);
++    }
++
++    #[test]
++    fn merge_resolution_is_bounded_by_the_grid_cap_not_the_span() {
++        // One author-sized skip span used to size the `open` merge vector
++        // directly: usize::MAX slots of Option<(usize, usize, usize)>.
++        let rows = vec![vec![grid_skip_cell(usize::MAX, PrefWidth::Auto, 0.0, 0.0)]];
++        let merged = resolve_table_merges(rows);
++        assert_eq!(merged[0][0].colspan, MAX_CELL_SPAN);
++    }
++
++    #[test]
++    fn stale_span_accounting_saturates_instead_of_overflowing() {
++        // Two spans whose sum overflows usize account as "covers the grid"
++        // (no stretch), not a debug overflow panic in the sum.
++        let mut rows = vec![vec![
++            grid_skip_cell(usize::MAX / 2 + 1, PrefWidth::Auto, 0.0, 0.0),
++            grid_skip_cell(usize::MAX / 2 + 1, PrefWidth::Auto, 0.0, 0.0),
++        ]];
++        let cols = vec![80.0_f32; 2];
++        stretch_stale_spans(&mut rows, &cols);
++        assert_eq!(rows[0][0].colspan, usize::MAX / 2 + 1);
++        assert_eq!(rows[0][1].colspan, usize::MAX / 2 + 1);
++    }
++}
+diff --git a/src/edit.rs b/src/edit.rs
+index 5df72f1..3355676 100644
+--- a/src/edit.rs
++++ b/src/edit.rs
+@@ -2678,6 +2678,7 @@ impl<'p> Transaction<'p> {
+                 }
+             }
+         }
++        self.scrub_redacted_text_from_outcomes();
+         if let Some(mut e) = first_failure {
+             e.outcomes = self.outcomes.clone();
+             return Err(e);
+@@ -2686,6 +2687,55 @@ impl<'p> Transaction<'p> {
+         Ok(())
+     }
+ 
++    /// Redaction-aware report sanitization: no outcome the report or a
++    /// refusal publishes may carry a redaction's text, including another
++    /// operation's context window, near-miss passage or read-as text over
++    /// the same source. A field that overlaps a needle — containing it, or
++    /// a prefix or suffix of it a context window could have clipped, read
++    /// with whitespace collapsed as a near-miss passage reads — is omitted;
++    /// the redaction's own outcome was already rebuilt from safe fields in
++    /// [`Self::resolve_one`]. `near` (the report-only `NearMatches`
++    /// diagnostic) is omitted whole when any of its occurrences' text or
++    /// shown form overlaps a needle.
++    fn scrub_redacted_text_from_outcomes(&mut self) {
++        let needles: Vec<String> = self
++            .plan
++            .operations
++            .iter()
++            .filter_map(|op| match &op.kind {
++                OperationKind::Redact { find, .. } => Some(collapse_ws(find)),
++                _ => None,
++            })
++            .filter(|find| !find.is_empty())
++            .collect();
++        if needles.is_empty() {
++            return;
++        }
++        let leaks = |text: &str| needles.iter().any(|needle| overlaps_clipped(text, needle));
++        for outcome in &mut self.outcomes {
++            for field in [
++                &mut outcome.context,
++                &mut outcome.anchor_read_as,
++                &mut outcome.message,
++            ] {
++                if field.as_deref().is_some_and(leaks) {
++                    *field = None;
++                }
++            }
++            if outcome
++                .near
++                .as_ref()
++                .is_some_and(|near| {
++                    near.occurrences
++                        .iter()
++                        .any(|occ| leaks(&occ.text) || leaks(&occ.shown))
++                })
++            {
++                outcome.near = None;
++            }
++        }
++    }
++
+     fn resolve_one(
+         &self,
+         id: &str,
+@@ -5700,6 +5739,30 @@ fn check_comment(text: &str) -> Result<(), String> {
+     text.split('\n').try_for_each(check_text)
+ }
+ 
++/// Whitespace collapsed to single spaces: the form in which a near-miss
++/// passage or context window reads back.
++fn collapse_ws(text: &str) -> String {
++    text.split_whitespace().collect::<Vec<_>>().join(" ")
++}
++
++/// Whether `field` overlaps the redaction needle `needle`: contains it, or
++/// contains a prefix or suffix of it that a context window could have
++/// clipped (at least 4 characters, so an incidental two-letter fragment is
++/// not treated as a disclosure).
++fn overlaps_clipped(field: &str, needle: &str) -> bool {
++    let field = collapse_ws(field);
++    let chars: Vec<char> = needle.chars().collect();
++    if field.contains(needle) {
++        return true;
++    }
++    let keep = chars.len().min(4);
++    (keep..chars.len()).any(|k| {
++        let prefix: String = chars[..k].iter().collect();
++        let suffix: String = chars[chars.len() - k..].iter().collect();
++        field.contains(&prefix) || field.contains(&suffix)
++    })
++}
++
+ /// `before {mark} after` with up to 20 chars of context on either side.
+ /// What a redaction leaves of `find`: one full block per character.
+ fn redaction(find: &str) -> String {
+diff --git a/src/legacy_doc.rs b/src/legacy_doc.rs
+index 1881053..f40eb44 100644
+--- a/src/legacy_doc.rs
++++ b/src/legacy_doc.rs
+@@ -1147,6 +1147,16 @@ struct StoryChar {
+ /// corrupt file, refused rather than converted short.
+ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
+     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
++    // Word's own main story stops far below this (a .doc's text is capped
++    // around 32 MB); aliased pieces can describe billions of logical
++    // characters over a few physical bytes, and each one costs a StoryChar
++    // of retained metadata, so the claimed length is refused up front.
++    const MAX_STORY_CHARS: u32 = 16 * 1024 * 1024;
++    if ccp_text > MAX_STORY_CHARS {
++        return Err(LegacyDocError::new(format!(
++            "the main story claims {ccp_text} characters, past the {MAX_STORY_CHARS} the reader converts"
++        )));
++    }
+     // The pieces run from CP 0 through the main story without a gap, or
+     // the document would come out quietly shorter than it is.
+     // The CPs only ever increase ([MS-DOC] 2.8.35): a piece that runs
+@@ -1592,8 +1602,11 @@ impl Story<'_> {
+         let mut out = Vec::new();
+         let mut spans: Vec<Span> = Vec::new();
+         // Field nesting: true while inside a field's code (before its
+-        // separator).
++        // separator). `code_frames` counts the true flags so "inside any
++        // field's code" stays O(1) per character instead of a scan of every
++        // enclosing frame (a deep field stack made reading quadratic).
+         let mut fields: Vec<bool> = Vec::new();
++        let mut code_frames = 0usize;
+         // Each finished row and whether it is marked as a header.
+         let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
+         let mut row: Vec<String> = Vec::new();
+@@ -1601,20 +1614,24 @@ impl Story<'_> {
+ 
+         for story in chars {
+             // Inside any field's code, even a nested field's result is code.
+-            let in_code = fields.iter().any(|&code| code);
++            let in_code = code_frames > 0;
+             let text = match story.ch {
+                 '\u{13}' => {
+                     fields.push(true);
++                    code_frames += 1;
+                     continue;
+                 }
+                 '\u{14}' => {
+                     if let Some(top) = fields.last_mut() {
++                        code_frames -= usize::from(*top);
+                         *top = false;
+                     }
+                     continue;
+                 }
+                 '\u{15}' => {
+-                    fields.pop();
++                    if let Some(top) = fields.pop() {
++                        code_frames -= usize::from(top);
++                    }
+                     continue;
+                 }
+                 _ if in_code => continue,
+@@ -1744,6 +1761,81 @@ mod tests {
+         assert_eq!(cp1252(0xE9), 'é');
+     }
+ 
++    fn story_char(ch: char, cp: u32) -> StoryChar {
++        StoryChar {
++            ch,
++            cp,
++            fc: 0,
++            modifier: CharModifier::default(),
++        }
++    }
++
++    fn empty_story(papx: &FkpIndex, chpx: &FkpIndex, lists: &Lists) -> Story<'_> {
++        Story {
++            papx,
++            chpx,
++            styles: &[],
++            lists,
++            section_marks: Vec::new(),
++        }
++    }
++
++    #[test]
++    fn field_code_suppression_stays_correct_at_deep_field_nesting() {
++        // 100,000 begin+separator pairs leave every field frame in its
++        // result phase, so the text after them reads; a single unclosed
++        // field's code still hides its text. The O(1) code-frame count keeps
++        // each character constant-time whatever the stack depth.
++        let papx = FkpIndex::new(&[], &[], (0, 0), Fkp::Paragraph).unwrap();
++        let chpx = FkpIndex::new(&[], &[], (0, 0), Fkp::Character).unwrap();
++        let lists = Lists::new(&[], (0, 0), (0, 0)).unwrap();
++        let story = empty_story(&papx, &chpx, &lists);
++        let mut chars = Vec::new();
++        for _ in 0..100_000 {
++            chars.push(story_char('\u{13}', 0));
++            chars.push(story_char('\u{14}', 0));
++        }
++        chars.push(story_char('x', 0));
++        let blocks = story.blocks(&chars);
++        let shown: String = blocks
++            .iter()
++            .flat_map(|b| match b {
++                Block::Paragraph(p) => p
++                    .spans
++                    .iter()
++                    .map(|s| s.text.as_str())
++                    .collect::<Vec<_>>(),
++                _ => Vec::new(),
++            })
++            .collect();
++        assert_eq!(shown, "x");
++        let code = vec![story_char('\u{13}', 0), story_char('y', 1)];
++        assert!(story.blocks(&code).is_empty());
++    }
++
++    #[test]
++    fn aliased_pieces_cannot_expand_past_the_story_cap() {
++        // Two compressed pieces claiming the same physical range describe
++        // 16M+ logical characters over 8 MB of text: the claimed length is
++        // refused before a StoryChar per character is materialized.
++        let claimed: u32 = 16 * 1024 * 1024 + 2;
++        let half = claimed / 2;
++        let word = vec![b'a'; half as usize];
++        let piece = |cp_start: u32, cp_end: u32| Piece {
++            cp_start,
++            cp_end,
++            fc: 0,
++            compressed: true,
++            modifier: CharModifier::default(),
++        };
++        let pieces = vec![piece(0, half), piece(half, claimed)];
++        let error = main_text(&word, &pieces, claimed).unwrap_err();
++        assert!(
++            error.to_string().contains("past the"),
++            "{error}"
++        );
++    }
++
+     #[test]
+     fn refuses_what_is_not_a_compound_file() {
+         let error = read(b"PK\x03\x04 not ole").unwrap_err();
+diff --git a/src/opc/mod.rs b/src/opc/mod.rs
+index 9865bda..bd08221 100644
+--- a/src/opc/mod.rs
++++ b/src/opc/mod.rs
+@@ -99,6 +99,7 @@ pub(crate) use zip32::zip32_plan;
+ fn drop_repeated_relationships(rels: &mut Relationships) -> Result<Vec<String>, OpcError> {
+     let mut seen: HashMap<&str, &Relationship> = HashMap::new();
+     let mut repaired: Vec<String> = Vec::new();
++    let mut reported: HashSet<&str> = HashSet::new();
+     let mut keep = Vec::with_capacity(rels.items.len());
+     for item in &rels.items {
+         match seen.get(item.id.as_str()) {
+@@ -113,7 +114,10 @@ fn drop_repeated_relationships(rels: &mut Relationships) -> Result<Vec<String>,
+                 {
+                     return Err(OpcError::InvalidRelationship);
+                 }
+-                if !repaired.contains(&item.id) {
++                // The Vec keeps the deterministic report order; membership
++                // goes through the set, so N distinct repeated IDs cost N
++                // lookups, not N(N-1)/2 string comparisons over the report.
++                if reported.insert(item.id.as_str()) {
+                     repaired.push(item.id.clone());
+                 }
+                 keep.push(false);
+@@ -675,10 +679,12 @@ impl PartFs {
+     /// absolute target ("/word/footer1.xml") was later re-prefixed into a
+     /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
+     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
+-        // PartFs receives raw relationship attributes; DOM consumers already
+-        // decoded XML entities and call the pure resolver directly.
+-        let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
+-        resolve_rel_target(source_part, &target)
++        // The stored relationship values are decoded once already: the OPC
++        // reader normalizes attributes (Target="media/a&amp;amp;b.png" reads
++        // back as `media/a&amp;b.png`), so decoding again would rewrite a
++        // literal `&amp;` in a part name to `&` and point the relationship
++        // at a part that does not exist.
++        resolve_rel_target(source_part, rel_target)
+     }
+ 
+     /// `contentTypeFor(part)`.
+@@ -1254,6 +1260,58 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn rel_targets_with_literal_entity_spelling_resolve_once() {
++        // `Target="media/a&amp;amp;b.png"` decodes once into the stored
++        // target `media/a&amp;b.png` (the test above); resolving it must not
++        // decode the stored value again into `&` and point the relationship
++        // at a part that does not exist.
++        let bytes = package_with_document_rels(
++            r#"<Relationship Id="rId7" Type="image" Target="media/a&amp;amp;b.png"/>"#,
++        );
++        let mut fs = PartFs::open(&bytes).unwrap();
++        fs.set_part("word/media/a&amp;b.png", vec![1]);
++        let rel = &fs.read_rels_for("word/document.xml").unwrap().items[0];
++        assert_eq!(rel.target, "media/a&amp;b.png");
++        assert_eq!(
++            fs.resolve_rel_target("word/document.xml", &rel.target),
++            "word/media/a&amp;b.png"
++        );
++        assert_eq!(fs.part_bytes("word/media/a&amp;b.png"), Some(&[1u8][..]));
++    }
++
++    #[test]
++    fn many_distinct_repeated_relationship_ids_repair_in_reported_order() {
++        // N distinct IDs repeated identically repair once each: the report
++        // keeps first-occurrence order and the open stays linear in the
++        // records (membership is a set, not a scan of the reported list).
++        let count = 4_096;
++        let records: String = (0..count)
++            .flat_map(|i| {
++                [
++                    format!(
++                        r#"<Relationship Id="rId{i}" Type="image" Target="media/{i}.png"/>"#
++                    ),
++                    format!(
++                        r#"<Relationship Id="rId{i}" Type="image" Target="media/{i}.png"/>"#
++                    ),
++                ]
++            })
++            .collect();
++        let bytes = package_with_document_rels(&records);
++        let fs = PartFs::open(&bytes).unwrap();
++        let repaired = fs.repaired_duplicate_ids();
++        assert_eq!(repaired.len(), count);
++        assert!(repaired
++            .iter()
++            .enumerate()
++            .all(|(i, (_, id))| id == &format!("rId{i}")));
++        assert_eq!(
++            fs.read_rels_for("word/document.xml").unwrap().items.len(),
++            count
++        );
++    }
++
+     #[test]
+     fn rel_attributes_survive_round_trips_unescaped() {
+         // rdocx-opc 0.1.0 keeps `Target="a&amp;b"` escaped when parsing and
+diff --git a/src/scrub.rs b/src/scrub.rs
+index 641d427..ef1064c 100644
+--- a/src/scrub.rs
++++ b/src/scrub.rs
+@@ -566,6 +566,31 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
+             return true;
+         }
+     }
++    // DrawingML text splits the same way: a chart title or SmartArt drawing
++    // paragraph (`a:p`, `dsp:p`) carries its words in one `a:t`/`dsp:t` per
++    // run, so a phrase split between two runs hides from the per-node scan
++    // above and shows only in the paragraph's joined text.
++    const DRAWINGML: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
++    const DIAGRAM_DRAWING: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
++    for (para, text) in [
++        (XName::get("p", DRAWINGML), XName::get("t", DRAWINGML)),
++        (
++            XName::get("p", DIAGRAM_DRAWING),
++            XName::get("t", DIAGRAM_DRAWING),
++        ),
++    ] {
++        for p in dom.descendants_and_self(root, Some(&para)) {
++            let joined: String = dom
++                .descendants(p, None)
++                .into_iter()
++                .filter(|&n| dom.name_is(n, &text))
++                .map(|n| dom.value(n))
++                .collect();
++            if joined.contains(needle) {
++                return true;
++            }
++        }
++    }
+     false
+ }
+ 
+@@ -631,6 +656,22 @@ mod tests {
+         assert!(xml_holds(&alt, "1224"));
+     }
+ 
++    #[test]
++    fn a_phrase_split_across_drawingml_runs_is_a_leak() {
++        let a = "http://schemas.openxmlformats.org/drawingml/2006/main";
++        let c = "http://schemas.openxmlformats.org/drawingml/2006/chart";
++        let chart = format!(
++            r#"<c:chartSpace xmlns:c="{c}" xmlns:a="{a}"><c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>Acme </a:t></a:r><a:r><a:t>Deal</a:t></a:r></a:p></c:rich></c:tx></c:title></c:chart></c:chartSpace>"#
++        );
++        assert!(!xml_holds(&chart, "Acme Deal 2"));
++        assert!(xml_holds(&chart, "Acme Deal"));
++        let dsp = "http://schemas.microsoft.com/office/drawing/2008/diagram";
++        let diagram = format!(
++            r#"<dsp:drawing xmlns:dsp="{dsp}"><dsp:spTree><dsp:sp><dsp:txBody><dsp:p><dsp:r><dsp:t>Falcon </dsp:t></dsp:r><dsp:r><dsp:t>Budget</dsp:t></dsp:r></dsp:p></dsp:txBody></dsp:sp></dsp:spTree></dsp:drawing>"#
++        );
++        assert!(xml_holds(&diagram, "Falcon Budget"));
++    }
++
+     #[test]
+     fn element_names_are_no_leak() {
+         let w = W::URI;
+@@ -715,6 +756,25 @@ mod public_memory_leak_boundary_tests {
+             assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
+         }
+     }
++    #[test]
++    fn chart_text_split_across_runs_reports_the_chart_part() {
++        // The leak check behind `redact` must certify DrawingML run splits
++        // the way it certifies Word run splits: a phrase split across two
++        // chart-title runs is still the redacted text.
++        let a = "http://schemas.openxmlformats.org/drawingml/2006/main";
++        let c = "http://schemas.openxmlformats.org/drawingml/2006/chart";
++        let mut pkg = package("<w:p><w:r><w:t>Independent body payload</w:t></w:r></w:p>");
++        pkg.set_part(
++            "word/charts/chart1.xml",
++            format!(
++                r#"<c:chartSpace xmlns:c="{c}" xmlns:a="{a}"><c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>Acme </a:t></a:r><a:r><a:t>Deal</a:t></a:r></a:p></c:rich></c:tx></c:title></c:chart></c:chartSpace>"#
++            )
++            .into_bytes(),
++        );
++        let bytes = pkg.to_zip().unwrap();
++        assert_eq!(leaks(&bytes, "Acme Deal"), ["word/charts/chart1.xml"]);
++    }
++
+     #[test]
+     fn decoded_entities_and_split_word_runs_are_secrets_but_numeric_ids_are_not() {
+         let body = "<w:p><w:pPr><w:spacing w:before='1234' w:after='-1234'/></w:pPr><w:r><w:t>Jane </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>Doe &amp; </w:t></w:r><w:r><w:t>Associates</w:t></w:r></w:p>";
+diff --git a/src/xmllinq/parse.rs b/src/xmllinq/parse.rs
+index 236c54c..7f51ba3 100644
+--- a/src/xmllinq/parse.rs
++++ b/src/xmllinq/parse.rs
+@@ -64,6 +64,15 @@ pub(crate) const MAX_LIVE_NS_BINDINGS: usize = 256;
+ /// Total prefix+URI bytes declared by xmlns attributes in one document.
+ pub(crate) const MAX_NS_DECLARED_BYTES: usize = 1024 * 1024;
+ 
++/// Element nesting the permissive DOM constructor will build: a stack-safety
++/// net independent of admission policy. Every checked gate in this crate
++/// admits at most 256 levels and no Word-authored part nests anywhere near
++/// this, but a consumer that reaches `parse_xdocument` without a gate (a
++/// renamed auxiliary part selected by relationship) must not be able to
++/// overflow the stack. Past this depth the document ends where it stands, as
++/// truncated as any other unterminated input the permissive parser tolerates.
++pub(crate) const MAX_DOM_DEPTH: usize = 1024;
++
+ // N02 mechanism counter: bytes of (prefix, uri) pairs the parser's
+ // namespace scope has recorded. The scoped-overlay scope only ever records
+ // what an element declares; a parent-map clone would inflate this by the
+@@ -104,6 +113,7 @@ pub fn parse_xdocument(dom: &mut Dom, xml: &str) -> NodeId {
+         dom,
+         c: chars,
+         pos: 0,
++        depth: 0,
+     };
+     p.parse_document()
+ }
+@@ -139,6 +149,9 @@ struct Parser<'a> {
+     dom: &'a mut Dom,
+     c: Vec<char>,
+     pos: usize,
++    /// Open elements: the DOM construction depth, for the MAX_DOM_DEPTH
++    /// guard.
++    depth: usize,
+ }
+ 
+ /// In-scope namespace bindings as an overlay stack (N02): one `HashMap`
+@@ -553,6 +566,14 @@ impl<'a> Parser<'a> {
+     }
+ 
+     fn parse_element(&mut self, scope: &mut NsScope) -> NodeId {
++        self.depth += 1;
++        let el = self.parse_element_inner(scope);
++        self.depth -= 1;
++        el
++    }
++
++    /// [`Self::parse_element`] under the [`MAX_DOM_DEPTH`] guard.
++    fn parse_element_inner(&mut self, scope: &mut NsScope) -> NodeId {
+         // at '<'
+         self.pos += 1; // consume '<'
+         let raw_name = self.read_name();
+@@ -658,6 +679,15 @@ impl<'a> Parser<'a> {
+                 continue;
+             }
+             if self.cur() == '<' {
++                if self.depth >= MAX_DOM_DEPTH {
++                    // No gate covers every consumer of the permissive parser
++                    // (a renamed auxiliary part selected by relationship
++                    // needs none), so the builder itself stops here: ending
++                    // the buffer closes every open element the way an
++                    // unterminated document does, without risking the stack.
++                    self.pos = self.len();
++                    break;
++                }
+                 let child = self.parse_element(scope);
+                 self.dom.add(el, child);
+                 continue;
+@@ -751,6 +781,12 @@ fn extract_pseudo_attr(s: &str, key: &str) -> Option<String> {
+     Some(after[1..1 + end].to_string())
+ }
+ 
++/// Characters an entity or character reference may span after the `&`. The
++/// five predefined names are at most 4 and a numeric reference to a `u32`
++/// at most 11, with padding; the window bounds the delimiter search so a
++/// payload of bare ampersands cannot rescan its whole suffix per `&`.
++const MAX_REFERENCE_CHARS: usize = 32;
++
+ /// Decode XML entity and character references in attribute and text
+ /// payloads (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&#nnn;`,
+ /// `&#xhh;`). Port of `unescapeXmlText`.
+@@ -770,8 +806,13 @@ pub fn unescape_xml_text(s: &str) -> String {
+     let mut i = 0;
+     while i < chars.len() {
+         if chars[i] == '&' {
+-            // find ';'
+-            if let Some(semi_rel) = chars[i + 1..].iter().position(|&c| c == ';') {
++            // find ';' within the reference window: a payload of bare
++            // ampersands must not rescan its whole suffix per '&'.
++            if let Some(semi_rel) = chars[i + 1..]
++                .iter()
++                .take(MAX_REFERENCE_CHARS)
++                .position(|&c| c == ';')
++            {
+                 let body: String = chars[i + 1..i + 1 + semi_rel].iter().collect();
+                 if let Some(decoded) = decode_entity(&body) {
+                     out.push_str(&decoded);
+@@ -977,7 +1018,7 @@ pub fn validate_xml_with_limits(xml: &str, limits: InputLimits) -> Result<(), St
+ #[cfg(test)]
+ #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+ mod checked_xml_tests {
+-    use super::{Dom, parse_xdocument, validate_xml};
++    use super::{Dom, MAX_DOM_DEPTH, parse_xdocument, validate_xml};
+ 
+     #[test]
+     fn truncated_attribute_input_terminates_in_legacy_parser() {
+@@ -1033,6 +1074,37 @@ mod checked_xml_tests {
+         assert_eq!(validate_xml(&ok_deep), Ok(()));
+     }
+ 
++    #[test]
++    fn dom_construction_depth_is_bounded_even_without_a_gate() {
++        // 5,000 nested elements parse without touching the stack limit: the
++        // permissive parser ends the document at MAX_DOM_DEPTH, as truncated
++        // as any other unterminated input. The checked gate refuses this
++        // first; a consumer that never calls a gate (a renamed auxiliary
++        // part) is still safe.
++        let deep = format!("{}{}", "<a>".repeat(5_000), "</a>".repeat(5_000));
++        let mut dom = Dom::new();
++        let document = parse_xdocument(&mut dom, &deep);
++        // The walk counts the root element as the first level.
++        let mut level = 1usize;
++        let mut node = dom.root(document).expect("root");
++        while let Some(child) = dom.elements(node, None).into_iter().next() {
++            level += 1;
++            node = child;
++        }
++        assert!(level <= MAX_DOM_DEPTH, "built {level} levels");
++        // Everything a gate admits (max_xml_depth 256) still parses whole.
++        let admitted = format!("{}{}", "<a>".repeat(256), "</a>".repeat(256));
++        let mut dom = Dom::new();
++        let document = parse_xdocument(&mut dom, &admitted);
++        let mut level = 1usize;
++        let mut node = dom.root(document).expect("root");
++        while let Some(child) = dom.elements(node, None).into_iter().next() {
++            level += 1;
++            node = child;
++        }
++        assert_eq!(level, 256);
++    }
++
+     #[test]
+     fn checked_xml_accepts_normal_documents_and_entities() {
+         for xml in [
+@@ -1069,6 +1140,20 @@ mod xml_lexical_boundary_contract_tests {
+         }
+     }
+ 
++    #[test]
++    fn entity_reference_search_stays_within_its_window() {
++        // A reference's ';' is sought only within the window, so a suffix of
++        // bare ampersands decodes linearly and keeps its literal shape.
++        let bare = "&".repeat(200_000);
++        assert_eq!(unescape_xml_text(&bare), bare);
++        // A body longer than the window (only zero padding can be) stays
++        // literal: the documented fallback for an undecodable reference.
++        let padded = format!("&#{}41;", "0".repeat(MAX_REFERENCE_CHARS));
++        assert_eq!(unescape_xml_text(&padded), padded);
++        // Everything a real document writes still decodes.
++        assert_eq!(unescape_xml_text("&#x00000041;"), "A");
++    }
++
+     #[test]
+     fn literal_attribute_whitespace_reads_as_spaces_references_survive() {
+         // XML 1.0 §2.11 + §3.3.3, the value a conforming reader (Word) sees:
+diff --git a/tests/scrub_and_redact.rs b/tests/scrub_and_redact.rs
+index 2a16d5d..75d37be 100644
+--- a/tests/scrub_and_redact.rs
++++ b/tests/scrub_and_redact.rs
+@@ -373,6 +373,30 @@ fn a_redaction_beside_another_edit_of_the_paragraph_keeps_both() {
+     assert!(!contains(&all_bytes(&out.redline), "12345678"));
+ }
+ 
++#[test]
++fn a_mixed_plan_report_repeats_no_redacted_text_in_another_context() {
++    // A replace beside the redaction used to publish the secret again in
++    // its own context window; the sanitizer omits any field that overlaps a
++    // redaction needle, clipped fragments included.
++    let source = docx(&para("Account 12345678 is closed."));
++    let out = apply_plan(
++        &source,
++        &plan(
++            r#"{"kind":"redact","paragraph":"p0","find":"12345678"},
++               {"kind":"replace","paragraph":"p0","find":"closed","replacement":"open"}"#,
++        ),
++    )
++    .unwrap();
++    let report = serde_json::to_string(&out.report).unwrap();
++    assert!(!report.contains("12345678"), "{report}");
++    assert!(!report.contains("12345"), "{report}");
++    assert!(report.contains("\"kind\":\"replace\""), "{report}");
++    assert_eq!(
++        jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text,
++        "Account ████████ is open."
++    );
++}
++
+ #[test]
+ fn the_same_text_left_in_another_paragraph_is_a_leak() {
+     let source = docx(&format!(
+
+```

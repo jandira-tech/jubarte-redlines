@@ -1,0 +1,1556 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX comparison/edit/inspection/rendering engine exposed through native CLI, PyO3 Python facade/CLI, WASM byte APIs/Node CLI, and an optional Python stdio MCP server (src/lib.rs:5-35; jubarte-python/pyproject.toml:42-49; jubarte-wasm/cli/package.json:33-46).",
+    "assets": [
+      "Document contents, revisions, comments, metadata, generated DOCX/PDF/PNG, edit snapshots and reports; host input/output files and engine process availability.",
+      "Installed executable and release integrity; updater selects jandira-tech/jubarte-redlines assets and SHA256SUMS.txt, with currently empty RELEASE_KEYS and no FIRST_SIGNED_RELEASE (src/update.rs:25-48,198-210,245-257)."
+    ],
+    "trustBoundaries": [
+      "Untrusted package bytes enter bounded admission before document operations; default input budgets are 64 MiB compressed/per part, 256 MiB inflated, 10000 entries and XML depth 256; compare budgets instead allow 512 MiB compressed/per part and 2 GiB inflated (src/admission.rs:63-100).",
+      "MCP stdio clients obtain document I/O under operator-selected --root (default cwd); _OutputRoot holds a cap-std directory handle for relative reads/publication; read/write ToolAnnotations are hints, while capability-relative I/O enforces containment (jubarte-python/python/jubarte_redlines/mcp_server.py:54-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199).",
+      "Native CLI publish_paths has ambient filesystem authority, held parent handles and staged per-file commits; OutputRoot is a separately confined interface (src/publication.rs:203-225,421-569)."
+    ],
+    "attackerCapabilities": [
+      "A sender can provide malicious DOCX/DOC/XML/font/image bytes and edit or Markdown content to a willing caller; no remote listener or tenant identity is inferred.",
+      "An MCP client can request supported tools and overwrite=true inside the granted root; it does not thereby possess operator environment, release signing keys, or repository publish authority (jubarte-python/python/jubarte_redlines/mcp_server.py:152-160,258-277,373-381)."
+    ],
+    "securityObjectives": [
+      "Preserve bounded parsing, package identity, safe path handling, and checked XML policy before materializing untrusted input; callers own OS memory/CPU confinement (SECURITY.md:35-79).",
+      "Confine MCP document reads and outputs to held root authority; never confuse read-only tool hints with enforcement (src/publication.rs:146-199; jubarte-python/python/jubarte_redlines/mcp_server.py:54-108)."
+    ],
+    "assumptions": [
+      "No deployment context or authoritative threat model supplied; userContext is null. Analysis is offline and current-state-only.",
+      "Native rendering additionally reads installed fonts and persists font-index.tsv beside the user font folder, with JUBARTE_FONT_INDEX overriding or disabling; MCP --root does not encompass those independent native renderer operations (src/convert/font.rs:2633-2652,3095-3107,3213-3229).",
+      "Byte-in/byte-out library docs say no temp files (src/lib.rs:8-11), but native font indexing writes a sibling tsv.<pid>.tmp then renames; retain this qualification, not a vulnerability claim (src/convert/font.rs:3213-3229)."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current source architecture; partial boundary mapping, not audit coverage"
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-expansion.html-colspan",
+      "title": "Rendering an HTML altChunk can exhaust memory through its colspan",
+      "summary": "Rendering a DOCX with a related HTML table containing `colspan=1000000000` makes the converter append one billion XML grid columns. The input stays tiny and passes archive admission, but PDF, PNG, and layout-report operations can consume excessive CPU and memory or terminate their host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can drive enormous allocation during ordinary rendering without control of local files or configuration. The established consequence is process availability loss; no remote service or broader compromise is assumed. Caller-enforced process CPU/memory limits contain impact.",
+        "changeConditions": "A deployed shared rendering service would increase operational impact; enforcing a cumulative expansion budget before the loop would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source traces public rendering through admitted package bytes to HTML parsing, unchecked numeric span and its allocation loop; no runtime trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "alt-expand",
+          "label": "Resolve and translate HTML bytes",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 28,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let end = if open.ends_with(\"/>\") {\n            open_end + 1\n        } else {\n            tail.find(\"</w:altChunk>\")\n                .map_or(open_end + 1, |i| i + \"</w:altChunk>\".len())\n        };\n        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "The document relationship ID selects package bytes; `chunk_html` decodes them and calls `html_to_wml`."
+        },
+        {
+          "id": "alt-span",
+          "label": "Accept unbounded HTML colspan",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 558,
+          "endLine": 567,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            \"td\" | \"th\" => {\n                self.close_open_cell();\n                self.flush();\n                self.sinks.push(String::new());\n                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Attacker-controlled `colspan` is parsed as `usize` with only a lower bound, then stored in the cell span stack."
+        },
+        {
+          "id": "alt-grid",
+          "label": "Emit one XML column per numeric span",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 463,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn end_table(&mut self) {\n        self.close_open_cell();\n        self.flush();\n        let Some(table) = self.tables.pop() else {\n            return;\n        };\n        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "`end_table` sums the stored spans and emits `cols` grid records into an expanding String without a column or output-byte budget."
+        },
+        {
+          "id": "alt-tag-dispatch",
+          "label": "Dispatch each parsed HTML tag",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 671,
+          "endLine": 678,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        if closing {\n            b.end(&name);\n        } else {\n            b.start(&name, tag_src);\n            if inner.ends_with('/') && name != \"br\" {\n                b.end(&name);\n            }\n        }",
+          "explanation": "The HTML tokenizer forwards opening cell and closing table tags to the builder, preserving numeric attribute input."
+        },
+        {
+          "id": "alt-end-dispatch",
+          "label": "Close tables through end_table",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 589,
+          "endLine": 598,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    fn end(&mut self, tag: &str) {\n        if let Some(i) = self.fmts.iter().rposition(|(t, _)| t == tag) {\n            self.fmts.truncate(i);\n        }\n        match tag {\n            t if BLOCKS.contains(&t) => self.flush(),\n            \"td\" | \"th\" if self.in_open_cell() => self.end_cell(),\n            \"td\" | \"th\" => {}\n            \"table\" => self.end_table(),\n            _ => {}",
+          "explanation": "A closing table tag triggers the expansion loop in `end_table`."
+        }
+      ],
+      "rootCause": {
+        "summary": "Package admission bounds archive bytes, inflated parts, and XML syntax, but HTML-to-WML expansion occurs afterwards. `Builder::start` accepts arbitrarily large representable `colspan`, stores it in `cell_spans`, and `end_table` uses the row span sum as the exact count of XML grid records to generate. The expanded output has no resource budget.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ]
+      },
+      "remediation": "Apply a small maximum HTML colspan and cumulative table-column budget before storing spans, use checked arithmetic for row sums, and enforce a cumulative generated-WML byte budget with a typed refusal before allocating.",
+      "validation": {
+        "counterEvidence": [
+          "Archive admission runs before expansion and limits actual input bytes, not the numeric span or generated XML (src/admission.rs:531-551).",
+          "Existing tests handle invalid, negative and zero spans and ordinary span 2, but show no maximum-span rejection (src/convert/altchunk.rs:1026-1054).",
+          "SECURITY.md requires hosts to apply process CPU/memory limits; these mitigate host scope but do not bound this loop."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "alt-expand",
+          "alt-tag-dispatch",
+          "alt-span",
+          "alt-end-dispatch",
+          "alt-grid"
+        ],
+        "limitations": [
+          "No application execution or vulnerability-triggering input was used in this static audit."
+        ],
+        "method": "read-only static source trace",
+        "status": "validated",
+        "summary": "`with_layout` resolves a related package part and invokes `expand`; `expand` routes HTML/MHT to `html_to_wml`. The tokenizer dispatches a `td` to `Builder::start`, whose positive usize span has no upper bound. Closing `table` invokes `end_table`, which writes one record per span before parsing the resulting XML. `1000000000` fits both 32-bit and 64-bit usize and avoids relying on integer overflow."
+      },
+      "attackPath": {
+        "controls": [
+          "Archive byte/XML limits apply before expansion.",
+          "Host process limits can contain a worker failure."
+        ],
+        "dataflow": {
+          "summary": "DOCX bytes -> `with_layout` -> package relationship -> `expand` -> `html_to_wml` -> numeric `cell_spans` -> `end_table` XML expansion",
+          "source": "Document-controlled HTML cell attribute",
+          "sink": "Growing WML String inside end_table",
+          "outcome": "Excessive CPU/memory consumption and possible process termination",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-tag-dispatch",
+            "alt-span",
+            "alt-end-dispatch",
+            "alt-grid"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering process availability and memory budget are affected."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short representable numeric attribute directly controls the expansion count."
+        },
+        "reachability": {
+          "summary": "Any caller exposing supported PDF/PNG/layout APIs to documents from another party can trigger this path; no service deployment, special flag, local file write, or raised input limits is required.",
+          "attacker": "Untrusted document provider",
+          "entrypoint": "convert::docx_to_pdf / render / docx_render_report",
+          "preconditions": [
+            "Victim renders a supplied DOCX with an internal HTML altChunk relationship."
+          ],
+          "evidenceRefs": [
+            "alt-render-entry",
+            "alt-expand",
+            "alt-span",
+            "alt-grid"
+          ]
+        },
+        "summary": "Provide a valid DOCX with `w:altChunk` referencing a short HTML table whose single cell has a very large positive `colspan`, then have a caller render it."
+      },
+      "remediationTests": [
+        "Reject huge representable positive colspan through public rendering while retaining ordinary span behavior.",
+        "Verify many bounded spans cannot exceed the cumulative table/output budget.",
+        "Verify row-span sum overflow returns a refusal on native and wasm32."
+      ],
+      "preventiveControls": [
+        "Budget derived representations before materialization, including post-admission HTML/MHT expansion."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-altchunk-colspan",
+        "producer": "discovery-0017",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-altchunk-colspan",
+            "title": "HTML altChunk colspan expands without a bound during rendering",
+            "attacker": "Provider of a DOCX containing a related HTML/MHT altChunk",
+            "evidence": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "code": "self.cell_spans.push(\n    attr(open, \"colspan\")\n        .and_then(|s| s.trim().parse::<usize>().ok())\n        .unwrap_or(1)\n        .max(1),\n);"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "code": "let cols = table.rows.iter().map(|r| r.iter().map(|c| c.span).sum::<usize>()).max().unwrap_or(1).max(1);\nfor _ in 0..cols {\n    let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n}"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 798,
+                "description": "with_layout admits original package, resolves related altChunk bytes, then expands before DOM construction."
+              }
+            ],
+            "impact": "A short numeric colspan may cause effectively unbounded generated XML and CPU/memory consumption despite archive admission.",
+            "unresolved": "Check complete HTML dispatch, valid routing and admission counterevidence before retaining."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-allocation.table-grid",
+      "title": "Rendering a tiny table can allocate billions of columns",
+      "summary": "A DOCX containing a cell with `w:gridSpan=2147483647`, or an equivalent `w:gridBefore`/`w:gridAfter`, drives the renderer to allocate approximately 8 GiB for a column-width vector. Archive admission accepts these short numeric attributes, so PDF, PNG and layout operations can exhaust memory or terminate their embedding process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document provider controls the count that reaches allocation during ordinary rendering. Process availability is the demonstrated impact and likelihood is high; no remotely exposed service is assumed. Caller process limits restrict blast radius.",
+        "changeConditions": "Shared-service deployment would increase impact; a semantic table-column budget checked before arithmetic/allocation would remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source directly connects the three numeric span fields through RawCell occupancy to vec allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14211,
+          "endLine": 14215,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14352,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13199,
+          "endLine": 13216,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13554,
+          "endLine": 13560,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "grid-span",
+          "label": "Parse cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14223,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {\n        None => VMerge::None,\n        Some(n) => match dom.attribute(n, &W::val()) {\n            Some(\"restart\") | Some(\"Restart\") => VMerge::Restart,\n            _ => VMerge::Continue,\n        },\n    };\n    (colspan, vmerge)",
+          "explanation": "A DOCX `w:gridSpan/@w:val` becomes an unrestricted positive usize returned to table parsing."
+        },
+        {
+          "id": "grid-skips",
+          "label": "Parse row skip spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14338,
+          "endLine": 14352,
+          "language": "rust",
+          "role": "root_control",
+          "code": "/// A row's `w:gridBefore`/`w:gridAfter` (`side` \"Before\"/\"After\"): the\n/// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.\nfn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))",
+          "explanation": "`gridBefore` and `gridAfter` share this unrestricted usize parser and become placeholder cell spans."
+        },
+        {
+          "id": "grid-skip-flow",
+          "label": "Carry leading skip into a cell",
+          "path": "src/convert/mod.rs",
+          "startLine": 13196,
+          "endLine": 13218,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let mut grid_at = 0usize;\n        let mut cells = Vec::new();\n        let mut row_has_cell_del = false;\n        let (grid_before, grid_after) = (\n            row_grid_skip(dom, row, \"Before\"),\n            row_grid_skip(dom, row, \"After\"),\n        );\n        // A skip without a wBefore/wAfter is as wide as the grid columns\n        // it leaves empty (ed36b607e8: a 5-twip first column a row skips\n        // keeps Word's 0.25pt; an auto width fitted it to a cell's\n        // margins, 10.8pt, and pushed the row's text in).\n        let grid_width = |at: usize, span: usize| -> PrefWidth {\n            PrefWidth::Dxa(cols.iter().skip(at).take(span).sum())\n        };\n        if let Some((span, pref)) = grid_before {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n            grid_at += span;\n        }\n        for cell in wrapped_children(dom, row, \"tc\") {",
+          "explanation": "The table parser turns the unbounded leading skip into a RawCell whose span contributes to row occupancy."
+        },
+        {
+          "id": "grid-cell-flow",
+          "label": "Carry authored cell span",
+          "path": "src/convert/mod.rs",
+          "startLine": 13461,
+          "endLine": 13486,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            // 0129b302's auto-spaced \"1.300.000\" cell is 14pt apart, not 28.\n            fold_stacked_spacing(\n                cell_paras.iter_mut().map(|p| &mut p.style).collect(),\n                &nested_at,\n            );\n            let (colspan, vmerge) = cell_span(dom, cell);\n            let last_col = grid_at + colspan.max(1) >= cols.len();\n            let at = |b: TblBorders| {\n                row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)\n            };\n            // tcBorders overrides only the edges it names (004599833e's\n            // cells name just tl2br / tr2bl): the rest keep the row's\n            // tblPrEx rules, else the table's.\n            let borders = match parse_tc_border_spec(dom, cell) {\n                Some([top, bottom, left, right]) => {\n                    let inherit = row_borders.or(table_borders).map(at).unwrap_or_default();\n                    Some(CellBorders {\n                        top: top.unwrap_or(inherit.top),\n                        bottom: bottom.unwrap_or(inherit.bottom),\n                        left: left.unwrap_or(inherit.left),\n                        right: right.unwrap_or(inherit.right),\n                    })\n                }\n                None => row_borders.map(at),\n            };\n            grid_at += colspan.max(1);",
+          "explanation": "The table parser receives `colspan` from `cell_span` without a cap."
+        },
+        {
+          "id": "grid-raw-cell",
+          "label": "Retain span in raw row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13527,
+          "endLine": 13542,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            {\n                cell_paras.pop();\n            }\n            cells.push(RawCell {\n                paras: cell_paras,\n                nested,\n                nested_at,\n                pref: cell_pref_width(dom, cell),\n                colspan,\n                vmerge,\n                fill: cell_fill(dom, cell),\n                fill_explicit: first_named(dom, cell, \"tcPr\")\n                    .and_then(|pr| first_named(dom, pr, \"shd\"))\n                    .is_some(),\n                valign_center: cell_valign_is(dom, cell, \"center\"),\n                valign_bottom: cell_valign_is(dom, cell, \"bottom\"),",
+          "explanation": "The unbounded `colspan` is stored in RawCell for later occupancy summation."
+        },
+        {
+          "id": "grid-allocate",
+          "label": "Allocate column vector from numeric occupancy",
+          "path": "src/convert/mod.rs",
+          "startLine": 13600,
+          "endLine": 13618,
+          "language": "rust",
+          "role": "sink",
+          "code": "    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }\n    let fixed = table_layout_fixed(dom, table);\n    let pref = column_prefs(&raw_rows, &cols, fixed);",
+          "explanation": "The maximum row span sum directly controls a f32 column vector allocation or resize."
+        },
+        {
+          "id": "grid-after",
+          "label": "Carry trailing skip into row",
+          "path": "src/convert/mod.rs",
+          "startLine": 13550,
+          "endLine": 13565,
+          "language": "rust",
+          "role": "propagation",
+          "code": "                hide_mark,\n                grid_skip: false,\n                borders,\n            });\n        }\n        if let Some((span, pref)) = grid_after {\n            let pref = match pref {\n                PrefWidth::Auto => grid_width(grid_at, span),\n                p => p,\n            };\n            cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));\n        }\n        // Word All Markup appends a “Deleted Cells” column when the\n        // row has live w:cellDel (addition_removal remnant). Do not\n        // rewrite trPr/del rows — that was mini 59 (−5 ITT).\n        if row_has_cell_del {",
+          "explanation": "The trailing skip becomes another RawCell contributing to the same allocation count."
+        },
+        {
+          "id": "grid-skip-value",
+          "label": "Placeholder retains numeric span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14376,
+          "endLine": 14384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        nested: Vec::new(),\n        nested_at: Vec::new(),\n        pref,\n        colspan: span,\n        vmerge: VMerge::None,\n        fill: None,\n        fill_explicit: false,\n        valign_center: false,\n        valign_bottom: false,",
+          "explanation": "`grid_skip_cell` copies the parsed span into `colspan` unchanged."
+        },
+        {
+          "id": "grid-stretch",
+          "label": "Stale span repair does not reduce oversized spans",
+          "path": "src/convert/mod.rs",
+          "startLine": 14168,
+          "endLine": 14201,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// brings its width closer to the tcW: Word reads the row by its cell\n/// widths and the saved grid as a cache (25f1d311bd). A row whose cells\n/// fit their columns (within `STALE_SPAN_SLACK_PT`) is a short row and\n/// stays one.\nfn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {\n    const STALE_SPAN_SLACK_PT: f32 = 20.0;\n    for row in rows.iter_mut() {\n        let used: usize = row.iter().map(|c| c.colspan.max(1)).sum();\n        if used >= cols.len() {\n            continue;\n        }\n        let mut spare = cols.len() - used;\n        let mut col = 0usize;\n        for cell in row.iter_mut() {\n            let span = cell.colspan.max(1);\n            if let PrefWidth::Dxa(want) = cell.pref {\n                let mut covered: f32 = cols.iter().skip(col).take(span).sum();\n                let mut extra = 0usize;\n                while extra < spare\n                    && want - covered > STALE_SPAN_SLACK_PT\n                    && let Some(&next) = cols.get(col + span + extra)\n                    && (covered + next - want).abs() < (want - covered).abs()\n                {\n                    covered += next;\n                    extra += 1;\n                }\n                if extra > 0 {\n                    cell.colspan = span + extra;\n                    spare -= extra;\n                }\n            }\n            col += cell.colspan.max(1);\n        }\n    }",
+          "explanation": "Oversized authored spans skip this repair when `used >= cols.len()`; it does not clamp them."
+        }
+      ],
+      "rootCause": {
+        "summary": "`cell_span` and `row_grid_skip` accept numeric column counts without a semantic maximum. Table parsing retains them as RawCell spans, including before/after placeholder cells. `stretch_stale_spans` leaves an oversized row unchanged, and its span sum then controls column-vector allocation. Package input bounds do not bound this derived representation.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ]
+      },
+      "remediation": "Reject individual spans and cumulative table occupancy above a documented column budget before arithmetic or allocation. Use checked addition and return a typed conversion refusal for invalid numeric semantics.",
+      "validation": {
+        "counterEvidence": [
+          "Byte/XML admission does not validate numeric table semantics.",
+          "Markdown's separate table reader clamps spans to 64 (src/markdown/from_docx/mod.rs:3590-3595), but rendering does not call that reader.",
+          "SECURITY.md directs callers to process memory/CPU limits."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "grid-span",
+          "grid-cell-flow",
+          "grid-raw-cell",
+          "grid-skips",
+          "grid-skip-flow",
+          "grid-after",
+          "grid-skip-value",
+          "grid-allocate",
+          "grid-stretch"
+        ],
+        "limitations": [
+          "Static-only validation; memory exhaustion was not triggered."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "The public rendering path admits and opens the document before table parsing. A positive 2147483647 fits usize on supported 32/64-bit targets. It is retained as `colspan`; the stale-span repair skips oversized rows. Occupancy reaches `vec![each; occupancy]` or `resize` without a maximum. Both row-skip fields independently feed the same sum via grid_skip_cell."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX table XML -> cell_span/row_grid_skip -> RawCell.colspan -> occupancy sum -> column vector allocation",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "grid-span",
+            "grid-cell-flow",
+            "grid-raw-cell",
+            "grid-skips",
+            "grid-skip-flow",
+            "grid-after",
+            "grid-skip-value",
+            "grid-allocate",
+            "grid-stretch"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering worker or embedding-process availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A tiny attribute deterministically controls allocation count."
+        },
+        "reachability": {
+          "summary": "A sender who controls a document consumed by supported render APIs can invoke the vulnerable path without raised input limits or filesystem authority.",
+          "attacker": "Untrusted DOCX provider",
+          "entrypoint": "Public render/PDF/PNG/layout APIs",
+          "outcome": "Memory exhaustion or process failure"
+        },
+        "summary": "Have a caller render a valid package with one visible table cell whose positive gridSpan is very large, or a row carrying a huge leading/trailing grid skip."
+      },
+      "remediationTests": [
+        "Reject oversized gridSpan, gridBefore and gridAfter through public rendering APIs.",
+        "Verify cumulative occupancy and integer-overflow refusal on native and wasm32.",
+        "Preserve valid merged-cell and row-skip layouts."
+      ],
+      "preventiveControls": [
+        "Use one semantic table-column policy for authored and synthesized cells."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-render-gridspan",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-render-gridspan",
+            "title": "Unbounded table spans expand a tiny DOCX into enormous allocations",
+            "cwe": "CWE-789",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "Attacker supplying a DOCX for rendering or layout through Rust, Python, WASM, CLI, or MCP.",
+            "violated_security_invariant": "Bounded admitted content must not control allocation independently of content size.",
+            "source_to_sink": "cell_span parses w:gridSpan directly to usize; parse_table sums spans into occupancy and vec![each; occupancy] / cols.resize. row_grid_skip also accepts unrestricted gridBefore/gridAfter.",
+            "impact": "gridSpan=2147483647 requests about 8 GiB for first f32 columns vector; larger values cause capacity overflow.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14204,
+                "endLine": 14223
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13600,
+                "endLine": 13618
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14340,
+                "endLine": 14352
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 769,
+                "endLine": 799
+              }
+            ],
+            "supporting_source_evidence": [
+              "cell_span parses then unwrap_or(1).max(1)",
+              "occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());",
+              "cols = vec![each; occupancy]; cols.resize(occupancy.max(1), 80.0);",
+              "row_grid_skip unrestricted positive usize"
+            ],
+            "counterevidence": [
+              "Admission limits bytes/XML syntax but not numeric spans.",
+              "Markdown reader clamps span to 64; renderer does not.",
+              "Host CPU/memory limits contain impact."
+            ],
+            "recommended_remediation": "Validate individual and cumulative table spans, checked sums, typed refusal."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-iteration.numbering-level",
+      "title": "Rendering extreme list levels performs billions of operations",
+      "summary": "A DOCX paragraph with `w:ilvl=4294967295` and an ordinary numbering definition forces a reverse scan over billions of undefined levels. Defining a very high abstract level or override additionally makes the renderer initialize a counter for every lower level, exhausting CPU and memory.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can force extreme work with a tiny numeric field during normal layout. The established impact is worker/process availability loss; no remote deployment is inferred. Host process limits can contain the failure.",
+        "changeConditions": "Exposure as a shared document service increases operational impact; bounded supported levels and key-based parent lookup remove the path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source establishes unrestricted paragraph, abstract and override levels and all numeric-range loops; no timing or allocation trigger was executed."
+      },
+      "taxonomy": {
+        "category": "Excessive iteration",
+        "cwe": [
+          "CWE-834"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5545,
+          "endLine": 5559,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5584,
+          "endLine": 5591,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5729,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6617,
+          "endLine": 6646,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6670,
+          "endLine": 6688,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "alt-render-entry",
+          "label": "Render imports a related HTML chunk after admission",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n    let main = pkg\n        .main_document_part()\n        .or_else(|| {\n            pkg.part_bytes(\"word/document.xml\")\n                .map(|_| \"word/document.xml\".to_string())\n        })\n        .ok_or(ConvertError::MissingDocument)?;\n    let xml = pkg\n        .part_string(&main)\n        .ok_or(ConvertError::MissingDocument)?;\n    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Untrusted DOCX bytes are admitted, then the related chunk bytes are passed to `altchunk::expand` before DOM construction."
+        },
+        {
+          "id": "ilvl-input",
+          "label": "Paragraph list level is unbounded",
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {\n    let Some(num) = first_named(dom, ppr, \"numPr\") else {\n        return (None, 0);\n    };\n    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);\n    let num_id = first_named(dom, num, \"numId\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .map(str::to_string);\n    (num_id, ilvl)",
+          "explanation": "Direct and style paragraph numbering reads `ilvl` as arbitrary u32 and retains it."
+        },
+        {
+          "id": "ilvl-resolve",
+          "label": "Resolve parent by scanning numeric range",
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn resolve_ilvl(&self, abs: &str, ilvl: u32) -> u32 {\n        let Some(lvls) = self.levels.get(abs) else {\n            return ilvl;\n        };\n        if lvls.contains_key(&ilvl) {\n            return ilvl;\n        }\n        // Word ignores a requested ilvl the abstract never defined\n        // (potpourri / file_170 ListNumber only has ilvl=0). Continue\n        // the parent level so Sift is \"3.\" at the same hanging as\n        // Preheat, not a synthesized nested \"1.\" at +18pt.\n        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "An undefined high level makes `resolve_ilvl` inspect every lower integer until a defined parent is found."
+        },
+        {
+          "id": "ilvl-ensure",
+          "label": "Synthesize level through another numeric scan",
+          "path": "src/convert/mod.rs",
+          "startLine": 5545,
+          "endLine": 5559,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn ensure_level(&mut self, abs: &str, ilvl: u32) -> Option<NumLevel> {\n        if let Some(lvl) = self.levels.get(abs).and_then(|m| m.get(&ilvl)).cloned() {\n            return Some(lvl);\n        }\n        let parent_ilvl = (0..ilvl)\n            .rev()\n            .find(|&i| self.levels.get(abs).is_some_and(|m| m.contains_key(&i)))?;\n        let parent = self.levels.get(abs)?.get(&parent_ilvl)?.clone();\n        if parent.fmt == NumFmt::Bullet {\n            return None;\n        }\n        let step = (ilvl - parent_ilvl) as f32;\n        let synth = NumLevel {\n            fmt: NumFmt::Decimal,\n            text: format!(\"%{}.\", ilvl + 1),",
+          "explanation": "`ensure_level` repeats a reverse parent search over the unbounded level range when a direct level is absent."
+        },
+        {
+          "id": "ilvl-next",
+          "label": "Marker dispatch preserves resolved level",
+          "path": "src/convert/mod.rs",
+          "startLine": 5584,
+          "endLine": 5591,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    fn next_marker(&mut self, num_id: &str, ilvl: u32) -> String {\n        let Some(abs) = self.instances.get(num_id).cloned() else {\n            return String::new();\n        };\n        let resolved = self.resolve_ilvl(&abs, ilvl);\n        let Some(lvl) = self.ensure_level(&abs, resolved) else {\n            return String::new();\n        };",
+          "explanation": "`next_marker` passes the arbitrary resolved level to subsequent counter initialization."
+        },
+        {
+          "id": "ilvl-counters",
+          "label": "Initialize a counter for every lower number",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "language": "rust",
+          "role": "sink",
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }\n            let first = self\n                .starts\n                .get(&(num_id.to_string(), level))\n                .copied()\n                .or_else(|| {\n                    self.levels\n                        .get(&abs)\n                        .and_then(|m| m.get(&level))\n                        .map(|l| l.start)\n                })\n                .unwrap_or(1)\n                .max(1);\n            self.counters\n                .insert((num_id.to_string(), level), first.saturating_add(1));",
+          "explanation": "An explicitly defined high level makes this loop grow the counters map for all lower integers."
+        },
+        {
+          "id": "ilvl-render-loop",
+          "label": "Render scans levels again",
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5729,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let mut out = lvl.text.clone();\n        for i in 0..=ilvl {\n            let token = format!(\"%{}\", i + 1);\n            if !out.contains(&token) {\n                continue;\n            }",
+          "explanation": "Marker rendering also enumerates all levels up to an unbounded ilvl."
+        },
+        {
+          "id": "ilvl-def",
+          "label": "Abstract numbering levels accept high indices",
+          "path": "src/convert/mod.rs",
+          "startLine": 6617,
+          "endLine": 6646,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let mut lvls = HashMap::new();\n        for lvl in dom.descendants(abs, Some(&W::name(\"lvl\"))) {\n            let ilvl = attr_any(&dom, lvl, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);\n            if let Some(v) = first_named(&dom, lvl, \"lvlRestart\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n            {\n                numbering.restarts.insert((aid.to_string(), ilvl), v);\n            }\n            if first_named(&dom, lvl, \"isLgl\").is_some_and(|n| !val_is_false(&dom, Some(n))) {\n                numbering.is_lgl.insert((aid.to_string(), ilvl));\n            }\n            if let Some(ps) =\n                first_named(&dom, lvl, \"pStyle\").and_then(|n| attr_any(&dom, n, \"val\"))\n            {\n                numbering\n                    .lvl_pstyle\n                    .insert((aid.to_string(), ilvl), ps.to_string());\n            }\n            if let Some(pic) = first_named(&dom, lvl, \"lvlPicBulletId\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n            {\n                numbering.lvl_pic.insert((aid.to_string(), ilvl), pic);\n            }\n            lvls.insert(ilvl, parse_num_level(&dom, lvl));\n        }\n        numbering.levels.insert(aid.to_string(), lvls);",
+          "explanation": "Parsed abstract `ilvl` keys enter the numbering map without a supported-range check."
+        },
+        {
+          "id": "ilvl-override",
+          "label": "Overrides accept high indices",
+          "path": "src/convert/mod.rs",
+          "startLine": 6670,
+          "endLine": 6688,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        // Full `lvlOverride/w:lvl` replacements give this num its own level\n        // table (014caa99 \"PART %2\" over the abstract's \"%2.\").\n        let overrides: Vec<(u32, NumLevel)> = dom\n            .descendants(num, Some(&W::name(\"lvlOverride\")))\n            .into_iter()\n            .filter_map(|ov| {\n                let ilvl = attr_any(&dom, ov, \"ilvl\")\n                    .and_then(|s| s.parse().ok())\n                    .unwrap_or(0);\n                first_named(&dom, ov, \"lvl\").map(|lvl| (ilvl, parse_num_level(&dom, lvl)))\n            })\n            .collect();\n        let aid = if overrides.is_empty() {\n            aid\n        } else {\n            let own = format!(\"{aid}@{nid}\");\n            let mut lvls = numbering.levels.get(&aid).cloned().unwrap_or_default();\n            lvls.extend(overrides);\n            numbering.levels.insert(own.clone(), lvls);",
+          "explanation": "Full level overrides independently preserve arbitrary level indices in the effective level map."
+        }
+      ],
+      "rootCause": {
+        "summary": "`num_pr` retains arbitrary u32 paragraph levels, and abstract/override parsers accept the same unsupported index range. `resolve_ilvl` and `ensure_level` search integer ranges rather than defined levels. For a high defined level, `next_marker` creates every missing lower counter, and marker rendering enumerates the range again.",
+        "evidenceRefs": [
+          "alt-render-entry",
+          "ilvl-input",
+          "ilvl-resolve",
+          "ilvl-ensure",
+          "ilvl-next",
+          "ilvl-counters",
+          "ilvl-render-loop",
+          "ilvl-def",
+          "ilvl-override"
+        ]
+      },
+      "remediation": "Enforce the supported numbering level range at paragraph, style, abstract and override boundaries, normally 0 through 8. Resolve parents by examining defined keys, and bound all counter initialization and rendering loops.",
+      "validation": {
+        "counterEvidence": [
+          "XML depth bounds are independent of numeric level values.",
+          "Markdown separately clamps ilvl to 8 (src/markdown/from_docx/mod.rs:2655-2664); renderer uses its own Numbering implementation.",
+          "Host CPU/memory limits can terminate or constrain a worker."
+        ],
+        "evidenceRefs": [
+          "alt-render-entry",
+          "ilvl-input",
+          "ilvl-resolve",
+          "ilvl-ensure",
+          "ilvl-next",
+          "ilvl-counters",
+          "ilvl-render-loop",
+          "ilvl-def",
+          "ilvl-override"
+        ],
+        "limitations": [
+          "Static validation only; billions of operations were not executed."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Paragraph numbering and style inheritance use num_pr without an ilvl cap (src/convert/mod.rs:12683-12718,12834-12879). An undefined u32-max paragraph level reaches resolve_ilvl's reverse scan with an ordinary level-zero parent. A defined high level bypasses that search but reaches the counters loop. Abstract levels and full overrides have no upper-bound check, so both paths remain reachable after admission."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Paragraph/style numPr or abstract/override XML -> arbitrary ilvl -> Numbering resolution -> numeric-range hash lookups / counter insertion / marker rendering",
+          "evidenceRefs": [
+            "alt-render-entry",
+            "ilvl-input",
+            "ilvl-resolve",
+            "ilvl-ensure",
+            "ilvl-next",
+            "ilvl-counters",
+            "ilvl-render-loop",
+            "ilvl-def",
+            "ilvl-override"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Rendering worker availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Short numeric input directly drives large ranges."
+        },
+        "reachability": {
+          "summary": "Supported render/layout APIs process document-supplied numbering without any feature flag or raised admission limit.",
+          "attacker": "Untrusted DOCX provider",
+          "outcome": "CPU saturation and possibly large counter-map allocation"
+        },
+        "summary": "Provide a DOCX list paragraph requesting a very high numeric level and have a caller render or lay it out."
+      },
+      "remediationTests": [
+        "Reject or safely normalize u32-max paragraph, abstract and override levels.",
+        "Verify sparse definitions do not trigger iteration proportional to an undefined numeric index.",
+        "Retain ordinary multilevel numbering behavior."
+      ],
+      "preventiveControls": [
+        "Use a validated bounded numbering-level type throughout the renderer."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-numbering-ilvl",
+        "producer": "independent baseline",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-numbering-ilvl",
+            "title": "Attacker-controlled list levels cause billions of numbering operations",
+            "cwe": "CWE-834",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "DOCX provider to layout engine",
+            "violated_security_invariant": "List-level resolution must be bounded by defined levels.",
+            "source_to_sink": "num_pr parses arbitrary u32 ilvl; resolve_ilvl evaluates (0..ilvl).rev().find(|i| lvls.contains_key(i)); next_marker iterates 0..resolved and inserts counters. Abstract and override levels also unrestricted.",
+            "impact": "ilvl=4294967295 with level zero requires about 4.29 billion hash lookups; explicitly high defined levels drive map memory growth.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 12707,
+                "endLine": 12718
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5518,
+                "endLine": 5532
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5610,
+                "endLine": 5627
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6617,
+                "endLine": 6646
+              }
+            ],
+            "supporting_source_evidence": [
+              "num_pr v.parse::<u32>().ok()",
+              "(0..ilvl).rev().find(|i| lvls.contains_key(i))",
+              "for level in 0..resolved inserts counters",
+              "parse_numbering_xml inserts parsed ilvl into levels"
+            ],
+            "counterevidence": [
+              "Markdown separately caps ilvl.min(8)",
+              "XML depth does not bound numeric ilvl"
+            ],
+            "recommended_remediation": "Enforce level 0..8 everywhere; inspect defined map keys instead of arbitrary numeric range."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.chicago-numbering",
+      "title": "Reading or rendering Chicago numbering can allocate gigabyte labels",
+      "summary": "A small DOCX list using `chicago` numbering and start `2147483647` requests 536870912 double-dagger symbols, about 1.5 GiB for one label. Reading the agent view, including MCP `docx_text`, and rendering reach the same unchecked formatter. Endnote and page-label starts provide additional rendering routes.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document sender can exhaust process memory through ordinary reading or rendering using a short numeric field. This affects process availability; filesystem confinement does not constrain memory allocation. No remote service is assumed.",
+        "changeConditions": "A shared service or multi-document host increases operational impact; a shared maximum generated-label budget removes all identified routes."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both independent readers and rendering consumers pass document counters into a direct unbounded String::repeat; proof is source-only."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 2074,
+          "endLine": 2090,
+          "role": "user_input"
+        },
+        {
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3023,
+          "endLine": 3030,
+          "role": "sink"
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "startLine": 131,
+          "endLine": 144,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6713,
+          "endLine": 6727,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8652,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8675,
+          "endLine": 8685,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 32020,
+          "endLine": 32032,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chi-parse",
+          "label": "Read numeric list start",
+          "path": "src/convert/mod.rs",
+          "startLine": 6742,
+          "endLine": 6753,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn parse_num_level(dom: &Dom, lvl: NodeId) -> NumLevel {\n    let fmt = first_named(dom, lvl, \"numFmt\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"decimal\");\n    let text = first_named(dom, lvl, \"lvlText\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .unwrap_or(\"%1.\")\n        .to_string();\n    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "An authored numbering level supplies both `numFmt` and arbitrary positive start, retained for later formatting."
+        },
+        {
+          "id": "chi-counter",
+          "label": "Select effective counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let start = self\n            .starts\n            .get(&(num_id.to_string(), resolved))\n            .copied()\n            .unwrap_or(lvl.start)\n            .max(1);\n        let cur = *self\n            .counters\n            .entry((num_id.to_string(), resolved))\n            .or_insert(start);\n        self.counters\n            .insert((num_id.to_string(), resolved), cur.saturating_add(1));\n        self.render(&abs, num_id, resolved, &lvl, cur)",
+          "explanation": "The instance override or level start becomes `cur`, which is sent to Numbering::render."
+        },
+        {
+          "id": "chi-token",
+          "label": "Resolve marker placeholder counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5724,
+          "endLine": 5751,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let mut out = lvl.text.clone();\n        for i in 0..=ilvl {\n            let token = format!(\"%{}\", i + 1);\n            if !out.contains(&token) {\n                continue;\n            }\n            let val = if i == ilvl {\n                this\n            } else {\n                self.counters\n                    .get(&(num_id.to_string(), i))\n                    .map(|v| (*v).saturating_sub(1).max(1))\n                    // An unused parent slot shows this instance's\n                    // startOverride before the abstract start.\n                    .or_else(|| self.starts.get(&(num_id.to_string(), i)).copied())\n                    .or_else(|| {\n                        self.levels\n                            .get(abs)\n                            .and_then(|m| m.get(&i))\n                            .map(|l| l.start.max(1))\n                    })\n                    .unwrap_or(1)\n            };\n            let fmt = self\n                .levels\n                .get(abs)\n                .and_then(|m| m.get(&i))\n                .map_or(lvl.fmt, |l| l.fmt);",
+          "explanation": "The marker uses the current or parent counter and obtains its selected format."
+        },
+        {
+          "id": "chi-format-call",
+          "label": "Expand marker through shared formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5755,
+          "endLine": 5766,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            let lgl = self\n                .lgl_override\n                .get(&(num_id.to_string(), ilvl))\n                .copied()\n                .unwrap_or_else(|| self.is_lgl.contains(&(abs.to_string(), ilvl)));\n            let fmt = if lgl || (lvl.fmt == NumFmt::DecimalZero && i != ilvl) {\n                NumFmt::Decimal\n            } else {\n                fmt\n            };\n            out = out.replace(&token, &format_num(fmt, val));\n        }",
+          "explanation": "A placeholder is replaced by format_num(fmt,val), reaching the Chicago label constructor."
+        },
+        {
+          "id": "chi-public-shared",
+          "label": "Shared Chicago formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 5847,
+          "endLine": 5861,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// A list counter in a `w:numFmt` (`lowerLetter`, `upperRoman`, …), as the\n/// layout prints it; for the agent view's id lines.\npub(crate) fn list_number(num_fmt: &str, n: u32) -> String {\n    format_num(parse_num_fmt(num_fmt), n)\n}\n\nfn format_num(fmt: NumFmt, n: u32) -> String {\n    match fmt {\n        NumFmt::Decimal => n.to_string(),\n        NumFmt::DecimalZero => format!(\"{n:02}\"),\n        NumFmt::CardinalText => cardinal_label(n),\n        NumFmt::Ordinal => ordinal_label(n),\n        NumFmt::OrdinalText => ordinal_text_label(n),\n        NumFmt::Hex => format!(\"{n:X}\"),\n        NumFmt::Chicago => chicago_label(n),",
+          "explanation": "Both list_number and rendering route the Chicago enum to chicago_label."
+        },
+        {
+          "id": "chi-allocate",
+          "label": "Repeat a symbol proportional to counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6019,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)\n}",
+          "explanation": "No label-length bound precedes repeat(i/4+1), so a tiny numeric counter produces gigabytes of output."
+        },
+        {
+          "id": "chi-md-parse",
+          "label": "Markdown reader accepts numeric start",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 2074,
+          "endLine": 2090,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn level_of(lvl: &Element) -> Level {\n    Level {\n        format: lvl\n            .child(\"numFmt\")\n            .and_then(|f| f.attr(\"val\"))\n            .unwrap_or(\"decimal\")\n            .to_string(),\n        start: lvl\n            .child(\"start\")\n            .and_then(|s| s.attr(\"val\"))\n            .and_then(|v| v.parse().ok())\n            .unwrap_or(1),\n        text: lvl\n            .child(\"lvlText\")\n            .and_then(|t| t.attr(\"val\"))\n            .map(str::to_string),\n    }",
+          "explanation": "The separate reading pipeline independently accepts document numbering starts without a maximum."
+        },
+        {
+          "id": "chi-md-label",
+          "label": "Reading invokes same formatter",
+          "path": "src/markdown/from_docx/mod.rs",
+          "startLine": 3023,
+          "endLine": 3030,
+          "language": "rust",
+          "role": "sink",
+          "code": "            let Some((_, at)) = self.numbering.level(num_id, k) else {\n                continue;\n            };\n            let n = counters[k].unwrap_or(i64::from(at.start));\n            label.push_str(&crate::convert::list_number(\n                &at.format,\n                u32::try_from(n.max(0)).unwrap_or(u32::MAX),\n            ));",
+          "explanation": "The agent-view list marker passes the effective unbounded counter to convert::list_number."
+        },
+        {
+          "id": "chi-mcp",
+          "label": "MCP read tool exposes agent view",
+          "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "startLine": 131,
+          "endLine": 144,
+          "language": "python",
+          "role": "entrypoint",
+          "code": "    @mcp.tool(annotations=_READ)\n    def docx_text(path: str) -> str:\n        \"\"\"The agent view `jubarte read` prints: a header (sha256, counts, page\n        setup), then Markdown with a <!-- pN --> id line before each paragraph\n        and every revision (r12) and comment (c5) with its id.\n\n        Those ids are the coordinates an edit plan uses (`p12` as written).\n        Read before you edit. Warnings follow the view, one per line.\n        \"\"\"\n        from . import _native\n\n        doc = load(path)\n        markdown, warnings = engine(lambda: _native.read_view(doc.to_bytes(), source=Path(path).name))\n        return markdown + \"\".join(f\"warning: {w}\\n\" for w in warnings)",
+          "explanation": "An MCP docx_text request reads a root-confined document and calls native read_view, whose output formatting reaches the reader."
+        },
+        {
+          "id": "chi-override",
+          "label": "Start override remains unbounded",
+          "path": "src/convert/mod.rs",
+          "startLine": 6713,
+          "endLine": 6727,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        for ov in dom.descendants(num, Some(&W::name(\"lvlOverride\"))) {\n            let ilvl = attr_any(&dom, ov, \"ilvl\")\n                .and_then(|s| s.parse().ok())\n                .unwrap_or(0);\n            let start = first_named(&dom, ov, \"startOverride\")\n                .and_then(|n| attr_any(&dom, n, \"val\"))\n                .and_then(|s| s.parse().ok())\n                .or_else(|| {\n                    first_named(&dom, ov, \"lvl\")\n                        .and_then(|lvl| first_named(&dom, lvl, \"start\"))\n                        .and_then(|n| attr_any(&dom, n, \"val\"))\n                        .and_then(|s| s.parse().ok())\n                });\n            if let Some(start) = start {\n                numbering.starts.insert((nid.to_string(), ilvl), start);",
+          "explanation": "An instance startOverride or full level replacement stores an unbounded start in the effective counter table."
+        },
+        {
+          "id": "chi-endnote-input",
+          "label": "Endnote start and format",
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8652,
+          "language": "rust",
+          "role": "user_input",
+          "code": "fn endnote_num_format(pkg: &PartFs, dom: &Dom, sects: &[NodeId]) -> (NumFmt, u32) {\n    let read = |dom: &Dom, pr: NodeId| {\n        let val = |name: &str| first_named(dom, pr, name).and_then(|n| attr_any(dom, n, \"val\"));\n        (\n            val(\"numFmt\").map(parse_num_fmt),\n            val(\"numStart\").and_then(|v| v.parse::<u32>().ok()),\n        )\n    };",
+          "explanation": "Section/settings endnote properties provide arbitrary u32 start and Chicago format."
+        },
+        {
+          "id": "chi-endnote-sink",
+          "label": "Endnote invokes same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 8675,
+          "endLine": 8685,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn number_endnote_refs(blocks: &mut [Block], (fmt, start): (NumFmt, u32)) {\n    let mut labels: HashMap<String, String> = HashMap::new();\n    visit_runs_mut(blocks, |run| {\n        let Some(id) = run.endnote_id.as_deref().filter(|id| !id.is_empty()) else {\n            return;\n        };\n        let next = start + labels.len() as u32;\n        let label = labels\n            .entry(id.to_string())\n            .or_insert_with(|| format_num(fmt, next));\n        run.text.clone_from(label);",
+          "explanation": "The first referenced endnote formats start plus its position, reaching Chicago repetition."
+        },
+        {
+          "id": "chi-page-input",
+          "label": "Page start and Chicago format",
+          "path": "src/convert/mod.rs",
+          "startLine": 5090,
+          "endLine": 5106,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    if let Some(num) = first_named(dom, sect, \"pgNumType\") {\n        if let Some(start) = attr_any(dom, num, \"start\").and_then(|s| s.parse::<u32>().ok()) {\n            // 0 is a start Word honours (3936a8fe56 numbers its title\n            // page 0 and its third page 2).\n            page.page_num_start = Some(start);\n        }\n        page.page_num_fmt = match attr_any(dom, num, \"fmt\").unwrap_or(\"\") {\n            \"lowerRoman\" => PageNumFmt::LowerRoman,\n            \"upperRoman\" => PageNumFmt::UpperRoman,\n            \"lowerLetter\" => PageNumFmt::LowerLetter,\n            \"upperLetter\" => PageNumFmt::UpperLetter,\n            \"decimalZero\" => PageNumFmt::DecimalZero,\n            \"cardinalText\" => PageNumFmt::CardinalText,\n            \"ordinal\" => PageNumFmt::Ordinal,\n            \"ordinalText\" => PageNumFmt::OrdinalText,\n            \"hex\" => PageNumFmt::Hex,\n            \"chicago\" => PageNumFmt::Chicago,",
+          "explanation": "Section pgNumType accepts arbitrary u32 start and selects Chicago formatting."
+        },
+        {
+          "id": "chi-page-state",
+          "label": "Retain starting page counter",
+          "path": "src/convert/mod.rs",
+          "startLine": 23157,
+          "endLine": 23165,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            last_after: 0.0,\n            compat_mode,\n            last_break_was_section: false,\n            tab_stops: Vec::new(),\n            tab_shift: 0.0,\n            section_page: page.page_num_start.unwrap_or(1),\n            chapter: String::new(),\n            header_rest: hf.header_rest,\n            footer_rest: hf.footer_rest,",
+          "explanation": "The layout stores the authored page start as section_page without reducing its magnitude."
+        },
+        {
+          "id": "chi-page-sink",
+          "label": "Page labels invoke same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 32020,
+          "endLine": 32032,
+          "language": "rust",
+          "role": "sink",
+          "code": "    fn section_page_label(&self) -> String {\n        match self.page.page_num_fmt {\n            PageNumFmt::Decimal => self.section_page.to_string(),\n            PageNumFmt::LowerRoman => format_num(NumFmt::LowerRoman, self.section_page),\n            PageNumFmt::UpperRoman => format_num(NumFmt::UpperRoman, self.section_page),\n            PageNumFmt::LowerLetter => format_num(NumFmt::LowerLetter, self.section_page),\n            PageNumFmt::UpperLetter => format_num(NumFmt::UpperLetter, self.section_page),\n            PageNumFmt::DecimalZero => format_num(NumFmt::DecimalZero, self.section_page),\n            PageNumFmt::CardinalText => format_num(NumFmt::CardinalText, self.section_page),\n            PageNumFmt::Ordinal => format_num(NumFmt::Ordinal, self.section_page),\n            PageNumFmt::OrdinalText => format_num(NumFmt::OrdinalText, self.section_page),\n            PageNumFmt::Hex => format_num(NumFmt::Hex, self.section_page),\n            PageNumFmt::Chicago => format_num(NumFmt::Chicago, self.section_page),",
+          "explanation": "section_page_label sends the authored numeric page count to the same Chicago formatter."
+        }
+      ],
+      "rootCause": {
+        "summary": "`chicago_label` calculates repetitions directly from an unrestricted u32 counter and allocates the entire result. Rendering list starts/overrides, the separate Markdown list reader, endnote starts and page-number starts all preserve high document-controlled counter values and reach this common formatter. Existing alphabetic/Roman label limits do not protect Chicago labels.",
+        "evidenceRefs": [
+          "chi-parse",
+          "chi-override",
+          "chi-counter",
+          "chi-token",
+          "chi-format-call",
+          "chi-public-shared",
+          "chi-allocate",
+          "chi-md-parse",
+          "chi-md-label",
+          "chi-mcp",
+          "chi-endnote-input",
+          "chi-endnote-sink",
+          "chi-page-input",
+          "chi-page-state",
+          "chi-page-sink"
+        ]
+      },
+      "remediation": "Enforce a shared maximum label length before repetition, using checked byte-size arithmetic. Apply a documented bounded Chicago counter policy or typed refusal so all reading, page, note and list consumers share the same protection.",
+      "validation": {
+        "counterEvidence": [
+          "The Markdown reader clamps nesting to eight but does not cap the counter's start magnitude.",
+          "Other formats have bounded Roman/alphabetic policies; Chicago's constructor lacks them.",
+          "Archive and XML budgets constrain the tiny source representation, not its label expansion.",
+          "Host CPU/memory limits can contain worker failure."
+        ],
+        "evidenceRefs": [
+          "chi-parse",
+          "chi-override",
+          "chi-counter",
+          "chi-token",
+          "chi-format-call",
+          "chi-public-shared",
+          "chi-allocate",
+          "chi-md-parse",
+          "chi-md-label",
+          "chi-mcp",
+          "chi-endnote-input",
+          "chi-endnote-sink",
+          "chi-page-input",
+          "chi-page-state",
+          "chi-page-sink"
+        ],
+        "limitations": [
+          "No allocation trigger executed; shared-service deployment is not established."
+        ],
+        "method": "static source trace and numeric size analysis",
+        "status": "validated",
+        "summary": "For n=2147483647, i=n-1=2147483646; i%4=2 selects the three-byte double dagger, and i/4+1=536870912 produces 1610612736 bytes before copies. List starts, startOverride, reader starts, endnote numStart and page pgNumType.start are parsed without a maximum. Both Numbering::render and the agent reader call the shared formatter. The native read_view adapter calls markdown::read (jubarte-python/src/lib.rs:899-901)."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Numbering/start overrides, reader levels, endnote or page XML -> effective u32 counter -> format_num/list_number -> chicago_label -> String::repeat",
+          "evidenceRefs": [
+            "chi-parse",
+            "chi-override",
+            "chi-counter",
+            "chi-token",
+            "chi-format-call",
+            "chi-public-shared",
+            "chi-allocate",
+            "chi-md-parse",
+            "chi-md-label",
+            "chi-mcp",
+            "chi-endnote-input",
+            "chi-endnote-sink",
+            "chi-page-input",
+            "chi-page-state",
+            "chi-page-sink"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Document-processing availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A short counter deterministically controls output size."
+        },
+        "reachability": {
+          "summary": "Untrusted document input is sufficient for a normal reading/rendering operation; MCP root containment remains intact while docx_text can still reach unbounded label formatting.",
+          "attacker": "Untrusted DOCX provider",
+          "entrypoint": "Agent-view reading and render/layout APIs",
+          "outcome": "Gigabyte allocations and possible host-process termination"
+        },
+        "summary": "Have a caller read or render a DOCX whose numbering level selects Chicago format and a huge positive start; alternatively use authored endnote or page-label starts when rendered."
+      },
+      "remediationTests": [
+        "Reject huge Chicago list starts and overrides through reading and rendering APIs.",
+        "Cover page and endnote Chicago starts as sibling routes.",
+        "Keep ordinary Chicago symbol cycles and existing Roman/alphabetic behavior."
+      ],
+      "preventiveControls": [
+        "Every numeric-to-text formatter should have an explicit output-size bound."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-chicago-label",
+        "producer": "independent baseline, with parent sibling-consumer validation",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-chicago-label",
+            "title": "Chicago numbering expands a short start value into a multi-gigabyte label",
+            "cwe": "CWE-789",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "DOCX numbering provider to reading or rendering interfaces",
+            "violated_security_invariant": "Formatting untrusted counters must have bounded output.",
+            "source_to_sink": "parse_num_level retains unrestricted u32 start; format_num Chicago routes to chicago_label; mark.repeat(i/4+1). Renderer Numbering::render and Markdown list_marker reach same formatter, including MCP docx_text.",
+            "impact": "start=2147483647 repeats 3-byte double dagger 536870912 times (~1.5 GiB); max u32 requests ~3 GiB.",
+            "locations": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6742,
+                "endLine": 6766
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 5847,
+                "endLine": 5861
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 6015,
+                "endLine": 6018
+              },
+              {
+                "path": "src/markdown/from_docx/mod.rs",
+                "startLine": 3023,
+                "endLine": 3030
+              },
+              {
+                "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+                "startLine": 131,
+                "endLine": 144
+              }
+            ],
+            "supporting_source_evidence": [
+              "parse_num_level parses w:start without upper bound",
+              "NumFmt::Chicago => chicago_label(n)",
+              "let i = n.saturating_sub(1) as usize; MARKS[i % 4].repeat(i / 4 + 1)",
+              "Markdown list_marker invokes crate::convert::list_number"
+            ],
+            "counterevidence": [
+              "Roman/alpha labels already cap counts",
+              "Markdown level clamp does not bound start",
+              "Archive/XML permits short trigger"
+            ],
+            "recommended_remediation": "Bound numbering-label bytes before allocation across all consumers."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "insecure-temporary-file.plan-recording",
+      "title": "Recording plans through binding CLIs can corrupt a symlink target",
+      "summary": "When an operator records a plan in a directory writable by another local user, that user can precreate `.<plan-name>.<pid>.partial` as a symlink. Python and Node write the plan JSON through that link before renaming it, corrupting an unrelated file writable by the operator.",
+      "severity": {
+        "level": "low",
+        "rationale": "The impact is corruption of operator-writable files outside the chosen shared directory. Exploitation requires local directory-entry access, a predictable target/PID and a platform configuration that allows symlink following; trusted private plan directories prevent it. No document-only attack or arbitrary executable payload is established.",
+        "changeConditions": "Routine privileged recording into attacker-writable directories would increase likelihood and impact; exclusive private staging eliminates this path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Both adapters explicitly derive the predictable path and perform default symlink-following writes; native code and its regression show the intended safe alternative."
+      },
+      "taxonomy": {
+        "category": "Insecure temporary file",
+        "cwe": [
+          "CWE-377"
+        ]
+      },
+      "locations": [
+        {
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 403,
+          "endLine": 414,
+          "role": "root_control"
+        },
+        {
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 408,
+          "endLine": 427,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "plan-python",
+          "label": "Python opens predictable staging name",
+          "path": "jubarte-python/python/jubarte_redlines/__main__.py",
+          "startLine": 403,
+          "endLine": 414,
+          "language": "python",
+          "role": "root_control",
+          "code": "    if not dry_run:\n        # Through a symbolic link to the file it names, written yet or not;\n        # via a hidden partial file named for this process, removed if the\n        # write fails; bytes as they are, so no platform newline translation.\n        target = Path(os.path.realpath(plan))\n        partial = target.with_name(f\".{target.name}.{os.getpid()}.partial\")\n        try:\n            partial.write_bytes(recorded[\"json\"].encode(\"utf-8\"))\n            os.replace(partial, target)\n        except OSError as exc:\n            partial.unlink(missing_ok=True)\n            raise CliError(f\"writing {plan}: {exc}\") from exc",
+          "explanation": "The operator-selected plan path is resolved, but the separate PID-derived partial path is opened by write_bytes without exclusive creation, so a preexisting symlink redirects the truncating write."
+        },
+        {
+          "id": "plan-node",
+          "label": "Node opens predictable staging name",
+          "path": "jubarte-wasm/cli/bin/jubarte-redlines.mjs",
+          "startLine": 408,
+          "endLine": 427,
+          "language": "javascript",
+          "role": "root_control",
+          "code": "  if (!o.dry_run) {\n    // Through a symbolic link to the file it names, written yet or not; via a hidden partial\n    // file named for this process, removed if the write fails.\n    let target = o.plan;\n    try {\n      target = fs.realpathSync(o.plan);\n    } catch {\n      // A link to a plan not written yet names where it goes.\n      try {\n        target = path.resolve(path.dirname(o.plan), fs.readlinkSync(o.plan));\n      } catch {}\n    }\n    const partial = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.partial`);\n    try {\n      fs.writeFileSync(partial, recorded.json);\n      fs.renameSync(partial, target);\n    } catch (e) {\n      fs.rmSync(partial, { force: true });\n      throw new CliError(`writing ${o.plan}: ${osError(e)}`);\n    }",
+          "explanation": "The same deterministic partial name is passed to default writeFileSync before rename, which follows a preexisting symlink."
+        },
+        {
+          "id": "plan-native-control",
+          "label": "Native recorder uses secure publication",
+          "path": "src/edit/record.rs",
+          "startLine": 142,
+          "endLine": 167,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// Legacy temporary-name helper, retained for API compatibility. Recordings\n/// no longer open this predictable path; publication creates exclusive staging.\n/// Concurrent recordings remain last-writer-wins, not a serialized append.\npub fn partial_path(target: &Path) -> PathBuf {\n    let name = target\n        .file_name()\n        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());\n    target.with_file_name(format!(\".{name}.{}.partial\", std::process::id()))\n}\n\n/// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:\n/// a precommit error leaves the plan as it was. Returns staging cleanup warnings\n/// after successful installation; publication errors retain their warning payload.\n///\n/// # Errors\n///\n/// The I/O error when the partial file cannot be written beside the plan or\n/// renamed into place (a missing directory, no permission). After a successful\n/// commit, a durability error explicitly reports the committed plan.\npub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {\n    #[cfg(not(target_arch = \"wasm32\"))]\n    {\n        let target = plan_target(plan);\n        crate::publication::publish_paths(&[(target, json.as_bytes())], true)\n            .map(|report| report.warnings)\n            .map_err(|error| std::io::Error::new(error.source.kind(), error))",
+          "explanation": "The native equivalent uses secure staging; the existing regression protects this behavior only for the native recorder."
+        },
+        {
+          "id": "plan-regression",
+          "label": "Existing native regression preserves symlink referent",
+          "path": "tests/cli_plan_record.rs",
+          "startLine": 2278,
+          "endLine": 2288,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "#[cfg(unix)]\n#[test]\nfn audit_d13_recording_never_opens_a_predictable_partial_link() {\n    let dir = tempfile::tempdir().unwrap();\n    let plan = dir.path().join(\"plan.json\");\n    let victim = dir.path().join(\"victim.json\");\n    std::fs::write(&victim, \"keep\").unwrap();\n    std::os::unix::fs::symlink(&victim, jubarte::edit::record::partial_path(&plan)).unwrap();\n    jubarte::edit::record::write_plan(&plan, \"{}\\n\").unwrap();\n    assert_eq!(std::fs::read_to_string(victim).unwrap(), \"keep\");\n    assert!(!plan.symlink_metadata().unwrap().is_symlink());",
+          "explanation": "The native equivalent uses secure staging; the existing regression protects this behavior only for the native recorder."
+        }
+      ],
+      "rootCause": {
+        "summary": "Resolving the intended plan destination does not secure a second sibling name. Both adapters use a PID-based partial path and ordinary truncating writes without exclusive creation or no-follow protection. A precreated staging symlink therefore transfers the operator's write authority to its referent before rename.",
+        "evidenceRefs": [
+          "plan-python",
+          "plan-node",
+          "plan-native-control",
+          "plan-regression"
+        ]
+      },
+      "remediation": "Use secure exclusive private staging in both binding adapters. Expose/reuse native plan publication from Python and implement equivalent exclusive staging and atomic replacement for Node; never truncate an existing PID-derived partial path.",
+      "validation": {
+        "counterEvidence": [
+          "Requires an attacker-writable plan parent and permitted symlink following; private parent directories prevent exploitation.",
+          "Only recorded plan JSON is written; no arbitrary-code payload or remote entry is established.",
+          "MCP and the native Rust CLI use separate secure publication."
+        ],
+        "evidenceRefs": [
+          "plan-python",
+          "plan-node",
+          "plan-native-control",
+          "plan-regression"
+        ],
+        "limitations": [
+          "No filesystem-race/symlink reproduction was executed."
+        ],
+        "method": "static source trace",
+        "status": "validated",
+        "summary": "Python `partial.write_bytes` and Node `fs.writeFileSync` use default creation/truncation behavior after constructing the same predictable name. No code checks the staging object's identity. Preview runs first but does not constrain that file. Native `write_plan` now delegates to secure publication, and a current regression explicitly verifies it does not open the legacy partial symlink."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Operator plan path -> deterministic sibling partial name -> ordinary write -> symlink referent corruption -> rename of link",
+          "evidenceRefs": [
+            "plan-python",
+            "plan-node",
+            "plan-native-control",
+            "plan-regression"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "why": "File integrity outside the attacker's direct authority can be lost."
+        },
+        "likelihood": {
+          "level": "low",
+          "why": "Requires local shared-directory and symlink-following prerequisites."
+        },
+        "reachability": {
+          "summary": "A lower-privilege local directory writer can cross into an operator-writable file outside that directory; controlling document contents alone is insufficient.",
+          "attacker": "Local writer of entries in the plan parent directory",
+          "outcome": "Unrelated file is truncated and replaced with plan JSON",
+          "preconditions": [
+            "Victim records a plan in that shared directory.",
+            "Platform protections permit the symlink-following write."
+          ]
+        },
+        "summary": "Precreate the expected partial filename in a shared plan directory as a link to a file the victim operator can write, then wait for a successful plan-recording command."
+      },
+      "remediationTests": [
+        "Precreate the predicted partial as a symlink and verify both adapters preserve the referent.",
+        "Verify intended plan symlink semantics and cleanup remain correct."
+      ],
+      "preventiveControls": [
+        "Keep filesystem publication policy shared across native and binding CLIs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0017-plan-staging-symlink",
+        "producer": "bindings_investigator",
+        "originalCandidates": [
+          {
+            "candidateId": "discovery-0017-plan-staging-symlink",
+            "title": "Binding CLI plan recording follows predictable temporary-file symlinks",
+            "originalWorkerEvidence": "Early candidate: both binding CLIs still record --plan through predictable .<plan-name>.<pid>.partial followed by ordinary write (Python __main__.py:407-411; npm mjs:420-423). A local attacker who can create entries in the chosen/shared plan directory can precreate that partial as symlink to victim-writable file elsewhere; ordinary write follows it and truncates unrelated file before rename. Native src/edit/record.rs:143 explicitly says callers no longer open this predictable path because publication now uses exclusive staging, but Python/npm duplicate old path. Assessing concrete privilege preconditions; document/plan content alone cannot exploit it.",
+            "source": "bindings_investigator"
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-27af9a1e1d45135a",
+        "label": "Document rendering and HTML altChunk expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated positive HTML colspan -> end_table unbounded XML expansion after package admission; original evidence retained in finding."
+      },
+      {
+        "id": "surface-2ffd4a3bc2b0cb5d",
+        "label": "Python and Node edit-plan staging",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated predictable partial symlink writes in both binding CLIs; calibrated low severity for local shared-directory prerequisites. Native recorder mitigated."
+      },
+      {
+        "id": "surface-39567b51d14ddcad",
+        "label": "Renderer table grid semantics",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated gridSpan, gridBefore and gridAfter allocation paths; Markdown clamp is separate and does not mitigate rendering."
+      },
+      {
+        "id": "surface-88cc4117a03d9fd4",
+        "label": "Renderer numbering level resolution",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated arbitrary numeric ilvl -> reverse scans, counter map growth and marker loops; paragraph, abstract and full override inputs retained."
+      },
+      {
+        "id": "surface-aa85c8896e13aed7",
+        "label": "Chicago numbering labels across reading and rendering",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated list starts/overrides, Markdown agent reading/MCP text, endnote and page-label consumers of the shared unchecked formatter."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0017-output-toctou",
+        "candidateId": "discovery-0017-output-toctou",
+        "reason": "Independent validation pending; requires shared output directory write access, distinct from control of a document.",
+        "paths": [
+          "jubarte-python/python/jubarte_redlines/__main__.py",
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-output-toctou",
+          "title": "Binding CLI output checks race with ordinary symlink-following writes",
+          "source": "bindings_investigator",
+          "originalWorkerEvidence": "Separate binding gap: ordinary output paths use exists()/existsSync() preflight followed by Path.write_bytes/fs.writeFileSync without exclusive create or no-follow. E.g Python _render_to checks PDF at :740-742, renders untrusted doc, then _write at :757 -> :130; npm renderTo checks at :157, renders at :158 then write -> :110. A lower-privilege local writer in shared output directory can insert symlink to an existing victim-only writable file during render, causing overwrite despite no --force. This requires directory-entry control; plan/document content alone is insufficient, and trusted private output directories are not exploitable. Native publication hard_link is counterexample."
+        }
+      },
+      {
+        "id": "discovery-0017-pr-self-hosted",
+        "candidateId": "discovery-0017-pr-self-hosted",
+        "reason": "Pending validation of PR execution trust and self-hosted runner prerequisites.",
+        "paths": [
+          ".github/workflows/adoption.yml",
+          ".github/workflows/docs.yml"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-pr-self-hosted",
+          "title": "Pull requests run repository-controlled code on self-hosted runners",
+          "source": "bindings_investigator",
+          "originalWorkerEvidence": "adoption.yml and docs.yml run pull_request code unconditionally on runs-on:self-hosted (adoption :19-31, :49-59 and :61-99; docs :42-67, :80-99), checking out PR merge/head then executing repository-local action/build/scripts. No fork/actor guard unlike Jules workflows. A contributor whose PR workflow runs (subject to GitHub's external approval settings) can execute arbitrary code as persistent self-hosted runner user. Reviewing ci/md-roundtrip/security and local mbx action for concrete host/cache authority; no claim of network/secrets beyond source.",
+          "additionalWorkerEvidence": "ci.yml:16 triggers all PRs; self-hosted jobs :36,:77-78,:116,:167 checkout/execute PR code/local .github/actions/mbx; :144 says public repo. mbx/action.yml:8-13 describes private Docker network/cache requiring no token; :21-22 HTTP mbx-cache:7543 shared namespace. No server protocol inspected; cache poisoning not established.",
+          "finalWorkerEvidence": "Full source review confirms independently reachable pull_request workflows CI, Markdown roundtrip, Adoption and Docs. CI loads PR-controlled local .github/actions/mbx; read-only token/persist-credentials:false do not confine OS code. Shared private Docker network/cache described in mbx action 8-13,21-32. GitHub contributor approval settings and actual ephemeral host isolation not queried. No root/Docker-socket/release-key access asserted."
+        }
+      },
+      {
+        "id": "discovery-0017-eocd-budget",
+        "candidateId": "discovery-0017-eocd-budget",
+        "reason": "Awaiting validation of dependency EOCD retry behavior and impact of entry-count underdeclaration.",
+        "paths": [
+          "src/admission.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-eocd-budget",
+          "title": "EOCD selection differential may bypass archive entry-count admission budget",
+          "source": "baseline",
+          "originalWorkerEvidence": "src/admission.rs declared_entry_count (580-624) trusts the last EOCD signature without validating its directory fields/comment framing. zip 9.0.5 actual reader (local dependency read/zip_archive.rs 196-231) retries earlier EOCD candidates after invalid central-header parsing. A fake later EOCD advertising count 0 but invalid directory can make preindex_budget accept, then ZipArchive indexes the earlier real archive; admit only checks archive.len() < declared, never > max_entries after open. Investigating exact payload and PartFs counterpart statically; likely admission entry-budget bypass.",
+          "additionalWorkerEvidence": "Static candidate confirmed: put a 22-byte fake EOCD in real archive comment, count=0, central_directory_offset=0xffffffff, remaining fields zero. admission::declared_entry_count returns 0 (580-602), but zip 9.0.5 find_central_directory.rs 147-155 rejects fake because its central offset is past EOCD and continues to real EOCD. admit accepts archive.len()>limit (451 only detects len<declared); PartFs read_package 282-289 same precheck and no post-open count. Real unique empty entries pass header/name/stream checks. Bypasses max_entries/preindex allocation protection; default64MB can carry hundreds of thousands of empty entries."
+        }
+      },
+      {
+        "id": "discovery-0017-duplicate-rels",
+        "candidateId": "discovery-0017-duplicate-rels",
+        "reason": "Awaiting independent validation of identical-duplicate relationship repair complexity.",
+        "paths": [
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-duplicate-rels",
+          "source": "baseline",
+          "title": "Identical duplicate relationship repair performs quadratic comparisons",
+          "originalWorkerEvidence": "src/opc/mod.rs drop_repeated_relationships 99-124 hashes first-seen IDs but checks repaired.contains(&item.id) (116) for every identical duplicate. A .rels containing IDs1..N once followed by same IDs1..N makes repaired growN and performs N(N-1)/2 linear string comparisons. read_relationships (222-250) preserves all records; PartFs::open_within (524-540) invokes repair. Multi-MiB .rels allowed; XML per-tag/ZIP budgets do not bound record count. Tests confirm identical duplicates accepted."
+        }
+      },
+      {
+        "id": "discovery-0017-font-alias-amplification",
+        "candidateId": "discovery-0017-font-alias-amplification",
+        "reason": "Embedded-font ownership/deduplication validation pending.",
+        "paths": [
+          "src/convert/font_table.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0017-font-alias-amplification",
+          "source": "architecture (focused audit continuation)",
+          "title": "Embedded font aliases may amplify one part into many retained font buffers",
+          "originalWorkerEvidence": "src/convert/font_table.rs:205-229 iterates every unique w:font name, resolves each embed relationship, then deobfuscate_odttf(raw,..) clones entire same part (179-193) and stores independent owned Arc per (family,bold,italic). No deduplication by part/digest or cumulative decoded-font budget visible. with_layout unconditionally loads whole table (mod.rs:807) before text usage. One valid embedded font part and many distinct family aliases -> O(alias count × font size) live memory, charged once in admission; downstream checks pending."
+        }
+      }
+    ],
+    "openQuestions": [
+      "Remaining source groups are under review."
+    ]
+  },
+  "scope": {
+    "summary": "Read-only offline Standard scan of the supplied target and scope .",
+    "runtimeStatus": "Application code not executed per core scan procedure.",
+    "validationMode": "static source analysis",
+    "context": "Generated source-backed threat model; exact userContext null; three subagents assigned."
+  }
+}

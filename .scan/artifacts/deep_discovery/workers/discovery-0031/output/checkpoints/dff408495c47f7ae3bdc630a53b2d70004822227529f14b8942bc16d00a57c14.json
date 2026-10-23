@@ -1,0 +1,72 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-d95e1f1173948b28",
+        "label": "DOCX renderer table-grid allocation",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Baseline candidate received; independent parent validation pending."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0031-table-grid-allocation",
+        "candidateId": "discovery-0031-table-grid-allocation",
+        "reason": "Baseline source-backed candidate awaits parent validation; original interim evidence preserved.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Unbounded table grid spans allocate document-controlled column vectors",
+          "evidence": [
+            "src/convert/mod.rs:14211-14216 parses gridSpan as usize",
+            "src/convert/mod.rs:14340-14354 parses gridBefore/gridAfter as usize",
+            "src/convert/mod.rs:13599-13615 allocates/resizes occupancy vectors",
+            "src/convert/mod.rs:14637-14638 open.resize"
+          ],
+          "attacker": "DOCX supplier",
+          "impact": "Tiny admitted XML with gridSpan=1000000000 requests about 4GB column vector then larger merge vector",
+          "status": "baseline tracing entrypoints and counterevidence"
+        }
+      },
+      {
+        "id": "discovery-0031-altchunk-table-expansion",
+        "candidateId": "discovery-0031-altchunk-table-expansion",
+        "reason": "Baseline returned additional table-span candidate; independent parent validation pending.",
+        "candidate": {
+          "source": "baseline",
+          "title": "Unbounded HTML altChunk colspan expands XML before rendering",
+          "evidence": [
+            "src/convert/altchunk.rs:563-568 accepts unbounded usize colspan",
+            "src/convert/altchunk.rs:469-476 sums spans",
+            "src/convert/altchunk.rs:490-492 emits gridCol for each column"
+          ],
+          "attackInput": "<table><tr><td colspan='1000000000'>A</td></tr></table>",
+          "impact": "About 23 GB intermediate XML before DOM",
+          "counterevidence": "Package admission has byte/entry/depth/attribute budgets, HTML chunk is non-XML; no execution performed."
+        }
+      },
+      {
+        "candidateId": "discovery-0031-font-alias-amplification",
+        "reason": "Investigator candidate awaits parent validation of font copying and retained buffers.",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Embedded font aliases amplify a single package font into repeated allocations",
+          "evidence": [
+            "src/convert/font_table.rs:209-229 iterates distinct font/style entries, resolves same payload per alias",
+            "src/convert/font_table.rs:180 clones font bytes in deobfuscate_odttf",
+            "src/convert/mod.rs:806-807 unconditionally loads embedded font table"
+          ],
+          "attacker": "DOCX supplier chooses distinct font family names and internal relationship targets",
+          "impact": "1000 aliases to one 10MB valid/padded font could retain about 10GB",
+          "counterevidence": "Known catalogue font families skipped; actual parser validity and aggregate controls still under investigation."
+        },
+        "id": "discovery-0031-font-alias-amplification"
+      }
+    ]
+  }
+}

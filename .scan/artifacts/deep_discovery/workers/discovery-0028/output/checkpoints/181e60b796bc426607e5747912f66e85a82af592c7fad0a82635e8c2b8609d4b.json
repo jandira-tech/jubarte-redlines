@@ -1,0 +1,46 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "altchunk-expansion",
+        "label": "DOCX embedded HTML altChunk table expansion",
+        "disposition": "needs_follow_up",
+        "notes": "Independent baseline candidate retained before parent validation.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "discovery-0028-altchunk-colspan",
+        "candidateId": "discovery-0028-altchunk-colspan",
+        "reason": "Awaiting independent parent source validation and full baseline payload.",
+        "paths": [
+          "src/convert/altchunk.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "candidateId": "discovery-0028-altchunk-colspan",
+          "title": "HTML altChunk colspan expands without a column bound",
+          "producer": "baseline",
+          "originalEvidence": {
+            "locations": [
+              "src/convert/altchunk.rs:469-475",
+              "src/convert/altchunk.rs:489-490",
+              "src/convert/altchunk.rs:562-566",
+              "src/convert/mod.rs:789-798"
+            ],
+            "description": "Baseline reports unbounded usize colspan from HTML altChunk is summed into table columns and emitted one gridCol per span. Small embedded HTML can request a billion columns; parent validation pending."
+          }
+        }
+      }
+    ],
+    "openQuestions": [
+      "Remaining authorized source is under review; candidate impact and controls require parent validation."
+    ]
+  }
+}

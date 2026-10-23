@@ -1,0 +1,1402 @@
+[
+  {
+    "findingId": "csf_9e40f23e742aa43493a0fb92",
+    "title": "Rendering a small DOCX table can exhaust host memory",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0004",
+      "dedup-0010",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0024",
+      "dedup-0025",
+      "dedup-0027",
+      "dedup-0029",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_8dcaf50784fd95a7f0c2ec28",
+    "title": "Processing renamed auxiliary XML bypasses XML depth limits",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0007",
+      "dedup-0008",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0025",
+      "dedup-0026",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_ad0603057507f1d6be6e9942",
+    "title": "Shallow malformed XML can bypass admission and overflow the DOM parser stack",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0020",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_0e2b085a251b34412cd71a4c",
+    "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0018",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0024",
+      "dedup-0025",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_d46d1a3ef7bb52454cbd3c68",
+    "title": "Large Chicago numbering values can exhaust memory while reading or rendering a DOCX",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0006",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_64b247931cd1f053217fde7a",
+    "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0023",
+      "dedup-0025",
+      "dedup-0026",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029",
+      "dedup-0030",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_f23ce2ece7c2d5de613bb58d",
+    "title": "Unbounded tab-leader positions create attacker-sized repeated strings",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0014"
+    ]
+  },
+  {
+    "findingId": "csf_e38139daefc493123fe13362",
+    "title": "Flat LaTeX script chains bypass nesting limits and exhaust the writer stack",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001"
+    ]
+  },
+  {
+    "findingId": "csf_3201e6caaef21850d61fa69c",
+    "title": "WMF record-boundary failures amplify polygon work and retained text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0003",
+      "dedup-0005",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0023",
+      "dedup-0026",
+      "dedup-0028",
+      "dedup-0029",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_dc0d34a6ea9a964733efe547",
+    "title": "Aliased legacy DOC pieces expand small physical text into enormous logical stories",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0018",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0024",
+      "dedup-0025",
+      "dedup-0028",
+      "dedup-0029",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_eaffa9e4af9c9c07d800ef1b",
+    "title": "ZIP footer and count interpretation mismatch bypasses entry-count admission",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0004",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0023"
+    ]
+  },
+  {
+    "findingId": "csf_a69309b0b64d1048c5a4e319",
+    "title": "Untrusted Markdown reference documents reach unchecked recursive XML parsing",
+    "severity": "low",
+    "folders": [
+      "dedup-0001",
+      "dedup-0010",
+      "dedup-0025"
+    ]
+  },
+  {
+    "findingId": "csf_a9b4e9d87eb567391149dad1",
+    "title": "Large page coordinates make border rendering loop without progress",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002"
+    ]
+  },
+  {
+    "findingId": "csf_09abb95061370ae3d7d342ca",
+    "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0025",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_de54caf2d47d7e03bce741e0",
+    "title": "Metadata scrub leaves property parts under alternate names",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_d22452ac5ec901578d340334",
+    "title": "Opaque DTD and top-level CDATA bypass package XML depth checks",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0007",
+      "dedup-0008",
+      "dedup-0013",
+      "dedup-0021",
+      "dedup-0023",
+      "dedup-0024",
+      "dedup-0027"
+    ]
+  },
+  {
+    "findingId": "csf_b2aa4325c8f3aa14a940fcad",
+    "title": "npm plan recording follows a predictable staging symlink",
+    "severity": "low",
+    "folders": [
+      "dedup-0002",
+      "dedup-0019",
+      "dedup-0022",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_85d9c340b10d981559925227",
+    "title": "A shared font-index directory permits staging symlink overwrites",
+    "severity": "low",
+    "folders": [
+      "dedup-0002",
+      "dedup-0010",
+      "dedup-0019"
+    ]
+  },
+  {
+    "findingId": "csf_4de0d1e5f809171f3b8323d9",
+    "title": "Repeated HTML chunk references bypass conversion memory budgets",
+    "severity": "medium",
+    "folders": [
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0011",
+      "dedup-0016",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_b45e3ea11925b4220c435786",
+    "title": "Python CLI output/plan and npm direct-output symlinks can overwrite unrelated files",
+    "severity": "low",
+    "folders": [
+      "dedup-0004",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0024",
+      "dedup-0026",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_68acfaf376a60cf8c3d8e2d4",
+    "title": "Cyclic Markdown drawing dependencies terminate conversion through unbounded recursion",
+    "severity": "medium",
+    "folders": [
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0007",
+      "dedup-0010",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0025",
+      "dedup-0027"
+    ]
+  },
+  {
+    "findingId": "csf_2cc2c8f85ad501547f61a5af",
+    "title": "Public Strict-format probe inflates unbounded document headers",
+    "severity": "medium",
+    "folders": [
+      "dedup-0004",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0014",
+      "dedup-0020",
+      "dedup-0022",
+      "dedup-0025"
+    ]
+  },
+  {
+    "findingId": "csf_49256aa9e91ee0159c917b13",
+    "title": "Rendering an admitted DOCX can retain gigabytes of duplicate embedded fonts",
+    "severity": "medium",
+    "folders": [
+      "dedup-0005",
+      "dedup-0006",
+      "dedup-0011",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0021",
+      "dedup-0023",
+      "dedup-0025",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_e317a396f5a5264629caef58",
+    "title": "Redacting a numeric identifier can leave its custom XML attribute intact",
+    "severity": "medium",
+    "folders": [
+      "dedup-0005",
+      "dedup-0009"
+    ]
+  },
+  {
+    "findingId": "csf_3b8aeff5efd1bfbd5ccfd3dd",
+    "title": "Scrubbing can silently preserve identifying UTF-16 core and app properties",
+    "severity": "medium",
+    "folders": [
+      "dedup-0005"
+    ]
+  },
+  {
+    "findingId": "csf_5ad7cba70ec2176a33e66f2a",
+    "title": "Tiny Markdown table metadata can trigger unbounded cell allocation",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0010"
+    ]
+  },
+  {
+    "findingId": "csf_275e734d8410a0bc01404a3c",
+    "title": "Unbounded document table spans exhaust memory during rendering",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0011",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_cac980ab6041d4ec91b39fd1",
+    "title": "Repeated relationship IDs trigger quadratic repair work",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0020",
+      "dedup-0022",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_dea8102957ca1306a0f7756b",
+    "title": "Unbounded list levels cause billions of iterations or allocations",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_6a40bc41bdf34a737ceac40d",
+    "title": "Entity decoding repeatedly scans the input suffix",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0011",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0023",
+      "dedup-0024",
+      "dedup-0029",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_631ab5c4311b813e6ceb189f",
+    "title": "Pull-request code runs on shared self-hosted infrastructure",
+    "severity": "medium",
+    "folders": [
+      "dedup-0008",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0020",
+      "dedup-0029",
+      "dedup-0030",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_85e0853b68d29e45897292e3",
+    "title": "Converting legacy DOC text with a long numeric prefix causes quadratic work",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_b7534c87815cfbca97ca8543",
+    "title": "Ragged legacy DOC tables expand into an unbounded padded rectangle",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009",
+      "dedup-0018",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_d7cf4e4a5f04c299b9dd8730",
+    "title": "Mixed edit plans repeat redacted text in another operation's report",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009",
+      "dedup-0016",
+      "dedup-0030"
+    ]
+  },
+  {
+    "findingId": "csf_7bd64146a8b40f28ac601665",
+    "title": "Inspecting many alternating-format runs repeatedly scans the whole paragraph prefix",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009"
+    ]
+  },
+  {
+    "findingId": "csf_d85bbb63ac7a034dda69d78b",
+    "title": "Listing many comments over one large range multiplies retained anchor text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009"
+    ]
+  },
+  {
+    "findingId": "csf_c2ab52b1c8614c7fd5356cf8",
+    "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+    "severity": "low",
+    "folders": [
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0021",
+      "dedup-0024",
+      "dedup-0025",
+      "dedup-0026",
+      "dedup-0028",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_00beee9df9b14ad1518f06ce",
+    "title": "Legacy edit-anchor searches compare long prefixes at every character",
+    "severity": "low",
+    "folders": [
+      "dedup-0009"
+    ]
+  },
+  {
+    "findingId": "csf_eb7afb96f6f0e2787081e030",
+    "title": "Redaction postcondition misses confidential phrases split across DrawingML runs",
+    "severity": "medium",
+    "folders": [
+      "dedup-0011",
+      "dedup-0016"
+    ]
+  },
+  {
+    "findingId": "csf_8510417e640fe194edfa6571",
+    "title": "Streaming XML hash repeatedly rescans growing escaped opening tags",
+    "severity": "medium",
+    "folders": [
+      "dedup-0011"
+    ]
+  },
+  {
+    "findingId": "csf_30d7378aa76256da61dfe8fc",
+    "title": "Nested semantic fields multiply retained instructions and hash work",
+    "severity": "medium",
+    "folders": [
+      "dedup-0011"
+    ]
+  },
+  {
+    "findingId": "csf_c1fd47c87c992981879d9be6",
+    "title": "Tolerated XML syntax can hide recursive elements from admission",
+    "severity": "medium",
+    "folders": [
+      "dedup-0012"
+    ]
+  },
+  {
+    "findingId": "csf_9885a1f1ab291001eef81daa",
+    "title": "Privacy scrubbing can return identifying data in valid relocated DOCX parts",
+    "severity": "low",
+    "folders": [
+      "dedup-0013",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_6971fbd04aa6a684463b89f5",
+    "title": "UTF-16 XML can retain confidential text after successful scrub or redaction",
+    "severity": "medium",
+    "folders": [
+      "dedup-0013"
+    ]
+  },
+  {
+    "findingId": "csf_38d5438aa76b1bf2cdbb12d0",
+    "title": "Revision settlement performs quadratic paragraph correspondence work",
+    "severity": "medium",
+    "folders": [
+      "dedup-0013"
+    ]
+  },
+  {
+    "findingId": "csf_5ca5660e582c260e59b28647",
+    "title": "Nested Markdown header or footer fields can overflow the conversion stack",
+    "severity": "medium",
+    "folders": [
+      "dedup-0013"
+    ]
+  },
+  {
+    "findingId": "csf_0b398d69c585073b8c510a3d",
+    "title": "Rendering a long paragraph performs quadratic suffix scans",
+    "severity": "medium",
+    "folders": [
+      "dedup-0014"
+    ]
+  },
+  {
+    "findingId": "csf_91c179305a37cdf9c1219fe0",
+    "title": "Comparing large tables can allocate a quadratic matrix",
+    "severity": "medium",
+    "folders": [
+      "dedup-0014"
+    ]
+  },
+  {
+    "findingId": "csf_eb4256ff45478e77c3906750",
+    "title": "Scanning a document for retained text can overflow the stack",
+    "severity": "medium",
+    "folders": [
+      "dedup-0014",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0019"
+    ]
+  },
+  {
+    "findingId": "csf_e02194eb587697016bdfe08d",
+    "title": "Rendering nested HTML tables bypasses the XML depth limit",
+    "severity": "medium",
+    "folders": [
+      "dedup-0014",
+      "dedup-0025"
+    ]
+  },
+  {
+    "findingId": "csf_06aad04a55110c49864e83c0",
+    "title": "PDF generation can hang on a font with many retained tables",
+    "severity": "medium",
+    "folders": [
+      "dedup-0015",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_ee82536925c3faabcb055f4a",
+    "title": "PDF font subsetting can enumerate billions of codepoints",
+    "severity": "medium",
+    "folders": [
+      "dedup-0015",
+      "dedup-0031"
+    ]
+  },
+  {
+    "findingId": "csf_93c93094934792b4e7e4a94c",
+    "title": "HTML selector groups multiply CSS values into excessive memory",
+    "severity": "medium",
+    "folders": [
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0018"
+    ]
+  },
+  {
+    "findingId": "csf_8c4451e023d8d194e7cae9a8",
+    "title": "Crafted MATH metrics can expand an equation into excessive glyphs",
+    "severity": "low",
+    "folders": [
+      "dedup-0015",
+      "dedup-0017"
+    ]
+  },
+  {
+    "findingId": "csf_21a623ddd20cd959e828b40e",
+    "title": "Release script exposes the PyPI publishing token in process arguments",
+    "severity": "low",
+    "folders": [
+      "dedup-0016",
+      "dedup-0020"
+    ]
+  },
+  {
+    "findingId": "csf_08670176ab69a0d459ba1059",
+    "title": "Reference metadata stamping builds oversized ZIP indexes before refusal",
+    "severity": "medium",
+    "folders": [
+      "dedup-0017"
+    ]
+  },
+  {
+    "findingId": "csf_6aa9a8626de9bc707c34e4d3",
+    "title": "Repeated compressed-image references can exhaust renderer memory",
+    "severity": "medium",
+    "folders": [
+      "dedup-0018",
+      "dedup-0024",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_8e4b0b14cb63a30d38fdbc99",
+    "title": "Predictable plan and font-cache staging paths follow local symlinks",
+    "severity": "low",
+    "folders": [
+      "dedup-0020"
+    ]
+  },
+  {
+    "findingId": "csf_5b24e6910eeca1b1d4367847",
+    "title": "Document font names trigger quadratic persistent index rewrites",
+    "severity": "medium",
+    "folders": [
+      "dedup-0021"
+    ]
+  },
+  {
+    "findingId": "csf_d7c1eb34fffbe325bc2b0af4",
+    "title": "Windows Markdown image checks can contact an external share before rejecting it",
+    "severity": "medium",
+    "folders": [
+      "dedup-0024"
+    ]
+  },
+  {
+    "findingId": "csf_50c9eabc4578186352265845",
+    "title": "Rejecting malformed ZIP headers can allocate gigabytes of diagnostic text",
+    "severity": "low",
+    "folders": [
+      "dedup-0025"
+    ]
+  },
+  {
+    "findingId": "csf_d1ff97a577444c45ea8ba899",
+    "title": "Legacy DOC placeholder selection repeatedly rescans predictable document text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_918c9b892d0d08ee23454ad8",
+    "title": "Report text extraction quadratically groups baselines on tall pages",
+    "severity": "medium",
+    "folders": [
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_8dc0178c218380a4337cf074",
+    "title": "Unbounded HTML colspan exhausts memory during DOCX rendering",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_6128bc397a829afd60ea9390",
+    "title": "Untrusted Markdown reference documents reach unchecked recursive XML parsing",
+    "severity": "low",
+    "folders": [
+      "dedup-0001",
+      "dedup-0010"
+    ]
+  },
+  {
+    "findingId": "csf_550f8cf900e415a773aa959d",
+    "title": "Repeated HTML chunk references bypass conversion memory budgets",
+    "severity": "medium",
+    "folders": [
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0011"
+    ]
+  },
+  {
+    "findingId": "csf_27ca2e0d965d8b1341a32909",
+    "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0014"
+    ]
+  },
+  {
+    "findingId": "csf_dbf35c828f9082997b9ef8fc",
+    "title": "Aliased legacy DOC pieces expand small physical text into enormous logical stories",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0014"
+    ]
+  },
+  {
+    "findingId": "csf_33c5fede5e569e4c1531e38a",
+    "title": "Rendering a small DOCX table can exhaust host memory",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0004",
+      "dedup-0010",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0015"
+    ]
+  },
+  {
+    "findingId": "csf_8510b5bc0ddac96422dfcdc6",
+    "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015"
+    ]
+  },
+  {
+    "findingId": "csf_1bcd308b4a2806997600d807",
+    "title": "Python CLI output/plan and npm direct-output symlinks can overwrite unrelated files",
+    "severity": "low",
+    "folders": [
+      "dedup-0004",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0015"
+    ]
+  },
+  {
+    "findingId": "csf_bff2c0151aeb6ffaa6f96d4a",
+    "title": "Repeated relationship IDs trigger quadratic repair work",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0015"
+    ]
+  },
+  {
+    "findingId": "csf_3ec09f0cecec11243e8a8f5e",
+    "title": "Entity decoding repeatedly scans the input suffix",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0011",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015"
+    ]
+  },
+  {
+    "findingId": "csf_6054d1763a69fc51bf4be2b2",
+    "title": "Mixed edit plans repeat redacted text in another operation's report",
+    "severity": "medium",
+    "folders": [
+      "dedup-0009",
+      "dedup-0016"
+    ]
+  },
+  {
+    "findingId": "csf_4b64ae60e06cc87420036fe5",
+    "title": "Metadata scrub leaves property parts under alternate names",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0015",
+      "dedup-0017"
+    ]
+  },
+  {
+    "findingId": "csf_85faece8ffd45c8ee175c288",
+    "title": "Cyclic Markdown drawing dependencies terminate conversion through unbounded recursion",
+    "severity": "medium",
+    "folders": [
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0007",
+      "dedup-0010",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0018",
+      "dedup-0020"
+    ]
+  },
+  {
+    "findingId": "csf_58625a5255dafe3f4e5744ea",
+    "title": "npm plan recording follows a predictable staging symlink",
+    "severity": "low",
+    "folders": [
+      "dedup-0002",
+      "dedup-0019",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_9178b4a4d6f60f788e9978b0",
+    "title": "Public Strict-format probe inflates unbounded document headers",
+    "severity": "medium",
+    "folders": [
+      "dedup-0004",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0014",
+      "dedup-0020",
+      "dedup-0022"
+    ]
+  },
+  {
+    "findingId": "csf_7084a83c24deb556942e2d43",
+    "title": "WMF record-boundary failures amplify polygon work and retained text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0003",
+      "dedup-0005",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0023"
+    ]
+  },
+  {
+    "findingId": "csf_e594736f4fae83b05e87e651",
+    "title": "Rendering an admitted DOCX can retain gigabytes of duplicate embedded fonts",
+    "severity": "medium",
+    "folders": [
+      "dedup-0005",
+      "dedup-0006",
+      "dedup-0011",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0021",
+      "dedup-0023"
+    ]
+  },
+  {
+    "findingId": "csf_5a86b3f5aa767e4e64bd9e71",
+    "title": "Rendering a small DOCX table can exhaust host memory",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0004",
+      "dedup-0010",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0024"
+    ]
+  },
+  {
+    "findingId": "csf_b0aa536248aea0f44dd30d47",
+    "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0018",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0024"
+    ]
+  },
+  {
+    "findingId": "csf_91956fe2d99a3a2871c06916",
+    "title": "Aliased legacy DOC pieces expand small physical text into enormous logical stories",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0004",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0018",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0024"
+    ]
+  },
+  {
+    "findingId": "csf_f1c7e6e8877805d7436a18fa",
+    "title": "Python and Node plan recording can overwrite unrelated files through staging symlinks",
+    "severity": "low",
+    "folders": [
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0012",
+      "dedup-0013",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0021",
+      "dedup-0024"
+    ]
+  },
+  {
+    "findingId": "csf_32d60b431e9d66bf961b0a29",
+    "title": "Redaction succeeds while UTF-16 XML retains the removed text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0002",
+      "dedup-0005",
+      "dedup-0009",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0025"
+    ]
+  },
+  {
+    "findingId": "csf_2ece2f7902f77a603a8c3e7d",
+    "title": "DOCX table spans drive attacker-sized column allocations",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_656f2c09e37719ab674c7d01",
+    "title": "HTML altChunk colspan expands into unbounded generated XML",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_64287538a7a91a3131e41cf3",
+    "title": "Unbounded numbering levels drive billions of renderer operations",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_ab1b5981b2fe3523acda9227",
+    "title": "Chicago numbering expands one counter into a multi-gigabyte label",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_8e223ee6b4dac7611a7a1666",
+    "title": "Non-XML auxiliary filenames bypass admission before recursive parsing",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_cfe16e57b9ef3db1480af379",
+    "title": "Decoded relationship ampersands trigger quadratic target resolution",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_7d0ce29936a1160934d4fc7c",
+    "title": "Identical duplicate relationship repair performs quadratic scans",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_b6323ea4d1b9deec7fd1691b",
+    "title": "Intern-pool saturation duplicates long namespace URIs per element",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_5c8dea5553c7fc1081bb4404",
+    "title": "Markdown XML tree duplicates inherited namespace maps for each child declaration",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_6ac92b590b334d3bf00acb96",
+    "title": "Markdown reference DOCX reaches recursive XML parsing before admission",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_0529dc7f423199b735cc79c0",
+    "title": "Tracked-edit audit parses permission-bearing XML before admission",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_c68801f07e53c21ee989186f",
+    "title": "Python CLI output writes follow substituted symlinks",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_17d1c1cbd835bb262cc60f1b",
+    "title": "npm CLI output writes follow substituted symlinks",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_d681729bf32d41763310113e",
+    "title": "Python plan recording follows predictable temporary-file symlinks",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_a2fc12fcad36bf0a916c1879",
+    "title": "npm plan recording follows predictable temporary-file symlinks",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_d633eef7259aae77e07e54f3",
+    "title": "A shared font-index parent permits symlink-directed cache staging writes",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_a10f0e5f40cc0a10cb3e3a1a",
+    "title": "Explicit Markdown revision IDs trigger quadratic run splitting",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_996bada33e4ee3093dba3ed9",
+    "title": "Rendering a DOCX with renamed auxiliary XML can exhaust the call stack",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_9bec1c0d5ba7855608bbae36",
+    "title": "Converting Markdown with an untrusted reference DOCX can exhaust the call stack",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_c55dc55a00e0fa344843906e",
+    "title": "Redacting text can leave recoverable copies in UTF-16 XML",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_f756bbe5509c42bdcaa64921",
+    "title": "Processing renamed auxiliary XML bypasses XML depth limits",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0007",
+      "dedup-0008",
+      "dedup-0011",
+      "dedup-0012",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0025",
+      "dedup-0026",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_88d031991ca3e20e4aae2f24",
+    "title": "Reading or converting nested legacy DOC fields can monopolize the processing thread",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0016",
+      "dedup-0018",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0022",
+      "dedup-0024",
+      "dedup-0025",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_32625277093e7f286a267e2b",
+    "title": "Rendering an HTML chunk can allocate gigabytes from a single colspan value",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0002",
+      "dedup-0003",
+      "dedup-0004",
+      "dedup-0006",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0023",
+      "dedup-0025",
+      "dedup-0026",
+      "dedup-0027",
+      "dedup-0028",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_80edacafa6b67d4864116a38",
+    "title": "WMF record-boundary failures amplify polygon work and retained text",
+    "severity": "medium",
+    "folders": [
+      "dedup-0001",
+      "dedup-0003",
+      "dedup-0005",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0011",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0018",
+      "dedup-0020",
+      "dedup-0023",
+      "dedup-0026",
+      "dedup-0028",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_eb94605aebd8f08907c46e8c",
+    "title": "Entity decoding repeatedly scans the input suffix",
+    "severity": "medium",
+    "folders": [
+      "dedup-0006",
+      "dedup-0008",
+      "dedup-0009",
+      "dedup-0010",
+      "dedup-0011",
+      "dedup-0013",
+      "dedup-0014",
+      "dedup-0015",
+      "dedup-0016",
+      "dedup-0019",
+      "dedup-0020",
+      "dedup-0021",
+      "dedup-0023",
+      "dedup-0024",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_4b734e13a64fed0f0a4aaf25",
+    "title": "Pull-request code runs on shared self-hosted infrastructure",
+    "severity": "medium",
+    "folders": [
+      "dedup-0008",
+      "dedup-0015",
+      "dedup-0017",
+      "dedup-0020",
+      "dedup-0029"
+    ]
+  },
+  {
+    "findingId": "csf_d84eab4d13fbce226cc028c6",
+    "title": "Converting cyclic Markdown drawing payloads can terminate the host process",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_15a49e54554d7e43955ad841",
+    "title": "Rendering a DOCX with a large table span can exhaust host memory",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_f2b8de5e6202ea345a0e0c02",
+    "title": "Rendering embedded HTML tables can expand a tiny colspan into billions of XML elements",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_c1fe8475183ebde207aa0c59",
+    "title": "Rendering nonstandard auxiliary XML parts bypasses admission depth limits",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_3339fb9302ddc111d50992db",
+    "title": "Rendering Chicago numbering can allocate gigabytes for one short counter",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_97bbc446dda426be0cba1425",
+    "title": "Document numbering values allocate multi-gigabyte Chicago labels",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_e3e47288f289bb478cceac76",
+    "title": "Attacker-controlled list levels cause billions of iterations and counter allocations",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_40b66860adb64bbff7afac76",
+    "title": "HTML altChunk colspan causes unbounded generated XML expansion",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_5722c422d8b3b400072d52fe",
+    "title": "Python and npm plan recording follows precreated staging symlinks",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_a3d19de450bebd004df5f6d1",
+    "title": "Recording a plan in a shared directory can overwrite a symlink target",
+    "severity": "low",
+    "folders": []
+  },
+  {
+    "findingId": "csf_cb06d76f5ddd08a0273f8203",
+    "title": "Converting a small HTML altChunk can exhaust memory",
+    "severity": "medium",
+    "folders": []
+  },
+  {
+    "findingId": "csf_8b6d07b4362cb6555001c97b",
+    "title": "Rendering a small DOCX table can allocate billions of columns",
+    "severity": "medium",
+    "folders": []
+  }
+]

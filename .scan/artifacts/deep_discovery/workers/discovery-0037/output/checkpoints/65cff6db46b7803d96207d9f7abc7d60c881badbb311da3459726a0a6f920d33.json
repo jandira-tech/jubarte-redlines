@@ -1,0 +1,381 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only Standard audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0037; three subagents.",
+    "runtimeStatus": "No application execution, tests, network access, or credential use.",
+    "validationMode": "static source analysis",
+    "context": "userContext is null. Generated architecture review is pending."
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-number-label-expansion",
+      "title": "Document numbering values allocate multi-gigabyte Chicago labels",
+      "summary": "A small admitted DOCX can set a list start or endnote numStart to 4294967295 with Chicago numbering. The renderer converts that numeric value directly into 1,073,741,824 repeated double-daggers, allocating 3 GiB before subsequent layout and copies. Document suppliers can exhaust a consuming process without a large archive or deep XML.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-supplied document input deterministically amplifies a tiny numeric field into gigabytes, threatening process availability. No shared production service is assumed; policy recommends external CPU/memory isolation.",
+        "changeConditions": "A network-facing shared conversion deployment raises exposure; strict worker memory/time limits constrain the blast radius to a worker."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source establishes unchecked u32 parsing, direct counter propagation, and unconditional repeat; no runtime or deployment proof is required for the public parser boundary."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6018,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6750,
+          "endLine": 6753,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5629,
+          "endLine": 5641,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5765,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8645,
+          "endLine": 8685,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 448,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chicago-repeat",
+          "label": "Numeric value controls allocation length",
+          "path": "src/convert/mod.rs",
+          "startLine": 6015,
+          "endLine": 6018,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)",
+          "explanation": "At u32::MAX, the selected 3-byte mark is repeated 2^30 times with no output budget."
+        },
+        {
+          "id": "chicago-start",
+          "label": "Untrusted list start accepts full u32 range",
+          "path": "src/convert/mod.rs",
+          "startLine": 6750,
+          "endLine": 6753,
+          "language": "rust",
+          "code": "    let start = first_named(dom, lvl, \"start\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1);",
+          "explanation": "The parsed start feeds NumLevel.start, next_marker and render without a semantic maximum."
+        },
+        {
+          "id": "chicago-render",
+          "label": "Marker formatter runs before label replacement",
+          "path": "src/convert/mod.rs",
+          "startLine": 5765,
+          "language": "rust",
+          "code": "            out = out.replace(&token, &format_num(fmt, val));",
+          "explanation": "The placeholder path materializes the entire label; layout or output clipping occurs later."
+        },
+        {
+          "id": "chicago-note",
+          "label": "Endnote format and start use the same formatter",
+          "path": "src/convert/mod.rs",
+          "startLine": 8681,
+          "endLine": 8685,
+          "language": "rust",
+          "code": "        let next = start + labels.len() as u32;\n        let label = labels\n            .entry(id.to_string())\n            .or_insert_with(|| format_num(fmt, next));\n        run.text.clone_from(label);",
+          "explanation": "The endnote numStart/numFmt sibling operation also reaches the unbounded formatter."
+        }
+      ],
+      "rootCause": {
+        "summary": "Numeric numbering parameters are treated as output sizes; chicago_label applies str::repeat without checking the expanded marker byte length.",
+        "evidenceRefs": [
+          "chicago-repeat",
+          "chicago-start"
+        ]
+      },
+      "remediation": "Enforce a finite expanded-marker byte budget before allocation for every numeric-format consumer. Refuse or safely fall back when start/counter values exceed format-specific limits; propagate a typed refusal instead of allocating. Cover list starts, startOverride, and endnote numbering.",
+      "validation": {
+        "counterEvidence": [
+          "src/convert/mod.rs:773-774 admits the input first; src/admission.rs:63-76 bounds archive sizes and XML depth, but no semantic number/output bound exists on this path.",
+          "SECURITY.md advises CPU/memory-limited workers; no guarantee against all denial of service is claimed."
+        ],
+        "limitations": [
+          "No vulnerability-triggering input or runtime reproduction executed.",
+          "No shared-service deployment is established."
+        ],
+        "method": "offline static source trace",
+        "status": "validated",
+        "summary": "Independently validated from public PDF entry through with_layout admission, list start parsing, counter propagation and render/format_num; endnote numStart reaches the same sink. Archive/XML budgets bound input bytes and structure, not numeric expansion."
+      },
+      "attackPath": {
+        "controls": [
+          "Input admission",
+          "Caller-owned process limits"
+        ],
+        "dataflow": {
+          "summary": "word/numbering.xml w:start (or endnotePr/numStart) -> u32 start -> Numbering counter/endnote counter -> format_num(Chicago,n) -> chicago_label -> str::repeat."
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Process memory exhaustion, OOM termination or prolonged CPU/memory pressure."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Direct deterministic numeric-to-allocation path under default parsing; exploitation depends on victim processing the document."
+        },
+        "reachability": {
+          "summary": "Public docx_to_pdf[_with/_report] accepts caller-provided bytes, admits the package, loads numbering, and formats the first matching numbered paragraph; a normal %1 placeholder is sufficient.",
+          "attacker": "Supplier of a DOCX processed by another user's application",
+          "preconditions": [
+            "Victim converts or renders attacker-controlled DOCX containing an active Chicago numbered paragraph or endnote.",
+            "No trusted configuration changes, large payload, or prior host access are needed."
+          ]
+        },
+        "summary": "Document author crosses the untrusted DOCX-to-renderer boundary using small numeric attributes to consume host memory."
+      },
+      "remediationTests": [
+        "Use deterministic formatter tests at the maximum accepted marker size and just beyond it, including u32::MAX, without allocating the oversized string.",
+        "Add integration fixtures with small Chicago list starts/startOverride and endnote numStart that exceed the output budget; assert bounded refusal."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0037-chicago-label-amplification",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "Possible Chicago numeric-format allocation amplification",
+          "originalEvidence": "Baseline: src/convert/mod.rs:6015-6018 chicago_label(n:u32) repeats up to ~1B symbols (3GB UTF-8) from a numeric list or note start. Tracing effective controls now.",
+          "baselineValidation": "parse_num_level reads unbounded u32 start at src/convert/mod.rs:6750-6753; Numbering next_marker uses it at 5629-5641; render calls format_num at 5765; Chicago at 5861 calls 6015-6018. start=4294967295 yields 1,073,741,824 double-daggers (~3GiB), tiny admitted DOCX."
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-numbering-level-iteration",
+      "title": "Attacker-controlled list levels cause billions of iterations and counter allocations",
+      "summary": "DOCX paragraph, style, and numbering definitions accept arbitrary u32 list levels. An undefined level near u32::MAX drives a descending search through billions of integers; defining that level instead makes next_marker create a counter for every lower level. A tiny document can monopolize CPU or exhaust memory during rendering.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can reliably deny availability to a consuming renderer through a small numeric field. The source establishes process-level impact; a shared service is conditional and policy recommends external process limits.",
+        "changeConditions": "Dedicated time/memory-limited conversion workers reduce cross-request impact; a shared network-facing process increases exposure."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently traced unbounded u32 parsing to numeric-range loops and per-level HashMap insertion with no range guard."
+      },
+      "taxonomy": {
+        "category": "Unchecked input controlling resource-consuming loops",
+        "cwe": [
+          "CWE-606"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5518,
+          "endLine": 5532,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5549,
+          "endLine": 5551,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5627,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 5725,
+          "endLine": 5728,
+          "role": "sibling_operation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12707,
+          "endLine": 12718,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6618,
+          "endLine": 6621,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6672,
+          "endLine": 6679,
+          "role": "source"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 12828,
+          "endLine": 12879,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "level-parse",
+          "label": "Paragraph list level accepts full u32",
+          "path": "src/convert/mod.rs",
+          "startLine": 12711,
+          "endLine": 12714,
+          "code": "    let ilvl = first_named(dom, num, \"ilvl\")\n        .and_then(|n| dom.attribute(n, &W::val()))\n        .and_then(|v| v.parse::<u32>().ok())\n        .unwrap_or(0);",
+          "explanation": "A ten-digit attribute controls the work count; normal XML/ZIP limits do not restrict the semantic value."
+        },
+        {
+          "id": "level-search",
+          "label": "Undefined levels scan every smaller integer",
+          "path": "src/convert/mod.rs",
+          "startLine": 5529,
+          "endLine": 5532,
+          "code": "        (0..ilvl)\n            .rev()\n            .find(|i| lvls.contains_key(i))\n            .unwrap_or(ilvl)",
+          "explanation": "With only level 0 defined, ilvl=4294967294 makes roughly four billion membership checks."
+        },
+        {
+          "id": "level-counters",
+          "label": "Defined high levels materialize every parent",
+          "path": "src/convert/mod.rs",
+          "startLine": 5610,
+          "endLine": 5613,
+          "code": "        for level in 0..resolved {\n            if self.counters.contains_key(&(num_id.to_string(), level)) {\n                continue;\n            }",
+          "explanation": "The loop eventually inserts a counter for every lower level at lines 5626-5627, even when no such numbering definition exists."
+        }
+      ],
+      "rootCause": {
+        "summary": "List levels are not constrained to the supported finite domain, and lookup/counter/render logic iterates numeric ranges rather than existing level definitions.",
+        "evidenceRefs": [
+          "level-parse",
+          "level-search",
+          "level-counters"
+        ]
+      },
+      "remediation": "Validate paragraph, style, abstract-level and override ilvl values against the supported numbering-level range before storing or using them. Iterate only bounded known levels for lookup, counters and placeholders; reject unsupported values with a typed error.",
+      "validation": {
+        "counterEvidence": [
+          "Input admission at src/convert/mod.rs:773 checks archive/XML budgets; it does not schema-validate or cap ilvl.",
+          "Missing numId/abstract definitions return early; the attack supplies a valid instance and level-0 definition or a matching high-level definition.",
+          "Caller CPU/memory limits bound worker damage but do not prevent the per-request exhaustion."
+        ],
+        "limitations": [
+          "No application execution or exploit fixture was run.",
+          "No remote shared deployment is assumed."
+        ],
+        "method": "offline static source trace",
+        "status": "validated",
+        "summary": "Validated paragraph num_pr -> list_marker -> next_revised/next_marker -> resolve_ilvl; high definitions also survive parse_numbering_xml and reach eager parent-counter insertion. The equivalent ensure_level search and render loop share the same missing level-domain control."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "word/document.xml or styles.xml w:ilvl -> u32 num_pr -> list_marker -> Numbering.resolve_ilvl/ensure_level/next_marker/render -> billions of loop iterations or counter insertions. Numbering.xml lvl/lvlOverride accepts the matching high-level definitions."
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Renderer CPU saturation and memory exhaustion."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Source-supported deterministic loops scale with attacker-controlled u32, not input size."
+        },
+        "reachability": {
+          "summary": "Public PDF/PNG/render entry points load the untrusted package and format active list paragraphs. Supplying a valid numbering instance plus a very high ilvl reaches the loops under default options.",
+          "attacker": "DOCX supplier",
+          "preconditions": [
+            "Victim renders a document containing an active numbered paragraph and its numbering instance."
+          ]
+        }
+      },
+      "remediationTests": [
+        "Add deterministic bounded tests for ilvl at the last supported value and just outside it, plus u32::MAX-1.",
+        "Exercise undefined high-level lookup and explicitly defined high-level counters; assert prompt refusal without iterating the numeric range."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0037-numbering-level-amplification",
+        "worker": "baseline",
+        "originalCandidate": {
+          "title": "Unbounded numbering level triggers billions of iterations or counter insertions",
+          "originalEvidence": "Baseline: direct ilvl u32 at 12711-12714 feeds resolve_ilvl 5518-5532 looping 0..ilvl in reverse, so ilvl=4294967294 with only normal level 0 performs ~4B hash lookups. If malicious numbering defines that high ilvl, next_marker loops 0..resolved inserting billions of HashMap counters (5610-5627). No value range validation seen."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-cb72fe95bbd18916",
+        "label": "Engine document parsing and rendering",
+        "disposition": "needs_follow_up",
+        "notes": "Validated Chicago numeric-label memory amplification; remaining engine audit and numbering-level candidate pending.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-1f22bf056ad79c1e",
+        "label": "Python/MCP and WASM interfaces",
+        "disposition": "needs_follow_up",
+        "notes": "Focused investigation in progress.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-9d0f5f4165ed863e",
+        "label": "Native publication and self-update",
+        "disposition": "needs_follow_up",
+        "notes": "Parent source review in progress.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0037-npm-plan-symlink",
+        "reason": "Focused investigator candidate awaiting independent source validation and severity calibration.",
+        "paths": [
+          "jubarte-wasm/cli/bin/jubarte-redlines.mjs"
+        ],
+        "candidate": {
+          "title": "Predictable plan staging follows symlinks",
+          "originalEvidence": "Investigator: recordPlan constructs .<plan basename>.<process.pid>.partial then fs.writeFileSync without exclusive/no-follow flags (lines 423-425), allowing a local attacker able to populate plan directory to pre-place a symlink and truncate a victim before rename. Independently reachable from plan-recording (--plan plus operation flags). Local-directory-write precondition; no document-only path escape found."
+        },
+        "id": "discovery-0037-npm-plan-symlink"
+      },
+      {
+        "candidateId": "discovery-0037-altchunk-colspan",
+        "reason": "New baseline candidate awaiting parent static validation.",
+        "paths": [
+          "src/convert/altchunk.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "Unbounded HTML colspan expansion",
+          "originalEvidence": "Baseline: src/convert/altchunk.rs:563-566 parses HTML td colspan as unrestricted usize; end_table computes cols as sum spans (469-475), emits one gridCol per col (489-490). HTML td colspan=\"18446744073709551615\" can drive unbounded string allocation; mod.rs:773 admits original archive, then 790-793 expands HTML with no output budget."
+        },
+        "id": "discovery-0037-altchunk-colspan"
+      }
+    ]
+  }
+}

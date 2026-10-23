@@ -1,0 +1,675 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard audit of the current /Users/arthrod/temp/T/jubarte-redlines source, scope .",
+    "runtimeStatus": "No application code or network executed.",
+    "validationMode": "static source review"
+  },
+  "threatModel": {
+    "summary": "Jubarte is a local Rust Word-document toolkit exposed through Rust byte APIs, PyO3 Python, WASM/Node, native and language CLIs, and an optional Python MCP server over stdio. Untrusted DOCX/DOC/Markdown and JSON edit plans feed package admission, XML/legacy parsers, comparisons, edits and PDF/PNG rendering. Native publication and explicit self-update are separate host-authority boundaries (src/lib.rs:7-30,106-174; src/convert/mod.rs:769-798; jubarte-python/python/jubarte_redlines/mcp_server.py:67-112,373-381). An independent architecture reviewer identified the resource rows below before its execution was interrupted; parent verified their actual consumers offline.",
+    "assets": [
+      "Host process availability and bounded memory/CPU while parsing attacker-authored documents (src/admission.rs:42-105; src/legacy_doc.rs:179-216).",
+      "Integrity/confidentiality of source documents and generated output; edit snapshot SHA-256 and output alias guards (src/bin/jubarte.rs:1610-1667,1768-1826).",
+      "Files outside MCP's held root capability and the operator's installed executable (src/publication.rs:146-200; src/update.rs:198-257,299-321).",
+      "Release/registry authority and signing credentials supplied by the operator or CI secret store, never document contents (.github/workflows/release.yml:261-310; scripts/release.sh:976-1012)."
+    ],
+    "trustBoundaries": [
+      "Document author -> Rust parsing/rendering -> caller process. admission bounds compressed bytes, entry counts, per-part/total inflation and selected XML depth/tag policy; downstream XML, numeric layout, images/fonts and legacy fields require their own effective controls (src/admission.rs:442-580,788-827; src/convert/mod.rs:769-798).",
+      "Python/Node/native CLI callers choose ambient local input/output paths; these callers already possess operator file authority. MCP clients instead provide relative document/output names beneath --root, default current working directory; build_server resolves that root once and _OutputRoot retains native cap_std::Dir authority for actual I/O (mcp_server.py:67-112,373-381; jubarte-python/src/lib.rs:1244-1279; src/publication.rs:146-200).",
+      "MCP/native rendering -> ambient font resources: JUBARTE_FONT_DIR overrides the platform user font directory; macOS ~/Library/Application Support/jubarte/fonts, Unix $XDG_DATA_HOME/jubarte/fonts or ~/.local/share/jubarte/fonts, Windows %APPDATA%/jubarte/fonts. Fonts are read by conversion outside the document root (src/convert/font.rs:2637-2652).",
+      "Rendering -> persistent font index: JUBARTE_FONT_INDEX selects a path; empty/off disables it; default parent(user_font_dir)/font-index.tsv. FONT_INDEX loads that path and save merges and writes path.with_extension(tsv.<pid>.tmp), then renames it to the index (src/convert/font.rs:3100-3107,3213-3229). This is component ambient authority, distinct from tool document/output confinement.",
+      "Explicit self-update -> fixed jandira-tech/jubarte-redlines GitHub release and SHA256SUMS.txt -> extracted platform executable -> installed binary. TLS/checksum verification, optional compiled version-gated signing policy, and lstat regular-file hook enforce distinct steps (src/update.rs:25-48,198-257,274-285,299-321; Cargo.toml:137-148).",
+      "Privileged release workflows: release.yml optionally signs with secret-store ZIPSIGN_PRIVATE_KEY, computes SHA256SUMS.txt and publishes GitHub assets. Operator scripts/release.sh:976-1012 can recover workflow artifacts into dist/release, compute checksums and create a release without that signing step."
+    ],
+    "attackerCapabilities": [
+      "An attacker can author DOCX ZIP entries, relationship targets/types, XML structures and numeric attributes, embedded media/font bytes, legacy DOC character streams, Markdown and edit-plan values that a caller elects to process.",
+      "An MCP client can invoke registered tools over its existing stdio connection and request reads/writes within the granted root; overwrite=true explicitly permits replacement there. No remote listener or tenant model is established by the source (mcp_server.py:93-112,373-381).",
+      "Document control does not imply control of host environment variables, font directories/index, release assets, signing credentials, operator checkout or trusted MCP root. No new authority is inferred from already possessing those privileges."
+    ],
+    "securityObjectives": [
+      "Reject malformed or excessive document input before unbounded recursion, scalar-driven allocation or algorithmic amplification reaches the host process.",
+      "Keep document relationship resolution within in-memory package data and do not fetch external references (src/convert/mod.rs:21310-21319; src/admission.rs:14-23).",
+      "Enforce held-root filesystem confinement and no-clobber publication; retain source identity for guarded native edits (src/publication.rs:419-574; src/bin/jubarte.rs:1610-1667,1768-1826).",
+      "Install only checksum-verified release binaries and enforce configured signing keys/version rules and regular-file validation; never expose CI secret material in generated analysis."
+    ],
+    "assumptions": [
+      "Exact userContext is null; no supplied threat model or CODEX_SECURITY_KNOWLEDGE_BASE was present. Only current on-disk source was reviewed; no Git history, network, application execution or credential validation was used.",
+      "Rust library, Python and WASM hosts may pass adversarial documents; no specific internet-facing production deployment is assumed. SECURITY.md recommends process CPU/memory limits; caller-enforced isolation constrains blast radius but does not establish parser safety.",
+      "MCP docstring claims tools only touch files under root (mcp_server.py:67-68), while native font resolution/index uses ambient directories (font.rs:2637-2652,3100-3107,3213-3229). Retain that guarantee mismatch; no attacker-directed file disclosure or arbitrary overwrite beyond trusted font configuration was established.",
+      "Compiled RELEASE_KEYS is empty and FIRST_SIGNED_RELEASE is None (src/update.rs:44-48), so current verification is checksum-only. docs/SELF_UPDATE.md:59-87 acknowledges this. The operator fallback release path lacks signing, a future signing-era compatibility concern rather than an established present substitution vulnerability.",
+      "Runtime and deployment-specific exploit reliability remain untested. The interrupted architecture/baseline workers did not return final fully-reviewed inventories; partial review and remaining paths must remain explicit."
+    ],
+    "origin": "generated"
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.table-grid-span",
+      "title": "Rendering a small DOCX table can exhaust host memory",
+      "summary": "A document author can set `w:gridSpan`, `w:gridBefore`, or `w:gridAfter` to a large integer. PDF/PNG layout uses it directly as a vector length, so a tiny admitted document can demand gigabytes and terminate or stall the host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "An untrusted document can deterministically drive huge allocations through a public parser boundary. This compromises availability of the rendering process; shared-service exposure is conditional and process memory limits constrain the blast radius."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static source tracing establishes the unbounded usize parsing and direct vector allocation after admission, with no semantic span budget. No application code was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled memory allocation from table spans",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 9175,
+          "endLine": 9190,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14216,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14353,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 13598,
+          "endLine": 13616,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 14635,
+          "endLine": 14644,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "render-entry",
+          "label": "render entry",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "Rendering admits package bytes, then opens the normalized package."
+        },
+        {
+          "id": "table-dispatch",
+          "label": "table dispatch",
+          "path": "src/convert/mod.rs",
+          "startLine": 9175,
+          "endLine": 9190,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        } else if dom.name_is(child, &W::tbl()) {\n            // Endnote references in cells count, in document order.\n            endnotes.observe_para(dom, child);\n            let block = table_block(\n                dom,\n                child,\n                ctx.sheet,\n                numbering,\n                &mut ctx.authors.borrow_mut(),\n                &ctx.comments,\n                Some((ctx.pkg, ctx.main)),\n            );\n            if !block_is_blank(&block) {\n                blocks.push(block);\n            }\n        } else if local_name_is(dom, child, \"customXml\") {",
+          "explanation": "Body tables reach table_block with document-controlled XML."
+        },
+        {
+          "id": "table-span",
+          "label": "table span",
+          "path": "src/convert/mod.rs",
+          "startLine": 14204,
+          "endLine": 14216,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {\n    let Some(pr) = first_named(dom, cell, \"tcPr\") else {\n        return (1, VMerge::None);\n    };\n    // Direct child only. first_named walks into tcPrChange (addition_removal\n    // remnant: live colspan=1, change gridSpan=2) and pads three 80pt\n    // columns so the live last cell wraps at ~50pt.\n    let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);\n    let vmerge = match direct_named(dom, pr, \"vMerge\") {",
+          "explanation": "gridSpan is parsed as usize and only a minimum of one is enforced."
+        },
+        {
+          "id": "table-skips",
+          "label": "table skips",
+          "path": "src/convert/mod.rs",
+          "startLine": 14340,
+          "endLine": 14353,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {\n    let pr = direct_named(dom, row, \"trPr\")?;\n    let span = direct_named(dom, pr, &format!(\"grid{side}\"))\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|v| v.parse::<usize>().ok())\n        .filter(|n| *n > 0)?;\n    let pref = direct_named(dom, pr, &format!(\"w{side}\"))\n        .filter(|n| attr_any(dom, *n, \"type\").is_none_or(|t| t == \"dxa\"))\n        .and_then(|n| attr_any(dom, n, \"w\"))\n        .and_then(parse_len)\n        .filter(|w| *w > 0.0)\n        .map_or(PrefWidth::Auto, PrefWidth::Dxa);\n    Some((span, pref))\n}",
+          "explanation": "gridBefore and gridAfter use the same unbounded span representation."
+        },
+        {
+          "id": "table-allocation",
+          "label": "table allocation",
+          "path": "src/convert/mod.rs",
+          "startLine": 13598,
+          "endLine": 13616,
+          "language": "rust",
+          "role": "sink",
+          "code": "    // tcW 10080 cell over its four-column grid (gridSpan absent), not the\n    // first 84pt column; 91 corpus documents carry such a row.\n    stretch_stale_spans(&mut raw_rows, &cols);\n    let mut occupancy = 0usize;\n    let grid_len = cols.len();\n    for row in &raw_rows {\n        occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());\n    }\n    if cols.len() < occupancy {\n        if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }\n    }\n    if cols.is_empty() && occupancy > 0 {\n        cols = vec![80.0; occupancy];\n    }",
+          "explanation": "Summed attacker-controlled occupancy directly sizes the grid vector."
+        },
+        {
+          "id": "table-merges",
+          "label": "table merges",
+          "path": "src/convert/mod.rs",
+          "startLine": 14635,
+          "endLine": 14644,
+          "language": "rust",
+          "role": "sink",
+          "code": "                style_fill: false,\n            });\n            if open.len() < col + span {\n                open.resize(col + span, None);\n            }\n            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));\n            for slot in open.iter_mut().skip(col).take(span) {\n                *slot = mark;\n            }\n            col += span;",
+          "explanation": "The same unbounded span sizes the merge bookkeeping vector."
+        }
+      ],
+      "rootCause": {
+        "summary": "`table_block()` obtains cell and omitted-column spans from XML. `cell_span()` and `row_grid_skip()` only enforce positive values. It sums these values into occupancy and grows grid and merge vectors to that length, independently of the document byte and nesting limits.",
+        "evidenceRefs": [
+          "render-entry",
+          "table-dispatch",
+          "table-span",
+          "table-skips",
+          "table-allocation",
+          "table-merges"
+        ]
+      },
+      "remediation": "Bound each span and total table occupancy before allocation using a documented renderer limit; use checked arithmetic and refuse excessive grids consistently across gridSpan, gridBefore and gridAfter.",
+      "validation": {
+        "counterEvidence": [
+          "ZIP, inflated bytes and XML nesting are bounded before layout.",
+          "The security policy recommends process CPU/memory limits; these limit damage to a worker but do not reject the document."
+        ],
+        "evidenceRefs": [
+          "render-entry",
+          "table-dispatch",
+          "table-span",
+          "table-skips",
+          "table-allocation",
+          "table-merges"
+        ],
+        "limitations": [
+          "No runtime denial-of-service input was executed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "The public renderer calls admission and then walks body tables. A one-cell table with a span of 1073741824 remains shallow, small XML yet requests a 4 GiB f32 grid before additional bookkeeping. The byte/depth admission checks do not constrain numeric table widths."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> with_layout -> admitted XML DOM -> body table_block -> cell_span/row_grid_skip -> occupancy -> Vec resize and merge allocation.",
+          "evidenceRefs": [
+            "render-entry",
+            "table-dispatch",
+            "table-span",
+            "table-skips",
+            "table-allocation",
+            "table-merges"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Memory exhaustion or process termination; no code execution or data access is established."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "Direct integer-to-allocation path reachable with a tiny document."
+        },
+        "reachability": {
+          "summary": "A document author needs only to have their package passed to the public rendering API; no filesystem access or privileged configuration is required.",
+          "attacker": "Author of an untrusted DOCX",
+          "entrypoint": "convert::docx_to_pdf / render / docx_to_png"
+        },
+        "summary": "Supply a small DOCX with a visible body table and an enormous grid span, then ask a Rust, Python, WASM or CLI consumer to render it."
+      },
+      "remediationTests": [
+        "Check that a tiny table with an enormous gridSpan is refused before allocation.",
+        "Cover gridBefore/gridAfter, accumulated spans, and overflow boundaries."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "worker": "discovery-0001",
+        "candidateId": "render-table-span-allocation",
+        "originalCandidates": [
+          {
+            "producer": "parent",
+            "title": "Rendering a small table with attacker-selected gridSpan can allocate enormous column vectors",
+            "evidence": [
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 14211,
+                "code": "let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13602,
+                "code": "occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 13606,
+                "code": "if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }"
+              }
+            ],
+            "hypothesis": "A tiny admitted main document can set gridSpan to a huge usize; allocation amplification is independent of ZIP/XML input-byte/depth limits."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "uncontrolled-recursion.unchecked-auxiliary-xml",
+      "title": "Rendering an auxiliary part with a non-XML extension bypasses XML depth limits",
+      "summary": "A document author can point a theme or other parsed auxiliary relationship at a deeply nested XML part named `.bin`. Admission applies its XML limits by filename, but rendering loads these parts by relationship type and recursively parses them, allowing a small package to exhaust the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Untrusted document bytes cross a public parser boundary and can terminate the rendering process. External shared-service exposure is conditional; no code execution or file access is established."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent independently verified the extension-based admission gate, relationship-selected consumer and unchecked recursive parser. Runtime stack threshold was not tested."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursion through an admission bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 550,
+          "role": "root_control"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 3305,
+          "endLine": 3317,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 7781,
+          "endLine": 7786,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8473,
+          "endLine": 8487,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8524,
+          "endLine": 8527,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 8696,
+          "endLine": 8700,
+          "role": "sink"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 659,
+          "endLine": 663,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "extension-gate",
+          "label": "extension gate",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 550,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())",
+          "explanation": "Only names ending .xml or .rels are passed through the XML depth/tag-policy gate; other bytes are merely drained."
+        },
+        {
+          "id": "main-only-extra",
+          "label": "main only extra",
+          "path": "src/admission.rs",
+          "startLine": 556,
+          "endLine": 569,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let main_part = main_part(&archive, &kept)?;\n    // The scan above is by extension; the main part is parsed whatever it is\n    // called, so one named otherwise is read once more for its depth.\n    let lower = main_part.to_ascii_lowercase();\n    if !(lower.ends_with(\".xml\") || lower.ends_with(\".rels\")) {\n        let mut entry = archive\n            .by_name(&main_part)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        let mut buf = Vec::new();\n        (&mut entry)\n            .take(limits.max_part_bytes.saturating_add(1))\n            .read_to_end(&mut buf)\n            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{main_part}: {e}\")))?;\n        check_xml_depth(&main_part, &buf, limits)?;",
+          "explanation": "The extension exception validates only the main part, leaving auxiliary relationship targets unchecked."
+        },
+        {
+          "id": "render-open",
+          "label": "render open",
+          "path": "src/convert/mod.rs",
+          "startLine": 769,
+          "endLine": 778,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn with_layout<T>(\n    docx: &[u8],\n    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,\n) -> Result<T, ConvertError> {\n    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;",
+          "explanation": "Public render pipeline admits then opens the normalized package."
+        },
+        {
+          "id": "theme-target",
+          "label": "theme target",
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21319,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())",
+          "explanation": "A relationship type chooses an internal part without an extension constraint."
+        },
+        {
+          "id": "theme-dom",
+          "label": "theme dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 3305,
+          "endLine": 3317,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn load_theme(pkg: &PartFs) -> ThemeFonts {\n    let Some(xml) = pkg\n        .part_string(&main_rel_part(pkg, \"theme\", \"word/theme/theme1.xml\"))\n        .or_else(|| pkg.part_string(\"word/theme/theme2.xml\"))\n    else {\n        return ThemeFonts::default();\n    };\n    parse_theme_xml(&xml)\n}\n\nfn parse_theme_xml(xml: &str) -> ThemeFonts {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "Theme bytes are passed to the unchecked recursive DOM parser."
+        },
+        {
+          "id": "styles-dom",
+          "label": "styles dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 3480,
+          "endLine": 3497,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let Some(xml) = pkg.part_string(&main_rel_part(pkg, \"styles\", \"word/styles.xml\")) else {\n        return StyleSheet {\n            defaults,\n            by_id: HashMap::new(),\n            tables: HashMap::new(),\n            theme,\n            latent: true,\n            default_table: false,\n        };\n    };\n    let linked = settings_link_styles(pkg);\n    let xml = if linked {\n        link_template_styles(&xml)\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The same by-type loader also reaches the styles parser."
+        },
+        {
+          "id": "numbering-dom",
+          "label": "numbering dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn load_numbering(pkg: &PartFs) -> Numbering {\n    let numbering_part = main_rel_part(pkg, \"numbering\", \"word/numbering.xml\");\n    let Some(xml) = pkg.part_string(&numbering_part) else {\n        return Numbering::default();\n    };\n    parse_numbering_xml(&xml, |rid| resolve_media(pkg, &numbering_part, rid))\n}\n\n/// `word/numbering.xml`; `media` resolves a picture-bullet r:id.\nfn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering {\n    let mut numbering = Numbering::default();\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "Numbering relationships also select arbitrary-named XML."
+        },
+        {
+          "id": "comments-dom",
+          "label": "comments dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 7781,
+          "endLine": 7786,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {\n    let Some(xml) = part_xml_by_rel_kind(pkg, main, \"comments\") else {\n        return HashMap::new();\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "Comment relationships feed unchecked XML parsing."
+        },
+        {
+          "id": "note-targets",
+          "label": "note targets",
+          "path": "src/convert/mod.rs",
+          "startLine": 8473,
+          "endLine": 8487,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn part_xml_by_rel_kind(pkg: &PartFs, main: &str, kind: &str) -> Option<String> {\n    if let Some(rels) = pkg.read_rels_for(main) {\n        let exact = format!(\"/{kind}\");\n        let by_type = rels.items.iter().filter(|i| i.rel_type.ends_with(&exact));\n        let loose = rels\n            .items\n            .iter()\n            .filter(|i| i.rel_type.ends_with(kind) || i.target.contains(kind));\n        for item in by_type.chain(loose) {\n            let path = pkg.resolve_rel_target(main, &item.target);\n            if let Some(xml) = pkg.part_string(&path) {\n                return Some(xml);\n            }\n        }\n    }",
+          "explanation": "Comments and notes are selected from package relationship targets."
+        },
+        {
+          "id": "endnotes-dom",
+          "label": "endnotes dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 8524,
+          "endLine": 8527,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let Some(xml) = part_xml_by_rel_kind(pkg, main, \"endnotes\") else {\n            return bag;\n        };\n        let doc = bag.ndom.parse_xdocument(&xml);",
+          "explanation": "Endnote XML reaches the recursive DOM parser."
+        },
+        {
+          "id": "footnotes-dom",
+          "label": "footnotes dom",
+          "path": "src/convert/mod.rs",
+          "startLine": 8696,
+          "endLine": 8700,
+          "language": "rust",
+          "role": "sink",
+          "code": "    let Some(xml) = part_xml_by_rel_kind(pkg, main, \"footnotes\") else {\n        return (HashMap::new(), Vec::new());\n    };\n    let mut ndom = Dom::new();\n    let doc = ndom.parse_xdocument(&xml);",
+          "explanation": "Footnote XML reaches the recursive DOM parser."
+        },
+        {
+          "id": "xml-recursion",
+          "label": "xml recursion",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 659,
+          "endLine": 663,
+          "language": "rust",
+          "role": "sink",
+          "code": "            }\n            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "A nested start tag recursively enters parse_element without a depth counter."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission validates XML depth and tags for `.xml`/`.rels` and specially the main document. Rendering independently resolves auxiliary parts by relationship type; theme, styles, numbering, comments and notes can therefore carry XML under another extension and enter `parse_element()` without the promised gate.",
+        "evidenceRefs": [
+          "extension-gate",
+          "main-only-extra",
+          "render-open",
+          "theme-target",
+          "theme-dom",
+          "styles-dom",
+          "numbering-dom",
+          "comments-dom",
+          "note-targets",
+          "endnotes-dom",
+          "footnotes-dom",
+          "xml-recursion"
+        ]
+      },
+      "remediation": "Apply the active XML limits to every part at its XML consumer or identify all XML parts by content type/relationship use before parsing; also make DOM construction iterative or enforce a depth bound there.",
+      "validation": {
+        "counterEvidence": [
+          "Nonstandard main-part names receive an extra depth check.",
+          "Package size, inflation, CRC, paths and ZIP consistency are checked.",
+          "External relationships are unnecessary; this uses an internal package target."
+        ],
+        "evidenceRefs": [
+          "extension-gate",
+          "main-only-extra",
+          "render-open",
+          "theme-target",
+          "theme-dom",
+          "styles-dom",
+          "numbering-dom",
+          "comments-dom",
+          "note-targets",
+          "endnotes-dom",
+          "footnotes-dom",
+          "xml-recursion"
+        ],
+        "limitations": [
+          "No runtime exploit or deployment was tested; exact nesting required to exhaust a stack depends on host/build."
+        ],
+        "method": "independent offline source trace",
+        "status": "validated",
+        "summary": "A valid small package can keep main/metadata parts conventionally named while assigning a `/theme` relationship to `word/theme/theme1.bin`. Byte budgets still apply, but the auxiliary payload bypasses `check_xml_depth()` and is parsed recursively by `load_theme()`. Confirmed sibling consumers include styles, numbering, comments, endnotes and footnotes."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX auxiliary .bin -> admission drains only -> by-type relationship resolution -> part_string -> load_theme/other auxiliary parser -> parse_element recursion.",
+          "evidenceRefs": [
+            "extension-gate",
+            "main-only-extra",
+            "render-open",
+            "theme-target",
+            "theme-dom",
+            "styles-dom",
+            "numbering-dom",
+            "comments-dom",
+            "note-targets",
+            "endnotes-dom",
+            "footnotes-dom",
+            "xml-recursion"
+          ]
+        },
+        "impact": {
+          "level": "medium",
+          "rationale": "Stack exhaustion and availability loss of the caller process."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "No privileged setting is required; only attacker-authored document processing."
+        },
+        "reachability": {
+          "summary": "An untrusted DOCX author controls both relationship target and part contents. Public Rust render APIs are sufficient; language bindings forwarding them inherit the issue.",
+          "attacker": "Document author",
+          "entrypoint": "convert::docx_to_pdf / render"
+        },
+        "summary": "Provide a DOCX with a deeply nested auxiliary XML payload under a non-XML extension, reference it as the theme, then request PDF/PNG rendering."
+      },
+      "remediationTests": [
+        "Reject an over-depth `.bin` theme with a typed XML refusal.",
+        "Cover styles, numbering, comments, footnotes and endnotes with nonstandard part extensions."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "worker": "baseline",
+        "candidateId": "xml-depth-nonxml-part"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-95feb8639ee5f1ba",
+        "label": "Document admission and downstream XML parser consistency",
+        "disposition": "reported",
+        "notes": "Validated xml-depth-nonxml-part: extension-based admission misses auxiliary XML resolved by relationship type (admission.rs:533,556; convert/mod.rs:3305-3317,21310-21319; xmllinq/parse.rs:661).",
+        "candidateId": "xml-depth-nonxml-part",
+        "originalCandidate": {
+          "producer": "baseline",
+          "originalEvidence": "admission.rs only check_xml_depth on .xml/.rels plus main part, but auxiliary relationships can target e.g theme/theme1.bin. convert::main_rel_part follows type /theme regardless extension, load_theme→parse_theme_xml→Dom::parse_xdocument and parse.rs:661 recursively calls parse_element with no depth guard. Small deeply nested .bin theme can pass admission then stack-overflow."
+        },
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-04b24a2df733ee5f",
+        "label": "Renderer table grid and merge allocation",
+        "disposition": "reported",
+        "notes": "Validated render-table-span-allocation at src/convert/mod.rs:14211,14340,13602-13616,14637. ZIP/XML admission does not bound scalar expansion.",
+        "candidateId": "render-table-span-allocation",
+        "originalCandidate": {
+          "producer": "parent",
+          "title": "Rendering a small table with attacker-selected gridSpan can allocate enormous column vectors",
+          "evidence": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 14211,
+              "code": "let colspan = direct_named(dom, pr, \"gridSpan\")\n        .and_then(|n| attr_any(dom, n, \"val\"))\n        .and_then(|s| s.parse().ok())\n        .unwrap_or(1)\n        .max(1);"
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 13602,
+              "code": "occupancy = occupancy.max(row.iter().map(|c| c.colspan).sum());"
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 13606,
+              "code": "if cols.len() == 1 && occupancy > 1 {\n            let each = cols[0] / occupancy as f32;\n            cols = vec![each; occupancy];\n        } else {\n            cols.resize(occupancy.max(1), 80.0);\n        }"
+            }
+          ],
+          "hypothesis": "A tiny admitted main document can set gridSpan to a huge usize; allocation amplification is independent of ZIP/XML input-byte/depth limits."
+        },
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-75c22145816eff51",
+        "label": "Independent architecture review and effective host resources",
+        "disposition": "no_issue_found",
+        "notes": "Independent reviewer messages retained; parent verified MCP --root, native held OutputRoot, ambient font directories and derived font-index path, fixed updater source and optional signing policy, and operator release fallback. Architecture mapping alone is not completed security-audit coverage.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "legacy-doc-quadratic-fields",
+        "candidateId": "legacy-doc-quadratic-fields",
+        "reason": "Baseline returned source-supported candidate; parent validation and complete source chain pending.",
+        "candidate": {
+          "producer": "baseline",
+          "originalEvidence": "src/legacy_doc.rs:1604 (Story::blocks): fields.iter().any(|&code| code) runs before every input character; 0x13 pushes true, 0x14 sets top false, 0x15 pops. A compressed-text story ('\\x13\\x14').repeat(N) builds N all-false frames; each subsequent begin/separator and displayed text rescans all N frames. No nesting limit in read()/main_text()/blocks, so ~200 KB story with 100k open/separated fields requires ~10^10 bool visits, without exceeding byte-size limits.",
+          "proposedCwe": "CWE-407"
+        }
+      },
+      {
+        "id": "xml-depth-parser-differential",
+        "candidateId": "xml-depth-parser-differential",
+        "reason": "Baseline is investigating lexical parser differential; quick-xml HTML attribute semantics and reachability need source validation.",
+        "candidate": {
+          "producer": "baseline",
+          "originalEvidence": "Repeat sibling <p a=//> elements under w:body. quick-xml parses these as Empty with tag p a=/; TagPolicy::tolerant uses html_attributes and permits unquoted value /. Admission sees depth 2. Permissive Parser::parse_element lines 574-593 blindly treats first / after = as opening quote, consumes second / as closing quote, leaving > and treating the empty element as an OPEN element; at line 661 recursively parses each following sibling as child => unbounded recursion despite max_xml_depth256."
+        }
+      },
+      {
+        "candidateId": "render-chicago-label-expansion",
+        "reason": "Parent found an independent scalar-to-string expansion; tracing document-selected numbering and page formats before validation.",
+        "candidate": {
+          "producer": "parent",
+          "evidence": [
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 6015,
+              "code": "fn chicago_label(n: u32) -> String {\n    const MARKS: [&str; 4] = [\"*\", \"†\", \"‡\", \"§\"];\n    let i = n.saturating_sub(1) as usize;\n    MARKS[i % 4].repeat(i / 4 + 1)\n}"
+            },
+            {
+              "path": "src/convert/mod.rs",
+              "startLine": 5807,
+              "code": "\"chicago\" => NumFmt::Chicago,"
+            }
+          ],
+          "hypothesis": "A large document-provided list start or page start may expand to hundreds of megabytes or gigabytes of label text without byte/depth admission detecting it."
+        },
+        "id": "render-chicago-label-expansion"
+      }
+    ]
+  }
+}

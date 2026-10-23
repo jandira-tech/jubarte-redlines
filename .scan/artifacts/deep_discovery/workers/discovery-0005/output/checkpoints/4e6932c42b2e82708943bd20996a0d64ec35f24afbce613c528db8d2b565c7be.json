@@ -1,0 +1,1627 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "findings": [
+    {
+      "ruleId": "uncontrolled-recursion.drawing-dependencies",
+      "title": "Converting cyclic Markdown drawings can crash the host process",
+      "summary": "A Markdown image with a `drawing:` payload can provide a self-referential dependency index. `markdown_to_docx()` accepts the decoded graph and `dep_part()` recurses without cycle or depth checks, exhausting the process stack before returning an error.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can reliably deny availability of the conversion process through the public default parser boundary. No privileges, network exposure or deployment were assumed; impact is process availability rather than code execution or disclosure.",
+        "changeConditions": "A shared remotely reachable conversion deployment would increase operational impact; process isolation limits blast radius."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent source trace confirms direct deserialization, public conversion dispatch and unconditional recursive self-index traversal. No runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled recursive dependency expansion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1970,
+          "endLine": 1974,
+          "role": "root_control"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4189,
+          "endLine": 4197,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "drawing-input",
+          "label": "Markdown parser accepts drawing payload",
+          "path": "src/markdown/write.rs",
+          "startLine": 4187,
+          "endLine": 4201,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        // A `drawing:` destination is a whole element and its parts,\n        // spliced back as it was; a payload that does not read is alt text.\n        if url.starts_with(\"drawing:\") {\n            match super::from_docx::drawing::decode(&url) {\n                Ok(drawing) => {\n                    self.document.drawings.push(drawing);\n                    let index = self.document.drawings.len() - 1;\n                    if self.box_names.insert(id.clone(), index).is_some() {\n                        self.box_duplicates.insert(id);\n                    }\n                    self.push(Content::Drawing(index));\n                }\n                Err(_) => self.plain(alt.trim()),\n            }\n            return;\n",
+          "explanation": "Attacker-controlled image destination is decoded and retained as a Drawing with no dependency-graph validation."
+        },
+        {
+          "id": "drawing-decode",
+          "label": "Payload JSON defines dependency references",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))\n",
+          "explanation": "Base64 decoding and serde deserialization preserve caller-supplied part indexes."
+        },
+        {
+          "id": "drawing-dispatch",
+          "label": "Package writer materializes the payload",
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let drawing = self.document.drawings.get(index)?;\n        let existing: HashSet<String> = self.package.parts().into_iter().collect();\n        let xml = super::from_docx::drawing::materialize(\n            drawing,\n            self.package,\n            &self.part,\n            &existing,\n            &mut self.media.used,\n            next_doc_pr,\n        )?;\n",
+          "explanation": "The accepted drawing is passed to materialize during package assembly."
+        },
+        {
+          "id": "drawing-root",
+          "label": "Root relationships enter dependent parts",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1900,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(part, raw), false),\n            _ => return None,\n        };\n        let rid = relate(package, part, &kind, &target, external);\n",
+          "explanation": "A root part index within bounds starts traversal of the same dependency array."
+        },
+        {
+          "id": "drawing-recurse",
+          "label": "Recursive materializer lacks cycle tracking",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1983,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;\n                (\n                    rel.kind.clone(),\n                    relative_rel_target(&name, &inner_name),\n                    false,\n                )\n            }\n            (_, _, Some(raw)) => (rel.kind.clone(), relative_rel_target(&name, raw), false),\n            _ => return None,\n        };\n",
+          "explanation": "A dependency relationship pointing to its own index passes the length check and recurses before producing a part. used tracks output names, not visited indexes."
+        },
+        {
+          "id": "drawing-capture-control",
+          "label": "Capture memoizes before recursion",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 591,
+          "endLine": 612,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    /// first use; `None` when the part is absent.\n    fn dep_for(&mut self, package: &mut Package<'_>, target: &str) -> Option<usize> {\n        if let Some(&index) = self.index.get(target) {\n            return Some(index);\n        }\n        if self.parts.len() >= MAX_DEPS {\n            self.failed = Some(format!(\"more than {MAX_DEPS} dependent parts\"));\n            return None;\n        }\n        let bytes = match package.read(target) {\n            Ok(Some(bytes)) if bytes.len() as u64 <= MAX_DEP_BYTES => bytes,\n            Ok(Some(_)) => {\n                self.failed = Some(format!(\"{target} exceeds {MAX_DEP_BYTES} bytes\"));\n                return None;\n            }\n            _ => return None,\n        };\n        let index = self.parts.len();\n        self.parts.push(Dep::default());\n        self.index.insert(target.to_string(), index);\n        let rels = package.rels(target).unwrap_or_default();\n        let mut pay_rels = Vec::new();\n",
+          "explanation": "The DOCX capture side tracks indexes, unlike the inverse materializer; its count cap does not make the graph acyclic."
+        }
+      ],
+      "rootCause": {
+        "summary": "`picture()` accepts the image destination as an encoded `Drawing`; `decode()` performs only base64/JSON decoding, preserving arbitrary `rels[].part` indexes. Package assembly calls `materialize()`, which enters `dep_part()` for any in-range root index. Each dependent relation invokes `dep_part()` again for any in-range child index without an in-progress set or depth bound. A child pointing back to index zero therefore recurses forever; the `used` set only renames parts and cannot break the cycle.",
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-dispatch",
+          "drawing-root",
+          "drawing-recurse"
+        ]
+      },
+      "remediation": "Validate the decoded dependency graph before materialization; track in-progress and completed dependency indexes, reject cycles and enforce depth/work budgets, and memoize each completed part for shared DAGs.",
+      "validation": {
+        "counterEvidence": [
+          "Capture uses a memoized index and caps dependent parts/relations, but decode/materialize do not enforce acyclicity; a one-node graph fits all count limits.",
+          "Package part equality is checked only after recursive traversal; it cannot stop self-reference."
+        ],
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-dispatch",
+          "drawing-root",
+          "drawing-recurse",
+          "drawing-capture-control"
+        ],
+        "limitations": [
+          "No application execution or crash reproduction; no remote service deployment established."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "A flat JSON envelope with one root relation to dependency zero and dependency zero relating to itself passes the only index bounds checks. Recursive descent occurs before base64/XML output or deduplication, so even a small input reaches nonterminating recursion. Capture limits and serde JSON nesting limits do not constrain a cycle represented as flat integer indexes."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown image -> picture() -> decode() -> package drawing() -> materialize() -> recursive dep_part()",
+          "source": "Untrusted Markdown drawing payload",
+          "sink": "Unbounded recursive dependency traversal",
+          "outcome": "Stack exhaustion terminates or traps the calling process/runtime",
+          "evidenceRefs": [
+            "drawing-input",
+            "drawing-decode",
+            "drawing-dispatch",
+            "drawing-root",
+            "drawing-recurse"
+          ]
+        },
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-recurse"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "Loss of conversion-process availability; no source-supported confidentiality or execution gain."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A single small self-referential graph passes in-range checks under the default public API."
+        },
+        "reachability": {
+          "summary": "Any caller processing supplier-controlled Markdown through `markdown_to_docx()` reaches this path without special flags or operator configuration.",
+          "attacker": "Document/Markdown supplier",
+          "entrypoint": "Public `markdown_to_docx(markdown, &DocxOptions::default())`",
+          "outcome": "Denial of service in the caller process",
+          "preconditions": [
+            "The victim converts attacker-supplied Markdown containing the supported drawing payload syntax."
+          ]
+        },
+        "summary": "Supply a Markdown image whose URL-safe base64 `drawing:` JSON has root `part:0` and `deps[0].rels[0].part:0`; invoke the default public Markdown-to-DOCX conversion."
+      },
+      "remediationTests": [
+        "Convert a self-cycle and a two-node cycle and assert a typed refusal without recursion.",
+        "Convert a deeply nested chain and a shared-dependency DAG under bounded work and ensure valid parts retain expected identity."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-drawing-cycle",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "baseline",
+        "baselineCounterEvidence": [
+          "MAX_DEPS/MAX_DEP_RELS/MAX_DEP_BYTES constrain capture, not decode; a single-node cycle fits.",
+          "Nested drawing/text-box XML checks do not validate dependency cycles.",
+          "Malformed JSON refuses safely; cyclic envelope uses valid flat JSON."
+        ],
+        "originalCandidates": [
+          {
+            "title": "Cyclic drawing dependencies in Markdown can overflow the process stack",
+            "source": "baseline",
+            "attacker": "Caller controlling Markdown input",
+            "evidence": [
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1397,
+                "endLine": 1412,
+                "description": "decode directly deserializes drawing JSON"
+              },
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1881,
+                "description": "materialize calls dep_part"
+              },
+              {
+                "path": "src/markdown/from_docx/drawing.rs",
+                "startLine": 1956,
+                "endLine": 1995,
+                "description": "dep_part recursively follows rel.part without visited/in-progress/depth guard; self-reference part=0 loops"
+              }
+            ],
+            "impact": "Stack overflow/abort via default markdown_to_docx",
+            "limitations": "Static candidate, parent source validation pending; no application execution",
+            "originalMessage": "Confirmed static candidate: attacker-crafted Markdown drawing: JSON dependencies can cycle. decode() at src/markdown/from_docx/drawing.rs:1397-1412 directly deserializes; materialize() 1881+ calls dep_part(); dep_part at 1956-1995 recurses on rel.part without visited/in-progress/depth guards. One dependency whose rel.part=0 repeatedly recurses, stack overflows/aborts process through default markdown_to_docx; no application execution used."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-exhaustion.legacy-doc-piece-expansion",
+      "title": "Converting a compact legacy DOC can exhaust memory through aliased text pieces",
+      "summary": "Legacy DOC piece records can map many increasing logical character ranges onto the same physical text bytes. `main_text()` materializes every logical character into an unbudgeted `StoryChar` vector, allowing a small file to consume many gigabytes before DOCX admission.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The public legacy parser accepts supplier-controlled files and permits predictable memory/CPU amplification without privileged settings. Impact is availability of the caller process; no remote service or broader compromise was established.",
+        "changeConditions": "A shared exposed conversion service would increase blast radius; enforced worker memory/CPU limits constrain host impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent baseline and focused investigation plus parent review establish that valid increasing CPs and repeated in-bounds FC ranges pass existing checks. Memory thresholds were not dynamically measured."
+      },
+      "taxonomy": {
+        "category": "Unbounded logical text expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1202,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221,
+          "endLine": 1225,
+          "role": "sink"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 919,
+          "role": "user_input"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1109,
+          "role": "propagation"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3129,
+          "endLine": 3143,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "legacy-entry",
+          "label": "Public legacy reader expands characters before other processing",
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {\n    let file = CompoundFile::open(bytes)?;\n    let word = file.stream(\"WordDocument\").ok_or_else(|| {\n        LegacyDocError::new(\n            \"no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password\",\n        )\n    })?;\n    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;\n",
+          "explanation": "Attacker-supplied compound WordDocument and table bytes directly determine Fib, pieces and main_text."
+        },
+        {
+          "id": "legacy-count",
+          "label": "Untrusted logical character count",
+          "path": "src/legacy_doc.rs",
+          "startLine": 912,
+          "endLine": 919,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        let csw = usize::from(u16_at(word, 32).ok_or_else(bad)?);\n        let cslw_at = csw\n            .checked_mul(2)\n            .and_then(|n| n.checked_add(34))\n            .ok_or_else(bad)?;\n        let cslw = usize::from(u16_at(word, cslw_at).ok_or_else(bad)?);\n        let lw = cslw_at.checked_add(2).ok_or_else(bad)?;\n        let ccp_text = u32_at(word, lw.checked_add(12).ok_or_else(bad)?).ok_or_else(bad)?;\n",
+          "explanation": "ccp_text is read from the document FIB without a logical-character budget."
+        },
+        {
+          "id": "legacy-pieces",
+          "label": "Each logical piece independently selects physical offset",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1110,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    for i in 0..count {\n        let cp_at = i.checked_mul(4).ok_or_else(bad)?;\n        let cp_start = u32_at(plc, cp_at).ok_or_else(bad)?;\n        let cp_end = u32_at(plc, cp_at.checked_add(4).ok_or_else(bad)?).ok_or_else(bad)?;\n        let pcd = i\n            .checked_mul(8)\n            .and_then(|n| n.checked_add(pcd_base))\n            .ok_or_else(bad)?;\n        let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;\n        let compressed = raw & 0x4000_0000 != 0;\n        let fc = raw & 0x3FFF_FFFF;\n        let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;\n        let modifier = piece_modifier(prm, &prcs)?;\n        out.push(Piece {\n            cp_start,\n            cp_end,\n            fc: if compressed { fc / 2 } else { fc },\n            compressed,\n            modifier,\n        });\n",
+          "explanation": "Consecutive logical CP ranges can reuse the same in-bounds physical FC slice."
+        },
+        {
+          "id": "legacy-expansion",
+          "label": "Logical characters materialized one by one",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1202,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    for piece in pieces {\n        if piece.cp_start >= ccp_text {\n            break;\n        }\n        let end = piece.cp_end.min(ccp_text);\n        let width: u32 = if piece.compressed { 1 } else { 2 };\n        for cp in piece.cp_start..end {\n            let fc = cp\n                .checked_sub(piece.cp_start)\n                .and_then(|n| n.checked_mul(width))\n                .and_then(|n| n.checked_add(piece.fc))\n                .ok_or_else(past)?;\n            let offset = index(fc).ok_or_else(past)?;\n            let here = StoryChar {\n                ch: '\\u{FFFD}',\n                cp,\n                fc,\n                modifier: piece.modifier,\n            };\n            let ch = if piece.compressed {\n                out.extend(pending_high.take().map(|(_, lone)| lone));\n                cp1252(*word.get(offset).ok_or_else(past)?)\n",
+          "explanation": "The loop charges neither repeated physical bytes nor logical expansion; each CP constructs a retained record."
+        },
+        {
+          "id": "legacy-push",
+          "label": "Each expanded character is retained",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221,
+          "endLine": 1225,
+          "language": "rust",
+          "role": "sink",
+          "code": "            out.push(StoryChar { ch, ..here });\n        }\n    }\n    out.extend(pending_high.map(|(_, lone)| lone));\n    Ok(out)\n",
+          "explanation": "The StoryChar vector grows to logical story size before returning."
+        },
+        {
+          "id": "legacy-cli",
+          "label": "CLI converts legacy input before DOCX admission",
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3144,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let raw =\n        std::fs::read(job.file).map_err(|e| format!(\"reading {}: {e}\", job.file.display()))?;\n    // A Word 97-2003 `.doc` is read into a `.docx` first; everything after\n    // sees that package. An encrypted document is still refused.\n    let legacy = jubarte::legacy_doc::is_compound_file(&raw);\n    let bytes = if legacy {\n        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!(\"convert failed: {e}\"))?\n    } else {\n        jubarte::admission::sniff(&raw)\n            .map_err(|refused| format!(\"{} is {}\", job.file.display(), refused.message))?;\n        raw\n    };\n    let from = if legacy {\n        Format::Docx\n    } else {\n        Format::of_input(markdown.from, job.file, &bytes)\n    };\n    if from == Format::Docx && !legacy {\n        admit_word(job.file, &bytes)?;\n    }\n",
+          "explanation": "Legacy conversion invokes the vulnerable public reader before later package parsing."
+        },
+        {
+          "id": "legacy-counter",
+          "label": "Logical CP ordering is enforced",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1150,
+          "endLine": 1175,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "    // The pieces run from CP 0 through the main story without a gap, or\n    // the document would come out quietly shorter than it is.\n    // The CPs only ever increase ([MS-DOC] 2.8.35): a piece that runs\n    // backwards is corruption, wherever it sits.\n    if pieces.iter().any(|piece| piece.cp_end < piece.cp_start) {\n        return Err(LegacyDocError::new(\"the piece table's CPs are decreasing\"));\n    }\n    let mut covered = 0u32;\n    for piece in pieces {\n        if covered >= ccp_text {\n            break;\n        }\n        // An empty piece (fast-saved files carry them) covers nothing.\n        if piece.cp_end == piece.cp_start {\n            continue;\n        }\n        if piece.cp_start != covered {\n            break;\n        }\n        covered = piece.cp_end;\n    }\n    if covered < ccp_text {\n        return Err(LegacyDocError::new(\n            \"the piece table does not cover the main story\",\n        ));\n    }\n",
+          "explanation": "This rejects repeated/decreasing logical ranges but permits contiguous increasing ranges sharing physical backing."
+        }
+      ],
+      "rootCause": {
+        "summary": "The FIB supplies `ccp_text` and each PCD supplies a physical `fc`. CP endpoints must be contiguous and increasing, but multiple PCDs can select the same physical byte range. `main_text()` calculates each byte offset relative to that PCD and appends one retained `StoryChar` per logical CP. No logical-character, output-allocation or expansion-work budget is checked before the vector grows; bounds on physical streams do not bound repeated references.",
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-expansion",
+          "legacy-push",
+          "legacy-counter"
+        ]
+      },
+      "remediation": "Enforce explicit legacy logical-character, piece-count and expanded-memory/work budgets before constructing StoryChar values; retain legitimate physical aliases only within that budget and return a typed refusal through every public legacy API.",
+      "validation": {
+        "counterEvidence": [
+          "Sector chains are bounded and repeated FAT locations rejected; integer arithmetic and physical byte reads are checked.",
+          "Decreasing CPs and gaps are refused, so the rejected repeated 0..N logical-range proposal is not needed. This construction uses increasing contiguous CPs.",
+          "The repository recommends host process limits, which constrain damage but do not provide a bounded parser refusal."
+        ],
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-expansion",
+          "legacy-push",
+          "legacy-cli",
+          "legacy-counter"
+        ],
+        "limitations": [
+          "No application execution, exploit fixture or memory threshold measurement; no deployment exposure assumed."
+        ],
+        "method": "Independent offline source trace and arithmetic construction",
+        "summary": "For example, 10,000 compressed pieces can describe successive 65,536-character CP ranges while all choose the same 64 KiB physical text. `ccp_text=655360000` is within u32; the approximately 120 KB piece table and backing bytes remain compact, all CP and byte checks pass, and the loop requests 655 million character records. The public reader and legacy CLI reach expansion before subsequent package checks."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOC bytes -> FIB ccp_text + CLX PCDs -> main_text() CP loop -> Vec<StoryChar>",
+          "source": "Attacker-controlled logical ranges and FC offsets",
+          "sink": "Unbudgeted character-vector growth",
+          "outcome": "Memory exhaustion/allocation abort and prolonged decoding",
+          "evidenceRefs": [
+            "legacy-entry",
+            "legacy-count",
+            "legacy-pieces",
+            "legacy-expansion",
+            "legacy-push"
+          ]
+        },
+        "evidenceRefs": [
+          "legacy-cli",
+          "legacy-pieces",
+          "legacy-expansion",
+          "legacy-push"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "Resource exhaustion of parser process."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Increasing logical ranges and physical aliases satisfy the implemented checks."
+        },
+        "reachability": {
+          "summary": "A document supplier needs only have the victim process the supported legacy format; the CLI calls the public converter before DOCX admission.",
+          "attacker": "Legacy DOC supplier",
+          "entrypoint": "Public legacy reader and CLI convert",
+          "outcome": "Denial of caller-process availability"
+        },
+        "summary": "Supply a valid compound DOC whose PCDs have consecutive CP ranges and shared physical FC backing, and invoke `legacy_doc::read`, `doc_to_markdown`, `doc_to_docx`, or CLI convert."
+      },
+      "remediationTests": [
+        "Use a small physical text stream with many increasing CP ranges sharing FC backing; assert a budget error before materialization.",
+        "Retain tests accepting legitimate short FC aliases and refusing decreasing CPs, gaps and out-of-range physical references."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-doc-fc-alias",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": [
+          "baseline",
+          "parser_investigator"
+        ],
+        "originalCandidate": {
+          "source": "baseline,parser_investigator",
+          "title": "Legacy DOC logical character expansion through repeated physical FC ranges",
+          "cwe": "CWE-400",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "DOC file supplier",
+          "source_to_sink": "CLI run_convert_any -> doc_to_docx -> read -> Fib::parse/pieces -> main_text -> Vec<StoryChar>::push",
+          "evidence": [
+            "Fib::parse reads ccp_text without logical budget at src/legacy_doc.rs:919-941.",
+            "pieces accepts independent repeated physical FCs at 1091-1107.",
+            "main_text verifies contiguous increasing CPs but expands each logical character without allocation/work limit at 1148-1225.",
+            "1024 compressed consecutive 1 MiB logical ranges can share one physical 1MiB text slice: ~12KiB piece records request >1 billion StoryChars.",
+            "CLI calls doc_to_docx before DOCX admission at src/bin/jubarte.rs:3125-3144."
+          ],
+          "counterevidence": [
+            "Physical sector chains, arithmetic and accesses are bounded but logical repeated references are not.",
+            "Host process limits contain damage but do not give controlled refusal."
+          ],
+          "remediation": "Apply explicit logical characters/pieces/work budget in public legacy reader.",
+          "validation": "Static only; no runtime execution"
+        },
+        "originalCandidates": [
+          {
+            "source": "baseline,parser_investigator",
+            "title": "Legacy DOC logical character expansion through repeated physical FC ranges",
+            "cwe": "CWE-400",
+            "severity": "medium",
+            "confidence": "high",
+            "attacker": "DOC file supplier",
+            "source_to_sink": "CLI run_convert_any -> doc_to_docx -> read -> Fib::parse/pieces -> main_text -> Vec<StoryChar>::push",
+            "evidence": [
+              "Fib::parse reads ccp_text without logical budget at src/legacy_doc.rs:919-941.",
+              "pieces accepts independent repeated physical FCs at 1091-1107.",
+              "main_text verifies contiguous increasing CPs but expands each logical character without allocation/work limit at 1148-1225.",
+              "1024 compressed consecutive 1 MiB logical ranges can share one physical 1MiB text slice: ~12KiB piece records request >1 billion StoryChars.",
+              "CLI calls doc_to_docx before DOCX admission at src/bin/jubarte.rs:3125-3144."
+            ],
+            "counterevidence": [
+              "Physical sector chains, arithmetic and accesses are bounded but logical repeated references are not.",
+              "Host process limits contain damage but do not give controlled refusal."
+            ],
+            "remediation": "Apply explicit logical characters/pieces/work budget in public legacy reader.",
+            "validation": "Static only; no runtime execution"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "resource-amplification.embedded-font-aliases",
+      "title": "Rendering an admitted DOCX can retain gigabytes of duplicate embedded fonts",
+      "summary": "Distinct font-table aliases may all reference one embedded font part. Rendering eagerly loads every alias, copies the full font and retains a separate buffer for each name, multiplying a small admitted package into gigabytes of memory even if its body never uses those fonts.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A supplier-controlled DOCX crosses the public renderer boundary under ordinary options and predictably exhausts caller memory. Source establishes process availability impact, without assuming a remote deployment or confidentiality/code-execution gain.",
+        "changeConditions": "Shared conversion services have greater availability impact; isolated memory-limited workers constrain host damage."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent review confirms unconditional loading, bytes.to_vec() per alias and distinct retained map entries. Exact exhaustion thresholds were not executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded expansion of shared embedded resources",
+        "cwe": [
+          "CWE-409"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 220,
+          "endLine": 228,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/font_table.rs",
+          "startLine": 179,
+          "endLine": 180,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 806,
+          "endLine": 807,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/font.rs",
+          "startLine": 1449,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "font-entry",
+          "label": "Renderer eagerly loads all embedded fonts",
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 778,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    crate::document_comparer::admit_package(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let normalized = crate::strict_translation::strict_to_transitional_docx(docx)\n        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;\n    let pkg =\n        PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!(\"{err:?}\")))?;\n",
+          "explanation": "Ordinary DOCX rendering first admits physical package bytes."
+        },
+        {
+          "id": "font-dispatch",
+          "label": "All font table entries are loaded before run selection",
+          "path": "src/convert/mod.rs",
+          "startLine": 806,
+          "endLine": 809,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let table = font_table::load_font_table(&pkg);\n    let mut embedded = font_table::load_embedded_fonts(&pkg, &table);\n    let mut family_names = rfont_names(&xml);\n    let mut run_faces = latin_font_names(&xml);\n",
+          "explanation": "All embedded rows load regardless of whether body runs reference their names."
+        },
+        {
+          "id": "font-rows",
+          "label": "Document supplies distinct font aliases and embedding IDs",
+          "path": "src/convert/font_table.rs",
+          "startLine": 83,
+          "endLine": 108,
+          "language": "rust",
+          "role": "user_input",
+          "code": "    for font in dom.elements(root, Some(&W::name(\"font\"))) {\n        let Some(name) = attr_any(&dom, font, \"name\").map(str::to_string) else {\n            continue;\n        };\n        let child_val = |local: &str| {\n            super::direct_named(&dom, font, local).and_then(|n| attr_any(&dom, n, \"val\"))\n        };\n        let mut embedded = [None, None, None, None];\n        for (i, local) in [\n            \"embedRegular\",\n            \"embedBold\",\n            \"embedItalic\",\n            \"embedBoldItalic\",\n        ]\n        .into_iter()\n        .enumerate()\n        {\n            let Some(node) = super::direct_named(&dom, font, local) else {\n                continue;\n            };\n            let Some(rid) = attr_any(&dom, node, \"id\") else {\n                continue;\n            };\n            let key = attr_any(&dom, node, \"fontKey\").unwrap_or(\"\");\n            embedded[i] = Some((rid.to_string(), key.to_string()));\n        }\n",
+          "explanation": "Each attacker-controlled font name and r:id creates an independent table entry."
+        },
+        {
+          "id": "font-copy",
+          "label": "Deobfuscation always copies the full part",
+          "path": "src/convert/font_table.rs",
+          "startLine": 177,
+          "endLine": 193,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// De-obfuscate an `.odttf`, or leave an already-plain TTF/OTF alone (an\n/// obfuscated header matches an sfnt tag only by a 2^-32 chance).\npub(crate) fn deobfuscate_odttf(bytes: &[u8], font_key: &str) -> Vec<u8> {\n    let mut data = bytes.to_vec();\n    let plain_sfnt = [\n        &[0x00, 0x01, 0x00, 0x00][..],\n        b\"OTTO\",\n        b\"true\",\n        b\"typ1\",\n        b\"ttcf\",\n    ]\n    .iter()\n    .any(|tag| data.starts_with(tag));\n    if !plain_sfnt && let Some(key) = parse_font_key(font_key) {\n        deobfuscate_font(&mut data, &key);\n    }\n    data\n",
+          "explanation": "Even an already plain TTF is copied before header detection; the copy is not shared by part identity."
+        },
+        {
+          "id": "font-retain",
+          "label": "Every alias retains its own decoded font buffer",
+          "path": "src/convert/font_table.rs",
+          "startLine": 205,
+          "endLine": 231,
+          "language": "rust",
+          "role": "root_control",
+          "code": "pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::font::EmbeddedFonts {\n    let mut out = HashMap::new();\n    let part = font_table_part(pkg);\n    let rels = pkg.read_rels_for(&part);\n    for entry in table.iter() {\n        if super::font::catalogue_paints_family(&entry.name) {\n            continue;\n        }\n        for (slot, (bold, italic)) in entry.embedded.iter().zip(EMBED_STYLES) {\n            let Some((rid, font_key)) = slot else {\n                continue;\n            };\n            let Some(rel) = rels.and_then(|r| r.items.iter().find(|item| item.id == *rid)) else {\n                continue;\n            };\n            let path = pkg.resolve_rel_target(&part, &rel.target);\n            let Some(raw) = pkg.part_bytes(&path) else {\n                continue;\n            };\n            let data = deobfuscate_odttf(raw, font_key);\n            if ttf_parser::Face::parse(&data, 0).is_err() {\n                continue;\n            }\n            out.insert((entry.name.to_ascii_lowercase(), bold, italic), data.into());\n        }\n    }\n    out\n",
+          "explanation": "An arbitrary family outside the installed catalogue can resolve to the same valid font part as other aliases; each is independently copied and stored."
+        }
+      ],
+      "rootCause": {
+        "summary": "`parse_font_table_xml()` stores attacker-selected distinct names and embedded relationship IDs. After physical package admission, `with_layout()` calls `load_embedded_fonts()` for every table row. Each unknown alias resolves the same part, calls `deobfuscate_odttf()` which immediately copies all bytes, then stores a new allocation keyed by alias/style. No resolved-part cache or aggregate decoded-font budget shares or bounds repeated copies.",
+        "evidenceRefs": [
+          "font-entry",
+          "font-dispatch",
+          "font-rows",
+          "font-copy",
+          "font-retain"
+        ]
+      },
+      "remediation": "Cache decoded font buffers by resolved package part and effective obfuscation key, share Arc values across aliases, and enforce an aggregate decoded-font allocation/work budget before copying.",
+      "validation": {
+        "counterEvidence": [
+          "Known catalogue families are skipped; use distinct unknown names.",
+          "Invalid fonts are skipped; a single valid embedded font is sufficient.",
+          "The map stores Arc values, but each iteration creates new data and a fresh Arc; there is no source-part sharing here.",
+          "ZIP byte and XML depth/attribute limits do not charge multiplicity of font aliases."
+        ],
+        "evidenceRefs": [
+          "font-entry",
+          "font-dispatch",
+          "font-rows",
+          "font-copy",
+          "font-retain"
+        ],
+        "limitations": [
+          "Static validation only; no exploit document or measured allocation threshold."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "A valid ordinary font can be referenced by thousands of differently named `w:font` rows using the same `r:id`. The names need not occur in runs. Unknown family names bypass the installed-catalogue optimization and valid font parsing succeeds for every copy. Ten thousand aliases of an approximately 320 KB font request roughly 3.2 GB of retained payload bytes while archive admission charges the original part once."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Admitted fontTable XML -> unique FontEntry names -> same embedded part -> repeated deobfuscate_odttf copies -> retained EmbeddedFonts",
+          "source": "Document font aliases and relationships",
+          "sink": "Per-alias full font allocation",
+          "outcome": "Memory exhaustion/allocation abort",
+          "evidenceRefs": [
+            "font-dispatch",
+            "font-rows",
+            "font-copy",
+            "font-retain"
+          ]
+        },
+        "evidenceRefs": [
+          "font-dispatch",
+          "font-copy",
+          "font-retain"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "Memory exhaustion affects rendering process."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Valid small aliases to one ordinary font reach the eager loader under default options."
+        },
+        "reachability": {
+          "summary": "Default public document rendering loads all embedded fonts before body run selection, so the supplier needs no operator-controlled configuration.",
+          "attacker": "DOCX supplier",
+          "entrypoint": "Public PDF/PNG/render APIs",
+          "outcome": "Caller-process denial of service"
+        },
+        "summary": "Supply a small DOCX with one valid embedded font and many unique unknown font-table aliases referencing it; invoke normal PDF/PNG/render conversion."
+      },
+      "remediationTests": [
+        "Load many unique aliases referencing one valid embedded part and assert shared buffers and bounded aggregate allocation.",
+        "Exercise distinct effective font keys and malformed fonts without bypassing aggregate budgets."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-embedded-font-alias",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "parser_investigator",
+        "originalCandidate": {
+          "source": "parser_investigator",
+          "title": "Embedded font aliases duplicate large decoded font allocations",
+          "originalMessage": "Third concrete amplification in embedded-font loading: every distinct w:font row referencing the same embedded part calls deobfuscate_odttf(raw)->bytes.to_vec() and retains a fresh Arc in EmbeddedFonts keyed by attacker name. No source-part sharing; runs need not use those fonts. Thousands of aliases of one valid ~300KB font create GBs from a small admitted DOCX; entry/ZIP byte budgets count original part once. Exact sink src/convert/font_table.rs:220-228; load runs unconditionally at mod.rs:806-807 before rendering. Reviewing full font_table (550 lines) and counterevidence."
+        },
+        "originalCandidates": [
+          {
+            "source": "parser_investigator",
+            "title": "Embedded font aliases duplicate large decoded font allocations",
+            "originalMessage": "Third concrete amplification in embedded-font loading: every distinct w:font row referencing the same embedded part calls deobfuscate_odttf(raw)->bytes.to_vec() and retains a fresh Arc in EmbeddedFonts keyed by attacker name. No source-part sharing; runs need not use those fonts. Thousands of aliases of one valid ~300KB font create GBs from a small admitted DOCX; entry/ZIP byte budgets count original part once. Exact sink src/convert/font_table.rs:220-228; load runs unconditionally at mod.rs:806-807 before rendering. Reviewing full font_table (550 lines) and counterevidence."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "record-extent-validation.wmf",
+      "title": "Rendering short WMF records can allocate gigabytes from overlapping text",
+      "summary": "The WMF parser checks declared record sizes against the file but reads text and point payloads from the entire file. Many tiny text records can each copy the same following 65,535 bytes into retained strings, exhausting memory from a small admitted DOCX image.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document supplier can trigger large allocation and replay amplification through supported embedded WMF rendering under ordinary API options. Impact is availability of the calling process; Rust slice checks prevent out-of-buffer disclosure and no remote deployment was assumed.",
+        "changeConditions": "A shared externally exposed converter increases availability impact; isolated resource-limited workers reduce blast radius."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent inspection confirms whole-file string reads, record-size-only cursor advancement and retained MetaText allocations. No runtime allocation threshold was measured."
+      },
+      "taxonomy": {
+        "category": "Missing record-local length validation",
+        "cwe": [
+          "CWE-1284"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 604,
+          "endLine": 610,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 615,
+          "endLine": 619,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 628,
+          "endLine": 680,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 700,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20260,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wmf-entry",
+          "label": "Renderer forwards embedded metafile bytes before raster decoding",
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20261,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {\n    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {\n        let raster = ImageKind::Rgb {\n            width,\n            height,\n            bytes: rgb,\n            alpha: None,\n        };\n        if texts.is_empty() {\n            return Some(raster);\n        }\n        return Some(ImageKind::Metafile {\n            raster: Box::new(raster),\n            texts: texts.into(),\n        });\n",
+          "explanation": "Package image bytes enter the custom WMF parser and retain returned text."
+        },
+        {
+          "id": "wmf-record",
+          "label": "Record length bounds traversal only",
+          "path": "src/convert/metafile.rs",
+          "startLine": 474,
+          "endLine": 489,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut texts: Vec<MetaText> = Vec::new();\n    let mut winding = false;\n    let mut off = 22 + 18;\n    while off + 6 <= data.len() {\n        let size = read_u32(data, off)? as usize;\n        let func = read_u16(data, off + 4)?;\n        // checked_mul: `size` is untrusted and `usize` is 32-bit on wasm32;\n        // comparing against the remaining length keeps `off` from ever\n        // moving past (or wrapping around) the buffer end.\n        let Some(size2) = size.checked_mul(2) else {\n            break;\n        };\n        if size < 3 || size2 > data.len() - off {\n            break;\n        }\n        let payload = off + 6;\n",
+          "explanation": "Each record size is checked against remaining file, then fields are read from whole data rather than a record slice."
+        },
+        {
+          "id": "wmf-copy",
+          "label": "Text count escapes current record extent",
+          "path": "src/convert/metafile.rs",
+          "startLine": 602,
+          "endLine": 620,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            // EXTTEXTOUT: y, x, count, options, [rect], string.\n            0x0A32 => {\n                let y = read_i16(data, payload)?;\n                let x = read_i16(data, payload + 2)?;\n                let n = usize::from(read_u16(data, payload + 4)?);\n                let opts = read_u16(data, payload + 6)?;\n                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };\n                if let Some(bytes) = data.get(at..at + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }\n            }\n            // TEXTOUT: count, string (word-padded), y, x.\n            0x0521 => {\n                let n = usize::from(read_u16(data, payload)?);\n                let at = payload + 2 + n.next_multiple_of(2);\n                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);\n                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }\n",
+          "explanation": "Both text operations validate string bytes against whole-file length instead of off+size2 and append the decoded copy."
+        },
+        {
+          "id": "wmf-retain",
+          "label": "Text survives in MetaText",
+          "path": "src/convert/metafile.rs",
+          "startLine": 690,
+          "endLine": 701,
+          "language": "rust",
+          "role": "sink",
+          "code": "/// One string of a WMF text record, in the DC's font, colour and\n/// alignment; blank strings write nothing.\nfn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {\n    let text = ansi_text(bytes);\n    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {\n        return None;\n    }\n    let font = dc.font.as_deref();\n    let height = font.map_or(0, |f| f.height);\n    Some(MetaText {\n        text,\n        x: (f32::from(x) - map.org_x) / map.ext_x,\n",
+          "explanation": "The selected cross-record bytes are allocated as a new String and retained for each text record."
+        },
+        {
+          "id": "wmf-loop",
+          "label": "Traversal advances only declared record size",
+          "path": "src/convert/metafile.rs",
+          "startLine": 682,
+          "endLine": 687,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            _ => {}\n        }\n        off += size2;\n    }\n    let (w, h, rgb) = canvas.finish();\n    Some((w, h, rgb, texts))\n",
+          "explanation": "Short declared records advance a few bytes while each may copy a 65535-byte suffix."
+        },
+        {
+          "id": "wmf-detect",
+          "label": "Untrusted WMF magic dispatch",
+          "path": "src/convert/metafile.rs",
+          "startLine": 25,
+          "endLine": 31,
+          "language": "rust",
+          "role": "user_input",
+          "code": "pub(crate) fn render(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)> {\n    if looks_like_wmf(bytes) {\n        return raster_wmf(bytes);\n    }\n    if looks_like_emf(bytes) {\n        return raster_emf(bytes).map(|(w, h, rgb)| (w, h, rgb, Vec::new()));\n    }\n",
+          "explanation": "The image decoder selects WMF solely from bytes and sends it to raster_wmf."
+        }
+      ],
+      "rootCause": {
+        "summary": "`decode_image()` routes embedded WMF bytes into `raster_wmf()`. The parser validates only that `size2` fits the remaining file; handlers still receive the entire `data` buffer. `EXTTEXTOUT` and `TEXTOUT` use attacker counts in whole-file slices without requiring those slices to fit the current record. `wmf_text()` allocates a String for each such slice, and `texts` retains it while the cursor advances by only the small declared record size. Polygon, polypolygon and polyline handlers likewise read geometry beyond record-local extents, multiplying replay work.",
+        "evidenceRefs": [
+          "wmf-entry",
+          "wmf-detect",
+          "wmf-record",
+          "wmf-copy",
+          "wmf-retain",
+          "wmf-loop"
+        ]
+      },
+      "remediation": "Slice every WMF record to its declared extent and make all field, string, font and point reads relative to that slice. Reject inconsistent lengths before copying/replay and enforce aggregate text/geometry work budgets.",
+      "validation": {
+        "counterEvidence": [
+          "Canvas dimensions are capped at 384 per side and hostile coordinates are clipped; these controls do not bound retained strings.",
+          "Record size must be at least three words and the cursor advances, preventing a zero-length infinite loop.",
+          "Whole-file Rust slice bounds avoid arbitrary memory reads; the finding concerns invalid record extents and resource amplification.",
+          "ZIP admission charges original media bytes rather than repeated decoding of overlapping record suffixes."
+        ],
+        "evidenceRefs": [
+          "wmf-entry",
+          "wmf-record",
+          "wmf-copy",
+          "wmf-retain",
+          "wmf-loop",
+          "wmf-detect"
+        ],
+        "limitations": [
+          "Source-derived construction only; no application, payload or memory measurement executed."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "A placeable WMF with nonzero bounds can use 14-byte EXTTEXTOUT records containing y/x/count/options but no local text bytes. With count 65535 and options zero, each handler reads subsequent records as text when enough file bytes remain. Tens of thousands of records in roughly 1 MB therefore retain several GB of overlapping decoded text. Header fields remain in bounds and each nonempty string is retained before traversal continues."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX image part -> decode_image() -> metafile::render() -> short WMF record -> whole-file text slice -> retained MetaText String",
+          "source": "Supplier-controlled WMF record size/count fields",
+          "sink": "Repeated text allocations and geometry replay",
+          "outcome": "Memory/CPU exhaustion of renderer process",
+          "evidenceRefs": [
+            "wmf-entry",
+            "wmf-record",
+            "wmf-copy",
+            "wmf-retain",
+            "wmf-loop"
+          ]
+        },
+        "evidenceRefs": [
+          "wmf-record",
+          "wmf-copy",
+          "wmf-retain"
+        ],
+        "impact": {
+          "level": "medium",
+          "why": "Allocation and replay exhaustion of renderer."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Tiny record extents and large valid whole-file counts directly reach retained allocation."
+        },
+        "reachability": {
+          "summary": "A document supplier controls an embedded relationship's media bytes; standard rendering detects placeable WMF magic and invokes this custom parser before the general image decoder.",
+          "attacker": "DOCX supplier",
+          "entrypoint": "Public document rendering with referenced WMF media",
+          "outcome": "Denial of conversion-process availability"
+        },
+        "summary": "Embed a referenced placeable WMF with many short EXTTEXTOUT records claiming long following strings in an otherwise admitted DOCX, then invoke ordinary rendering."
+      },
+      "remediationTests": [
+        "Reject EXTTEXTOUT and TEXTOUT strings extending into the next record.",
+        "Reject cross-record polygon/polypolygon/polyline coordinates and validate large valid records within aggregate text/geometry budgets."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-wmf-record-amplification",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "parser_investigator",
+        "originalCandidate": {
+          "source": "parser_investigator",
+          "title": "WMF record text reads cross declared record extents and retain amplified text",
+          "originalMessage": "Second concrete candidate in WMF: raster_wmf validates size2 versus whole file but passes whole data to record field/string reads. META_EXTTEXTOUT at 604-612 reads n bytes via data.get(at..at+n), without at+n <= off+size2. Thousands of 14-byte records each claiming n=65535 can copy overlapping suffixes into retained MetaText strings, yielding multi-GB allocation from ~1MB media. Same extent gap exists POLYGON/POLYPOLYGON/TEXTOUT; EMF point reader does enforce off+size. Tracing referenced media callers and exact lines.",
+          "evidence": [
+            {
+              "path": "src/convert/metafile.rs",
+              "startLine": 604,
+              "endLine": 612,
+              "description": "EXTTEXTOUT accepts text bytes beyond record boundary"
+            }
+          ]
+        },
+        "originalCandidates": [
+          {
+            "source": "parser_investigator",
+            "title": "WMF record text reads cross declared record extents and retain amplified text",
+            "originalMessage": "Second concrete candidate in WMF: raster_wmf validates size2 versus whole file but passes whole data to record field/string reads. META_EXTTEXTOUT at 604-612 reads n bytes via data.get(at..at+n), without at+n <= off+size2. Thousands of 14-byte records each claiming n=65535 can copy overlapping suffixes into retained MetaText strings, yielding multi-GB allocation from ~1MB media. Same extent gap exists POLYGON/POLYPOLYGON/TEXTOUT; EMF point reader does enforce off+size. Tracing referenced media callers and exact lines.",
+            "evidence": [
+              {
+                "path": "src/convert/metafile.rs",
+                "startLine": 604,
+                "endLine": 612,
+                "description": "EXTTEXTOUT accepts text bytes beyond record boundary"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "redaction-verification.utf16-xml",
+      "title": "Redacting visible text can leave a recoverable UTF-16 XML copy",
+      "summary": "A body redaction can succeed while the same sensitive text survives in an untouched UTF-16 auxiliary XML part. The package accepts and preserves that encoding, but the final leak check treats XML as UTF-8 and misses the retained copy.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The protection is specifically intended to prevent disclosure when redacted outputs are shared. A recipient can recover the retained text from auxiliary XML, but this requires an existing duplicate in supported UTF-16 XML and subsequent sharing; no automatic external transmission is asserted.",
+        "changeConditions": "Evidence of routine redaction of highly sensitive duplicated data would increase impact; independent output sanitization or withholding the file removes the disclosure path."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent source review verifies UTF-16 admission, byte-preserving auxiliary output, UTF-8-only XML scanning and the final gate that trusts no matches. No application reproduction was run."
+      },
+      "taxonomy": {
+        "category": "Incomplete sensitive-data removal verification",
+        "cwe": [
+          "CWE-201"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 471,
+          "role": "root_control"
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 4727,
+          "endLine": 4745,
+          "role": "propagation"
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "startLine": 873,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 764,
+          "endLine": 780,
+          "role": "user_input"
+        },
+        {
+          "path": "src/opc/mod.rs",
+          "startLine": 659,
+          "endLine": 664,
+          "role": "outcome"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "redact-api",
+          "label": "Public edit plan reaches shared preparation",
+          "path": "src/edit.rs",
+          "startLine": 1750,
+          "endLine": 1770,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "/// `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE` and\n/// `AMBIGUOUS_CHANGE` while settling revisions; `ANCHOR_NOT_FOUND`,\n/// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,\n/// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,\n/// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`\n/// while resolving and applying operations; `UNSUPPORTED` for a `settings`\n/// operation with a protection password. `FIELDS_FAILED` when field\n/// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be\n/// compared, `PACKAGE_WRITE` when it cannot be packaged, and\n/// `REDACTION_LEAK` when redacted text still occurs in an output.\npub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {\n    prepared::prepare(source, plan, &PrepareOptions::default()).map(|p| p.result)\n}\n\n/// `update_fields` refreshes the clean copy the comparer reads. Under\n/// `existing_revisions: \"keep\"` the redline replays the edits instead, so a\n/// refreshed clean copy would no longer be the accepted redline.\nfn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {\n    if plan.update_fields && plan.existing_revisions == ExistingRevisions::Keep {\n        return Err(err(\n            \"INVALID_PLAN\",\n",
+          "explanation": "A caller requests redaction through the public edit API."
+        },
+        {
+          "id": "redact-prepare",
+          "label": "Serialized outputs are checked before successful return",
+          "path": "src/edit/prepared.rs",
+          "startLine": 860,
+          "endLine": 878,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            op,\n            \"the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph\",\n        );\n        error.code = \"UNSUPPORTED_STRUCTURE\".into();\n        error.outcomes[op].code = Some(error.code.clone());\n        return Err(error);\n    }\n    // Settings are not revisions: the redline takes them as they are.\n    if let Some(request) = &tx.settings {\n        redline = crate::settings::apply_settings_to_docx(&redline, request)\n            .map_err(|m| err(\"PACKAGE_WRITE\", None, m))?;\n    }\n    redline = super::replacement_order::typing_order(&redline)?;\n    tx.check_redactions(&[&clean, &redline])?;\n    let mut report = tx.report(true);\n    report.paragraphs.to = crate::inspect::paragraphs(&clean)\n        .map(|p| p.len())\n        .unwrap_or(report.paragraphs.from);\n    report.revisions = revision_counts(&redline);\n",
+          "explanation": "Normal output preparation invokes check_redactions on clean and redline."
+        },
+        {
+          "id": "redact-check",
+          "label": "Empty leak scan allows redaction success",
+          "path": "src/edit.rs",
+          "startLine": 4724,
+          "endLine": 4746,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    /// Refuse the plan when the text of a redaction still occurs in one of\n    /// `outputs` (a comment on it, another paragraph, a header, the\n    /// document properties). The message names the parts, never the text.\n    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {\n        for (op, operation) in self.plan.operations.iter().enumerate() {\n            let OperationKind::Redact { find, .. } = &operation.kind else {\n                continue;\n            };\n            let parts: std::collections::BTreeSet<String> = outputs\n                .iter()\n                .flat_map(|doc| crate::scrub::leaks(doc, find))\n                .collect();\n            if parts.is_empty() {\n                continue;\n            }\n            let message = format!(\n                \"the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it\",\n                parts.into_iter().collect::<Vec<_>>().join(\", \")\n            );\n            let mut error = self.conflict(op, &message);\n            error.code = \"REDACTION_LEAK\".into();\n            error.outcomes[op].code = Some(error.code.clone());\n            return Err(error);\n",
+          "explanation": "The redaction invariant is enforced solely by scrub::leaks results; an empty result skips refusal."
+        },
+        {
+          "id": "redact-preserve",
+          "label": "Untouched parts retain original bytes",
+          "path": "src/edit.rs",
+          "startLine": 5381,
+          "endLine": 5384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        // The body is always written; a story part only when an operation\n        // edits it, so untouched parts keep their exact bytes.\n        let mut written = self.touched_stories();\n        written.insert(0);\n",
+          "explanation": "Ordinary body redaction rewrites touched stories and leaves custom XML unchanged."
+        },
+        {
+          "id": "redact-output",
+          "label": "Clean output serializes full retained package",
+          "path": "src/edit.rs",
+          "startLine": 5420,
+          "endLine": 5427,
+          "language": "rust",
+          "role": "outcome",
+          "code": "        let clean = self\n            .opened\n            .pkg\n            .to_zip()\n            .map_err(|e| err(\"PACKAGE_WRITE\", None, e.to_string()))?;\n        #[cfg(test)]\n        let clean = prepared::tests::serialized_candidate(clean);\n        Ok((clean, marked))\n",
+          "explanation": "Auxiliary parts still reside in the returned clean package."
+        },
+        {
+          "id": "redact-zip",
+          "label": "Package writer copies raw part bytes",
+          "path": "src/opc/mod.rs",
+          "startLine": 659,
+          "endLine": 664,
+          "language": "rust",
+          "role": "outcome",
+          "code": "        for (name, entry) in &entries {\n            zip.start_file(name.as_ref(), options)?;\n            match entry {\n                ZipEntry::Rels(rels) => zip.write_all(&rels.to_xml()?)?,\n                ZipEntry::Part(data) => zip.write_all(data)?,\n            }\n",
+          "explanation": "Untouched custom XML bytes are copied verbatim into the generated archive."
+        },
+        {
+          "id": "redact-utf16-admit",
+          "label": "Admission explicitly accepts BOM-marked UTF-16 XML",
+          "path": "src/admission.rs",
+          "startLine": 764,
+          "endLine": 780,
+          "language": "rust",
+          "role": "user_input",
+          "code": "/// A part's text for scanning. Word writes UTF-8, but a part may be UTF-16\n/// with a byte-order mark (SharePoint's `customXml` items often are) and\n/// Word opens it, so it is transcoded; other bytes decode lossily, as the\n/// rest of the engine reads them.\nfn part_text(xml: &[u8]) -> Cow<'_, str> {\n    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {\n        let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));\n        Cow::Owned(\n            char::decode_utf16(units)\n                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))\n                .collect(),\n        )\n    };\n    match xml {\n        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),\n        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),\n        _ => String::from_utf8_lossy(xml),\n",
+          "explanation": "A valid UTF-16 auxiliary XML part crosses admission; it is not excluded input."
+        },
+        {
+          "id": "redact-utf8-scan",
+          "label": "Leak scan decodes XML only as UTF-8",
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 475,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let xml = name.ends_with(\".xml\") || name.ends_with(\".rels\");\n        let hit = if xml {\n            xml_holds(&String::from_utf8_lossy(&bytes), needle)\n        } else {\n            contains(&bytes, needle.as_bytes()) || contains(&bytes, &utf16)\n        };\n        if hit {\n            found.insert(name);\n        }\n",
+          "explanation": "XML files never take the raw UTF-16 needle fallback available to non-XML parts."
+        },
+        {
+          "id": "redact-contract",
+          "label": "Documented redaction confidentiality promise",
+          "path": "docs/python.md",
+          "startLine": 2269,
+          "endLine": 2275,
+          "language": "markdown",
+          "role": "expected_control",
+          "code": "Replace the unique occurrence of ``find`` (or its ``occurrence``-th hit) with one block per character.\n\nThe redaction is no tracked change: the clean copy and the redline\nboth show the blocks. The plan is refused with ``REDACTION_LEAK``\nwhen the text still occurs anywhere in either document (another\nparagraph, a comment, a header, the properties); the report never\nrepeats it.\n",
+          "explanation": "The promised REDACTION_LEAK refusal applies when target text remains anywhere in either output."
+        },
+        {
+          "id": "redact-xml-fallback",
+          "label": "XML fallback cannot reconstruct UTF-16",
+          "path": "src/scrub.rs",
+          "startLine": 527,
+          "endLine": 538,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn xml_holds(xml: &str, needle: &str) -> bool {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);\n    let Some(root) = dom.root(doc) else {\n        // Not XML after all: read it as bytes.\n        return xml.contains(needle);\n    };\n    for node in dom.descendant_nodes(doc) {\n        if dom.is_text(node) || dom.is_comment(node) {\n            if dom.text_value(node).is_some_and(|v| v.contains(needle)) {\n                return true;\n            }\n",
+          "explanation": "The fallback searches the same lossy UTF-8 string, which retains interleaved NULs rather than the decoded target."
+        }
+      ],
+      "rootCause": {
+        "summary": "Admission decodes BOM-marked UTF-16LE/BE XML for validation, so a `customXml/item1.xml` holding the target text is supported input. Redaction rewrites the body and touched stories, preserving untouched part bytes in the clean DOCX. `check_redactions()` scans generated outputs through `scrub::leaks()`, but its XML branch passes lossy UTF-8 to `xml_holds()` instead of decoding the XML encoding. Interleaved UTF-16 NULs prevent semantic or fallback matching; the raw UTF-16 needle check is available only to non-XML parts. An empty match set permits successful return with the sensitive bytes still present.",
+        "evidenceRefs": [
+          "redact-api",
+          "redact-utf16-admit",
+          "redact-preserve",
+          "redact-output",
+          "redact-zip",
+          "redact-prepare",
+          "redact-check",
+          "redact-utf8-scan",
+          "redact-xml-fallback"
+        ]
+      },
+      "remediation": "Reuse a BOM/encoding-aware XML decoder before leak scanning, handling UTF-16LE and UTF-16BE, and fail closed when an XML part cannot be decoded or scanned completely.",
+      "validation": {
+        "counterEvidence": [
+          "Archive read/inflation failures fail closed and UTF-8 XML comments, processing instructions/entities and joined Word runs are scanned.",
+          "Neither those controls nor the non-XML UTF-16LE fallback covers UTF-16 XML.",
+          "A simple transitional package does not need strict translation that could rewrite auxiliary XML."
+        ],
+        "evidenceRefs": [
+          "redact-api",
+          "redact-utf16-admit",
+          "redact-preserve",
+          "redact-output",
+          "redact-zip",
+          "redact-prepare",
+          "redact-check",
+          "redact-utf8-scan",
+          "redact-xml-fallback",
+          "redact-contract"
+        ],
+        "limitations": [
+          "Static source validation only; disclosure additionally requires sharing the returned document with a recipient."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "Use ordinary transitional body XML containing a multi-character target and an auxiliary BOM-marked UTF-16 XML element containing the same target. Admission supports both endiannesses; untouched auxiliary bytes serialize verbatim. The XML branch searches a NUL-interleaved UTF-8 interpretation rather than the decoded target, so it yields no auxiliary hit after visible redaction."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Accepted UTF-16 custom XML -> unchanged package part -> returned clean DOCX -> UTF-8-only leak check -> empty match result",
+          "source": "Sensitive text duplicated in supported auxiliary XML",
+          "sink": "Successful output containing recoverable sensitive bytes",
+          "outcome": "Recipient can recover text the user believed removed",
+          "evidenceRefs": [
+            "redact-utf16-admit",
+            "redact-preserve",
+            "redact-zip",
+            "redact-check",
+            "redact-utf8-scan"
+          ]
+        },
+        "evidenceRefs": [
+          "redact-check",
+          "redact-utf8-scan",
+          "redact-zip"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "Sensitive text can survive a confidentiality operation and be disclosed in shared output."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Requires the specified auxiliary encoding/duplicate and sharing workflow."
+        },
+        "reachability": {
+          "summary": "The public redact edit operation reaches the check through shared preparation without special configuration. The prerequisite is a duplicate in untouched UTF-16 auxiliary XML.",
+          "attacker": "Recipient of purportedly redacted DOCX; a document supplier can arrange the auxiliary copy",
+          "entrypoint": "Public edit plan Redact operation",
+          "outcome": "Disclosure of the retained redaction target",
+          "preconditions": [
+            "Sensitive text also exists in a UTF-16 XML part.",
+            "The successful output is shared with a recipient."
+          ]
+        },
+        "summary": "A supplied or existing document contains a visible secret and a duplicate in UTF-16 auxiliary XML. The user redacts the visible copy, receives a successful result and shares the DOCX; its recipient decodes the retained auxiliary part."
+      },
+      "remediationTests": [
+        "Redact a visible target while matching UTF-16LE and UTF-16BE custom XML remains; assert REDACTION_LEAK.",
+        "Verify the standalone leaks API reports encoded auxiliary copies and unsupported encodings fail closed."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-utf16-redaction-leak",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "baseline",
+        "originalCandidate": {
+          "source": "baseline",
+          "title": "UTF-16 auxiliary XML bypasses redaction leak checking",
+          "originalMessage": "New supported candidate: src/scrub.rs:472-477 leaks_within treats .xml/.rels as String::from_utf8_lossy, then xml_holds, with NO UTF-16 decoding or raw UTF-16 fallback for XML. Admission explicitly supports UTF-16 XML (src/admission.rs:764-780 and test1845+ customXml). An admitted UTF-16LE/BE customXml/item.xml retaining the exact redacted text contains NUL-separated characters after lossy UTF-8 decoding, so xml_holds never sees the needle. edit.check_redactions at src/edit.rs:4727-4740 trusts leaks over clean/redline; attacker-provided doc can retain secret in UTF-16 auxiliary XML while redaction succeeds. Gathering non-rewrite path to confirm output preserves auxiliary bytes."
+        },
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "title": "UTF-16 auxiliary XML bypasses redaction leak checking",
+            "originalMessage": "New supported candidate: src/scrub.rs:472-477 leaks_within treats .xml/.rels as String::from_utf8_lossy, then xml_holds, with NO UTF-16 decoding or raw UTF-16 fallback for XML. Admission explicitly supports UTF-16 XML (src/admission.rs:764-780 and test1845+ customXml). An admitted UTF-16LE/BE customXml/item.xml retaining the exact redacted text contains NUL-separated characters after lossy UTF-8 decoding, so xml_holds never sees the needle. edit.check_redactions at src/edit.rs:4727-4740 trusts leaks over clean/redline; attacker-provided doc can retain secret in UTF-16 auxiliary XML while redaction succeeds. Gathering non-rewrite path to confirm output preserves auxiliary bytes."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "redaction-verification.namespace-blind-attributes",
+      "title": "Redacting a numeric identifier can leave its custom XML attribute intact",
+      "summary": "The final redaction leak scan exempts numeric-looking attributes by local name alone. A sensitive value such as a customer or account identifier in custom XML `id` is ignored, allowing visible redaction to succeed while the value remains recoverable in the returned DOCX.",
+      "severity": {
+        "level": "medium",
+        "rationale": "The confidentiality operation can certify an output still containing the exact sensitive identifier. A business-data duplicate and subsequent sharing are required; there is no asserted automatic network transmission or arbitrary file access.",
+        "changeConditions": "Routine exposure of highly sensitive identifiers in shared redacted documents would increase impact; independent complete sanitization or withholding output prevents disclosure."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent review confirms local-name-only filtering, numeric/hex classifier and byte-preserving auxiliary output before the final leak check."
+      },
+      "taxonomy": {
+        "category": "Overbroad sensitive-data scan exemption",
+        "cwe": [
+          "CWE-201"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/scrub.rs",
+          "startLine": 543,
+          "endLine": 552,
+          "role": "root_control"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 484,
+          "endLine": 490,
+          "role": "propagation"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 522,
+          "endLine": 525,
+          "role": "propagation"
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 4727,
+          "endLine": 4745,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "startLine": 873,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "redact-api",
+          "label": "Public edit plan reaches shared preparation",
+          "path": "src/edit.rs",
+          "startLine": 1750,
+          "endLine": 1770,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "/// `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE` and\n/// `AMBIGUOUS_CHANGE` while settling revisions; `ANCHOR_NOT_FOUND`,\n/// `AMBIGUOUS_ANCHOR`, `INVALID_EDIT`, `UNKNOWN_STYLE`, `UNKNOWN_COMMENT`,\n/// `LOCKED_CONTROL`, `COMMENT_NOT_IN_BODY`, `PARAGRAPH_RESOLVED`,\n/// `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE` and `UNSUPPORTED_IMAGE`\n/// while resolving and applying operations; `UNSUPPORTED` for a `settings`\n/// operation with a protection password. `FIELDS_FAILED` when field\n/// results cannot be refreshed, `COMPARE_FAILED` when the redline cannot be\n/// compared, `PACKAGE_WRITE` when it cannot be packaged, and\n/// `REDACTION_LEAK` when redacted text still occurs in an output.\npub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {\n    prepared::prepare(source, plan, &PrepareOptions::default()).map(|p| p.result)\n}\n\n/// `update_fields` refreshes the clean copy the comparer reads. Under\n/// `existing_revisions: \"keep\"` the redline replays the edits instead, so a\n/// refreshed clean copy would no longer be the accepted redline.\nfn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {\n    if plan.update_fields && plan.existing_revisions == ExistingRevisions::Keep {\n        return Err(err(\n            \"INVALID_PLAN\",\n",
+          "explanation": "A caller requests redaction through the public edit API."
+        },
+        {
+          "id": "redact-prepare",
+          "label": "Serialized outputs are checked before successful return",
+          "path": "src/edit/prepared.rs",
+          "startLine": 860,
+          "endLine": 878,
+          "language": "rust",
+          "role": "propagation",
+          "code": "            op,\n            \"the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph\",\n        );\n        error.code = \"UNSUPPORTED_STRUCTURE\".into();\n        error.outcomes[op].code = Some(error.code.clone());\n        return Err(error);\n    }\n    // Settings are not revisions: the redline takes them as they are.\n    if let Some(request) = &tx.settings {\n        redline = crate::settings::apply_settings_to_docx(&redline, request)\n            .map_err(|m| err(\"PACKAGE_WRITE\", None, m))?;\n    }\n    redline = super::replacement_order::typing_order(&redline)?;\n    tx.check_redactions(&[&clean, &redline])?;\n    let mut report = tx.report(true);\n    report.paragraphs.to = crate::inspect::paragraphs(&clean)\n        .map(|p| p.len())\n        .unwrap_or(report.paragraphs.from);\n    report.revisions = revision_counts(&redline);\n",
+          "explanation": "Normal output preparation invokes check_redactions on clean and redline."
+        },
+        {
+          "id": "redact-check",
+          "label": "Empty leak scan allows redaction success",
+          "path": "src/edit.rs",
+          "startLine": 4724,
+          "endLine": 4746,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    /// Refuse the plan when the text of a redaction still occurs in one of\n    /// `outputs` (a comment on it, another paragraph, a header, the\n    /// document properties). The message names the parts, never the text.\n    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {\n        for (op, operation) in self.plan.operations.iter().enumerate() {\n            let OperationKind::Redact { find, .. } = &operation.kind else {\n                continue;\n            };\n            let parts: std::collections::BTreeSet<String> = outputs\n                .iter()\n                .flat_map(|doc| crate::scrub::leaks(doc, find))\n                .collect();\n            if parts.is_empty() {\n                continue;\n            }\n            let message = format!(\n                \"the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it\",\n                parts.into_iter().collect::<Vec<_>>().join(\", \")\n            );\n            let mut error = self.conflict(op, &message);\n            error.code = \"REDACTION_LEAK\".into();\n            error.outcomes[op].code = Some(error.code.clone());\n            return Err(error);\n",
+          "explanation": "The redaction invariant is enforced solely by scrub::leaks results; an empty result skips refusal."
+        },
+        {
+          "id": "redact-preserve",
+          "label": "Untouched parts retain original bytes",
+          "path": "src/edit.rs",
+          "startLine": 5381,
+          "endLine": 5384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        // The body is always written; a story part only when an operation\n        // edits it, so untouched parts keep their exact bytes.\n        let mut written = self.touched_stories();\n        written.insert(0);\n",
+          "explanation": "Ordinary body redaction rewrites touched stories and leaves custom XML unchanged."
+        },
+        {
+          "id": "redact-output",
+          "label": "Clean output serializes full retained package",
+          "path": "src/edit.rs",
+          "startLine": 5420,
+          "endLine": 5427,
+          "language": "rust",
+          "role": "outcome",
+          "code": "        let clean = self\n            .opened\n            .pkg\n            .to_zip()\n            .map_err(|e| err(\"PACKAGE_WRITE\", None, e.to_string()))?;\n        #[cfg(test)]\n        let clean = prepared::tests::serialized_candidate(clean);\n        Ok((clean, marked))\n",
+          "explanation": "Auxiliary parts still reside in the returned clean package."
+        },
+        {
+          "id": "redact-zip",
+          "label": "Package writer copies raw part bytes",
+          "path": "src/opc/mod.rs",
+          "startLine": 659,
+          "endLine": 664,
+          "language": "rust",
+          "role": "outcome",
+          "code": "        for (name, entry) in &entries {\n            zip.start_file(name.as_ref(), options)?;\n            match entry {\n                ZipEntry::Rels(rels) => zip.write_all(&rels.to_xml()?)?,\n                ZipEntry::Part(data) => zip.write_all(data)?,\n            }\n",
+          "explanation": "Untouched custom XML bytes are copied verbatim into the generated archive."
+        },
+        {
+          "id": "redact-numeric-scan",
+          "label": "Local-name exemption ignores matching sensitive attributes",
+          "path": "src/scrub.rs",
+          "startLine": 543,
+          "endLine": 552,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        } else if dom.is_element(node) {\n            for i in 0..dom.attr_count(node) {\n                let (name, value) = dom.attr_at(node, i);\n                if !value.contains(needle) || dom.is_namespace_declaration(name) {\n                    continue;\n                }\n                if NUMERIC_ATTRIBUTES.contains(&name.local_name()) && is_number(value) {\n                    continue;\n                }\n                return true;\n",
+          "explanation": "The skip tests only local name plus numeric-looking value, without namespace, owner or package context."
+        },
+        {
+          "id": "redact-numeric-values",
+          "label": "Numeric classifier accepts hexadecimal identifiers",
+          "path": "src/scrub.rs",
+          "startLine": 522,
+          "endLine": 525,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn is_number(value: &str) -> bool {\n    let digits = value.strip_prefix('-').unwrap_or(value);\n    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_hexdigit())\n}\n",
+          "explanation": "Sensitive business identifiers consisting of hex digits enter the exemption."
+        },
+        {
+          "id": "redact-id-name",
+          "label": "Attribute exemption includes id",
+          "path": "src/scrub.rs",
+          "startLine": 484,
+          "endLine": 490,
+          "language": "rust",
+          "role": "propagation",
+          "code": "/// Attributes that only ever hold a number or a hex id.\nconst NUMERIC_ATTRIBUTES: &[&str] = &[\n    \"id\",\n    \"paraId\",\n    \"textId\",\n    \"durableId\",\n    \"w\",\n",
+          "explanation": "The broadly used business-data attribute name id is exempted."
+        },
+        {
+          "id": "redact-contract",
+          "label": "Documented redaction confidentiality promise",
+          "path": "docs/python.md",
+          "startLine": 2269,
+          "endLine": 2275,
+          "language": "markdown",
+          "role": "expected_control",
+          "code": "Replace the unique occurrence of ``find`` (or its ``occurrence``-th hit) with one block per character.\n\nThe redaction is no tracked change: the clean copy and the redline\nboth show the blocks. The plan is refused with ``REDACTION_LEAK``\nwhen the text still occurs anywhere in either document (another\nparagraph, a comment, a header, the properties); the report never\nrepeats it.\n",
+          "explanation": "The promised REDACTION_LEAK refusal applies when target text remains anywhere in either output."
+        }
+      ],
+      "rootCause": {
+        "summary": "`check_redactions()` refuses outputs only when `scrub::leaks()` finds the target. For XML attributes, `xml_holds()` ignores a matching value if its local name appears in `NUMERIC_ATTRIBUTES` and its value is hexadecimal-looking. The exemption checks neither namespace nor owning element/part. Thus business XML `<customer id=\"123456789\"/>`, including a business-namespaced `id`, is treated like an OOXML layout identifier. Ordinary body redaction leaves that auxiliary part unchanged and the final scan reports no residual target.",
+        "evidenceRefs": [
+          "redact-api",
+          "redact-preserve",
+          "redact-zip",
+          "redact-prepare",
+          "redact-check",
+          "redact-id-name",
+          "redact-numeric-values",
+          "redact-numeric-scan"
+        ]
+      },
+      "remediation": "Remove numeric exemptions from strict redaction verification, or restrict them to verified OOXML namespace/element/attribute combinations representing exclusively generated layout state. Always scan arbitrary custom XML business attributes.",
+      "validation": {
+        "counterEvidence": [
+          "Exempting genuine OOXML dimensions/generated IDs avoids unrelated short numeric matches and is covered by existing tests.",
+          "That purpose does not establish arbitrary custom XML business identifiers as safe; the code does not constrain namespace/element/part.",
+          "Nonnumeric attribute values are scanned normally."
+        ],
+        "evidenceRefs": [
+          "redact-api",
+          "redact-preserve",
+          "redact-output",
+          "redact-zip",
+          "redact-prepare",
+          "redact-check",
+          "redact-id-name",
+          "redact-numeric-values",
+          "redact-numeric-scan",
+          "redact-contract"
+        ],
+        "limitations": [
+          "No dynamic integration reproduction; disclosure additionally requires sharing the returned DOCX."
+        ],
+        "method": "Independent offline static source trace",
+        "summary": "A custom XML attribute with `id=123456789` reaches the matching-value branch, passes `is_number()`, and is skipped solely because local_name is id. No other text node need contain the identifier after body redaction. The retained custom part is serialized verbatim; the check then permits the result."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Sensitive custom XML id -> unchanged output bytes -> xml_holds() matching attribute -> local-name numeric exemption -> no REDACTION_LEAK",
+          "source": "Sensitive numeric/hexadecimal business attribute",
+          "sink": "Successful purportedly redacted output",
+          "outcome": "Recipient recovers retained sensitive identifier",
+          "evidenceRefs": [
+            "redact-preserve",
+            "redact-zip",
+            "redact-check",
+            "redact-numeric-scan"
+          ]
+        },
+        "evidenceRefs": [
+          "redact-check",
+          "redact-numeric-scan",
+          "redact-zip"
+        ],
+        "impact": {
+          "level": "high",
+          "why": "A confidentiality check certifies a file containing sensitive business data."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Requires a specified duplicate representation and sharing workflow."
+        },
+        "reachability": {
+          "summary": "Public redaction preparation invokes this scan without extra flags; an arbitrary custom XML duplicate whose local name matches the exemption is sufficient.",
+          "attacker": "Recipient of redacted output; document supplier can arrange the duplicate",
+          "entrypoint": "Public Redact operation",
+          "outcome": "Sensitive identifier disclosure",
+          "preconditions": [
+            "Target identifier is duplicated in a numeric-looking custom XML attribute with exempt local name.",
+            "Output is shared."
+          ]
+        },
+        "summary": "A document has a visible sensitive numeric identifier plus the same value in custom XML `id`. The user redacts the visible value and shares successful output; the recipient reads the unchanged attribute."
+      },
+      "remediationTests": [
+        "Redact visible numeric targets duplicated in unqualified and business-namespaced custom XML id attributes; assert REDACTION_LEAK.",
+        "Retain explicit tests for legitimate OOXML layout exemptions only if their exact namespace and element contexts are enforced."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0005-numeric-redaction-leak",
+        "workerLabel": "discovery-0005",
+        "discoveredBy": "baseline",
+        "originalCandidate": {
+          "source": "baseline",
+          "title": "Numeric custom XML values bypass redaction leak checking",
+          "originalMessage": "Same redaction checker has second independent static false-negative: xml_holds at scrub.rs:539-578 skips NUMERIC_ATTRIBUTES by name.local_name() and is_number(value), regardless of namespace/part. Untouched business customXml <customer id=\"123456789\"/> or <record x:id=\"123456789\" xmlns:x=\"urn:business\"/> is skipped after visible account/identifier 123456789 is redacted from body. Numeric identifier copies in arbitrary custom XML are actual sensitive data, unlike OOXML layout IDs. This needs restricting exemptions to exact OOXML namespace+element/attribute contexts (or removing them in strict redaction scans). Deliberate tests exempt layout numeric values, but do not cover unrelated customXml namespace collisions."
+        },
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "title": "Numeric custom XML values bypass redaction leak checking",
+            "originalMessage": "Same redaction checker has second independent static false-negative: xml_holds at scrub.rs:539-578 skips NUMERIC_ATTRIBUTES by name.local_name() and is_number(value), regardless of namespace/part. Untouched business customXml <customer id=\"123456789\"/> or <record x:id=\"123456789\" xmlns:x=\"urn:business\"/> is skipped after visible account/identifier 123456789 is redacted from body. Numeric identifier copies in arbitrary custom XML are actual sensitive data, unlike OOXML layout IDs. This needs restricting exemptions to exact OOXML namespace+element/attribute contexts (or removing them in strict redaction scans). Deliberate tests exempt layout numeric values, but do not cover unrelated customXml namespace collisions."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-5bd1c07e4dad3466",
+        "label": "Markdown drawing dependency materialization",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Parser availability",
+        "notes": "Validated uncontrolled recursion through default public conversion; capture-side count limits do not enforce graph acyclicity. src/markdown/from_docx/drawing.rs:1397-1408,1889-1900,1964-1983; src/markdown/write.rs:4189-4201.",
+        "candidateId": "discovery-0005-drawing-cycle"
+      },
+      {
+        "id": "surface-1935c19630995f8c",
+        "label": "Legacy DOC repeated logical CP candidate",
+        "disposition": "rejected",
+        "receiptRefs": [],
+        "notes": "Rejected proposed duplicate 0..N CP pieces: pieces() reads adjacent CP[i],CP[i+1] endpoints (src/legacy_doc.rs:1091-1094), and main_text rejects every decreasing interval (1154-1156), so restarting at zero creates a rejected decreasing bridge. Original source evidence retained. A distinct physical-FC alias expansion remains under validation. Validation completed: distinct FC-alias finding retained.",
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        }
+      },
+      {
+        "id": "surface-c0829fbe8309dd2e",
+        "label": "Legacy DOC physical text alias expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Parser availability",
+        "notes": "Validated increasing contiguous logical ranges sharing physical FC bytes; no pre-allocation logical budget. Existing sector, arithmetic, CP ordering and byte-bound checks do not bound expansion. src/legacy_doc.rs:919,1091-1109,1150-1225; src/bin/jubarte.rs:3129-3143.",
+        "candidateId": "discovery-0005-doc-fc-alias"
+      },
+      {
+        "id": "surface-6662f74877c6722e",
+        "label": "Legacy DOC physical text alias expansion",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Parser availability",
+        "notes": "Validated increasing contiguous logical ranges sharing physical FC bytes; no pre-allocation logical budget. Sector, arithmetic, CP ordering and physical byte checks do not bound expansion. src/legacy_doc.rs:919,1091-1109,1150-1225; src/bin/jubarte.rs:3129-3143.",
+        "candidateId": "discovery-0005-doc-fc-alias"
+      },
+      {
+        "id": "surface-7bca1dc8005e6ed9",
+        "label": "Embedded font alias allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Renderer availability",
+        "notes": "Validated physical part counted once but eagerly copied/retained for each arbitrary font name. Catalogue-family skip and font syntax validation do not limit valid unknown aliases. src/convert/font_table.rs:83-108,179-193,205-231; src/convert/mod.rs:773-807.",
+        "candidateId": "discovery-0005-embedded-font-alias"
+      },
+      {
+        "id": "surface-e49bbf5bc3fb4f19",
+        "label": "WMF record extent enforcement",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Embedded media availability",
+        "notes": "Validated whole-file payload reads despite small record extents. Text retains overlapping copied strings; geometry siblings read beyond their own records. Canvas/clipping and Rust slice checks do not prevent amplification. src/convert/metafile.rs:474-489,604-619,628-687,692-700.",
+        "candidateId": "discovery-0005-wmf-record-amplification"
+      },
+      {
+        "id": "surface-6d9d4fc6fa49af44",
+        "label": "Redaction verification of UTF-16 auxiliary XML",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "riskArea": "Sensitive-data confidentiality",
+        "notes": "Validated accepted UTF-16LE/BE auxiliary XML survives untouched while leak check decodes only UTF-8 for .xml/.rels. Returned clean bytes retain secret despite successful redaction. src/admission.rs:764-780; src/scrub.rs:467-471; src/edit.rs:4727-4745,5381-5427; src/opc/mod.rs:659-664.",
+        "candidateId": "discovery-0005-utf16-redaction-leak"
+      },
+      {
+        "label": "Redaction exemption for numeric XML attributes",
+        "disposition": "reported",
+        "riskArea": "Sensitive identifier confidentiality",
+        "notes": "Validated namespace/element/part-blind numeric exemption skips custom XML id values. Actual OOXML layout exemption rationale is counterevidence only for those exact contexts. src/scrub.rs:484-525,543-552; src/edit.rs:4727-4745.",
+        "candidateId": "discovery-0005-numeric-redaction-leak",
+        "id": "surface-a15ca5a6ec9d07a2",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        },
+        "id": "discovery-0005-doc-piece-amplification"
+      },
+      {
+        "candidateId": "discovery-0005-ci-cache-authority",
+        "reason": "Private-cache write/validation implementation is absent from authorized source, so effective cache-poisoning impact cannot be established offline",
+        "paths": [
+          ".github/workflows/ci.yml",
+          ".github/actions/mbx/action.yml"
+        ],
+        "candidate": {
+          "source": "architecture",
+          "title": "PR code executes with network reachability to unauthenticated private mbx cache",
+          "originalMessage": "Concrete candidate boundary established: pull_request runs .github/workflows/ci.yml self-hosted lint/test/etc; these execute PR-controlled Cargo/tests after local .github/actions/mbx, whose documented unauthenticated private resource is http://mbx-cache:7543 namespace jandira-tech/jubarte-redlines (action.yml:8-22). 'Only protected pushes publish; PRs read' is stated client policy, but arbitrary PR code on the same reachable runner can bypass client selection. Source lacks cache server/routes/config, so actual write API, validation/auth and trusted-consumer poisoning feasibility remain prerequisites; cannot claim cache-poisoning finding from comments alone yet."
+        },
+        "id": "discovery-0005-ci-cache-authority"
+      },
+      {
+        "candidateId": "discovery-0005-relocated-metadata-scrub",
+        "reason": "Baseline source-backed privacy candidate awaiting focused validation",
+        "candidate": {
+          "source": "baseline",
+          "title": "Scrubbing uses conventional metadata part names instead of relationship targets",
+          "originalMessage": "Additional scrub privacy gap worth separate validation: alias_authors/remove_rsids restrict to literal word/*.xml (scrub.rs:218-224,290+), and scrub_properties uses hardcoded docProps/{core,app,custom}.xml (constants38-40,359+). Admitted OPC main/metadata parts can be relocated through relationships; defaults can return success retaining w:author in e.g. document/main.xml or creator in relocated core metadata. File docs expressly describe word/ scope for aliases, so I am not yet classifying the main-path variant as a finding. Metadata docprops removal is not similarly documented as path-limited."
+        },
+        "id": "discovery-0005-relocated-metadata-scrub"
+      }
+    ]
+  },
+  "scope": {
+    "summary": "Current source at /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null",
+    "runtimeStatus": "No application code executed; audit ongoing",
+    "validationMode": "offline static source review"
+  },
+  "threatModel": {
+    "summary": "Jubarte is a Rust Word-document toolkit exposed as native CLI, Rust byte APIs, Python/PyO3 facade and stdio MCP server, and browser/Node WASM APIs plus npm CLI. Documents and edit plans pass through admission/XML/package processing to DOCX, Markdown, PDF/PNG and reports. Normal processing is local; explicit native self-update downloads and installs a GitHub release (src/lib.rs:7-35,96-165; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; src/update.rs:186-258).",
+    "assets": [
+      "Confidential document bytes, revisions/comments/authors and derived renderings/reports; integrity of selected input/output files and admitted package structures (src/lib.rs:17-30; src/publication.rs:146-225).",
+      "MCP root filesystem capability; native executable integrity on self-update; release publishing/signing authority (.github/workflows/release.yml:230-275,356-369; src/update.rs:25-48,198-258).",
+      "Native renderers read installed/user/Word cloud-cache fonts and persist a per-user font index, distinct from document output-root authority (src/convert/font.rs:2228-2236,2633-2652,3090-3107,3213-3227)."
+    ],
+    "trustBoundaries": [
+      "Untrusted DOCX/ZIP/XML, legacy DOC, embedded images/fonts and edit plans enter the engine. Default admission bounds archive/part bytes 64 MiB, 10000 entries, inflation 256 MiB, XML depth 256; comparison allows 512 MiB archive/part and 2 GiB inflation. Permissive parse_xdocument requires a prior gate (src/admission.rs:15-28,63-99; src/xmllinq/parse.rs:21-36).",
+      "MCP stdio client invokes document tools under operator --root (default cwd). Python resolves paths for diagnostics; native _OutputRoot owns confined reads/publication through a held capability. Annotations are hints, not caller authorization (jubarte-python/python/jubarte_redlines/mcp_server.py:55,67-108,373-381; jubarte-python/src/lib.rs:1244-1277; src/publication.rs:146-199).",
+      "Native CLI grants ambient paths with staged per-file publication. Python/Node CLI ambient reads/writes are separate from MCP confinement (src/bin/jubarte.rs:261-273; src/publication.rs:203-225; jubarte-python/python/jubarte_redlines/document.py:142-145; jubarte-python/python/jubarte_redlines/__main__.py:126-132; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-56,106-110).",
+      "Native Markdown images use --resource-path or Markdown parent directory; URL schemes/canonical escape targets are refused, followed by capability-relative read (src/bin/jubarte.rs:2835-2876,2936-2943).",
+      "Self-update enters executable replacement only on explicit command and confirmation/--yes. RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None mean checksum-only today; optional Ed25519 support is inactive (src/update.rs:25-48,120-125,198-258,274-285; docs/SELF_UPDATE.md:59-82).",
+      "Tag-triggered release builds are read-only; release job has contents:write, signing step receives signing secret and publishes dist/* with workflow token. These are CI/maintainer authorities (.github/workflows/release.yml:15-21,51-55,230-275,356-369)."
+    ],
+    "attackerCapabilities": [
+      "Document suppliers control package/XML/relationship/font/image/Markdown bytes, not operator environment, MCP root grants or release infrastructure (src/admission.rs:15-28; src/bin/jubarte.rs:2851-2876).",
+      "Authorized MCP clients read/publish inside granted root including explicit overwrite; tools do not grant updater or ambient path authority (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,153-217,373-381).",
+      "Control of release assets permits changing archive and adjacent checksum; this is a separate supply-chain starting capability not authenticated by checksum-only policy (docs/SELF_UPDATE.md:59-77; src/update.rs:44-48,245-248)."
+    ],
+    "securityObjectives": [
+      "Do not fetch external document relationships or Markdown URL resources; confine MCP and resource reads to granted directory capabilities (src/admission.rs:15-22; src/bin/jubarte.rs:2835-2876; src/publication.rs:146-199).",
+      "Refuse malformed/over-budget packages/XML before DOM processing; host memory/CPU process bounds remain necessary (src/admission.rs:39-99; src/xmllinq/parse.rs:21-36; SECURITY.md:70-85).",
+      "Bind source_sha256 to document bytes when supplied and reject stale plans; staged publication is atomic per file only (src/edit.rs:2081-2089; src/publication.rs:83-131,168-174).",
+      "Protect updater integrity with HTTPS/checksums, configured signatures and regular-file check; keep document processing distinct from release publication (src/update.rs:198-258,299-307; .github/workflows/release.yml:230-275)."
+    ],
+    "assumptions": [
+      "No deployment, tenants or HTTP listener supplied; MCP uses stdio and operator controls client attachment/root (jubarte-python/python/jubarte_redlines/mcp_server.py:373-381).",
+      "Limits are configurable; hosts should not silently raise them for hostile inputs. Low-level permissive XML APIs require prior checking (src/admission.rs:103-164; src/xmllinq/parse.rs:21-30; SECURITY.md:70-85).",
+      "Updater docs disclose checksum-only operation until a key is committed; signature support is not active authentication (docs/SELF_UPDATE.md:59-82; src/update.rs:44-48).",
+      "Overview says no temporary files, but native font lookup persists an index and PID temporary sibling: a documentation qualification, not demonstrated vulnerability (src/lib.rs:7-11; src/convert/font.rs:3098-3107,3213-3227).",
+      "Current source audit only, no Git history or runtime execution; architecture mapping does not establish full audit coverage."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Architecture of current source in supplied repository; no immutable revision was requested."
+    }
+  }
+}

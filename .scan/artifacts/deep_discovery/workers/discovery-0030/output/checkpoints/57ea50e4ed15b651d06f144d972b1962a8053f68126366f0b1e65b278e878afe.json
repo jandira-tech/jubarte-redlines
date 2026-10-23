@@ -1,0 +1,187 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline read-only audit of current /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and tests are not executed during this audit.",
+    "validationMode": "static source review"
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-html-table-expansion",
+      "title": "Rendering an HTML altChunk with a large colspan exhausts host memory",
+      "summary": "A small DOCX HTML altChunk can specify an enormous `colspan`. Rendering expands that number into one XML grid-column element per column before any output budget is checked, exhausting memory or CPU in the hosting process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document author can deny availability of a process that renders their document using a compact input. Shared-service exposure is conditional; no confidentiality or execution impact is established.",
+        "changeConditions": "Process isolation and enforced CPU/memory quotas contain host impact; a shared unsandboxed rendering service increases impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The input-to-loop source trace is direct; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "altchunk-load",
+          "label": "Renderer expands admitted embedded HTML",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "role": "entrypoint",
+          "code": "// Word merges `w:altChunk` content (HTML / MHT) into the body on open.\nlet xml = if xml.contains(\"<w:altChunk\") {\n    altchunk::expand(&xml, |rid| {\n        rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n    })\n} else {\n    xml\n};\nlet mut dom = Dom::new();\nlet doc = dom.parse_xdocument(&xml);",
+          "explanation": "Package-controlled relationship bytes become HTML and generated WML before DOM construction."
+        },
+        {
+          "id": "unbounded-span",
+          "label": "HTML column span has no upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "role": "root_control",
+          "code": "self.cell_spans.push(\n    attr(open, \"colspan\")\n        .and_then(|s| s.trim().parse::<usize>().ok())\n        .unwrap_or(1)\n        .max(1),\n);",
+          "explanation": "An attacker-controlled decimal is accepted up to usize without a column or expansion limit."
+        },
+        {
+          "id": "grid-loop",
+          "label": "Span sum controls output expansion",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "role": "propagation",
+          "code": "let cols = table\n    .rows\n    .iter()\n    .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n    .max()\n    .unwrap_or(1)\n    .max(1);\nlet col_w = 9360 / cols;",
+          "explanation": "A single cell span determines the grid size; archive byte limits do not bound this derived value."
+        },
+        {
+          "id": "grid-allocation",
+          "label": "One generated XML element per requested column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "role": "sink",
+          "code": "s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\nfor _ in 0..cols {\n    let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n}",
+          "explanation": "A span such as 1000000000 fits 32-bit and 64-bit usize and drives billions of appended elements from a tiny input."
+        }
+      ],
+      "rootCause": {
+        "summary": "The HTML importer treats `colspan` as an unrestricted allocation count. It sums spans into `cols` and emits `cols` XML nodes. Admission bounds stored and inflated package bytes, but the later representation expansion has no separate column, node, or byte budget.",
+        "evidenceRefs": [
+          "altchunk-load",
+          "unbounded-span",
+          "grid-loop",
+          "grid-allocation"
+        ]
+      },
+      "remediation": "Reject excessive per-cell spans and total table columns with checked arithmetic, and enforce an aggregate byte/node budget during altChunk expansion before allocating or iterating.",
+      "validation": {
+        "counterEvidence": [
+          "Package admission limits original bytes and XML depth.",
+          "External relationship targets are not fetched.",
+          "Caller process resource limits may contain the crash."
+        ],
+        "limitations": [
+          "No application execution or runtime memory measurement."
+        ],
+        "method": "independent static source trace",
+        "summary": "Verified that `with_layout` admits the package then calls `altchunk::expand`, whose HTML cell parser forwards an unrestricted positive usize to the grid-writing loop. A single table/cell with colspan=1000000000 needs no arithmetic overflow to force huge output."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX internal relationship -> altchunk::expand -> HTML colspan usize -> table span sum -> gridCol String append loop"
+        },
+        "impact": {
+          "level": "medium",
+          "why": "CPU and memory exhaustion can terminate or stall the rendering host."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A compact valid HTML cell span reaches the unbounded loop under default settings."
+        },
+        "reachability": {
+          "summary": "A public renderer caller or document author controls the DOCX bytes. Exploitation requires a victim to render the document; no remote endpoint is assumed.",
+          "attacker": "untrusted document author",
+          "entrypoint": "DOCX PDF/PNG rendering APIs"
+        },
+        "summary": "Supply a DOCX with an internal HTML altChunk containing `<table><tr><td colspan=\"1000000000\">x</td></tr></table>` and have it rendered to PDF or PNG."
+      },
+      "remediationTests": [
+        "Render an admitted DOCX with a huge HTML colspan and assert bounded typed refusal.",
+        "Check overflow in sums of several cell spans and cumulative expansion across tables."
+      ],
+      "preventiveControls": [
+        "Apply resource budgets at representation changes, including generated WML."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "html-altchunk-colspan-expansion",
+        "workerLabel": "discovery-0030",
+        "discoveredBy": "interfaces"
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-171d48ebb36e4127",
+        "label": "Current-source security audit",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline, independent architecture review and interface/rendering investigator active.",
+        "receiptRefs": []
+      },
+      {
+        "label": "HTML altChunk column expansion",
+        "disposition": "reported",
+        "notes": "Validated unbounded span-driven generated XML in src/convert/altchunk.rs:469-490,562-566.",
+        "id": "surface-584bdf7d59a0bd43",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "auxiliary-xml-admission-depth",
+        "candidateId": "auxiliary-xml-admission-depth",
+        "reason": "Baseline lead awaiting source evidence and parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "Reviewed production admission/legacy CFB paths. Investigating two possible DoS paths: auxiliary XML named without .xml/.rels bypasses admission depth before unchecked DOM parse; legacy nested field stack scans via fields.iter().any per character are quadratic. No findings confirmed yet. Root policy explicitly exempts direct parse_xdocument from input limits."
+        }
+      },
+      {
+        "id": "legacy-field-stack-complexity",
+        "candidateId": "legacy-field-stack-complexity",
+        "reason": "Baseline lead awaiting source evidence and parent validation.",
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "legacy nested field stack scans via fields.iter().any per character are quadratic. No findings confirmed yet."
+        }
+      }
+    ]
+  }
+}

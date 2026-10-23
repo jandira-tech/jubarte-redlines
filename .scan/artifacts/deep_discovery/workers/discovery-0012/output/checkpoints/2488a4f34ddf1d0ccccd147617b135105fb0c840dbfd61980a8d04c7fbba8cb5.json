@@ -1,0 +1,42 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline current-state Standard scan of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "Application code and exploit inputs not executed.",
+    "validationMode": "static source review"
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "DOCX table layout span arithmetic and allocation",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate awaiting independent source validation.",
+        "candidateId": "discovery-0012-gridspan-allocation",
+        "id": "surface-a53132fa7ac159fa",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0012-gridspan-allocation",
+        "reason": "Baseline candidate received; independent source validation is pending.",
+        "candidate": {
+          "candidateId": "discovery-0012-gridspan-allocation",
+          "producer": "baseline",
+          "title": "Unbounded table gridSpan drives huge allocation",
+          "evidence": "src/convert/mod.rs cell_span lines 14211-14216 parses untrusted w:gridSpan/@w:val directly as usize without ceiling; table parse occupancy sums colspan at 13601-13604 then vec![each; occupancy]/cols.resize(occupancy) 13606-13615. A tiny admitted DOCX table with gridSpan=1000000000 forces >=4 GB allocation (or usize::MAX capacity-overflow panic); admission only bounds XML/package, not span. Public convert::render -> with_layout lines 592,779 -> admit_package -> parse table path.",
+          "status": "awaiting parent validation"
+        },
+        "id": "discovery-0012-gridspan-allocation"
+      },
+      {
+        "reason": "Repository source audit remains active; baseline, architecture and focused investigation are running.",
+        "id": "deferred-474caf37a86073af"
+      }
+    ]
+  }
+}

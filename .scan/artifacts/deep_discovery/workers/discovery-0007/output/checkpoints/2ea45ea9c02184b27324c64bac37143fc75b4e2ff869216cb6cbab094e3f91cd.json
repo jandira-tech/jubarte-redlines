@@ -1,0 +1,38 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard security audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0007.",
+    "runtimeStatus": "Application execution and network validation not performed.",
+    "validationMode": "static source analysis",
+    "context": "Exact userContext null; generated threat model in progress. Audit exact current supplied target, not the directory-name revision."
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "label": "Legacy DOC logical text expansion",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline source lead: src/legacy_doc.rs main_text (1148+) allows repeated physical text regions across monotonic logical CP pieces. Parent validation pending.",
+        "id": "surface-6cafb2f26f59d77c",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "legacy-doc-piece-expansion",
+        "reason": "Awaiting baseline dataflow and independent source validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "src/legacy_doc.rs main_text (1148+) validates monotonic logical CP coverage but allows each piece to point at same physical WordDocument bytes; emits one StoryChar per logical CP without budget. A ~1 MiB repeated source region + small piece table can request billions of chars (u32 ccp_text), exhausting tens of GB."
+        },
+        "id": "legacy-doc-piece-expansion"
+      }
+    ]
+  }
+}

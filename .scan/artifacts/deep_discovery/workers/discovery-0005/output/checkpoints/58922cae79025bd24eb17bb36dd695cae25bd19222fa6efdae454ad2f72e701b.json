@@ -1,0 +1,127 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "threatModel": {
+    "summary": "Jubarte is a Rust Word-document toolkit exposed as native CLI, Rust byte APIs, Python/PyO3 facade and stdio MCP server, and browser/Node WASM APIs plus npm CLI. Documents and edit plans pass through admission/XML/package processing to DOCX, Markdown, PDF/PNG and reports. Normal processing is local; explicit native self-update downloads and installs a GitHub release (src/lib.rs:7-35,96-165; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; src/update.rs:186-258).",
+    "assets": [
+      "Confidential document bytes, revisions/comments/authors and derived renderings/reports; integrity of selected input/output files and admitted package structures (src/lib.rs:17-30; src/publication.rs:146-225).",
+      "MCP root filesystem capability; native executable integrity on self-update; release publishing/signing authority (.github/workflows/release.yml:230-275,356-369; src/update.rs:25-48,198-258).",
+      "Native renderers read installed/user/Word cloud-cache fonts and persist a per-user font index, distinct from document output-root authority (src/convert/font.rs:2228-2236,2633-2652,3090-3107,3213-3227)."
+    ],
+    "trustBoundaries": [
+      "Untrusted DOCX/ZIP/XML, legacy DOC, embedded images/fonts and edit plans enter the engine. Default admission bounds archive/part bytes 64 MiB, 10000 entries, inflation 256 MiB, XML depth 256; comparison allows 512 MiB archive/part and 2 GiB inflation. Permissive parse_xdocument requires a prior gate (src/admission.rs:15-28,63-99; src/xmllinq/parse.rs:21-36).",
+      "MCP stdio client invokes document tools under operator --root (default cwd). Python resolves paths for diagnostics; native _OutputRoot owns confined reads/publication through a held capability. Annotations are hints, not caller authorization (jubarte-python/python/jubarte_redlines/mcp_server.py:55,67-108,373-381; jubarte-python/src/lib.rs:1244-1277; src/publication.rs:146-199).",
+      "Native CLI grants ambient paths with staged per-file publication. Python/Node CLI ambient reads/writes are separate from MCP confinement (src/bin/jubarte.rs:261-273; src/publication.rs:203-225; jubarte-python/python/jubarte_redlines/document.py:142-145; jubarte-python/python/jubarte_redlines/__main__.py:126-132; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-56,106-110).",
+      "Native Markdown images use --resource-path or Markdown parent directory; URL schemes/canonical escape targets are refused, followed by capability-relative read (src/bin/jubarte.rs:2835-2876,2936-2943).",
+      "Self-update enters executable replacement only on explicit command and confirmation/--yes. RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None mean checksum-only today; optional Ed25519 support is inactive (src/update.rs:25-48,120-125,198-258,274-285; docs/SELF_UPDATE.md:59-82).",
+      "Tag-triggered release builds are read-only; release job has contents:write, signing step receives signing secret and publishes dist/* with workflow token. These are CI/maintainer authorities (.github/workflows/release.yml:15-21,51-55,230-275,356-369)."
+    ],
+    "attackerCapabilities": [
+      "Document suppliers control package/XML/relationship/font/image/Markdown bytes, not operator environment, MCP root grants or release infrastructure (src/admission.rs:15-28; src/bin/jubarte.rs:2851-2876).",
+      "Authorized MCP clients read/publish inside granted root including explicit overwrite; tools do not grant updater or ambient path authority (jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,153-217,373-381).",
+      "Control of release assets permits changing archive and adjacent checksum; this is a separate supply-chain starting capability not authenticated by checksum-only policy (docs/SELF_UPDATE.md:59-77; src/update.rs:44-48,245-248)."
+    ],
+    "securityObjectives": [
+      "Do not fetch external document relationships or Markdown URL resources; confine MCP and resource reads to granted directory capabilities (src/admission.rs:15-22; src/bin/jubarte.rs:2835-2876; src/publication.rs:146-199).",
+      "Refuse malformed/over-budget packages/XML before DOM processing; host memory/CPU process bounds remain necessary (src/admission.rs:39-99; src/xmllinq/parse.rs:21-36; SECURITY.md:70-85).",
+      "Bind source_sha256 to document bytes when supplied and reject stale plans; staged publication is atomic per file only (src/edit.rs:2081-2089; src/publication.rs:83-131,168-174).",
+      "Protect updater integrity with HTTPS/checksums, configured signatures and regular-file check; keep document processing distinct from release publication (src/update.rs:198-258,299-307; .github/workflows/release.yml:230-275)."
+    ],
+    "assumptions": [
+      "No deployment, tenants or HTTP listener supplied; MCP uses stdio and operator controls client attachment/root (jubarte-python/python/jubarte_redlines/mcp_server.py:373-381).",
+      "Limits are configurable; hosts should not silently raise them for hostile inputs. Low-level permissive XML APIs require prior checking (src/admission.rs:103-164; src/xmllinq/parse.rs:21-30; SECURITY.md:70-85).",
+      "Updater docs disclose checksum-only operation until a key is committed; signature support is not active authentication (docs/SELF_UPDATE.md:59-82; src/update.rs:44-48).",
+      "Overview says no temporary files, but native font lookup persists an index and PID temporary sibling: a documentation qualification, not demonstrated vulnerability (src/lib.rs:7-11; src/convert/font.rs:3098-3107,3213-3227).",
+      "Current source audit only, no Git history or runtime execution; architecture mapping does not establish full audit coverage."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Architecture of current source in supplied repository; no immutable revision was requested."
+    }
+  },
+  "findings": [],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0005-drawing-cycle",
+        "reason": "Independent baseline candidate awaiting parent validation",
+        "candidate": {
+          "title": "Cyclic drawing dependencies in Markdown can overflow the process stack",
+          "source": "baseline",
+          "attacker": "Caller controlling Markdown input",
+          "evidence": [
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1397,
+              "endLine": 1412,
+              "description": "decode directly deserializes drawing JSON"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1881,
+              "description": "materialize calls dep_part"
+            },
+            {
+              "path": "src/markdown/from_docx/drawing.rs",
+              "startLine": 1956,
+              "endLine": 1995,
+              "description": "dep_part recursively follows rel.part without visited/in-progress/depth guard; self-reference part=0 loops"
+            }
+          ],
+          "impact": "Stack overflow/abort via default markdown_to_docx",
+          "limitations": "Static candidate, parent source validation pending; no application execution",
+          "originalMessage": "Confirmed static candidate: attacker-crafted Markdown drawing: JSON dependencies can cycle. decode() at src/markdown/from_docx/drawing.rs:1397-1412 directly deserializes; materialize() 1881+ calls dep_part(); dep_part at 1956-1995 recurses on rel.part without visited/in-progress/depth guards. One dependency whose rel.part=0 repeatedly recurses, stack overflows/aborts process through default markdown_to_docx; no application execution used."
+        },
+        "id": "discovery-0005-drawing-cycle"
+      },
+      {
+        "candidateId": "discovery-0005-doc-piece-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "Repeated legacy DOC pieces amplify bounded text into huge StoryChar vectors",
+          "originalMessage": "Found a concrete legacy DOC amplification candidate: main_text validates coverage only until the first piece reaches ccp_text (1158-1169), then separately decodes every PCD whose cp_start < ccp_text (1181-1229). Appending thousands of duplicate (cp_start=0, cp_end=ccp_text, same fc) pieces passes the prefix coverage check and re-decodes the same bounded WordDocument bytes into huge StoryChar vectors. Investigating surrounding controls/tests and exact public caller trace; no app execution.",
+          "evidence": [
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1158,
+              "endLine": 1169,
+              "description": "Prefix coverage validation ends after ccp_text"
+            },
+            {
+              "path": "src/legacy_doc.rs",
+              "startLine": 1181,
+              "endLine": 1229,
+              "description": "All PCDs below ccp_text subsequently decoded"
+            }
+          ]
+        },
+        "id": "discovery-0005-doc-piece-amplification"
+      },
+      {
+        "candidateId": "discovery-0005-wmf-record-amplification",
+        "reason": "Focused investigator candidate awaiting full evidence and parent validation",
+        "candidate": {
+          "source": "parser_investigator",
+          "title": "WMF record text reads cross declared record extents and retain amplified text",
+          "originalMessage": "Second concrete candidate in WMF: raster_wmf validates size2 versus whole file but passes whole data to record field/string reads. META_EXTTEXTOUT at 604-612 reads n bytes via data.get(at..at+n), without at+n <= off+size2. Thousands of 14-byte records each claiming n=65535 can copy overlapping suffixes into retained MetaText strings, yielding multi-GB allocation from ~1MB media. Same extent gap exists POLYGON/POLYPOLYGON/TEXTOUT; EMF point reader does enforce off+size. Tracing referenced media callers and exact lines.",
+          "evidence": [
+            {
+              "path": "src/convert/metafile.rs",
+              "startLine": 604,
+              "endLine": 612,
+              "description": "EXTTEXTOUT accepts text bytes beyond record boundary"
+            }
+          ]
+        },
+        "id": "discovery-0005-wmf-record-amplification"
+      }
+    ]
+  }
+}

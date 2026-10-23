@@ -1,0 +1,249 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Read-only offline Standard security audit of /Users/arthrod/temp/T/jubarte-redlines, scope .; worker discovery-0007.",
+    "runtimeStatus": "Application execution and network validation not performed.",
+    "validationMode": "static source analysis",
+    "context": "Exact userContext null; generated threat model in progress. Audit exact current supplied target, not the directory-name revision."
+  },
+  "findings": [
+    {
+      "ruleId": "wmf-record-boundary-resource-exhaustion",
+      "title": "Rendering a DOCX with malformed WMF text records can exhaust host memory",
+      "summary": "A document author can embed short WMF records whose text counts borrow bytes from following records. Rendering repeatedly copies overlapping input into retained strings, expanding roughly 1 MiB of media into multiple GiB and potentially terminating the host process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "High availability impact from small attacker-controlled document media; likelihood is medium because a victim must render the supplied DOCX. No remote service deployment is assumed; process limits reduce impact.",
+        "changeConditions": "Lower with effective per-job memory/CPU isolation; higher likelihood if exposed through an automatic untrusted document conversion service."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace establishes public rendering, attacker media dispatch, missing record-relative bounds and retained allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 620,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 700,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 18401,
+          "endLine": 18403,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20260,
+          "role": "propagation"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 422,
+          "endLine": 437,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wmf-media",
+          "label": "Embedded document media reaches metafile rendering",
+          "path": "src/convert/mod.rs",
+          "startLine": 18401,
+          "endLine": 18403,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "            if let Some(rid) = attr_any(dom, blip, \"embed\") {\n                if let Some(bytes) = resolve_media(pkg, main, rid) {\n                    let kind = decode_image(bytes).unwrap_or(ImageKind::Reserve);",
+          "explanation": "The document controls the embedded relationship and package media bytes; collect_images forwards those bytes to decode_image."
+        },
+        {
+          "id": "wmf-dispatch",
+          "label": "Image decoder invokes the WMF parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20248,
+          "language": "rust",
+          "role": "propagation",
+          "code": "fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {\n    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {",
+          "explanation": "WMF parsing precedes the ordinary image decoders, so raster image-library limits do not constrain its text expansion."
+        },
+        {
+          "id": "wmf-record-bound",
+          "label": "Record size only controls cursor advancement",
+          "path": "src/convert/metafile.rs",
+          "startLine": 483,
+          "endLine": 489,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let Some(size2) = size.checked_mul(2) else {\n            break;\n        };\n        if size < 3 || size2 > data.len() - off {\n            break;\n        }\n        let payload = off + 6;",
+          "explanation": "This validates the declared record extent in the file but passes the whole data buffer to record handlers rather than a slice confined to that extent."
+        },
+        {
+          "id": "wmf-text-read",
+          "label": "Text reads cross into later WMF records",
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 611,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            0x0A32 => {\n                let y = read_i16(data, payload)?;\n                let x = read_i16(data, payload + 2)?;\n                let n = usize::from(read_u16(data, payload + 4)?);\n                let opts = read_u16(data, payload + 6)?;\n                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };\n                if let Some(bytes) = data.get(at..at + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }",
+          "explanation": "The attacker chooses n independently of size2. A 14-byte EXTTEXTOUT with n=65535 consumes the next 65535 bytes yet the loop advances only 14 bytes. TEXTOUT at lines 614-620 shares this whole-file bounds error."
+        },
+        {
+          "id": "wmf-retain",
+          "label": "Decoded text is allocated and retained",
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 700,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {\n    let text = ansi_text(bytes);\n    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {\n        return None;\n    }\n    let font = dc.font.as_deref();\n    let height = font.map_or(0, |f| f.height);\n    Some(MetaText {\n        text,",
+          "explanation": "Each overlapping slice becomes an owned string retained in texts; nonzero extents and nonwhitespace record bytes satisfy the return checks."
+        }
+      ],
+      "rootCause": {
+        "summary": "collect_images resolves attacker-selected package media and decode_image dispatches placeable WMF bytes to raster_wmf. The loop checks each declared record size but EXTTEXTOUT and TEXTOUT read their attacker-supplied text lengths against the entire media buffer. Advancing by the short declared size causes overlapping later bytes to be decoded and retained repeatedly in MetaText, without a cumulative expansion budget.",
+        "evidenceRefs": [
+          "wmf-media",
+          "wmf-dispatch",
+          "wmf-record-bound",
+          "wmf-text-read",
+          "wmf-retain"
+        ]
+      },
+      "remediation": "Confine every WMF handler to its declared record slice, reject payloads/counts that exceed that slice, and enforce cumulative text/geometry/work budgets before allocation. Apply the same record confinement to EXTTEXTOUT, TEXTOUT, polygon and other sibling handlers.",
+      "validation": {
+        "counterEvidence": [
+          "WMF canvas side is capped at 384 and record size arithmetic is checked; neither bounds retained strings.",
+          "InputLimits bounds compressed/inflated package bytes and XML depth, not WMF logical text.",
+          "An operator's process limits can contain impact; no production deployment was established."
+        ],
+        "evidenceRefs": [
+          "wmf-record-bound",
+          "wmf-text-read",
+          "wmf-retain"
+        ],
+        "limitations": [
+          "No malicious file was constructed and no application code was executed."
+        ],
+        "method": "independent static source trace",
+        "summary": "Verified the record cursor at metafile.rs:684 advances by size2 while handlers at 603-620 read against data. Approximately 65536 14-byte records plus 65535 trailing bytes fit in ~1 MiB yet retain at least ~4 GiB of text. WMF detection checks the placeable magic; bounded canvas dimensions do not bound text. Package admission permits such small binary media."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Untrusted DOCX media -> collect_images -> decode_image -> metafile::render -> raster_wmf whole-buffer text slices -> owned MetaText strings retained in texts.",
+          "source": "Attacker-controlled WMF record sizes and text counts",
+          "sink": "ansi_text allocation and texts accumulation",
+          "outcome": "Host memory/CPU exhaustion, including potential native host termination or WASM memory trap."
+        },
+        "impact": {
+          "level": "high",
+          "why": "Multiple GiB of retained allocation from a small document can kill the host process."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Requires document rendering and absence of sufficiently strict per-job process limits."
+        },
+        "reachability": {
+          "summary": "Public Rust docx_to_pdf/render and their binding consumers process caller-supplied package media after package admission; no network exposure is required.",
+          "attacker": "Author of an untrusted DOCX rendered by another user or host",
+          "entrypoint": "Public DOCX PDF/PNG rendering APIs",
+          "outcome": "Loss of availability in the rendering process.",
+          "preconditions": [
+            "Victim renders the supplied document.",
+            "Referenced media is a placeable WMF with a nondegenerate canvas."
+          ]
+        },
+        "summary": "Supply a DOCX with a referenced placeable WMF containing many 14-byte EXTTEXTOUT records, count 65535, nonzero extents and sufficient trailing bytes; induce PDF/PNG rendering."
+      },
+      "remediationTests": [
+        "Small malformed EXTTEXTOUT and TEXTOUT records must be rejected without reading following bytes.",
+        "Repeated short records must remain within deterministic cumulative allocation/work limits.",
+        "Verify valid WMF text still renders through public PDF/PNG APIs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "wmf-cross-record-text-expansion",
+        "workerLabel": "discovery-0007",
+        "discoveredBy": "baseline subagent; independently validated by parent",
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalEvidence": "src/convert/metafile.rs 603-610 EXTTEXTOUT bounds text slice against whole data, not current record end off+size2; off advances size2 at690. Repeat 14-byte records (size=7 words, func0x0A32, y=x=opts=0,count=65535) followed by >=65535 bytes of padding. Each record copies next65535 bytes via ansi_text->String into texts Vec (431-440,692-700), yielding ~4GiB retained strings from ~1MiB WMF. No per-record or cumulative text bound; header canvas extents nonzero. decode_image (20248) calls render before image decode. Also polygon counts read across record boundary, amplifying CPU."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-6cafb2f26f59d77c",
+        "label": "Legacy DOC logical text expansion",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Baseline source lead: src/legacy_doc.rs main_text (1148+) allows repeated physical text regions across monotonic logical CP pieces. Parent validation pending."
+      },
+      {
+        "id": "surface-f064e3099772a386",
+        "label": "WMF text record boundaries and allocation",
+        "disposition": "reported",
+        "receiptRefs": [],
+        "notes": "Validated wmf-cross-record-text-expansion. Original baseline evidence retained in finding provenance.",
+        "candidateId": "wmf-cross-record-text-expansion"
+      },
+      {
+        "id": "surface-deb7e7eaaae5e5d8",
+        "label": "Filesystem confinement investigator result",
+        "disposition": "needs_follow_up",
+        "receiptRefs": [],
+        "notes": "Focused investigator returned no findings. Counterevidence awaiting parent reconciliation: Markdown image_policy percent-decodes, rejects schemes, canonicalizes/root-checks, and image_loader uses held OutputRoot (src/bin/jubarte.rs:2815-2877). OutputRoot validates portable relative paths and uses capability directory handles for read/write; symlink outputs refused; atomic rename/no-clobber hard links (src/publication.rs:153-199,228-273,421-570). MCP all explicit reads/publications use _OutputRoot (mcp_server.py:67-112,126-368; native lib.rs:1244-1278). Staging private/exclusive; cleanup denies swapped symlink. Media extraction content-hash names returns bytes. Fully reviewed files: src/publication.rs, src/markdown/from_docx/media.rs, jubarte-python/python/jubarte_redlines/mcp_server.py. No source-backed credentials in inspected surface."
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "legacy-doc-piece-expansion",
+        "candidateId": "legacy-doc-piece-expansion",
+        "reason": "Awaiting baseline dataflow and independent source validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "src/legacy_doc.rs main_text (1148+) validates monotonic logical CP coverage but allows each piece to point at same physical WordDocument bytes; emits one StoryChar per logical CP without budget. A ~1 MiB repeated source region + small piece table can request billions of chars (u32 ccp_text), exhausting tens of GB.",
+          "validationUpdate": "Baseline confirmed statically: DOC CLI run_convert_any src/bin/jubarte.rs:3126-3145 calls legacy_doc::doc_to_docx before admission and skips admit_word for legacy. Fib::parse reads unbounded ccp_text at legacy_doc.rs:923. pieces 1090-1113 takes logical CPs and physical FC independently. Use4095 compressed pieces each1MiB with monotonically increasing CPs (total~4GiB), all fc=the same1MiB WordDocument text region. Table~49KiB +text1MiB; main_text:1181-1221 appends ~4billion StoryChar records (>~64GiB). Bounds checks all pass; no logical text/output budget. No application execution used."
+        }
+      },
+      {
+        "candidateId": "zip-eocd-entry-budget-mismatch",
+        "reason": "Baseline candidate awaiting final evidence and parent verification of dependency behavior.",
+        "paths": [
+          "src/admission.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "originalEvidence": "declared_entry_count src/admission.rs:604-612 reads EOCD total count at+10, but pinned zip9.0.5 CentralDirectoryInfo::try_from (dependency src/read/mod.rs:69-74) uses number_of_files_on_this_disk at+8 for ZIP32, with no disk-count equality check. Set ordinary valid package EOCD+8=60000 actual entries,+10=1; preindex accepts1, ZipArchive indexes60000, admit only checks archive.len()<declared at447 (60000<1 false), never archive.len()>limits.max_entries. PartFs read_package also trusts preindex. Quota bypass under max10000. Additional fake invalid EOCD in comment may fool preindex while zip falls back earlier valid footer; not validated."
+        },
+        "id": "zip-eocd-entry-budget-mismatch"
+      }
+    ]
+  }
+}

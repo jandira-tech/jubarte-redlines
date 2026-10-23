@@ -1,0 +1,316 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Current source of /Users/arthrod/temp/T/jubarte-redlines, scope .; userContext null.",
+    "runtimeStatus": "No application code or tests executed.",
+    "validationMode": "offline static source audit"
+  },
+  "findings": [
+    {
+      "ruleId": "resource-exhaustion.legacy-doc-piece-expansion",
+      "title": "Converting a small legacy DOC can exhaust memory through reused text pieces",
+      "summary": "An attacker-supplied DOC can reuse one physical text range across thousands of contiguous logical pieces. `legacy_doc::read` decodes every declared character into an unbounded vector, allowing megabyte-sized input to request billions of characters and exhaust the converting process.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Availability impact is limited to the converting process. Processing attacker-controlled documents is supported and the amplification requires no privileged configuration; shared-service exposure is not assumed. SECURITY.md recommends external memory/CPU isolation.",
+        "changeConditions": "A decoded-output budget would remove this path; shared service exposure without worker isolation would increase impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent static trace confirms attacker-controlled counts and reusable physical offsets reach unbounded allocation; no runtime reproduction was performed."
+      },
+      "taxonomy": {
+        "category": "Unbounded logical text expansion",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1176,
+          "endLine": 1187,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1110
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1221
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3129,
+          "endLine": 3131
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "legacy-entry",
+          "label": "legacy-entry",
+          "path": "src/legacy_doc.rs",
+          "startLine": 235,
+          "endLine": 237,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {\n    document_to_docx(&read(bytes)?)\n}",
+          "explanation": "Caller-controlled legacy bytes enter read before DOCX generation."
+        },
+        {
+          "id": "legacy-read",
+          "label": "legacy-read",
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 192,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {\n    let file = CompoundFile::open(bytes)?;\n    let word = file.stream(\"WordDocument\").ok_or_else(|| {\n        LegacyDocError::new(\n            \"no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password\",\n        )\n    })?;\n    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;",
+          "explanation": "read forwards document FIB length and parsed pieces to main_text without a decoded-text budget."
+        },
+        {
+          "id": "legacy-count",
+          "label": "legacy-count",
+          "path": "src/legacy_doc.rs",
+          "startLine": 912,
+          "endLine": 919,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        let csw = usize::from(u16_at(word, 32).ok_or_else(bad)?);\n        let cslw_at = csw\n            .checked_mul(2)\n            .and_then(|n| n.checked_add(34))\n            .ok_or_else(bad)?;\n        let cslw = usize::from(u16_at(word, cslw_at).ok_or_else(bad)?);\n        let lw = cslw_at.checked_add(2).ok_or_else(bad)?;\n        let ccp_text = u32_at(word, lw.checked_add(12).ok_or_else(bad)?).ok_or_else(bad)?;",
+          "explanation": "ccp_text is read directly from the FIB."
+        },
+        {
+          "id": "legacy-pieces",
+          "label": "legacy-pieces",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1091,
+          "endLine": 1110,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    for i in 0..count {\n        let cp_at = i.checked_mul(4).ok_or_else(bad)?;\n        let cp_start = u32_at(plc, cp_at).ok_or_else(bad)?;\n        let cp_end = u32_at(plc, cp_at.checked_add(4).ok_or_else(bad)?).ok_or_else(bad)?;\n        let pcd = i\n            .checked_mul(8)\n            .and_then(|n| n.checked_add(pcd_base))\n            .ok_or_else(bad)?;\n        let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;\n        let compressed = raw & 0x4000_0000 != 0;\n        let fc = raw & 0x3FFF_FFFF;\n        let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;\n        let modifier = piece_modifier(prm, &prcs)?;\n        out.push(Piece {\n            cp_start,\n            cp_end,\n            fc: if compressed { fc / 2 } else { fc },\n            compressed,\n            modifier,\n        });",
+          "explanation": "Every piece independently retains physical fc, including reused ranges."
+        },
+        {
+          "id": "legacy-control",
+          "label": "legacy-control",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1154,
+          "endLine": 1176,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    if pieces.iter().any(|piece| piece.cp_end < piece.cp_start) {\n        return Err(LegacyDocError::new(\"the piece table's CPs are decreasing\"));\n    }\n    let mut covered = 0u32;\n    for piece in pieces {\n        if covered >= ccp_text {\n            break;\n        }\n        // An empty piece (fast-saved files carry them) covers nothing.\n        if piece.cp_end == piece.cp_start {\n            continue;\n        }\n        if piece.cp_start != covered {\n            break;\n        }\n        covered = piece.cp_end;\n    }\n    if covered < ccp_text {\n        return Err(LegacyDocError::new(\n            \"the piece table does not cover the main story\",\n        ));\n    }\n    let mut out = Vec::new();",
+          "explanation": "Contiguous CP coverage does not cap aggregate decoded output."
+        },
+        {
+          "id": "legacy-loop",
+          "label": "legacy-loop",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1181,
+          "endLine": 1204,
+          "language": "rust",
+          "role": "sink",
+          "code": "    for piece in pieces {\n        if piece.cp_start >= ccp_text {\n            break;\n        }\n        let end = piece.cp_end.min(ccp_text);\n        let width: u32 = if piece.compressed { 1 } else { 2 };\n        for cp in piece.cp_start..end {\n            let fc = cp\n                .checked_sub(piece.cp_start)\n                .and_then(|n| n.checked_mul(width))\n                .and_then(|n| n.checked_add(piece.fc))\n                .ok_or_else(past)?;\n            let offset = index(fc).ok_or_else(past)?;\n            let here = StoryChar {\n                ch: '\\u{FFFD}',\n                cp,\n                fc,\n                modifier: piece.modifier,\n            };\n            let ch = if piece.compressed {\n                out.extend(pending_high.take().map(|(_, lone)| lone));\n                cp1252(*word.get(offset).ok_or_else(past)?)\n            } else {\n                let unit = u16_at(word, offset).ok_or_else(past)?;",
+          "explanation": "Every logical character reads within each piece physical range; reuse passes bounds checks."
+        },
+        {
+          "id": "legacy-push",
+          "label": "legacy-push",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1219,
+          "endLine": 1225,
+          "language": "rust",
+          "role": "outcome",
+          "code": "                }\n            };\n            out.push(StoryChar { ch, ..here });\n        }\n    }\n    out.extend(pending_high.map(|(_, lone)| lone));\n    Ok(out)",
+          "explanation": "Every decoded character grows the StoryChar vector."
+        },
+        {
+          "id": "legacy-cli",
+          "label": "legacy-cli",
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3144,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    let raw =\n        std::fs::read(job.file).map_err(|e| format!(\"reading {}: {e}\", job.file.display()))?;\n    // A Word 97-2003 `.doc` is read into a `.docx` first; everything after\n    // sees that package. An encrypted document is still refused.\n    let legacy = jubarte::legacy_doc::is_compound_file(&raw);\n    let bytes = if legacy {\n        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!(\"convert failed: {e}\"))?\n    } else {\n        jubarte::admission::sniff(&raw)\n            .map_err(|refused| format!(\"{} is {}\", job.file.display(), refused.message))?;\n        raw\n    };\n    let from = if legacy {\n        Format::Docx\n    } else {\n        Format::of_input(markdown.from, job.file, &bytes)\n    };\n    if from == Format::Docx && !legacy {\n        admit_word(job.file, &bytes)?;\n    }",
+          "explanation": "CLI converts legacy bytes before DOCX admission."
+        }
+      ],
+      "rootCause": {
+        "summary": "`doc_to_docx` calls `read`, which reads `ccp_text` and physical piece offsets from untrusted streams. `main_text` checks contiguous increasing CP coverage and physical byte access, but permits repeated physical ranges and never bounds total decoded characters before appending `StoryChar` values.",
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-read",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-control",
+          "legacy-loop",
+          "legacy-push",
+          "legacy-cli"
+        ]
+      },
+      "remediation": "Enforce a configurable aggregate decoded-character/byte budget before main_text iterates and return a typed LEGACY_DOC refusal on excess; preserve legitimate overlapping physical ranges within budget.",
+      "validation": {
+        "counterEvidence": [
+          "OLE chains are bounded by file sectors (src/legacy_doc.rs:681-704,765-803); this limits physical streams, not logical piece expansion.",
+          "Decreasing CPs, gaps and out-of-range bytes are rejected (1154-1204), but none rejects repeated physical fc values."
+        ],
+        "evidenceRefs": [
+          "legacy-entry",
+          "legacy-read",
+          "legacy-count",
+          "legacy-pieces",
+          "legacy-control",
+          "legacy-loop",
+          "legacy-push",
+          "legacy-cli"
+        ],
+        "limitations": [
+          "Static validation only; no malicious input or app execution."
+        ],
+        "method": "Independent parent static source trace",
+        "summary": "Confirmed direct public/CLI reachability and lack of aggregate decoded-text budget. Two thousand contiguous million-character pieces can reuse the same million physical bytes while requesting two billion StoryChar entries; all logical CPs fit u32 and all physical reads remain in bounds."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOC FIB and Clx -> pieces -> main_text per-CP loop -> Vec<StoryChar>::push",
+          "source": "Untrusted DOC bytes",
+          "sink": "Decoded-story vector",
+          "outcome": "Memory/CPU exhaustion and possible process termination"
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Converting process availability."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Document-controlled lengths directly drive unbounded allocation."
+        },
+        "reachability": {
+          "summary": "Document suppliers can trigger this when users or applications call public legacy conversion or CLI convert on their DOC; no operator privileges or remote deployment are assumed.",
+          "attacker": "Document supplier",
+          "entrypoint": "legacy_doc::read/doc_to_docx/doc_to_markdown and CLI convert",
+          "preconditions": [
+            "Victim processes attacker-controlled legacy DOC."
+          ]
+        },
+        "summary": "Supply a readable legacy DOC with a large FIB story length and repeated physical text ranges under contiguous increasing CPs, then request conversion."
+      },
+      "remediationTests": [
+        "Construct a small repeated-range piece table and assert refusal before large allocation.",
+        "Accept legitimate reused ranges when decoded length remains below budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0029-legacy-piece-expansion",
+        "workerLabel": "discovery-0029",
+        "discoveredBy": "baseline",
+        "originalCandidates": [
+          {
+            "title": "Legacy DOC piece-table expansion has no decoded-character budget",
+            "originalEvidence": "Baseline candidate: src/legacy_doc.rs read() 180-197 calls main_text before any resource admission; pieces() accepts repeated physical fc ranges with contiguous increasing CPs (1088-1105), and main_text loops every declared CP and pushes StoryChar (1187-1219). Thousands of pieces can each reference the same ~1MiB WordDocument bytes, yielding billions of characters from ~1MiB input, exhausting host memory. CLI convert invokes doc_to_docx directly at src/bin/jubarte.rs:3129-3131 before DOCX admission.",
+            "producer": "baseline",
+            "validationStatus": "pending baseline control review and independent parent validation"
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "title": "Legacy DOC piece-table expansion has no decoded-character budget",
+          "originalEvidence": "Baseline candidate: src/legacy_doc.rs read() 180-197 calls main_text before any resource admission; pieces() accepts repeated physical fc ranges with contiguous increasing CPs (1088-1105), and main_text loops every declared CP and pushes StoryChar (1187-1219). Thousands of pieces can each reference the same ~1MiB WordDocument bytes, yielding billions of characters from ~1MiB input, exhausting host memory. CLI convert invokes doc_to_docx directly at src/bin/jubarte.rs:3129-3131 before DOCX admission.",
+          "producer": "baseline",
+          "validationStatus": "pending baseline control review and independent parent validation"
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-934910b14fd464c9",
+        "label": "Legacy DOC piece-table expansion",
+        "disposition": "reported",
+        "notes": "Independent parent source validation confirms unbounded logical text expansion despite checked physical reads; CWE-400 finding retained.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-aec127e3b2325a91",
+        "label": "HTML altChunk table expansion",
+        "disposition": "needs_follow_up",
+        "notes": "Conversion investigator candidate pending independent validation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-3a420d729b0bc65f",
+        "label": "XML policy for arbitrarily named auxiliary parts",
+        "disposition": "needs_follow_up",
+        "notes": "Baseline candidate awaiting full returned evidence and parent validation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-4e4e9136f3450219",
+        "label": "WMF text record boundary",
+        "disposition": "needs_follow_up",
+        "notes": "Investigator candidate awaiting independent validation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-b872d4c9cd47c116",
+        "label": "Legacy DOC field-state quadratic scan",
+        "disposition": "needs_follow_up",
+        "notes": "Investigator candidate awaiting independent validation.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "remaining-source-review",
+        "reason": "Baseline audit, architecture review, conversion investigation and parent source review are ongoing."
+      },
+      {
+        "id": "discovery-0029-html-colspan",
+        "candidateId": "discovery-0029-html-colspan",
+        "reason": "Conversion investigator candidate pending validation and full return.",
+        "candidate": {
+          "title": "HTML colspan expands without output budget",
+          "originalEvidence": "Confirmed source-backed candidate: src/convert/altchunk.rs accepts arbitrary usize HTML colspan (around 567-572), sums spans and serializes one <w:gridCol> per logical column (481-505). A tiny internal HTML altChunk with colspan=1000000000 forces ~20 GB generated XML before DOM parsing. Public with_layout admits package then expands at mod.rs:773-800, no output budget.",
+          "producer": "conversion"
+        }
+      },
+      {
+        "id": "discovery-0029-auxiliary-xml-policy",
+        "candidateId": "discovery-0029-auxiliary-xml-policy",
+        "reason": "Baseline source candidate awaiting full validation.",
+        "candidate": {
+          "producer": "baseline",
+          "title": "Auxiliary part names can bypass XML admission",
+          "originalEvidence": "Admission only calls check_xml_depth/TagPolicy for names ending .xml/.rels (src/admission.rs:535-545), special-cases only extensionless main part (562-571). Auxiliary header/footer/notes/styles targets can have arbitrary extensions. header word/header.dat referenced from document.xml sectPr and rels: with_layout admits then opens package (src/convert/mod.rs:771-781), load_chrome_part follows rid and reads arbitrary path (20768-20782), chrome_part_xml calls permissive recursive parse_xdocument without limits (20795-20797), which recursively calls parse_element (src/xmllinq/parse.rs:655-657). Deep header.dat can pass admission then stack-overflow renderer. Same notes path pre_process_markup src/document_comparer.rs:4737-4751 reaches DOM after compare admission."
+        }
+      },
+      {
+        "id": "discovery-0029-wmf-record",
+        "candidateId": "discovery-0029-wmf-record",
+        "reason": "Candidate pending full returned evidence and parent validation.",
+        "candidate": {
+          "title": "WMF text record boundary",
+          "producer": "conversion",
+          "originalEvidence": "WMF raster_wmf validates record size only against entire file, then EXTTEXTOUT reads n-byte text with data.get(at..at+n) across record boundary (metafile.rs:613-623). Repeated 14-byte records (size=7 words, function 0x0A32, y/x=0, n=65535, opts=0) each copy ~64KiB of following records into retained MetaText, ~4600x amplification; sub-MiB embedded WMF can retain GiBs. POLYGON/POLYPOLYGON/POLYLINE sibling payload readers also cross records; EMF read_emf_points correctly bounds off+size. Public decode_image calls metafile::render first."
+        }
+      },
+      {
+        "id": "discovery-0029-legacy-field-depth",
+        "candidateId": "discovery-0029-legacy-field-depth",
+        "reason": "Candidate pending full returned evidence and parent validation.",
+        "candidate": {
+          "title": "Legacy DOC field-state quadratic scan",
+          "producer": "baseline",
+          "originalEvidence": "Story::blocks src/legacy_doc.rs:1595-1617 computes fields.iter().any(|&code| code) for every StoryChar, using an unbounded Vec<bool> stack. N repetitions of U+0013 (field begin), U+0014 (separator) leave N false entries; each next begin/separator scans every false ancestor, causing quadratic work on ~2N source bytes. N end markers also scan/pop. Single 1MiB piece can encode ~500k field levels and ~250 billion checks. Distinct from memory expansion; candidate CWE-407."
+        }
+      }
+    ]
+  }
+}

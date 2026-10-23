@@ -1,0 +1,1501 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Current repository /Users/arthrod/temp/T/jubarte-redlines, scope ., userContext null; offline read-only static audit.",
+    "validationMode": "static source review",
+    "limitations": [
+      "No application execution, network validation, or history review."
+    ]
+  },
+  "threatModel": {
+    "summary": "Jubarte is a local Rust DOCX processing engine with a native CLI, PyO3 Python library/CLI, wasm-bindgen browser/Node bindings, a Node CLI, and an optional Python MCP server over stdio. Normal document processing transforms caller-supplied package/Markdown bytes into document views, edits, tracked changes, PDF/PNG, and reports. Native CLI startup dispatches shared commands on an 8 MiB worker stack; Python wraps the Rust engine, and Node explicitly performs filesystem I/O around WASM calls. The MCP adapter additionally brokers root-confined document reads and output publication. Explicit self-update and maintainer publication are separate privileged workflows. Evidence: Cargo.toml:83-99; src/bin/jubarte.rs:3555-3583; jubarte-python/src/lib.rs:5-15; jubarte-wasm/src/lib.rs:77-97; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-73,106-111; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381. Scope is current source under repository '.', userContext=null; no supplied threat model or knowledge base.",
+    "assets": [
+      "Confidential document text, revisions, comments, metadata, images, embedded fonts, generated DOCX/PDF/PNG, patches, and reports. These cross API and MCP responses and caller-selected filesystem outputs. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,161-218,220-255.",
+      "Host process availability and memory/CPU; default admission permits 64 MiB compressed/per-part and 256 MiB inflated, while comparison and native PDF layout use the roomier 512 MiB compressed/per-part and 2 GiB inflated policy. Both cap entries at 10,000 and XML nesting at 256. XML tag limits are 1,024 attributes, 1,024 name bytes, 64 MiB value bytes, and 128 MiB start-tag bytes. Evidence: src/admission.rs:63-100; src/xmllinq/parse.rs:49-57; src/document_comparer.rs:4926-4927; src/convert/mod.rs:769-778.",
+      "Filesystem authority granted to the MCP root, ambient CLI paths, Markdown resource directory, native font directories, and persistent font index. MCP document/output authority is a held cap_std directory; native font discovery/cache accesses remain ambient. Evidence: src/publication.rs:146-165,175-199,203-218; src/bin/jubarte.rs:2858-2871,2936-2943; src/convert/font.rs:2258-2276,2633-2652,3095-3107,3182-3227.",
+      "Installed native jubarte executable and release/package integrity. Self-update currently trusts GitHub release assets plus SHA256SUMS.txt without a compiled signing key; the extracted candidate must be a regular file. Evidence: src/update.rs:25-48,198-210,245-257,307-320.",
+      "Maintainer publication credentials and GitHub/Jules capabilities: GitHub release contents-write token, optional ZIPSIGN_PRIVATE_KEY, local Cargo/npm/PyPI credentials, JULES_API_KEY, and review/comment/check permissions. References only; no credential contents inspected. Evidence: .github/workflows/release.yml:230-263,356-369; scripts/release.sh:374-389,919-937,1069; .github/workflows/jules-review.yml:28-50; .github/workflows/jules-el-conejo-review.yml:46-54,259-324.",
+      "Shared self-hosted build infrastructure and remote compilation cache configured at http://mbx-cache:7543, namespace jandira-tech/jubarte-redlines; build integrity and runner isolation depend partly on components absent from this repository. Evidence: .github/workflows/docs.yml:42-86; .github/actions/mbx/action.yml:8-22,33-52."
+    ],
+    "trustBoundaries": [
+      "Document supplier to Rust parsers: DOCX/legacy DOC/XML/images/fonts are untrusted data. Admission checks archive metadata and names, duplicate identities, supported compression/encryption, structural ZIP defects, bounded inflation and XML policy before ordinary downstream processing. No document parts are extracted to disk by admission. The checked XML APIs validate before constructing DOM nodes; public infallible parse_xdocument deliberately does not enforce policy. Evidence: SECURITY.md:38-74; src/admission.rs:13-28,439-548; src/opc/archive.rs:35-51; src/xmllinq/parse.rs:90-135.",
+      "Admission policy to actual consumers: comparison supports caller overrides over InputLimits::compare; WASM retains the same 2 GiB default despite documenting that it exceeds a 32-bit heap. PDF layout also calls admit_package and therefore uses comparison limits. Archive limits govern admitted processing, while native/Python/Node CLI input files are initially read into memory using ambient filesystem APIs. Host process and ingress quotas remain separate responsibilities. Evidence: jubarte-wasm/src/lib.rs:63-97; jubarte-python/src/lib.rs:65-79; src/convert/mod.rs:769-778; src/bin/jubarte.rs:2740-2742; jubarte-python/python/jubarte_redlines/__main__.py:73-81; jubarte-wasm/cli/bin/jubarte-redlines.mjs:52-68.",
+      "MCP client to document filesystem: startup expands/resolves --root, defaulting to cwd, and opens one native _OutputRoot. Each document path passes an early containment diagnostic and is then read relative to the held capability. Output publication validates portable relative paths, uses capability-relative parent traversal, refuses output symlinks, and honors overwrite. This is distinct from advisory MCP ToolAnnotations, and from the ambient filesystem authority available to native/Python/Node CLIs. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-218,431-463.",
+      "MCP edit/render request to publication: docx_edit computes clean.docx, redline.docx, patch.diff, report.json and optional redline.pdf/redline-page-NN.png under root/out_dir; docx_render computes page-NN.png and optional render.pdf. All files stage and validate before commits, but replacement is atomic per file, not across the set; commit errors can report already committed files. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:161-218,229-255; src/publication.rs:168-174.",
+      "Markdown image target to native CLI resource authority: --resource-path overrides the Markdown source's parent directory, with '.' for a bare input filename. The loader decodes targets, refuses URL schemes, canonicalizes containment, and reads through an OutputRoot capability. Library DocxOptions defaults to no image loader, making any supplied callback a separate host-granted capability. Evidence: src/bin/jubarte.rs:2835-2871,2936-2943; src/markdown/mod.rs:159-177,196-198,216-226.",
+      "Document font names to native host font resources: rendering resolves fonts through installed/system/Word/cloud and configured per-user directories. The cloud family component must be exactly one normal path component, but native font I/O and the persistent index are not governed by the MCP document OutputRoot. JUBARTE_FONT_DIR overrides the platform directory; JUBARTE_FONT_INDEX overrides the cache, with empty/off disabling it. Otherwise the cache is font-index.tsv in the parent of the effective font directory. Defaults resolve to ~/Library/Application Support/jubarte/font-index.tsv on macOS, $XDG_DATA_HOME/jubarte/font-index.tsv or ~/.local/share/jubarte/font-index.tsv on Linux, and %APPDATA%/jubarte/font-index.tsv on Windows. Evidence: src/convert/font.rs:2225-2236,2258-2276,2281-2315,2633-2652,2855-2862,3095-3107,3154-3168,3182-3227.",
+      "Package relationships to resource consumers: document processing uses package part lookups rather than granting general network/file fetches from relationship targets. Representative rendering story/auxiliary-part selection filters External relationships, while altChunk loading resolves targets into package bytes. This is different from native host font reads and explicitly authorized self-update networking. Evidence: SECURITY.md:70-74; src/convert/mod.rs:789-793,21283-21319.",
+      "Operator to installed executable: only explicit self-update dispatch invokes updater installation. The updater fixes owner/repository to jandira-tech/jubarte-redlines, selects five desktop OS/architecture targets and archive child jubarte-<version>-<target>/jubarte[.exe], verifies SHA256SUMS.txt, applies configured signature policy, and checks the extracted candidate with symlink_metadata before swap. --check does not install; a terminal confirmation or --yes authorizes replacement, and explicit --version permits downgrade. RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None currently disable signature enforcement. Evidence: src/bin/jubarte.rs:3892-3896; src/update.rs:25-48,91-108,120-125,144-160,198-257,307-320.",
+      "Release maintainer to public distribution: v* tags trigger read-only binary/wheel build jobs and a contents-write publication job. Optional signing receives ZIPSIGN_PRIVATE_KEY only in the signer step, decodes keys into $RUNNER_TEMP/zipsign.XXXXXX/keyN, signs dist/jubarte-*.tar.gz and dist/jubarte-*.zip before checksums, and verifies against committed keys/*.pub. Publication attaches dist/* to the current repository/tag. Local scripts/release.sh additionally uses Cargo/npm/PyPI credentials, mandatory security-check.sh, an explicit version confirmation unless --yes, and a separately configured external app checkout. Evidence: .github/workflows/release.yml:15-21,51-89,230-310,317-321,356-369; scripts/release.sh:374-389,655-660,777-784,875-919,934-937,1069.",
+      "PR source to self-hosted CI and remote cache: the docs workflow runs pull_request source on self-hosted runners and invokes a local composite action configuring a pinned external mbx action at http://mbx-cache:7543. The composite's protected-branch-only write claim and private-network-only access are not independently enforced by local source visible here; external action/server and runner provisioning own those controls. The action inserts ${XDG_DATA_HOME:-$HOME/.local/share}/mbx/bin into PATH and configures a 20 GiB store GC target, separate from server authorization and job isolation. Evidence: .github/workflows/docs.yml:42-86,98-99; .github/actions/mbx/action.yml:8-22,33-52.",
+      "PR review authority is separate from companion remediation authority. The standard Jules reviewer runs for same-repository non-Dependabot PRs, receives JULES_API_KEY and a GitHub token with pull-request/check write permissions, delegates to a pinned external action, and disables approval. The companion workflow resolves a same-repository PR, checks out its exact head SHA, posts a report, and grants creation of a Jules fix session only to trusted author/dispatcher arthrod under specified events. The external session uses AUTO_CREATE_PR, require_plan_approval=false, and a branch name; remote source integration and head/target revision binding are absent implementation details, not established controls. Evidence: .github/workflows/jules-review.yml:19-50; .github/workflows/jules-el-conejo-review.yml:46-54,64-102,231-254,259-324."
+    ],
+    "attackerCapabilities": [
+      "A document supplier can choose package entries, XML, relationship strings, embedded media/fonts, Markdown and edit-plan data accepted by the caller, without already owning process credentials, environment variables, filesystem roots, or release infrastructure. Parser failure could add process denial of service or unintended host resource access; ordinary requested document transformations are not privilege escalation. Evidence: SECURITY.md:38-74; src/admission.rs:439-548.",
+      "An MCP client can invoke registered tools and choose paths, output directories, edit plans, and overwrite flags within the host-granted root. This adapter supplies no per-tool tenant/identity partition; its transport is stdio, and selecting the root is host authority. Potential boundary failure concerns resources outside that grant, not access already intentionally granted within it. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,152-160,373-381.",
+      "A Markdown author can name image targets; native CLI containment limits that capability to the caller-selected resource directory. A library-supplied image callback may grant different authority and must be evaluated as host code. Evidence: src/bin/jubarte.rs:2835-2871,2936-2943; src/markdown/mod.rs:159-163,196-198.",
+      "Control of JUBARTE_FONT_DIR, JUBARTE_FONT_INDEX, host font files or the existing font index requires an additional local configuration/state capability; it must not be inferred from control of a document's font names. Evidence: src/convert/font.rs:2637-2652,3100-3107,3154-3168,3182-3227.",
+      "A release-asset publisher can affect archive and colocated checksum integrity under today's checksum-only updater policy. This requires release publication compromise or equivalent trusted distribution control, not an ordinary document. A signing-key holder or privileged release runner has separate authority. Evidence: docs/SELF_UPDATE.md:59-80; src/update.rs:44-48,245-257.",
+      "PR authors can provide code and review text. Review/remediation workflows restrict same-repository access, while self-hosted PR CI is a separate boundary whose runner/cache network isolation is not established by workflow permissions. Companion-session spending additionally requires the configured trusted author/dispatcher condition. Evidence: .github/workflows/docs.yml:42-86; .github/workflows/jules-review.yml:19-39; .github/workflows/jules-el-conejo-review.yml:259-269."
+    ],
+    "securityObjectives": [
+      "Refuse unsupported, structurally inconsistent or over-budget packages before downstream inflation/DOM processing, and use checked XML APIs for new untrusted raw-XML consumers. Preserve the intentionally unchecked API contract rather than treating its existence as a defect. Evidence: src/admission.rs:439-548; src/xmllinq/parse.rs:90-135,919-954.",
+      "Keep MCP document reads and requested outputs inside the host-granted directory through actual capability-relative I/O, rather than relying only on string containment or tool visibility hints. Preserve overwrite policy and report partial commit/durability outcomes honestly. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:75-108; src/publication.rs:146-199,431-463.",
+      "Keep native CLI Markdown image reads within the caller-selected resource authority and avoid fetching document-supplied URLs. Treat ambient CLI paths, library callbacks and native font access as separate capabilities. Evidence: src/bin/jubarte.rs:2835-2871,2936-2943; src/markdown/mod.rs:159-163; src/convert/font.rs:2258-2276,3182-3227.",
+      "Apply caller-owned ingress, memory and CPU limits for shared services, Python hosts and browser/WASM usage; package admission is not a process sandbox or full denial-of-service guarantee. Evidence: SECURITY.md:71-74; jubarte-wasm/src/lib.rs:80-85.",
+      "Bind self-update to the selected repository, version, platform archive and regular-file candidate; require actual compiled trusted keys before claiming publisher-independent signature authentication. Evidence: src/update.rs:25-48,91-108,198-257,307-320.",
+      "Keep release signing credentials limited to the signing step, preserve signature-before-checksum ordering, and retain publication permissions only in the publishing job. External release scripts/checkouts and package registries remain trusted privileged consumers. Evidence: .github/workflows/release.yml:230-310,317-321,356-369; scripts/release.sh:374-389.",
+      "Keep automated review, PR commenting/check writing, companion branch creation, self-hosted job execution and cache publication as distinct authorities with separately established controls. Evidence: .github/workflows/jules-review.yml:28-50; .github/workflows/jules-el-conejo-review.yml:259-324; .github/actions/mbx/action.yml:8-22."
+    ],
+    "assumptions": [
+      "This is source-backed architecture mapping, not a completed vulnerability audit. No application execution, network requests, attack inputs, modifications, or history review were performed. The applicable SECURITY.md resolved to the root policy for '.', src, jubarte-python, jubarte-wasm and .github.",
+      "No observed production service, remote tenant model, runner provisioning, filesystem mounts, deployment environment values, or caller process quotas were supplied. Effective platform paths are configuration expressions, not claims about the reviewing machine's actual values.",
+      "Documentation/current-control distinction: docs/SELF_UPDATE.md:32-35 describes signatures once signing is enabled; its explicit staged policy at docs/SELF_UPDATE.md:69-80 agrees with current RELEASE_KEYS=[] and FIRST_SIGNED_RELEASE=None at src/update.rs:44-48. Signature support must not be reported as currently required authentication. Whether a release secret exists remotely is unknown and unnecessary to establish the updater's compiled policy.",
+      "MCP scope distinction: mcp_server.py:7-9,45-46 promises argument/output paths under root, and native capability I/O supports that claim. Interpreting it as process-wide filesystem confinement would exceed the implementation: native font files and font-index.tsv are consumed via ambient fs APIs. The index default follows the parent of effective JUBARTE_FONT_DIR, so a custom '/some/fonts' directory derives '/some/font-index.tsv'. Evidence: src/convert/font.rs:2637-2652,3100-3107,3182-3227.",
+      "MCP publication is staged before committing but atomic only per file; this does not establish rollback of an entire output set after a commit failure. Evidence: src/publication.rs:168-174. docx_edit's all-or-nothing anchor refusal is a separate pre-publication engine guarantee; mcp_server.py:163-168.",
+      "Cache claim versus visible enforcement: .github/actions/mbx/action.yml:8-12 claims only private-network runners reach a tokenless HTTP server and only protected-branch pushes publish. The local configuration at lines 17-22 supplies URL/namespace to an external pinned action; server ACLs, external action enforcement and runner network isolation are not present here. No unauthorized cache write is established. Runner network access and checkout reuse are documented rather than live-inspected.",
+      "The pinned external Jules actions are implementation gaps for remote tool/session permissions, provider credential handling and exact revision binding. Workflow-side grants and filters are established; broader restrictions are not. Evidence: .github/workflows/jules-review.yml:35-50; .github/workflows/jules-el-conejo-review.yml:259-324.",
+      "Local release app execution resolves JUBARTE_APP_DIR, otherwise repository-relative jubarte-app, then executes scripts/release-engine.sh with version and --engine-dir $PWD; that checkout is explicitly untracked by this repository. Its downstream deployment credentials and controls are unknown. Evidence: scripts/release.sh:382-389.",
+      "The updater delegates HTTPS/download/extraction/replacement internals to self_update with rustls and platform archive features. Wrapper configuration and its regular-file verification hook were inspected; dependency extraction internals were not independently reviewed in this architecture pass. Evidence: Cargo.toml:141-148; src/update.rs:198-210,307-320."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Current authorized repository"
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "xml-admission-bypass",
+      "title": "Rendering a relationship-selected XML part can bypass the depth limit and abort the host",
+      "summary": "A document can place deeply nested numbering XML in a .bin part and reference it with the numbering relationship. Admission skips its XML policy; rendering later passes it to the recursive unchecked DOM parser, allowing a small input to overflow the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-controlled document bytes reach unbounded recursion through an ordinary conversion API. Process availability impact is medium and likelihood is high once the document is converted; no remote deployment is assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Static trace establishes suffix-based admission, arbitrary relationship target selection, and recursive parsing without a depth guard. No crash input was executed."
+      },
+      "taxonomy": {
+        "category": "XML resource-limit bypass",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/admission.rs",
+          "startLine": 533,
+          "endLine": 551,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6569,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21320
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "xml-admission",
+          "label": "Admission checks XML by filename suffix",
+          "path": "src/admission.rs",
+          "startLine": 531,
+          "endLine": 551,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);\n        let cap = limits.max_part_bytes.min(remaining);\n        let lower = name.to_ascii_lowercase();\n        let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");\n        let mut limited = (&mut entry).take(cap.saturating_add(1));\n        let read = if is_xml {\n            let mut buf = Vec::new();\n            limited\n                .read_to_end(&mut buf)\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?;\n            let n = buf.len() as u64;\n            if n <= cap {\n                check_xml_depth(&name, &buf, limits)?;\n                if lower == \"[content_types].xml\" || lower == \"_rels/.rels\" {\n                    kept.insert(lower, buf);\n                }\n            }\n            n\n        } else {\n            std::io::copy(&mut limited, &mut std::io::sink())\n                .map_err(|e| AdmissionError::new(K::InvalidPackage, format!(\"{name}: {e}\")))?",
+          "explanation": "An auxiliary .bin part is only drained and charged to the inflation budget; its XML depth and tag policy are never inspected."
+        },
+        {
+          "id": "xml-target",
+          "label": "Relationship type selects an arbitrary part name",
+          "path": "src/convert/mod.rs",
+          "startLine": 21310,
+          "endLine": 21320,
+          "language": "rust",
+          "role": "propagation",
+          "code": "pub(crate) fn main_rel_part(pkg: &PartFs, kind: &str, fallback: &str) -> String {\n    let suffix = format!(\"/{kind}\");\n    pkg.main_document_part()\n        .and_then(|main| {\n            let rel = pkg.read_rels_for(&main)?.items.iter().find(|r| {\n                r.rel_type.ends_with(&suffix) && r.target_mode.as_deref() != Some(\"External\")\n            })?;\n            Some(pkg.resolve_rel_target(&main, &rel.target))\n        })\n        .unwrap_or_else(|| fallback.to_string())\n}",
+          "explanation": "A numbering relationship may point to a non-.xml internal part; no suffix or content-policy check is applied here."
+        },
+        {
+          "id": "xml-numbering",
+          "label": "Numbering loader invokes unchecked DOM parser",
+          "path": "src/convert/mod.rs",
+          "startLine": 6557,
+          "endLine": 6571,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn load_numbering(pkg: &PartFs) -> Numbering {\n    let numbering_part = main_rel_part(pkg, \"numbering\", \"word/numbering.xml\");\n    let Some(xml) = pkg.part_string(&numbering_part) else {\n        return Numbering::default();\n    };\n    parse_numbering_xml(&xml, |rid| resolve_media(pkg, &numbering_part, rid))\n}\n\n/// `word/numbering.xml`; `media` resolves a picture-bullet r:id.\nfn parse_numbering_xml(xml: &str, media: impl Fn(&str) -> Option<Vec<u8>>) -> Numbering {\n    let mut numbering = Numbering::default();\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);\n    let Some(root) = dom.root(doc) else {\n        return numbering;",
+          "explanation": "The selected part bytes become a string and enter Dom::parse_xdocument regardless of their filename."
+        },
+        {
+          "id": "xml-recursion",
+          "label": "Unchecked parser recurses for each nested element",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 663,
+          "language": "rust",
+          "role": "outcome",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;",
+          "explanation": "Each nested '<' adds another parse_element stack frame without checking InputLimits."
+        }
+      ],
+      "rootCause": {
+        "summary": "admit classifies auxiliary XML by filename suffix, while main_rel_part classifies it by relationship type. load_numbering bridges those inconsistent classifications and sends the unvalidated bytes to parse_xdocument, whose parse_element calls itself for every nested element. The main-part fallback check does not protect auxiliary numbering parts.",
+        "evidenceRefs": [
+          "xml-admission",
+          "xml-target",
+          "xml-numbering",
+          "xml-recursion"
+        ]
+      },
+      "remediation": "Apply the active XML depth/tag policy to every relationship-selected XML consumer before constructing its DOM, or classify all XML content types during admission and retain checked depth at each unchecked consumer.",
+      "validation": {
+        "limitations": [
+          "No runtime crash reproduction; affected thread stack size and host isolation determine failure threshold."
+        ],
+        "method": "static source trace",
+        "summary": "with_layout admits input at src/convert/mod.rs:776, then opens the same package and reaches collect_blocks at :923. collect_blocks calls load_numbering at :7734. A valid internal numbering relationship to a .bin part passes admission's byte limits and main-part check yet reaches unchecked recursive parsing. strict_to_transitional_docx_within only rewrites .xml/.rels names (:810) and PartFs read_package only applies metadata checks to [Content_Types].xml/.rels (:354). Neither inserts the missing depth check.",
+        "counterevidence": [
+          "Ordinary .xml/.rels parts are depth-checked; the main document is explicitly checked even with a different extension.",
+          "ZIP entry/part/total byte limits and process limits reduce blast radius but do not bound recursive depth of this auxiliary part."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX bytes -> admit suffix filter -> internal numbering relationship -> part_string -> parse_numbering_xml -> recursive parse_element",
+          "source": "Attacker-controlled auxiliary package part and relationship",
+          "sink": "Recursive DOM parser",
+          "outcome": "Stack exhaustion terminates the processing thread/process, including an embedding Python host."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Availability loss of the process converting the document."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "The attacker chooses both relationship target and deeply nested part bytes; current parser has no guard."
+        },
+        "reachability": {
+          "summary": "An untrusted-document supplier needs the victim to call a normal PDF/PNG/render-report conversion; no filesystem or configuration privileges are required.",
+          "attacker": "Document supplier",
+          "entrypoint": "convert::render / docx_to_pdf",
+          "preconditions": [
+            "Victim converts the supplied package; it contains valid root metadata and main document."
+          ]
+        },
+        "summary": "Supply an otherwise valid DOCX with an internal numbering relationship targeting word/numbering.bin containing deeply nested XML; ask the library or CLI to render it."
+      },
+      "remediationTests": [
+        "Verify that rendering refuses a numbering relationship targeting deeply nested .bin XML with INVALID_XML before DOM construction.",
+        "Apply the same regression to renamed styles, headers, footers, notes, settings and other relationship-selected XML parts."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-xml-extension",
+        "workerLabel": "discovery-0034",
+        "originalCandidates": [
+          {
+            "title": "Non-XML extension may bypass XML depth budget for relationship-selected parts",
+            "evidence": [
+              {
+                "path": "src/admission.rs",
+                "startLine": 529,
+                "code": "let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");",
+                "explanation": "Admission chooses XML validation by suffix except for main part."
+              },
+              {
+                "path": "src/opc/mod.rs",
+                "startLine": 561,
+                "code": "pub fn part_string(&self, name: &str) -> Option<String> {\n self.part_bytes(name).map(|b| String::from_utf8_lossy(b).into_owned())\n}",
+                "explanation": "Relationship targets can supply raw strings to later DOM consumers."
+              }
+            ],
+            "unresolved": "Must establish reachable unchecked parser consumer and concrete impact."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "title": "Non-XML extension may bypass XML depth budget for relationship-selected parts",
+          "evidence": [
+            {
+              "path": "src/admission.rs",
+              "startLine": 534,
+              "code": "let is_xml = lower.ends_with(\".xml\") || lower.ends_with(\".rels\");",
+              "explanation": "Admission chooses XML validation by suffix except for main part."
+            },
+            {
+              "path": "src/opc/mod.rs",
+              "startLine": 561,
+              "code": "pub fn part_string(&self, name: &str) -> Option<String> {\n self.part_bytes(name).map(|b| String::from_utf8_lossy(b).into_owned())\n}",
+              "explanation": "Relationship targets can supply raw strings to later DOM consumers."
+            }
+          ],
+          "unresolved": "Must establish reachable unchecked parser consumer and concrete impact."
+        }
+      }
+    },
+    {
+      "ruleId": "untrusted-self-hosted-ci",
+      "title": "Permitted pull requests execute code on shared self-hosted infrastructure",
+      "summary": "Pull-request jobs execute the PR checkout, including a mutable local action and Cargo code, on self-hosted runners used by trusted branch jobs. The committed action describes a shared persistent checkout/store and tokenless private-network cache; permitting an attacker PR run grants runner filesystem and network authority.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Impact can be high for the runner account and private build infrastructure, but likelihood depends on fork-run approval and runner-group/isolation settings unavailable offline. The source does not establish access to release credentials."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "PR trigger, self-hosted execution and local checkout execution are explicit. Shared private cache/persistence are documented in the committed action; live isolation and approval policy were not inspected."
+      },
+      "taxonomy": {
+        "category": "Excessive CI execution privileges",
+        "cwe": [
+          "CWE-250"
+        ]
+      },
+      "locations": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "role": "root_control"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 72,
+          "endLine": 99
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "startLine": 114,
+          "endLine": 127
+        },
+        {
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 32
+        },
+        {
+          "path": ".github/workflows/docs.yml",
+          "startLine": 79,
+          "endLine": 99
+        },
+        {
+          "path": ".github/workflows/md-roundtrip.yml",
+          "startLine": 28,
+          "endLine": 39
+        },
+        {
+          "path": ".github/workflows/adoption.yml",
+          "startLine": 48,
+          "endLine": 72
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "ci-trigger",
+          "label": "Pull requests trigger the shared CI workflow",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 13,
+          "endLine": 16,
+          "language": "yaml",
+          "role": "propagation",
+          "code": "on:\n  push:\n    branches: [main]\n  pull_request:",
+          "explanation": "No trusted-ref or fork condition restricts this trigger."
+        },
+        {
+          "id": "ci-run",
+          "label": "PR checkout runs on self-hosted infrastructure",
+          "path": ".github/workflows/ci.yml",
+          "startLine": 34,
+          "endLine": 48,
+          "language": "yaml",
+          "role": "root_control",
+          "code": "  lint:\n    name: fmt + clippy\n    runs-on: self-hosted\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01\n        with:\n          components: rustfmt, clippy\n          # jubarte-wasm is linted for the target it ships on.\n          targets: wasm32-unknown-unknown\n      - uses: ./.github/actions/mbx\n      - run: cargo fmt --check\n      - run: cargo clippy --all-targets --all-features -- -D warnings",
+          "explanation": "Checkout selects the PR merge tree; the local action and Cargo build execute attacker-editable code with runner authority."
+        },
+        {
+          "id": "ci-network",
+          "label": "Cache endpoint is shared and unauthenticated by design",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 8,
+          "endLine": 22,
+          "language": "yaml",
+          "role": "propagation",
+          "code": "# The self-hosted runners share one mbx cache server on their private Docker\n# network (`mbx-cache`), so a crate one runner compiled is a cache hit on the\n# others. The server takes no token: mbx sends none over plain HTTP, and only\n# the runners can reach it. mbx publishes only from pushes to a protected\n# branch; pull requests read. GitHub-hosted runners cannot reach the server,\n# so jobs that also run there keep Swatinem/rust-cache on those legs.\nruns:\n  using: composite\n  steps:\n    - uses: jdx/mr-boxington-action@47ce49b32025d93a7a2f4570815afaa2b7092240 # v1.7.2\n      with:\n        backend: remote\n        version: \"1.24.1\"\n        remote-url: http://mbx-cache:7543\n        namespace: jandira-tech/jubarte-redlines",
+          "explanation": "Committed topology describes private-network access from runners and configures the cache consumer's concrete HTTP endpoint."
+        },
+        {
+          "id": "ci-persist",
+          "label": "Runner checkout and store are reused",
+          "path": ".github/actions/mbx/action.yml",
+          "startLine": 27,
+          "endLine": 32,
+          "language": "yaml",
+          "role": "propagation",
+          "code": "    # Every job on a runner builds in the same checkout, so mbx always counts\n    # that checkout's managed target as the most recently used and never\n    # collects it: on 2026-10-17 three of them reached 69-220 GiB in a few\n    # hours and filled the disk the four runners share. Each job now starts\n    # from an empty target, restored from the store and the cache server,\n    # and each runner's store keeps to a fixed share of the disk.",
+          "explanation": "The documented shared writable resources bridge PR execution and later jobs."
+        }
+      ],
+      "rootCause": {
+        "summary": "The workflow assigns unreviewed PR source to the same self-hosted execution class used for main and executes a repository-local composite action. Read-only GITHUB_TOKEN and disabled checkout credential persistence do not sandbox those commands. The private-cache reader convention is client-side and cannot restrain arbitrary commands supplied by the PR.",
+        "evidenceRefs": [
+          "ci-trigger",
+          "ci-run",
+          "ci-network",
+          "ci-persist"
+        ]
+      },
+      "remediation": "Move every untrusted PR job to hosted or disposable isolated runners without private trusted-network access or shared writable state. Enforce trusted-ref restrictions for persistent runner groups and expose only a separately isolated server-enforced read-only cache to PR jobs.",
+      "validation": {
+        "limitations": [
+          "No workflow was run and no host/network endpoint contacted."
+        ],
+        "method": "static configuration trace",
+        "summary": "Validated the unrestricted pull_request trigger and self-hosted lint/test/coverage jobs in ci.yml and corresponding docs, md-roundtrip and adoption jobs. The local mbx action can itself be changed by a PR. Its consumers use http://mbx-cache:7543 and reusable local state. No per-PR execution isolation is defined in this repository.",
+        "counterevidence": [
+          "Some fork runs may require GitHub approval; exploitation requires a permitted run.",
+          "Workflow contents permission is read-only and checkout does not retain credentials.",
+          "Runner deployment and cache server implementation are external; credential access or successful cache poisoning was not demonstrated."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "PR checkout -> local action/Cargo invocation -> self-hosted runner process -> runner files/private network",
+          "source": "Untrusted PR-controlled executable source",
+          "sink": "Self-hosted runner shell/build process",
+          "outcome": "Execution with infrastructure authority beyond submitting source."
+        },
+        "impact": {
+          "level": "high",
+          "why": "Arbitrary commands can access the runner account and private build infrastructure."
+        },
+        "likelihood": {
+          "level": "medium",
+          "why": "Approval and runner isolation prerequisites are external and unknown."
+        },
+        "reachability": {
+          "summary": "Requires a PR run permitted by repository approval and runner access policy. Persistence/network exposure follows the committed topology; stronger external isolation would reduce impact.",
+          "attacker": "Untrusted PR author",
+          "entrypoint": "pull_request workflows"
+        },
+        "summary": "Author a PR changing a local action or Cargo build script; once its run is permitted, the self-hosted job executes it with runner authority."
+      },
+      "remediationTests": [
+        "Assert fork/untrusted PR workflows cannot select persistent trusted runners.",
+        "Verify PR worker disposal and separation from main/release writable state and private cache administration."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-ci-runner",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "baseline",
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "originalReport": "Public-repo pull_request CI executes attacker-controlled checkout on self-hosted runner without fork/trust gate. .github/workflows/ci.yml:16,36-49; docs.yml PR trigger+self-hosted+run scripts/gen_docs.sh; md-roundtrip/adoption same. .github/actions/mbx/action.yml says runners share private Docker network, tokenless HTTP mbx-cache:7543, and same checkout/store. Fork PR can change build.rs/local action/tests/scripts to execute runner commands when GitHub permits the run, reach private network/poison persistent host for protected jobs. persist-credentials:false/read-only token do not constrain host execution.",
+            "fullResult": {
+              "title": "Untrusted pull requests execute on persistent self-hosted runners",
+              "cwe": "CWE-250",
+              "severity": "high",
+              "confidence": "high",
+              "attacker": "Fork PR author whose run is permitted by GitHub repository-level approval settings",
+              "impact": "Runner-account execution, private Docker network access, possible interference with later jobs. Credential theft/protected-build compromise not established offline.",
+              "affectedLocations": [
+                ".github/workflows/ci.yml:13-48",
+                ".github/actions/mbx/action.yml:8-32",
+                ".github/workflows/docs.yml:79-99",
+                ".github/workflows/md-roundtrip.yml:28-39",
+                ".github/workflows/adoption.yml:48-72"
+              ],
+              "counterevidence": [
+                "contents:read and persist-credentials:false restrict workflow token only",
+                "Fork-run approval may be required",
+                "No live runner inspection; persistence/network facts from committed action"
+              ],
+              "remediation": "Isolate untrusted jobs on ephemeral runners without trusted network/shared state; server-enforced read-only cache."
+            }
+          },
+          {
+            "source": "baseline",
+            "originalReport": "Public-repo pull_request CI executes attacker-controlled checkout on self-hosted runner without fork/trust gate. .github/workflows/ci.yml:16,36-49; docs.yml PR trigger+self-hosted+run scripts/gen_docs.sh; md-roundtrip/adoption same. .github/actions/mbx/action.yml says runners share private Docker network, tokenless HTTP mbx-cache:7543, and same checkout/store. Fork PR can change build.rs/local action/tests/scripts to execute runner commands when GitHub permits the run, reach private network/poison persistent host for protected jobs. persist-credentials:false/read-only token do not constrain host execution."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "baseline",
+          "originalReport": "Public-repo pull_request CI executes attacker-controlled checkout on self-hosted runner without fork/trust gate. .github/workflows/ci.yml:16,36-49; docs.yml PR trigger+self-hosted+run scripts/gen_docs.sh; md-roundtrip/adoption same. .github/actions/mbx/action.yml says runners share private Docker network, tokenless HTTP mbx-cache:7543, and same checkout/store. Fork PR can change build.rs/local action/tests/scripts to execute runner commands when GitHub permits the run, reach private network/poison persistent host for protected jobs. persist-credentials:false/read-only token do not constrain host execution.",
+          "fullResult": {
+            "title": "Untrusted pull requests execute on persistent self-hosted runners",
+            "cwe": "CWE-250",
+            "severity": "high",
+            "confidence": "high",
+            "attacker": "Fork PR author whose run is permitted by GitHub repository-level approval settings",
+            "impact": "Runner-account execution, private Docker network access, possible interference with later jobs. Credential theft/protected-build compromise not established offline.",
+            "affectedLocations": [
+              ".github/workflows/ci.yml:13-48",
+              ".github/actions/mbx/action.yml:8-32",
+              ".github/workflows/docs.yml:79-99",
+              ".github/workflows/md-roundtrip.yml:28-39",
+              ".github/workflows/adoption.yml:48-72"
+            ],
+            "counterevidence": [
+              "contents:read and persist-credentials:false restrict workflow token only",
+              "Fork-run approval may be required",
+              "No live runner inspection; persistence/network facts from committed action"
+            ],
+            "remediation": "Isolate untrusted jobs on ephemeral runners without trusted network/shared state; server-enforced read-only cache."
+          }
+        }
+      }
+    },
+    {
+      "ruleId": "unbounded-html-colspan",
+      "title": "Rendering a tiny HTML table can exhaust memory through unbounded colspan expansion",
+      "summary": "An HTML or MHT altChunk cell may supply any positive usize colspan. The converter turns that value into one generated XML grid column per unit after package admission, permitting billions of allocations/emissions from a short input.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Availability impact is medium and attacker control is direct/high likelihood when the supplied document is converted. Input byte limits do not constrain the numeric multiplier."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified package-to-altChunk flow, unrestricted numeric parsing, and the emission loop; no runtime trigger executed."
+      },
+      "taxonomy": {
+        "category": "Unbounded derived-content expansion",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 491,
+          "role": "sink"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 776,
+          "endLine": 799
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chunk-expand",
+          "label": "Relationship bytes become generated WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 31,
+          "endLine": 38,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "            tail.find(\"</w:altChunk>\")\n                .map_or(open_end + 1, |i| i + \"</w:altChunk>\".len())\n        };\n        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();",
+          "explanation": "Attacker-supplied chunk bytes are decoded as HTML and passed into html_to_wml."
+        },
+        {
+          "id": "span-input",
+          "label": "Colspan has no practical upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "language": "rust",
+          "role": "root_control",
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),",
+          "explanation": "A large representable positive attribute is retained as a cell span."
+        },
+        {
+          "id": "span-output",
+          "label": "Every claimed column generates another element",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;\n        let mut s = String::from(\"<w:tbl><w:tblPr><w:tblW w:w=\\\"0\\\" w:type=\\\"auto\\\"/>\");\n        if table.border {\n            s.push_str(\"<w:tblBorders>\");\n            for edge in [\"top\", \"left\", \"bottom\", \"right\", \"insideH\", \"insideV\"] {\n                let _ = write!(\n                    s,\n                    \"<w:{edge} w:val=\\\"single\\\" w:sz=\\\"4\\\" w:space=\\\"0\\\" w:color=\\\"auto\\\"/>\"\n                );\n            }\n            s.push_str(\"</w:tblBorders>\");\n        }\n        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "The row span sum determines cols, and the converter appends one gridCol per column without a generated-output budget."
+        }
+      ],
+      "rootCause": {
+        "summary": "Builder::start parses colspan as usize and applies only a lower bound. Builder::end_table sums those values and loops to cols, creating XML after admission. Admission's source byte/depth budgets and raster limits therefore cannot bound this expansion.",
+        "evidenceRefs": [
+          "chunk-expand",
+          "span-input",
+          "span-output"
+        ]
+      },
+      "remediation": "Bound colspan and total columns to a practical supported maximum before emission, sum with checked arithmetic, and enforce a cumulative generated-content budget across all altChunks.",
+      "validation": {
+        "limitations": [
+          "No allocation or hang reproduction was run."
+        ],
+        "method": "static source trace",
+        "summary": "with_layout (:776-799) admits the DOCX, then loads altChunk relationship bytes and expands them before DOM/layout. expand calls html_to_wml. A table with a single large positive colspan reaches end_table's grid emission with no upper or cumulative output check. Values fitting both 32-bit and 64-bit usize can request billions of columns.",
+        "counterevidence": [
+          "Unparseable, negative, and zero spans fall back to one; large positive representable spans do not.",
+          "Caller process quotas contain host impact but do not prevent conversion termination.",
+          "The original investigator's span location was corrected to :562-566; original report retained."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX altChunk -> chunk_html -> html_to_wml -> cell span -> cols -> repeated gridCol writes",
+          "source": "HTML colspan string",
+          "sink": "Unbounded generated XML String",
+          "outcome": "Excessive CPU/memory consumption or process termination."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Conversion host denial of service."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Short caller-controlled numeric attribute directly drives loop bound."
+        },
+        "reachability": {
+          "summary": "Normal library/CLI/Python rendering reaches expansion before selecting pages or emitting outputs.",
+          "attacker": "Untrusted document supplier",
+          "entrypoint": "convert::render / docx_to_pdf"
+        },
+        "summary": "Provide a valid DOCX containing a tiny internally related HTML/MHT table with a huge positive colspan, then request PDF/PNG or render-report conversion."
+      },
+      "remediationTests": [
+        "Refuse an admitted HTML altChunk with a huge positive colspan before generating grid XML.",
+        "Cover summed-span overflow and repeated/nested tables under a shared output budget."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-altchunk-span",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "conversion",
+        "originalCandidates": [
+          {
+            "source": "conversion",
+            "title": "Unbounded HTML colspan expansion during altChunk conversion",
+            "originalReport": "Confirmed source-level conversion DoS candidate: altchunk::Builder::start parses untrusted HTML colspan as unrestricted usize (src/convert/altchunk.rs:588-594), end_table sums spans and emits one gridCol per computed column (470-490). A tiny admitted HTML altChunk can demand billions of generated XML elements before layout; no HTML-derived output/column budget.",
+            "unresolved": "Parent must verify input-to-expansion flow and counterevidence."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "conversion",
+          "title": "Unbounded HTML colspan expansion during altChunk conversion",
+          "originalReport": "Confirmed source-level conversion DoS candidate: altchunk::Builder::start parses untrusted HTML colspan as unrestricted usize (src/convert/altchunk.rs:588-594), end_table sums spans and emits one gridCol per computed column (470-490). A tiny admitted HTML altChunk can demand billions of generated XML elements before layout; no HTML-derived output/column budget.",
+          "unresolved": "Parent must verify input-to-expansion flow and counterevidence."
+        }
+      }
+    },
+    {
+      "ruleId": "wmf-record-confinement",
+      "title": "Rendering short WMF records can multiply retained text beyond the input budget",
+      "summary": "WMF text handlers accept a text count from each short record but slice the entire image rather than that record. Repeated records retain overlapping strings from subsequent bytes, amplifying a small admitted image into gigabytes of allocated text.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Medium availability impact and high likelihood when crafted embedded media is rendered; no code execution or remote deployment assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified record advancement, file-wide payload slices, owned string conversion and retention. No allocation test was executed."
+      },
+      "taxonomy": {
+        "category": "Missing record boundary validation",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 619,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 477,
+          "endLine": 489
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 628,
+          "endLine": 679
+        },
+        {
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 701
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 20247,
+          "endLine": 20263
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "wmf-size",
+          "label": "Record size bounds advancement only",
+          "path": "src/convert/metafile.rs",
+          "startLine": 477,
+          "endLine": 489,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    while off + 6 <= data.len() {\n        let size = read_u32(data, off)? as usize;\n        let func = read_u16(data, off + 4)?;\n        // checked_mul: `size` is untrusted and `usize` is 32-bit on wasm32;\n        // comparing against the remaining length keeps `off` from ever\n        // moving past (or wrapping around) the buffer end.\n        let Some(size2) = size.checked_mul(2) else {\n            break;\n        };\n        if size < 3 || size2 > data.len() - off {\n            break;\n        }\n        let payload = off + 6;",
+          "explanation": "The record word count is checked against file length but no record-local slice is created."
+        },
+        {
+          "id": "wmf-text",
+          "label": "Text count is checked against the entire image",
+          "path": "src/convert/metafile.rs",
+          "startLine": 603,
+          "endLine": 620,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            0x0A32 => {\n                let y = read_i16(data, payload)?;\n                let x = read_i16(data, payload + 2)?;\n                let n = usize::from(read_u16(data, payload + 4)?);\n                let opts = read_u16(data, payload + 6)?;\n                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };\n                if let Some(bytes) = data.get(at..at + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }\n            }\n            // TEXTOUT: count, string (word-padded), y, x.\n            0x0521 => {\n                let n = usize::from(read_u16(data, payload)?);\n                let at = payload + 2 + n.next_multiple_of(2);\n                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);\n                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {\n                    texts.extend(wmf_text(&dc, &map, x, y, bytes));\n                }",
+          "explanation": "Both text handlers can consume bytes from following records instead of the current record extent."
+        },
+        {
+          "id": "wmf-owned",
+          "label": "Each overlapping slice becomes retained owned text",
+          "path": "src/convert/metafile.rs",
+          "startLine": 692,
+          "endLine": 701,
+          "language": "rust",
+          "role": "sink",
+          "code": "fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {\n    let text = ansi_text(bytes);\n    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {\n        return None;\n    }\n    let font = dc.font.as_deref();\n    let height = font.map_or(0, |f| f.height);\n    Some(MetaText {\n        text,\n        x: (f32::from(x) - map.org_x) / map.ext_x,",
+          "explanation": "wmf_text allocates an ANSI-decoded String and retains it in MetaText, even with the default font."
+        }
+      ],
+      "rootCause": {
+        "summary": "raster_wmf advances off by the declared record size, but EXTTEXTOUT and TEXTOUT use data.get on the full image for their variable-length text. wmf_text owns each decoded copy in texts. Polygon/polyline/polypolygon handlers similarly read counts and points against the file, multiplying work across short overlapping records.",
+        "evidenceRefs": [
+          "wmf-size",
+          "wmf-text",
+          "wmf-owned"
+        ]
+      },
+      "remediation": "Parse every WMF handler through a slice confined to the declared record extent, reject text/font/point counts exceeding it, and enforce cumulative decoded text/geometry budgets.",
+      "validation": {
+        "limitations": [
+          "No runtime memory amplification was measured; estimate follows source lengths and retention."
+        ],
+        "method": "static source trace",
+        "summary": "collect_images resolves embedded image bytes and calls decode_image (src/convert/mod.rs:18349-18360); decode_image invokes metafile::render at :20248. A short valid-sized EXTTEXTOUT record can set a 65535-byte count extending into following records; forward advancement still uses its short size. Each nonblank overlapping slice is retained as a String. Roughly one MiB can therefore generate several GiB of text without exceeding source byte admission.",
+        "counterevidence": [
+          "Record multiplication is checked and advancement always progresses.",
+          "Canvas sides are capped at 384 and strokes clipped; those controls do not bound MetaText.",
+          "Per-record count is u16, but there is no cumulative decoded-text budget.",
+          "EMF point parsing uses record extent; WMF lacks its analogous control."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX image relation -> collect_images -> decode_image -> raster_wmf -> file-wide text slices -> retained MetaText strings",
+          "source": "Embedded WMF record sizes and text counts",
+          "sink": "Owned decoded text collection",
+          "outcome": "Memory/CPU exhaustion of conversion host."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Process availability loss."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Record counts and overlap are input-controlled."
+        },
+        "reachability": {
+          "summary": "Caller-controlled embedded media reaches the standard conversion API without local attacker privileges.",
+          "attacker": "Untrusted DOCX supplier",
+          "entrypoint": "PDF/PNG/render-report conversion"
+        },
+        "summary": "Embed a placeable WMF with many short text records claiming long overlapping payloads, then render the DOCX."
+      },
+      "remediationTests": [
+        "Reject short WMF records whose text or point counts reach into following otherwise valid records.",
+        "Verify bounded decoded text across repeated EXTTEXTOUT and TEXTOUT records."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-wmf-record",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "conversion",
+        "originalCandidates": [
+          {
+            "source": "conversion",
+            "originalReport": "WMF EXTTEXTOUT validates record size/advance but takes n-byte text from entire file at data.get(at..at+n), not current record (src/convert/metafile.rs:603-611), then copies into retained MetaText. Repeated 14-byte records can each claim 65535 bytes overlapping subsequent records; approximately 1 MiB -> 4GiB retained text. Polygon/polyline siblings may share boundary error. Needs record-scoped slicing and budget."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "conversion",
+          "originalReport": "WMF EXTTEXTOUT validates record size/advance but takes n-byte text from entire file at data.get(at..at+n), not current record (src/convert/metafile.rs:603-611), then copies into retained MetaText. Repeated 14-byte records can each claim 65535 bytes overlapping subsequent records; approximately 1 MiB -> 4GiB retained text. Polygon/polyline siblings may share boundary error. Needs record-scoped slicing and budget."
+        }
+      }
+    },
+    {
+      "ruleId": "quadratic-html-entity-decoding",
+      "title": "HTML entity decoding can monopolize a worker with repeated suffix scans",
+      "summary": "An HTML altChunk or Markdown raw HTML segment containing many ampersands without a nearby semicolon triggers a full remaining-input search for each ampersand, causing quadratic CPU work.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Medium availability impact with high likelihood once attacker-controlled text reaches conversion."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified search-before-bound and one-byte fallback, plus altChunk and Markdown callers; no timing benchmark executed."
+      },
+      "taxonomy": {
+        "category": "Algorithmic complexity",
+        "cwe": [
+          "CWE-407"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 730,
+          "endLine": 758,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 405,
+          "endLine": 406
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 1357
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 1415,
+          "endLine": 1420
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "entity-caller",
+          "label": "HTML text enters shared entity decoding",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 405,
+          "endLine": 406,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    fn text(&mut self, raw: &str) {\n        let collapsed = collapse_ws(&decode_entities(raw));",
+          "explanation": "HTML text segments are passed directly into decode_entities."
+        },
+        {
+          "id": "entity-search",
+          "label": "Search scans the suffix before applying length limit",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 730,
+          "endLine": 733,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    while let Some(a) = rest.find('&') {\n        out.push_str(&rest[..a]);\n        let tail = &rest[a..];\n        let semi = tail.find(';').filter(|&e| e <= 10);",
+          "explanation": "tail.find scans all remaining bytes; filtering the returned offset afterward does not bound work."
+        },
+        {
+          "id": "entity-step",
+          "label": "Failure advances by only one ampersand",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 753,
+          "endLine": 758,
+          "language": "rust",
+          "role": "sink",
+          "code": "        if let Some((c, e)) = decoded {\n            out.push(c);\n            rest = &tail[e + 1..];\n        } else {\n            out.push('&');\n            rest = &tail[1..];",
+          "explanation": "Ampersands with no semicolon repeat the full suffix scan, giving triangular total work."
+        },
+        {
+          "id": "entity-markdown",
+          "label": "Markdown raw HTML uses the same helper",
+          "path": "src/markdown/write.rs",
+          "startLine": 1415,
+          "endLine": 1422,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "fn html_block_text(html: &str) -> (Option<String>, Vec<String>) {\n    let mut first = None;\n    let mut paragraphs = Vec::new();\n    let mut text = String::new();\n    let flush = |text: &mut String, paragraphs: &mut Vec<String>| {\n        let decoded = crate::convert::altchunk::decode_entities(text);\n        let words: Vec<&str> = decoded.split_whitespace().collect();\n        if !words.is_empty() {",
+          "explanation": "The same failed-control mechanism is independently reachable through raw HTML in Markdown input."
+        }
+      ],
+      "rootCause": {
+        "summary": "decode_entities accepts entities only up to ten bytes but applies that bound after an unbounded tail.find(';'). Failure removes only one ampersand. Repeated literal ampersands therefore scan suffix lengths n,n-1,... rather than a fixed lookahead.",
+        "evidenceRefs": [
+          "entity-caller",
+          "entity-search",
+          "entity-step",
+          "entity-markdown"
+        ]
+      },
+      "remediation": "Search only the maximum accepted entity prefix, using byte iteration, or implement a single-pass decoder while preserving invalid-entity semantics.",
+      "validation": {
+        "limitations": [
+          "No dynamic latency measurement."
+        ],
+        "method": "static source trace",
+        "summary": "Parent traced with_layout -> altchunk::expand -> html_to_wml -> Builder::text -> decode_entities and inspected raw-HTML Markdown calls at write.rs:1357,1420. A semicolon-free ampersand run forces each loop iteration to scan the remaining suffix; input limits do not change that quadratic relation.",
+        "counterevidence": [
+          "The loop advances and preserves unknown entities correctly; this is excessive work, not nontermination.",
+          "Accepted entity length is capped, but only after the expensive scan.",
+          "Host process CPU limits contain impact without fixing the algorithm."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Untrusted HTML text -> decode_entities -> repeated full-suffix semicolon search",
+          "source": "Literal HTML text",
+          "sink": "Quadratic decoder loop",
+          "outcome": "Disproportionate CPU occupation."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Worker denial of service."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "A simple linear input establishes the repeated scans."
+        },
+        "reachability": {
+          "summary": "Document/Markdown supplier controls the text; standard conversion invokes the helper.",
+          "attacker": "Input supplier",
+          "entrypoint": "DOCX rendering and markdown_to_docx raw HTML"
+        },
+        "summary": "Supply a large HTML text segment of repeated literal ampersands inside an altChunk or raw HTML Markdown block and request conversion."
+      },
+      "remediationTests": [
+        "Assert bounded/linear scanning for semicolon-free ampersands and far-away semicolons across HTML and Markdown callers."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-html-entities",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "conversion",
+        "originalCandidates": [
+          {
+            "source": "conversion",
+            "originalReport": "src/convert/altchunk.rs:733 decode_entities searches entire remaining tail for ';' then filters e<=10. Repeated '&' without ';' can cause quadratic rescans. Sibling markdown/write.rs:1420 uses same helper."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "conversion",
+          "originalReport": "src/convert/altchunk.rs:733 decode_entities searches entire remaining tail for ';' then filters e<=10. Repeated '&' without ';' can cause quadratic rescans. Sibling markdown/write.rs:1420 uses same helper."
+        }
+      }
+    },
+    {
+      "ruleId": "quadratic-legacy-field-state",
+      "title": "Nested legacy DOC result fields cause quadratic CPU consumption",
+      "summary": "The legacy DOC reader scans every enclosing field state before every character. Nested fields that have entered their result state leave a growing all-false stack, forcing complete rescans even when the output is tiny.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Medium availability impact and high likelihood for a controlled legacy input converted by the victim."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent inspected public read, main-text extraction, field-state transitions and the CLI legacy dispatch; no application execution."
+      },
+      "taxonomy": {
+        "category": "Algorithmic complexity",
+        "cwe": [
+          "CWE-407"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 1602,
+          "endLine": 1618,
+          "role": "root_control"
+        },
+        {
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 216
+        },
+        {
+          "path": "src/bin/jubarte.rs",
+          "startLine": 3125,
+          "endLine": 3132
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "doc-read",
+          "label": "Public legacy reader sends decoded characters to Story",
+          "path": "src/legacy_doc.rs",
+          "startLine": 180,
+          "endLine": 216,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {\n    let file = CompoundFile::open(bytes)?;\n    let word = file.stream(\"WordDocument\").ok_or_else(|| {\n        LegacyDocError::new(\n            \"no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password\",\n        )\n    })?;\n    let fib = Fib::parse(&word)?;\n    let table = file\n        .stream(if fib.table_one { \"1Table\" } else { \"0Table\" })\n        .ok_or_else(|| LegacyDocError::new(\"the table stream the FIB names is missing\"))?;\n    let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;\n    let chars = main_text(&word, &pieces, fib.ccp_text)?;\n    let styles = heading_styles(&table, fib.fc_stshf, fib.lcb_stshf)?;\n    let papx = FkpIndex::new(\n        &word,\n        &table,\n        (fib.fc_plcf_bte_papx, fib.lcb_plcf_bte_papx),\n        Fkp::Paragraph,\n    )?;\n    let chpx = FkpIndex::new(\n        &word,\n        &table,\n        (fib.fc_plcf_bte_chpx, fib.lcb_plcf_bte_chpx),\n        Fkp::Character,\n    )?;\n    let lists = Lists::new(&table, fib.plf_lst, fib.plf_lfo)?;\n    let story = Story {\n        papx: &papx,\n        chpx: &chpx,\n        styles: &styles,\n        lists: &lists,\n        section_marks: section_marks(&table, fib.plcf_sed)?,\n    };\n    Ok(LegacyDocument {\n        blocks: story.blocks(&chars),\n    })",
+          "explanation": "The file's main story becomes chars and is passed to Story::blocks."
+        },
+        {
+          "id": "doc-fields",
+          "label": "Every character rescans the growing field stack",
+          "path": "src/legacy_doc.rs",
+          "startLine": 1591,
+          "endLine": 1618,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    fn blocks(&self, chars: &[StoryChar]) -> Vec<Block> {\n        let mut out = Vec::new();\n        let mut spans: Vec<Span> = Vec::new();\n        // Field nesting: true while inside a field's code (before its\n        // separator).\n        let mut fields: Vec<bool> = Vec::new();\n        // Each finished row and whether it is marked as a header.\n        let mut rows: Vec<(Vec<String>, bool)> = Vec::new();\n        let mut row: Vec<String> = Vec::new();\n        let mut cell: Vec<String> = Vec::new();\n\n        for story in chars {\n            // Inside any field's code, even a nested field's result is code.\n            let in_code = fields.iter().any(|&code| code);\n            let text = match story.ch {\n                '\\u{13}' => {\n                    fields.push(true);\n                    continue;\n                }\n                '\\u{14}' => {\n                    if let Some(top) = fields.last_mut() {\n                        *top = false;\n                    }\n                    continue;\n                }\n                '\\u{15}' => {\n                    fields.pop();\n                    continue;",
+          "explanation": "Field begin pushes true, separator changes it false, and the next character's any must examine all false enclosing states."
+        }
+      ],
+      "rootCause": {
+        "summary": "Story::blocks computes in_code by fields.iter().any on every character, rather than maintaining an active-code count. Repeating begin/separator creates successively longer all-false stacks; transitions and later ordinary characters each pay proportional to depth.",
+        "evidenceRefs": [
+          "doc-read",
+          "doc-fields"
+        ]
+      },
+      "remediation": "Maintain an active code-frame count updated on begin, separator, and end so in_code is constant time; apply a justified field-depth budget as additional containment.",
+      "validation": {
+        "limitations": [
+          "No timing measurement or crafted DOC was produced."
+        ],
+        "method": "static source trace",
+        "summary": "legacy_doc::read decodes caller-controlled main-story characters and immediately calls Story::blocks. main_text verifies piece coverage and checked byte offsets (:1148-1233) but places no field-nesting bound. CLI run_convert_any calls doc_to_docx on compound input before DOCX admission (:3125-3132). Thus a valid legacy stream with nested result fields forces quadratic work without a large visible result.",
+        "counterevidence": [
+          "Compound allocation-chain traversal and piece extraction are bounded and checked.",
+          "A true frame can short-circuit any; the attack specifically keeps enclosing frames false after separators.",
+          "Existing shallow nested-field tests establish semantics, not a depth/work bound."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "WordDocument stream -> main_text -> Story::blocks -> fields.iter().any per character",
+          "source": "DOC main-story field control characters",
+          "sink": "Repeated state-stack scans",
+          "outcome": "Conversion worker CPU exhaustion."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Worker denial of service."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Field-state sequence directly controls scan depth."
+        },
+        "reachability": {
+          "summary": "The public legacy reader and CLI .doc conversion accept file-supplied characters without requiring host authority.",
+          "attacker": "Legacy document supplier",
+          "entrypoint": "legacy_doc::read / doc_to_docx"
+        },
+        "summary": "Provide a legacy DOC whose main story repeatedly begins a nested field and immediately enters its result, followed by text or closing fields."
+      },
+      "remediationTests": [
+        "Cover deeply nested fields in result state and assert work grows linearly while preserving nested field semantics."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-doc-fields",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "conversion",
+        "originalCandidates": [
+          {
+            "source": "conversion",
+            "originalReport": "src/legacy_doc.rs:1604 fields.iter().any scans whole stack per character. Nested fields already in result state leave false frames and yield quadratic parsing; no depth cap."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "conversion",
+          "originalReport": "src/legacy_doc.rs:1604 fields.iter().any scans whole stack per character. Nested fields already in result state leave false frames and yield quadratic parsing; no depth cap."
+        }
+      }
+    },
+    {
+      "ruleId": "redaction-encoding-bypass",
+      "title": "Redaction can certify a DOCX that retains confidential text in UTF-16 XML",
+      "summary": "The leak scanner decodes .xml/.rels only as UTF-8, while admission accepts UTF-16 XML and editing preserves untouched parts. A duplicate value in UTF-16 custom XML can remain recoverable in the clean DOCX even after redact succeeds.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Confidentiality impact is medium and likelihood high when an accepted UTF-16 duplicate is present and the result is shared. No host compromise is claimed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent verified the encoding mismatch, byte preservation and empty-result acceptance. Existing admission tests explicitly accept both UTF-16 byte orders; no runtime reproduction performed."
+      },
+      "taxonomy": {
+        "category": "Incomplete sensitive-data removal",
+        "cwe": [
+          "CWE-200"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 471,
+          "role": "root_control"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 527,
+          "endLine": 532
+        },
+        {
+          "path": "src/admission.rs",
+          "startLine": 765,
+          "endLine": 784
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 4727,
+          "endLine": 4746
+        },
+        {
+          "path": "src/edit/prepared.rs",
+          "startLine": 873
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "leak-encoding",
+          "label": "XML branch omits UTF-16 decoding",
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 472,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        let xml = name.ends_with(\".xml\") || name.ends_with(\".rels\");\n        let hit = if xml {\n            xml_holds(&String::from_utf8_lossy(&bytes), needle)\n        } else {\n            contains(&bytes, needle.as_bytes()) || contains(&bytes, &utf16)\n        };",
+          "explanation": "XML bytes are lossy-decoded as UTF-8; only non-XML parts receive a UTF-16LE raw-byte check."
+        },
+        {
+          "id": "encoding-admission",
+          "label": "Admission accepts BOM-marked UTF-16",
+          "path": "src/admission.rs",
+          "startLine": 765,
+          "endLine": 784,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "/// with a byte-order mark (SharePoint's `customXml` items often are) and\n/// Word opens it, so it is transcoded; other bytes decode lossily, as the\n/// rest of the engine reads them.\nfn part_text(xml: &[u8]) -> Cow<'_, str> {\n    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {\n        let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));\n        Cow::Owned(\n            char::decode_utf16(units)\n                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))\n                .collect(),\n        )\n    };\n    match xml {\n        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),\n        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),\n        _ => String::from_utf8_lossy(xml),\n    }\n}\n\n/// Well-formed enough to scan, no deeper than `max_depth` elements, and",
+          "explanation": "The admitted format set includes both UTF-16 byte orders, so the leak checker must understand them too."
+        },
+        {
+          "id": "untouched-parts",
+          "label": "Editing preserves untouched part bytes",
+          "path": "src/edit.rs",
+          "startLine": 5381,
+          "endLine": 5384,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        // The body is always written; a story part only when an operation\n        // edits it, so untouched parts keep their exact bytes.\n        let mut written = self.touched_stories();\n        written.insert(0);",
+          "explanation": "Custom XML not changed by the visible-text operation remains in its original UTF-16 encoding."
+        },
+        {
+          "id": "leak-accept",
+          "label": "Empty scanner results certify redaction",
+          "path": "src/edit.rs",
+          "startLine": 4727,
+          "endLine": 4738,
+          "language": "rust",
+          "role": "outcome",
+          "code": "    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {\n        for (op, operation) in self.plan.operations.iter().enumerate() {\n            let OperationKind::Redact { find, .. } = &operation.kind else {\n                continue;\n            };\n            let parts: std::collections::BTreeSet<String> = outputs\n                .iter()\n                .flat_map(|doc| crate::scrub::leaks(doc, find))\n                .collect();\n            if parts.is_empty() {\n                continue;\n            }",
+          "explanation": "A false negative from leaks allows clean/redline output to pass the privacy check."
+        }
+      ],
+      "rootCause": {
+        "summary": "leaks_within chooses XML by suffix and calls xml_holds on String::from_utf8_lossy. Admitted UTF-16LE/BE bytes become NUL-separated/mojibake strings, so a normal multi-character ASCII needle is absent. xml_holds parses or searches that same incorrect representation. Untouched custom XML is serialized unchanged, and check_redactions treats the empty result as success.",
+        "evidenceRefs": [
+          "encoding-admission",
+          "untouched-parts",
+          "leak-encoding",
+          "leak-accept"
+        ]
+      },
+      "remediation": "Use shared encoding-aware XML decoding for admission and leak scanning, handle both UTF-16 byte orders, and fail closed when an XML part cannot be decoded reliably.",
+      "validation": {
+        "limitations": [
+          "No runtime reproduction; a recipient must obtain the produced package to read the retained copy."
+        ],
+        "method": "static source trace",
+        "summary": "Admission part_text supports UTF-16LE/BE; existing tests at admission.rs:1845-1860 admit UTF-16 customXml. Parent verified normal transitional packages remain unchanged in strict_translation and raw parts are preserved by PartFs serialization. check_redactions scans both output documents but invokes the encoding-blind XML branch, allowing the retained custom-XML copy to evade certification.",
+        "counterevidence": [
+          "Non-XML parts are checked for UTF-8 and UTF-16LE raw values.",
+          "Unreadable archives, entries and budget failures fail closed.",
+          "Ordinary UTF-8 text/attribute/comment duplicates are detected; this mismatch is specific to admitted encodings."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "UTF-16 custom XML -> admission transcode/check -> raw part preservation -> UTF-8-only leak scan -> successful redacted output",
+          "source": "Accepted XML part bytes",
+          "sink": "Package-wide redaction certification",
+          "outcome": "Confidential text remains recoverable."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Confidential values survive in shared output."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "The encoding branch deterministically misses an ordinary multi-character needle in UTF-16 bytes."
+        },
+        "reachability": {
+          "summary": "A document supplier controls package parts; the victim relies on redact's explicit package-wide guarantee.",
+          "attacker": "Input supplier or recipient of a supposedly sanitized document",
+          "entrypoint": "edit::apply_plan redact and scrub::leaks"
+        },
+        "summary": "An input package contains a visible value and another copy in BOM-marked UTF-16 custom XML. Redact the visible value and share the successful output; its recipient can extract the untouched XML copy."
+      },
+      "remediationTests": [
+        "Redact a visible value duplicated in UTF-16LE and UTF-16BE XML text/attributes; require REDACTION_LEAK.",
+        "Verify both clean and redline output checks preserve the fail-closed invariant."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-utf16-leak",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "architecture",
+        "originalCandidates": [
+          {
+            "source": "architecture",
+            "originalReport": "Admission accepts/transcodes BOM UTF-16 XML (src/admission.rs:765-780,1845-1867); PartFs preserves untouched XML bytes (src/opc/mod.rs:368-376,630-663). scrub::leaks selects .xml/.rels then uses String::from_utf8_lossy without UTF-16 decoding (src/scrub.rs:467-471,527-532). A secret duplicated in UTF-16 customXml/item1.xml may survive visible text redact and evade dual clean/redline leak check (src/edit/prepared.rs:873; src/edit.rs:4727-4746). No execution.",
+            "validationDetail": {
+              "evidence": [
+                "src/scrub.rs:467-471,527-532",
+                "src/admission.rs:764-792,1845-1860",
+                "src/strict_translation.rs:809-831",
+                "src/edit.rs:5381-5383,5420-5424,4727-4746",
+                "src/edit/prepared.rs:803-804,873"
+              ],
+              "counterevidence": "Non-XML UTF16LE matching and fail-closed read errors don't cover XML selected as UTF8."
+            }
+          },
+          {
+            "source": "architecture",
+            "originalReport": "Admission accepts/transcodes BOM UTF-16 XML (src/admission.rs:765-780,1845-1867); PartFs preserves untouched XML bytes (src/opc/mod.rs:368-376,630-663). scrub::leaks selects .xml/.rels then uses String::from_utf8_lossy without UTF-16 decoding (src/scrub.rs:467-471,527-532). A secret duplicated in UTF-16 customXml/item1.xml may survive visible text redact and evade dual clean/redline leak check (src/edit/prepared.rs:873; src/edit.rs:4727-4746). No execution."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "architecture",
+          "originalReport": "Admission accepts/transcodes BOM UTF-16 XML (src/admission.rs:765-780,1845-1867); PartFs preserves untouched XML bytes (src/opc/mod.rs:368-376,630-663). scrub::leaks selects .xml/.rels then uses String::from_utf8_lossy without UTF-16 decoding (src/scrub.rs:467-471,527-532). A secret duplicated in UTF-16 customXml/item1.xml may survive visible text redact and evade dual clean/redline leak check (src/edit/prepared.rs:873; src/edit.rs:4727-4746). No execution.",
+          "validationDetail": {
+            "evidence": [
+              "src/scrub.rs:467-471,527-532",
+              "src/admission.rs:764-792,1845-1860",
+              "src/strict_translation.rs:809-831",
+              "src/edit.rs:5381-5383,5420-5424,4727-4746",
+              "src/edit/prepared.rs:803-804,873"
+            ],
+            "counterevidence": "Non-XML UTF16LE matching and fail-closed read errors don't cover XML selected as UTF8."
+          }
+        }
+      }
+    },
+    {
+      "ruleId": "redaction-report-disclosure",
+      "title": "Combining redaction with a nearby edit leaks the removed text in the report",
+      "summary": "Only redact's own outcome is sanitized. Other operations capture context from the original document, so a nearby replacement can retain the confidential value in report.operations[].context even when both output documents are redacted.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Medium confidentiality impact and high likelihood for a supported mixed plan; exposure occurs when report/response/log is shared or retained under the redaction guarantee."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Parent traced context creation and report cloning and inspected the existing mixed-operation fixture, which places the secret within the replacement context window."
+      },
+      "taxonomy": {
+        "category": "Sensitive data in diagnostic output",
+        "cwe": [
+          "CWE-200"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/edit.rs",
+          "startLine": 2695,
+          "endLine": 2707,
+          "role": "root_control"
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 2931,
+          "endLine": 2939
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 2476,
+          "endLine": 2518
+        },
+        {
+          "path": "src/edit.rs",
+          "startLine": 5710,
+          "endLine": 5720
+        },
+        {
+          "path": "jubarte-python/python/jubarte_redlines/mcp_server.py",
+          "startLine": 194,
+          "endLine": 207
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "report-original",
+          "label": "Operations resolve against original source",
+          "path": "src/edit.rs",
+          "startLine": 2522,
+          "endLine": 2526,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    /// Resolve every operation against the untouched source; the first\n    /// failure is returned after every operation has been tried.\n    fn resolve(&mut self) -> Result<(), EditError> {\n        let mut first_failure: Option<EditError> = None;\n        for (i, op) in self.plan.operations.iter().enumerate() {",
+          "explanation": "Each operation's diagnostics see the pre-redaction document."
+        },
+        {
+          "id": "report-context",
+          "label": "Replacement captures surrounding source text",
+          "path": "src/edit.rs",
+          "startLine": 2931,
+          "endLine": 2939,
+          "language": "rust",
+          "role": "propagation",
+          "code": "                let (start, end) = self\n                    .find_range(projection, find, *occurrence, &mut outcome)\n                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;\n                outcome.context = Some(context(\n                    text,\n                    start,\n                    end,\n                    &format!(\"{{{}→{}}}\", &text[start..end], replacement),\n                ));",
+          "explanation": "A replacement stores text from both sides of its range, potentially including the nearby redaction target."
+        },
+        {
+          "id": "report-only-redact",
+          "label": "Privacy filtering covers only the Redact variant",
+          "path": "src/edit.rs",
+          "startLine": 2695,
+          "endLine": 2715,
+          "language": "rust",
+          "role": "root_control",
+          "code": "            OperationKind::Redact { find, .. } => {\n                let result = self.resolve_one_unreported(id, kind);\n                // A refusal can quote a selector, field, control or revision\n                // author as well as the anchor. None is safe locating help for\n                // a redaction, including the deferred revision diagnostics.\n                self.revision_refusal.take();\n                let scrub = |outcome: EditOutcome| EditOutcome {\n                    id: outcome.id,\n                    kind: outcome.kind,\n                    status: outcome.status,\n                    paragraph: outcome.paragraph,\n                    matches: outcome.matches,\n                    context: outcome.context.map(|_| format!(\"{{{}}}\", redaction(find))),\n                    comment_id: None,\n                    anchor_given: None,\n                    anchor_read_as: None,\n                    near: None,\n                    code: None,\n                    message: None,\n                };\n                // Rebuild from safe fields on both paths. Adding an outcome",
+          "explanation": "This sanitizer rewrites the current redact outcome, but sibling operation outcomes bypass it."
+        },
+        {
+          "id": "report-copy",
+          "label": "Report copies all previously captured outcomes",
+          "path": "src/edit.rs",
+          "startLine": 2510,
+          "endLine": 2518,
+          "language": "rust",
+          "role": "sink",
+          "code": "                .unwrap_or_default(),\n            paragraphs: ParagraphDelta {\n                from: self.body_paragraph_count(),\n                to: self.body_paragraph_count(),\n            },\n            operations: self.outcomes.clone(),\n            comments_added: self.comments_added,\n            revisions: RevisionCounts::default(),\n            fields: Vec::new(),",
+          "explanation": "outcomes are cloned without plan-wide redaction filtering."
+        },
+        {
+          "id": "report-existing-test",
+          "label": "Existing supported plan places a secret next to an edit",
+          "path": "tests/scrub_and_redact.rs",
+          "startLine": 353,
+          "endLine": 363,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "fn a_redaction_beside_another_edit_of_the_paragraph_keeps_both() {\n    let source = docx(&para(\"Account 12345678 is closed.\"));\n    let out = apply_plan(\n        &source,\n        &plan(\n            r#\"{\"kind\":\"redact\",\"paragraph\":\"p0\",\"find\":\"12345678\"},\n               {\"kind\":\"replace\",\"paragraph\":\"p0\",\"find\":\"closed\",\"replacement\":\"open\"}\"#,\n        ),\n    )\n    .unwrap();\n    assert_word_valid_package(&out.redline);",
+          "explanation": "The repository's mixed-operation example redacts account digits and replaces a nearby word; context includes the original digits."
+        }
+      ],
+      "rootCause": {
+        "summary": "resolve resolves all operations against untouched source. Replace uses context with a 20-character window, while resolve_one filters only the Redact outcome. report clones other outcomes unchanged. check_redactions scans document bytes only, so those source-context strings escape the otherwise careful privacy gate.",
+        "evidenceRefs": [
+          "report-original",
+          "report-context",
+          "report-only-redact",
+          "report-copy"
+        ]
+      },
+      "remediation": "Apply redaction privacy filtering to the complete report and every refusal/diagnostic channel, or suppress source-derived context for all operations in a plan containing redact.",
+      "validation": {
+        "limitations": [
+          "The existing fixture was inspected, not executed; confidentiality impact requires report logging/persistence/sharing."
+        ],
+        "method": "static trace using existing repository fixture",
+        "summary": "tests/scrub_and_redact.rs:353-374 already combines redact of 12345678 with closed->open in 'Account 12345678 is closed.'. The replacement's before window contains those digits; report() retains it. The test asserts document secrecy but omits serialized-report secrecy, unlike its preceding single-redaction test. MCP writes/returns the report at mcp_server.py:194-207, and native Python/WASM bindings serialize it.",
+        "counterevidence": [
+          "Redact's own outcome is sanitized and the success confirmation suppresses before/after diffs.",
+          "Both output packages are checked for leaks; report strings are outside that check."
+        ]
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Original paragraph -> sibling operation context -> outcomes clone -> serialized report/MCP response",
+          "source": "Confidential source text near another edit",
+          "sink": "Report context and diagnostics",
+          "outcome": "Removed value remains in non-document artifacts."
+        },
+        "impact": {
+          "level": "medium",
+          "why": "Redacted text leaks through reports."
+        },
+        "likelihood": {
+          "level": "high",
+          "why": "Existing supported fixture deterministically captures the value."
+        },
+        "reachability": {
+          "summary": "Ordinary supported use triggers the leak; no elevated attacker authority is needed. A recipient with report access can recover the value.",
+          "attacker": "Recipient or log reader",
+          "entrypoint": "Mixed redact/edit plan"
+        },
+        "summary": "Apply a supported plan with redact plus a nearby non-overlapping replacement; inspect or share the returned report or MCP report.json."
+      },
+      "remediationTests": [
+        "Extend the existing mixed redact/replace fixture to assert serialized reports omit the removed value.",
+        "Cover sibling-operation refusals and MCP/native/Python/WASM report serialization."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0034-redaction-report",
+        "workerLabel": "discovery-0034",
+        "discoveredBy": "architecture",
+        "originalCandidates": [
+          {
+            "source": "architecture",
+            "originalReport": "Redact suppresses context only for own outcome (src/edit.rs:2695-2751); nearby Replace resolves original source (2522-2526,2931-2939) and context retains 20 chars on either side (5710-5720). report clones other outcomes (2476-2518); check_redactions scans DOCX only (4727-4746). Mixed plan can leak redacted text in report.operations[replace].context; MCP persists report (mcp_server.py:194-207), bindings serialize it. README:823 promises no report repeats text. Existing tests/scrub_and_redact.rs:353-374 mixed redaction 12345678 plus nearby closed->open omits report assertion; preceding single-op test asserts report secrecy."
+          }
+        ]
+      },
+      "extensions": {
+        "originalCandidate": {
+          "source": "architecture",
+          "originalReport": "Redact suppresses context only for own outcome (src/edit.rs:2695-2751); nearby Replace resolves original source (2522-2526,2931-2939) and context retains 20 chars on either side (5710-5720). report clones other outcomes (2476-2518); check_redactions scans DOCX only (4727-4746). Mixed plan can leak redacted text in report.operations[replace].context; MCP persists report (mcp_server.py:194-207), bindings serialize it. README:823 promises no report repeats text. Existing tests/scrub_and_redact.rs:353-374 mixed redaction 12345678 plus nearby closed->open omits report assertion; preceding single-op test asserts report secrecy."
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "package-xml",
+        "label": "Package admission and XML consumers",
+        "disposition": "reported",
+        "notes": "Validated extension-based XML depth bypass through numbering relationship; review of sibling consumers ongoing.",
+        "receiptRefs": []
+      },
+      {
+        "id": "ci-isolation",
+        "label": "Pull-request execution and private build infrastructure",
+        "disposition": "reported",
+        "notes": "Validated untrusted-self-hosted-ci across ci/docs/md-roundtrip/adoption. Severity calibrated medium because external approval/isolation prerequisites are unverified.",
+        "receiptRefs": []
+      },
+      {
+        "id": "html-table-expansion",
+        "label": "HTML and MHT table expansion during rendering",
+        "disposition": "reported",
+        "notes": "Unbounded colspan validated from numeric input to grid emission; XML admission bounds only source bytes.",
+        "receiptRefs": []
+      },
+      {
+        "id": "wmf-record-confinement",
+        "label": "WMF record parsing and retained text",
+        "disposition": "reported",
+        "notes": "collect_images resolves embedded image bytes and calls decode_image (src/convert/mod.rs:18349-18360); decode_image invokes metafile::render at :20248. A short valid-sized EXTTEXTOUT record can set a 65535-byte count extending into following records; forward advancement still uses its short size. Each nonblank overlapping slice is retained as a String. Roughly one MiB can therefore generate several GiB of text without exceeding source byte admission.",
+        "receiptRefs": []
+      },
+      {
+        "id": "quadratic-html-entity-decoding",
+        "label": "HTML entity decoding in DOCX and Markdown conversion",
+        "disposition": "reported",
+        "notes": "Parent traced with_layout -> altchunk::expand -> html_to_wml -> Builder::text -> decode_entities and inspected raw-HTML Markdown calls at write.rs:1357,1420. A semicolon-free ampersand run forces each loop iteration to scan the remaining suffix; input limits do not change that quadratic relation.",
+        "receiptRefs": []
+      },
+      {
+        "id": "quadratic-legacy-field-state",
+        "label": "Legacy DOC field-state processing",
+        "disposition": "reported",
+        "notes": "legacy_doc::read decodes caller-controlled main-story characters and immediately calls Story::blocks. main_text verifies piece coverage and checked byte offsets (:1148-1233) but places no field-nesting bound. CLI run_convert_any calls doc_to_docx on compound input before DOCX admission (:3125-3132). Thus a valid legacy stream with nested result fields forces quadratic work without a large visible result.",
+        "receiptRefs": []
+      },
+      {
+        "id": "redaction-encoding-bypass",
+        "label": "Encoding-aware redaction leak certification",
+        "disposition": "reported",
+        "notes": "Admission part_text supports UTF-16LE/BE; existing tests at admission.rs:1845-1860 admit UTF-16 customXml. Parent verified normal transitional packages remain unchanged in strict_translation and raw parts are preserved by PartFs serialization. check_redactions scans both output documents but invokes the encoding-blind XML branch, allowing the retained custom-XML copy to evade certification.",
+        "receiptRefs": []
+      },
+      {
+        "id": "redaction-report-disclosure",
+        "label": "Redaction privacy across report and diagnostic channels",
+        "disposition": "reported",
+        "notes": "tests/scrub_and_redact.rs:353-374 already combines redact of 12345678 with closed->open in 'Account 12345678 is closed.'. The replacement's before window contains those digits; report() retains it. The test asserts document secrecy but omits serialized-report secrecy, unlike its preceding single-redaction test. MCP writes/returns the report at mcp_server.py:194-207, and native Python/WASM bindings serialize it.",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "id": "audit-remaining",
+        "reason": "Independent baseline, architecture review, conversion investigation and remaining current-scope files are being reviewed."
+      },
+      {
+        "id": "candidate-scrub-metadata",
+        "candidateId": "discovery-0034-scrub-metadata",
+        "reason": "Focused privacy investigator is validating metadata relocation and preservation prerequisites.",
+        "candidate": {
+          "source": "architecture",
+          "originalReport": "scrub_properties reads only fixed docProps/core.xml, app.xml, custom.xml (src/scrub.rs:39-43,357-384), unlike relationship-derived main/story handling. Relocated relationship-carried identifying metadata may remain untouched while scrub succeeds; preservation/validation constraints still being checked. Redaction has explicit dual clean/redline leak checks.",
+          "validationDetail": {
+            "evidence": [
+              "src/scrub.rs:16-20,39-43,68-75,136-150,357-383",
+              "src/opc/mod.rs:365-376,617-663",
+              "README.md:673-676"
+            ],
+            "counterevidence": "Conventional paths scrubbed; title/subject/application/revision dates deliberately retained; validity comparison doesn't establish privacy.",
+            "impact": "Relocated relationship-carried core/extended/custom identifying metadata survives selected docprops operation."
+          }
+        }
+      },
+      {
+        "id": "candidate-node-plan",
+        "candidateId": "discovery-0034-node-plan",
+        "reason": "Investigator is assessing local attacker prerequisites and whether a protected authority boundary is crossed.",
+        "candidate": {
+          "source": "conversion",
+          "originalReport": "Node recordPlan writes deterministic .<plan-basename>.<pid>.partial with fs.writeFileSync at cli mjs:410-426, which could follow a preexisting symlink in writable directory. --consume pins planFd into consumed (:449-457) but applyEdit->editPlan reopens o.plan by pathname (:362,496); pinned snapshot used only deletion check. Requires local concurrent directory/plan manipulation; not yet established as a vulnerability.",
+          "finalFinding": {
+            "title": "Predictable Node plan temporary file follows attacker-controlled symlinks",
+            "cwe": "CWE-377",
+            "severity": "medium",
+            "confidence": "high",
+            "locations": [
+              "jubarte-wasm/cli/bin/jubarte-redlines.mjs:420-425",
+              ":443-444"
+            ],
+            "attacker": "Local attacker with write access to shared plan destination directory; not document-only",
+            "dataflow": "recordPlan validates plan, constructs .<basename>.<pid>.partial, fs.writeFileSync truncates/follows symlink, rename later",
+            "impact": "Clobber another file writable by CLI account with plan JSON.",
+            "counterevidence": [
+              "Requires local directory write and PID prediction",
+              "Final selected symlink destination is intentionally resolved; bug is independent temporary path",
+              "--consume path reread is separate unproven authority issue"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

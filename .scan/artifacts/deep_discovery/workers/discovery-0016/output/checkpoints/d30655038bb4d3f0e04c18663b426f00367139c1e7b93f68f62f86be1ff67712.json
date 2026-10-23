@@ -1,0 +1,1237 @@
+{
+  "complete": false,
+  "scanId": "f695b239-71c7-4b01-b1c7-bb7c6b33c706",
+  "scope": {
+    "summary": "Offline current-state audit of /Users/arthrod/temp/T/jubarte-redlines, scope .",
+    "runtimeStatus": "Application code not executed",
+    "validationMode": "static source review"
+  },
+  "threatModel": {
+    "summary": "Jubarte is an in-process Rust DOCX comparison, editing, inspection, conversion and revision-processing engine. Rust byte APIs are exposed through a native CLI, PyO3 Python bindings and Python CLI, wasm-bindgen browser/Node bindings and a Node CLI. An optional Python MCP server exposes document tools over stdio with a directory capability. Inputs flow through package admission into OPC/XML processing, comparison/editing/layout, then returned bytes or caller-selected filesystem outputs. Rendering additionally reads installed fonts and maintains a host font index; these operations have authority separate from document publication. Explicit native self-update retrieves GitHub release assets and replaces the executable. Tag-driven GitHub Actions builds and publishes releases. Evidence: src/lib.rs:7-30; jubarte-python/python/jubarte_redlines/__main__.py:5-27; jubarte-wasm/src/lib.rs:7-28; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21; jubarte-python/python/jubarte_redlines/mcp_server.py:67-108,373-381; src/convert/font.rs:3090-3107; src/update.rs:186-257; .github/workflows/release.yml:15-21,230-245,356-369.",
+    "assets": [
+      "Confidential document contents, media, revision histories, author/comment metadata and rendered text. Read/inspection tools intentionally disclose these to their caller; edit/render workflows write derived DOCX, PDFs, PNGs and reports. Evidence: src/lib.rs:17-28; jubarte-python/python/jubarte_redlines/mcp_server.py:131-150,185-218,229-255.",
+      "Integrity of source-bound edits and explicitly selected output files. Legacy EditPlan source_sha256 is optional and checked when present; CLI additionally provides source-recheck machinery. Evidence: src/edit.rs:5-13,2081-2089; src/bin/jubarte.rs:1642-1655.",
+      "Host memory and CPU consumed by untrusted ZIP/XML, images, fonts, legacy DOC and document layout/comparison. Admission bounds input structures but is not a whole-process resource sandbox. Evidence: SECURITY.md:39-77; src/admission.rs:63-99,439-553.",
+      "MCP root contents and output integrity; host-installed font files and font-index metadata; updater executable integrity; release signing and GitHub publication authority. Evidence: src/publication.rs:146-205; src/convert/font.rs:2633-2652,3098-3107,3155-3168,3213-3229; src/update.rs:198-207; .github/workflows/release.yml:234-235,261-307,356-369."
+    ],
+    "trustBoundaries": [
+      "Untrusted document producer to engine: complete package bytes enter admission before representative comparison/rendering paths. Default limits are 64 MiB compressed, 10,000 entries, 64 MiB per part, 256 MiB total inflated and XML depth 256; comparison limits are 512 MiB compressed/per part and 2 GiB total, with the same entry/depth caps. Python/WASM comparison options apply explicit overrides to the comparison settings. Admission checks ZIP defects, canonical part identity, encryption/compression, declared and actual inflation and XML policy. Evidence: src/admission.rs:63-99,137-153,439-553; src/document_comparer.rs:4903-4918,6530-6559; src/convert/mod.rs:769-778; jubarte-python/src/lib.rs:65-79; jubarte-wasm/src/lib.rs:63-74.",
+      "Raw XML caller to DOM: checked parsing applies XML policy, while public infallible parse_xdocument is a lower-level permissive interface whose caller must gate untrusted XML. The tag defaults are 1,024 attributes, 1,024-byte attribute names, 64 MiB raw/decoded values and 128 MiB complete start tags. Evidence: src/xmllinq/parse.rs:44-57,91-98,111-134.",
+      "Agent/client to edit engine: plans select exact anchors against the untouched source; optional legacy source hash rejects stale bytes. This establishes document consistency, not authentication or approval of the requested change. Evidence: src/edit.rs:5-24,2073-2094.",
+      "Native CLI/operator to local filesystem: explicitly selected paths use ambient authority. The Rust publisher holds destination-parent handles, stages and verifies complete bytes, and commits each file separately; failures report already committed files. Existing destinations require overwrite authorization. This is not the MCP directory confinement boundary. Evidence: src/publication.rs:83-130,168-205,211-225,421-480.",
+      "MCP client to document filesystem: --root defaults to process cwd and is expanded/resolved once; build_server opens a native OutputRoot capability. All document loads and outputs route through that held directory. Python resolve/is_relative_to checks provide early diagnostics; actual I/O is capability relative. Outputs reject unsafe relative names, escaping resolution and output symlinks, with overwrite false by default. All connected stdio clients share this root and the registered read/write tools; ToolAnnotations are hints, not per-client authorization. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:54-55,67-108,152-160,373-381; jubarte-python/src/lib.rs:1244-1278; src/publication.rs:146-199,228-245,431-463.",
+      "Markdown author to CLI image loader: document image names are percent decoded, URL schemes are refused and resolved targets must remain inside --resource-path or the Markdown file's parent, falling back to cwd. A held OutputRoot performs the actual read. This resource capability is independent of ambient output authority. Evidence: src/bin/jubarte.rs:2811-2848,2851-2870,2936-2943.",
+      "Document-selected font families to renderer/host: renderer searches installed font locations and its configured per-user directory; a persistent index can directly select stored face paths after file/directory stamp checks. JUBARTE_FONT_DIR overrides the platform directory. JUBARTE_FONT_INDEX overrides the index path; empty/off disables it. Otherwise the index is a sibling of fonts, at parent(user_font_dir)/font-index.tsv, with staging at the same path after replacing its extension with tsv.<pid>.tmp. These operations use ambient std::fs and do not pass through MCP OutputRoot. Evidence: src/convert/font.rs:2633-2652,2814-2862,3098-3107,3155-3168,3182-3229.",
+      "Browser WASM host to byte API: browser/Node wasm-bindgen functions accept and return byte arrays/strings; filesystem publication is separately performed by a host adapter. The Node CLI explicitly has node:fs authority and directly reads/writes caller-selected paths. Do not transfer native Rust publication guarantees to that adapter. Evidence: jubarte-wasm/src/lib.rs:7-28; jubarte-wasm/cli/bin/jubarte-redlines.mjs:16-21,52-73,76-79,106-110.",
+      "Release infrastructure to explicit updater: the target is fixed to jandira-tech/jubarte-redlines and the platform-specific archive entry jubarte-<version>-<target>/jubarte[.exe]. Checksums come from SHA256SUMS.txt in the same release. Current RELEASE_KEYS is empty and FIRST_SIGNED_RELEASE is None, so signatures are not enforced. Noninteractive replacement requires --yes; --check performs lookup only; named versions can intentionally downgrade. An extracted-binary hook rejects nonregular files. Evidence: src/update.rs:25-48,91-108,120-125,144-160,198-257,274-285,299-320.",
+      "Maintainer/tag authority to release publication: v* tag pushes run a version-match check, read-only build jobs and a distinct contents:write release job. Signing receives secrets.ZIPSIGN_PRIVATE_KEY in its signing step, decodes keys into a temporary runner directory, removes that directory on exit and verifies against committed public keys when present. GitHub publication receives secrets.GITHUB_TOKEN and uploads dist/* to github.repository. Evidence: .github/workflows/release.yml:15-21,31-49,51-89,230-245,261-309,317-322,356-369."
+    ],
+    "attackerCapabilities": [
+      "A document supplier can control document/archive/XML/media/font payloads, Markdown image references and document-selected font families, without controlling the host environment, chosen resource root, installed font index, operator account or release infrastructure. Failure at parsing/layout could add denial of service or unauthorized resource access; those impacts require separate validation.",
+      "An MCP caller can read supported documents under the granted root and request exposed editing/rendering writes there, including overwrite=true. This is intentionally granted authority; there is no established tenant or per-tool identity separation. Reading outside the capability or causing writes outside the document root would require a separate control failure or an independently reachable host subsystem.",
+      "An attacker who can only supply input documents is not assumed able to set JUBARTE_FONT_DIR/JUBARTE_FONT_INDEX, modify installed font/index files, publish release assets or push tags. Control of those resources is a distinct prerequisite.",
+      "A release-asset attacker could affect the updater only when the user invokes update and consumes the affected release. Current checksums provide corruption detection without independent signer authentication, as the documentation explicitly recognizes."
+    ],
+    "securityObjectives": [
+      "Refuse malformed or policy-exceeding packages before representative comparison/rendering work; preserve effective overridden limits instead of silently weakening them. Resource limits remain caller/host responsibilities beyond admission. Evidence: src/admission.rs:63-99,439-553; SECURITY.md:39-77.",
+      "Keep MCP document reads and outputs within the originally granted directory capability, resist escaping symlink resolution, and require explicit replacement authorization. Distinguish this from renderer ambient font/cache access. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:67-108; src/publication.rs:146-199,431-463; src/convert/font.rs:3182-3229.",
+      "Bind prepared edits to their intended source when the relevant guard is supplied or workflow requires it; resolve plan failures before publishing. Publish verified bytes with accurate partial-commit and durability reporting. Evidence: src/edit.rs:5-13,2081-2089; src/bin/jubarte.rs:1642-1655; src/publication.rs:83-130,168-173.",
+      "Restrict Markdown image reads to the selected resource root and refuse network image schemes. Evidence: src/bin/jubarte.rs:2811-2870,2936-2943.",
+      "Keep updater replacement explicit and platform/version bound, verify checksums and regular-file identity, and enforce signatures if trusted keys are enabled. Limit release publication authority to its privileged job and keep private signing material out of published artifacts. Evidence: src/update.rs:120-125,198-257,274-285,307-320; .github/workflows/release.yml:234-235,261-309,356-369."
+    ],
+    "assumptions": [
+      "No exact deployment context or authoritative knowledge base was supplied. The model describes supported code paths, not observed production exposure, remote service access, tenant isolation or active release settings.",
+      "Repository SECURITY.md is inherited policy and analysis data. It declares untrusted document inputs and process memory/CPU isolation obligations; this pass does not certify that every exported operation or decoder enforces every declared limit. Evidence: SECURITY.md:39-77.",
+      "Documentation/configuration disagreement: MCP build_server says tools only touch files under root, and its module documentation describes outputs under root, but native rendering has ambient font reads and persistent font-index writes outside that root. Preserve both facts: OutputRoot confines document I/O; the process is not globally filesystem confined. Native macOS fonts default to $HOME/Library/Application Support/jubarte/fonts and index to $HOME/Library/Application Support/jubarte/font-index.tsv. Linux uses $XDG_DATA_HOME/jubarte/fonts or $HOME/.local/share/jubarte/fonts with the index in the parent; Windows uses $APPDATA/jubarte/fonts with index in its parent and system fonts from WINDIR/SystemRoot/LOCALAPPDATA. Nonempty JUBARTE_FONT_DIR overrides fonts; JUBARTE_FONT_INDEX explicitly selects index, empty/off disables it. Temporary sibling replaces extension with tsv.<pid>.tmp. Evidence: jubarte-python/python/jubarte_redlines/mcp_server.py:5-9,67-72,234-236; src/convert/font.rs:2633-2652,2831-2862,3098-3107,3155-3168,3182-3229. No exploit or unauthorized new capability is established by this architectural discrepancy alone.",
+      "Documentation/configuration disagreement: crate overview says every function returns bytes with no temp files, whereas native rendering maintains a font index using a temporary sibling file and rename. This does not imply document bytes are written to that index; it records lookup/path/stamp metadata. Evidence: src/lib.rs:7-11; src/convert/font.rs:3090-3096,3192-3229.",
+      "Self-update documentation describes signed releases conditionally and explicitly says an empty trusted-key list means checksum-only. Current code matches the staged, checksum-only state; presence of signature dependencies does not establish active signature enforcement. Evidence: docs/SELF_UPDATE.md:29-35,59-80; src/update.rs:44-48,245-249,274-285.",
+      "docs/SELF_UPDATE.md:22-24 claims GH_TOKEN/GITHUB_TOKEN raise the API budget. src/update.rs:198-210 does not explicitly pass an auth token. Whether the dependency automatically consumes these variables was not inspected; credential recipients and this documentation claim remain unresolved.",
+      "Actual OS permissions, environment values, MCP launch cwd/root, font availability, writable-cache state, tag protections, GitHub environment approvals and configured secret presence are not established by source alone.",
+      "External relationship fetching, all legacy-DOC/media decoders, platform-specific dependency extraction internals, all CLI wrapper publication paths and package-manager publication scripts were not exhaustively inspected. They remain explicit coverage gaps; this is an architecture pass without runtime execution."
+    ],
+    "origin": "generated",
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "summary": "Representative product architecture and conditional release/update boundaries in the current repository; architecture mapping is not completed security-audit coverage."
+    }
+  },
+  "findings": [
+    {
+      "ruleId": "unbounded-expansion.html-table-colspan",
+      "title": "Rendering an embedded HTML table can exhaust process memory",
+      "summary": "Rendering a small DOCX containing an HTML altChunk with a large `colspan` allocates one generated grid column per attacker-supplied span value. A single cell with `colspan=\"1000000000\"` causes a billion string writes before layout, bypassing the original package's input-size budgets.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A document author can deterministically exhaust CPU and memory in a consuming renderer with a tiny input. Availability impact is high for that process, but remote/shared-service deployment is not established and process limits can contain it."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace establishes attacker-controlled integer parsing and the unbounded allocation loop after admission; no runtime exploit was executed."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource consumption during HTML expansion",
+        "cwe": [
+          "CWE-789"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 566,
+          "role": "user_input"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 490,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 773,
+          "endLine": 798,
+          "role": "entrypoint"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "chunk-consumer",
+          "label": "Admission precedes HTML expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+        },
+        {
+          "id": "chunk-transform",
+          "label": "Chunk bytes become HTML and generated WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+        },
+        {
+          "id": "span-input",
+          "label": "HTML colspan accepted without upper bound",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 562,
+          "endLine": 567,
+          "language": "rust",
+          "role": "user_input",
+          "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+          "explanation": "Any positive span fitting usize survives unchanged; the lower clamp adds no upper bound."
+        },
+        {
+          "id": "span-count",
+          "label": "Span values determine generated grid length",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 469,
+          "endLine": 476,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+          "explanation": "A one-cell row sets cols directly to the supplied span, independently of input length."
+        },
+        {
+          "id": "span-sink",
+          "label": "One string write for each column",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 488,
+          "endLine": 491,
+          "language": "rust",
+          "role": "sink",
+          "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+          "explanation": "The attacker-sized loop grows the output string by tens of gigabytes for a billion-column cell before later validation could occur."
+        }
+      ],
+      "rootCause": {
+        "summary": "`with_layout()` admits the original DOCX, then `expand()` loads its HTML chunk and passes it to `html_to_wml()`. Cell parsing stores `colspan` as an unrestricted usize. `end_table()` sums the spans into `cols` and emits a grid element for every column, so a short decimal attribute controls huge CPU and allocation work after the input gate.",
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "span-input",
+          "span-count",
+          "span-sink"
+        ]
+      },
+      "remediation": "Reject spans and total table column counts above a documented limit before construction; use checked addition and enforce a generated-output/work budget shared across all HTML chunks.",
+      "validation": {
+        "counterEvidence": [
+          "Admission caps compressed/inflated bytes and XML policy before conversion (src/convert/mod.rs:773-778).",
+          "SECURITY.md recommends process memory/CPU isolation, which can limit collateral damage.",
+          "No shared or remote renderer deployment is established."
+        ],
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "span-input",
+          "span-count",
+          "span-sink"
+        ],
+        "limitations": [
+          "No application code or resource-exhaustion input was executed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "Parent verified the baseline candidate against the actual converter entrypoint and HTML builder. A well-formed one-cell table with a large positive colspan reaches the grid-generation loop with no upper bound; admission limits only the stored input, not this new output."
+      },
+      "attackPath": {
+        "controls": [
+          "Original package admission limits do not bound generated table columns.",
+          "Host process resource limits mitigate collateral impact."
+        ],
+        "dataflow": {
+          "summary": "DOCX main-story altChunk relationship -> embedded HTML bytes -> html_to_wml cell span -> row span sum -> repeated grid-column string writes.",
+          "evidenceRefs": [
+            "chunk-consumer",
+            "chunk-transform",
+            "span-input",
+            "span-count",
+            "span-sink"
+          ]
+        },
+        "impact": {
+          "level": "high",
+          "rationale": "Renderer process CPU and memory exhaustion; a shared host could lose service if its integration provides no isolation."
+        },
+        "likelihood": {
+          "level": "high",
+          "rationale": "The numeric span flows directly to the allocation loop and a small input can request billions of iterations."
+        },
+        "reachability": {
+          "summary": "A caller-controlled document is sufficient at public conversion APIs; no privileged options or network access are required. The victim must render/layout the supplied document.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "DOCX rendering through with_layout",
+          "preconditions": [
+            "Victim invokes a rendering/layout API on attacker-authored DOCX."
+          ]
+        },
+        "summary": "Provide a DOCX whose main story references an embedded HTML table with a huge numeric colspan, then have a victim render it as PDF/PNG or request layout facts."
+      },
+      "remediationTests": [
+        "Assert that a tiny HTML chunk with a huge colspan is refused before grid allocation.",
+        "Cover aggregate span overflow, multiple cells/chunks, and valid spans at the inclusive boundary."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "workerLabel": "discovery-0016",
+        "worker": "baseline",
+        "candidateId": "discovery-0016-altchunk-colspan",
+        "previousFindings": [
+          {
+            "ruleId": "unbounded-expansion.html-table-colspan",
+            "title": "Rendering an embedded HTML table can exhaust process memory",
+            "summary": "Rendering a small DOCX containing an HTML altChunk with a large `colspan` allocates one generated grid column per attacker-supplied span value. A single cell with `colspan=\"1000000000\"` causes a billion string writes before layout, bypassing the original package's input-size budgets.",
+            "severity": {
+              "level": "medium",
+              "rationale": "A document author can deterministically exhaust CPU and memory in a consuming renderer with a tiny input. Availability impact is high for that process, but remote/shared-service deployment is not established and process limits can contain it."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Direct source trace establishes attacker-controlled integer parsing and the unbounded allocation loop after admission; no runtime exploit was executed."
+            },
+            "taxonomy": {
+              "category": "Uncontrolled resource consumption during HTML expansion",
+              "cwe": [
+                "CWE-400"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "role": "user_input"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 773,
+                "endLine": 798,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "chunk-consumer",
+                "label": "Admission precedes HTML expansion",
+                "path": "src/convert/mod.rs",
+                "startLine": 789,
+                "endLine": 798,
+                "language": "rust",
+                "role": "entrypoint",
+                "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+                "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+              },
+              {
+                "id": "chunk-transform",
+                "label": "Chunk bytes become HTML and generated WML",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 34,
+                "endLine": 39,
+                "language": "rust",
+                "role": "propagation",
+                "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+                "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+              },
+              {
+                "id": "span-input",
+                "label": "HTML colspan accepted without upper bound",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 567,
+                "language": "rust",
+                "role": "user_input",
+                "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+                "explanation": "Any positive span fitting usize survives unchanged; the lower clamp adds no upper bound."
+              },
+              {
+                "id": "span-count",
+                "label": "Span values determine generated grid length",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 476,
+                "language": "rust",
+                "role": "propagation",
+                "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+                "explanation": "A one-cell row sets cols directly to the supplied span, independently of input length."
+              },
+              {
+                "id": "span-sink",
+                "label": "One string write for each column",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 488,
+                "endLine": 491,
+                "language": "rust",
+                "role": "sink",
+                "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+                "explanation": "The attacker-sized loop grows the output string by tens of gigabytes for a billion-column cell before later validation could occur."
+              }
+            ],
+            "rootCause": {
+              "summary": "`with_layout()` admits the original DOCX, then `expand()` loads its HTML chunk and passes it to `html_to_wml()`. Cell parsing stores `colspan` as an unrestricted usize. `end_table()` sums the spans into `cols` and emits a grid element for every column, so a short decimal attribute controls huge CPU and allocation work after the input gate.",
+              "evidenceRefs": [
+                "chunk-consumer",
+                "chunk-transform",
+                "span-input",
+                "span-count",
+                "span-sink"
+              ]
+            },
+            "remediation": "Reject spans and total table column counts above a documented limit before construction; use checked addition and enforce a generated-output/work budget shared across all HTML chunks.",
+            "validation": {
+              "counterEvidence": [
+                "Admission caps compressed/inflated bytes and XML policy before conversion (src/convert/mod.rs:773-778).",
+                "SECURITY.md recommends process memory/CPU isolation, which can limit collateral damage.",
+                "No shared or remote renderer deployment is established."
+              ],
+              "evidenceRefs": [
+                "chunk-consumer",
+                "chunk-transform",
+                "span-input",
+                "span-count",
+                "span-sink"
+              ],
+              "limitations": [
+                "No application code or resource-exhaustion input was executed."
+              ],
+              "method": "independent static source trace",
+              "status": "validated",
+              "summary": "Parent verified the baseline candidate against the actual converter entrypoint and HTML builder. A well-formed one-cell table with a large positive colspan reaches the grid-generation loop with no upper bound; admission limits only the stored input, not this new output."
+            },
+            "attackPath": {
+              "controls": [
+                "Original package admission limits do not bound generated table columns.",
+                "Host process resource limits mitigate collateral impact."
+              ],
+              "dataflow": {
+                "summary": "DOCX main-story altChunk relationship -> embedded HTML bytes -> html_to_wml cell span -> row span sum -> repeated grid-column string writes.",
+                "evidenceRefs": [
+                  "chunk-consumer",
+                  "chunk-transform",
+                  "span-input",
+                  "span-count",
+                  "span-sink"
+                ]
+              },
+              "impact": {
+                "level": "high",
+                "rationale": "Renderer process CPU and memory exhaustion; a shared host could lose service if its integration provides no isolation."
+              },
+              "likelihood": {
+                "level": "high",
+                "rationale": "The numeric span flows directly to the allocation loop and a small input can request billions of iterations."
+              },
+              "reachability": {
+                "summary": "A caller-controlled document is sufficient at public conversion APIs; no privileged options or network access are required. The victim must render/layout the supplied document.",
+                "attacker": "Untrusted document author",
+                "entrypoint": "DOCX rendering through with_layout",
+                "preconditions": [
+                  "Victim invokes a rendering/layout API on attacker-authored DOCX."
+                ]
+              },
+              "summary": "Provide a DOCX whose main story references an embedded HTML table with a huge numeric colspan, then have a victim render it as PDF/PNG or request layout facts."
+            },
+            "remediationTests": [
+              "Assert that a tiny HTML chunk with a huge colspan is refused before grid allocation.",
+              "Cover aggregate span overflow, multiple cells/chunks, and valid spans at the inclusive boundary."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "workerLabel": "discovery-0016",
+              "worker": "baseline",
+              "candidateId": "discovery-0016-altchunk-colspan",
+              "originalCandidates": [
+                {
+                  "title": "Unbounded HTML table colspan expansion causes denial of service",
+                  "source": "baseline",
+                  "message": "Confirmed strong DoS candidate: src/convert/altchunk.rs parses attacker HTML td/th colspan directly as usize (lines ~564-568), sums spans into cols (lines ~475-481), then emits one w:gridCol per column using for _ in 0..cols (line ~497), no clamp/budget. A tiny embedded HTML altChunk with colspan=1000000000 forces billions of iterations/output despite DOCX admission. Exact call-path/evidence being checked."
+                }
+              ]
+            }
+          },
+          {
+            "ruleId": "unbounded-expansion.html-table-colspan",
+            "title": "Rendering an embedded HTML table can exhaust process memory",
+            "summary": "Rendering a small DOCX containing an HTML altChunk with a large `colspan` allocates one generated grid column per attacker-supplied span value. A single cell with `colspan=\"1000000000\"` causes a billion string writes before layout, bypassing the original package's input-size budgets.",
+            "severity": {
+              "level": "medium",
+              "rationale": "A document author can deterministically exhaust CPU and memory in a consuming renderer with a tiny input. Availability impact is high for that process, but remote/shared-service deployment is not established and process limits can contain it."
+            },
+            "confidence": {
+              "level": "high",
+              "rationale": "Direct source trace establishes attacker-controlled integer parsing and the unbounded allocation loop after admission; no runtime exploit was executed."
+            },
+            "taxonomy": {
+              "category": "Uncontrolled resource consumption during HTML expansion",
+              "cwe": [
+                "CWE-400"
+              ]
+            },
+            "locations": [
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 566,
+                "role": "user_input"
+              },
+              {
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 490,
+                "role": "root_control"
+              },
+              {
+                "path": "src/convert/mod.rs",
+                "startLine": 773,
+                "endLine": 798,
+                "role": "entrypoint"
+              }
+            ],
+            "codeEvidence": [
+              {
+                "id": "chunk-consumer",
+                "label": "Admission precedes HTML expansion",
+                "path": "src/convert/mod.rs",
+                "startLine": 789,
+                "endLine": 798,
+                "language": "rust",
+                "role": "entrypoint",
+                "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+                "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+              },
+              {
+                "id": "chunk-transform",
+                "label": "Chunk bytes become HTML and generated WML",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 34,
+                "endLine": 39,
+                "language": "rust",
+                "role": "propagation",
+                "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+                "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+              },
+              {
+                "id": "span-input",
+                "label": "HTML colspan accepted without upper bound",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 562,
+                "endLine": 567,
+                "language": "rust",
+                "role": "user_input",
+                "code": "                self.cell_spans.push(\n                    attr(open, \"colspan\")\n                        .and_then(|s| s.trim().parse::<usize>().ok())\n                        .unwrap_or(1)\n                        .max(1),\n                );",
+                "explanation": "Any positive span fitting usize survives unchanged; the lower clamp adds no upper bound."
+              },
+              {
+                "id": "span-count",
+                "label": "Span values determine generated grid length",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 469,
+                "endLine": 476,
+                "language": "rust",
+                "role": "propagation",
+                "code": "        let cols = table\n            .rows\n            .iter()\n            .map(|r| r.iter().map(|c| c.span).sum::<usize>())\n            .max()\n            .unwrap_or(1)\n            .max(1);\n        let col_w = 9360 / cols;",
+                "explanation": "A one-cell row sets cols directly to the supplied span, independently of input length."
+              },
+              {
+                "id": "span-sink",
+                "label": "One string write for each column",
+                "path": "src/convert/altchunk.rs",
+                "startLine": 488,
+                "endLine": 491,
+                "language": "rust",
+                "role": "sink",
+                "code": "        s.push_str(\"<w:tblLayout w:type=\\\"fixed\\\"/></w:tblPr><w:tblGrid>\");\n        for _ in 0..cols {\n            let _ = write!(s, \"<w:gridCol w:w=\\\"{col_w}\\\"/>\");\n        }",
+                "explanation": "The attacker-sized loop grows the output string by tens of gigabytes for a billion-column cell before later validation could occur."
+              }
+            ],
+            "rootCause": {
+              "summary": "`with_layout()` admits the original DOCX, then `expand()` loads its HTML chunk and passes it to `html_to_wml()`. Cell parsing stores `colspan` as an unrestricted usize. `end_table()` sums the spans into `cols` and emits a grid element for every column, so a short decimal attribute controls huge CPU and allocation work after the input gate.",
+              "evidenceRefs": [
+                "chunk-consumer",
+                "chunk-transform",
+                "span-input",
+                "span-count",
+                "span-sink"
+              ]
+            },
+            "remediation": "Reject spans and total table column counts above a documented limit before construction; use checked addition and enforce a generated-output/work budget shared across all HTML chunks.",
+            "validation": {
+              "counterEvidence": [
+                "Admission caps compressed/inflated bytes and XML policy before conversion (src/convert/mod.rs:773-778).",
+                "SECURITY.md recommends process memory/CPU isolation, which can limit collateral damage.",
+                "No shared or remote renderer deployment is established."
+              ],
+              "evidenceRefs": [
+                "chunk-consumer",
+                "chunk-transform",
+                "span-input",
+                "span-count",
+                "span-sink"
+              ],
+              "limitations": [
+                "No application code or resource-exhaustion input was executed."
+              ],
+              "method": "independent static source trace",
+              "status": "validated",
+              "summary": "Parent verified the baseline candidate against the actual converter entrypoint and HTML builder. A well-formed one-cell table with a large positive colspan reaches the grid-generation loop with no upper bound; admission limits only the stored input, not this new output."
+            },
+            "attackPath": {
+              "controls": [
+                "Original package admission limits do not bound generated table columns.",
+                "Host process resource limits mitigate collateral impact."
+              ],
+              "dataflow": {
+                "summary": "DOCX main-story altChunk relationship -> embedded HTML bytes -> html_to_wml cell span -> row span sum -> repeated grid-column string writes.",
+                "evidenceRefs": [
+                  "chunk-consumer",
+                  "chunk-transform",
+                  "span-input",
+                  "span-count",
+                  "span-sink"
+                ]
+              },
+              "impact": {
+                "level": "high",
+                "rationale": "Renderer process CPU and memory exhaustion; a shared host could lose service if its integration provides no isolation."
+              },
+              "likelihood": {
+                "level": "high",
+                "rationale": "The numeric span flows directly to the allocation loop and a small input can request billions of iterations."
+              },
+              "reachability": {
+                "summary": "A caller-controlled document is sufficient at public conversion APIs; no privileged options or network access are required. The victim must render/layout the supplied document.",
+                "attacker": "Untrusted document author",
+                "entrypoint": "DOCX rendering through with_layout",
+                "preconditions": [
+                  "Victim invokes a rendering/layout API on attacker-authored DOCX."
+                ]
+              },
+              "summary": "Provide a DOCX whose main story references an embedded HTML table with a huge numeric colspan, then have a victim render it as PDF/PNG or request layout facts."
+            },
+            "remediationTests": [
+              "Assert that a tiny HTML chunk with a huge colspan is refused before grid allocation.",
+              "Cover aggregate span overflow, multiple cells/chunks, and valid spans at the inclusive boundary."
+            ],
+            "provenance": {
+              "source": "local_plugin",
+              "workerLabel": "discovery-0016",
+              "worker": "baseline",
+              "candidateId": "discovery-0016-altchunk-colspan"
+            }
+          }
+        ],
+        "originalCandidates": [
+          {
+            "title": "Unbounded HTML table colspan expansion causes denial of service",
+            "source": "baseline",
+            "message": "Confirmed strong DoS candidate: src/convert/altchunk.rs parses attacker HTML td/th colspan directly as usize (lines ~564-568), sums spans into cols (lines ~475-481), then emits one w:gridCol per column using for _ in 0..cols (line ~497), no clamp/budget. A tiny embedded HTML altChunk with colspan=1000000000 forces billions of iterations/output despite DOCX admission. Exact call-path/evidence being checked."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-expansion.html-css-selector-copy",
+      "title": "Rendering embedded CSS multiplies property allocations per selector",
+      "summary": "A small HTML altChunk stylesheet can exhaust renderer memory before layout. `parse_css()` deep-copies every property value into a separate map for every selector, including unused selectors and unsupported property names; thousands of selectors can retain thousands of copies of one large value.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Attacker-authored document content can reliably exhaust the consuming process with a modest input. Shared-service deployment is conditional and host process limits reduce collateral impact."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Source shows owned String property values, HashMap::clone per selector and retention in Builder with no count or allocation budget."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled resource amplification in stylesheet parsing",
+        "cwe": [
+          "CWE-400"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 152,
+          "endLine": 168,
+          "role": "root_control"
+        },
+        {
+          "path": "src/convert/altchunk.rs",
+          "startLine": 604,
+          "endLine": 610,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/convert/mod.rs",
+          "startLine": 790,
+          "endLine": 793,
+          "role": "propagation"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "css-owned-values",
+          "label": "CSS properties stored as owned strings",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 158,
+          "endLine": 162,
+          "language": "rust",
+          "role": "user_input",
+          "code": "        let props: Props = body\n            .split(';')\n            .filter_map(|d| d.split_once(':'))\n            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))\n            .collect();",
+          "explanation": "A large attacker property value becomes a retained owned String without filtering supported properties or limiting value size."
+        },
+        {
+          "id": "css-per-selector",
+          "label": "Deep clone for every selector",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 163,
+          "endLine": 168,
+          "language": "rust",
+          "role": "root_control",
+          "code": "        for s in sel.split(',') {\n            let s = s.trim().to_ascii_lowercase();\n            if !s.is_empty() {\n                rules.entry(s).or_default().extend(props.clone());\n            }\n        }",
+          "explanation": "Distinct comma-separated selectors each retain a deep clone of the complete property map. Allocation is selector count times property bytes."
+        },
+        {
+          "id": "css-eager",
+          "label": "All styles parsed before body import",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 604,
+          "endLine": 610,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub(crate) fn html_to_wml(html: &str) -> String {\n    let css = collect_between(html, \"<style\", \"</style>\")\n        .map(|s| parse_css(&s))\n        .unwrap_or_default();\n    let body_at = html.to_ascii_lowercase().find(\"<body\").unwrap_or(0);\n    let mut b = Builder {\n        css,",
+          "explanation": "The parser retains every rule before examining body content, so selectors need not match any element to trigger the allocation."
+        },
+        {
+          "id": "chunk-consumer",
+          "label": "Admission precedes HTML expansion",
+          "path": "src/convert/mod.rs",
+          "startLine": 789,
+          "endLine": 798,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "    // Word merges `w:altChunk` content (HTML / MHT) into the body on open.\n    let xml = if xml.contains(\"<w:altChunk\") {\n        altchunk::expand(&xml, |rid| {\n            rel_target_path(&pkg, &main, rid).and_then(|p| pkg.part_bytes(&p).map(<[u8]>::to_vec))\n        })\n    } else {\n        xml\n    };\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(&xml);",
+          "explanation": "The renderer loads a relationship-targeted chunk from the admitted package and expands it before DOM layout; generated output has no size gate here."
+        },
+        {
+          "id": "chunk-transform",
+          "label": "Chunk bytes become HTML and generated WML",
+          "path": "src/convert/altchunk.rs",
+          "startLine": 34,
+          "endLine": 39,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let wml = attr(open, \"id\")\n            .and_then(|rid| load(&rid))\n            .and_then(|bytes| chunk_html(&bytes))\n            .map(|html| html_to_wml(&html))\n            .unwrap_or_default();\n        out.push_str(&wml);",
+          "explanation": "Attacker-authored HTML is converted locally into a new WML string; archive inflation bounds do not constrain this representation expansion."
+        }
+      ],
+      "rootCause": {
+        "summary": "After DOCX admission, `expand()` imports an embedded HTML chunk. `html_to_wml()` eagerly calls `parse_css()`, which owns property values as Strings and calls `props.clone()` for every selector. Each distinct selector retains a full copy, making retained memory proportional to selector count multiplied by property size rather than bounded by the original part.",
+        "evidenceRefs": [
+          "chunk-consumer",
+          "chunk-transform",
+          "css-eager",
+          "css-owned-values",
+          "css-per-selector"
+        ]
+      },
+      "remediation": "Share immutable declaration blocks between selectors and enforce aggregate stylesheet work/allocation budgets, selector-count and value-length limits before allocating. Ignore unsupported properties before retention.",
+      "validation": {
+        "counterEvidence": [
+          "Package input/inflation limits constrain the original HTML but not selector-value multiplication.",
+          "Process limits recommended by SECURITY.md can contain the failure."
+        ],
+        "limitations": [
+          "No memory-exhaustion input was executed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "Parent verified that selector keys are distinct, values are owned Strings, clones remain in Builder, and no maximum or supported-property filter limits the copies. A stylesheet with 10,000 short selectors and one 1 MiB property requests about 10 GiB of retained property bytes from about 1.1 MiB HTML."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "DOCX chunk -> html_to_wml -> parse_css -> owned property map -> full cloned map retained under each selector."
+        },
+        "reachability": {
+          "summary": "Public PDF/PNG/layout conversion loads relationship-targeted HTML after admission. Attacker needs only to supply the document; unused selectors still trigger parsing.",
+          "attacker": "Untrusted document author",
+          "entrypoint": "DOCX rendering"
+        },
+        "summary": "Embed a stylesheet containing many distinct comma-separated selectors and a long property value in a DOCX altChunk, then have a victim render the document."
+      },
+      "remediationTests": [
+        "Assert that many selectors sharing a large declaration block remain bounded or are refused before multiplication.",
+        "Cover unused selectors, unsupported property names, multiple style blocks, and valid boundary inputs."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0016-altchunk-css",
+        "worker": "baseline",
+        "workerLabel": "discovery-0016",
+        "originalCandidates": [
+          {
+            "title": "Embedded HTML CSS causes multiplicative retained property allocation",
+            "source": "baseline",
+            "message": "parse_css lines 158-166 builds one Props map then deep-clones every property/value for each comma selector. E.g. <style>.s0,...,.s9999{a:<1 MiB value>}</style> is ~1.1 MiB admitted HTML but retains ~10 GiB value clones before any body rendering. html_to_wml lines 607-610 eagerly parses all styles, even unused selectors/properties. Separate CPU/memory multiplier from colspan."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-recursion.leak-scan-xml",
+      "title": "Scanning a document for leaks can abort on deeply nested XML",
+      "summary": "Calling public `scrub::leaks()` on an attacker-supplied package can overflow the process stack. It bounds archive bytes but sends XML directly to the recursive permissive DOM parser without checking the XML depth policy.",
+      "severity": {
+        "level": "medium",
+        "rationale": "A small malicious XML part can reliably abort the consumer process. Exposure is the public Rust leak-scan API; no remote/shared-service deployment is assumed."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "The direct public API trace has only ZIP byte/count gates before an unbounded recursive parser call. Runtime stack threshold was not measured."
+      },
+      "taxonomy": {
+        "category": "Missing XML depth validation before recursive parsing",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/scrub.rs",
+          "startLine": 403,
+          "endLine": 404,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 469,
+          "role": "propagation"
+        },
+        {
+          "path": "src/scrub.rs",
+          "startLine": 527,
+          "endLine": 529,
+          "role": "root_control"
+        },
+        {
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 662,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "leaks-api",
+          "label": "Public leak scan opens bytes directly",
+          "path": "src/scrub.rs",
+          "startLine": 403,
+          "endLine": 404,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "pub fn leaks(docx: &[u8], needle: &str) -> Vec<String> {\n    leaks_within(docx, needle, crate::admission::InputLimits::compare())",
+          "explanation": "Caller-controlled DOCX bytes enter leaks_within without an admission prerequisite."
+        },
+        {
+          "id": "leaks-xml",
+          "label": "Archive XML is passed to unchecked parser",
+          "path": "src/scrub.rs",
+          "startLine": 467,
+          "endLine": 469,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let xml = name.ends_with(\".xml\") || name.ends_with(\".rels\");\n        let hit = if xml {\n            xml_holds(&String::from_utf8_lossy(&bytes), needle)",
+          "explanation": "After byte inflation limits, any XML-named part reaches xml_holds without structural/depth validation."
+        },
+        {
+          "id": "leaks-parse",
+          "label": "Leak scan chooses permissive DOM",
+          "path": "src/scrub.rs",
+          "startLine": 527,
+          "endLine": 529,
+          "language": "rust",
+          "role": "root_control",
+          "code": "fn xml_holds(xml: &str, needle: &str) -> bool {\n    let mut dom = Dom::new();\n    let doc = dom.parse_xdocument(xml);",
+          "explanation": "This calls the unchecked parser rather than the available checked parse API."
+        },
+        {
+          "id": "xml-recursion",
+          "label": "Each child nests another stack frame",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 660,
+          "endLine": 664,
+          "language": "rust",
+          "role": "sink",
+          "code": "            if self.cur() == '<' {\n                let child = self.parse_element(scope);\n                self.dom.add(el, child);\n                continue;\n            }",
+          "explanation": "Deep repeated elements recursively call parse_element without a depth counter until stack exhaustion."
+        },
+        {
+          "id": "xml-checked",
+          "label": "Checked parser validates before construction",
+          "path": "src/xmllinq/parse.rs",
+          "startLine": 129,
+          "endLine": 135,
+          "language": "rust",
+          "role": "expected_control",
+          "code": "pub fn try_parse_xdocument_with_limits(\n    dom: &mut Dom,\n    xml: &str,\n    limits: InputLimits,\n) -> Result<NodeId, String> {\n    validate_xml_with_limits(xml, limits)?;\n    Ok(parse_xdocument(dom, xml))",
+          "explanation": "The existing checked API provides the missing preconstruction validation; the leak scan does not use it."
+        }
+      ],
+      "rootCause": {
+        "summary": "`leaks()` accepts raw package bytes and a nonempty search term. `leaks_within()` checks ZIP size/count and inflated bytes but does not admit XML. It selects XML parts by extension and calls `xml_holds()`, which builds the permissive DOM. The parser recursively descends each child and has no internal depth guard, so nested elements in a small part can exceed the host stack.",
+        "evidenceRefs": [
+          "leaks-api",
+          "leaks-xml",
+          "leaks-parse",
+          "xml-recursion",
+          "xml-checked"
+        ]
+      },
+      "remediation": "Validate every XML part with the active depth/tag limits before DOM construction; report validation errors as fail-closed leak findings. Prefer the existing checked parser and preserve part context.",
+      "validation": {
+        "counterEvidence": [
+          "ZIP byte/count/inflation limits are enforced.",
+          "Normal edit redaction may already admit its source; this finding specifically covers the independently public leak-scan boundary.",
+          "The lower-level permissive XML parser documents its caller's validation obligation; that alone is not reported as a finding."
+        ],
+        "limitations": [
+          "No application execution or stack-overflow reproduction performed."
+        ],
+        "method": "parent static source trace",
+        "status": "validated",
+        "summary": "The full leak scan path contains no XML admission call; `Dom::parse_xdocument()` delegates directly to parse::parse_xdocument (src/xmllinq/mod.rs:1285-1286). A nonempty needle and a deeply nested .xml member suffice to reach unbounded recursion."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Public package bytes -> bounded ZIP read -> XML member -> xml_holds -> unchecked recursive parse_element."
+        },
+        "reachability": {
+          "summary": "Public Rust API is a valid untrusted-package boundary and has no documented pre-admission requirement in src/scrub.rs:383-404. CLI redaction paths may have additional admission controls.",
+          "attacker": "Untrusted document supplier",
+          "entrypoint": "jubarte::scrub::leaks"
+        },
+        "summary": "Supply a small package with tens of thousands of nested XML elements and induce a caller to run `scrub::leaks()` with a nonempty search term."
+      },
+      "remediationTests": [
+        "Assert deeply nested XML returns a bounded fail-closed finding rather than recursing.",
+        "Cover exact permitted depth and malformed auxiliary XML without certifying incomplete scans."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0016-leaks-depth",
+        "workerLabel": "discovery-0016",
+        "originalCandidates": [
+          {
+            "title": "Public leak scan bypasses XML depth admission",
+            "evidence": [
+              "src/scrub.rs:403-404 public leaks calls leaks_within directly.",
+              "src/scrub.rs:418-469 bounds ZIP input/inflation, then passes XML to xml_holds without structural validation.",
+              "src/scrub.rs:529 Dom::parse_xdocument is unchecked.",
+              "src/xmllinq/parse.rs:660-662 recursively parses child elements with no depth guard."
+            ],
+            "potentialImpact": "Deep XML inside a small archive may stack overflow a caller invoking public scrub::leaks directly."
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "unbounded-recursion.markdown-drawing-dependencies",
+      "title": "Converting a cyclic Markdown drawing can terminate the process",
+      "summary": "A small `drawing:` Markdown image payload can encode a dependency that references itself. Markdown-to-DOCX conversion accepts the JSON graph and recursively materializes dependencies without detecting cycles, exhausting the host stack.",
+      "severity": {
+        "level": "medium",
+        "rationale": "Tiny caller-controlled Markdown can terminate its conversion process or WASM instance; service-wide exposure depends on downstream integration and process isolation."
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Independent source trace verifies deserialization, storage, package assembly and unconditional recursive dispatch on in-bounds self-edges."
+      },
+      "taxonomy": {
+        "category": "Uncontrolled drawing dependency recursion",
+        "cwe": [
+          "CWE-674"
+        ]
+      },
+      "locations": [
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "role": "user_input"
+        },
+        {
+          "path": "src/markdown/write.rs",
+          "startLine": 4189,
+          "endLine": 4197,
+          "role": "entrypoint"
+        },
+        {
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1895,
+          "role": "propagation"
+        },
+        {
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1974,
+          "role": "root_control"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "drawing-decode",
+          "label": "JSON decode has no graph validation",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1397,
+          "endLine": 1408,
+          "language": "rust",
+          "role": "user_input",
+          "code": "pub(crate) fn decode(dest: &str) -> Result<Drawing, String> {\n    let encoded = dest\n        .strip_prefix(\"drawing:\")\n        .ok_or_else(|| \"not a drawing: destination\".to_string())?;\n    use base64::Engine;\n    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD\n        .decode(encoded)\n        .or_else(|_| {\n            base64::engine::general_purpose::URL_SAFE.decode(encoded.trim_end_matches('='))\n        })\n        .map_err(|e| format!(\"drawing payload is not base64: {e}\"))?;\n    serde_json::from_slice(&bytes).map_err(|e| format!(\"drawing payload is not its JSON: {e}\"))",
+          "explanation": "Base64 decoding and serde deserialization accept an in-bounds self-reference; syntax validity does not establish graph safety."
+        },
+        {
+          "id": "drawing-input",
+          "label": "Markdown image accepts serialized drawing",
+          "path": "src/markdown/write.rs",
+          "startLine": 4189,
+          "endLine": 4197,
+          "language": "rust",
+          "role": "entrypoint",
+          "code": "        if url.starts_with(\"drawing:\") {\n            match super::from_docx::drawing::decode(&url) {\n                Ok(drawing) => {\n                    self.document.drawings.push(drawing);\n                    let index = self.document.drawings.len() - 1;\n                    if self.box_names.insert(id.clone(), index).is_some() {\n                        self.box_duplicates.insert(id);\n                    }\n                    self.push(Content::Drawing(index));",
+          "explanation": "The untrusted drawing: destination is decoded and stored as a drawing node without graph validation."
+        },
+        {
+          "id": "drawing-package",
+          "label": "Document assembly invokes materialization",
+          "path": "src/markdown/package.rs",
+          "startLine": 1703,
+          "endLine": 1712,
+          "language": "rust",
+          "role": "propagation",
+          "code": "        let drawing = self.document.drawings.get(index)?;\n        let existing: HashSet<String> = self.package.parts().into_iter().collect();\n        let xml = super::from_docx::drawing::materialize(\n            drawing,\n            self.package,\n            &self.part,\n            &existing,\n            &mut self.media.used,\n            next_doc_pr,\n        )?;",
+          "explanation": "Stored drawing data is passed to materialize during public Markdown-to-DOCX assembly."
+        },
+        {
+          "id": "drawing-start",
+          "label": "Root relationship begins dependency traversal",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1889,
+          "endLine": 1895,
+          "language": "rust",
+          "role": "propagation",
+          "code": "    let mut xml = drawing.xml.clone();\n    for rel in &drawing.rels {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(index), _) if index < drawing.deps.len() => {\n                let name = dep_part(drawing, index, package, existing, used, next_doc_pr)?;\n                (rel.kind.clone(), relative_rel_target(part, &name), false)",
+          "explanation": "Any in-bounds part index calls dep_part, carrying the supplied dependency graph."
+        },
+        {
+          "id": "drawing-recursion",
+          "label": "Dependency traversal recursively follows self-reference",
+          "path": "src/markdown/from_docx/drawing.rs",
+          "startLine": 1964,
+          "endLine": 1974,
+          "language": "rust",
+          "role": "root_control",
+          "code": "    let dep = drawing.deps.get(index)?;\n    let name = name_for(&dep.name, existing, used);\n    used.insert(name.clone());\n    // The part's own relationships name the parts the recursion is writing;\n    // their ids land in a rewrite of its `d{index}.{n}` symbols.\n    let mut xml = dep.xml.clone();\n    for (n, rel) in dep.rels.iter().enumerate() {\n        let (kind, target, external) = match (&rel.u, rel.part, &rel.raw) {\n            (Some(url), _, _) => (rel.kind.clone(), url.clone(), true),\n            (_, Some(inner), _) if inner < drawing.deps.len() => {\n                let inner_name = dep_part(drawing, inner, package, existing, used, next_doc_pr)?;",
+          "explanation": "A self-edge passes the bounds check and calls the same dependency before any completed-output memoization; used tracks names rather than visited indices."
+        }
+      ],
+      "rootCause": {
+        "summary": "`Writer::picture()` decodes the caller's drawing destination using `decode()`, whose only checks are base64/JSON syntax. Assembly calls `materialize()`, which dispatches dependency indices to `dep_part()`. That function reserves a fresh name but follows each dependency relationship recursively before writing a part or remembering its index. A one-node self-reference therefore never reaches publication and repeatedly allocates frames/names.",
+        "evidenceRefs": [
+          "drawing-input",
+          "drawing-decode",
+          "drawing-package",
+          "drawing-start",
+          "drawing-recursion"
+        ]
+      },
+      "remediation": "Validate graph size and work during decoding, then materialize each dependency once with an index-to-output-name map registered before following its edges. Resolve valid OPC cycles safely or reject them with a structured error; bound depth and aggregate work for repeated DAG edges.",
+      "validation": {
+        "counterEvidence": [
+          "MAX_DEPS/MAX_DEP_RELS constrain DOCX capture, not deserialized payload traversal; a one-node cycle fits both anyway.",
+          "Capture-side indexing prevents capture recursion, but materialization has no index-to-result map.",
+          "Existing byte-identical-part reuse happens only after recursive relationships have completed (drawing.rs:1989-2006)."
+        ],
+        "limitations": [
+          "No crafted input or application execution was performed."
+        ],
+        "method": "independent static source trace",
+        "status": "validated",
+        "summary": "Parent verified Drawing/PayRel/Dep defaults, unguarded JSON acceptance and the full source-to-recursion route. A single dependency whose rel.part is its own index passes all local bounds checks. The used-name set does not break recursion; even after name suffix exhaustion it continues."
+      },
+      "attackPath": {
+        "dataflow": {
+          "summary": "Markdown image -> base64/JSON Drawing -> Content::Drawing -> package materialize -> dep_part(0) -> dep_part(0) indefinitely."
+        },
+        "reachability": {
+          "summary": "The public markdown_to_docx entrypoint reads image destinations by default; no privileged configuration is needed.",
+          "attacker": "Untrusted Markdown supplier",
+          "entrypoint": "Markdown-to-DOCX library conversion"
+        },
+        "summary": "Encode a Drawing with one dependency and a self-referencing part=0 relationship as a drawing: image URL, then submit the Markdown to markdown_to_docx."
+      },
+      "remediationTests": [
+        "Cover one-node self-cycles, multi-node cycles, deep chains and repeated DAG edges.",
+        "Assert either bounded rejection or correct shared-part materialization without process termination."
+      ],
+      "provenance": {
+        "source": "local_plugin",
+        "candidateId": "discovery-0016-drawing-cycle",
+        "worker": "baseline",
+        "workerLabel": "discovery-0016",
+        "originalCandidates": [
+          {
+            "source": "baseline",
+            "message": "src/markdown/from_docx/drawing.rs decode lines 1396-1408 deserializes drawing: base64 JSON without graph validation; materialize lines ~1890-1900 calls dep_part for rel.part; dep_part lines ~1950-1980 recursively calls itself for dependent rel.part without visited/depth guard. Drawing JSON {\"xml\":\"<w:drawing/>\",\"rels\":[{\"sym\":\"r1\",\"t\":\"x\",\"part\":0}],\"deps\":[{\"name\":\"word/media/a.xml\",\"xml\":\"<x/>\",\"rels\":[{\"sym\":\"d0.1\",\"t\":\"x\",\"part\":0}]}]} produces endless self recursion when passed as ![x](drawing:BASE64URL) to markdown_to_docx. Wrapper reachability being checked.",
+            "finalDetails": {
+              "title": "Cyclic Markdown drawing dependencies cause unbounded recursion and process termination",
+              "cwe": "CWE-674",
+              "severity": "medium",
+              "confidence": "high",
+              "locations": [
+                "src/markdown/from_docx/drawing.rs:1397-1408",
+                "src/markdown/write.rs:4189-4197",
+                "src/markdown/package.rs:1697-1712",
+                "src/markdown/from_docx/drawing.rs:1890-1894",
+                "src/markdown/from_docx/drawing.rs:1964-1974"
+              ],
+              "counterevidence": [
+                "Capture limits count/relationships but one-node cycle fits and decode applies no such graph validation.",
+                "Capture Deps::dep_for memoizes before traversing; materialization has no corresponding memoization.",
+                "Indices are bounds-checked but a self-reference is in bounds.",
+                "Static review only."
+              ],
+              "remediation": "Validate graph, bound work/depth, memoize output names before dependency traversal or refuse cycles."
+            }
+          },
+          {
+            "source": "baseline",
+            "message": "src/markdown/from_docx/drawing.rs decode lines 1396-1408 deserializes drawing: base64 JSON without graph validation; materialize lines ~1890-1900 calls dep_part for rel.part; dep_part lines ~1950-1980 recursively calls itself for dependent rel.part without visited/depth guard. Drawing JSON {\"xml\":\"<w:drawing/>\",\"rels\":[{\"sym\":\"r1\",\"t\":\"x\",\"part\":0}],\"deps\":[{\"name\":\"word/media/a.xml\",\"xml\":\"<x/>\",\"rels\":[{\"sym\":\"d0.1\",\"t\":\"x\",\"part\":0}]}]} produces endless self recursion when passed as ![x](drawing:BASE64URL) to markdown_to_docx. Wrapper reachability being checked."
+          }
+        ]
+      }
+    }
+  ],
+  "coverage": {
+    "completeness": "partial",
+    "surfaces": [
+      {
+        "id": "surface-6409104186aa3f4d",
+        "label": "Embedded HTML altChunk table expansion",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-altchunk-colspan by independent source trace; input admission precedes unbounded generated-grid construction.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-9a2a22e90e3f28ee",
+        "label": "Embedded HTML CSS selector expansion",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-altchunk-css; selector count multiplies retained String values at src/convert/altchunk.rs:158-166 independently of body matches.",
+        "receiptRefs": []
+      },
+      {
+        "id": "surface-2e95534cc3fdc156",
+        "label": "Public document leak scan XML policy",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-leaks-depth at src/scrub.rs:403-469,527-529 and src/xmllinq/parse.rs:660-662. Byte budgets do not enforce XML depth.",
+        "receiptRefs": []
+      },
+      {
+        "label": "Markdown serialized drawing dependency graph",
+        "disposition": "reported",
+        "notes": "Validated discovery-0016-drawing-cycle; decode accepts cycles and materialization follows them without visited-index tracking.",
+        "id": "surface-91306812940d18dc",
+        "receiptRefs": []
+      }
+    ],
+    "explicitExclusions": [],
+    "deferred": [
+      {
+        "candidateId": "discovery-0016-wmf-record",
+        "reason": "Focused renderer candidate received; parent must verify WMF record extent, text copies, and public reachability.",
+        "paths": [
+          "src/convert/metafile.rs",
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "WMF text records read beyond declared record and amplify retained memory",
+          "source": "render_investigator",
+          "message": "raster_wmf only validates size>=3 and size*2 fits remaining bytes (486-500); EXTTEXTOUT at 623-634 reads y/x/n/options and data.get(at..at+n) against entire file, not current record. Repeating six-byte WMF records [u32 size=3,u16 func=0x0A32] makes each record read next record's func as n=2610 and opts=3 from following size; at=off+22 then copies ~2610 bytes into persistent MetaText despite declared payload zero. ~6 MB body can retain ~2.6 GB text before later layout. Needs nonzero placeable extents and trailing bytes; no runtime reproduction.",
+          "finalDetails": {
+            "cwe": "CWE-1284",
+            "severity": "medium",
+            "confidence": "high",
+            "locations": [
+              "src/convert/metafile.rs:477-489",
+              "src/convert/metafile.rs:602-619",
+              "src/convert/metafile.rs:692-700",
+              "src/convert/mod.rs:20247-20264"
+            ],
+            "counterevidence": [
+              "Checked size multiplication prevents outer offset wrapping.",
+              "Canvas capped 384 and polygon coordinates clipped.",
+              "Admission counts media bytes, not overlapping text copies.",
+              "Static source/byte arithmetic only."
+            ],
+            "siblingImpact": "TEXTOUT uses same whole-file boundary; sibling font/polygon readers also get whole file.",
+            "remediation": "Slice each record to declared length; validate field/count extents in slice; enforce extracted text budget."
+          }
+        },
+        "id": "discovery-0016-wmf-record"
+      },
+      {
+        "candidateId": "discovery-0016-image-copies",
+        "reason": "Focused renderer returned decoded-image retained-copy candidate; awaiting independent parent source validation.",
+        "paths": [
+          "src/convert/mod.rs"
+        ],
+        "candidate": {
+          "title": "Repeated references to compressed images bypass package budgets through retained decoded copies",
+          "cwe": "CWE-770",
+          "severity": "medium",
+          "confidence": "high",
+          "attacker": "DOCX author controlling compressed embedded media and repeated references",
+          "source_to_sink": "collect_images resolves and decodes each blip independently; LaidImage owns RGB/alpha vectors and layout clones them into page operations without aggregate decoded-pixel budget or shared cache.",
+          "impact": "A highly compressible 4096x4096 RGB PNG produces 50,331,648 retained RGB bytes per reference; 100 references retain about 4.7 GiB despite one small media part.",
+          "locations": [
+            "src/convert/mod.rs:18396-18428",
+            "src/convert/mod.rs:20289-20311",
+            "src/convert/mod.rs:27564-27577"
+          ],
+          "counterevidence": [
+            "image 0.25.10 has default 512 MiB limit per decode; selected example is below it.",
+            "Per-page 2^28 pixel cap does not constrain intrinsic media memory.",
+            "PDF interning at src/convert/pdf.rs:506-566 is later than retained vector copies.",
+            "Static review only."
+          ],
+          "remediation": "Conversion-wide decoded-pixel budget, shared decoded cache and no vector cloning per reference."
+        },
+        "id": "discovery-0016-image-copies"
+      },
+      {
+        "candidateId": "discovery-0016-aux-extension",
+        "reason": "Focused sibling API investigator reports extension-based XML admission bypass; awaiting independent parent source validation and scope reconciliation.",
+        "paths": [
+          "src/admission.rs",
+          "src/revision_processor.rs",
+          "src/document_comparer.rs"
+        ],
+        "candidate": {
+          "source": "architecture",
+          "message": "accept_revisions/reject_revisions admit input at document_comparer.rs:4961-4987, but admission validates XML by .xml/.rels extension with main-part special case (admission.rs:533-569). Related header/footer/notes/comments/styles .bin part retained raw by PartFs opc/mod.rs:348-377, then revision_bearing_parts selects relationship target by type without extension/content validation (revision_processor.rs:3689-3728). RevisionIds::new parse_xdocument:3785-3792 precedes process_part:3732-3740; deeply nested XML bypasses input depth/tag policy through high-level byte APIs. Static evidence only."
+        },
+        "id": "discovery-0016-aux-extension"
+      },
+      {
+        "candidateId": "discovery-0016-legacy-piece",
+        "reason": "Worker source-backed candidate awaiting independent parent validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "render_investigator",
+          "message": "main_text emits ccp_text StoryChars without output cap; many increasing CP pieces may reuse same WordDocument FC bytes (1000 pieces of 1MiB same FC =>1GiB chars from ~1MiB stream and ~12KiB table)."
+        },
+        "id": "discovery-0016-legacy-piece"
+      },
+      {
+        "candidateId": "discovery-0016-legacy-fields",
+        "reason": "Worker source-backed candidate awaiting independent parent validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "render_investigator",
+          "message": "Story::blocks calls fields.iter().any on every char. Repeated field-start/result-separator pairs \\x13\\x14 leave a growing all-false vector; n pairs cause quadratic scans from 2n chars."
+        },
+        "id": "discovery-0016-legacy-fields"
+      },
+      {
+        "candidateId": "discovery-0016-legacy-table",
+        "reason": "Worker source-backed candidate awaiting independent parent validation.",
+        "paths": [
+          "src/legacy_doc.rs"
+        ],
+        "candidate": {
+          "source": "render_investigator",
+          "message": "push_block lines512-524 pads EVERY row to max row.len() with no cell/output budget. Story::blocks creates cells/rows from byte0x07 and PAPX row_end (1625-1645); one W-cell row + R one-cell rows yields O(W*R) output cells from O(W+R) input."
+        },
+        "id": "discovery-0016-legacy-table"
+      },
+      {
+        "candidateId": "discovery-0016-zip-count",
+        "reason": "Worker source-backed candidate awaiting independent parent validation.",
+        "paths": [
+          "src/admission.rs",
+          "src/opc/mod.rs"
+        ],
+        "candidate": {
+          "source": "baseline",
+          "message": "admission::declared_entry_count reads ZIP32 EOCD count at +10; pinned zip9.0.5 read/mod.rs:69-71 indexes number_of_files_on_this_disk at +8. No equality check. >10,000 unique empty entries with +8 true count and +10=1 pass preindex, ZipArchive indexes all, admit only tests archive.len()<declared not >max_entries. PartFs also relies on preindex. Byte budgets remain."
+        },
+        "id": "discovery-0016-zip-count"
+      }
+    ]
+  }
+}
