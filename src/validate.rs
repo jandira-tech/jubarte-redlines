@@ -1474,10 +1474,18 @@ fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     Some((dom, root))
 }
 
+/// The package's XML parts: by name, or by content type (a main document
+/// part may be `word/main.dat`).
 fn xml_parts(pkg: &PartFs) -> Vec<String> {
     pkg.parts()
         .into_iter()
-        .filter(|name| name.ends_with(".xml"))
+        .filter(|name| {
+            name.to_ascii_lowercase().ends_with(".xml")
+                || pkg.content_type_for(name).is_some_and(|ct| {
+                    let ct = ct.to_ascii_lowercase();
+                    ct.ends_with("+xml") || ct == "application/xml" || ct == "text/xml"
+                })
+        })
         .collect()
 }
 
@@ -1719,6 +1727,10 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
                     | "moveTo"
                     | "moveFromRangeStart"
                     | "moveToRangeStart"
+                    | "customXmlInsRangeStart"
+                    | "customXmlDelRangeStart"
+                    | "customXmlMoveFromRangeStart"
+                    | "customXmlMoveToRangeStart"
                     | "tblGridChange"
                     | "tblPrExChange"
                     | "numberingChange"
@@ -1743,11 +1755,14 @@ fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
 }
 
 /// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
-/// checks: part, then record type and id ([`revision_id_key`]).
+/// checks: part, then record type and id ([`revision_id_key`]). A Strict
+/// package is read as the Transitional one an edit writes.
 pub(crate) fn revision_id_occurrences(
     docx: &[u8],
 ) -> Result<HashMap<(String, String), usize>, ValidateError> {
-    let pkg = PartFs::open(docx)?;
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
+    let pkg = PartFs::open(&transitional)?;
     let mut out = HashMap::new();
     for part in xml_parts(&pkg) {
         let Some((dom, root)) = parse_part(&pkg, &part) else {
@@ -2917,11 +2932,10 @@ pub(crate) fn renumber_duplicate_revision_ids(
         next += 1;
         revisions.push((id.clone(), fresh.clone()));
         renames.push((n, fresh.clone()));
-        let end_local = match local {
-            "moveFromRangeStart" => Some("moveFromRangeEnd"),
-            "moveToRangeStart" => Some("moveToRangeEnd"),
-            _ => None,
-        };
+        // A range start's end shares its id.
+        let end_local = local
+            .strip_suffix("RangeStart")
+            .map(|range| format!("{range}RangeEnd"));
         if let Some(end_local) = end_local
             && let Some(&end) = all[i + 1..].iter().find(|&&e| {
                 dom.name(e).is_some_and(|x| x.local_name() == end_local)
