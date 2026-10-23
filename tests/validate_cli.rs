@@ -70,7 +70,10 @@ fn validate_exit_codes_prose_json_and_repair() {
         &["validate", "broken.docx", "--repair", "fixed.docx"],
     );
     assert_eq!(code, 0, "{out}");
-    assert_eq!(out, "repaired 1 finding(s)\nno findings\n");
+    assert_eq!(
+        out,
+        "repaired 1 finding(s), structure only; history not checked (--original, --author)\nno findings\n"
+    );
     assert!(err.starts_with("wrote fixed.docx (docx, "), "{err}");
     let (_, out, err) = run(
         dir.path(),
@@ -78,7 +81,10 @@ fn validate_exit_codes_prose_json_and_repair() {
     );
     assert_eq!(
         (out.as_str(), err.as_str()),
-        ("repaired 1 finding(s)\nno findings\n", "")
+        (
+            "repaired 1 finding(s), structure only; history not checked (--original, --author)\nno findings\n",
+            ""
+        )
     );
     let (code, _, _) = run(dir.path(), &["validate", "fixed.docx"]);
     assert_eq!(code, 0);
@@ -483,6 +489,69 @@ fn foreign_swapped_deletions_exit_two() {
                 == "FOREIGN_AUTHOR"
         ),
         "{out}"
+    );
+}
+
+/// Carol's tracked change of `10` to `12` in `Fee is 10.`, her insertion
+/// in two pieces that share w:id 6; `by` wrote the second (KI-8).
+fn duplicated_ids(by: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Fee is </w:t></w:r><w:del w:id="5" w:author="Carol"><w:r><w:delText>10</w:delText></w:r></w:del><w:ins w:id="6" w:author="Carol"><w:r><w:t>1</w:t></w:r></w:ins><w:ins w:id="6" w:author="{by}"><w:r><w:t>2</w:t></w:r></w:ins><w:r><w:t>.</w:t></w:r></w:p>"#
+    ))
+}
+
+/// `--repair` mends structure; it never says the edits' history was
+/// checked, and with `--original` a history that still fails fails the run
+/// (KI-8, #1665).
+#[test]
+fn repair_tells_structure_from_history() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("original.docx"), docx(&para("Fee is 10."))).unwrap();
+    std::fs::write(dir.path().join("carol.docx"), duplicated_ids("Carol")).unwrap();
+    std::fs::write(dir.path().join("alice.docx"), duplicated_ids("Alice")).unwrap();
+    let (code, out, _) = run(
+        dir.path(),
+        &["validate", "carol.docx", "--repair", "a.docx", "-q"],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        out,
+        "repaired 1 finding(s), structure only; history not checked (--original, --author)\nno findings\n"
+    );
+    let history = ["--original", "original.docx", "--author", "Carol", "-q"];
+    let (code, out, _) = run(
+        dir.path(),
+        &[
+            &["validate", "carol.docx", "--repair", "b.docx"][..],
+            &history,
+        ]
+        .concat(),
+    );
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        out,
+        "repaired 1 finding(s), structure only; history checked below against original.docx\nno findings\n"
+    );
+    let (code, out, _) = run(
+        dir.path(),
+        &[
+            &["validate", "alice.docx", "--repair", "c.docx"][..],
+            &history,
+        ]
+        .concat(),
+    );
+    assert_eq!(code, 2, "{out}");
+    assert!(
+        out.starts_with(
+            "repaired 1 finding(s), structure only; history checked below against original.docx\n"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("Alice"), "{out}");
+    let (_, help, _) = run(dir.path(), &["validate", "--help"]);
+    assert!(
+        help.contains("A structural repair: it does not check the edits' history"),
+        "{help}"
     );
 }
 

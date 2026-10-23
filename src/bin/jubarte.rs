@@ -3969,7 +3969,15 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
         if !job.json {
-            outln!("repaired {} finding(s)", fixed.repaired.len());
+            // A structural repair: the edits' history is a separate check.
+            let history = match job.original {
+                Some(original) => format!("history checked below against {}", original.display()),
+                None => "history not checked (--original, --author)".to_string(),
+            };
+            outln!(
+                "repaired {} finding(s), structure only; {history}",
+                fixed.repaired.len()
+            );
         }
         if !job.quiet {
             eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));

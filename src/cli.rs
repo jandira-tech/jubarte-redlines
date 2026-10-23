@@ -1614,6 +1614,9 @@ pub enum Command {
         #[arg(long)]
         strict: bool,
         /// Write the repaired package here; remaining findings still fail.
+        ///
+        /// A structural repair: it does not check the edits' history.
+        /// Add --original and --author for that.
         #[arg(long, value_name = "FILE")]
         repair: Option<PathBuf>,
         /// The document the edits started from: its findings print as

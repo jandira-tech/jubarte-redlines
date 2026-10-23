@@ -66,14 +66,16 @@ Done in #1661 (#1659): `tests/validate_formatting_history.rs` and the `history_g
 
 Update shared candidate checks in `src/edit/prepared.rs`.
 
-- [ ] Check clean and tracked serialized candidates.
-- [ ] Compare revision occurrences by part, record type and ID. A candidate must not introduce an additional same-kind duplicate occurrence.
-- [ ] Keep inherited duplicates separate from newly introduced duplicates; healing one ID must not conceal a collision under another.
-- [ ] Retain valid cross-kind ID sharing.
-- [ ] Refuse with `CANDIDATE_INVALID` before writing outputs; attach the responsible operation when provenance identifies it.
-- [ ] Keep `DUPLICATE_REVISION_ID` classified as non-Word-fatal. Publication policy and Word-opening behavior are separate concerns.
+- [x] Check clean and tracked serialized candidates.
+- [x] Compare revision occurrences by part, record type and ID. A candidate must not introduce an additional same-kind duplicate occurrence.
+- [x] Keep inherited duplicates separate from newly introduced duplicates; healing one ID must not conceal a collision under another.
+- [x] Retain valid cross-kind ID sharing.
+- [ ] Refuse with `CANDIDATE_INVALID` before writing outputs; attach the responsible operation when provenance identifies it. The refusal is done (#1665) and names the part, record type and id; the operation needs task 6's provenance.
+- [x] Keep `DUPLICATE_REVISION_ID` classified as non-Word-fatal. Publication policy and Word-opening behavior are separate concerns.
 
 Repair must retain its existing nonzero result when validation against the original still fails. Its help and completion text must distinguish structural repair from history verification.
+
+Done in #1665: `--repair` reports "structure only" and whether the history was checked (`--original`), and a history that still fails exits 2 (`repair_tells_structure_from_history`).
 
 ## 3. P1 — Compound edits, diagnostics and CLI usability
 
