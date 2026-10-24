@@ -25,6 +25,8 @@ use self_update::Extract;
 const ASSET: &str = "jubarte-9.9.9-linux-x86_64.tar.gz";
 /// Named as release.yml stages a Windows archive.
 const ZIP_ASSET: &str = "jubarte-9.9.9-windows-x86_64.zip";
+/// A Linux archive under the short gzipped-tar extension.
+const TGZ_ASSET: &str = "jubarte-9.9.9-linux-x86_64.tgz";
 const BIN_IN_ARCHIVE: &str = "jubarte-9.9.9-linux-x86_64/jubarte";
 const BIN_BYTES: &[u8] = b"test-only stand-in for the jubarte binary\n";
 
@@ -37,6 +39,7 @@ const SIGNED_B: &[u8] = include_bytes!("data/self_update/signed-b.tar.gz");
 const SIGNED_AB: &[u8] = include_bytes!("data/self_update/signed-ab.tar.gz");
 const UNSIGNED_ZIP: &[u8] = include_bytes!("data/self_update/unsigned.zip");
 const SIGNED_A_ZIP: &[u8] = include_bytes!("data/self_update/signed-a.zip");
+const SIGNED_A_TGZ: &[u8] = include_bytes!("data/self_update/signed-a.tgz");
 
 /// Write `bytes` as `dir/name`, the way the updater stores a download under
 /// its asset name before checking it.
@@ -76,6 +79,28 @@ fn a_signed_windows_zip_verifies() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = download(dir.path(), ZIP_ASSET, SIGNED_A_ZIP);
     verify_signature(&path, &[KEY_A]).expect("signature accepted");
+}
+
+#[test]
+fn a_signed_tgz_verifies_and_still_extracts() {
+    // self_update's archive detection reads `.tgz` as a gzipped tar, and
+    // `zipsign sign tar` signs one under its own name.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), TGZ_ASSET, SIGNED_A_TGZ);
+    verify_signature(&path, &[KEY_A]).expect("signature accepted");
+
+    let out = tempfile::tempdir().expect("tempdir");
+    Extract::from_source(&path)
+        .extract_file(out.path(), BIN_IN_ARCHIVE)
+        .expect("extract");
+    assert_eq!(
+        std::fs::read(out.path().join(BIN_IN_ARCHIVE)).expect("read"),
+        BIN_BYTES
+    );
+
+    // Signed as `.tgz`, so not valid as `.tar.gz`.
+    let path = download(dir.path(), ASSET, SIGNED_A_TGZ);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
 }
 
 #[test]

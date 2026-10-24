@@ -1,4 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+// SPDX-FileCopyrightText: 2023-2025 René Kijewski
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -14,17 +15,20 @@
 //!
 //! `zipsign sign` writes two layouts:
 //!
-//! - `.zip`: a 16-byte header ([`MAGIC`], then the signature count as a
-//!   little-endian `u16`), the 64-byte signatures, then the archive. The
-//!   signed message is everything after the signatures.
-//! - `.tar.gz`: the archive, then one more gzip member whose comment holds
-//!   the same header and signatures in base64, closed by that member's start
-//!   offset in 16 hex digits and [`GZIP_END`]. The signed message is
-//!   everything before that member. Gzip readers see an empty last member,
-//!   so the archive still extracts.
+//! - `zipsign sign zip`: a 16-byte header ([`MAGIC`], then the signature
+//!   count as a little-endian `u16`), the 64-byte signatures, then the
+//!   archive. The signed message is everything after the signatures.
+//! - `zipsign sign tar`: the archive, then one more gzip member whose
+//!   comment holds the same header and signatures in base64, closed by that
+//!   member's start offset in 16 hex digits and [`GZIP_END`]. The signed
+//!   message is everything before that member. Gzip readers see an empty
+//!   last member, so the archive still extracts.
 //!
 //! Either way a signature is ed25519ph over SHA-512, with the archive's file
-//! name as its context.
+//! name as its context. The archive's name picks the layout, as self_update's
+//! own archive detection does: `.tar.gz` and `.tgz` are tar, `.zip` is zip.
+//! The check reads a `.zip` on every platform, though only a build with
+//! self_update's `archive-zip` (Windows) can then extract it.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
@@ -66,7 +70,7 @@ const OFFSET_DIGITS: usize = 16;
 /// # Errors
 ///
 /// A message naming why the archive is refused: its name is not UTF-8 or
-/// not `.tar.gz`/`.zip`, it cannot be read, it carries no well-formed
+/// not `.tar.gz`/`.tgz`/`.zip`, it cannot be read, it carries no well-formed
 /// signature block, or no key verifies any of its signatures.
 pub fn verify_signature(archive: &Path, keys: &[ReleaseKey]) -> Result<(), String> {
     if keys.is_empty() {
@@ -85,13 +89,13 @@ pub fn verify_signature(archive: &Path, keys: &[ReleaseKey]) -> Result<(), Strin
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut file = File::open(archive).map_err(|e| format!("reading {name}: {e}"))?;
-    let (message, signatures) = if name.ends_with(".tar.gz") {
+    let (message, signatures) = if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         tar_message_and_signatures(&mut file)
     } else if name.ends_with(".zip") {
         zip_message_and_signatures(&mut file)
     } else {
         return Err(format!(
-            "{name}: zipsign signs only .tar.gz and .zip archives"
+            "{name}: zipsign signs only .tar.gz, .tgz and .zip archives"
         ));
     }
     .map_err(|e| format!("{name}: {e}"))?;
