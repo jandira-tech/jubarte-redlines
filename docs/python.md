@@ -392,8 +392,8 @@ Options:
           Emit one JSON object per line
 
       --author <NAME>
-          Only the changes this author made (exact match); repeat for several, as
-          `accept --author` selects them
+          Only listed changes by this author (exact match); repeat for several.
+          Comment-body revisions are not listed, even without this filter
 
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
