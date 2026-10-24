@@ -13888,11 +13888,18 @@ fn official_potpourri_symbol_bullet_keeps_gutter_space() {
     );
 }
 
-#[test]
-fn fixed_width_table_is_not_stretched_to_the_page() {
-    // 2000+2000+2000 twips = 300pt. Page content is 468pt; stretching would
-    // draw the right edge at 72+468=540 (table_bookmark_end failure mode).
-    let body = "<w:p><w:r><w:t>Title</w:t></w:r></w:p>\
+/// A bordered three-column table on a 2000-twip grid with one letter per
+/// cell; `tcpr` goes in every cell's `tcPr`. Returns the PDF and its
+/// vertical rules.
+fn bordered_letter_table(tcpr: &str) -> (Vec<u8>, Vec<f32>) {
+    let cells = ["A", "B", "C"]
+        .iter()
+        .map(|letter| {
+            format!("<w:tc><w:tcPr>{tcpr}</w:tcPr><w:p><w:r><w:t>{letter}</w:t></w:r></w:p></w:tc>")
+        })
+        .collect::<String>();
+    let body = format!(
+        "<w:p><w:r><w:t>Title</w:t></w:r></w:p>\
          <w:tbl><w:tblPr><w:tblBorders>\
            <w:top w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
            <w:left w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
@@ -13900,19 +13907,23 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
            <w:right w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>\
          </w:tblBorders></w:tblPr><w:tblGrid>\
            <w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
-         </w:tblGrid>\
-         <w:tr>\
-           <w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>C</w:t></w:r></w:p></w:tc>\
-         </w:tr></w:tbl><w:sectPr/>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert table");
-    let text = String::from_utf8_lossy(&pdf);
+         </w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert table");
     let rules = pdf_vertical_rule_xs(&pdf);
+    (pdf, rules)
+}
+
+#[test]
+fn fixed_width_table_is_not_stretched_to_the_page() {
+    // 2000+2000+2000 twips = 300pt. Page content is 468pt; stretching would
+    // draw the right edge at 72+468=540 (table_bookmark_end failure mode).
+    // Every cell has a tcW, so Word 16 keeps the grid: its right border is
+    // at 371.8 (#1716 probe fw_t).
+    let (pdf, rules) = bordered_letter_table("<w:tcW w:w=\"2000\" w:type=\"dxa\"/>");
+    let text = String::from_utf8_lossy(&pdf);
     let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     // No default table style: the border stays on the margin, 72 + 300.
-    // Word 16 runs this body (no tcW, autofit) shrunk to its letters
-    // instead; re-running autofit is not reconstructed yet.
     assert!(
         (371.0..=373.0).contains(&right),
         "300pt table ends at 372, not stretched; rules={rules:?}"
@@ -13920,6 +13931,20 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
     assert!(
         !text.contains("540.00"),
         "must not stretch a 300pt table to the 468pt content box"
+    );
+}
+
+#[test]
+fn a_bordered_autofit_table_without_tcw_shrinks_to_its_letters() {
+    // The same table with no tcW (#1716 probe fw). Word 16 fits each
+    // column to its letter: the right border is at 97.4, not 371.8. Word
+    // sets this styles-less body in Aptos 12 and jubarte in Calibri 11, so
+    // our letters, and the table, are a few points narrower.
+    let (_, rules) = bordered_letter_table("");
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (85.0..=100.0).contains(&right),
+        "the table shrinks to its three letters; rules={rules:?}"
     );
 }
 
@@ -17983,11 +18008,14 @@ fn line240_table_style(style_id: &str) -> String {
 
 fn three_col_shaded_table(style_id: &str, cols: usize) -> String {
     let grid: String = (0..cols).map(|_| "<w:gridCol w:w=\"2000\"/>").collect();
+    // A tcW on every cell, as Word writes it: without one, Word fits the
+    // autofit table to its content (#1716).
     let row = |label: &str| {
         let cells: String = (0..cols)
             .map(|i| {
                 format!(
-                    "<w:tc><w:tcPr><w:shd w:val=\"clear\" w:fill=\"DCE6F1\"/></w:tcPr>\
+                    "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>\
+                       <w:shd w:val=\"clear\" w:fill=\"DCE6F1\"/></w:tcPr>\
                        <w:p><w:r><w:t>{label}{i}</w:t></w:r></w:p></w:tc>"
                 )
             })
@@ -21761,20 +21789,20 @@ fn nested_table_paints_inner_cells_separately() {
     // (same baseline, different x); EEE vMerge must not swallow FFF/GGG.
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
          <w:tr><w:tc>\
-           <w:p><w:r><w:t>Outer</w:t></w:r></w:p>\
+           <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p>\
            <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
              <w:tr>\
-               <w:tc><w:p><w:r><w:t>CCC</w:t></w:r></w:p></w:tc>\
-               <w:tc><w:p><w:r><w:t>DDD</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>CCC</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>DDD</w:t></w:r></w:p></w:tc>\
              </w:tr>\
              <w:tr>\
-               <w:tc><w:tcPr><w:vMerge w:val=\"restart\"/></w:tcPr>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:vMerge w:val=\"restart\"/></w:tcPr>\
                  <w:p><w:r><w:t>EEE</w:t></w:r></w:p></w:tc>\
-               <w:tc><w:p><w:r><w:t>FFF</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>FFF</w:t></w:r></w:p></w:tc>\
              </w:tr>\
              <w:tr>\
-               <w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p></w:p></w:tc>\
-               <w:tc><w:p><w:r><w:t>GGG</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:vMerge/></w:tcPr><w:p></w:p></w:tc>\
+               <w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>GGG</w:t></w:r></w:p></w:tc>\
              </w:tr>\
            </w:tbl>\
          </w:tc></w:tr></w:tbl><w:sectPr/>";
@@ -21988,9 +22016,9 @@ fn light_shading_skips_header_when_firstrow_has_no_fill() {
          <w:tblPr><w:tblStyle w:val=\"LightShading-Accent1\"/>\
            <w:tblLook w:firstRow=\"1\" w:noHBand=\"0\"/></w:tblPr>\
          <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
-         <w:tr><w:tc><w:p><w:r><w:t>R0</w:t></w:r></w:p></w:tc></w:tr>\
-         <w:tr><w:tc><w:p><w:r><w:t>R1</w:t></w:r></w:p></w:tc></w:tr>\
-         <w:tr><w:tc><w:p><w:r><w:t>R2</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>R0</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>R1</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>R2</w:t></w:r></w:p></w:tc></w:tr>\
          </w:tbl><w:sectPr/>";
     let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("convert light shading");
     let hay = String::from_utf8_lossy(&pdf);
@@ -22088,12 +22116,12 @@ fn lightshading_firstrow_without_fill_does_not_bold_value_cell() {
            <w:tblLook w:firstRow=\"1\" w:firstColumn=\"1\"/></w:tblPr>\
          <w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
          <w:tr>\
-           <w:tc><w:p><w:r>{sz}<w:t>PrepFor</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r>{sz}<w:t>ExecNoBold</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r>{sz}<w:t>PrepFor</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r>{sz}<w:t>ExecNoBold</w:t></w:r></w:p></w:tc>\
          </w:tr>\
          <w:tr>\
-           <w:tc><w:p><w:r>{sz}<w:t>PrepBy</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r>{sz}<w:t>TeamVal</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r>{sz}<w:t>PrepBy</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p><w:r>{sz}<w:t>TeamVal</w:t></w:r></w:p></w:tc>\
          </w:tr>\
          </w:tbl><w:sectPr/>"
     );
@@ -22334,14 +22362,14 @@ fn medium_shading_three_col_oneline_header_stays_sixteen_after_mini_607() {
          <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/>\
            <w:gridCol w:w=\"2400\"/></w:tblGrid>\
          <w:tr>\
-           <w:tc><w:p><w:r><w:t>H0</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>H0</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>H1</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>H2</w:t></w:r></w:p></w:tc>\
          </w:tr>\
          <w:tr>\
-           <w:tc><w:p><w:r><w:t>A0</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>A0</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc>\
          </w:tr>\
          </w:tbl><w:sectPr/>";
     let pdf = docx_to_pdf(&docx_with_styles(body, medium_shading_accent1_styles()))
@@ -32394,7 +32422,7 @@ fn table_cell_empty_pbdr_paints_signature_rule_after_mini_78() {
     // plain interior empties stay skipped.
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
          <w:tr><w:tc>\
-           <w:p><w:r><w:t>EigenPal</w:t></w:r></w:p>\
+           <w:tcPr><w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>EigenPal</w:t></w:r></w:p>\
            <w:p><w:pPr><w:spacing w:after=\"320\"/></w:pPr>\
              <w:r><w:t>Maintainer</w:t></w:r></w:p>\
            <w:p><w:pPr><w:pBdr>\
@@ -32806,7 +32834,7 @@ fn cell_tcmar_80_stays_flush_after_mini_pill80() {
     // chrome (mini 257–260) was no-redline +0.033/+0.102 but redline
     // mean −0.005 (file_34 −0.25). Keep flush tops.
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid>\
-         <w:tr><w:tc><w:tcPr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/>\
            <w:shd w:val=\"clear\" w:fill=\"1E293B\"/>\
            <w:tcMar>\
              <w:top w:w=\"80\" w:type=\"dxa\"/><w:left w:w=\"140\" w:type=\"dxa\"/>\
@@ -34073,7 +34101,8 @@ fn three_row_grid_table() -> String {
     let mut rows = String::new();
     for label in ["R1", "R2", "R3"] {
         rows.push_str(&format!(
-            "<w:tr><w:tc><w:p><w:r><w:t>{label}</w:t></w:r></w:p></w:tc></w:tr>"
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>{label}</w:t></w:r></w:p></w:tc></w:tr>"
         ));
     }
     format!(
@@ -34351,9 +34380,10 @@ fn table_grid_wrapped_header_keeps_cell_chrome() {
         "Word advantage",
     ];
     let mut cells = String::new();
-    for text in header {
+    for (text, width) in header.into_iter().zip([2505, 2505, 2508, 2552]) {
         cells.push_str(&format!(
-            "<w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc>"
+            "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc>"
         ));
     }
     let body = format!(
@@ -40532,9 +40562,13 @@ fn an_inline_picture_in_a_table_cell_paints() {
     // fixtures_500 000ae863: each row holds a map photo (VML v:imagedata
     // in a w:pict) beside the address cell. Cell paragraphs kept only
     // their text, so every photo was missing (Jaccard 0.019).
+    // Word-written, so every cell has a tcW and Word 16 keeps the grid: the
+    // picture starts at 172.5 (#1716 probe pi_t).
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>\
-         <w:tr><w:tc><w:p><w:r><w:t>Address</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p><w:r><w:pict><v:shape style=\"width:120pt;height:60pt\">\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>Address</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:pict><v:shape style=\"width:120pt;height:60pt\">\
              <v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict></w:r></w:p></w:tc></w:tr></w:tbl>\
          <w:p><w:r><w:t>After</w:t></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -41084,11 +41118,11 @@ fn a_pbdr_edge_of_val_none_paints_nothing() {
     );
 }
 
-#[test]
-fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
-    // fixtures_500 017abe40: photos anchored layoutInCell, positionH
-    // column/center, positionV paragraph. Word keeps them in the cell and
-    // grows the row; cells dropped every anchored picture (0.110 -> 0.760).
+/// A two-column table, `Label` beside a 120x60pt picture anchored
+/// layoutInCell and centred on its column (fixtures_500 017abe40), on a
+/// 3000/5000 grid; `tcpr` holds each cell's `tcPr` content. Returns the
+/// picture's position.
+fn column_centred_cell_picture(tcpr: [&str; 2]) -> (f32, f32) {
     let pic = "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
           <wp:simplePos x=\"0\" y=\"0\"/>\
@@ -41103,17 +41137,52 @@ fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
           </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
     let body = format!(
         "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"5000\"/></w:tblGrid>\
-         <w:tr><w:tc><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:tc>\
-           <w:tc><w:p>{pic}</w:p></w:tc></w:tr></w:tbl>\
+         <w:tr><w:tc><w:tcPr>{}</w:tcPr><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:tcPr>{}</w:tcPr><w:p>{pic}</w:p></w:tc></w:tr></w:tbl>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
-           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        tcpr[0], tcpr[1]
     );
     let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert anchored cell picture");
-    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    image_cm_xy(&pdf, "120.00", "60.00")
+}
+
+#[test]
+fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
+    // fixtures_500 017abe40: photos anchored layoutInCell, positionH
+    // column/center, positionV paragraph. Word keeps them in the cell and
+    // grows the row; cells dropped every anchored picture (0.110 -> 0.760).
+    let (x, y) = column_centred_cell_picture([
+        "<w:tcW w:w=\"3000\" w:type=\"dxa\"/>",
+        "<w:tcW w:w=\"5000\" w:type=\"dxa\"/>",
+    ]);
     // Second cell spans 222..472pt; a 120pt picture centred sits near 287.
+    // Every cell has a tcW, so Word 16 keeps the grid: 287.0 (#1716 probe
+    // pa_t).
     assert!(
         x > 240.0 && x + 120.0 < 472.0,
         "picture centred in the cell; x={x}"
+    );
+    assert!(
+        (y - (720.0 - 60.0)).abs() < 3.0,
+        "picture top at the row top; y={y}"
+    );
+}
+
+#[test]
+fn an_autofit_cell_without_tcw_fits_its_column_to_its_picture() {
+    // The same table with no tcW (#1716 probe pa). Word 16 fits each
+    // column to its content and counts the picture: the label column ends
+    // just after "Label" (101.1) and the picture column is as wide as the
+    // picture, so the centred picture starts at its column's edge, 102.2.
+    // Word sets this styles-less body in Aptos 12 and jubarte in Calibri
+    // 11, so our "Label" is a few points narrower. Not counting the picture
+    // would centre it on a sliver left of "Label"'s end; the grid puts it
+    // at 287.
+    let (x, y) = column_centred_cell_picture(["", ""]);
+    assert!(
+        (90.0..=110.0).contains(&x),
+        "the picture column starts after Label and fits the picture; x={x}"
     );
     assert!(
         (y - (720.0 - 60.0)).abs() < 3.0,
@@ -43053,6 +43122,113 @@ fn table_cell_spacing_stands_twice_between_the_table_edge_and_its_text() {
         ((y0 - y1) - 10.0).abs() < 1.0,
         "10pt down from the top; dy={}",
         y0 - y1
+    );
+}
+
+/// How far column 2's first word (`right`) starts after column 1's
+/// (`left`) in an autofit table (`tblW` auto) on a valid grid: two
+/// `gridCol` widths, no `w:type`. `tcpr` goes in every cell's `tcPr`. The
+/// page and paragraphs are those of the #1716 Word probes (Letter, 1in
+/// margins).
+fn valid_grid_autofit_pitch(
+    grid: [u32; 2],
+    tcpr: &str,
+    rows: &[[&str; 2]],
+    left: &str,
+    right: &str,
+) -> f32 {
+    let row = |cells: &[&str; 2]| {
+        let cells = cells
+            .iter()
+            .map(|text| {
+                format!(
+                    "<w:tc><w:tcPr>{tcpr}</w:tcPr><w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p></w:tc>"
+                )
+            })
+            .collect::<String>();
+        format!("<w:tr>{cells}</w:tr>")
+    };
+    let body = format!(
+        "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"{}\"/><w:gridCol w:w=\"{}\"/></w:tblGrid>{}</w:tbl>\
+         <w:p><w:r><w:t>Outro</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        grid[0],
+        grid[1],
+        rows.iter().map(row).collect::<String>()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
+    let a = pdf_glyph_text_xy(&pdf, left).expect(left).0;
+    let b = pdf_glyph_text_xy(&pdf, right).expect(right).0;
+    b - a
+}
+
+#[test]
+fn an_autofit_table_on_a_valid_grid_without_tcw_fits_its_columns_to_the_content() {
+    // #1716 probe g2: gridCol 2400/2400 with no w:type, no tcW, a long
+    // paragraph in each cell. Word 16 fits the columns to the content, as
+    // it does with a w:type grid (g1) or no grid widths (g3): column 2's
+    // text starts 233.3pt after column 1's (x 72.5 and 305.8). We kept the
+    // 120pt grid.
+    let words = "AAAA ".repeat(30);
+    let pitch = valid_grid_autofit_pitch(
+        [2400, 2400],
+        "",
+        &[[&format!("{words}fox"), &format!("Bear {words}bear")]],
+        "AAAA",
+        "Bear",
+    );
+    assert!(
+        (pitch - 233.3).abs() < 10.0,
+        "Word fits both columns to ~233pt; pitch={pitch}"
+    );
+}
+
+#[test]
+fn an_autofit_table_whose_cells_have_an_auto_tcw_fits_its_columns_to_the_content() {
+    // #1716 probe q1 (the python-docx shape): gridCol 3000/6000, every cell
+    // `tcW w:w="0" w:type="auto"`. An auto width is no width: Word 16 fits
+    // the columns to the content, Value 61.7pt after Label (x 72.5 and
+    // 134.2), where the grid would put it 150pt after.
+    let long = "Obsluha palicich peci, Pripravar keramickych hmot, Tociri keramiky, \
+                Vyrobce lisovane keramiky, Obrabec keramiky, Vyrobce sadrovych forem, "
+        .repeat(6);
+    let pitch = valid_grid_autofit_pitch(
+        [3000, 6000],
+        "<w:tcW w:w=\"0\" w:type=\"auto\"/>",
+        &[
+            ["Label", "Value"],
+            ["Professions", long.trim_end()],
+            ["Code", "23-51-H/01"],
+        ],
+        "Label",
+        "Value",
+    );
+    assert!(
+        (pitch - 61.7).abs() < 10.0,
+        "Word fits the label column to its words; pitch={pitch}"
+    );
+}
+
+#[test]
+fn an_autofit_table_with_a_tcw_on_every_cell_keeps_its_grid() {
+    // #1716 probe q3, g2's complement: the same table with
+    // `tcW 2400 dxa` on every cell. A Word-written table has a tcW on
+    // every cell, and Word 16 keeps its grid as the last autofit result:
+    // column 2's text starts 120pt after column 1's (x 72.5 and 192.5).
+    let words = "AAAA ".repeat(30);
+    let pitch = valid_grid_autofit_pitch(
+        [2400, 2400],
+        "<w:tcW w:w=\"2400\" w:type=\"dxa\"/>",
+        &[[&format!("{words}fox"), &format!("Bear {words}bear")]],
+        "AAAA",
+        "Bear",
+    );
+    assert!(
+        (pitch - 120.0).abs() < 3.0,
+        "Word keeps the 120pt grid; pitch={pitch}"
     );
 }
 
