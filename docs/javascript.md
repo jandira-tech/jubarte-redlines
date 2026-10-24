@@ -1426,6 +1426,10 @@ Options:
       --json
           Emit one JSON object per line
 
+      --author <NAME>
+          Only listed changes by this author (exact match); repeat for several.
+          Comment-body revisions are not listed, even without this filter
+
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
