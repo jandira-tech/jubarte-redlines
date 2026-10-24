@@ -1328,12 +1328,15 @@ fn read_tables_refuses_input_aliases_before_reading() {
                 let (code, stdout, stderr) = run(&args);
                 assert_eq!(code, 2, "{args:?}: {stderr}");
                 assert!(stdout.is_empty(), "{stdout}");
+                // The CLI names paths with forward slashes on every
+                // platform (`slash_path`); `display()` keeps Windows'
+                // backslashes.
                 assert_eq!(
                     stderr,
                     format!(
                         "error: OUTPUT_ALIAS: the output '{}' is the same file as the input '{}'\n",
-                        output.display(),
-                        source.display()
+                        jubarte::cli::slash_path(&output),
+                        jubarte::cli::slash_path(&source)
                     )
                 );
                 assert_eq!(std::fs::read(&source).unwrap(), original);
