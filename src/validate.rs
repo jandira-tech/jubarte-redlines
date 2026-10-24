@@ -1202,18 +1202,22 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
 /// revision, as Open-Xml-PowerTools writes them: Word resolves those
 /// (2026-10-23). The body's final mark is not flagged: Word resolves it.
 fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for part in xml_parts(pkg) {
-        // `tc>` closes a cell whatever its prefix, none included.
-        if !pkg
-            .part_bytes(&part)
-            .is_some_and(|bytes| bytes.windows(3).any(|w| w == b"tc>"))
-        {
+    for part in revision_parts(pkg) {
+        // A cell's start tag, whatever its prefix (none included) and
+        // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
+        if !pkg.part_bytes(&part).is_some_and(|bytes| {
+            bytes.windows(4).any(|w| {
+                matches!(w[0], b'<' | b':')
+                    && &w[1..3] == b"tc"
+                    && matches!(w[3], b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n')
+            })
+        }) {
             continue;
         }
         let Some((dom, root)) = parse_part(pkg, &part) else {
             continue;
         };
-        for cell in dom.descendants(root, Some(&W::name("tc"))) {
+        for cell in dom.descendants(root, Some(&W::tc())) {
             for (last, kind) in uncovered_final_marks(&dom, cell) {
                 out.push(Finding::new(
                     "CELL_FINAL_MARK_REVISION",
@@ -1237,20 +1241,20 @@ pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'s
         return Vec::new();
     };
     let Some(rpr) = dom
-        .element(last, &W::name("pPr"))
-        .and_then(|ppr| dom.element(ppr, &W::name("rPr")))
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
     else {
         return Vec::new();
     };
     let cells: Vec<NodeId> = std::iter::once(cell)
-        .chain(dom.ancestors(cell, Some(&W::name("tc"))))
+        .chain(dom.ancestors(cell, Some(&W::tc())))
         .collect();
     ["ins", "del"]
         .into_iter()
         .filter(|kind| {
-            dom.element(rpr, &W::name(kind)).is_some()
+            dom.element(rpr, &revision_name(kind)).is_some()
                 && !cells.iter().any(|&c| {
-                    dom.ancestors(c, Some(&W::name("tr")))
+                    dom.ancestors(c, Some(&W::tr()))
                         .first()
                         .is_some_and(|&row| row_revised(dom, row, c, kind))
                 })
@@ -1263,12 +1267,21 @@ pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'s
 /// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
 /// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
 pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
-    let cell_kind = if kind == "ins" { "cellIns" } else { "cellDel" };
-    dom.element(row, &W::name("trPr"))
-        .is_some_and(|pr| dom.element(pr, &W::name(kind)).is_some())
+    let cell_kind = if kind == "ins" {
+        W::cell_ins()
+    } else {
+        W::cell_del()
+    };
+    dom.element(row, &W::tr_pr())
+        .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
         || dom
-            .element(cell, &W::name("tcPr"))
-            .is_some_and(|pr| dom.element(pr, &W::name(cell_kind)).is_some())
+            .element(cell, &W::tc_pr())
+            .is_some_and(|pr| dom.element(pr, &cell_kind).is_some())
+}
+
+/// `w:ins` for `"ins"`, `w:del` for `"del"`.
+pub(crate) fn revision_name(kind: &str) -> XName {
+    if kind == "ins" { W::ins() } else { W::del() }
 }
 
 /// The last paragraph among a container's blocks, through block content
@@ -1276,10 +1289,10 @@ pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> b
 pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
     let mut last = None;
     for child in dom.elements(container, None) {
-        let found = if dom.name_is(child, &W::name("p")) {
+        let found = if dom.name_is(child, &W::p()) {
             Some(child)
-        } else if dom.name_is(child, &W::name("sdt")) {
-            dom.element(child, &W::name("sdtContent"))
+        } else if dom.name_is(child, &W::sdt()) {
+            dom.element(child, &W::sdt_content())
                 .and_then(|content| last_block_paragraph(dom, content))
         } else if dom.name_is(child, &W::name("customXml")) {
             last_block_paragraph(dom, child)

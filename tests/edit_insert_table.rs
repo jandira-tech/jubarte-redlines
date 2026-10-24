@@ -306,6 +306,16 @@ fn a_table_inside_a_table_cell_is_refused() {
         r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a"]]}]"#,
     );
     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
+    // Keeping the existing revisions refuses it too, after the cell's
+    // final paragraph or before it (codex on #1680).
+    for position in ["after", "before"] {
+        let keep = EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"A","date":"2026-10-02T12:00:00Z","existing_revisions":"keep","operations":[{{"kind":"insert_table","paragraph":"p0","position":"{position}","rows":[["a"]]}}]}}"#
+        ))
+        .unwrap();
+        let error = apply_plan(&source, &keep).unwrap_err();
+        assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{position}");
+    }
 }
 
 #[test]

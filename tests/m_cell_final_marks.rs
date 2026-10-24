@@ -224,6 +224,44 @@ fn a_row_gaining_a_cell_resolves_both_ways() {
     check_valid(&b, &a, "removed cell");
 }
 
+/// A row added or removed whole keeps every final mark's revision, a
+/// cell in a row-level content control (`w:tr/w:sdt/…/w:tc`) included:
+/// the row's revision covers it (codex on #1680, round 9).
+#[test]
+fn a_wrapped_cell_of_a_whole_row_keeps_its_revised_marks() {
+    let rows = |second: Option<(&str, &str)>| {
+        let tc = |inner: String| {
+            format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
+        };
+        let wrapped = second.map_or(String::new(), |(one, two)| {
+            format!(
+                "<w:tr><w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt></w:tr>",
+                tc(para(one) + &para(two))
+            )
+        });
+        docx(&format!(
+            "{}<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}</w:tr>{wrapped}</w:tbl>{}",
+            para("Before."),
+            tc(para("Keep.")),
+            para("After.")
+        ))
+    };
+    let short = rows(None);
+    let long = rows(Some(("New.", "Two.")));
+    check(
+        &short,
+        &long,
+        &[("+", "+New."), ("+", "+Two.")],
+        "row added",
+    );
+    check(
+        &long,
+        &short,
+        &[("-", "-New."), ("-", "-Two.")],
+        "row removed",
+    );
+}
+
 /// The redline of `a` against `b` is Word-valid, accepts to `b` and rejects
 /// to `a`.
 fn check_valid(a: &[u8], b: &[u8], what: &str) -> Vec<u8> {
@@ -246,4 +284,150 @@ fn check_valid(a: &[u8], b: &[u8], what: &str) -> Vec<u8> {
         "{what}: Reject All"
     );
     out
+}
+
+/// `body` with `cell` as the one cell of a table in `story`: a footnote,
+/// an endnote, a header, a footer, or a text box in the body. Returns the
+/// package and the part the table is in.
+fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
+    use common::docx::{Part, W_NS, docx_with, docx_with_sect};
+    let table = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl><w:p/>"#
+    );
+    let r_ns = common::docx::R_NS;
+    let note = |kind: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{kind}s xmlns:w="{W_NS}"><w:{kind} w:id="1">{table}</w:{kind}></w:{kind}s>"#
+        )
+    };
+    let reference = |kind: &str| {
+        format!(r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:{kind}Reference w:id="1"/></w:r></w:p>"#)
+    };
+    let chrome = |root: &str| {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="{W_NS}" xmlns:r="{r_ns}">{table}</w:{root}>"#
+        )
+    };
+    const CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+    match story {
+        "footnote" | "endnote" => {
+            let name: &'static str = if story == "footnote" {
+                "word/footnotes.xml"
+            } else {
+                "word/endnotes.xml"
+            };
+            let xml = note(story);
+            let content_type = format!("{CT}{story}s+xml");
+            let rel_type = format!("{REL}{story}s");
+            let part = Part {
+                name,
+                content_type: &content_type,
+                rel_type: &rel_type,
+                xml: &xml,
+            };
+            (docx_with(&reference(story), &[part]), name)
+        }
+        "header" | "footer" => {
+            let (name, root): (&'static str, &str) = if story == "header" {
+                ("word/header1.xml", "hdr")
+            } else {
+                ("word/footer1.xml", "ftr")
+            };
+            let xml = chrome(root);
+            let content_type = format!("{CT}{story}+xml");
+            let rel_type = format!("{REL}{story}");
+            let part = Part {
+                name,
+                content_type: &content_type,
+                rel_type: &rel_type,
+                xml: &xml,
+            };
+            let sect = format!(r#"<w:{story}Reference w:type="default" r:id="rIdX0"/>"#);
+            (docx_with_sect(&para("Body."), &[part], &sect), name)
+        }
+        "text box" => (
+            docx(&format!(
+                r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="box" style="width:200pt;height:100pt"><v:textbox><w:txbxContent>{table}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#
+            )),
+            "word/document.xml",
+        ),
+        _ => unreachable!("no story {story}"),
+    }
+}
+
+/// `part`'s blocks as `[tbl [tr [tc [p text]]]]`.
+fn blocks_of(bytes: &[u8], part: &str) -> String {
+    let xml = part_string(bytes, part).unwrap();
+    let token = regex::Regex::new(
+        r"<w:(tbl|tr|tc|p)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
+    )
+    .unwrap();
+    let mut out = String::new();
+    for c in token.captures_iter(&xml) {
+        if let Some(open) = c.get(1) {
+            out.push('[');
+            out.push_str(open.as_str());
+            if !c[2].is_empty() {
+                out.push(']');
+            }
+        } else if c.get(3).is_some() {
+            out.push(']');
+        } else {
+            out.push_str(&c[4]);
+        }
+    }
+    out
+}
+
+/// A cell in every story beside the body, in both modes: a paragraph
+/// appended, and a nested table at the cell's start cleared with the text
+/// after it. The redline is Word-valid, accepts to the revised story and
+/// rejects to the original (#1684: the pairing never ran in the notes,
+/// and missed headers, footers and text boxes).
+#[test]
+fn a_cells_final_mark_settles_in_every_story() {
+    use jubarte::comparer::{CompareMode, WmlComparerSettings};
+    use jubarte::document_comparer::compare_documents_with_settings;
+    let nested = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
+        para("Inner."),
+        para("Tail.")
+    );
+    let pairs = [
+        (para("Old."), format!("{}{}", para("Old."), para("New."))),
+        (nested, "<w:p/>".to_string()),
+    ];
+    let mut failures = Vec::new();
+    for story in ["footnote", "endnote", "header", "footer", "text box"] {
+        for (old, new) in &pairs {
+            let (a, part) = in_story(story, old);
+            let (b, _) = in_story(story, new);
+            for mode in [CompareMode::Word, CompareMode::PowerTools] {
+                let what = format!(
+                    "{story}, {} ({mode:?})",
+                    if new == "<w:p/>" {
+                        "cleared"
+                    } else {
+                        "appended"
+                    }
+                );
+                let out = compare_documents_with_settings(&a, &b, &WmlComparerSettings::new(mode))
+                    .expect("compare");
+                let report = check_word_valid_package(&out);
+                if !report.ok() {
+                    failures.push(format!("{what}: {:?}", report.errors));
+                }
+                let accepted = blocks_of(&accept_revisions(&out).unwrap(), part);
+                if accepted != blocks_of(&b, part) {
+                    failures.push(format!("{what}: Accept All gives {accepted}"));
+                }
+                let rejected = blocks_of(&reject_revisions(&out).unwrap(), part);
+                if rejected != blocks_of(&a, part) {
+                    failures.push(format!("{what}: Reject All gives {rejected}"));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
