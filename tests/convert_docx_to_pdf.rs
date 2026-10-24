@@ -43127,9 +43127,26 @@ fn table_cell_spacing_stands_twice_between_the_table_edge_and_its_text() {
 
 /// How far column 2's first word (`right`) starts after column 1's
 /// (`left`) in an autofit table (`tblW` auto) on a valid grid: two
-/// `gridCol` widths, no `w:type`. `tcpr` goes in every cell's `tcPr`. The
-/// page and paragraphs are those of the #1716 Word probes (Letter, 1in
-/// margins).
+/// `gridCol` widths, no `w:type`, and `rows` as written. The page and
+/// paragraphs are those of the #1716 Word probes (Letter, 1in margins).
+fn autofit_pitch(grid: [u32; 2], rows: &str, left: &str, right: &str) -> f32 {
+    let body = format!(
+        "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"{}\"/><w:gridCol w:w=\"{}\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:t>Outro</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        grid[0], grid[1]
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
+    let a = pdf_glyph_text_xy(&pdf, left).expect(left).0;
+    let b = pdf_glyph_text_xy(&pdf, right).expect(right).0;
+    b - a
+}
+
+/// [`autofit_pitch`] for rows of two text cells, `tcpr` in every cell's
+/// `tcPr`.
 fn valid_grid_autofit_pitch(
     grid: [u32; 2],
     tcpr: &str,
@@ -43148,21 +43165,8 @@ fn valid_grid_autofit_pitch(
             .collect::<String>();
         format!("<w:tr>{cells}</w:tr>")
     };
-    let body = format!(
-        "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>\
-         <w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
-         <w:tblGrid><w:gridCol w:w=\"{}\"/><w:gridCol w:w=\"{}\"/></w:tblGrid>{}</w:tbl>\
-         <w:p><w:r><w:t>Outro</w:t></w:r></w:p>\
-         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
-         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
-        grid[0],
-        grid[1],
-        rows.iter().map(row).collect::<String>()
-    );
-    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
-    let a = pdf_glyph_text_xy(&pdf, left).expect(left).0;
-    let b = pdf_glyph_text_xy(&pdf, right).expect(right).0;
-    b - a
+    let rows = rows.iter().map(row).collect::<String>();
+    autofit_pitch(grid, &rows, left, right)
 }
 
 #[test]
@@ -43210,6 +43214,63 @@ fn an_autofit_table_whose_cells_have_an_auto_tcw_fits_its_columns_to_the_content
         (pitch - 61.7).abs() < 10.0,
         "Word fits the label column to its words; pitch={pitch}"
     );
+}
+
+#[test]
+fn an_autofit_table_whose_cells_have_a_zero_or_auto_tcw_fits_its_columns() {
+    // #1720 probes b6 and b7 (Word 16, 2026-10-24): gridCol 2400/6000, every
+    // cell `tcW w:w="0"`, of type dxa (b6) or auto (b7). A zero width is no
+    // width either: Word fits both, VALUE 39.3 and 50.1pt after LABEL:,
+    // where the grid would put it 120pt after.
+    let long = "AAAA ".repeat(25);
+    for (tcpr, word) in [
+        ("<w:tcW w:w=\"0\" w:type=\"dxa\"/>", 39.3),
+        ("<w:tcW w:w=\"0\" w:type=\"auto\"/>", 50.1),
+    ] {
+        let pitch = valid_grid_autofit_pitch(
+            [2400, 6000],
+            tcpr,
+            &[["LABEL:", "VALUE"], ["second row", long.trim_end()]],
+            "LABEL:",
+            "VALUE",
+        );
+        assert!(
+            (pitch - word).abs() < 10.0,
+            "{tcpr}: Word fits the columns to their words; pitch={pitch}"
+        );
+    }
+}
+
+#[test]
+fn a_deleted_or_hidden_row_without_tcw_fits_the_table_as_any_row_does() {
+    // #1720 probes b10 and b11 (Word 16, 2026-10-24): row 0 has the grid's
+    // widths as tcW; row 1 is deleted (w:del on its mark) or hidden, and its
+    // cells have none. Word fits the table either way: VALUE starts 77.3
+    // (b10) and 76.1pt (b11) after LABEL:, not the grid's 120.
+    let long = "AAAA ".repeat(25);
+    for (trpr, text, word) in [
+        (
+            "<w:del w:id=\"900\" w:author=\"Ann\" w:date=\"2026-10-24T00:00:00Z\"/>",
+            "deleted",
+            77.3,
+        ),
+        ("<w:hidden/>", "hidden", 76.1),
+    ] {
+        let rows = format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>VALUE</w:t></w:r></w:p></w:tc></w:tr>\
+             <w:tr><w:trPr>{trpr}</w:trPr><w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>\
+               <w:tc><w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p></w:tc></w:tr>",
+            long.trim_end()
+        );
+        let pitch = autofit_pitch([2400, 6000], &rows, "LABEL:", "VALUE");
+        assert!(
+            (pitch - word).abs() < 10.0,
+            "{text} row: Word fits the table; pitch={pitch}"
+        );
+    }
 }
 
 #[test]
