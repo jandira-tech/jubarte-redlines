@@ -1426,8 +1426,8 @@ fn read_tables_force_replaces_output_entry() {
     }
 }
 
-/// `changes --author NAME` lists only that author's changes, as
-/// `accept --author` selects them: exact names, repeatable (#1690).
+/// `changes --author NAME` filters listed changes by exact, repeatable names
+/// (#1690). Comment-body changes are outside the listing's scope.
 #[test]
 fn changes_filter_by_author() {
     let dir = tempfile::tempdir().unwrap();
@@ -1472,6 +1472,58 @@ fn changes_filter_by_author() {
         .collect();
     assert_eq!(json.len(), 1, "{json:?}");
     assert_eq!(json[0]["author"], "Bo");
+}
+
+#[test]
+fn changes_help_discloses_unlisted_comment_body_revisions() {
+    use common::docx::{Part, W_NS, docx_with, part_string};
+    let dir = tempfile::tempdir().unwrap();
+    let comments = format!(
+        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Rev"><w:p><w:r><w:t>plain </w:t></w:r><w:ins w:id="9" w:author="Cara" w:date="2026-10-01T00:00:00Z"><w:r><w:t>revised</w:t></w:r></w:ins></w:p></w:comment></w:comments>"#
+    );
+    let bytes = docx_with(
+        r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>anchored</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let source = dir.path().join("source.docx");
+    std::fs::write(&source, &bytes).unwrap();
+    // Check unfiltered changes first: this is a listing boundary, not an
+    // author-filter regression.
+    for filter in [vec![], vec!["--author", "Cara"]] {
+        let mut args = vec!["changes", source.to_str().unwrap()];
+        args.extend(filter);
+        let (code, stdout, stderr) = run(&args);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "0 change(s)");
+    }
+    let accepted = dir.path().join("accepted.docx");
+    let (code, _, stderr) = run(&[
+        "accept",
+        source.to_str().unwrap(),
+        "--author",
+        "Cara",
+        "-o",
+        accepted.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let comments = part_string(&std::fs::read(accepted).unwrap(), "word/comments.xml").unwrap();
+    assert!(!comments.contains("<w:ins"), "{comments}");
+    assert!(comments.contains("revised"), "{comments}");
+    let (code, help, stderr) = run(&["changes", "--help"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        help.contains("Comment-body revisions are not listed"),
+        "disclose listing scope: {help}"
+    );
+    assert!(
+        !help.contains("as `accept --author` selects them"),
+        "{help}"
+    );
 }
 
 /// `edit --help` names a plan's contents as operations, shows one
