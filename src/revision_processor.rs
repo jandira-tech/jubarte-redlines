@@ -669,24 +669,26 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::name(saved)),
         };
-        // pPrChange specially re-adds the live rPr (so run-mark formatting survives)
-        if name == W::p_pr()
-            && let Some(rpr) = dom.element(node, &W::r_pr())
-        {
-            let rpr_clone = dom.clone_subtree(rpr);
-            dom.add(new_prop, rpr_clone);
-        }
-        // #1708: the saved pPr (CT_PPrBase) has no section break, so the
-        // live sectPr stays, last as the schema orders it. A saved one a
-        // source carried is replaced, never doubled.
-        if name == W::p_pr()
-            && let Some(sect) = dom.element(node, &W::sect_pr())
-        {
-            for stale in dom.elements(new_prop, Some(&W::sect_pr())) {
-                dom.remove(stale);
+        // The saved pPr (CT_PPrBase) holds neither the paragraph mark's
+        // run properties nor a section break (#1708), so the live ones stay,
+        // last as the schema orders them: rPr, then sectPr. A source that
+        // left either in the saved copy gets the live state back, once:
+        // never a doubled rPr, nor a section break the paragraph lacks.
+        if name == W::p_pr() {
+            let mut stale = dom.elements(new_prop, None);
+            stale.retain(|&e| {
+                dom.name(e)
+                    .is_some_and(|n| n == W::r_pr() || n == W::sect_pr())
+            });
+            for e in stale {
+                dom.remove(e);
             }
-            let sect_clone = dom.clone_subtree(sect);
-            dom.add(new_prop, sect_clone);
+            for kept in [W::r_pr(), W::sect_pr()] {
+                if let Some(live) = dom.element(node, &kept) {
+                    let live_clone = dom.clone_subtree(live);
+                    dom.add(new_prop, live_clone);
+                }
+            }
         }
         // #1713: the saved trPr (CT_TrPrBase) has no row insertion or
         // deletion. The live w:ins/w:del stay, so the reversal below still
