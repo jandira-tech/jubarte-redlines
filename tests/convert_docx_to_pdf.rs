@@ -44063,6 +44063,44 @@ fn an_autofit_table_with_gridcol_type_and_a_tcw_on_every_cell_keeps_its_grid() {
 }
 
 #[test]
+fn a_gridcol_width_that_is_not_a_finite_number_is_no_width() {
+    // Jules on #1735: `w:w="NaN"`, `"inf"` and `"1e40"` parse as f32, so
+    // they passed for widths and reached the layout, before #1720 too.
+    // NaN set VALUE at x 1655, off the page; inf and 1e40 squeezed the
+    // first column to its word (VALUE at 103.4). Such a width is no
+    // number: the table is laid out as with an unparsable one.
+    let cell = |text: &str, w: u32| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let value_x = |width: &str| {
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"{width}\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+             <w:tr>{}{}</w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+             w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            cell("LABEL:", 2400),
+            cell("VALUE", 6000),
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
+        pdf_glyph_text_xy(&pdf, "VALUE").map(|(x, _)| x)
+    };
+    let unparsable = value_x("bad").expect("VALUE with an unparsable width");
+    let moved: Vec<_> = ["NaN", "inf", "1e40"]
+        .into_iter()
+        .map(|width| (width, value_x(width)))
+        .filter(|(_, x)| !x.is_some_and(|x| (x - unparsable).abs() < 0.01))
+        .collect();
+    assert!(
+        moved.is_empty(),
+        "a non-finite width lays out as an unparsable one (VALUE at {unparsable}); moved: {moved:?}"
+    );
+}
+
+#[test]
 fn a_spaced_autofit_tables_columns_share_the_text_width_plus_its_margins() {
     // fixtures_500 00046848, live Word: labels in Arial 10 bold beside an
     // 800pt paragraph, 2.5pt cell spacing, 4pt margins. The label column's

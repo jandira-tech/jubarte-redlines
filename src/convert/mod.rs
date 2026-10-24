@@ -13265,8 +13265,9 @@ fn table_block(
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
-            // A gridCol without a width, or with one that is no number, is
-            // a grid Word never wrote: it fits the columns to their
+            // A gridCol without a width, or with one that is no finite
+            // number (`NaN` and `inf` parse as f32), is a grid Word never
+            // wrote: it fits the columns to their
             // content on open (0edc50c464's `<w:gridCol/>` tables). Cells
             // without a width can say so too (`cells_foreign`, below). A
             // gridCol's `w:type` says nothing: Word keeps the grid of a
@@ -13274,7 +13275,8 @@ fn table_block(
             // probes b1, b2).
             let width = dom
                 .attribute(col, &W::name("w"))
-                .and_then(|s| s.parse::<f32>().ok());
+                .and_then(|s| s.parse::<f32>().ok())
+                .filter(|w| w.is_finite());
             foreign_grid |= width.is_none();
             cols.push(width.map(twip).unwrap_or(80.0));
         }
