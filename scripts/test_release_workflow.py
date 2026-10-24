@@ -18,6 +18,7 @@ Run with PyYAML: `uv run --with pyyaml python3 scripts/test_release_workflow.py`
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -25,8 +26,17 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 WORKFLOW = HERE.parent / ".github" / "workflows" / "release.yml"
+sys.path.insert(0, str(HERE))
+
+from check_release_artifacts import REQUIRED_WHEEL_TAGS
 
 PUBLISH_JOBS = ("publish-crates", "publish-pypi", "publish-npm")
+ATTEST_PERMISSIONS = {
+    "contents": "write",
+    "id-token": "write",
+    "attestations": "write",
+    "artifact-metadata": "write",
+}
 SHA_PIN = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
@@ -37,6 +47,22 @@ def load() -> dict:
 def runs(job: dict) -> str:
     """Every `run:` script of a job, in order, joined."""
     return "\n".join(s.get("run", "") for s in job["steps"])
+
+
+def matrix_artifacts(job: dict) -> list[str]:
+    return [row["artifact"] for row in job["strategy"]["matrix"]["include"]]
+
+
+def wheel_artifact(tag: str) -> str:
+    """The wheels job's artifact name for a platform tag of REQUIRED_WHEEL_TAGS."""
+    for prefix, family in (("manylinux_2_28_", "manylinux"), ("musllinux_1_2_", "musllinux")):
+        if tag.startswith(prefix):
+            return f"{family}-{tag.removeprefix(prefix)}"
+    if tag.startswith("macosx_"):
+        return "macos-aarch64" if tag.endswith("_arm64") else "macos-x86_64"
+    if tag == "win_amd64":
+        return "windows-x86_64"
+    raise AssertionError(f"no wheels-job artifact for {tag}")
 
 
 def step_index(job: dict, predicate) -> int:
@@ -64,14 +90,21 @@ class TrustedPublishing(unittest.TestCase):
             env = env.get("name") if isinstance(env, dict) else env
             self.assertEqual(env, "release", name)
 
-    def test_only_the_publish_jobs_may_mint_an_id_token(self) -> None:
+    def test_only_the_publish_jobs_and_the_attestation_may_mint_an_id_token(self) -> None:
         self.assertNotIn("id-token", self.wf.get("permissions", {}))
         for name, job in self.jobs.items():
             perms = job.get("permissions", {})
             if name in PUBLISH_JOBS:
                 self.assertEqual(perms, {"contents": "read", "id-token": "write"}, name)
+            elif name == "release":
+                self.assertEqual(perms, ATTEST_PERMISSIONS, name)
             else:
                 self.assertNotIn("id-token", perms, name)
+
+    def test_the_attesting_job_cannot_pass_for_a_publisher(self) -> None:
+        # The registries trust tokens from the release environment only; a
+        # token minted outside it carries no environment claim they accept.
+        self.assertNotIn("environment", self.jobs["release"])
 
     def test_no_registry_secret_is_read_anywhere(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -106,6 +139,55 @@ class TrustedPublishing(unittest.TestCase):
                 uses = s.get("uses")
                 if uses and not uses.startswith("./"):
                     self.assertRegex(uses, SHA_PIN, f"{name}: {uses}")
+
+
+class Matrices(unittest.TestCase):
+    """Each platform list is written in more than one place; they agree."""
+
+    def setUp(self) -> None:
+        self.jobs = load()["jobs"]
+
+    def test_the_binary_matrix_is_the_list_release_sh_names(self) -> None:
+        text = (HERE / "release.sh").read_text(encoding="utf-8")
+        m = re.search(r"^\s*for a in (linux-\S+(?: \S+)*); do$", text, re.M)
+        self.assertIsNotNone(m, "release.sh lost its list of release archives")
+        self.assertEqual(matrix_artifacts(self.jobs["binaries"]), m.group(1).split())
+
+    def test_the_wheel_matrix_is_the_set_check_release_artifacts_requires(self) -> None:
+        artifacts = matrix_artifacts(self.jobs["wheels"])
+        self.assertEqual(len(artifacts), len(set(artifacts)))
+        self.assertEqual(sorted(artifacts), sorted(wheel_artifact(t) for t in REQUIRED_WHEEL_TAGS))
+
+    def test_the_wheel_matrix_is_the_readme_row(self) -> None:
+        readme = (HERE.parent / "README.md").read_text(encoding="utf-8")
+        row = re.search(r"^\| Python release wheels \| (.+?) \(abi3", readme, re.M)
+        self.assertIsNotNone(row, "README lost its Python release wheels row")
+        archs = [a for group in row.group(1).split(", ") for a in group.split(" ", 1)[1].split("/")]
+        self.assertEqual(len(archs), len(matrix_artifacts(self.jobs["wheels"])))
+
+
+class Provenance(unittest.TestCase):
+    """Every release asset carries a GitHub build-provenance attestation
+    (SLSA, Sigstore-signed), so `gh attestation verify` ties a download to
+    the release.yml run that built it."""
+
+    def setUp(self) -> None:
+        self.job = load()["jobs"]["release"]
+        self.steps = self.job["steps"]
+
+    def named(self, name: str) -> int:
+        return step_index(self.job, lambda s: s.get("name") == name)
+
+    def test_the_release_attests_every_checksummed_asset(self) -> None:
+        i = step_index(self.job, lambda s: s.get("uses", "").startswith("actions/attest@"))
+        self.assertEqual(self.steps[i]["with"], {"subject-checksums": "dist/SHA256SUMS.txt"})
+
+    def test_attests_the_signed_bytes_before_anything_is_published(self) -> None:
+        # Signing rewrites the archives, so the attestation follows it.
+        i = step_index(self.job, lambda s: s.get("uses", "").startswith("actions/attest@"))
+        self.assertLess(self.named("Sign archives"), self.named("Checksums"))
+        self.assertLess(self.named("Checksums"), i)
+        self.assertLess(i, self.named("Publish release"))
 
 
 class Crates(unittest.TestCase):
@@ -169,6 +251,23 @@ class Npm(unittest.TestCase):
 
     def test_a_prerelease_does_not_take_the_latest_tag(self) -> None:
         self.assertIn("--tag next", runs(self.job))
+
+    def test_a_refused_publish_names_the_trusted_publisher_causes(self) -> None:
+        # 0.13.0: npm answered E404 on PUT and never reached npm. A trusted
+        # publisher made after 2026-09-03 allows only `npm stage publish`
+        # unless it allows npm publish, and a new one expires unless its
+        # first publish lands within two days. The log says so.
+        publishes = [s for s in self.job["steps"] if "npm publish" in s.get("run", "")]
+        self.assertEqual(len(publishes), 2)
+        for step in publishes:
+            pkg = "jubarte-wasm" if step["working-directory"].endswith("/npm") else "jubarte-redlines"
+            script = step["run"]
+            with self.subTest(pkg=pkg):
+                self.assertRegex(script, r'npm publish "\$\{tag\[@\]\}" \|\| \{')
+                self.assertIn("::error::", script)
+                self.assertIn(f"npm trust github {pkg} --file release.yml", script)
+                self.assertIn("--allow-publish", script)
+                self.assertIn("two days", script)
 
 
 if __name__ == "__main__":
