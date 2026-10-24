@@ -470,6 +470,52 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert capsys.readouterr().err == f"error: reading {missing}: No such file or directory (os error 2)\n"
 
 
+def test_changes_filters_by_author_as_the_binary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`changes --author` keeps one author's changes, exact names, and repeats (#1690)."""
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+        f'<w:ins w:id="1" w:author="Ana" {stamp}><w:r><w:t>new</w:t></w:r></w:ins></w:p>'
+        '<w:p><w:r><w:t xml:space="preserve">also </w:t></w:r>'
+        f'<w:del w:id="2" w:author="Bo" {stamp}><w:r><w:delText>old</w:delText></w:r></w:del></w:p>'
+        f'<w:p><w:ins w:id="3" w:author="Ana Maria" {stamp}><w:r><w:t>more</w:t></w:r></w:ins></w:p>'
+    )
+    source = tmp_path / "two.docx"
+    source.write_bytes(docx(body))
+    assert main(["changes", str(source), "--author", "Ana"]) == 0
+    assert capsys.readouterr().out.splitlines() == ['r1\tinsertion\ttext\tAna\tp0\t"new"', "1 change(s)"]
+    assert main(["changes", str(source), "--author", "Ana", "--author", "Bo"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "2 change(s)"
+    assert main(["changes", str(source), "--author", "Nobody"]) == 0
+    assert capsys.readouterr().out == "0 change(s)\n"
+    assert main(["changes", str(source), "--json", "--author", "Bo"]) == 0
+    records = _listed(capsys.readouterr().out)
+    assert [r["author"] for r in records] == ["Bo"]
+
+
+def test_read_tables_writes_its_grids_to_a_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`read --tables -o FILE` writes the grids it prints (#1690); a .json name is refused."""
+    cell = '<w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc>'
+    table = "<w:tbl><w:tr>" + cell.format("a") + cell.format("b") + "</w:tr></w:tbl>"
+    source = tmp_path / "grid.docx"
+    source.write_bytes(docx(para("Before.") + table + para("After.")))
+    assert main(["read", str(source), "--tables"]) == 0
+    grids = capsys.readouterr().out
+    assert "a" in grids and "b" in grids
+    out = tmp_path / "grid.md"
+    assert main(["read", str(source), "--tables", "-o", str(out)]) == 0
+    written = capsys.readouterr()
+    assert written.out == "" and out.read_text(encoding="utf-8") == grids
+    assert written.err == f"wrote {out} (tables, {out.stat().st_size} bytes)\n"
+    # Refused; the exit status differs from the binary's 2 (#1692).
+    assert main(["read", str(source), "--tables", "-o", str(out)]) != 0
+    assert "already exists" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as usage:
+        main(["read", str(source), "--tables", "-o", str(tmp_path / "grid.json")])
+    assert usage.value.code == 2
+    assert "--tables writes the grids as text" in capsys.readouterr().err
+
+
 def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     plan = {
         "schema_version": 1,
