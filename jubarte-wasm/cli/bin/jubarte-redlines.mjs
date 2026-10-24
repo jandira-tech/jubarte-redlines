@@ -9,9 +9,9 @@
 //
 //   npx jubarte-redlines redline a.docx b.docx -o redline.docx
 //
-// Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage,
-// 3 edit plan refused (its per-operation report is on stdout; nothing was
-// written).
+// Exit codes: 0 success, 1 error (I/O, engine), 2 usage (a flag, a
+// combination, an existing output), 3 edit plan refused (its per-operation
+// report is on stdout; nothing was written).
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -29,7 +29,7 @@ const EXIT_PLAN_REFUSED = 3;
 /** A user-facing failure; printed as `error: ...`, exit 1. */
 class CliError extends Error {}
 
-/** A host capability mismatch; rejected before file I/O, exit 2. */
+/** A usage refusal: a flag, a combination or an existing output; exit 2. */
 class UsageError extends Error {}
 
 /** An engine refusal that exits 3, as `read --for-edit`'s. */
@@ -94,9 +94,11 @@ function readInput(file, o, json = false) {
   return docx;
 }
 
+/** The no-clobber refusal, as the binary words and codes it: a usage
+ * refusal (exit 2) with the OUTPUT_EXISTS code. */
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
-    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${file}' already exists (use --force to overwrite)`);
   }
 }
 
@@ -622,7 +624,7 @@ function applyEdit(verb, file, docx, o) {
   const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
-    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${outDir}' already exists (use --force to overwrite)`);
   }
   if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
     throw new CliError("--out-dir must not be the input's own directory");
@@ -741,7 +743,7 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
   for (const taken of [output, pdfPath]) {
     if (taken != null && fs.existsSync(taken) && !o.force) {
-      throw new UsageError(`output '${taken}' already exists (use --force to overwrite)`);
+      throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.
