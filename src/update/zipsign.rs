@@ -118,9 +118,9 @@ pub fn verify_signature(archive: &Path, keys: &[ReleaseKey]) -> Result<(), Strin
 /// signatures that member carries.
 fn tar_message_and_signatures(file: &mut File) -> Result<(Sha512, Vec<Signature>), String> {
     let mut tail = [0; OFFSET_DIGITS + GZIP_END.len()];
-    let tail_len = i64::try_from(tail.len()).map_err(|e| e.to_string())?;
+    // 30 bytes: the cast cannot wrap.
     let data_end = file
-        .seek(SeekFrom::End(-tail_len))
+        .seek(SeekFrom::End(-(tail.len() as i64)))
         .map_err(|_| "no signature: the archive is too short")?;
     file.read_exact(&mut tail).map_err(|e| e.to_string())?;
     if tail[OFFSET_DIGITS..] != GZIP_END {
@@ -181,13 +181,12 @@ fn signature_header(block: &[u8]) -> Result<(usize, &[u8]), String> {
     let Some((header, rest)) = block.split_first_chunk::<HEADER_SIZE>() else {
         return Err("no signature: the signature block is too short".into());
     };
-    let Some((magic, count)) = header.split_first_chunk::<{ MAGIC.len() }>() else {
-        return Err("no signature: the signature block is too short".into());
-    };
+    // The header is the magic and a little-endian count, split by its type.
+    let [magic @ .., low, high] = header;
     if magic != MAGIC {
         return Err("no signature: the signature block's magic is not zipsign's".into());
     }
-    let count = usize::from(u16::from_le_bytes([count[0], count[1]]));
+    let count = usize::from(u16::from_le_bytes([*low, *high]));
     if count == 0 {
         return Err("the signature block holds no signature".into());
     }
