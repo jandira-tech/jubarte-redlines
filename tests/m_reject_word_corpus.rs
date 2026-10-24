@@ -6,15 +6,9 @@
 //! `rejected_tracking` corpus copied into `tests/corpus` (Word's redlines and
 //! Word's Reject All of each): every listed pair is present,
 //! and every story paragraph's text and mark state match (`jubarte debug
-//! WORD JUB -c text` prints `text identical`). Comment ids are compared by
-//! position: Word's Reject All numbers them afresh, and jubarte keeps them
-//! (#1264, `docs/WORD_DIFFERENCES.md`).
-
-mod common;
+//! WORD JUB -c text` prints `text identical`).
 
 use std::path::PathBuf;
-
-use common::comment_ids::dense_comment_ids;
 
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::reject_revisions;
@@ -61,9 +55,8 @@ fn reject_matches_words_reject_all_on_words_redlines() {
             differ.push(format!("{id}: missing {}", missing.join(", ")));
             continue;
         }
-        let ours = dense_comment_ids(&reject_revisions(&std::fs::read(&redline).unwrap()).unwrap());
-        let word_rejected = dense_comment_ids(&std::fs::read(&word).unwrap());
-        let out = report(&word_rejected, Some(&ours), &opts).unwrap();
+        let ours = reject_revisions(&std::fs::read(&redline).unwrap()).unwrap();
+        let out = report(&std::fs::read(&word).unwrap(), Some(&ours), &opts).unwrap();
         if out != "text identical\n" {
             differ.push(format!("{id}:\n{out}"));
         }

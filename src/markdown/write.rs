@@ -20,10 +20,10 @@ use pulldown_cmark::{
 use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::critic::{self, Piece, Pieces, Token};
-use super::diff::{continues, marker_len, opens_amount, table_row, table_row_change};
+use super::diff::{continues, marker_len, table_row, table_row_change};
 use super::xml::{
-    Change, Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link,
-    List, Note, Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
+    Comment, Content, Document, FormatMark, Indent, Item, Kind, Label, LabelUse, Link, List, Note,
+    Paragraph, Picture, Run, RunFormat, TableFormats, TextBox,
 };
 use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 use super::{math, view_notes, view_stories, view_styles};
@@ -60,11 +60,6 @@ pub fn markdown_to_docx(
     markdown: &str,
     options: &DocxOptions<'_>,
 ) -> Result<WrittenDocx, MarkdownError> {
-    if options.critic
-        && let Some(error) = critic::legacy_attribution_error(markdown)
-    {
-        return Err(MarkdownError::Package(error));
-    }
     // A comment or change that names no author or date takes the file's
     // own (`author:`, `last_modified:`), before the options' defaults.
     let defaults = view_notes::file_defaults(markdown);
@@ -84,13 +79,6 @@ pub fn markdown_to_docx(
         )));
     }
     let document = read(markdown, options);
-    if let Some(error) = document
-        .revision_note_error
-        .as_ref()
-        .or(document.box_error.as_ref())
-    {
-        return Err(MarkdownError::Package(error.clone()));
-    }
     let mut warnings = document.warnings.clone();
     // Only when no other date key gave the date.
     if let Some((key, value)) = defaults.unread.filter(|_| defaults.date.is_none()) {
@@ -105,7 +93,7 @@ pub fn markdown_to_docx(
             options.page.as_str()
         ));
     }
-    let docx = package::assemble(&document, options, markdown, &mut warnings)?;
+    let docx = package::assemble(&document, options)?;
     let docx = match options.track_changes {
         _ if !options.critic => docx,
         TrackChanges::All => docx,
@@ -149,9 +137,8 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         (markdown.to_string(), Vec::new())
     };
     let source = page_commands(&source);
-    let source = inline_math(table_pipes(&source));
+    let source = table_pipes(&source);
     let mut writer = Writer::new(options);
-    (writer.box_markdown, writer.document.box_error) = text_box_sources(markdown);
     writer.tables = table_plans(&source);
     writer.note_breaks = note_breaks(&source);
     writer.item_levels = item_levels(&source);
@@ -163,182 +150,12 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
         .map(|(name, def)| (name.to_string(), def.dest.to_string()))
         .collect();
     writer.document.drawing_backings = super::from_docx::drawing::backing_comments(&source);
-    let mut inserted_end: Option<usize> = None;
-    let newlines: Vec<usize> = source.match_indices('\n').map(|(at, _)| at).collect();
-    for (event, range) in parser.into_offset_iter() {
-        writer.source_line = newlines.partition_point(|&at| at < range.start) + 1;
-        if let Some(end) = inserted_end
-            && range.start >= end
-        {
-            inserted_end = None;
-            // Paragraph end ranges can include the first terminating LF.
-            // Count it with the whitespace before the following block.
-            let from = if source[..end].ends_with("\r\n") {
-                end - 2
-            } else if source[..end].ends_with('\n') {
-                end - 1
-            } else {
-                end
-            };
-            let gap = &source[from..range.start];
-            if gap.chars().all(char::is_whitespace) {
-                let extra = (gap.bytes().filter(|&b| b == b'\n').count() / 2).saturating_sub(1);
-                for _ in 0..extra {
-                    writer.begin_paragraph();
-                    writer.end_paragraph();
-                }
-            }
-        }
-        let ends_paragraph = matches!(&event, Event::End(TagEnd::Paragraph | TagEnd::Heading(_)));
+    for event in parser {
         writer.event(event);
-        if ends_paragraph
-            && !writer.view
-            && writer.target.is_none()
-            && writer.cell.is_none()
-            && writer.lists.is_empty()
-            && writer.quote == 0
-            && writer
-                .body
-                .iter()
-                .rev()
-                .find_map(|item| match item {
-                    Item::Paragraph(paragraph) => Some(paragraph),
-                    _ => None,
-                })
-                .is_some_and(|paragraph| {
-                    paragraph.mark_fixed && paragraph.mark == Some(Kind::Insert)
-                })
-        {
-            inserted_end = Some(range.end);
-        }
     }
     let mut document = writer.finish();
     document.warnings.splice(..0, critic_warnings);
-    document.index_wrapping_parents();
     document
-}
-
-/// Keep rejected dollar pairs as text before any Markdown pass consumes them.
-fn inline_math(source: String) -> String {
-    inline_math_passes(source).0
-}
-
-fn inline_math_passes(mut source: String) -> (String, usize) {
-    let mut passes = 0;
-    if !source.contains('$') {
-        return (source, passes);
-    }
-    // Keep the byte ranges of formulas accepted in any pass. A leftover
-    // dollar must never use one of their delimiters to make a new formula.
-    let mut accepted = BTreeMap::new();
-    loop {
-        passes += 1;
-        let mut rejected = Vec::new();
-        for (event, range) in Parser::new_ext(&source, parser_options()).into_offset_iter() {
-            let (latex, display) = match event {
-                Event::InlineMath(latex) => (latex, false),
-                Event::DisplayMath(latex) => (latex, true),
-                _ => continue,
-            };
-            if accepted
-                .range(..=range.start)
-                .next_back()
-                .is_some_and(|(_, &end)| range.start < end)
-            {
-                // An earlier conflicting pair may have consumed this
-                // formula's opener. Its remaining delimiter stays intact
-                // until that conflicting pair has been escaped.
-                continue;
-            }
-            let steals_formula = accepted.range(range.start..range.end).next().is_some();
-            let closer = range.end - 1;
-            if steals_formula
-                || (!display && opens_amount(&source, closer))
-                || critic::math_crosses_boundary(&latex)
-            {
-                rejected.push(range.start);
-                if display {
-                    // Both bytes belong to the refused opening delimiter.
-                    rejected.push(range.start + 1);
-                } else if opens_amount(&source, closer) {
-                    // A tight numeric chain's next pair is already known
-                    // to fail the digit-after-closer rule. Settle it now,
-                    // rather than repeatedly halving the chain on reparses.
-                    // Leave other closers free to open a real formula.
-                    let next = source[closer + 1..].trim_start_matches(|c: char| {
-                        c.is_ascii_digit() || matches!(c, ',' | '.' | '-' | '–')
-                    });
-                    let protected = accepted
-                        .range(..=closer)
-                        .next_back()
-                        .is_some_and(|(_, &end)| closer < end);
-                    if !protected && opens_amount(next, 0) {
-                        rejected.push(closer);
-                    }
-                }
-            } else {
-                accepted.insert(range.start, range.end);
-            }
-        }
-        if rejected.is_empty() {
-            return (source, passes);
-        }
-        rejected.sort_unstable();
-        rejected.dedup();
-        // Escapes shift the ranges, but never change an accepted formula.
-        accepted = accepted
-            .into_iter()
-            .map(|(start, end)| {
-                (
-                    start + rejected.partition_point(|&at| at < start),
-                    end + rejected.partition_point(|&at| at < end),
-                )
-            })
-            .collect();
-        let mut escaped = String::with_capacity(source.len() + rejected.len());
-        let mut from = 0;
-        for at in rejected {
-            escaped.push_str(&source[from..at]);
-            escaped.push('\\');
-            from = at;
-        }
-        escaped.push_str(&source[from..]);
-        source = escaped;
-    }
-}
-
-/// The visible paragraphs bounded by each box's structural markers.
-fn text_box_sources(markdown: &str) -> (HashMap<String, String>, Option<String>) {
-    let mut boxes = HashMap::new();
-    let mut seen = HashSet::new();
-    let mut open = None;
-    let mut error = None;
-    for (event, range) in Parser::new_ext(markdown, parser_options()).into_offset_iter() {
-        let (Event::Html(html) | Event::InlineHtml(html)) = event else {
-            continue;
-        };
-        let html = html.trim();
-        if let Some(name) = html
-            .strip_prefix("<!-- text-box ")
-            .and_then(|s| s.strip_suffix(" -->"))
-        {
-            if !seen.insert(name.to_string()) || open.is_some() {
-                error.get_or_insert_with(|| {
-                    format!("text-box {name}: duplicate or overlapping marker region")
-                });
-            }
-            // The parser consumes the HTML event, not a substring inside code or an escape.
-            open = Some((name.to_string(), range.end));
-        } else if html == "<!-- /text-box -->"
-            && let Some((name, start)) = open.take()
-        {
-            boxes.insert(
-                name,
-                markdown[start..range.start].trim().replace("<br>", "\n"),
-            );
-        }
-    }
-    (boxes, error)
 }
 
 /// CriticMarkup changes that hold whole blocks, rewritten so the Markdown
@@ -643,8 +460,6 @@ fn page_commands(source: &str) -> String {
 /// whose columns then match their delimiter row, and nowhere else: front
 /// matter and fenced code keep every line, and a line a space would
 /// change without making the table is left as it was.
-/// An odd backslash run at a header's line ending likewise needs a space:
-/// otherwise pulldown-cmark sees a hard break before checking for a table.
 fn table_pipes(source: &str) -> String {
     let lines: Vec<&str> = source.split_inclusive('\n').collect();
     let mut out = String::with_capacity(source.len());
@@ -678,15 +493,14 @@ fn table_pipes(source: &str) -> String {
             out.push_str(line);
             continue;
         }
-        let row =
-            indent < 4 && bare[..indent].bytes().all(|b| b == b' ') && trimmed.starts_with('|');
+        let row = indent < 4 && trimmed.starts_with('|');
         if !row {
             in_table = false;
             out.push_str(line);
             continue;
         }
         let unshielded = unshield_pipes(bare);
-        if in_table {
+        if in_table || unshielded == bare {
             out.push_str(&unshielded);
             out.push_str(&line[bare.len()..]);
             continue;
@@ -695,26 +509,14 @@ fn table_pipes(source: &str) -> String {
         // runs moved off their pipes, are the delimiter row's.
         in_table = lines.get(n + 1).is_some_and(|next| {
             let next = next.trim_end_matches(['\n', '\r']);
-            let indent = next.len() - next.trim_start().len();
-            indent < 4 && next[..indent].bytes().all(|b| b == b' ') && delimiter_row(next)
+            let columns = next.len() - next.trim_start().len();
+            columns < 4 && delimiter_row(next)
         }) && row_columns(&unshielded)
             == lines
                 .get(n + 1)
                 .map(|next| row_columns(next.trim_end_matches(['\n', '\r'])))
                 .unwrap_or(0);
         out.push_str(if in_table { &unshielded } else { bare });
-        // Only a matching header loses the hard break. Spaces around a
-        // table cell are trimmed, so its backslashes remain cell text.
-        if in_table
-            && !unshielded
-                .bytes()
-                .rev()
-                .take_while(|&b| b == b'\\')
-                .count()
-                .is_multiple_of(2)
-        {
-            out.push(' ');
-        }
         out.push_str(&line[bare.len()..]);
     }
     out
@@ -829,7 +631,7 @@ fn delimiter_row(line: &str) -> bool {
 /// backslash run before a pipe escapes it, an even one is backslashes the
 /// row's cells hold.
 fn row_columns(line: &str) -> usize {
-    let line = line.trim();
+    let line = line.trim_end();
     let bytes = line.as_bytes();
     let (mut pipes, mut run, mut last_pipe) = (0usize, 0usize, None);
     for (i, &b) in bytes.iter().enumerate() {
@@ -875,12 +677,6 @@ struct TablePlan {
     row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
-    /// The cell paragraphs' own spacing (`p8 line 8.65pt exact`), #1473.
-    spacings: HashMap<usize, super::xml::Spacing>,
-    /// The cell paragraphs' own text size (`p8 size 9pt`), #1474.
-    sizes: HashMap<usize, u32>,
-    /// The grid's widths, the table's width, indent and layout (#1472).
-    geometry: super::xml::TableGeometry,
     /// A comment's range runs through the table (`in c5`).
     in_comment: bool,
     /// The formatting changes the line names.
@@ -1310,9 +1106,6 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         marks: line.marks,
         aligns: line.aligns,
         styles: line.styles,
-        spacings: line.spacings,
-        sizes: line.sizes,
-        geometry: line.geometry,
         style: line.style,
         borders: line.borders,
         cell_borders: line.cell_borders,
@@ -1328,9 +1121,20 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
     }
 }
 
-/// Every `{>>…<<}` in a header's or footer's text is a comment.
+/// A `{>>…<<}` in a header's or footer's text that is no change's tag.
 fn has_comment(text: &str) -> bool {
-    text.contains("{>>")
+    let mut rest = text;
+    while let Some(at) = rest.find("{>>") {
+        let after = &rest[at + 3..];
+        let Some(end) = after.find("<<}") else {
+            return false;
+        };
+        if view_notes::revision_tags(&after[..end]).is_none() {
+            return true;
+        }
+        rest = &after[end + 3..];
+    }
+    false
 }
 
 /// `<br>`, `<br/>` or `<br class="x">`, as the view and authors write a
@@ -1521,7 +1325,6 @@ fn closes(token: Token) -> Option<Token> {
         Token::SubstituteEnd => Some(Token::SubstituteStart),
         Token::HighlightEnd => Some(Token::HighlightStart),
         Token::CommentEnd => Some(Token::CommentStart),
-        Token::AttributionEnd => Some(Token::AttributionStart),
         Token::MarkEnd => Some(Token::MarkStart),
         _ => None,
     }
@@ -1553,8 +1356,6 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
                 | Token::SubstituteStart
                 | Token::HighlightStart
                 | Token::CommentStart
-                | Token::AttributionStart
-                | Token::ParagraphInsertion
                 | Token::MarkStart
         ) {
             open.push((*token, at));
@@ -1587,8 +1388,6 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
                         | Token::SubstituteStart
                         | Token::HighlightStart
                         | Token::CommentStart
-                        | Token::AttributionStart
-                        | Token::ParagraphInsertion
                         | Token::MarkStart
                 ) {
                     open.push((token, at));
@@ -1604,21 +1403,6 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
         }
     }
     loose
-}
-
-/// The destinations `markdown`'s `![…](dest)` images name, as the
-/// writer's image loader sees them: `drawing:` and `data:` payloads
-/// included, `%XX` escapes still encoded, in document order. A caller
-/// that reports or audits the images a document would load (the `diff`
-/// text patch, which never runs a loader) names them this way rather
-/// than by scanning the text itself (#617).
-pub fn image_targets(markdown: &str) -> Vec<String> {
-    Parser::new_ext(markdown, parser_options())
-        .filter_map(|event| match event {
-            Event::Start(Tag::Image { dest_url, .. }) => Some(critic::decode(&dest_url)),
-            _ => None,
-        })
-        .collect()
 }
 
 /// The Markdown extensions jubarte reads, for the writer and for
@@ -1712,14 +1496,6 @@ impl Anchor {
     }
 }
 
-/// The part a pooled tag's marks are numbered in (#1355).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum PoolStory {
-    Body,
-    Footnotes,
-    Endnotes,
-}
-
 struct Writer<'o, 'a> {
     options: &'o DocxOptions<'a>,
     /// A soft line break holds until the words after it arrive: the space
@@ -1736,13 +1512,6 @@ struct Writer<'o, 'a> {
     /// Substitutions one tag names (`r5+6+7`): the deleted side's serial and
     /// the inserted side's, whose ids the runs each has split.
     shared_tags: Vec<(u32, u32)>,
-    /// Each tag of several ids (`r7+8+9+10`) in its story: how many notes
-    /// name those ids, and the serials they name, in order. The pieces of
-    /// one logical change each carry its whole id
-    /// ([`Self::share_pooled_ids`]). The body, the footnotes and the
-    /// endnotes number their marks apart, so `r7+8` in the body and
-    /// `footnotes.r7+8` are two changes ([`PoolStory`]).
-    pools: HashMap<(PoolStory, Vec<u32>), (usize, Vec<u32>)>,
     /// The labels whose definition the view names an endnote
     /// (`<!-- endnotes.p0 -->` before `[^2]:`).
     endnotes: HashSet<String>,
@@ -1837,12 +1606,6 @@ struct Writer<'o, 'a> {
     /// language, its backing's name and the source accumulated so far.
     drawing_block: Option<(String, String, String)>,
     metadata: Option<String>,
-    source_line: usize,
-    box_markdown: HashMap<String, String>,
-    box_names: HashMap<String, usize>,
-    box_duplicates: HashSet<String>,
-    box_open: Option<(String, Option<String>, usize)>,
-    box_spans: Vec<(String, Option<String>, usize, usize)>,
 
     // Inline formatting depth.
     bold: u32,
@@ -1879,14 +1642,12 @@ struct Writer<'o, 'a> {
     /// The change the open comment follows, while the comment may still
     /// turn out to be the change's attribution.
     comment_anchor: Option<Anchor>,
-    attribution_open: bool,
-    paragraph_attribution: bool,
-    /// Scopes (`{==…==}`) with no comment yet and no untracked text since
-    /// them outside a scope: pieces of one range whose comment follows the
-    /// last piece.
+    /// Scopes (`{==…==}`) with no comment yet and no text since them
+    /// outside a scope: pieces of one range whose comment follows the last
+    /// piece.
     pending_scopes: Vec<(usize, usize)>,
-    /// Where the last closed scope's comment range ends, even when
-    /// another tagged revision stands before the comment.
+    /// Where the comment range of a scope inside a substitution's
+    /// inserted side ends, once that side moved before the deleted one.
     range_end_at: Option<usize>,
     /// The slot of the range a comment just took, while another comment
     /// may follow on the same text.
@@ -1894,10 +1655,6 @@ struct Writer<'o, 'a> {
     /// The header's `unplaced:` marks, by the paragraph they are in: a cell
     /// paragraph has no id line to name them.
     unplaced: HashMap<usize, Vec<(&'static str, view_notes::Tag)>>,
-    /// Notes that say which change holds their comment's reference
-    /// (`{>>c0 @B in r13: …<<}`): the comment's id, its view number and
-    /// the change's `w:id`s.
-    held_in: Vec<(u32, u32, Vec<u32>)>,
     run_after_close: bool,
     scope: Option<(usize, usize)>,
     groups: usize,
@@ -1940,7 +1697,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             endnotes: HashSet::new(),
             endnote_next: false,
             shared_tags: Vec::new(),
-            pools: HashMap::new(),
             references: Vec::new(),
             target: None,
             note_clauses: HashMap::new(),
@@ -1986,12 +1742,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             image: None,
             drawing_block: None,
             metadata: None,
-            source_line: 1,
-            box_markdown: HashMap::new(),
-            box_names: HashMap::new(),
-            box_duplicates: HashSet::new(),
-            box_open: None,
-            box_spans: Vec::new(),
             bold: 0,
             italic: 0,
             strike: 0,
@@ -2013,13 +1763,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             substituted: None,
             substitution: None,
             comment_anchor: None,
-            attribution_open: false,
-            paragraph_attribution: false,
             pending_scopes: Vec::new(),
             range_end_at: None,
             shared_range: None,
             unplaced: HashMap::new(),
-            held_in: Vec::new(),
             id_line: None,
             paragraph_in_comments: None,
             page_break_due: false,
@@ -2264,17 +2011,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .table_style
                         .as_ref()
                         .filter(|(legend, ..)| legend == id)
-                        .map(|(_, border, name)| (border.clone(), name.clone()))
+                        .map(|(_, border, name)| (*border, name.clone()))
                         .or_else(|| self.document.table_legend.get(id).cloned());
-                    let border = legend.as_ref().and_then(|(border, _)| border.clone());
+                    let border = legend.as_ref().and_then(|(border, _)| *border);
                     // Word's thin Table Grid, unless the legend gives it a
                     // border or a name of its own (`TableGrid, all borders
                     // 1.5pt`, `TableGrid, named …`).
                     let name = legend.and_then(|(_, name)| name);
-                    if id == "TableGrid"
-                        && matches!(border, None | Some(view_styles::TableBorders::All(4)))
-                        && name.is_none()
-                    {
+                    if id == "TableGrid" && border.is_none_or(|sz| sz == 4) && name.is_none() {
                         self.document.styles.insert("TableGrid");
                     } else {
                         self.document
@@ -2283,31 +2027,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     }
                 }
                 let formats = self.table_formats();
-                let mut geometry = self
-                    .table_plan
-                    .as_ref()
-                    .map(|plan| plan.geometry.clone())
-                    .unwrap_or_default();
-                // Widths that do not count the grid's columns (an edit added
-                // or dropped one) name no column: the even split stands.
-                if let Some(widths) = &geometry.widths
-                    && widths.len() != grid.len().max(1)
-                {
-                    self.document.warnings.push(format!(
-                        "t{}: its widths name {} columns and its grid has {}: the columns \
-                         split the text width evenly",
-                        self.table_count,
-                        widths.len(),
-                        grid.len().max(1)
-                    ));
-                    geometry.widths = None;
-                }
                 self.story().push(Item::Table {
                     columns: grid,
                     align,
                     style,
                     formats,
-                    geometry,
                 });
                 self.table = Some(columns);
                 self.table_count += 1;
@@ -2556,9 +2280,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::HtmlBlock => {
                 if let Some(block) = self.html_block.take() {
-                    if self.box_boundary(block.trim()) {
-                        return;
-                    }
                     let view_lines = self.view
                         && self.cell.is_none()
                         && self.comment.is_none()
@@ -2851,8 +2572,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 left: line.left,
                 right: line.right,
             };
-            paragraph.spacing = line.spacing;
-            paragraph.size = line.size;
             if let Some(label) = line.label {
                 // The label stands for the list's own number, and a heading
                 // prints it before its text.
@@ -2882,13 +2601,11 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
-                let mut unshown = Vec::new();
-                for tag in &line.rev {
-                    let inserted = !line.rev_del.contains(tag);
-                    let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
-                }
-                paragraph.unshown = unshown;
+                paragraph.unshown = line
+                    .rev
+                    .iter()
+                    .map(|tag| (!line.rev_del.contains(tag), self.format_mark(tag)))
+                    .collect();
             }
             let mark = line
                 .break_ins
@@ -2915,20 +2632,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             {
                 paragraph.style = Some(style.into());
             }
-            if let Some(spacing) = self
-                .table_plan
-                .as_ref()
-                .and_then(|plan| plan.spacings.get(&at).copied())
-            {
-                paragraph.spacing = spacing;
-            }
-            if let Some(size) = self
-                .table_plan
-                .as_ref()
-                .and_then(|plan| plan.sizes.get(&at).copied())
-            {
-                paragraph.size = Some(size);
-            }
             let formats = self
                 .table_plan
                 .as_ref()
@@ -2939,14 +2642,10 @@ impl<'o, 'a> Writer<'o, 'a> {
                 && let Some(tags) = self.unplaced.remove(&at)
             {
                 for (kind, tag) in &tags {
-                    if *kind == "fmt" {
-                        let mark = self.format_mark(tag);
-                        paragraph.formats.push(mark);
-                    } else {
-                        let marks = self.unshown_marks(tag);
-                        paragraph
-                            .unshown
-                            .extend(marks.into_iter().map(|mark| (*kind == "ins", mark)));
+                    let mark = self.format_mark(tag);
+                    match *kind {
+                        "fmt" => paragraph.formats.push(mark),
+                        _ => paragraph.unshown.push((*kind == "ins", mark)),
                     }
                 }
             }
@@ -3049,21 +2748,6 @@ impl<'o, 'a> Writer<'o, 'a> {
         FormatMark { id, author, date }
     }
 
-    /// An unshown change's empty marks, one per id its tag names: a
-    /// joined change (`rev-del r3+4 @B`) comes back as both its marks.
-    fn unshown_marks(&mut self, tag: &view_notes::Tag) -> Vec<FormatMark> {
-        let first = self.format_mark(tag);
-        let mut marks = vec![first.clone()];
-        for &id in tag.ids.iter().skip(1) {
-            self.document.reserved_ids.insert(id);
-            marks.push(FormatMark {
-                id: Some(id),
-                ..first.clone()
-            });
-        }
-        marks
-    }
-
     /// The open table lies in a comment's range (`in c5`): its cells'
     /// scopes are pieces of that range, which goes on past them.
     fn table_in_range(&self) -> bool {
@@ -3152,7 +2836,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         // A view's cell or note says its paragraph marks by its `<br>`s,
         // in a change or not: a paragraph changed whole keeps its mark.
         let says_marks = self.view && (self.cell.is_some() || self.target.is_some());
-        // A change that names another after ` re ` (a fold) is not the
+        // A change that names another after ` on ` (a fold) is not the
         // paragraph's own mark: the writer nests it back inside the one it
         // names, and the row or cell it sits in keeps its own.
         let folded = |serial: u32| self.document.wraps.contains_key(&serial);
@@ -3164,9 +2848,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                         && span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
-                        // An explicit text tag names only the printed span;
-                        // its paragraph mark has its own break or pilcrow.
-                        && !self.document.revision_ids.contains_key(&span.serial)
                         && !folded(span.serial)
                         && !self.run_after_close
                         && self.paragraph_runs > 0
@@ -3270,9 +2951,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.ensure_paragraph();
         let blank = matches!(&content, Content::Text(text) if text.trim().is_empty())
             || matches!(content, Content::Tab | Content::Break);
-        // A separately tagged revision can stand between a closed scope
-        // and its comment. Its text does not end the pending range.
-        if self.scope.is_none() && self.change.is_none() && !blank {
+        if self.scope.is_none() && !blank {
             self.pending_scopes.clear();
             self.range_end_at = None;
             self.shared_range = None;
@@ -3522,12 +3201,65 @@ impl<'o, 'a> Writer<'o, 'a> {
         self.run_after_close = false;
     }
 
-    /// A substitution writes its deletion then insertion. Each side keeps
-    /// its links, bookmarks and comments; the parser does not reorder it.
+    /// `{~~old~>new~~}` is Word's substitution: the inserted text, then
+    /// the deleted text, as Word's Compare writes them. The view reads a
+    /// deletion before an insertion as two changes, so they keep that
+    /// order. Each side moves whole with its links, bookmarks and comments;
+    /// a side holding more (a paragraph's end, half a link or comment range)
+    /// stays where it is. A scope that ends inside a side
+    /// (`{~~old~>{==new==}~~}{>>c0 …<<}`) still has its range open: the side
+    /// moves, and its range ends where the side does.
+    fn inserted_side_first(&mut self) {
+        /// The comment ranges a side leaves open, when it holds only runs,
+        /// bookmarks, links that close within, and ranges that close
+        /// within or are scopes awaiting their comment (`awaiting`).
+        fn whole(items: &[Item], awaiting: &[usize]) -> Option<usize> {
+            let mut links = 0usize;
+            let mut ranges = Vec::new();
+            for item in items {
+                match item {
+                    Item::Run(_) | Item::Bookmark(_) | Item::CommentReference(_) => {}
+                    Item::LinkStart(..) => links += 1,
+                    Item::LinkEnd if links > 0 => links -= 1,
+                    Item::RangeStart(slot) => ranges.push(*slot),
+                    Item::RangeEnd(_) if !ranges.is_empty() => {
+                        ranges.pop();
+                    }
+                    _ => return None,
+                }
+            }
+            (links == 0 && ranges.iter().all(|slot| awaiting.contains(slot)))
+                .then_some(ranges.len())
+        }
+        let Some((start, Some(split))) = self.substitution.take() else {
+            return;
+        };
+        let awaiting: Vec<usize> = self.pending_scopes.iter().map(|(slot, _)| *slot).collect();
+        let story = self.story();
+        let end = story.len();
+        if start > split || split > end {
+            return;
+        }
+        let (Some(deleted), Some(inserted)) = (
+            whole(&story[start..split], &awaiting),
+            whole(&story[split..end], &awaiting),
+        ) else {
+            return;
+        };
+        // One open range at most: its comment ends it.
+        if deleted + inserted > 1 {
+            return;
+        }
+        story[start..end].rotate_left(split - start);
+        if inserted == 1 {
+            self.range_end_at = Some(start + (end - split));
+        }
+    }
+
     fn token(&mut self, token: Token) {
         if self.comment.is_some() {
             match token {
-                Token::CommentEnd | Token::AttributionEnd => self.end_comment(),
+                Token::CommentEnd => self.end_comment(),
                 // A blank line inside `{>>…<<}`: another comment
                 // paragraph, as `<br>` gives one.
                 Token::CommentBreak => {
@@ -3559,6 +3291,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::InsertEnd | Token::DeleteEnd => self.close(),
             Token::SubstituteEnd => {
                 self.close();
+                self.inserted_side_first();
             }
             Token::HighlightStart => {
                 self.ensure_paragraph();
@@ -3572,9 +3305,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::HighlightEnd => {
                 if let Some((slot, group)) = self.scope.take() {
                     self.pending_scopes.push((slot, group));
-                    // The comment may follow another tagged revision, but
-                    // its range ends at this scope's closing delimiter.
-                    self.range_end_at = Some(self.story().len());
                     self.anchor = Some(Anchor {
                         slot,
                         group: Some(group),
@@ -3583,12 +3313,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                     });
                 }
             }
-            Token::AttributionStart | Token::ParagraphInsertion => {
-                self.attribution_open = true;
-                self.paragraph_attribution = token == Token::ParagraphInsertion;
-                self.begin_comment();
-            }
-            Token::AttributionEnd => {}
             Token::CommentStart => self.begin_comment(),
             Token::CommentEnd => {}
             Token::CommentBreak => {}
@@ -3606,26 +3330,11 @@ impl<'o, 'a> Writer<'o, 'a> {
     /// A comment on the span that just closed, or on this point.
     fn begin_comment(&mut self) {
         let id = u32::try_from(self.document.comments.len()).unwrap_or(u32::MAX);
-        if self.paragraph_attribution {
-            self.ensure_paragraph();
-            self.comment = Some(Comment {
-                id,
-                paragraphs: vec![String::new()],
-                ..Comment::default()
-            });
-            return;
-        }
         match self.anchor.take() {
             // Anchored when it ends, unless it names the change's author.
-            Some(anchor) if self.attribution_open && anchor.takes_attribution() => {
-                self.comment_anchor = Some(anchor);
-            }
+            Some(anchor) if anchor.takes_attribution() => self.comment_anchor = Some(anchor),
             Some(anchor) => self.anchor_comment(anchor, id),
             None => self.anchor_here(id),
-        }
-        if self.paragraph_attribution {
-            self.comment_anchor = None;
-            self.ensure_paragraph();
         }
         self.comment = Some(Comment {
             id,
@@ -3682,63 +3391,23 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some(mut comment) = self.comment.take() else {
             return;
         };
-        let is_attribution = std::mem::take(&mut self.attribution_open);
-        if std::mem::take(&mut self.paragraph_attribution) {
+        if let Some(mut anchor) = self.comment_anchor.take() {
             let whole = comment.paragraphs.join("\n");
-            let tag = view_notes::revision_tags(&whole).and_then(|tags| tags.into_iter().next());
-            let serial = if let Some(tag) = tag {
-                self.tag_serial(&tag)
-            } else if let Some(plain) = view_notes::plain_revision(&whole) {
-                self.serial += 1;
-                self.document
-                    .attributions
-                    .insert(self.serial, (plain.author, plain.date));
-                self.pool(&plain.ids, &[self.serial]);
-                self.name_revision(self.serial, plain.ids);
-                self.serial
-            } else {
-                return;
-            };
-            self.ensure_paragraph();
-            if let Some(index) = self.paragraph
-                && let Item::Paragraph(p) = &mut self.story()[index]
-            {
-                p.mark_fixed = true;
-                p.mark = Some(Kind::Insert);
-                p.mark_by = Some(serial);
-            }
-            return;
-        }
-        if let Some(mut anchor) = self.comment_anchor.take().filter(|_| is_attribution) {
-            let whole = comment.paragraphs.join("\n");
-            // A note that names another change after ` re `: the change it
-            // follows sits inside that one (`A` inserted what `B` deleted),
-            // so it goes back inside it, outermost last. #1134: Word
-            // refuses w:t under a deletion, not same-kind nesting. It opens
-            // ins > del > ins with delText but misreads reject-all. Keep
-            // rebuilding only the first outer pending the chain decision.
-            let sole = self
-                .sole_change(&anchor)
-                .or_else(|| anchor.serials[0].map(|old| (Kind::Delete, old)));
+            // A note that names another change after ` on `: the change it
+            // follows was that one's only content (`A` inserted what `B`
+            // deleted), so it goes back inside it, outermost last. Deeper
+            // chains name what Word refuses to hold (a revision nested in
+            // its own kind), so only the first outer is rebuilt.
+            let sole = self.sole_change(&anchor);
             if let Some((kind, inner)) = sole
                 && let Some(tags) = view_notes::nested_revision_tags(&whole)
             {
                 let (author, date) = self.view_author(&tags[0].handle, tags[0].date.as_deref());
-                self.document
-                    .attributions
-                    .insert(inner, (author.clone(), date.clone()));
-                let mut old_ids = tags[0].ids.clone();
-                let mut own = vec![inner];
-                if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
-                    let (old, inserted) = view_stories::substitution_ids(&tags[0].ids);
-                    old_ids = old.to_vec();
-                    self.name_revision(new, inserted.to_vec());
-                    self.document.attributions.insert(new, (author, date));
-                    own.push(new);
-                }
-                self.pool(&tags[0].ids, &own);
-                if !old_ids.is_empty() {
-                    self.name_revision(inner, old_ids);
+                self.document.attributions.insert(inner, (author, date));
+                if !tags[0].ids.is_empty() {
+                    self.document
+                        .revision_ids
+                        .insert(inner, tags[0].ids.clone());
                 }
                 if let Some(tag) = tags.get(1) {
                     let outer = (other(kind), self.tag_serial(tag));
@@ -3754,20 +3423,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.document
                     .attributions
                     .insert(inner, (first.author.clone(), first.date.clone()));
-                let mut old_ids = first.ids.clone();
-                let mut own = vec![inner];
-                if let Some(new) = anchor.serials[0].and(anchor.serials[1]) {
-                    let (old, inserted) = view_stories::substitution_ids(&first.ids);
-                    old_ids = old.to_vec();
-                    self.name_revision(new, inserted.to_vec());
-                    self.document
-                        .attributions
-                        .insert(new, (first.author.clone(), first.date.clone()));
-                    own.push(new);
-                }
-                self.pool(&first.ids, &own);
-                if !old_ids.is_empty() {
-                    self.name_revision(inner, old_ids);
+                if !first.ids.is_empty() {
+                    self.document.revision_ids.insert(inner, first.ids.clone());
                 }
                 if let Some(part) = parts.get(1) {
                     self.serial += 1;
@@ -3776,9 +3433,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .attributions
                         .insert(outer.1, (part.author.clone(), part.date.clone()));
                     if !part.ids.is_empty() {
-                        self.name_revision(outer.1, part.ids.clone());
+                        self.document.revision_ids.insert(outer.1, part.ids.clone());
                     }
-                    self.pool(&part.ids, &[outer.1]);
                     self.document.wraps.insert(inner, outer);
                 }
                 return;
@@ -3795,16 +3451,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 if let ([_], [deleted, inserted]) = (tags.as_slice(), serials.as_slice()) {
                     self.shared_tags.push((*deleted, *inserted));
                 }
-                // One tag names all the sides; several, one side each.
-                if let [tag] = tags.as_slice() {
-                    self.pool(&tag.ids, &serials);
-                } else if tags.len() == serials.len() {
-                    for (tag, serial) in tags.iter().zip(&serials) {
-                        self.pool(&tag.ids, &[*serial]);
-                    }
-                }
-                // Preserve the established range-date assignment to revision
-                // serials when one author has several dates.
+                // A substitution is written insertion first: a dated range's
+                // last day goes on the mark that comes last, its deletion.
                 let mut ranged = Vec::new();
                 for (i, serial) in serials.iter().enumerate() {
                     let tag = if tags.len() == 1 {
@@ -3823,7 +3471,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                         ranged.push((tag.handle.clone(), *serial));
                     }
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
-                        self.name_revision(*serial, ids.clone());
+                        self.document.revision_ids.insert(*serial, ids.clone());
                     }
                 }
                 if serials.len() == 2 {
@@ -3833,11 +3481,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     self.ranged.entry(handle).or_default().push(serial);
                 }
                 // One number after a substitution names its deleted side:
-                // the inserted side's tag may follow (`{r0 @AC}{r1
-                // @AS}` in reader-compatible multi-tag input).
+                // the inserted side's tag may follow (`{>>r0 @AC<<}{>>r1
+                // @AS<<}` when two authors made them).
                 let numbers: usize = tags.iter().map(|tag| tag.ids.len()).sum();
                 anchor.attributed += 1;
-                if serials.len() == 2 && numbers <= 1 {
+                if serials.len() == 2 && numbers == 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
                 return;
@@ -3845,51 +3493,33 @@ impl<'o, 'a> Writer<'o, 'a> {
             // The plain view's note: the change's ids, then who made it and
             // when, absent ones left empty (`r5 Ana Lima (2026-…)`, `r7 Di
             // Eng`). The number says it is no comment on the change.
-            if let Some(mut parts) = view_notes::plain_revisions(&whole) {
-                for plain in &mut parts {
-                    if plain.ids.is_empty() && plain.author.is_empty() {
-                        plain.author = self.options.author.to_string();
-                    }
-                }
+            if let Some(plain) = view_notes::plain_revision(&whole) {
                 let serials: Vec<u32> = if anchor.attributed == 0 {
                     anchor.serials.iter().flatten().copied().collect()
                 } else {
                     anchor.serials[1..].iter().flatten().copied().collect()
                 };
-                let tags: Vec<_> = parts
-                    .iter()
-                    .map(|plain| view_notes::Tag {
-                        handle: String::new(),
-                        date: None,
-                        ids: plain.ids.clone(),
-                    })
-                    .collect();
-                let ids = mark_ids(&tags, serials.len());
-                if parts.len() == 1
-                    && let [deleted, inserted] = serials.as_slice()
-                {
+                let tag = view_notes::Tag {
+                    handle: String::new(),
+                    date: None,
+                    ids: plain.ids,
+                };
+                let ids = mark_ids(std::slice::from_ref(&tag), serials.len());
+                if let [deleted, inserted] = serials.as_slice() {
                     self.shared_tags.push((*deleted, *inserted));
                 }
-                if let [plain] = parts.as_slice() {
-                    self.pool(&plain.ids, &serials);
-                } else if parts.len() == serials.len() {
-                    for (plain, serial) in parts.iter().zip(&serials) {
-                        self.pool(&plain.ids, &[*serial]);
-                    }
-                }
                 for (i, serial) in serials.iter().enumerate() {
-                    let plain = &parts[i.min(parts.len() - 1)];
                     self.document
                         .attributions
                         .insert(*serial, (plain.author.clone(), plain.date.clone()));
                     if let Some(ids) = ids.get(i).filter(|ids| !ids.is_empty()) {
-                        self.name_revision(*serial, ids.clone());
+                        self.document.revision_ids.insert(*serial, ids.clone());
                     }
                 }
                 anchor.attributed += 1;
                 // One number after a substitution names its deleted side:
                 // the inserted side's note may follow.
-                if serials.len() == 2 && tags.iter().map(|tag| tag.ids.len()).sum::<usize>() <= 1 {
+                if serials.len() == 2 && tag.ids.len() == 1 {
                     self.anchor = anchor.takes_attribution().then_some(anchor);
                 }
                 return;
@@ -3941,18 +3571,6 @@ impl<'o, 'a> Writer<'o, 'a> {
             comment.number = Some(head.number).filter(|&n| n <= view_notes::MOST_ID);
             comment.parent = head.reply_to.filter(|&n| n <= view_notes::MOST_ID);
             comment.done = head.resolved;
-            if !head.held_in.is_empty() {
-                if self.target.is_none() {
-                    self.held_in
-                        .push((comment.id, head.number, head.held_in.clone()));
-                } else {
-                    self.document.warnings.push(format!(
-                        "c{} is in {}: a note's comment holds no change's mark; its mark stays after its text",
-                        head.number,
-                        held_tag(&head.held_in)
-                    ));
-                }
-            }
             if let Some(handle) = &head.handle {
                 let (author, date) = self.view_author(handle, head.date.as_deref());
                 comment.by = Some((author, date));
@@ -3984,21 +3602,16 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         self.ensure_paragraph();
         let id = comment.id;
-        // Within this paragraph, keep a closed scope's exact endpoint.
-        // Across paragraphs, the id line says whether the range continues
-        // into the note's paragraph or ends at the boundary before it.
-        let mut end_at = self
-            .range_end_at
-            .take()
-            .filter(|&at| self.paragraph.is_none_or(|start| at >= start));
+        let mut end_at = self.range_end_at.take();
         // A range from an earlier block whose note is in a paragraph the
         // range does not run into (its id line's `in` names other comments
         // or none) ends before that paragraph, as Word wrote it.
         let runs_in = |ids: &Vec<u32>| comment.number.map_or(!ids.is_empty(), |n| ids.contains(&n));
-        if self
-            .paragraph_in_comments
-            .as_ref()
-            .is_some_and(|ids| !runs_in(ids))
+        if end_at.is_none()
+            && self
+                .paragraph_in_comments
+                .as_ref()
+                .is_some_and(|ids| !runs_in(ids))
             && let Some(start) = self.paragraph
         {
             let mine: Vec<usize> = (0..self.document.slots.len())
@@ -4120,9 +3733,6 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     fn inline_html(&mut self, html: &str) {
-        if self.box_boundary(html.trim()) {
-            return;
-        }
         if self.note_clause(html) {
             return;
         }
@@ -4316,9 +3926,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 Ok(drawing) => {
                     self.document.drawings.push(drawing);
                     let index = self.document.drawings.len() - 1;
-                    if self.box_names.insert(id.clone(), index).is_some() {
-                        self.box_duplicates.insert(id);
-                    }
                     self.push(Content::Drawing(index));
                 }
                 Err(_) => self.plain(alt.trim()),
@@ -4639,7 +4246,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         // Word lets no one comment in a header or footer, and shows no
         // comment from one: the text stays, the comment goes. A change's
-        // tag (`{header1.r3 @AC}`) is no comment.
+        // tag (`{>>header1.r3 @AC<<}`) is no comment.
         let mut dropped: Vec<String> = self
             .document
             .stories
@@ -4659,14 +4266,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 "comment in {part} dropped: Word shows comments only in the body, never in a header or footer"
             ));
         }
-    }
-
-    /// Remember where an explicit id was supplied, including a parent tag.
-    fn name_revision(&mut self, serial: u32, ids: Vec<u32>) {
-        self.document.revision_ids.insert(serial, ids);
-        self.document
-            .revision_lines
-            .insert(serial, self.source_line);
     }
 
     /// A change of its own for `tag`: attributed and numbered as it says.
@@ -4689,35 +4288,9 @@ impl<'o, 'a> Writer<'o, 'a> {
         let attribution = self.view_author(&tag.handle, tag.date.as_deref());
         self.document.attributions.insert(serial, attribution);
         if !tag.ids.is_empty() {
-            self.name_revision(serial, tag.ids.clone());
+            self.document.revision_ids.insert(serial, tag.ids.clone());
         }
-        self.pool(&tag.ids, &[serial]);
         serial
-    }
-
-    /// [`Self::tag_serial`] for the tags of note `label`'s id line, which
-    /// [`Self::finish`] reads once the note is closed: they pool with the
-    /// note's story, not the body's (#1355).
-    fn note_serials(&mut self, label: &str, tags: &[view_notes::Tag]) -> Vec<u32> {
-        let target = self.target.replace(label.to_string());
-        let serials = tags.iter().map(|tag| self.tag_serial(tag)).collect();
-        self.target = target;
-        serials
-    }
-
-    /// A note naming `ids` names `serials` ([`Self::pools`]).
-    fn pool(&mut self, ids: &[u32], serials: &[u32]) {
-        if ids.len() < 2 || serials.is_empty() {
-            return;
-        }
-        let story = match &self.target {
-            None => PoolStory::Body,
-            Some(label) if self.endnotes.contains(label) => PoolStory::Endnotes,
-            Some(_) => PoolStory::Footnotes,
-        };
-        let (notes, named) = self.pools.entry((story, ids.to_vec())).or_default();
-        *notes += 1;
-        named.extend_from_slice(serials);
     }
 
     /// The single change a note follows, when the anchor names exactly one
@@ -4731,7 +4304,7 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The paragraph's id line names a change a note rebuilt as unshown
-    /// (`rev r1 @AL` after `{--x--}{r3 @BO re r1 @AL}`): its mark is
+    /// (`rev r1 @AL` after `{--x--}{>>r3 @BO on r1 @AL<<}`): its mark is
     /// written, so an empty one must not follow it.
     fn unshown_rebuilt(&mut self, nested: &[u32]) {
         let ids: Vec<u32> = nested
@@ -4794,9 +4367,11 @@ impl<'o, 'a> Writer<'o, 'a> {
     }
 
     /// The author a view handle names and the date for one of their notes:
-    /// the note's own timestamp, else the author's shared or latest one,
-    /// else a legacy range's first day. A known author without timestamps
-    /// gets none; an unknown handle takes the conversion's date.
+    /// the note's own, else the one the `authors:` table gives them all. An
+    /// author the table knows without one date (several, printed as a day
+    /// range) gets none: the note is written undated, never with the
+    /// conversion's date. An unknown handle stands for itself, dated as the
+    /// conversion is.
     fn view_author(&self, handle: &str, date: Option<&str>) -> (String, String) {
         let known = self.authors.get(handle);
         // `??` names no one: the mark's author is empty, as it was.
@@ -4812,76 +4387,17 @@ impl<'o, 'a> Writer<'o, 'a> {
         );
         let date = match (date, known) {
             (Some(date), _) => date.to_string(),
-            (None, Some(known)) => known
-                .date
-                .as_ref()
-                .or(known.latest.as_ref())
-                .cloned()
-                .unwrap_or_else(|| {
-                    // A range's first day; its last mark takes the last day.
-                    known
-                        .range
-                        .as_ref()
-                        .map(|(first, _)| format!("{first}T00:00:00Z"))
-                        .unwrap_or_default()
-                }),
+            (None, Some(known)) => known.date.clone().unwrap_or_else(|| {
+                // A range's first day; its last mark takes the last day.
+                known
+                    .range
+                    .as_ref()
+                    .map(|(first, _)| format!("{first}T00:00:00Z"))
+                    .unwrap_or_default()
+            }),
             (None, None) => self.options.date.clone(),
         };
         (author, date)
-    }
-
-    /// Box markers delimit editable paragraphs in plain and agent views.
-    fn box_boundary(&mut self, html: &str) -> bool {
-        if let Some(name) = html
-            .strip_prefix("<!-- text-box ")
-            .and_then(|s| s.strip_suffix(" -->"))
-        {
-            if !self.box_markdown.contains_key(name) {
-                return false;
-            }
-            self.end_paragraph();
-            let start = self.story().len();
-            self.box_open = Some((name.to_string(), self.target.clone(), start));
-            true
-        } else if html == "<!-- /text-box -->" {
-            self.end_paragraph();
-            if let Some((name, target, start)) = self.box_open.take() {
-                let end = self.story().len();
-                self.box_spans.push((name, target, start, end));
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    fn box_frames(&mut self) {
-        for (name, target, start, end) in std::mem::take(&mut self.box_spans).into_iter().rev() {
-            let Some((drawing, ordinal)) = name.rsplit_once('.') else {
-                continue;
-            };
-            let Some(index) = self.box_names.get(drawing).copied() else {
-                continue;
-            };
-            let Ok(ordinal) = ordinal.parse::<usize>() else {
-                continue;
-            };
-            if ordinal >= 4096 {
-                continue;
-            }
-            let items = match target {
-                Some(label) => self.definitions.get_mut(&label),
-                None => Some(&mut self.body),
-            };
-            let Some(items) = items.filter(|items| end <= items.len() && start <= end) else {
-                continue;
-            };
-            let mut items = items.drain(start..end).collect();
-            finish_story(&mut items);
-            let stories = self.document.box_stories.entry(index).or_default();
-            stories.resize_with(stories.len().max(ordinal + 1), Default::default);
-            stories[ordinal] = (self.box_markdown.remove(&name).unwrap_or_default(), items);
-        }
     }
 
     /// The text boxes the view prints as blocks with no id lines of their
@@ -5037,7 +4553,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .attributions
                 .insert(serial, (mark.author.clone(), mark.date.clone()));
             if let Some(id) = mark.id {
-                self.name_revision(serial, vec![id]);
+                self.document.revision_ids.insert(serial, vec![id]);
             }
             for id in ids {
                 self.document
@@ -5050,115 +4566,6 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
-    /// The notes that say `in r13` put their comment's reference back
-    /// inside r13: the paragraph's runs of it, or the mark its id line
-    /// names when r13 holds nothing else (`rev-del r13 @D`), as Word wrote
-    /// it. A paragraph without r13 keeps the reference after the text,
-    /// with a warning.
-    fn named_held_marks(&mut self) {
-        let mut bound: HashMap<(usize, Vec<u32>), (Kind, u32)> = HashMap::new();
-        let mut paragraphs = Vec::new();
-        for (comment, number, ids) in std::mem::take(&mut self.held_in) {
-            let reference = self
-                .body
-                .iter()
-                .position(|item| matches!(item, Item::CommentReference(id) if *id == comment));
-            let start = reference.and_then(|at| {
-                self.body[..at]
-                    .iter()
-                    .rposition(|item| matches!(item, Item::Paragraph(_)))
-            });
-            let (Some(at), Some(start)) = (reference, start) else {
-                continue;
-            };
-            let end = self.body[at..]
-                .iter()
-                .position(|item| matches!(item, Item::ParagraphEnd))
-                .map_or(self.body.len(), |skip| at + skip);
-            let change = bound.get(&(start, ids.clone())).copied().or_else(|| {
-                self.body[start..end].iter().find_map(|item| match item {
-                    Item::Run(run) => run.change.filter(|(_, serial)| {
-                        // A merged tag (`r13+14`) holds each of its ids.
-                        self.document
-                            .revision_ids
-                            .get(serial)
-                            .is_some_and(|named| ids.iter().all(|id| named.contains(id)))
-                    }),
-                    _ => None,
-                })
-            });
-            let change = change.or_else(|| {
-                let &[id] = ids.as_slice() else {
-                    return None;
-                };
-                let Some(Item::Paragraph(paragraph)) = self.body.get_mut(start) else {
-                    return None;
-                };
-                let found = paragraph
-                    .unshown
-                    .iter()
-                    .position(|(_, mark)| mark.id == Some(id))?;
-                let (inserted, mark) = paragraph.unshown.remove(found);
-                self.serial += 1;
-                let serial = self.serial;
-                self.document
-                    .attributions
-                    .insert(serial, (mark.author, mark.date));
-                self.name_revision(serial, vec![id]);
-                Some((if inserted { Kind::Insert } else { Kind::Delete }, serial))
-            });
-            let Some(change) = change else {
-                self.document.warnings.push(format!(
-                    "c{number} is in {}, which its paragraph does not have: its mark stays after its text",
-                    held_tag(&ids)
-                ));
-                continue;
-            };
-            bound.insert((start, ids), change);
-            self.document.note_changes.insert(comment, (change, false));
-            paragraphs.push(start);
-        }
-        for start in paragraphs {
-            self.gather_held_references(start);
-        }
-    }
-
-    /// The comment ends between references that go inside one change
-    /// (`{==a==}{>>c0 in r13<<}{>>c1 re c0 in r13<<}`) come before them,
-    /// so the references stay in one mark, as Word writes them.
-    fn gather_held_references(&mut self, start: usize) {
-        let notes = &self.document.note_changes;
-        let held = |item: &Item| match item {
-            Item::CommentReference(id) => notes.get(id).filter(|(_, end)| !end).map(|(c, _)| *c),
-            _ => None,
-        };
-        let mut at = start;
-        while at < self.body.len() && !matches!(self.body[at], Item::ParagraphEnd) {
-            let Some(change) = held(&self.body[at]) else {
-                at += 1;
-                continue;
-            };
-            // The references to `change` from here, and the range ends
-            // between them.
-            let window = self.body[at..]
-                .iter()
-                .take_while(|item| matches!(item, Item::RangeEnd(_)) || held(item) == Some(change))
-                .count();
-            let last = self.body[at..at + window]
-                .iter()
-                .rposition(|item| held(item) == Some(change))
-                .map_or(at, |skip| at + skip);
-            let (ends, references): (Vec<Item>, Vec<Item>) = self.body[at..=last]
-                .iter()
-                .cloned()
-                .partition(|item| matches!(item, Item::RangeEnd(_)));
-            let count = last + 1 - at;
-            self.body
-                .splice(at..=last, ends.into_iter().chain(references));
-            at += count;
-        }
-    }
-
     fn finish(mut self) -> Document {
         self.end_paragraph();
         self.textless_paragraph();
@@ -5167,55 +4574,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             // its text anyway.
             self.document.comments.push(comment);
         }
-        for name in self
-            .document
-            .drawings
-            .iter()
-            .flat_map(|drawing| drawing.nested_tokens())
-        {
-            let error = if !self.box_names.contains_key(&name) {
-                Some(format!(
-                    "text-box {name}: nested drawing token is missing; deleting the box token is unsupported"
-                ))
-            } else if self.box_duplicates.contains(&name) {
-                Some(format!(
-                    "text-box {name}: nested drawing token appears more than once"
-                ))
-            } else {
-                None
-            };
-            if let Some(error) = error {
-                self.document.box_error.get_or_insert(error);
-            }
-        }
-        for (name, &index) in &self.box_names {
-            if let Some(drawing) = self.document.drawings.get(index)
-                && let Err(error) = drawing.check_box_regions(name, &self.box_markdown)
-            {
-                self.document.box_error.get_or_insert(error);
-            }
-        }
-        for name in self.box_markdown.keys() {
-            let resolved = name.rsplit_once('.').and_then(|(token, ordinal)| {
-                let index = *self.box_names.get(token)?;
-                let ordinal = ordinal.parse::<usize>().ok()?;
-                self.document
-                    .drawings
-                    .get(index)
-                    .map(|drawing| ordinal < drawing.box_count())
-            });
-            let reason = match resolved {
-                None => "undefined or absent drawing token",
-                Some(false) => "box index out of range",
-                Some(true) => continue,
-            };
-            self.document
-                .box_error
-                .get_or_insert_with(|| format!("text-box {name}: {reason}"));
-        }
-        self.box_frames();
         self.text_boxes();
-        self.named_held_marks();
         self.held_comment_marks();
         let mut body = std::mem::take(&mut self.body);
         clear_continued_marks(&mut body, &self.document);
@@ -5357,32 +4716,13 @@ impl<'o, 'a> Writer<'o, 'a> {
             // endnotes.r228`): each mark holds that paragraph's reference
             // and text together, so the note's change is the first of them
             // and its runs take their own.
-            // The view joins each paragraph's text and mark into one change
-            // in reading order (`rev footnotes.r32+31`: text, then mark,
-            // #1261); Word's shape names them apart, the mark first.
-            let own: Vec<view_notes::Tag> = if clauses.rev.len() == paragraphs(&items)
-                && clauses.rev.iter().all(|tag| tag.ids.len() > 1)
-            {
-                clauses
-                    .rev
-                    .iter()
-                    .flat_map(|tag| {
-                        let (text, mark) = tag.ids.split_at(tag.ids.len() - 1);
-                        [mark, text].map(|ids| view_notes::Tag {
-                            ids: ids.to_vec(),
-                            ..tag.clone()
-                        })
-                    })
-                    .collect()
-            } else {
-                clauses.rev.clone()
-            };
             if let Some((kind, _)) = change
                 && !self.resolved
                 && in_one_change(&items, kind)
-                && own.len() == paragraphs(&items)
+                && clauses.rev.len() == paragraphs(&items)
             {
-                let serials = self.note_serials(&label, &own);
+                let serials: Vec<u32> =
+                    clauses.rev.iter().map(|tag| self.tag_serial(tag)).collect();
                 let mut next = serials.iter().copied();
                 let mut runs = None;
                 for item in &mut items {
@@ -5396,9 +4736,10 @@ impl<'o, 'a> Writer<'o, 'a> {
             } else if let Some((kind, _)) = change
                 && !self.resolved
                 && in_one_change(&items, kind)
-                && own.len() == 2 * paragraphs(&items)
+                && clauses.rev.len() == 2 * paragraphs(&items)
             {
-                let serials = self.note_serials(&label, &own);
+                let serials: Vec<u32> =
+                    clauses.rev.iter().map(|tag| self.tag_serial(tag)).collect();
                 own_note_marks(&mut items, kind, &serials);
                 change = serials.get(1).map(|&first| (kind, first));
             } else if let Some((kind, _)) = change
@@ -5425,13 +4766,11 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .rev()
                     .find(|item| matches!(item, Item::Paragraph(_)))
             {
-                let mut unshown = Vec::new();
-                for tag in &clauses.rev {
-                    let inserted = !clauses.rev_del.contains(tag);
-                    let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
-                }
-                last.unshown = unshown;
+                last.unshown = clauses
+                    .rev
+                    .iter()
+                    .map(|tag| (!clauses.rev_del.contains(tag), self.format_mark(tag)))
+                    .collect();
             }
             if !clauses.fmt.is_empty()
                 && let Some(Item::Paragraph(first)) = items.first_mut()
@@ -5449,7 +4788,6 @@ impl<'o, 'a> Writer<'o, 'a> {
                 endnote,
             });
         }
-        self.share_pooled_ids();
         self.share_substitution_ids();
         self.range_ends();
         self.comments_out_of_notes();
@@ -5760,219 +5098,9 @@ fn mark_ids(tags: &[view_notes::Tag], serials: usize) -> Vec<Vec<u32>> {
 }
 
 impl Writer<'_, '_> {
-    /// The pieces of one logical change each carry its whole id (`{++shall
-    /// re++}{r7+8 @B}{++main++}{r7+8 @B}`, #1261): its ids go to the
-    /// pieces in turn, in reading order, the last taking any left and a
-    /// piece past them a fresh one. A piece the view split around a change
-    /// nested in it continues the mark it was split from (`{++a++}{r7+8
-    /// @B}{--x--}{r9 @A re r7+8 @B}{++b++}{r7+8 @B}`), and the nested change
-    /// sits inside that mark; a piece of another kind is another mark
-    /// (`{--old--}{r5+6 @A}{--x--}{r7 @B re r5+6 @A}`: the deletion 5, then
-    /// the insertion 6 that holds 7). A paragraph mark is a piece of its
-    /// own, after its paragraph's text.
-    fn share_pooled_ids(&mut self) {
-        let pools: Vec<(Vec<u32>, Vec<u32>)> = std::mem::take(&mut self.pools)
-            .into_iter()
-            .filter(|(_, (notes, _))| *notes > 1)
-            .map(|((_, ids), (_, serials))| (ids, serials))
-            .collect();
-        if pools.is_empty() {
-            return;
-        }
-        let mut pool_of: HashMap<u32, usize> = HashMap::new();
-        for (at, (_, serials)) in pools.iter().enumerate() {
-            for &serial in serials {
-                pool_of.insert(serial, at);
-            }
-        }
-        // A change with more ids than its fewest marks need has a mark that
-        // starts after a nest (`{++a ++}{r7+9 @B}{--b--}{r8 @A re r7+9
-        // @B}{++ c++}{r7+9 @B}`: ` c` is mark 9, #1354): its next ids start
-        // one at each piece that follows a nest, the first ones first.
-        // With ids still left for every nest right after another nest in
-        // the same change, each of those starts the change's next mark
-        // (`{--a--}{r3+4 @B re r1+2 @A}{--b--}{r3+4 @B re r1+2 @A}`);
-        // without, it sits in the mark the first one sits in (`{++a++}{r7+8
-        // @B}{--x--}{r9+10+11 @A re r7+8 @B}{--y--}{…}{++b++}{r7+8 @B}`:
-        // `x` and `y` in mark 7, `b` mark 8). Any still left start a mark
-        // at a nest that follows a piece: a mark that holds only the nest
-        // (`{++a ++}{r7+9+11 @B}{--x--}{r8 @Z re r7+9+11 @B}{++ b++}{r7+9+11
-        // @B}`: mark 9 holds the deletion 8).
-        let none = vec![0; pools.len()];
-        let spare_of = |counts: &[usize]| -> Vec<usize> {
-            pools
-                .iter()
-                .zip(counts)
-                .map(|((ids, _), &count)| ids.len().saturating_sub(count))
-                .collect()
-        };
-        let (_, fewest) = self.pool_pieces(&pool_of, &vec![false; pools.len()], &none, &none);
-        let spare = spare_of(&fewest);
-        let (_, apart) = self.pool_pieces(&pool_of, &vec![true; pools.len()], &spare, &none);
-        let split: Vec<bool> = pools
-            .iter()
-            .zip(&apart)
-            .map(|((ids, _), &count)| ids.len() >= count)
-            .collect();
-        let (_, after) = self.pool_pieces(&pool_of, &split, &spare, &none);
-        let (piece, pieces) = self.pool_pieces(&pool_of, &split, &spare, &spare_of(&after));
-        for (pool, (ids, serials)) in pools.iter().enumerate() {
-            let count = pieces[pool];
-            for serial in serials {
-                let Some(&at) = piece.get(serial) else {
-                    continue;
-                };
-                // A piece past the ids takes the last one again, which the
-                // package then renumbers with a warning.
-                let Some(&id) = ids.get(at).or(ids.last()) else {
-                    continue;
-                };
-                let mut own = vec![id];
-                if at + 1 == count {
-                    own.extend(ids.iter().skip(count));
-                }
-                self.document.revision_ids.insert(*serial, own);
-            }
-        }
-        // A substitution among the pieces took its ids from them.
-        self.shared_tags.retain(|(deleted, inserted)| {
-            !piece.contains_key(deleted) && !piece.contains_key(inserted)
-        });
-    }
-
-    /// The piece of its pool each pooled serial is, in reading order, and
-    /// each pool's count of pieces ([`Self::share_pooled_ids`]); `split`
-    /// says, per pool, whether a nest right after a nest is a new piece,
-    /// `spare` how many pieces right after a nest are new ones, and
-    /// `spare_nests` how many nests right after a piece are.
-    fn pool_pieces(
-        &self,
-        pool_of: &HashMap<u32, usize>,
-        split: &[bool],
-        spare: &[usize],
-        spare_nests: &[usize],
-    ) -> (HashMap<u32, usize>, Vec<usize>) {
-        // Per pool: the pieces counted so far, the one read last with its
-        // kind (none for a paragraph mark), and the spare ids taken.
-        let mut pieces = vec![0usize; split.len()];
-        let mut current: Vec<Option<(usize, Option<Kind>)>> = vec![None; split.len()];
-        let mut spent = vec![0usize; split.len()];
-        let mut spent_nests = vec![0usize; split.len()];
-        let mut piece: HashMap<u32, usize> = HashMap::new();
-        let notes = self.document.notes.iter().map(|note| &note.items);
-        for items in std::iter::once(&self.document.body).chain(notes) {
-            // The pools the run before is a piece of, and whether it is
-            // a change nested inside the piece rather than the piece.
-            let mut before: Vec<(usize, bool)> = Vec::new();
-            let mut mark = None;
-            for item in items {
-                match item {
-                    Item::Run(run) => {
-                        let mut now = Vec::new();
-                        let mut placed: Vec<(usize, usize)> = Vec::new();
-                        let mut chain: Vec<Change> = run.change.into_iter().collect();
-                        while let Some(&outer) =
-                            chain.last().and_then(|(_, by)| self.document.wraps.get(by))
-                            && !chain.iter().any(|&(_, by)| by == outer.1)
-                        {
-                            chain.push(outer);
-                        }
-                        for (depth, (kind, serial)) in chain.into_iter().enumerate() {
-                            let Some(&pool) = pool_of.get(&serial) else {
-                                continue;
-                            };
-                            let nested = depth > 0;
-                            let at = *piece.entry(serial).or_insert_with(|| {
-                                // The piece read last goes on: around the
-                                // nest it holds, or after the nest in it
-                                // while no spare id is left; a nest after
-                                // a nest, unless split.
-                                let mut goes_on = false;
-                                let mut after_nest = false;
-                                let mut after_piece = false;
-                                for &(other, inside) in &before {
-                                    if other == pool {
-                                        goes_on |= nested != inside || (nested && !split[pool]);
-                                        after_nest |= !nested && inside;
-                                        after_piece |= nested && !inside;
-                                    }
-                                }
-                                let goes_on = current[pool]
-                                    .filter(|&(_, was)| goes_on && was == Some(kind))
-                                    .map(|(at, _)| at);
-                                match goes_on {
-                                    Some(_) if after_nest && spent[pool] < spare[pool] => {
-                                        spent[pool] += 1;
-                                        pieces[pool] += 1;
-                                        pieces[pool] - 1
-                                    }
-                                    Some(_)
-                                        if after_piece && spent_nests[pool] < spare_nests[pool] =>
-                                    {
-                                        spent_nests[pool] += 1;
-                                        pieces[pool] += 1;
-                                        pieces[pool] - 1
-                                    }
-                                    Some(at) => at,
-                                    None => {
-                                        pieces[pool] += 1;
-                                        pieces[pool] - 1
-                                    }
-                                }
-                            });
-                            current[pool] = Some((at, Some(kind)));
-                            now.push((pool, nested));
-                            placed.push((pool, at));
-                        }
-                        // A text box prints the change of the run it sits
-                        // in: its copy of that tag is the same piece.
-                        if let Content::Drawing(index) = &run.content {
-                            let boxes = self.document.box_stories.get(index);
-                            for item in boxes.into_iter().flatten().flat_map(|(_, items)| items) {
-                                if let Item::Run(Run {
-                                    change: Some((_, serial)),
-                                    ..
-                                }) = item
-                                    && let Some(pool) = pool_of.get(serial)
-                                    && let Some(&(_, at)) = placed.iter().find(|(p, _)| p == pool)
-                                {
-                                    piece.entry(*serial).or_insert(at);
-                                }
-                            }
-                        }
-                        before = now;
-                    }
-                    Item::Bookmark(_)
-                    | Item::RangeStart(_)
-                    | Item::RangeEnd(_)
-                    | Item::CommentReference(_)
-                    | Item::LinkStart(..)
-                    | Item::LinkEnd => {}
-                    Item::Paragraph(paragraph) => {
-                        mark = paragraph.mark_by;
-                        before.clear();
-                    }
-                    Item::ParagraphEnd => {
-                        if let Some(serial) = mark.take()
-                            && let Some(&pool) = pool_of.get(&serial)
-                            && !piece.contains_key(&serial)
-                        {
-                            piece.insert(serial, pieces[pool]);
-                            current[pool] = Some((pieces[pool], None));
-                            pieces[pool] += 1;
-                        }
-                        before.clear();
-                    }
-                    _ => before.clear(),
-                }
-            }
-        }
-        (piece, pieces)
-    }
-
     /// A substitution's one tag (`r5+6+7`) lists the deleted side's ids,
     /// then the inserted side's. Word numbers marks in document order and
-    /// may number the insertion first, so where the numbers drop (`r3+4+1+2`)
+    /// writes the insertion first, so where the numbers drop (`r3+4+1+2`)
     /// the inserted side's begin; with no drop the deleted side takes one
     /// id per run it has (`plain _italic_` is two). Either side keeps one
     /// at least.
@@ -6009,12 +5137,6 @@ impl Writer<'_, '_> {
 /// a reply's `re c5` and every later `c5` still name the same comment; one
 /// with no number, or with a number an earlier comment took, gets the
 /// lowest free one. Replies then name their parent by its `w:id`.
-/// The view's tag for a change's `w:id`s: `r13`, `r4+5`.
-fn held_tag(ids: &[u32]) -> String {
-    let ids: Vec<String> = ids.iter().map(u32::to_string).collect();
-    format!("r{}", ids.join("+"))
-}
-
 fn renumber_comments(document: &mut Document) {
     let mut taken = HashSet::new();
     let claimed: Vec<Option<u32>> = document
@@ -6510,26 +5632,9 @@ pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tight_amount_lists_need_a_constant_number_of_math_passes() {
-        let source = (5..2005)
-            .map(|n| format!("${n}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let (escaped, passes) = inline_math_passes(source);
-        assert!(
-            passes <= 3,
-            "2,000 amounts took {passes} full parses (limit 3)"
-        );
-        assert!(
-            !Parser::new_ext(&escaped, parser_options())
-                .any(|event| { matches!(event, Event::InlineMath(_) | Event::DisplayMath(_)) })
-        );
-    }
 
     #[test]
     fn a_comment_body_holding_a_date_keeps_its_author() {
@@ -6587,65 +5692,6 @@ mod tests {
             table_pipes("---\ntext: |\n  \\\\|x\n---\n"),
             "---\ntext: |\n  \\\\|x\n---\n"
         );
-    }
-
-    #[test]
-    fn trailing_backslashes_only_move_when_a_table_opens() {
-        // pulldown-cmark reads a run of an odd number of backslashes at a
-        // line's end as a hard break before it looks for a delimiter row,
-        // so the table never surfaces; GFM keeps the run as the last
-        // cell's text. The run moves off the row's end by a space, which
-        // is not a cell's text, where the row opens a table, and nowhere
-        // else: a row that opens no table keeps its hard break, and so do
-        // the rows inside a table, which no hard break can end.
-        assert_eq!(
-            table_pipes("|\\\\| \\\n|---|---|\n"),
-            "|\\\\ | \\ \n|---|---|\n"
-        );
-        assert_eq!(table_pipes("|\\\n|---|\n"), "|\\ \n|---|\n");
-        assert_eq!(
-            table_pipes("|\\\\\\\n|---|\n"),
-            "|\\\\\\ \n|---|\n",
-            "a run of three backslashes is odd too"
-        );
-        assert_eq!(
-            table_pipes("|\\\r\n|---|\r\n"),
-            "|\\ \r\n|---|\r\n",
-            "a carriage return keeps its place after the space"
-        );
-        // An even run is no hard break, and a row that opens no table, a
-        // fence or front matter keeps every byte.
-        assert_eq!(table_pipes("|\\\\\n|---|\n"), "|\\\\\n|---|\n");
-        assert_eq!(table_pipes("|\\\n| a |\n"), "|\\\n| a |\n");
-        assert_eq!(
-            table_pipes("| a |\n|---|\n| x | y\\\n"),
-            "| a |\n|---|\n| x | y\\\n",
-            "a row inside a table keeps its bytes"
-        );
-        assert_eq!(table_pipes("```\n|\\\n```\n"), "```\n|\\\n```\n");
-        for source in [
-            "|\\\n|---|---|\n",     // Mismatched columns.
-            "    |\\\n    |---|\n", // Indented code.
-            "\t|\\\n\t|---|\n",
-            " \t|\\\n \t|---|\n",
-            "\u{a0}|\\\n|---|\n", // Non-ASCII whitespace is not table indentation.
-            "~~~\n|\\\n|---|\n~~~\n",
-            "---\ntext: |\n  |\\\n  |---|\n---\n", // Front matter.
-            "|\\\n    |---|\n",                    // An indented delimiter is code.
-            "|\\\n\t|---|\n",
-            "|\\\n\u{a0}|---|\n",
-        ] {
-            assert_eq!(table_pipes(source), source);
-        }
-    }
-
-    #[test]
-    fn indented_backslash_headers_match_their_delimiter_columns() {
-        for indent in [" ", "  ", "   "] {
-            let source = format!("{indent}|\\\n{indent}|---|\n");
-            let expected = format!("{indent}|\\ \n{indent}|---|\n");
-            assert_eq!(table_pipes(&source), expected);
-        }
     }
 
     #[test]
@@ -6781,7 +5827,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod markdown_authored_boundary_tests {
     use super::*;
 
@@ -6928,7 +5974,7 @@ mod markdown_authored_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memory_picture_import_contract_tests {
     use super::*;
 
@@ -7025,7 +6071,7 @@ mod memory_picture_import_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod html_tag_tests {
     use super::*;
 

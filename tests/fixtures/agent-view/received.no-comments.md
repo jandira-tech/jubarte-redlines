@@ -3,12 +3,12 @@ source: received.docx
 sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: tracked, comments hidden     # 2 threads open (3 comments); carrying paragraphs are marked
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
+revisions: 9                       # 9 marks shown as 9 changes: 5 insertions, 4 deletions
 comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00-04:00
+  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z
 body: p0-p20, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
@@ -21,15 +21,8 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default:
-    id: footer2
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "", indent: {right: 0.25in}}
-  even:                            # defined, but even/odd headers are off
-    id: footer1
-    p0: {text: "{PAGE}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "", indent: {right: 0.25in}}
-    inactive: true
+  default: {id: footer2, text: ["{PAGE}1{/}", ""]}
+  even: {id: footer1, text: ["{PAGE}", ""], inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- page 1 of 2 -->
@@ -44,24 +37,24 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r0 @AC} route-cost reports and a {~~weekly~>monthly~~}{r1+2 @AC} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r0 @AC<<} route-cost reports and a {--weekly--}{>>r1 @AC<<}{++monthly++}{>>r2 @AC<<} review call.
 
 <!-- p4 -->
 ## 2. Fees
 
 <!-- p5 comments c5 c6 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{r3+4 @AC} days of receipt. Late amounts accrue interest at one percent per month.
+Client shall pay each invoice within {--thirty--}{>>r3 @AC<<}{++forty-five++}{>>r4 @AC<<} days of receipt. Late amounts accrue interest at one percent per month.
 
 <!-- p6 -->
 ## 3. Term
 
 <!-- p7 -->
-This Agreement begins on March 1, 2026 and continues until either party ends it with {~~ninety days~>sixty days~~}{r7+8 @AC} written notice.
+This Agreement begins on March 1, 2026 and continues until either party ends it with {--ninety days--}{>>r7 @AC<<}{++sixty days++}{>>r8 @AC<<} written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, widths 2.1646in 2.164in 2.1646in, header row repeats -->
+<!-- t0 center 3x3, cells p8-p16 by row, header row repeats -->
 |Deliverable|Due|Owner|
 |-|-|-|
-|Route-cost report|{~~Day 10~>Day 15~~}{r9+10 @AC}|Consultant|
+|Route-cost report|{--Day 10--}{>>r9 @AC<<}{++Day 15++}{>>r10 @AC<<}|Consultant|
 |Review call|Monthly|Both|
 
 <!-- p17 -->

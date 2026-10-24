@@ -73,24 +73,6 @@ function read(file, forceKind) {
   return bytes;
 }
 
-/** The JSON reads report the input's validity findings in their output,
- * not on stderr (#1309). (A binding older than that has no
- * inputValidityLine; its JSON reads keep the stderr line.) */
-const jsonValidity = typeof wasm.inputValidityLine === "function";
-
-/** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
- * says how many validity findings the input has, as the binary's does,
- * but for a JSON read (`json`), which carries them. (A binding older than
- * #1256 has no inputNotice and says nothing.) */
-function readInput(file, o, json = false) {
-  const docx = read(file);
-  if (!o.quiet && !(json && jsonValidity) && wasm.inputNotice) {
-    const notice = wasm.inputNotice(docx, file);
-    if (notice) console.error(notice);
-  }
-  return docx;
-}
-
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
     throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
@@ -144,28 +126,20 @@ function wrote(o, file, format, size, pages) {
   if (!o.quiet) console.error(wasm.wroteLine(file, format, size, pages));
 }
 
-/** `readJson`'s `validityFile` for FILE as typed, when the binding takes it. */
-function validity(file) {
-  return file != null && jsonValidity ? { validityFile: file } : {};
-}
-
-/** The read options that select paragraphs, and the text --track-changes
- * settles, as `readJson` takes them. */
+/** The read options that select paragraphs, as `readJson` takes them. */
 function selection(o = {}) {
-  return { trackChanges: o.track_changes ?? undefined, paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
+  return { paragraphs: o.paragraphs ?? undefined, head: o.head ?? undefined, tail: o.tail ?? undefined, changed: Boolean(o.changed), by: o.by ?? undefined };
 }
 
 /** `-o` in the format its extension names, as the binary's writer: the Word
  * package, its agent view (.md, headed `source`), its snapshot (.json) or
- * its PDF. `view` is read's options; the defaults elsewhere. `validityFile`
- * puts the input's validity in a snapshot's summary, as `read --json`
- * prints it. */
-function writeResult(o, docx, source, view, validityFile) {
+ * its PDF. `view` is read's options; the defaults elsewhere. */
+function writeResult(o, docx, source, view) {
   const output = o.output, kind = o.output_format ?? "docx";
   if (kind === "pdf") return renderTo(o, docx, output);
   ensureWritable(output, o.force);
   const data = kind === "md" ? viewText(docx, view ?? {}, source)
-    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify({ ...selection(view), ...validity(validityFile) }))}\n`
+    : kind === "json" ? `${wasm.readJson(docx, JSON.stringify(selection(view)))}\n`
     : docx;
   write(output, data);
   wrote(o, output, kind, typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length);
@@ -243,42 +217,21 @@ const COMMANDS = {
   },
   changes: {
     run(_, [file], o) {
-      const docx = readInput(file, o, o.json);
+      const docx = read(file);
       if (!o.json) return void process.stdout.write(wasm.changesText(docx));
       for (const change of JSON.parse(wasm.listChanges(docx))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
-      if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
     },
   },
   accept: resolution(true),
   reject: resolution(false),
   read: {
     run(_, [file], o) {
-      const docx = readInput(file, o, o.json && o.output == null);
-      if (o.tables) {
-        // (A binding older than #1255 has no tablesView; its parser
-        // refuses -p and --track-changes here.)
-        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
-        // With -p, the grids of the tables it reaches, then its view; a
-        // pick that reaches no table is a usage error.
-        let view;
-        try {
-          view = JSON.parse(wasm.tablesView(docx, JSON.stringify({
-            trackChanges: o.track_changes ?? undefined, comments: o.comments, dates: o.dates,
-            pageMarkers: !o.no_page_markers, paragraphs: o.paragraphs ?? undefined, source: path.basename(file),
-          })));
-        } catch (e) {
-          const usage = /^jubarte-wasm: USAGE: (.*)$/s.exec(String(e?.message ?? e));
-          if (usage) throw new UsageError(usage[1]);
-          throw e;
-        }
-        for (const warning of view.warnings) console.error(`warning: ${warning}`);
-        return void process.stdout.write(view.markdown);
-      }
-      if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
-      if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));
-      printView(docx, o, path.basename(file));
+      if (o.tables) return void process.stdout.write(wasm.tablesText(read(file)));
+      if (o.output != null) return void writeResult(o, read(file), path.basename(file), o);
+      if (o.json) return void console.log(wasm.readJson(read(file), JSON.stringify({ ...selection(o), source: path.basename(file) })));
+      printView(read(file), o, path.basename(file));
     },
   },
   convert: {
@@ -323,10 +276,6 @@ const COMMANDS = {
   add: { run: (name, [file], o) => runEdit("add", file, o) },
   capabilities: {
     run(_, __, o) {
-      if (o.matrix || o.operation != null || o.field != null) {
-        if (o.json) return console.log(JSON.stringify(JSON.parse(wasm.capabilityQuery(o.operation, o.field)), null, 2));
-        return process.stdout.write(wasm.capabilityQueryText(o.operation, o.field));
-      }
       const manifest = cliManifest();
       if (o.json) return console.log(JSON.stringify(manifest, null, 2));
       process.stdout.write(wasm.capabilitiesText(JSON.stringify(manifest)));
@@ -405,23 +354,8 @@ function readPlanText(plan, missing = false) {
   }
 }
 
-/** `--plan`'s text, or the plan the operation flags describe, and its
- * notes; `--rewrite-others-comments` sets the plan's field. */
+/** `--plan`'s text, or the plan the operation flags describe, and its notes. */
 function editPlan(verb, docx, o) {
-  const given = editPlanAsGiven(verb, docx, o);
-  if (!o.rewrite_others_comments) return given;
-  let parsed;
-  try {
-    parsed = JSON.parse(given.plan);
-  } catch {
-    return given; // reported as INVALID_PLAN when applied
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return given;
-  parsed.rewrite_others_comments = true;
-  return { plan: JSON.stringify(parsed), notes: given.notes };
-}
-
-function editPlanAsGiven(verb, docx, o) {
   if (o.plan != null) return { plan: readPlanText(o.plan), notes: [] };
   try {
     const options = { author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions };
@@ -456,7 +390,6 @@ function recordPlan(verb, file, docx, o) {
   const options = {
     author: o.author, date: o.datetime ?? undefined, existingRevisions: o.existing_revisions,
     file, plan: o.plan, defaultPlan: Boolean(o.plan_default), dryRun: Boolean(o.dry_run),
-    rewriteOthersComments: Boolean(o.rewrite_others_comments),
   };
   const answer = JSON.parse(wasm.recordPlan(verb, JSON.stringify(o.operations), docx, JSON.stringify(options), held));
   if (!answer.ok) {
@@ -493,69 +426,37 @@ function recordPlan(verb, file, docx, o) {
   return EXIT_OK;
 }
 
-// lstat refuses links even where O_NOFOLLOW is unavailable; compare the
-// opened file with the name using bigint identities to avoid rounding inos.
-function planIdentityMatches(fd, name) {
-  const opened = fs.fstatSync(fd, { bigint: true });
-  const named = fs.lstatSync(name, { bigint: true });
-  if (named.isSymbolicLink()) throw Object.assign(new Error("symbolic link"), { code: "ELOOP" });
-  return (opened.ino === 0n && named.ino === 0n) || (opened.dev === named.dev && opened.ino === named.ino);
-}
-
 function runEdit(verb, file, o) {
   const docx = read(file);
   if (o.plan != null && o.operations?.length) return recordPlan(verb, file, docx, o);
   // What --consume deletes once the edit is written: the plan file as it
-  // was read, never a link to it or an output written over it. Open once
-  // and read the handle, so `plan` names this file — not another placed on
-  // the name between a check and the read; O_NOFOLLOW makes the open itself
-  // refuse a symbolic link.
-  let planFd, consumed;
+  // was read, never a link to it or an output written over it.
+  let consumed;
   if (o.consume && !o.dry_run) {
+    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+    }
     try {
-      planFd = fs.openSync(o.plan, (fs.constants.O_NOFOLLOW ?? 0) | fs.constants.O_RDONLY);
-      if (!planIdentityMatches(planFd, o.plan)) {
-        throw new Error("the plan name changed while it was being read");
-      }
-      consumed = fs.readFileSync(planFd);
+      consumed = fs.readFileSync(o.plan);
     } catch (e) {
-      if (planFd !== undefined) try { fs.closeSync(planFd); } catch {}
-      if (e?.code === "ELOOP") {
-        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
-      }
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
   }
-  try {
-    const code = applyEdit(verb, file, docx, o);
-    if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
-      const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
-      let unchanged = false;
-      try {
-        // The original read advanced the fd: reread positionally, including
-        // one extra byte so an append cannot compare equal to the plan.
-        const current = Buffer.alloc(consumed.length + 1);
-        let length = 0;
-        while (length < current.length) {
-          const read = fs.readSync(planFd, current, length, current.length - length, length);
-          if (read === 0) break;
-          length += read;
-        }
-        unchanged = current.subarray(0, length).equals(consumed) && planIdentityMatches(planFd, o.plan);
-      } catch {}
-      if (!unchanged) throw kept("it no longer holds the plan (an output was written over it?)");
-      // Unavoidable race window between the last lstat and unlinkSync:
-      // Node has no unlink-by-handle API.
-      try {
-        fs.unlinkSync(o.plan);
-      } catch (e) {
-        throw kept(osError(e));
-      }
+  const code = applyEdit(verb, file, docx, o);
+  if ((code ?? EXIT_OK) === EXIT_OK && consumed) {
+    const kept = (why) => new CliError(`the plan was applied, but ${o.plan} was not deleted: ${why}`);
+    let current;
+    try {
+      current = fs.readFileSync(o.plan);
+    } catch {}
+    if (!current?.equals(consumed)) throw kept("it no longer holds the plan (an output was written over it?)");
+    try {
+      fs.unlinkSync(o.plan);
+    } catch (e) {
+      throw kept(osError(e));
     }
-    return code;
-  } finally {
-    if (planFd !== undefined) fs.closeSync(planFd);
   }
+  return code;
 }
 
 function applyEdit(verb, file, docx, o) {
@@ -663,12 +564,11 @@ function printResolutionOrView(docx, planJson, result, editing, shown) {
   printChangedView(result, editing, shown);
 }
 
-/** The `note:` lines of an applied edit: the flags' notes, the plan's (a field
- * read as another), then each anchor read without its Markdown marks. */
+/** The `note:` lines of an applied edit: the flags' notes, then each anchor
+ * read without its Markdown marks. */
 function editNotes(notes, result) {
-  const report = JSON.parse(result.json);
-  const lines = [...notes, ...(report.notes ?? [])].map((note) => `note: ${note}`);
-  for (const outcome of report.operations ?? []) {
+  const lines = notes.map((note) => `note: ${note}`);
+  for (const outcome of JSON.parse(result.json).operations ?? []) {
     if (outcome.anchor_given != null && outcome.anchor_read_as != null) {
       lines.push(`note: ${outcome.id}: anchor ${JSON.stringify(outcome.anchor_given)} read as ${JSON.stringify(outcome.anchor_read_as)} (Markdown marks are not document text)`);
     }
@@ -819,13 +719,11 @@ function validateHost(name, o) {
   }
 }
 
-/** `--json` before any `--`: an error prints on stdout as JSON too. */
 function main(argv) {
   try {
     const parsed = JSON.parse(wasm.parseCli(JSON.stringify(argv), PROG, JSON.stringify(Object.keys(COMMANDS))));
     if ("text" in parsed) {
       for (const note of parsed.notes ?? []) console.error(note);
-      if (parsed.json != null) process.stdout.write(parsed.json);
       (parsed.stream === "stderr" ? process.stderr : process.stdout).write(parsed.text);
       return parsed.exit_code;
     }
@@ -835,11 +733,8 @@ function main(argv) {
     const positionals = name === "compare" ? [o.original, o.modified] : name === "diff" ? [o.old, o.new] : o.file == null ? [] : [o.file];
     return COMMANDS[name].run(name, positionals, o) ?? EXIT_OK;
   } catch (e) {
-    const code = e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
-    // A binding older than #1255 has no runtimeJsonError: stdout stays empty.
-    if (wasm.runtimeJsonError && wasm.wantsJson(argv)) process.stdout.write(wasm.runtimeJsonError(messageOf(e), code));
     console.error(`error: ${messageOf(e)}`);
-    return code;
+    return e instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
   }
 }
 

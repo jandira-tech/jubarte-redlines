@@ -3,12 +3,12 @@ source: received.docx
 sha256: e42d9d7cec67a3ceff4714cddd5e2306b23c8fc973a9d262f4aa637041c67e68
 view: reject-all                   # 9 revisions by AC shown as rejected; file unchanged
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks: 5 insertions, 4 deletions
+revisions: 9                       # 9 marks shown as 9 changes: 5 insertions, 4 deletions
 comments: 2 threads open, c6 style Normal  # 3 comments: c5 (+ reply c6), c11
 authors:
   document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy; no dc:creator
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00-04:00
+  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z
 body: p0-p20, 1 table, 2 pages     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
@@ -21,15 +21,8 @@ headers:
   default: {id: header1, text: SIGNATURE PAGE, right}
 footers:
   first: none                      # page 1 shows no page number
-  default:
-    id: footer2
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "", indent: {right: 0.25in}}
-  even:                            # defined, but even/odd headers are off
-    id: footer1
-    p0: {text: "{PAGE}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "", indent: {right: 0.25in}}
-    inactive: true
+  default: {id: footer2, text: ["{PAGE}1{/}", ""]}
+  even: {id: footer1, text: ["{PAGE}", ""], inactive}  # defined, but even/odd headers are off
 ---
 
 <!-- page 1 of 2 -->
@@ -43,22 +36,22 @@ This Consulting Agreement (the “Agreement”) is made between Harbor Point Ana
 <!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev r0 @AC; r1+2 @AC -->
+<!-- p3 rev r0 @AC; r1 @AC; r2 @AC -->
 Consultant will deliver the services in each Statement of Work, including  route-cost reports and a weekly review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev r3+4 @AC -->
+<!-- p5 rev r3 @AC; r4 @AC -->
 Client shall pay each invoice within thirty days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c5 @AC: Is one percent the statutory cap in Delaware?<<}{>>c6 @AS re c5: Disagree.<<}
 
 <!-- p6 -->
 ## 3. Term
 
-<!-- p7 rev r7+8 @AC -->
+<!-- p7 rev r7 @AC; r8 @AC -->
 This Agreement begins on March 1, 2026 and continues until either party ends it with ninety days written notice.
 
-<!-- t0 center 3x3, cells p8-p16 by row, widths 2.1646in 2.164in 2.1646in, header row repeats, rev r9+10 @AC in p12 -->
+<!-- t0 center 3x3, cells p8-p16 by row, header row repeats, rev r9 @AC in p12; r10 @AC in p12 -->
 |Deliverable|Due|Owner|
 |-|-|-|
 |Route-cost report|Day 10|Consultant|

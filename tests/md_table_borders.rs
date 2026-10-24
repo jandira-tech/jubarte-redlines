@@ -8,9 +8,7 @@
 //! as they were: Demo.docx's thin black grid, 25f1d6ecc3's in automatic
 //! colour, 5331b981b7's 0.25pt table with 1pt grey cells. Only a table that
 //! names nothing, a plain Markdown table, takes Word's thin grid (Table
-//! Grid, as Insert Table makes it), and a plain Markdown table reads as
-//! the table it is: cells that hold only backslashes are table cells, not
-//! a hard break that turns the table into a paragraph.
+//! Grid, as Insert Table makes it).
 
 mod common;
 
@@ -156,80 +154,6 @@ fn a_markdown_table_takes_words_thin_grid() {
     assert_eq!(table_styles(&document), [Some("TableGrid".to_string())]);
     assert_eq!(table_borders(&document), [None]);
     assert!(thin_grid(&part(&written, "word/styles.xml")));
-}
-
-/// A pipe table whose cells hold only backslashes reads as the table it
-/// is (#548's defect 3, still open in #588): pulldown-cmark takes a run
-/// of an odd number of backslashes at a row's end for a hard break
-/// before it looks for the delimiter row, so `| \` over `|---|` came
-/// back a paragraph that opens `\|`. The run moves off the row's end by
-/// a space, which is not a cell's text, so the cells hold their
-/// backslashes and the view is a fixed point, as the rows the reader
-/// writes (`|\\|`) always were.
-#[test]
-fn a_table_whose_cells_hold_only_backslashes_stays_a_table() {
-    let single = write("| \\\n|---|\n| a |\n");
-    let document = part(&single, "word/document.xml");
-    assert_eq!(document.matches("<w:tbl>").count(), 1, "{document}");
-    assert!(
-        document.contains("<w:t xml:space=\"preserve\">\\</w:t>"),
-        "{document}"
-    );
-    let first = view(&single);
-    assert!(first.contains("|\\\\|\n|-|\n"), "{first}");
-    assert_eq!(view(&write(&first)), first);
-
-    let pair = write("| \\\\| \\\n|---|---|\n| a | b |\n");
-    let document = part(&pair, "word/document.xml");
-    assert_eq!(document.matches("<w:tbl>").count(), 1, "{document}");
-    assert_eq!(
-        document
-            .matches("<w:t xml:space=\"preserve\">\\</w:t>")
-            .count(),
-        2,
-        "{document}"
-    );
-    let first = view(&pair);
-    assert!(first.contains("|\\\\|\\\\|\n|-|-|\n"), "{first}");
-    assert_eq!(view(&write(&first)), first);
-}
-
-#[test]
-fn backslash_table_headers_preserve_cell_text_and_reach_a_fixed_point() {
-    for run in 1usize..=6 {
-        for indent in ["", " ", "  ", "   "] {
-            for newline in ["\n", "\r\n"] {
-                // The first cell ends at a separator; the last has no
-                // closing pipe and ends at the line ending instead.
-                let header = format!("|{}| {}", "\\".repeat(2 * run), "\\".repeat(run));
-                let source =
-                    format!("{indent}{header}{newline}{indent}|---|---|{newline}{indent}|a|b|");
-                let written = write(&source);
-                let document = part(&written, "word/document.xml");
-                assert_eq!(
-                    document.matches("<w:tbl>").count(),
-                    1,
-                    "{source:?}: {document}"
-                );
-                let first = view(&written);
-                let expected = format!(
-                    "|{}|{}|\n|-|-|\n|a|b|",
-                    "\\".repeat(2 * run),
-                    "\\".repeat(2 * run.div_ceil(2))
-                );
-                assert!(first.contains(&expected), "{source:?}: {first}");
-                assert_eq!(view(&write(&first)), first, "{source:?}");
-            }
-        }
-    }
-}
-
-#[test]
-fn backslash_cells_under_plain_headers_keep_their_text() {
-    let source = "|a|b|\n|-|-|\n|\\\\|\\\\\\\\|\n";
-    let first = view(&write(source));
-    assert!(first.contains(source.trim_end()), "{first}");
-    assert_eq!(view(&write(&first)), first);
 }
 
 #[test]
@@ -397,17 +321,14 @@ fn a_grid_and_a_borderless_table_keep_their_own() {
         table(DEMO_BORDERS)
     );
     let (first, again, second) = round_trip(&docx(&body));
-    // The tables' 4000-twip columns are not an even split of the text
-    // width, and their width is auto, so both lines name their geometry.
     assert!(
         first.contains(
-            "<!-- t1 2x2, cells p6-p9 by row, widths 2.778in 2.778in, width auto, \
-             style TableNormal, borders single 0.5pt 000000 -->"
+            "<!-- t1 2x2, cells p6-p9 by row, style TableNormal, borders single 0.5pt 000000 -->"
         ),
         "{first}"
     );
     assert!(
-        first.contains("<!-- t0 2x2, cells p0-p3 by row, widths 2.778in 2.778in, width auto -->"),
+        first.contains("<!-- t0 2x2, cells p0-p3 by row -->"),
         "{first}"
     );
     let document = part(&again, "word/document.xml");
@@ -759,70 +680,4 @@ fn table_style_names_with_commas_quote_and_sanitize() {
             converted.warnings
         );
     }
-}
-
-/// A table style of the document's own whose borders are not one single
-/// line all round names each side it sets (`Ledger, borders bottom double
-/// 0.75pt`), in Word's order, with a colour other than `auto` and a
-/// spacing other than zero, and the writer writes exactly those sides
-/// back: the view is a fixed point, where `borders vary` lost them
-/// (#1419). Word's own styles keep `borders vary`: the writer writes
-/// them as Word defines them.
-#[test]
-fn a_table_style_whose_borders_vary_names_each_side() {
-    let styles = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="Coloured"><w:name w:val="Coloured"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:insideH w:val="nil"/><w:top w:val="single" w:sz="12" w:space="2" w:color="FF0000"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="GridTable2"><w:name w:val="Grid Table 2"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="8"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders><w:top w:val="double" w:sz="24" w:space="0" w:color="auto"/><w:bottom w:val="double" w:sz="24" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style></w:styles>"#,
-        jubarte::namespaces::W::URI
-    );
-    let parts = [common::docx::Part {
-        name: "word/styles.xml",
-        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
-        xml: &styles,
-    }];
-    let body = format!(
-        "{}<w:p/>{}<w:p/>{}<w:p/>{}",
-        table(r#"<w:tblStyle w:val="Ledger"/>"#),
-        table(r#"<w:tblStyle w:val="Coloured"/>"#),
-        table(r#"<w:tblStyle w:val="GridTable2"/>"#),
-        table(r#"<w:tblStyle w:val="TableGrid"/>"#)
-    );
-    let docx = common::docx::docx_with(&body, &parts);
-    let (first, again, second) = round_trip(&docx);
-    // A colour's `#` would start a YAML comment: the value is quoted.
-    assert!(
-        first.contains(
-            "tables: \"Ledger, borders bottom double 0.75pt, Coloured, borders top single 1.5pt #FF0000 space 2pt insideH nil, GridTable2, borders vary, TableGrid, borders top double 3pt bottom double 3pt\""
-        ),
-        "{first}"
-    );
-    let written = part(&again, "word/styles.xml");
-    let definition = |id: &str| {
-        written
-            .split("<w:style ")
-            .find(|s| s.contains(&format!("w:styleId=\"{id}\"")))
-            .unwrap_or_else(|| panic!("no style {id}: {written}"))
-            .to_string()
-    };
-    assert!(
-        definition("Ledger").contains(
-            r#"<w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders>"#
-        ),
-        "{written}"
-    );
-    assert!(
-        definition("Coloured").contains(
-            r#"<w:tblBorders><w:top w:val="single" w:sz="12" w:space="2" w:color="FF0000"/><w:insideH w:val="nil"/></w:tblBorders>"#
-        ),
-        "{written}"
-    );
-    // A Table Grid other than Word's thin one is the document's own too.
-    assert!(
-        definition("TableGrid").contains(
-            r#"<w:tblBorders><w:top w:val="double" w:sz="24" w:space="0" w:color="auto"/><w:bottom w:val="double" w:sz="24" w:space="0" w:color="auto"/></w:tblBorders>"#
-        ),
-        "{written}"
-    );
-    assert_eq!(second, first);
 }

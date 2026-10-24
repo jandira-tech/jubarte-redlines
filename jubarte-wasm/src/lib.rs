@@ -113,22 +113,15 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
     jubarte::document_comparer::reject_revisions(docx).map_err(js_err)
 }
 
-/// List the tracked changes as a JSON array string, one object per
-/// logical change: a change Word wrote as several marks is one object
-/// with a composite id (`r1+2`) and its `members`, and an author's
-/// deletion followed by their insertion is one `replacement`. Each `id`
-/// is one `acceptChanges` / `rejectChanges` select by. The objects are
-/// the ones `jubarte changes --json` prints: `id`, `ref` (the same id),
-/// `kind` (`insertion`, `deletion`, `move`, `formatting` or
-/// `replacement`), `target`, `author`, `date`, `text`, `paragraph`,
-/// `move_name`, `move_side`, `inside`, `holds_comments` when the change
-/// holds comment marks, and `members` (each mark's `id`, `kind`,
-/// `target`, `date` and `text`) for a change of several marks.
+/// List the tracked changes one by one as a JSON array string, each with the
+/// id `acceptChanges` / `rejectChanges` select by (the same objects as
+/// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
+/// `text`, `move_name`, `move_side`, `inside`).
 ///
-/// Mirrors `jubarte::changes::list_logical_changes`.
+/// Mirrors `jubarte::changes::list_changes`.
 #[wasm_bindgen(js_name = listChanges)]
 pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
-    let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
     serde_json::to_string(&changes).map_err(js_err)
 }
 
@@ -152,13 +145,12 @@ pub fn list_comments(
 }
 
 /// The listing `jubarte changes` prints: a line per change with its short
-/// id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
-/// for a change Word wrote as several marks), then `N change(s)`.
+/// id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
 ///
 /// Mirrors `jubarte::changes::changes_text`.
 #[wasm_bindgen(js_name = changesText)]
 pub fn changes_text(docx: &[u8]) -> Result<String, JsValue> {
-    let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
     Ok(jubarte::changes::changes_text(&changes))
 }
 
@@ -301,11 +293,8 @@ pub fn source_sha256(docx: &[u8]) -> String {
 }
 
 /// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
-/// `summary`, `paragraphs` (ids, text, style, formatting spans,
-/// limitations) and top-level `tables` with recursive `nested` entries.
-/// Snapshot schema 3 lists logical changes (one entry, with `members`, for
-/// a change Word wrote as several marks), counts top-level tables, and gives
-/// nested entries `parent` cell paths and no `index`. Oversized or malformed packages are refused before parsing.
+/// `summary` and `paragraphs` (ids, text, style, formatting spans,
+/// limitations). Oversized or malformed packages are refused before parsing.
 ///
 /// Mirrors `jubarte::inspect::inspect_json`.
 #[wasm_bindgen(js_name = inspectDocument)]
@@ -360,7 +349,11 @@ fn read_view_json(docx: &[u8], options_json: Option<&str>) -> Result<String, Str
         Some(json) => serde_json::from_str(json).map_err(|e| format!("readView options: {e}"))?,
         None => ReadViewOptions::default(),
     };
-    let track_changes = track_changes_of(options.track_changes.as_deref())?;
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or("trackChanges must be all, accept or reject")?,
+    };
     let comments = match options.comments.as_deref() {
         None | Some("inline") => true,
         Some("none") => false,
@@ -403,147 +396,27 @@ pub fn read_view(docx: &[u8], options_json: Option<String>) -> Result<String, Js
     read_view_json(docx, options_json.as_deref()).map_err(js_err)
 }
 
-/// `tablesText` options: `read --tables`'s `--track-changes`.
-#[derive(Default, serde::Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-struct TablesTextOptions {
-    track_changes: Option<String>,
-}
-
-fn tables_text_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
-    let options: TablesTextOptions = match options_json {
-        Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesText options: {e}"))?,
-        None => TablesTextOptions::default(),
-    };
-    let options = jubarte::markdown::ReadOptions {
-        track_changes: track_changes_of(options.track_changes.as_deref())?,
-        ..jubarte::markdown::ReadOptions::default()
-    };
-    jubarte::markdown::read_tables(docx, &options)
-        .map(|view| view.markdown)
-        .map_err(|e| e.to_string())
-}
-
-/// `trackChanges` as the view reads it: `all` (the default), `accept` or
-/// `reject`, with their `accepted` and `rejected` spellings.
-fn track_changes_of(choice: Option<&str>) -> Result<jubarte::markdown::TrackChanges, String> {
-    match choice {
-        None => Ok(jubarte::markdown::TrackChanges::All),
-        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
-            .ok_or_else(|| "trackChanges must be all, accept or reject".to_string()),
-    }
-}
-
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
-/// top-level body table, then a line per row of `ids=text` cells; nested
-/// tables follow their cell row, indented two spaces per level and labelled
-/// `nested in CELL_PATH`. `no tables` prints when there are none. Options (JSON, all optional): `trackChanges` (`reject`
-/// reads the rejected text).
+/// body table, then a line per row of `ids=text` cells; `no tables` when
+/// there are none.
 ///
-/// Mirrors `jubarte::markdown::read_tables` without a selection.
+/// Mirrors `jubarte::inspect::tables_text`.
 #[wasm_bindgen(js_name = tablesText)]
-pub fn tables_text(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
-    tables_text_of(docx, options_json.as_deref()).map_err(js_err)
+pub fn tables_text(docx: &[u8]) -> Result<String, JsValue> {
+    let tables = jubarte::inspect::tables(docx).map_err(js_err)?;
+    Ok(jubarte::inspect::tables_text(&tables))
 }
 
-/// `tablesView` options: `read --tables` with the view's options.
-#[derive(Default, serde::Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-struct TablesViewOptions {
-    track_changes: Option<String>,
-    comments: Option<String>,
-    dates: bool,
-    page_markers: Option<bool>,
-    paragraphs: Option<String>,
-    source: Option<String>,
-}
-
-fn tables_view_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
-    let options: TablesViewOptions = match options_json {
-        Some(json) => serde_json::from_str(json).map_err(|e| format!("tablesView options: {e}"))?,
-        None => TablesViewOptions::default(),
-    };
-    let comments = match options.comments.as_deref() {
-        None | Some("inline") => true,
-        Some("none") => false,
-        Some(other) => return Err(format!("comments must be inline or none, not {other:?}")),
-    };
-    let view = jubarte::markdown::read_tables(
-        docx,
-        &jubarte::markdown::ReadOptions {
-            track_changes: track_changes_of(options.track_changes.as_deref())?,
-            comments,
-            dates: options.dates,
-            page_markers: options.page_markers.unwrap_or(true),
-            select: jubarte::markdown::Select::from_flags(
-                options.paragraphs.as_deref(),
-                None,
-                None,
-                false,
-                None,
-            )?,
-            source: options.source,
-        },
-    )
-    .map_err(|e| match e {
-        jubarte::markdown::TablesError::Usage(message) => format!("USAGE: {message}"),
-        jubarte::markdown::TablesError::Read(e) => e.to_string(),
-    })?;
-    Ok(serde_json::json!({ "markdown": view.markdown, "warnings": view.warnings }).to_string())
-}
-
-/// What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
-/// the grids (`tablesText`), or with `paragraphs` (`"t0"`, `"p11"`,
-/// `"p3-p20"`) the grids of the tables the view's selection reaches (a
-/// `pN` inside a table, that table), each with the tables nested in it,
-/// then an empty line and the view `readView` prints of that selection.
-/// Options (JSON, all optional): `trackChanges`, `comments`, `dates`,
-/// `pageMarkers`, `paragraphs`, `source`, as `readView` reads them. A pick
-/// that reaches no table throws `jubarte-wasm: USAGE: …`, as the CLI
-/// exits 2.
-///
-/// Mirrors `jubarte::markdown::read_tables`.
-#[wasm_bindgen(js_name = tablesView)]
-pub fn tables_view(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
-    tables_view_of(docx, options_json.as_deref()).map_err(js_err)
-}
-
-/// Whether a command line (without the program name) asks for JSON: a
-/// real `--json` flag before any `--`, read as the binary reads it (the
-/// `--json` in `--text --json` is a value). An error then prints its
-/// [`runtime_json_error`] line on stdout too.
-///
-/// Mirrors `jubarte::cli::wants_json`.
-#[wasm_bindgen(js_name = wantsJson)]
-pub fn wants_json(arguments: Vec<String>) -> bool {
-    jubarte::cli::wants_json(&arguments)
-}
-
-/// The line an error prints on stdout under `--json`:
-/// `{"error":{"code":…,"message":…}}`, its code the message's leading
-/// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
-///
-/// Mirrors `jubarte::cli::runtime_json_error`.
-#[wasm_bindgen(js_name = runtimeJsonError)]
-pub fn runtime_json_error(message: &str, exit: u8) -> String {
-    jubarte::cli::runtime_json_error(message, exit)
-}
-
-/// `readJson` options: the `read` command's selection, and the text its
-/// `--track-changes` settles.
+/// `readJson` options: the `read` command's selection.
 #[derive(Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 struct ReadJsonOptions {
-    track_changes: Option<String>,
     paragraphs: Option<String>,
     head: Option<usize>,
     tail: Option<usize>,
     changed: bool,
     by: Option<String>,
     source: Option<String>,
-    /// The path as the command line spells it: the snapshot's summary
-    /// carries the input's validity findings (#1309).
-    validity_file: Option<String>,
 }
 
 fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
@@ -558,30 +431,20 @@ fn read_json_of(docx: &[u8], options_json: Option<&str>) -> Result<String, Strin
         options.changed,
         options.by.as_deref(),
     )?;
-    let track_changes = track_changes_of(options.track_changes.as_deref())?;
-    let validity_file = options.validity_file;
     let options = jubarte::markdown::ReadOptions {
-        track_changes,
         select,
         source: options.source,
         ..jubarte::markdown::ReadOptions::default()
     };
-    let mut snapshot =
-        jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
-    snapshot.summary.input_validity = validity_file
-        .as_deref()
-        .map(|file| jubarte::validate::input_validity_of(docx, file));
+    let snapshot = jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
     serde_json::to_string(&snapshot).map_err(|e| e.to_string())
 }
 
 /// The snapshot `jubarte read --json` prints, with its `changes` and
 /// `comments`. Options (JSON, all optional) select as in
 /// [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
-/// `source` names the document; `trackChanges` `accept` or `reject`
-/// settles the text and names the choice in `track_changes`;
-/// `validityFile`, the path as the command line spells it, adds
-/// `summary.input_validity`, the input's validity findings counted. The
-/// snapshot keeps the selected paragraphs and their changes and comments.
+/// `source` names the document. The snapshot keeps the selected paragraphs
+/// and their changes and comments.
 ///
 /// Mirrors `jubarte::markdown::read_snapshot`.
 #[wasm_bindgen(js_name = readJson)]
@@ -639,13 +502,12 @@ pub fn flag_plan(
 }
 
 /// Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
-/// it keeps and does not itself accept or reject, or a reply to a comment
-/// on a paragraph it deletes; `undefined` when neither.
+/// it keeps and does not itself accept or reject; `undefined` when none.
 ///
 /// Mirrors `jubarte::edit::flags::editing_mode_conflict`.
 #[wasm_bindgen(js_name = editingModeConflict)]
 pub fn editing_mode_conflict(plan: &str, docx: &[u8]) -> Option<String> {
-    jubarte::edit::flags::editing_mode_conflict_json(plan, docx)
+    jubarte::edit::flags::editing_mode_conflict_json(plan, docx).map(str::to_string)
 }
 
 /// `record_plan` as JSON: `{ok: true, recorded: {plan, json, notes,
@@ -678,7 +540,7 @@ fn record_plan_json(
 /// On failure `{ok: false, usage, message}`: a usage error (exit 2), or
 /// `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
 /// `existingRevisions`, `file`, `plan`, `defaultPlan` (a bare `--plan`),
-/// `dryRun`, `rewriteOthersComments`.
+/// `dryRun`.
 ///
 /// Mirrors `jubarte::edit::record::record`.
 #[wasm_bindgen(js_name = recordPlan)]
@@ -824,13 +686,8 @@ pub fn apply_edit_plan(
 /// Mirrors `jubarte::edit::preview_plan`.
 #[wasm_bindgen(js_name = previewEditPlan)]
 pub fn preview_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
-    let resolved =
-        jubarte::edit::EditPlan::from_json_with_notes(plan_json).and_then(|(plan, notes)| {
-            jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
-                report.notes = notes;
-                report
-            })
-        });
+    let resolved = jubarte::edit::EditPlan::from_json(plan_json)
+        .and_then(|plan| jubarte::edit::preview_plan(docx, &plan));
     Ok(EditOutput {
         ok: resolved.is_ok(),
         clean: None,
@@ -1078,15 +935,7 @@ pub fn diff_documents_critic(
             Ok(jubarte::markdown::diff_markdown(old, next))
         }
         _ => jubarte::markdown::redline(old, next, &options)
-            .and_then(|docx| {
-                jubarte::markdown::docx_to_markdown(
-                    &docx,
-                    &jubarte::markdown::MarkdownOptions {
-                        input_limits: options.settings.input_limits,
-                        ..Default::default()
-                    },
-                )
-            })
+            .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
             .map(|read| read.markdown)
             .map_err(js_err),
     }
@@ -1114,9 +963,7 @@ pub fn redline_documents(
 /// The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
-/// `pN` id in a Word document or `line:N` in Markdown. When a side is a
-/// Word document, a replacement inside a paragraph reads insertion first,
-/// `{+new+}[-old-]`, as Word Compare writes it.
+/// `pN` id in a Word document or `line:N` in Markdown.
 ///
 /// Each side is a `.docx` package or UTF-8 Markdown
 /// (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -1233,35 +1080,9 @@ pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
     serde_json::to_string(&findings).map_err(js_err)
 }
 
-/// The one stderr line `read` and `changes` give an input with validity
-/// findings (`input has 2 validity warnings; jubarte validate FILE lists
-/// them`), or `undefined` when there is none or the package cannot be
-/// validated; `file` is the path as the command line spells it.
-///
-/// Mirrors `jubarte::validate::input_notice`.
-#[wasm_bindgen(js_name = inputNotice)]
-pub fn input_notice(docx: &[u8], file: &str) -> Option<String> {
-    jubarte::validate::validate(docx)
-        .ok()
-        .and_then(|findings| jubarte::validate::input_notice(&findings, file))
-}
-
-/// The last line `changes --json` and `comments --json` print, the input's
-/// validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
-/// "next":"jubarte validate FILE"}}`); `file` is the path as the command
-/// line spells it. A package that cannot be validated counts none.
-///
-/// Mirrors `jubarte::validate::input_validity_line`.
-#[wasm_bindgen(js_name = inputValidityLine)]
-pub fn input_validity_line(docx: &[u8], file: &str) -> Result<String, JsValue> {
-    jubarte::validate::input_validity_line(&jubarte::validate::input_validity_of(docx, file))
-        .map_err(js_err)
-}
-
-/// Check that every text change from `original` to `edited` is a revision
-/// by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
-/// and `PERMISSION_RANGE_DROPPED` for a permission endpoint of `original`
-/// that `edited` lost) as a JSON array.
+/// Every text change from `original` to `edited` must be a revision by
+/// `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
+/// array.
 ///
 /// Mirrors `jubarte::validate::audit_tracked`.
 #[wasm_bindgen(js_name = auditTracked)]
@@ -1398,22 +1219,6 @@ fn manifest() -> jubarte::capabilities::Capabilities {
 #[wasm_bindgen]
 pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest()).map_err(js_err)
-}
-
-/// Focused edit discovery; no filters returns this runtime's edit support matrix.
-#[wasm_bindgen(js_name = capabilityQuery)]
-pub fn capability_query(operation: Option<String>, field: Option<String>) -> String {
-    jubarte::capabilities::discovery("wasm", operation.as_deref(), field.as_deref()).to_string()
-}
-
-/// Render a focused query in the same text form as the native CLI.
-#[wasm_bindgen(js_name = capabilityQueryText)]
-pub fn capability_query_text(operation: Option<String>, field: Option<String>) -> String {
-    jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
-        "wasm",
-        operation.as_deref(),
-        field.as_deref(),
-    ))
 }
 
 /// [`capabilities`] as the text summary `jubarte capabilities` prints; of
@@ -1739,9 +1544,8 @@ mod tests {
             Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
         )
         .unwrap();
-        // The writer uses Word typing order: deletion before insertion.
-        // The snapshot preserves that document order.
-        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
+        // The writer emits a substitution insertion-first (document order).
+        assert!(marked.contains("{++45++}{--30--}") && marked.contains("{++45++}{--60--}"));
         for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }
@@ -1869,8 +1673,6 @@ mod tests {
         assert_eq!(manifest["operations"]["png"], false);
         assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
         assert_eq!(manifest["operations"]["edit"], true);
-        // `apply_plan` here takes no --skip-failed.
-        assert_eq!(manifest["operations"]["edit_skip_failed"], false);
         assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
         let yes = |on: bool| if on { "yes" } else { "no" };
         let text = capabilities_text(None).unwrap();
@@ -1900,9 +1702,7 @@ mod tests {
     fn refused_input_and_plan_error_are_the_binary_lines() {
         assert_eq!(
             refused_input("fake.docx", b"hello", true).as_deref(),
-            Some(
-                "INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record"
-            )
+            Some("INVALID_PACKAGE: fake.docx is not a ZIP file: no end-of-central-directory record")
         );
         // Markdown is no ZIP and is read.
         assert_eq!(refused_input("a.md", b"# Title", false), None);
@@ -2011,10 +1811,8 @@ mod tests {
         let out = diffed(&word(OLD), NEW.as_bytes(), None);
         let text = out["text"].as_str().unwrap();
         assert!(text.starts_with("--- a/old.docx\n+++ b/new.md\t"), "{text}");
-        // Compare keeps its insertion-first order, unlike typed replacements
-        // and the Markdown-only diff above. The patch follows its XML.
         assert!(
-            text.contains("@@ [p1] @@\nPayment is due in {+45+}[-30-] days.\n"),
+            text.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
             "{text}"
         );
         let json = diff_documents(
@@ -2303,148 +2101,21 @@ mod tests {
     fn listings_are_the_binary_text() {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
-        // Word typing order writes the deletion, then the insertion; the
-        // listing is the binary's: one logical change of both marks.
-        assert_eq!(
-            changes,
-            "r1+2\treplacement\ttext\tRedline\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
+        assert!(
+            // A substitution is written as Word writes one: insertion first.
+            changes.starts_with(
+                "r1\tinsertion\ttext\tRedline\tp0\t\"45\"\nr2\tdeletion\ttext\tRedline\tp0\t\"30\"\n"
+            ),
+            "{changes}"
         );
-        let tables = tables_text(&docx, None).unwrap();
+        assert!(
+            changes.contains("\"30\"") && changes.ends_with("2 change(s)\n"),
+            "{changes}"
+        );
+        let tables = tables_text(&docx).unwrap();
         assert!(tables.starts_with("table 0: 2x2"), "{tables}");
-        assert_eq!(
-            tables_text(&word("No grid.\n"), None).unwrap(),
-            "no tables\n"
-        );
+        assert_eq!(tables_text(&word("No grid.\n")).unwrap(), "no tables\n");
         assert_eq!(comments_text(&docx, None, None).unwrap(), "0 comment(s)\n");
-    }
-
-    #[test]
-    fn input_notice_counts_the_inputs_findings() {
-        // #1256: the line `read` and `changes` print, as the CLI's.
-        let clean = word("Due in 30 days.\n");
-        assert_eq!(input_notice(&clean, "a.docx"), None);
-        let mut pkg = jubarte::opc::PartFs::open(&clean).unwrap();
-        let xml = String::from_utf8(pkg.part_bytes("word/document.xml").unwrap().to_vec()).unwrap();
-        // Text inside a deletion as `w:t`: one Word-fatal error.
-        let broken = xml.replacen(
-            "<w:body>",
-            r#"<w:body><w:p><w:del w:id="90" w:author="A"><w:r><w:t>gone</w:t></w:r></w:del></w:p>"#,
-            1,
-        );
-        assert_ne!(broken, xml);
-        pkg.set_part("word/document.xml", broken.into_bytes());
-        let docx = pkg.to_zip().unwrap();
-        assert_eq!(
-            input_notice(&docx, "my file.docx").as_deref(),
-            Some("input has 1 validity error; jubarte validate 'my file.docx' lists it")
-        );
-        assert_eq!(input_notice(b"no package", "x.docx"), None);
-        // #1309: the JSON reads carry the counts instead.
-        assert_eq!(
-            input_validity_line(&clean, "a.docx").unwrap(),
-            r#"{"input_validity":{"errors":0,"warnings":0}}"#
-        );
-        assert_eq!(
-            input_validity_line(&docx, "my file.docx").unwrap(),
-            r#"{"input_validity":{"errors":1,"warnings":0,"next":"jubarte validate 'my file.docx'"}}"#
-        );
-        let snapshot: serde_json::Value = serde_json::from_str(
-            &read_json_of(&docx, Some(r#"{"validityFile":"my file.docx"}"#)).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            snapshot["summary"]["input_validity"],
-            serde_json::json!({"errors":1,"warnings":0,"next":"jubarte validate 'my file.docx'"})
-        );
-        // Without it, the snapshot is the library's, as before.
-        let plain: serde_json::Value =
-            serde_json::from_str(&read_json_of(&docx, None).unwrap()).unwrap();
-        assert!(plain["summary"].get("input_validity").is_none(), "{plain}");
-    }
-
-    #[test]
-    fn tables_take_the_view_picks_and_the_rejected_text() {
-        // #1255, #1161: `--tables -p` reads the view's selection, as the CLI.
-        let docx =
-            word("| A | B |\n|---|---|\n| {~~30~>45~~} | 2 |\n\nBetween.\n\n| C |\n|---|\n| 3 |\n");
-        let markdown = |json: &str| -> String {
-            let view: serde_json::Value =
-                serde_json::from_str(&tables_view_of(&docx, Some(json)).unwrap()).unwrap();
-            view["markdown"].as_str().unwrap().to_string()
-        };
-        let view = |json: &str| -> String {
-            let view: serde_json::Value =
-                serde_json::from_str(&read_view_json(&docx, Some(json)).unwrap()).unwrap();
-            view["markdown"].as_str().unwrap().to_string()
-        };
-        let all = tables_text_of(&docx, None).unwrap();
-        assert_eq!(markdown("{}"), all);
-        let grids: Vec<&str> = all.split_inclusive('\n').collect();
-        let (first, second) = (grids[..3].concat(), grids[3..].concat());
-        assert!(
-            second.starts_with("table 1: ") && second.contains('C'),
-            "{all}"
-        );
-        // The grids it reaches, an empty line, then the view of the pick.
-        for (pick, grids) in [
-            ("t1", second.clone()),
-            ("t1,t0", all.clone()),
-            ("p2", first.clone()),
-            ("p3-p5", all.clone()),
-        ] {
-            let json = format!(r#"{{"paragraphs":"{pick}","pageMarkers":false}}"#);
-            assert_eq!(
-                markdown(&json),
-                format!("{grids}\n{}", view(&json)),
-                "{pick}"
-            );
-        }
-        let rejected = markdown(r#"{"paragraphs":"t0","trackChanges":"reject"}"#);
-        let (grids, _) = rejected.split_once("\n---\n").unwrap();
-        assert!(grids.contains("30") && !grids.contains("45"), "{rejected}");
-        // A pick that reaches no table is a usage error; the view's own
-        // refusal is the view's.
-        let outside = tables_view_of(&docx, Some(r#"{"paragraphs":"p4"}"#)).unwrap_err();
-        assert_eq!(
-            outside,
-            "USAGE: p4 is not in a table; --tables -p takes tN, or a pN inside a table"
-        );
-        let missing = tables_view_of(&docx, Some(r#"{"paragraphs":"t5"}"#)).unwrap_err();
-        assert!(
-            missing.ends_with("t5 is not a table of this document") && !missing.contains("USAGE"),
-            "{missing}"
-        );
-        assert!(tables_view_of(&docx, Some(r#"{"bogus":1}"#)).is_err());
-        assert!(tables_text_of(&docx, Some(r#"{"paragraphs":"t0"}"#)).is_err());
-        let rejected = tables_text_of(&docx, Some(r#"{"trackChanges":"reject"}"#)).unwrap();
-        assert!(
-            rejected.contains("30") && !rejected.contains("45"),
-            "{rejected}"
-        );
-    }
-
-    #[test]
-    fn json_errors_read_the_command_line_as_the_binary_does() {
-        let args = |a: &[&str]| a.iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
-        assert!(wants_json(args(&["read", "f.docx", "--json"])));
-        assert!(!wants_json(args(&["read", "f.docx"])));
-        assert!(!wants_json(args(&["read", "f.docx", "--", "--json"])));
-        assert!(!wants_json(args(&[
-            "edit", "replace", "f.docx", "--find", "x", "--text", "--json"
-        ])));
-        let line: serde_json::Value = serde_json::from_str(&runtime_json_error(
-            "INVALID_PACKAGE: f.docx is not a ZIP file",
-            1,
-        ))
-        .unwrap();
-        assert_eq!(line["error"]["code"], "INVALID_PACKAGE");
-        assert_eq!(
-            line["error"]["message"],
-            "INVALID_PACKAGE: f.docx is not a ZIP file"
-        );
-        let usage: serde_json::Value =
-            serde_json::from_str(&runtime_json_error("bad -p", 2)).unwrap();
-        assert_eq!(usage["error"]["code"], "USAGE");
     }
 
     #[test]
@@ -2453,12 +2124,7 @@ mod tests {
         let whole: serde_json::Value =
             serde_json::from_str(&read_json_of(&docx, None).unwrap()).unwrap();
         assert_eq!(whole["paragraphs"].as_array().unwrap().len(), 2);
-        // Snapshot schema 3 lists logical changes: the substitution is one
-        // replacement of its two marks.
-        let changes = whole["changes"].as_array().unwrap();
-        assert_eq!(changes.len(), 1, "{changes:?}");
-        assert_eq!(changes[0]["kind"], "replacement");
-        assert_eq!(changes[0]["members"].as_array().unwrap().len(), 2);
+        assert_eq!(whole["changes"].as_array().unwrap().len(), 2);
         let one: serde_json::Value = serde_json::from_str(
             &read_json_of(&docx, Some(r#"{"paragraphs":"p0","source":"x.docx"}"#)).unwrap(),
         )

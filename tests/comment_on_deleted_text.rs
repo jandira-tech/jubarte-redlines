@@ -100,37 +100,6 @@ fn deleting_only_the_commented_word_keeps_the_comment() {
     assert_eq!(list_comments(&accepted).unwrap().len(), 1);
 }
 
-/// A comment that opens on kept text keeps the words replacing its end:
-/// the insertion stays inside its range, and the comment survives Accept.
-#[test]
-fn a_replacement_at_the_end_of_a_comment_on_kept_text_stays_inside_it() {
-    let source = apply_plan(
-        &docx(&(para("The cap is 10.") + &para("Kept."))),
-        &plan(
-            "Ann",
-            r#"[{"kind":"comment","paragraph":"p0","find":"The cap","text":"Too low"}]"#,
-        ),
-    )
-    .unwrap()
-    .clean;
-    let out = apply_plan(
-        &source,
-        &plan(
-            "Bob",
-            r#"[{"kind":"replace","paragraph":"p0","find":"The cap is","replacement":"The hat is"}]"#,
-        ),
-    )
-    .unwrap();
-    assert_word_valid_package(&out.redline);
-    let body = body(&out.redline);
-    let ins = body.find("<w:ins ").unwrap();
-    let end = body.find("<w:commentRangeEnd").unwrap();
-    assert!(ins < end, "{body}");
-    assert_eq!(list_comments(&out.clean).unwrap().len(), 1);
-    let accepted = accept_revisions(&out.redline).unwrap();
-    assert_eq!(list_comments(&accepted).unwrap().len(), 1);
-}
-
 /// B still defines A's comment but lost its anchors with the paragraph:
 /// A's anchor carries it, as Word's Compare does.
 #[test]

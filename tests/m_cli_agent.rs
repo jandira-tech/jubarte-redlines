@@ -53,7 +53,7 @@ fn retired_names_work_once_with_a_note() {
     assert_eq!(stderr, "note: text is now read; text is removed in 0.14\n");
     let (code, stdout, stderr) = run(&["inspect", file, "--json"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("{\"schema_version\":3"), "{stdout}");
+    assert!(stdout.starts_with("{\"schema_version\":1"), "{stdout}");
     assert_eq!(
         stderr,
         "note: inspect is now read; inspect is removed in 0.14\n"
@@ -110,7 +110,7 @@ fn json(args: &[&str]) -> serde_json::Value {
 #[test]
 fn read_json_prints_the_snapshot_with_changes_and_comments() {
     let snapshot = json(&["read", RECEIVED, "--json"]);
-    assert_eq!(snapshot["schema_version"], 3);
+    assert_eq!(snapshot["schema_version"], 1);
     assert_eq!(snapshot["paragraphs"][1]["id"], "p1");
     assert_eq!(snapshot["changes"][0]["ref"], "r0");
     assert_eq!(snapshot["comments"][0]["ref"], "c5");
@@ -123,17 +123,13 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     for (task, key) in [("changes", "changes"), ("comments", "comments")] {
         let (code, stdout, _) = run(&[task, RECEIVED, "--json"]);
         assert_eq!(code, 0);
-        let mut listed: Vec<serde_json::Value> = stdout
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        // The last line is the input's validity, the snapshot's summary's
-        // (#1309), never a record.
-        let validity = listed.pop().unwrap();
-        assert_eq!(
-            validity["input_validity"], snapshot["summary"]["input_validity"],
-            "{task}"
-        );
+        let listed: Vec<serde_json::Value> = match serde_json::from_str(&stdout) {
+            Ok(serde_json::Value::Array(all)) => all,
+            _ => stdout
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect(),
+        };
         assert_eq!(
             listed.len(),
             snapshot[key].as_array().unwrap().len(),
@@ -148,15 +144,15 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     }
 }
 
-/// The library's snapshot carries what `list_logical_changes` and
-/// `list_comments` list, and `retain` keeps a paragraph's own records.
+/// The library's snapshot carries what `list_changes` and `list_comments`
+/// list, and `retain` keeps a paragraph's own records.
 #[test]
 fn the_snapshot_lists_changes_and_comments_and_retains_by_paragraph() {
     let bytes = std::fs::read(RECEIVED).unwrap();
     let mut snapshot = jubarte::inspect::snapshot(&bytes).unwrap();
     assert_eq!(
         snapshot.changes,
-        jubarte::changes::list_logical_changes(&bytes).unwrap()
+        jubarte::changes::list_changes(&bytes).unwrap()
     );
     assert_eq!(
         snapshot.comments,
@@ -286,20 +282,14 @@ fn read_tables_and_the_json_refusals() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("--tables reads one document"), "{stderr}");
     for args in [
-        &["read", RECEIVED, "--tables", "--head", "2"][..],
-        &["read", RECEIVED, "--tables", "-p", "p0"],
-        &["read", RECEIVED, "--tables", "--json"],
+        &["read", RECEIVED, "--json", "--dates"][..],
+        &["read", RECEIVED, "--json", "--comments", "none"],
+        &["read", RECEIVED, "--json", "--track-changes", "accept"],
+        &["read", RECEIVED, "--json", "--no-page-markers"],
+        &["read", RECEIVED, "--tables", "--head", "2"],
         &[RECEIVED, RECEIVED, "--tables"],
     ] {
         assert_eq!(run(args).0, 2, "{args:?}");
-    }
-    // The view's own options change nothing in the snapshot (#1255).
-    for args in [
-        &["read", RECEIVED, "--json", "--dates"][..],
-        &["read", RECEIVED, "--json", "--comments", "none"],
-        &["read", RECEIVED, "--json", "--no-page-markers"],
-    ] {
-        assert_eq!(json(args), json(&["read", RECEIVED, "--json"]), "{args:?}");
     }
     // The one-file shorthand reads like `read`.
     assert_eq!(
@@ -396,8 +386,7 @@ fn edit_writes_clean_redline_and_report_and_refuses_an_existing_output_dir() {
         "--out-dir",
         out_dir.to_str().unwrap(),
     ]);
-    assert_eq!(code, 2);
-    assert!(stderr.contains("OUTPUT_EXISTS"), "{stderr}");
+    assert_eq!(code, 1);
     assert!(stderr.contains("already exists"), "{stderr}");
     let (code, _, _) = run(&[
         "edit",
@@ -526,7 +515,7 @@ fn convert_checks_every_png_path_before_writing_one() {
         "--report",
         report.to_str().unwrap(),
     ]);
-    assert_eq!(code, 2);
+    assert_eq!(code, 1);
     assert!(stderr.contains("letter-page-01.png"), "{stderr}");
     assert!(!report.exists(), "a refused PNG leaves no partial bundle");
     assert_eq!(
@@ -592,7 +581,7 @@ fn capabilities_describe_the_built_binary() {
     ] {
         assert_eq!(v["operations"][op], true, "{op}");
     }
-    assert_eq!(v["edit_plan_versions"], serde_json::json!([1, 2]));
+    assert_eq!(v["edit_plan_versions"], serde_json::json!([1]));
     let kinds = v["edit_operations"].as_array().unwrap();
     assert!(kinds.iter().any(|k| k == "insert_paragraph"));
     assert_eq!(
@@ -632,7 +621,7 @@ fn capabilities_print_a_text_summary_by_default() {
     );
     assert_eq!(lines[1], "compare: yes");
     assert!(lines.contains(&"png: yes"), "{text}");
-    assert!(lines.contains(&"edit plan versions: 1, 2"), "{text}");
+    assert!(lines.contains(&"edit plan versions: 1"), "{text}");
     for prefix in [
         "edit operations: replace, insert, ",
         "stories: body, header, footer, footnotes, endnotes",
@@ -679,7 +668,7 @@ fn capabilities_print_a_text_summary_by_default() {
     expected.sort();
     printed.sort();
     assert_eq!(printed, expected);
-    assert_eq!(lines[operations.len() + 1], "edit plan versions: 1, 2");
+    assert_eq!(lines[operations.len() + 1], "edit plan versions: 1");
     let (limits, input) = (&v["limits"], &v["limits"]["input"]);
     let limits_line = format!(
         "limits: plain text runs {}, refuses opaque ranges {}, reads legacy .doc {}, \
@@ -775,7 +764,7 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
 }
 
 #[test]
-fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
+fn edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_fixture(dir.path());
     let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
@@ -825,23 +814,15 @@ fn edit_writes_the_patch_and_confirms_full_views_unless_quiet() {
         )
         .replace(['{', '}', '+', '='], "");
     assert!(accepted.contains("1(g), 2(c), 2(e), 3"), "{accepted}");
-    // The patch stays on disk; stdout compares the full published views.
-    assert!(stdout.contains("SUCCESS:\n~~~~diff\n"), "{stdout}");
-    assert!(stdout.contains("\n@@ "), "{stdout}");
+    // stdout carries the redline's changed blocks as the agent view, not
+    // the patch (which stays on disk).
+    assert!(!stdout.contains("\n@@ "), "{stdout}");
     assert!(
-        stdout
-            .lines()
-            .any(|line| line.starts_with('+') && line.contains("{~~his or her~>an~~}")),
+        stdout.contains("\nrange: changed by @C (p1, p2) of p0-p2\n"),
         "{stdout}"
     );
     assert!(
-        stdout.lines().any(|line| line.starts_with('+')
-            && regex::Regex::new(r"\{~~his or her~>an~~\}\{r[0-9]+\+[0-9]+ @C\}")
-                .unwrap()
-                .is_match(line))
-            && stdout
-                .lines()
-                .any(|line| line.starts_with('+') && line.contains("c0 @C: post-disclosure duty")),
+        stdout.contains("{~~his or her~>an~~}") && stdout.contains("c0 @C: post-disclosure duty"),
         "{stdout}"
     );
     assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");
@@ -916,267 +897,4 @@ fn read_json_changed_keeps_a_headers_changes() {
     // A paragraph pick names body paragraphs only.
     let one = json(&["read", path, "--json", "-p", "p1"]);
     assert_eq!(ids(&one), ["r1"], "{one}");
-}
-
-// These are process-level integration tests: the filesystem and entrypoint
-// are the boundaries under test, using only a synthetic DOCX.
-fn read_json_fixture(dir: &Path) {
-    let body = para("Alice agrees with Bob.")
-        + "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>\
-           <w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Carol Diaz</w:t></w:r></w:p>\
-           </w:tc></w:tr></w:tbl>";
-    std::fs::write(dir.join("source.docx"), docx(&body)).unwrap();
-}
-
-/// `--no-page-markers` with an output that has no page markers: taken,
-/// and nothing changes, stdout, stderr or the file written (#1255).
-fn no_page_markers_changes_nothing(shorthand: bool, output: &[&str]) {
-    let dir = tempfile::tempdir().unwrap();
-    read_json_fixture(dir.path());
-    let prefix = if shorthand {
-        vec!["source.docx"]
-    } else {
-        vec!["read", "source.docx"]
-    };
-    let args = [prefix.as_slice(), output].concat();
-    let plain = run_in(dir.path(), &args);
-    assert_eq!(plain.0, 0, "{args:?}: {}", plain.2);
-    let file = output
-        .contains(&"-o")
-        .then(|| std::fs::read(dir.path().join("snap.json")).unwrap());
-    let fast_args = [args.as_slice(), &["--no-page-markers", "--force"]].concat();
-    let fast = run_in(dir.path(), &fast_args);
-    assert_eq!(fast, plain, "{fast_args:?}");
-    if let Some(file) = file {
-        assert_eq!(
-            std::fs::read(dir.path().join("snap.json")).unwrap(),
-            file,
-            "{fast_args:?}"
-        );
-    }
-}
-
-macro_rules! no_page_markers_case {
-    ($name:ident, $shorthand:expr, [$($output:expr),*]) => {
-        #[test]
-        fn $name() {
-            no_page_markers_changes_nothing($shorthand, &[$($output),*]);
-        }
-    };
-}
-
-no_page_markers_case!(no_page_markers_json, false, ["--json"]);
-no_page_markers_case!(no_page_markers_tables, false, ["--tables"]);
-no_page_markers_case!(no_page_markers_for_edit, false, ["--for-edit"]);
-no_page_markers_case!(no_page_markers_json_shorthand, true, ["--json"]);
-no_page_markers_case!(no_page_markers_tables_shorthand, true, ["--tables"]);
-no_page_markers_case!(no_page_markers_for_edit_shorthand, true, ["--for-edit"]);
-no_page_markers_case!(no_page_markers_json_file, false, ["-o", "snap.json", "-q"]);
-no_page_markers_case!(
-    no_page_markers_json_file_shorthand,
-    true,
-    ["-o", "snap.json", "-q"]
-);
-no_page_markers_case!(
-    no_page_markers_explicit_json_file,
-    false,
-    ["--json", "-o", "snap.json", "-q"]
-);
-no_page_markers_case!(
-    no_page_markers_explicit_json_file_shorthand,
-    true,
-    ["--json", "-o", "snap.json", "-q"]
-);
-no_page_markers_case!(
-    no_page_markers_for_edit_file,
-    false,
-    ["--for-edit", "-o", "snap.json", "-q"]
-);
-no_page_markers_case!(
-    no_page_markers_for_edit_file_shorthand,
-    true,
-    ["--for-edit", "-o", "snap.json", "-q"]
-);
-
-fn read_view_conflict_teaches(flags: &[&str], output: &[&str], output_name: &str) {
-    let dir = tempfile::tempdir().unwrap();
-    read_json_fixture(dir.path());
-    for prefix in [
-        &["read", "source.docx"][..],
-        &["source.docx"],
-        &["text", "source.docx"],
-    ] {
-        let args = [prefix, flags, output].concat();
-        let (code, stdout, stderr) = run_in(dir.path(), &args);
-        assert_eq!(code, 2, "{args:?}: {stderr}");
-        assert!(stdout.is_empty(), "{args:?}: {stdout}");
-        assert!(stderr.contains("error: "), "{args:?}: {stderr}");
-        for expected in [
-            flags[0],
-            output_name,
-            "shapes the Markdown view",
-            "has no view",
-            "drop",
-        ] {
-            assert!(
-                stderr.contains(expected),
-                "missing {expected:?}: {args:?}: {stderr}"
-            );
-        }
-        let usage = stderr
-            .lines()
-            .find(|line| line.starts_with("Usage:"))
-            .unwrap();
-        assert_eq!(usage, "Usage: jubarte read [OPTIONS] <FILE>", "{args:?}");
-        assert!(!usage.contains(flags[0]), "{args:?}: {usage}");
-        assert!(!dir.path().join("snap.json").exists());
-    }
-}
-
-macro_rules! read_view_conflict_case {
-    ($name:ident, [$($flag:expr),*], [$($output:expr),*], $label:expr) => {
-        #[test]
-        fn $name() {
-            read_view_conflict_teaches(&[$($flag),*], &[$($output),*], $label);
-        }
-    };
-}
-
-read_view_conflict_case!(
-    read_view_conflict_track_changes_for_edit,
-    ["--track-changes", "all"],
-    ["--for-edit"],
-    "--for-edit"
-);
-
-/// A view option beside an output without a view: taken, under every
-/// spelling of `read`, and `--comments`/`--dates` change nothing (#1255).
-fn read_view_option_is_taken(flags: &[&str], output: &[&str]) {
-    let dir = tempfile::tempdir().unwrap();
-    read_json_fixture(dir.path());
-    for prefix in [
-        &["read", "source.docx"][..],
-        &["source.docx"],
-        &["text", "source.docx"],
-    ] {
-        let plain = [prefix, output, &["--force"]].concat();
-        let plain = (
-            run_in(dir.path(), &plain),
-            std::fs::read(dir.path().join("snap.json")).ok(),
-        );
-        let args = [prefix, flags, output, &["--force"]].concat();
-        let (code, stdout, stderr) = run_in(dir.path(), &args);
-        assert_eq!(code, 0, "{args:?}: {stderr}");
-        assert!(
-            !stderr.contains("error") && !stderr.contains("warning"),
-            "{args:?}: {stderr}"
-        );
-        if flags[0] != "--track-changes" {
-            assert_eq!((code, stdout, stderr), plain.0, "{args:?}");
-            assert_eq!(
-                std::fs::read(dir.path().join("snap.json")).ok(),
-                plain.1,
-                "{args:?}"
-            );
-        }
-    }
-}
-
-macro_rules! read_view_option_case {
-    ($name:ident, [$($flag:expr),*], [$($output:expr),*]) => {
-        #[test]
-        fn $name() {
-            read_view_option_is_taken(&[$($flag),*], &[$($output),*]);
-        }
-    };
-}
-
-read_view_option_case!(
-    read_view_option_comments_json,
-    ["--comments", "inline"],
-    ["--json"]
-);
-read_view_option_case!(
-    read_view_option_comments_tables,
-    ["--comments", "inline"],
-    ["--tables"]
-);
-read_view_option_case!(
-    read_view_option_comments_for_edit,
-    ["--comments", "inline"],
-    ["--for-edit"]
-);
-read_view_option_case!(
-    read_view_option_comments_file,
-    ["--comments", "inline"],
-    ["-o", "snap.json"]
-);
-read_view_option_case!(
-    read_view_option_track_changes_json,
-    ["--track-changes", "all"],
-    ["--json"]
-);
-read_view_option_case!(
-    read_view_option_track_changes_tables,
-    ["--track-changes", "all"],
-    ["--tables"]
-);
-read_view_option_case!(
-    read_view_option_track_changes_file,
-    ["--track-changes", "all"],
-    ["-o", "snap.json"]
-);
-read_view_option_case!(read_view_option_dates_json, ["--dates"], ["--json"]);
-read_view_option_case!(read_view_option_dates_tables, ["--dates"], ["--tables"]);
-read_view_option_case!(read_view_option_dates_for_edit, ["--dates"], ["--for-edit"]);
-read_view_option_case!(
-    read_view_option_dates_file,
-    ["--dates"],
-    ["-o", "snap.json"]
-);
-
-fn read_option_help(option: &str, clause: &str) {
-    let (code, stdout, stderr) = run(&["read", "--help"]);
-    assert_eq!(code, 0, "{stderr}");
-    let block = stdout
-        .split(&format!("      {option}"))
-        .nth(1)
-        .unwrap()
-        .split("\n      --")
-        .next()
-        .unwrap();
-    let words = block.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(words.contains(clause), "{option}: {words}");
-}
-
-#[test]
-fn read_help_track_changes_exclusion() {
-    read_option_help(
-        "--track-changes",
-        "--json and --tables read the accepted text",
-    );
-}
-
-#[test]
-fn read_help_comments_exclusion() {
-    read_option_help(
-        "--comments",
-        "ignored by --json, --for-edit and the --tables grids",
-    );
-}
-
-#[test]
-fn read_help_dates_exclusion() {
-    read_option_help(
-        "--dates",
-        "ignored by --json, --for-edit and the --tables grids",
-    );
-}
-
-#[test]
-fn read_help_no_page_markers_structured_outputs() {
-    read_option_help(
-        "--no-page-markers",
-        "ignored by --json, --for-edit and the --tables grids",
-    );
 }

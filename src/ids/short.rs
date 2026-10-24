@@ -330,12 +330,10 @@ impl ShortId {
             Some(_) => return None,
             None => (Story::Body, token),
         };
-        // `r87+r88` spells `r87+88` (plan 11): a member after the first
-        // may repeat the `r`.
-        let mut members = rest.strip_prefix('r')?.split('+');
-        let first = number::<u32>(members.next()?)?;
-        let wids = std::iter::once(Some(first))
-            .chain(members.map(|member| number::<u32>(member.strip_prefix('r').unwrap_or(member))))
+        let wids = rest
+            .strip_prefix('r')?
+            .split('+')
+            .map(number::<u32>)
             .collect::<Option<Vec<_>>>()?;
         Some(Self::Change { story, wids })
     }
@@ -558,40 +556,6 @@ mod tests {
             "t0.row1.cell2-p1",
             "t0.row1.cell2.p0",
             "t0.row1.cell2.p0.box0.p0",
-        ] {
-            assert!(
-                token.parse::<ShortId>().is_err(),
-                "{token} parsed as {:?}",
-                token.parse::<ShortId>()
-            );
-        }
-    }
-
-    /// `r87+r88` is a spelling of `r87+88` (plan 11): a member may repeat
-    /// the `r`, and the id prints back once, as the view prints it.
-    #[test]
-    fn a_composite_may_repeat_its_r_and_prints_it_once() {
-        for (token, printed) in [
-            ("r87+r88", "r87+88"),
-            ("r1+r2+3", "r1+2+3"),
-            ("r1+2+r3", "r1+2+3"),
-            ("header1.r1+r2", "header1.r1+2"),
-        ] {
-            let id = token
-                .parse::<ShortId>()
-                .unwrap_or_else(|e| panic!("{token}: {e:?}"));
-            assert_eq!(id.to_string(), printed, "{token}");
-        }
-        for token in [
-            "r1+r",
-            "rr1",
-            "rr1+2",
-            "header1.rr2",
-            "r1+rr2",
-            "r1+R2",
-            "r1+c2",
-            "r1+header1.r2",
-            "r1+ r2",
         ] {
             assert!(
                 token.parse::<ShortId>().is_err(),

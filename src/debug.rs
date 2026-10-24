@@ -25,8 +25,7 @@
 //!   undeclared `mc:Ignorable` prefixes.
 //! - `structure`: empty field codes, cells that do not end in a paragraph,
 //!   rows without cells, a revision nested in one of its own kind, a body
-//!   `w:sectPr` that is not last, and unequal source/destination range counts
-//!   for a move name (Word opens it but misreads Reject All).
+//!   `w:sectPr` that is not last.
 //! - `ids`: revision and `wp:docPr` ids used twice in the package. Word opens
 //!   files that repeat them, so they are leads, not causes.
 //! - `styles`: `basedOn`/`next`/`link` and `pStyle`/`rStyle`/`tblStyle`
@@ -134,9 +133,6 @@ pub struct Options {
     /// `text`/`xml`/`runs` of two files: common lines shown around each
     /// change.
     pub context: usize,
-    /// `text`, `xml`, `runs`, `changes`, `styledefs`, `numbering`, `render`:
-    /// each line whole, not clipped at 200 characters.
-    pub full_lines: bool,
 }
 
 impl Default for Options {
@@ -147,7 +143,6 @@ impl Default for Options {
             grep: None,
             limit: 5,
             context: 0,
-            full_lines: false,
         }
     }
 }
@@ -170,35 +165,10 @@ struct Package {
     entries: Vec<Entry>,
     /// The package's bytes, for a layout pass.
     raw: Vec<u8>,
-    /// The package's structural zip defects: a package every reader
-    /// refuses is still a package a maintainer must triage, so `debug`
-    /// opens it unchecked and reports each defect as a finding.
-    defects: Vec<crate::opc::ZipDefect>,
 }
 
 impl Package {
     fn open(bytes: &[u8]) -> Result<Self, String> {
-        Self::open_within(bytes, crate::admission::InputLimits::compare())
-    }
-
-    /// [`Package::open`] under an explicit budget, so the caps are provable
-    /// with budgets small enough for a test (#645). The compressed size and
-    /// the declared entry count run before the archive is indexed, each
-    /// entry inflates through a capped reader with a checked cumulative
-    /// total, and no allocation is sized from the central directory's
-    /// declared sizes: the initial capacity follows the Markdown reader's
-    /// `min(size, 16 MiB)` rule (`markdown::from_docx::ooxml`).
-    fn open_within(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<Self, String> {
-        // Preserve the diagnostic reader's malformed-ZIP prefix while keeping
-        // budget refusals identical to admission's INPUT_LIMIT wording.
-        let budget_error = |error: crate::admission::AdmissionError| {
-            if error.kind == crate::admission::AdmissionErrorKind::InputLimit {
-                error.to_string()
-            } else {
-                format!("not a zip: {error}")
-            }
-        };
-        crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
         // Read Strict packages as the Transitional the checks describe, as
         // the comparer does at load. The rewrite touches namespace
         // declarations and relationship types alone and hands a package
@@ -207,82 +177,18 @@ impl Package {
         // bytes it carries (#531), while a package whose subparts alone
         // are Strict is translated too, as before the main-part gate
         // (#561).
-        // A ZIP32 plan refusal keeps the original bytes: triage reports on
-        // the package as found rather than refusing its one openable file.
-        let translated =
-            crate::strict_translation::strict_to_transitional_docx_within(bytes, limits)
-                .unwrap_or_else(|_| bytes.to_vec());
+        let translated = crate::strict_translation::strict_to_transitional_docx(bytes);
         let bytes = translated.as_slice();
-        crate::admission::preindex_budget(bytes, limits).map_err(budget_error)?;
-        let mut zip = crate::opc::open_archive_unchecked(Cursor::new(bytes))
-            .map_err(|e| format!("not a zip: {e}"))?;
-        let mut defects = crate::opc::zip_defects(&zip, &mut Cursor::new(bytes));
+        let mut zip =
+            zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
         let mut entries = Vec::with_capacity(zip.len());
-        let mut total = 0u64;
         for i in 0..zip.len() {
-            // Every read failure is a finding named for the entry: where
-            // a reading route refuses, triage keeps going so the
-            // structural findings collected above still reach the
-            // report (#644). `by_index` borrows `zip` mutably while its
-            // result lives, so the central name is resolved first.
-            let shown = zip
-                .name_for_index(i)
-                .and_then(Result::ok)
-                .map_or_else(|| "unnamed".to_string(), |name| format!("'{name}'"));
-            let mut f = match zip.by_index(i) {
-                Ok(f) => f,
-                Err(error) => {
-                    defects.push(crate::opc::ZipDefect {
-                        kind: crate::opc::ZipDefectKind::EntryRead,
-                        detail: format!("entry {i} ({shown}) cannot be opened: {error}"),
-                    });
-                    continue;
-                }
-            };
-            let name = match f.name() {
-                Ok(name) => name.into_owned(),
-                Err(error) => {
-                    defects.push(crate::opc::ZipDefect {
-                        kind: crate::opc::ZipDefectKind::EntryRead,
-                        detail: format!("entry {i} ({shown}) has an unreadable name: {error}"),
-                    });
-                    continue;
-                }
-            };
-            if f.size() > limits.max_part_bytes {
-                return Err(
-                    crate::admission::part_declared_over(&name, f.size(), &limits).to_string(),
-                );
-            }
-            let cap = limits
-                .max_part_bytes
-                .min(limits.max_uncompressed_bytes.saturating_sub(total));
-            let mut data = Vec::with_capacity(
-                usize::try_from(f.size().min(cap).min(16 * 1024 * 1024)).unwrap_or(0),
-            );
-            let read = match (&mut f).take(cap.saturating_add(1)).read_to_end(&mut data) {
-                Ok(read) => read,
-                Err(error) if f.is_dir() => {
-                    defects.push(crate::opc::ZipDefect {
-                        kind: crate::opc::ZipDefectKind::DirectoryPayload,
-                        detail: format!(
-                            "directory entry '{name}' has an unreadable payload: {error}"
-                        ),
-                    });
-                    continue;
-                }
-                Err(error) => {
-                    defects.push(crate::opc::ZipDefect {
-                        kind: crate::opc::ZipDefectKind::EntryRead,
-                        detail: format!("entry '{name}' has an unreadable payload: {error}"),
-                    });
-                    continue;
-                }
-            };
-            crate::admission::tally_inflated(&mut total, read as u64, &name, cap, &limits)
-                .map_err(|e| e.to_string())?;
+            let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
+            let mut data = Vec::with_capacity(f.size() as usize);
+            f.read_to_end(&mut data)
+                .map_err(|e| format!("{}: {e}", f.name()))?;
             entries.push(Entry {
-                name,
+                name: f.name().to_string(),
                 size: f.size(),
                 packed: f.compressed_size(),
                 data,
@@ -291,7 +197,6 @@ impl Package {
         Ok(Package {
             entries,
             raw: bytes.to_vec(),
-            defects,
         })
     }
 
@@ -354,27 +259,14 @@ fn decode_xml(data: &[u8]) -> Option<String> {
 #[derive(Default)]
 struct Findings {
     by_kind: BTreeMap<String, Vec<(String, String)>>,
-    /// In step with `by_kind`: where each example sits, as `validate`'s
-    /// element chain ([`crate::validate::element_path`]), or empty.
-    places: BTreeMap<String, Vec<String>>,
 }
 
 impl Findings {
     fn add(&mut self, kind: &str, part: &str, detail: String) {
-        self.push(kind, part, detail, String::new());
-    }
-
-    /// [`Findings::add`] for an example at element `n`.
-    fn add_at(&mut self, kind: &str, part: &str, detail: String, dom: &Dom, n: NodeId) {
-        self.push(kind, part, detail, crate::validate::element_path(dom, n));
-    }
-
-    fn push(&mut self, kind: &str, part: &str, detail: String, place: String) {
         self.by_kind
             .entry(kind.to_string())
             .or_default()
             .push((part.to_string(), detail));
-        self.places.entry(kind.to_string()).or_default().push(place);
     }
 }
 
@@ -438,7 +330,7 @@ fn path(dom: &Dom, n: NodeId) -> String {
 }
 
 fn clip(s: &str, max: usize) -> String {
-    let s = crate::util::collapse_whitespace(s);
+    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if s.chars().count() <= max {
         s
     } else {
@@ -483,12 +375,10 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
     for n in dom.descendants(root, None) {
         let name = local(dom, n);
         match name.as_str() {
-            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add_at(
+            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add(
                 &format!("orphan-{name}"),
                 part,
                 format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
-                dom,
-                n,
             ),
             "t" | "instrText"
                 if state(dom, n) == 'D'
@@ -497,12 +387,10 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .iter()
                         .any(|&a| local(dom, a) == "del") =>
             {
-                f.add_at(
+                f.add(
                     &format!("{name}-under-del"),
                     part,
                     format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
-                    dom,
-                    n,
                 );
             }
             "r" => {
@@ -527,7 +415,7 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                         .map(|c| local(dom, c))
                         .filter(|c| c != "rPr")
                         .collect();
-                    f.add_at(
+                    f.add(
                         "bare-run-in-deleted-textbox",
                         part,
                         format!(
@@ -536,8 +424,6 @@ fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                             kids.join(","),
                             clip(&dom.value(n), 30)
                         ),
-                        dom,
-                        n,
                     );
                 }
             }
@@ -552,7 +438,6 @@ struct OpenField {
     instr: Vec<(bool, char)>,
     code: String,
     at: String,
-    node: NodeId,
 }
 
 fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
@@ -571,7 +456,7 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     open.instr.push((name == "delInstrText", st));
                     open.code.push_str(&dom.value(n));
                 }
-                None => f.add_at("field-code-outside-field", part, path(dom, n), dom, n),
+                None => f.add("field-code-outside-field", part, path(dom, n)),
             }
             continue;
         }
@@ -588,15 +473,14 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 instr: Vec::new(),
                 code: String::new(),
                 at: path(dom, n),
-                node: n,
             }),
             "separate" => match stack.last_mut() {
                 Some(open) => open.separate = Some(st),
-                None => f.add_at("field-separate-without-begin", part, path(dom, n), dom, n),
+                None => f.add("field-separate-without-begin", part, path(dom, n)),
             },
             "end" => {
                 let Some(open) = stack.pop() else {
-                    f.add_at("field-end-without-begin", part, path(dom, n), dom, n);
+                    f.add("field-end-without-begin", part, path(dom, n));
                     continue;
                 };
                 let states: String = std::iter::once(open.begin)
@@ -606,21 +490,17 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .collect();
                 let code = clip(&open.code, 40);
                 if states.contains('D') && states.chars().any(|c| c != 'D') {
-                    f.add_at(
+                    f.add(
                         "field-partly-deleted",
                         part,
                         format!("begin/code/separate/end={states} \"{code}\" at {}", open.at),
-                        dom,
-                        open.node,
                     );
                 }
                 if open.instr.iter().any(|&(del, s)| del != (s == 'D')) {
-                    f.add_at(
+                    f.add(
                         "field-code-kind-vs-state",
                         part,
                         format!("states={states} \"{code}\" at {}", open.at),
-                        dom,
-                        open.node,
                     );
                 }
             }
@@ -628,12 +508,10 @@ fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
         }
     }
     for open in stacks.into_values().flatten() {
-        f.add_at(
+        f.add(
             "field-unclosed",
             part,
             format!("\"{}\" at {}", clip(&open.code, 40), open.at),
-            dom,
-            open.node,
         );
     }
 }
@@ -710,11 +588,7 @@ fn check_bookmarks(
             ("sdt", &["sdtContent"][..]),
             ("cell", &["tc"][..]),
             ("textbox", &["txbxContent"][..]),
-            // Deleted and moved-away text can hold a source endpoint:
-            // Accept hoists it; Reject restores it (#1176, #1195).
-            // Insertions and move destinations remain placement guards
-            // for #827, though Word tolerates these crossings (#1195).
-            ("revision", &["ins", "moveTo"][..]),
+            ("revision", &REVISIONS[..]),
         ] {
             if within(s, set) != within(e, set) {
                 f.add(
@@ -1008,23 +882,11 @@ fn undeclared_ignorable_prefixes(xml: &str) -> Vec<String> {
 }
 
 fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
-    let mut moves: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for n in dom.descendants(root, None) {
         let name = local(dom, n);
         match name.as_str() {
-            "moveFromRangeStart" | "moveToRangeStart" => {
-                let move_name = attr(dom, n, "name");
-                if !move_name.is_empty() {
-                    let counts = moves.entry(move_name).or_default();
-                    if name == "moveFromRangeStart" {
-                        counts.0 += 1;
-                    } else {
-                        counts.1 += 1;
-                    }
-                }
-            }
             "instrText" | "delInstrText" if dom.value(n).is_empty() => {
-                f.add_at(&format!("{name}-empty"), part, path(dom, n), dom, n);
+                f.add(&format!("{name}-empty"), part, path(dom, n));
             }
             "tc" if !cell_ends_in_paragraph(dom, n) => {
                 let last = dom
@@ -1032,12 +894,10 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .into_iter()
                     .map(|c| local(dom, c))
                     .rfind(|c| c.as_str() != "tcPr");
-                f.add_at(
+                f.add(
                     "cell-not-ending-in-p",
                     part,
                     format!("{} last={}", path(dom, n), last.unwrap_or_default()),
-                    dom,
-                    n,
                 );
             }
             "tr" if !dom
@@ -1045,12 +905,8 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 .iter()
                 .any(|&c| local(dom, c) == "tc") =>
             {
-                f.add_at("row-without-cell", part, path(dom, n), dom, n);
+                f.add("row-without-cell", part, path(dom, n));
             }
-            // Only `ins`/`del` count as interleaving: Word's measured
-            // reject-all misreading (#1134, 2026-10-17) alternates the two. A
-            // move between two same-kind revisions is unmeasured, so it
-            // reports as nested.
             "ins" | "del"
                 if dom
                     .ancestors(n, None)
@@ -1058,21 +914,7 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                     .take_while(|&a| !STORIES.contains(&local(dom, a).as_str()))
                     .any(|a| local(dom, a) == name) =>
             {
-                let alternating = dom
-                    .ancestors(n, None)
-                    .into_iter()
-                    .take_while(|&a| {
-                        !STORIES.contains(&local(dom, a).as_str()) && local(dom, a) != name
-                    })
-                    .any(|a| matches!(local(dom, a).as_str(), "ins" | "del"));
-                let relation = if alternating { "interleaved" } else { "nested" };
-                f.add_at(
-                    &format!("{name}-{relation}-in-{name}"),
-                    part,
-                    path(dom, n),
-                    dom,
-                    n,
-                );
+                f.add(&format!("{name}-nested-in-{name}"), part, path(dom, n));
             }
             "body" => {
                 let kids = dom.elements(n, None);
@@ -1087,15 +929,6 @@ fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
                 }
             }
             _ => {}
-        }
-    }
-    for (name, (source, destination)) in moves {
-        if source != destination {
-            f.add(
-                "move-range-count-mismatch",
-                part,
-                format!("{name}: {source} source ranges, {destination} destination ranges; Word opens it but Reject All can duplicate moved text (#1214)"),
-            );
         }
     }
 }
@@ -1225,13 +1058,6 @@ fn analyze(pkg: &Package, opts: &Options) -> Analysis {
         textboxes: Vec::new(),
     };
     let on = |c: Check| opts.checks.contains(&c);
-    for defect in &pkg.defects {
-        a.findings.add(
-            defect.finding_kind(),
-            "package",
-            defect.refusal().to_string(),
-        );
-    }
     let parts = pkg.xml_parts(opts.part.as_deref(), &mut a.findings);
     if on(Check::Package) {
         // Cross-part references need every part, whatever `part` selects.
@@ -2357,9 +2183,12 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
             for l in lines {
-                // Asked for by name (`--grep`) or `--full-lines`: the whole
-                // paragraph.
-                whole_or_clipped(&mut out, l, opts.grep.is_some() || opts.full_lines);
+                if opts.grep.is_some() {
+                    // Asked for by name: the whole paragraph.
+                    let _ = writeln!(out, "{l}");
+                } else {
+                    line(&mut out, l);
+                }
             }
         }
         return out;
@@ -2414,7 +2243,6 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
             // A line paired with its counterpart is clipped from a little
             // before their first difference, so the change stays visible.
             let from = |i: usize| match (del.get(i), add.get(i)) {
-                _ if opts.full_lines => 0,
                 (Some(x), Some(y)) => x
                     .chars()
                     .zip(y.chars())
@@ -2423,19 +2251,18 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                     .saturating_sub(WIDTH / 3),
                 _ => 0,
             };
-            let whole = opts.full_lines;
             for l in &la[at.saturating_sub(opts.context)..*at] {
-                whole_or_clipped(&mut out, &format!("   {l}"), whole);
+                line(&mut out, &format!("   {l}"));
             }
             for (i, l) in del.iter().enumerate() {
-                whole_or_clipped(&mut out, &format!("-A {}", clip_from(l, from(i))), whole);
+                line(&mut out, &format!("-A {}", clip_from(l, from(i))));
             }
             for (i, l) in add.iter().enumerate() {
-                whole_or_clipped(&mut out, &format!("+B {}", clip_from(l, from(i))), whole);
+                line(&mut out, &format!("+B {}", clip_from(l, from(i))));
             }
             let after = at + del.len();
             for l in &la[after..(after + opts.context).min(la.len())] {
-                whole_or_clipped(&mut out, &format!("   {l}"), whole);
+                line(&mut out, &format!("   {l}"));
             }
         }
     }
@@ -2470,15 +2297,6 @@ fn line_has(l: &str, g: &str) -> bool {
 
 fn line(out: &mut String, s: &str) {
     let _ = writeln!(out, "{}", clip_line(s));
-}
-
-/// `s` as a report line: whole when `whole`, else clipped at `WIDTH`.
-fn whole_or_clipped(out: &mut String, s: &str, whole: bool) {
-    if whole {
-        let _ = writeln!(out, "{s}");
-    } else {
-        line(out, s);
-    }
 }
 
 /// `s` from its `from`-th character, the dropped head marked `…`.
@@ -2578,30 +2396,13 @@ pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
     let mut out = Vec::new();
     for (kind, items) in &analysis.findings.by_kind {
         let code = finding_code(kind);
-        // An example with no place listed has none, as `Findings::add`
-        // writes it: no example is dropped, and none panics.
-        let places = analysis.findings.places.get(kind);
-        for (i, (part, detail)) in items.iter().enumerate() {
-            let place = places.and_then(|p| p.get(i)).map_or("", String::as_str);
+        for (part, detail) in items {
             let message = if detail.is_empty() {
                 format!("{kind} in '{part}'")
             } else {
                 format!("{kind} in '{part}': {detail}")
             };
-            let mut finding = crate::validate::Finding::new(&code, part, place, message);
-            if code == "NESTED_SAME_REVISION" {
-                if matches!(kind.as_str(), "ins-nested-in-ins" | "del-nested-in-del") {
-                    finding.severity = "info".to_string();
-                    finding
-                        .message
-                        .push_str("; Word opens it and reads it faithfully (#1134, 2026-10-17)");
-                } else {
-                    finding
-                        .message
-                        .push_str("; Word opens it but misreads reject-all (#1134, 2026-10-17)");
-                }
-            }
-            out.push(finding);
+            out.push(crate::validate::Finding::new(&code, part, "", message));
         }
     }
     Ok(out)
@@ -2633,10 +2434,7 @@ fn finding_code(kind: &str) -> String {
         "instrText-empty" | "delInstrText-empty" => "EMPTY_FIELD_CODE",
         "cell-not-ending-in-p" => "CELL_WITHOUT_PARAGRAPH",
         "row-without-cell" => "ROW_WITHOUT_CELL",
-        "ins-nested-in-ins"
-        | "del-nested-in-del"
-        | "ins-interleaved-in-ins"
-        | "del-interleaved-in-del" => "NESTED_SAME_REVISION",
+        "ins-nested-in-ins" | "del-nested-in-del" => "NESTED_SAME_REVISION",
         "body-sectPr-not-last" => "SECTPR_NOT_LAST",
         k if k.starts_with("bookmark-in-") && k.ends_with("-control") => {
             "BOOKMARK_IN_SINGLE_VALUE_CONTROL"
@@ -2847,7 +2645,7 @@ fn print_counts(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -2935,309 +2733,6 @@ mod tests {
     fn a_clean_package_has_no_findings() {
         let out = report(&docx(CLEAN), None, &Options::default()).unwrap();
         assert_eq!(out, "no findings\n");
-    }
-
-    /// Change only the local name, locating the header through the
-    /// central record rather than searching payload bytes.
-    fn rename_local_header(bytes: &mut [u8], from: &[u8], to: &[u8]) {
-        assert_eq!(from.len(), to.len());
-        let at = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*bytes)).unwrap();
-            archive
-                .by_name(std::str::from_utf8(from).unwrap())
-                .unwrap()
-                .header_start() as usize
-        };
-        assert_eq!(&bytes[at..at + 4], b"PK\x03\x04");
-        assert_eq!(&bytes[at + 30..at + 30 + from.len()], from);
-        bytes[at + 30..at + 30 + from.len()].copy_from_slice(to);
-    }
-
-    /// GHSA-m665-v7pm-7grj: every reader refuses a package whose local
-    /// header disagrees with its central directory — except `debug`, the
-    /// triage tool, which opens it anyway and reports the disagreement as
-    /// a finding so a maintainer can inspect what was refused.
-    #[test]
-    fn a_dual_header_package_reports_a_finding_instead_of_refusing() {
-        let mut pkg = docx(CLEAN);
-        rename_local_header(&mut pkg, b"word/document.xml", b"w0rd/document.xml");
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
-        assert!(
-            out.contains(
-                "'word/document.xml' in the central directory but 'w0rd/document.xml' in its local header"
-            ),
-            "{out}"
-        );
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
-            "{found:?}"
-        );
-    }
-
-    /// The fixture builders for structural packages, shared with the
-    /// admission tests.
-    use crate::admission::zip_names;
-
-    /// An entry's local-header offset, located through the reader.
-    fn local_header_at(bytes: &[u8], name: &str) -> usize {
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
-        usize::try_from(archive.by_name(name).unwrap().header_start()).unwrap()
-    }
-
-    /// ZIP-17 (#644): a content field that disagrees between the two
-    /// headers is a `zip-header-mismatch` finding, not a refusal.
-    #[test]
-    fn a_header_field_mismatch_reports_a_finding_instead_of_refusing() {
-        let mut pkg = docx(CLEAN);
-        let at = local_header_at(&pkg, "word/document.xml");
-        pkg[at + 8] ^= 0x08; // the local method no longer matches the record's
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
-        assert!(
-            out.contains("compression method 8 in the central directory but 0"),
-            "{out}"
-        );
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
-            "{found:?}"
-        );
-    }
-
-    /// ZIP-17 (#644): an entry nested inside another entry's payload is
-    /// a `zip-extent` finding, not a refusal.
-    #[test]
-    fn an_overlapping_entry_reports_a_finding_instead_of_refusing() {
-        let mut embedded = zip_names::local_header(b"b.bin", 0, zip_names::crc32(b"x"), 1, 1, &[]);
-        embedded.push(b'x');
-        let mut pkg = zip_names::docx_package(
-            "",
-            &[
-                zip_names::RawEntry::raw(b"a.bin", &embedded),
-                zip_names::RawEntry::raw(b"b.bin", b"x"),
-            ],
-        );
-        let embedded_at = local_header_at(&pkg, "a.bin") + 30 + b"a.bin".len();
-        let b_central = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
-            usize::try_from(archive.by_name("b.bin").unwrap().central_header_start()).unwrap()
-        };
-        pkg[b_central + 42..b_central + 46]
-            .copy_from_slice(&u32::try_from(embedded_at).unwrap().to_le_bytes());
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-extent: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
-    }
-
-    /// ZIP-17 (#644): a descriptor that disagrees with the central
-    /// record is a `zip-descriptor` finding, not a refusal.
-    #[test]
-    fn a_descriptor_disagreement_reports_a_finding_instead_of_refusing() {
-        let mut pkg = zip_names::assembled(
-            b"",
-            &[
-                zip_names::AssembledEntry::plain(b"[Content_Types].xml", b"<Types/>"),
-                zip_names::AssembledEntry::plain(b"_rels/.rels", b"<Relationships/>"),
-                zip_names::AssembledEntry::plain(b"word/document.xml", b"<w:document/>"),
-                zip_names::AssembledEntry::plain(b"x.bin", b"payload")
-                    .with_descriptor(zip_names::Descriptor::Signed),
-            ],
-            None,
-            b"",
-        );
-        let signature = pkg
-            .windows(4)
-            .position(|w| w == b"PK\x07\x08")
-            .expect("signed descriptor");
-        pkg[signature + 4] ^= 0xff;
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-descriptor: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_DESCRIPTOR"),
-            "{found:?}"
-        );
-    }
-
-    /// ZIP-17 (#644): a directory entry whose payload fails its CRC is a
-    /// `zip-directory-payload` finding, not a refusal.
-    #[test]
-    fn a_corrupt_directory_payload_reports_a_finding_instead_of_refusing() {
-        let mut pkg =
-            zip_names::docx_package("", &[zip_names::RawEntry::raw(b"word/media/", b"x")]);
-        let at = local_header_at(&pkg, "word/media/") + 30 + b"word/media/".len();
-        pkg[at] = b'y';
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-directory-payload: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_DIRECTORY_PAYLOAD"),
-            "{found:?}"
-        );
-    }
-
-    /// The report or its refusal message, so a package `debug` cannot
-    /// open fails the finding assertion instead of panicking (#644).
-    fn debug_output(pkg: &[u8]) -> String {
-        report(pkg, None, &Options::default()).unwrap_or_else(|e| e)
-    }
-
-    /// A minimal package whose one binary entry is easy to corrupt:
-    /// stored, no extra fields, so extents are plain arithmetic.
-    fn bin_package() -> Vec<u8> {
-        zip_names::docx_package("", &[zip_names::RawEntry::raw(b"z.bin", b"payload")])
-    }
-
-    /// The offset of `name`'s central record, located through the reader.
-    fn central_header_at(bytes: &[u8], name: &str) -> usize {
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
-        usize::try_from(archive.by_name(name).unwrap().central_header_start()).unwrap()
-    }
-
-    /// Set `name`'s central-record compressed size (the field at +20),
-    /// which both the extent pass and the payload read follow.
-    fn set_central_compressed_size(bytes: &mut [u8], name: &str, size: u32) {
-        assert_ne!(size, u32::MAX, "0xFFFFFFFF is the ZIP64 placeholder");
-        let at = central_header_at(bytes, name);
-        bytes[at + 20..at + 24].copy_from_slice(&size.to_le_bytes());
-    }
-
-    /// ZIP-17 (#644): an entry whose extent reaches past the central
-    /// directory fails its read on every route — `debug` still reports
-    /// the structural finding, and the failed read is a finding of its
-    /// own rather than the end of the report.
-    #[test]
-    fn an_extent_past_the_directory_reports_a_finding_instead_of_refusing() {
-        let mut pkg = bin_package();
-        let reach = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
-            let start = archive.by_name("z.bin").unwrap().header_start();
-            archive.central_directory_start() - start + 1
-        };
-        set_central_compressed_size(&mut pkg, "z.bin", u32::try_from(reach).unwrap());
-        let out = debug_output(&pkg);
-        assert!(out.contains("zip-extent: 1\n"), "{out}");
-        assert!(out.contains("reaches past the central directory"), "{out}");
-        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
-    }
-
-    /// ZIP-17 (#644): the same defect one byte into the central
-    /// directory, the smallest overlapping extent.
-    #[test]
-    fn an_extent_one_byte_into_the_directory_reports_a_finding() {
-        let mut pkg = bin_package();
-        let reach = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
-            let start = archive.by_name("z.bin").unwrap().data_start().unwrap();
-            archive.central_directory_start() - start + 1
-        };
-        set_central_compressed_size(&mut pkg, "z.bin", u32::try_from(reach).unwrap());
-        let out = debug_output(&pkg);
-        assert!(out.contains("zip-extent: 1\n"), "{out}");
-        assert!(out.contains("reaches past the central directory"), "{out}");
-        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
-    }
-
-    /// ZIP-17 (#644): the first entry's extent ends inside the second
-    /// entry's local record — an overlap finding, even though reading
-    /// the first entry fails.
-    #[test]
-    fn an_extent_over_the_next_entry_reports_a_finding_instead_of_refusing() {
-        let mut pkg = zip_names::docx_package("", &[]);
-        let reach = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
-            let next = archive.by_name("_rels/.rels").unwrap().header_start();
-            let start = archive
-                .by_name("[Content_Types].xml")
-                .unwrap()
-                .data_start()
-                .unwrap();
-            next - start + 1
-        };
-        set_central_compressed_size(
-            &mut pkg,
-            "[Content_Types].xml",
-            u32::try_from(reach).unwrap(),
-        );
-        let out = debug_output(&pkg);
-        assert!(out.contains("zip-extent: 1\n"), "{out}");
-        assert!(out.contains("inside entry '_rels/.rels'"), "{out}");
-        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(found.iter().any(|f| f.code == "ZIP_EXTENT"), "{found:?}");
-    }
-
-    /// ZIP-17 (#644): a central record that points inside another
-    /// entry's payload has no local header there — a header-mismatch
-    /// finding, and the failed open of the entry is a finding too.
-    #[test]
-    fn a_central_record_inside_a_payload_reports_a_finding_instead_of_refusing() {
-        let mut pkg = bin_package();
-        let inside =
-            local_header_at(&pkg, "word/document.xml") + 30 + b"word/document.xml".len() + 1;
-        let at = central_header_at(&pkg, "z.bin");
-        pkg[at + 42..at + 46].copy_from_slice(&u32::try_from(inside).unwrap().to_le_bytes());
-        let out = debug_output(&pkg);
-        assert!(out.contains("zip-header-mismatch: 1\n"), "{out}");
-        assert!(out.contains("has no local header"), "{out}");
-        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_HEADER_MISMATCH"),
-            "{found:?}"
-        );
-    }
-
-    /// ZIP-17 (#644): an entry whose payload fails its CRC, with no
-    /// structural defect behind it, is a `zip-entry-read` finding — the
-    /// same triage a directory's payload already gets.
-    #[test]
-    fn a_corrupt_entry_payload_reports_a_finding_instead_of_refusing() {
-        let mut pkg = bin_package();
-        let at = local_header_at(&pkg, "z.bin") + 30 + b"z.bin".len();
-        pkg[at] = b'X';
-        let out = debug_output(&pkg);
-        assert!(out.contains("zip-entry-read: 1\n"), "{out}");
-        assert!(out.contains("'z.bin'"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_ENTRY_READ"),
-            "{found:?}"
-        );
-    }
-
-    /// ZIP-16 (#639): an entry recorded as a non-regular Unix type — a
-    /// symlink here — is a `zip-special-entry` finding, not a refusal.
-    #[test]
-    fn a_special_entry_reports_a_finding_instead_of_refusing() {
-        let mut pkg = docx(CLEAN);
-        let at = {
-            let mut archive = zip::ZipArchive::new(Cursor::new(&*pkg)).unwrap();
-            usize::try_from(
-                archive
-                    .by_name("word/document.xml")
-                    .unwrap()
-                    .central_header_start(),
-            )
-            .unwrap()
-        };
-        assert_eq!(&pkg[at..at + 4], b"PK\x01\x02");
-        // version_made_by = Unix host, S_IFLNK mode in the high 16 bits
-        // of the external attributes.
-        pkg[at + 4..at + 6].copy_from_slice(&0x0314u16.to_le_bytes());
-        pkg[at + 38..at + 42].copy_from_slice(&(0o120777u32 << 16).to_le_bytes());
-        let out = report(&pkg, None, &Options::default()).unwrap();
-        assert!(out.contains("zip-special-entry: 1\n"), "{out}");
-        let found = findings(&pkg).unwrap();
-        assert!(
-            found.iter().any(|f| f.code == "ZIP_SPECIAL_ENTRY"),
-            "{found:?}"
-        );
     }
 
     #[test]
@@ -3777,10 +3272,7 @@ mod tests {
                 let mut f = z.by_index(i).unwrap();
                 let mut s = String::new();
                 f.read_to_string(&mut s).unwrap();
-                parts.push((
-                    f.name().expect("decode ZIP fixture name").to_string(),
-                    s.replace("1F3864", fill),
-                ));
+                parts.push((f.name().to_string(), s.replace("1F3864", fill)));
             }
             let refs: Vec<(&str, &str)> = parts
                 .iter()
@@ -4342,7 +3834,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_byte_diagnostic_contract_tests {
     use super::*;
     use std::io::Write;
@@ -4637,38 +4129,6 @@ mod residual_byte_diagnostic_contract_tests {
         );
     }
 
-    /// `--full-lines` prints a listing's lines whole, in one file and in
-    /// the lines two files differ by, where a report clips them at
-    /// `WIDTH` characters around their first difference.
-    #[test]
-    fn full_lines_prints_listing_lines_whole() {
-        let long = "漢".repeat(300);
-        let a = source(&format!("<w:p><w:r><w:t>{long}a</w:t></w:r></w:p>"));
-        let b = source(&format!("<w:p><w:r><w:t>{long}b</w:t></w:r></w:p>"));
-        let runs = Options {
-            checks: vec![Check::Runs],
-            ..Options::default()
-        };
-        let clipped = report(&a, Some(&b), &runs).unwrap();
-        assert!(!clipped.contains(&long), "{clipped}");
-        let opts = Options {
-            full_lines: true,
-            ..runs.clone()
-        };
-        let whole = report(&a, Some(&b), &opts).unwrap();
-        assert!(
-            whole.contains(&format!("-A   ¶  [] ¶«» «»{long}a\n")),
-            "{whole}"
-        );
-        assert!(
-            whole.contains(&format!("+B   ¶  [] ¶«» «»{long}b\n")),
-            "{whole}"
-        );
-        let one = report(&a, None, &opts).unwrap();
-        assert!(one.contains(&format!("  ¶  [] ¶«» «»{long}a\n")), "{one}");
-        assert!(!report(&a, None, &runs).unwrap().contains(&long));
-    }
-
     #[test]
     fn grep_across_run_and_revision_marks_preserves_the_complete_unclipped_paragraph() {
         let long = format!("{}needle{}", "漢".repeat(205), "界".repeat(205));
@@ -4872,42 +4332,5 @@ mod residual_byte_diagnostic_contract_tests {
         };
         assert_eq!(report(&bytes, None, &opts).unwrap(), "");
         assert_eq!(report(&bytes, Some(&bytes), &opts).unwrap(), "");
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod bounded_input_tests {
-    use super::*;
-    use crate::admission::{InputLimits, limit_test_support as fixture};
-
-    fn refuses(limits: InputLimits, detail: &str) {
-        let bytes = fixture::package();
-        let text = Package::open_within(&bytes, limits)
-            .err()
-            .expect("over-budget package must be refused");
-        assert!(text.contains("INPUT_LIMIT"), "{text}");
-        assert!(text.contains(detail), "{text}");
-    }
-    #[test]
-    fn compressed_limit() {
-        refuses(fixture::compressed(), "input is");
-    }
-    #[test]
-    fn count_limit() {
-        refuses(fixture::count(), "3 ZIP entries; the limit is 2");
-    }
-    #[test]
-    fn part_limit() {
-        refuses(fixture::part(), "a.bin");
-    }
-    #[test]
-    fn aggregate_limit() {
-        refuses(fixture::total(), "the package limit is 160");
-    }
-    #[test]
-    fn exact_budget_control() {
-        let bytes = fixture::package();
-        assert!(Package::open_within(&bytes, fixture::limits()).is_ok());
     }
 }

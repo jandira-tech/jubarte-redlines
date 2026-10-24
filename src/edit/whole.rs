@@ -163,7 +163,12 @@ pub(super) fn rewrite(
             parts.push((part.clone(), document, root));
         }
     }
-    let mut next_id = crate::revision_processor::RevisionIds::new(&opened.pkg);
+    let mut next_id = parts
+        .iter()
+        .flat_map(|&(_, _, root)| opened.dom.descendants(root, None))
+        .filter_map(|n| opened.dom.attribute(n, &W::id())?.parse::<u64>().ok())
+        .max()
+        .map_or(1, |max| max + 1);
     let mut fallbacks = Vec::new();
     for mark in marks {
         let stamp = Stamp {
@@ -195,13 +200,14 @@ pub(super) fn rewrite(
 struct Stamp<'a> {
     author: &'a str,
     date: &'a str,
-    next_id: &'a mut crate::revision_processor::RevisionIds,
+    next_id: &'a mut u64,
 }
 
 impl Stamp<'_> {
     fn container(&mut self, dom: &mut Dom, name: crate::xmllinq::XName) -> NodeId {
         let node = dom.new_element(name);
-        dom.set_attribute_value(node, &W::id(), Some(&self.next_id.allocate().to_string()));
+        dom.set_attribute_value(node, &W::id(), Some(&self.next_id.to_string()));
+        *self.next_id += 1;
         dom.set_attribute_value(node, &W::author(), Some(self.author));
         dom.set_attribute_value(node, &W::date(), Some(self.date));
         node
@@ -286,16 +292,10 @@ fn rewrite_one(
         }
         match item.kind {
             Kind::Kept => {
-                let copy = crate::revision_processor::clone_with_fresh_property_ids(
-                    dom,
-                    item.node,
-                    stamp.next_id,
-                );
+                let copy = dom.clone_subtree(item.node);
                 for t in dom.descendants(copy, Some(&W::t())) {
                     dom.set_name(t, W::del_text());
                 }
-                settle_format(dom, copy, true);
-                settle_format(dom, item.node, false);
                 deleted.push(copy);
                 inserted.push(item.node);
             }
@@ -350,11 +350,8 @@ fn rewrite_one(
                     for (name, value) in dom.attributes(original) {
                         dom.set_attribute_value(copy, &name, Some(&value));
                     }
-                    dom.set_attribute_value(
-                        copy,
-                        &W::id(),
-                        Some(&stamp.next_id.allocate().to_string()),
-                    );
+                    dom.set_attribute_value(copy, &W::id(), Some(&stamp.next_id.to_string()));
+                    *stamp.next_id += 1;
                     copy
                 };
                 dom.add(p, target);
@@ -365,34 +362,6 @@ fn rewrite_one(
         dom.add(target, item.node);
     }
     Ok(())
-}
-
-/// A kept run's formatting change, settled for one side of the rewrite:
-/// the deleted copy (`old`) shows the text as the source had it, in the
-/// change's old properties, and the inserted run as it is now. Neither
-/// keeps the change, which describes nothing a deletion or an insertion
-/// can undo (#1375).
-fn settle_format(dom: &mut Dom, run: NodeId, old: bool) {
-    let Some(rpr) = dom.element(run, &W::r_pr()) else {
-        return;
-    };
-    let Some(change) = dom.element(rpr, &W::r_pr_change()) else {
-        return;
-    };
-    let before = dom.element(change, &W::r_pr());
-    dom.remove(change);
-    if !old {
-        return;
-    }
-    for child in dom.elements(rpr, None) {
-        dom.remove(child);
-    }
-    if let Some(before) = before {
-        for child in dom.elements(before, None) {
-            dom.remove(child);
-            dom.add(rpr, child);
-        }
-    }
 }
 
 fn flatten(dom: &Dom, p: NodeId) -> Vec<Item> {
@@ -470,7 +439,7 @@ fn side_text(dom: &Dom, items: &[Item], side: Kind) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -497,7 +466,7 @@ mod tests {
     }
 
     fn run(dom: &mut Dom, body: NodeId, m: &Mark) -> Result<(), String> {
-        let mut next_id = crate::revision_processor::RevisionIds::from_used(HashSet::from([99]));
+        let mut next_id = 100;
         let stamp = Stamp {
             author: "A",
             date: "2026-09-28T00:00:00Z",

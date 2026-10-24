@@ -42,7 +42,7 @@ def letter() -> Document:
 def test_inspect_returns_typed_snapshot_with_ids_spans_and_summary() -> None:
     snap = letter().inspect()
     assert isinstance(snap, Snapshot)
-    assert snap.schema_version == 3
+    assert snap.schema_version == 1
     assert len(snap.source_sha256) == 64
     assert snap.summary.paragraphs == 4
     assert snap.summary.tables == 0
@@ -128,8 +128,7 @@ def test_edit_applies_plan_and_returns_clean_redline_and_report() -> None:
     assert report.operations[0].context == "individual signs in {his or her→an} individual capacity"
     assert report.operations[1].comment_id == 0
     assert report.comments_added == 1
-    # A replace is one replacement change (plan 11).
-    assert report.revisions.replaced >= 1
+    assert report.revisions.inserted >= 1 and report.revisions.deleted >= 1
     assert result.redline.inspect().summary.comments == 1
     lines = [json.loads(line) for line in report.to_jsonl().splitlines()]
     assert lines[0]["ev"] == "load" and lines[-1]["ev"] == "summary"
@@ -270,9 +269,7 @@ def test_whole_replace_shows_one_deletion_then_one_insertion() -> None:
     result = doc.edit(plan)
     assert result.report.ok, result.report.operations
     assert all(op.message is None for op in result.report.operations)
-    revisions = result.report.revisions
-    # The deletion and the insertion after it are one replacement (plan 11).
-    assert (revisions.deleted, revisions.inserted, revisions.replaced) == (0, 0, 1)
+    assert (result.report.revisions.deleted, result.report.revisions.inserted) == (1, 1)
     assert [p.text for p in result.redline.accept().inspect().paragraphs] == [
         p.text for p in result.clean.inspect().paragraphs
     ]
@@ -339,32 +336,6 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
     assert "list" in caps["edit_operations"]
 
 
-def test_capability_query_matrix_and_focused_answers_reach_the_engine() -> None:
-    matrix = jubarte.capabilities(matrix=True)
-    assert matrix["runtime"] == "python"
-    assert matrix["edit_plan_versions"] == [1]
-    advertised = matrix["edit_operations"]
-    # 26 with #1252's strike and restore.
-    assert len(advertised) == 26
-    # Every kind the matrix advertises answers a focused query as a
-    # dispatched v1 operation: the wrapper routes to the engine's table.
-    for kind in advertised:
-        answer = jubarte.capabilities(operation=kind)
-        assert answer["supported"] is True, kind
-        v1 = next(p for p in answer["profiles"] if p["plan_version"] == 1)
-        assert v1["dispatched"] is True, kind
-    # A name the dispatcher refuses is not advertised, and the query says so.
-    assert "definitely_not_an_operation" not in advertised
-    refused = jubarte.capabilities(operation="definitely_not_an_operation")
-    assert refused["supported"] is False
-    assert refused["reason"] == "unsupported operation"
-    # Field queries narrow within an operation and suggest the nearest name.
-    near = jubarte.capabilities(operation="reply_comment", field="tex")
-    assert near["supported"] is False
-    assert near["nearest"][0] == "text"
-    assert jubarte.capabilities(operation="reply_comment", field="text")["supported"] is True
-
-
 def test_plan_builder_validates_selectors_runs_and_options() -> None:
     plan = EditPlan(author="A", initials="AA", existing_revisions="accept")
     wire = plan.to_dict()
@@ -413,20 +384,6 @@ def tracked() -> Document:
     return Document.from_bytes(docx(body))
 
 
-def test_a_change_names_the_comment_marks_it_holds() -> None:
-    """Accepting r13 removes the thread whose mark it holds (#1159)."""
-    stamp = 'w:date="2020-01-01T00:00:00Z"'
-    body = (
-        '<w:p><w:r><w:t>kept</w:t></w:r>'
-        f'<w:del w:id="13" w:author="d" {stamp}>'
-        '<w:r><w:commentReference w:id="4"/></w:r>'
-        '<w:r><w:commentReference w:id="5"/></w:r></w:del></w:p>'
-    )
-    [change] = Document.from_bytes(docx(body)).changes()
-    assert (change.id, change.holds_comments) == ("r13", ("c4", "c5"))
-    assert all(c.holds_comments == () for c in tracked().changes())
-
-
 def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     doc = tracked()
     changes = doc.changes()
@@ -455,38 +412,6 @@ def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
     # An id that is no change id is a bad argument.
     with pytest.raises(ValueError, match="expected a change id"):
         doc.accept(ids=["c5"])
-
-
-def test_a_change_word_wrote_as_several_marks_is_one_change() -> None:
-    """One typed insertion split by session lists once (plan 11, #1261)."""
-    def ins(n: int, text: str, minute: int) -> str:
-        return (
-            f'<w:ins w:id="{n}" w:author="b" w:date="2020-01-01T00:{minute:02}:00Z">'
-            f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>'
-        )
-
-    body = (
-        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
-        + ins(7, "one ", 1)
-        + ins(8, "two", 3)
-        + "</w:p>"
-    )
-    doc = Document.from_bytes(docx(body))
-    (change,) = doc.changes()
-    assert (change.id, change.kind, change.text, change.date) == (
-        "r7+8",
-        "insertion",
-        "one two",
-        "2020-01-01T00:01:00Z",
-    )
-    assert [(m.id, m.kind, m.date) for m in change.members] == [
-        ("r7", "insertion", "2020-01-01T00:01:00Z"),
-        ("r8", "insertion", "2020-01-01T00:03:00Z"),
-    ]
-    assert isinstance(change.members[0], jubarte.ChangeMember)
-    with pytest.raises(ValueError, match=r"r7 is part of r7\+8; name the whole change"):
-        doc.accept(ids=["r7"])
-    assert doc.accept(ids=["r7+r8"]).changes() == ()
 
 
 def test_a_plan_resolves_selected_changes_before_it_edits() -> None:

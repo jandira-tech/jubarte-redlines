@@ -174,9 +174,6 @@ jobs:
         with:
           toolchain: "1.94"
       - uses: ./.github/actions/mbx
-      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
-        with:
-          tool: cargo-nextest
       # The whole suite, not `cargo check`: README.md promises MSRV *testing*,
       # and dev-dependencies and test-only code are exactly what a compile
       # check of the library skips. One Linux run on the declared
@@ -184,9 +181,7 @@ jobs:
       # The strict Markdown round trip is red until the reader work lands
       # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
       # keeps reporting every other test.
-      - run: cargo nextest run --all-features --no-fail-fast -E 'not test(markdown_and_docx_round_trip_exactly)'
-      # nextest runs no doctests.
-      - run: cargo test --all-features --doc
+      - run: cargo test --all-features --no-fail-fast -- --skip markdown_and_docx_round_trip_exactly
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
@@ -261,7 +256,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: build the extension and run pytest
         working-directory: jubarte-python
         run: |
@@ -279,7 +274,7 @@ jobs:
       # (test_release_sh.py's parenthesized `with (…)` needs 3.9+). uv
       # installs 3.14 and puts its venv first on PATH, so every `python3`
       # below is 3.14.
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
           activate-environment: true
@@ -288,15 +283,6 @@ jobs:
         run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
-      - run: python3 scripts/test_check_engine_commit.py
-      - run: python3 scripts/test_check_npm_paths.py
-      # The committed npm packages name no builder's home (#1480): the
-      # library's artifacts and the CLI package's modules.
-      - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm jubarte-wasm/cli
-      - name: Oracle dependency and advisory record tests with coverage
-        run: |
-          uv run --with coverage coverage run --branch --include='scripts/test_oracle_dependency.py' scripts/test_oracle_dependency.py
-          uv run --with coverage coverage report
       - name: OpenSSF attestation script tests with coverage
         run: |
           uv run --with coverage coverage run --branch --include='scripts/openssf_attest.py' scripts/test_openssf_attest.py
@@ -316,4 +302,4 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - run: node --test jubarte-wasm/cli/test/*.test.mjs
+      - run: node --test jubarte-wasm/cli/test/cli.test.mjs

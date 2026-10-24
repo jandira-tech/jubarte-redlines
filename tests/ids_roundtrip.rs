@@ -169,9 +169,8 @@ fn long_body() -> &'static [u8] {
                 inner.push_str(&ins(w, A, &format!("added{i}")));
             }
             if i == 7 {
-                // Word Compare's insertion-then-deletion order: two marks
-                // of one replacement, printed `r4+3` in reading order
-                // (#1359); `r3+4` still selects both ids.
+                // Word Compare's order, the insertion then the deletion:
+                // one substitution, `r3+4`.
                 inner.push_str(&ins("4", A, "new"));
                 inner.push_str(&del("3", A, "old"));
             }
@@ -462,14 +461,11 @@ struct Patterns {
 fn patterns() -> &'static Patterns {
     static P: OnceLock<Patterns> = OnceLock::new();
     P.get_or_init(|| Patterns {
-        note: Regex::new(
-            r"\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b[^{}]*?)(?:<<)?\}",
-        )
-        .unwrap(),
+        note: Regex::new(r"\{>>(.*?)<<\}").unwrap(),
         // `r12 @AC`, `header1.r1+2 @AC`, `Header_1:rev:4 @AC`, with a date.
         tag: Regex::new(r"^(\S+) @[A-Za-z0-9?]+(?: \S+)?$").unwrap(),
         comment_head: Regex::new(
-            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?(?: in r\d+(?:\+\d+)*)?: ",
+            r"^c(\d+)(?: @[A-Za-z0-9?]+)?(?: \S+)?(?: re c(\d+)| resolved)?: ",
         )
         .unwrap(),
         reply: Regex::new(r" re c(\d+)").unwrap(),
@@ -536,7 +532,7 @@ fn printed(view: &str) -> Printed {
             }
             continue;
         }
-        for one in note.split("; ").flat_map(|one| one.split(" re ")) {
+        for one in note.split("; ") {
             match pat.tag.captures(one) {
                 Some(tag) => {
                     out.changes.insert(tag[1].to_string());
@@ -560,7 +556,7 @@ fn printed(view: &str) -> Printed {
     let mut current: Option<usize> = None;
     for line in body.lines() {
         // A note definition's own changes: `[^1]: text <!-- fmt footnotes.r7 @AC -->`,
-        // also when the definition is wrapped: `{--[^1]: text--}{r18 @C} <!-- … -->`.
+        // also when the definition is wrapped: `{--[^1]: text--}{>>r18 @C<<} <!-- … -->`.
         if line.contains("[^")
             && !line.starts_with("<!-- ")
             && line.ends_with(" -->")
@@ -667,16 +663,7 @@ fn view_text(block: &str) -> String {
     let images = Regex::new(r"!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])").unwrap();
     let links = Regex::new(r"\]\([^)]*\)").unwrap();
     // `<mailto:a@b>` shows the address the document holds.
-    let box_markers =
-        Regex::new(r"(?P<escape>\\)?<!-- (?:text-box d\d+\.\d+|/text-box) -->").unwrap();
-    let text = box_markers.replace_all(block, |caps: &regex::Captures<'_>| {
-        if caps.name("escape").is_some() {
-            caps[0].to_string()
-        } else {
-            String::new()
-        }
-    });
-    let text = plain_anchor(&text).replace("<mailto:", "<");
+    let text = plain_anchor(block).replace("<mailto:", "<");
     let text = refs.replace_all(&text, "");
     let text = images.replace_all(&text, "");
     let tags = Regex::new(r#"</?[a-z]+(?:\s[^>]*)?>"#).unwrap();
@@ -685,19 +672,6 @@ fn view_text(block: &str) -> String {
     let fields = Regex::new(r#"\{[A-Z]+(?:\s(?:[^{}"]|"[^"]*")*)?\}|\{/\}"#).unwrap();
     let text = fields.replace_all(&text, "");
     letters(&links.replace_all(&text, "]"))
-}
-
-#[test]
-fn box_boundary_metadata_is_not_document_text() {
-    let deleted = "<!-- text-box d1.0 -->\n{--hello--}{r0 @C}\n<!-- /text-box -->";
-    assert_eq!(view_text(deleted), "");
-    assert_eq!(
-        view_text("|Cell<br><!-- text-box d1.0 --><br>Visible box words<br><!-- /text-box -->|"),
-        "CellVisibleboxwords"
-    );
-    let visible = "<!-- text-box d1.0 -->\nVisible box words\n<!-- /text-box -->";
-    assert_eq!(view_text(visible), "Visibleboxwords");
-    assert_eq!(view_text(r"\<!-- text-box d1.0 -->"), "textboxd10");
 }
 
 // ---------------------------------------------------------------- checks
@@ -1021,20 +995,7 @@ fn accept_by_cli(name: &str, docx: &[u8], token: &str, fails: &mut Vec<String>) 
         .iter()
         .map(ChangeId::short)
         .collect();
-    // A change inside one the token names may go with its content: the
-    // marks in a text box whose deletion is accepted.
-    let inside: HashMap<String, String> = jubarte::changes::list_changes(docx)
-        .unwrap()
-        .into_iter()
-        .filter_map(|c| Some((c.id, c.inside?)))
-        .collect();
-    let held = |id: &str| {
-        std::iter::successors(inside.get(id), |outer| inside.get(outer.as_str()))
-            .take(inside.len())
-            .any(|outer| named.contains(outer))
-    };
-    let swept = gone.difference(&named).all(|id| held(id));
-    if !named.is_subset(&gone) || !swept || !after.is_subset(&before) {
+    if gone != named || !after.is_subset(&before) {
         fails.push(format!(
             "{name}: accept --id {token} removed {gone:?}, named {named:?}"
         ));
@@ -1072,12 +1033,12 @@ fn the_long_body_round_trips_every_id_width() {
         assert!(view.contains(id), "{id}");
     }
     for tag in [
-        "{r51000 @AC}",
-        "{r9 @AC}",
-        "{r10000 @AC}",
-        "{r0 @AC}",
-        "{r51199 @AC}",
-        "{++new++}{r4+3 @AC}{--old--}{r4+3 @AC}",
+        "{>>r51000 @AC<<}",
+        "{>>r9 @AC<<}",
+        "{>>r10000 @AC<<}",
+        "{>>r0 @AC<<}",
+        "{>>r51199 @AC<<}",
+        "{~~old~>new~~}{>>r3+4 @AC<<}",
         "{>>c51000 @AC: Far away.<<}",
         "{>>c10 @JD re c9: Reply to nine.<<}",
         "{>>c99 @JD resolved: Settled.<<}",
@@ -1130,10 +1091,10 @@ fn every_story_and_every_collision_round_trips() {
         "footnotes.r5 @AC",
         "footnotes.r51000 @JD",
         "endnotes.r12 @AC",
-        "{++body five++}{r5 @AC}",
+        "{++body five++}{>>r5 @AC<<}",
         "{>>c5 @AC: Five.<<}",
         "<!-- p5 -->",
-        "{++Boxed++}{r40 @AC}",
+        "{++Boxed++}{>>r40 @AC<<}",
     ] {
         assert!(view.contains(printed), "{printed}:\n{view}");
     }
@@ -1194,9 +1155,7 @@ fn word_redlines_round_trip() {
         let name = file.file_name().unwrap().to_string_lossy().to_string();
         let docx = std::fs::read(file).unwrap();
         round_trip(&name, &docx, &mut fails);
-        // The id `jubarte changes` lists: a logical change, composite when
-        // Word wrote it as several marks.
-        let listed = jubarte::changes::list_logical_changes(&docx).unwrap();
+        let listed = jubarte::changes::list_changes(&docx).unwrap();
         if let Some(change) = listed.first() {
             accept_by_cli(&name, &docx, &change.r#ref, &mut fails);
         }
@@ -1258,83 +1217,4 @@ fn a_shell_unsafe_part_stem_prints_a_safe_story_id() {
             .is_empty()
     );
     assert!(view(&docx).contains("hdr%21old"), "{}", view(&docx));
-}
-
-/// Plan 11 (#1261): the view and `changes` agree on every logical
-/// change. An id the view prints that names a mark of a change of several
-/// marks is that change's whole id, and every such change is printed
-/// (itself, or the container it sits inside).
-fn agree_on_groups(name: &str, docx: &[u8], fails: &mut Vec<String>) {
-    let mut fail = |what: String| fails.push(format!("{name}: {what}"));
-    let printed = printed(&view(docx));
-    let logical = jubarte::changes::list_logical_changes(docx).expect("changes lists the document");
-    let whole: HashMap<&str, &str> = logical
-        .iter()
-        .flat_map(|c| {
-            c.members
-                .iter()
-                .map(move |m| (m.id.as_str(), c.id.as_str()))
-        })
-        .collect();
-    for token in &printed.changes {
-        let Ok(ids) = parse_change_ids(token) else {
-            continue; // `round_trip` names it
-        };
-        for id in ids {
-            if let Some(change) = whole.get(id.short().as_str())
-                && token != change
-            {
-                fail(format!("printed {token} for a mark of {change}"));
-            }
-        }
-    }
-    let by_id: HashMap<&str, &jubarte::changes::Change> =
-        logical.iter().map(|c| (c.id.as_str(), c)).collect();
-    for change in logical.iter().filter(|c| !c.members.is_empty()) {
-        let mut at = Some(change);
-        let mut hops = 0;
-        while let Some(c) = at.filter(|c| !printed.changes.contains(&c.id)) {
-            at = c.inside.as_deref().and_then(|i| by_id.get(i).copied());
-            hops += 1;
-            if hops > logical.len() {
-                at = None;
-            }
-        }
-        if at.is_none() {
-            fail(format!(
-                "{} ({:?}) is printed nowhere",
-                change.id, change.kind
-            ));
-        }
-    }
-}
-
-#[test]
-fn read_and_changes_agree_on_every_group() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
-    let mut fails = Vec::new();
-    for (name, docx) in [
-        ("long body", long_body()),
-        ("tables", tables()),
-        ("stories", stories()),
-    ] {
-        agree_on_groups(name, docx, &mut fails);
-    }
-    for dir in [
-        "grok_run/wr0928/rejected_tracking/docx",
-        "corpus/word/with_comments_tracking/docx",
-        "corpus/word/tracking_without_comments/docx",
-    ] {
-        let mut here: Vec<_> = std::fs::read_dir(root.join(dir))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == "docx"))
-            .collect();
-        here.sort();
-        for file in here {
-            let name = file.file_name().unwrap().to_string_lossy().to_string();
-            agree_on_groups(&name, &std::fs::read(&file).unwrap(), &mut fails);
-        }
-    }
-    report(&fails);
 }

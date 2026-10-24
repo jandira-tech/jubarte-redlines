@@ -107,8 +107,7 @@ impl std::error::Error for ScrubError {}
 /// document, the options are invalid, or scrubbing would introduce new
 /// validation findings.
 pub fn scrub(docx: &[u8], options: &ScrubOptions) -> Result<Vec<u8>, ScrubError> {
-    let mut pkg = PartFs::open(docx)
-        .map_err(|e| ScrubError::Package(crate::opc::refusal_message(docx, &e)))?;
+    let mut pkg = PartFs::open(docx).map_err(|e| ScrubError::Package(e.to_string()))?;
     if pkg
         .main_document_part()
         .is_none_or(|main| pkg.part_bytes(&main).is_none())
@@ -388,82 +387,29 @@ fn scrub_properties(pkg: &mut PartFs) {
 /// The parts of `docx` where `needle` still occurs, sorted: in a text node,
 /// an attribute value that can hold text, an XML comment, the joined run
 /// text of a paragraph (a text split across runs), or the raw bytes of a
-/// part that is not XML (UTF-8 or UTF-16LE). An empty needle occurs nowhere.
-/// An unreadable archive or entry is a finding: an incomplete scan cannot
-/// certify a redaction.
-///
-/// The scan is bounded like the package constructor (#645): a package past
-/// the admission budget, or an entry that inflates past its per-part or
-/// package cap, is reported as a finding rather than skipped — `edit`'s
-/// redaction check turns every finding into a refusal, so a package that
-/// cannot be scanned fails closed.
+/// part that is not XML (UTF-8 or UTF-16LE). An empty needle, or bytes that
+/// are not a zip, occur nowhere.
 ///
 /// The check fails closed: a short needle can also match an unrelated
 /// attribute value. Attributes that only ever hold numbers (sizes, ids,
 /// positions) are skipped when their value is a plain number.
 pub fn leaks(docx: &[u8], needle: &str) -> Vec<String> {
-    leaks_within(docx, needle, crate::admission::InputLimits::compare())
-}
-
-/// [`leaks`] under an explicit budget, so the fail-closed paths are provable
-/// with budgets small enough for a test.
-pub(crate) fn leaks_within(
-    docx: &[u8],
-    needle: &str,
-    limits: crate::admission::InputLimits,
-) -> Vec<String> {
     let mut found = BTreeSet::new();
     if needle.is_empty() {
         return Vec::new();
     }
-    if let Err(error) = crate::admission::preindex_budget(docx, limits) {
-        return vec![format!("the package ({error})")];
-    }
-    let mut zip = match crate::opc::open_archive(std::io::Cursor::new(docx)) {
-        Ok(zip) => zip,
-        Err(error) => return vec![format!("the package (cannot read: {error})")],
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
+        return Vec::new();
     };
     let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let mut total = 0u64;
     for i in 0..zip.len() {
-        let mut entry = match zip.by_index(i) {
-            Ok(entry) => entry,
-            Err(error) => {
-                found.insert(format!("ZIP entry {i} (cannot read: {error})"));
-                break;
-            }
+        let Ok(mut entry) = zip.by_index(i) else {
+            continue;
         };
-        let name = match entry.name() {
-            Ok(name) => name,
-            Err(error) => {
-                found.insert(format!("ZIP entry {i} (cannot read name: {error})"));
-                break;
-            }
-        };
-        let name = name.into_owned();
-        if entry.size() > limits.max_part_bytes {
-            let error = crate::admission::part_declared_over(&name, entry.size(), &limits);
-            found.insert(format!("{name} ({error})"));
-            break;
-        }
-        let cap = limits
-            .max_part_bytes
-            .min(limits.max_uncompressed_bytes.saturating_sub(total));
+        let name = entry.name().to_string();
         let mut bytes = Vec::new();
-        let read = match (&mut entry)
-            .take(cap.saturating_add(1))
-            .read_to_end(&mut bytes)
-        {
-            Ok(read) => read as u64,
-            Err(error) => {
-                found.insert(format!("{name} (cannot read: {error})"));
-                break;
-            }
-        };
-        if let Err(error) = crate::admission::tally_inflated(&mut total, read, &name, cap, &limits)
-        {
-            found.insert(format!("{name} ({error})"));
-            break;
+        if entry.read_to_end(&mut bytes).is_err() {
+            continue;
         }
         let xml = name.ends_with(".xml") || name.ends_with(".rels");
         let hit = if xml {
@@ -571,7 +517,7 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -642,7 +588,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_memory_leak_boundary_tests {
     use super::*;
 
@@ -752,56 +698,5 @@ mod public_memory_leak_boundary_tests {
             );
             assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), original);
         }
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod bounded_input_tests {
-    use super::*;
-    use crate::admission::{InputLimits, limit_test_support as fixture};
-
-    fn refuses(limits: InputLimits, detail: &str) {
-        let bytes = fixture::package();
-        let text = leaks_within(&bytes, "absent needle", limits).join(", ");
-        assert!(text.contains("INPUT_LIMIT"), "{text}");
-        assert!(text.contains(detail), "{text}");
-    }
-    #[test]
-    fn compressed_limit() {
-        refuses(fixture::compressed(), "input is");
-    }
-    #[test]
-    fn count_limit() {
-        refuses(fixture::count(), "3 ZIP entries; the limit is 2");
-    }
-    #[test]
-    fn part_limit() {
-        refuses(fixture::part(), "a.bin");
-    }
-    #[test]
-    fn aggregate_limit() {
-        refuses(fixture::total(), "the package limit is 160");
-    }
-    #[test]
-    fn unreadable_entry_is_a_finding() {
-        let mut bytes = fixture::package();
-        // Corrupt a central-directory CRC, leaving its payload and size intact.
-        let cd = bytes.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
-        bytes[cd + 16] ^= 1;
-        let findings = leaks_within(&bytes, "absent needle", fixture::limits());
-        assert!(
-            !findings.is_empty(),
-            "an unreadable part cannot certify a redaction"
-        );
-    }
-    #[test]
-    fn exact_budget_control() {
-        let bytes = fixture::package();
-        assert!(leaks_within(&bytes, "absent needle", fixture::limits()).is_empty());
-        assert_eq!(
-            leaks_within(&bytes, "aaaa", fixture::limits()),
-            ["word/media/a.bin"]
-        );
     }
 }

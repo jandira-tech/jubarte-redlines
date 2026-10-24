@@ -12,46 +12,25 @@ styles:
   ListParagraph: Times 11.5pt, after 6pt, line 1.1, named List Paragraph
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
-  first:                           # page 1 only (different first page)
-    id: header3
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "This is my first page header, page numbers at the right", indent: {right: 0.25in}}
-  default:
-    id: header2
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "Odd page header, page numbers at the right", indent: {right: 0.25in}}
-  even:
-    id: header1
-    p0: {text: "{PAGE}2{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, xAlign: right, y: 1}}
-    p1: {text: "Even page header, page numbers at the right", indent: {right: 0.25in}}
-    p2: {text: "", indent: {right: 0.25in}}
+  first: {id: header3, text: ["{PAGE}1{/}", "This is my first page header, page numbers at the right"]}  # page 1 only (different first page)
+  default: {id: header2, text: ["{PAGE}1{/}", "Odd page header, page numbers at the right"]}
+  even: {id: header1, text: ["{PAGE}2{/}", "Even page header, page numbers at the right", ""]}
 footers:
-  first:                           # page 1 only (different first page)
-    id: footer3
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "This Is my first page footer, page numbers at the left", indent: {first-line: 0.25in}}
-  default:
-    id: footer2
-    p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "Odd page footer, page numbers at the left", indent: {first-line: 0.25in, right: 0.25in}}
-    p2: {text: ""}
-    styles: [Footer, Header, Footer]
-  even:
-    id: footer1
-    p0: {text: "{PAGE}2{/}", frame: {wrap: none, hAnchor: margin, vAnchor: text, y: 1}}
-    p1: {text: "Even page footer, page numbers at the right", indent: {first-line: 0.25in}}
+  first: {id: footer3, text: ["{PAGE}1{/}", "This Is my first page footer, page numbers at the left"]}  # page 1 only (different first page)
+  default: {id: footer2, text: ["{PAGE}1{/}", "Odd page footer, page numbers at the left", ""], styles: [Footer, Header, Footer]}
+  even: {id: footer1, text: ["{PAGE}2{/}", "Even page footer, page numbers at the right"]}
 ---
 
-<!-- p0 size 16pt -->
+<!-- p0 -->
 This is a document with:
 
-<!-- p1 ListParagraph size 16pt, bullet -->
+<!-- p1 ListParagraph bullet -->
 - normal headers and footers defined - ON
 
-<!-- p2 ListParagraph size 16pt, bullet -->
+<!-- p2 ListParagraph bullet -->
 - odd/even headers and footers defined - ON
 
-<!-- p3 ListParagraph size 16pt, bullet -->
+<!-- p3 ListParagraph bullet -->
 - first page header and footer defined - ON
 
 <!-- p4 empty -->

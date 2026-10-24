@@ -83,20 +83,6 @@ fn resolve(markdown: &str, accept: bool) -> String {
         }
     };
     let text = spans(markdown, "{>>", "<<}", |_| String::new());
-    // A pilcrow attributes the following paragraph boundary. Move only
-    // that separator and an ATX heading prefix into an insertion so the
-    // independent span resolver can accept or reject it with the mark.
-    let text = regex::Regex::new(
-        r"¶\{(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|noid)\b[^{}]*\}(\n\n)(#{1,6}[ \t]+)?",
-    )
-    .unwrap()
-    .replace_all(&text, "{++$1$2++}")
-    .into_owned();
-    let text =
-        regex::Regex::new(r"(?:¶)?\{(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|noid)\b[^{}]*\}")
-            .unwrap()
-            .replace_all(&text, "")
-            .into_owned();
     let text = spans(&text, "{==", "==}", str::to_string);
     let text = spans(&text, "{~~", "~~}", |inner| {
         let (old, new) = inner.split_once("~>").unwrap();
@@ -118,14 +104,6 @@ fn plain(markdown: &str) -> String {
 
 #[test]
 fn office_written_tracked_changes_match_the_golden_markdown() {
-    if std::env::var_os("JUBARTE_BLESS").is_some() {
-        std::fs::write(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/from-docx/critic/tracked-changes.md"),
-            markdown(),
-        )
-        .unwrap();
-    }
     assert_eq!(markdown(), fixture("tracked-changes.md"));
 }
 
@@ -156,15 +134,15 @@ fn every_comment_names_its_author_and_word_date() {
 fn every_change_names_its_author_and_date() {
     let markdown = markdown();
     for change in [
-        "{-- to people that--}{r0 Bo Chen (2026-09-29T15:12:00Z)}",
-        // A deletion followed by a live insertion from the same author pairs.
-        "{~~fonts~>font-styles~~}{r1+2 Ana Lima (2026-09-29T14:05:00Z)}",
-        // LibreOffice splits this insertion into two marks: one change,
-        // each piece tagged with the joined id.
-        "{++**any**++}{r3+4 Bo Chen (2026-09-29T15:10:00Z)}{++ ++}{r3+4 Bo Chen (2026-09-29T15:10:00Z)}",
-        // The text and its paragraph mark are one change, one piece.
-        "{--This whole paragraph was cut.\n\n--}{r5+6 Ana Lima (2026-09-30T09:00:00Z)}",
-        "¶{r7 Bo Chen (2026-09-30T09:30:00Z)}\n\nsplit in two.",
+        "{-- to people that--}{>>r0 Bo Chen (2026-09-29T15:12:00Z)<<}",
+        // Writer writes the replacement deletion first: two changes.
+        "{--fonts--}{>>r1 Ana Lima (2026-09-29T14:05:00Z)<<}{++font-styles++}{>>r2 Ana Lima (2026-09-29T14:05:00Z)<<}",
+        // LibreOffice splits this insertion in two; one author, one note
+        // naming both marks.
+        "{++**any** ++}{>>r3+4 Bo Chen (2026-09-29T15:10:00Z)<<}",
+        // The text and its paragraph mark, each its own mark.
+        "{--This whole paragraph was cut.\n\n--}{>>r5+6 Ana Lima (2026-09-30T09:00:00Z)<<}",
+        "{++\n\n++}{>>r7 Bo Chen (2026-09-30T09:30:00Z)<<}",
     ] {
         assert!(markdown.contains(change), "{change} not in {markdown}");
     }

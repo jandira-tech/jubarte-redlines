@@ -75,7 +75,7 @@ fn replace_unique_text_yields_clean_copy_and_tracked_redline() {
         op.context.as_deref(),
         Some("above also signs in {his or her→an} individual capacity")
     );
-    assert!(report.revisions.replaced >= 1, "{:?}", report.revisions);
+    assert!(report.revisions.inserted >= 1 && report.revisions.deleted >= 1);
     assert_eq!(report.source_sha256, source_sha256(&source));
     // Inputs are never mutated.
     assert_eq!(source_sha256(&source), report.source_sha256);
@@ -739,13 +739,8 @@ fn preview_reports_without_producing_documents() {
         report.operations[0].context.as_deref(),
         Some("alpha {beta→gamma}")
     );
-    // The counts are applying's: one replacement (plan 11).
-    assert_eq!(
-        (report.revisions.replaced, report.revisions.total),
-        (1, 1),
-        "{:?}",
-        report.revisions
-    );
+    // The counts are applying's: the replacement's deletion and insertion.
+    assert_eq!(report.revisions.total, 2, "{:?}", report.revisions);
 }
 
 #[test]
@@ -759,7 +754,7 @@ fn macro_packages_are_refused() {
         let mut data = Vec::new();
         std::io::Read::read_to_end(&mut f, &mut data).unwrap();
         out.start_file(
-            f.name().expect("decode ZIP fixture name").into_owned(),
+            f.name().to_string(),
             zip::write::SimpleFileOptions::default(),
         )
         .unwrap();
@@ -1747,14 +1742,12 @@ fn whole_replace_deletes_the_find_text_then_inserts_the_replacement() {
     }
     assert!(whole.report.ok);
     assert!(whole.report.operations.iter().all(|o| o.message.is_none()));
-    // Each deletion and the insertion after it is one replacement.
     assert_eq!(
         (
             whole.report.revisions.deleted,
-            whole.report.revisions.inserted,
-            whole.report.revisions.replaced
+            whole.report.revisions.inserted
         ),
-        (0, 0, 2)
+        (2, 2)
     );
 }
 
@@ -1765,95 +1758,28 @@ fn whole_replace_across_runs_keeps_formatting_and_comment() {
     let source = docx(&format!(
         "<w:p>{}{}</w:p>",
         run("Notices. Send notices by ", false, false, None),
-        run("email to Alice", true, false, None) + &run(" within two days.", false, false, None)
+        run("email to legal@acme.example", true, false, None)
+            + &run(" within two days.", false, false, None)
     ));
     let result = apply_plan(
         &source,
         &plan(
             &source,
-            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true,"comment":"Courier only."}]"#,
+            r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to legal","replacement":"by courier to legal","whole":true,"comment":"Courier only."}]"#,
         ),
     )
     .unwrap();
     assert_eq!(
         marked_paragraphs(&result.redline),
-        ["Notices. Send notices [-by email to-]{+by courier to+} Alice within two days."]
+        [
+            "Notices. Send notices [-by email to legal-]{+by courier to legal+}@acme.example within two days."
+        ]
     );
     let xml = part_string(&result.redline, "word/document.xml").unwrap();
-    let mut dom = Dom::new();
-    let document = dom.parse_xdocument(&xml);
-    let root = dom.root(document).unwrap();
-    let mut seen = std::collections::HashSet::new();
-    let mut count = 0;
-    for node in dom.descendants(root, None) {
-        let Some(name) = dom.name(node) else { continue };
-        if name.namespace_name() == W::URI && matches!(name.local_name(), "rPrChange" | "pPrChange")
-        {
-            let id = dom.attribute(node, &W::id()).unwrap();
-            assert!(
-                seen.insert((name.local_name().to_string(), id.to_string())),
-                "duplicate {}:{id} in word/document.xml",
-                name.local_name()
-            );
-            count += 1;
-        }
-    }
-    // Re-typed whole, the span is one deletion and one insertion: neither
-    // side carries a formatting change of its own (#1375).
-    assert_eq!(
-        count, 0,
-        "no w:rPrChange on either side of a whole replacement"
-    );
     assert_eq!(xml.matches("<w:commentReference ").count(), 1);
-    // "email to" was bold in the source; its deleted copy stays bold.
+    // "email to legal" was bold in the source; its deleted copy stays bold.
     let del = &xml[xml.find("<w:del ").unwrap()..xml.find("</w:del>").unwrap()];
     assert!(del.contains("<w:b/>") || del.contains("<w:b />"), "{del}");
-    assert_word_valid_package(&result.redline);
-}
-
-/// Annotation ids are independent of the revision-record allocator.
-#[test]
-fn whole_replace_ignores_div_and_bookmark_ids() {
-    let source = docx_with(
-        r#"<w:p><w:bookmarkStart w:id="900000" w:name="Alice"/><w:ins w:id="10" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Send notices by email to Alice.</w:t></w:r></w:ins><w:bookmarkEnd w:id="900000"/></w:p>"#,
-        &[Part {
-            name: "word/webSettings.xml",
-            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.webSettings+xml",
-            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/webSettings",
-            xml: r#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:divs><w:div w:id="2147483647"/></w:divs></w:webSettings>"#,
-        }],
-    );
-    let mut edit = plan(
-        &source,
-        r#"[{"kind":"replace","paragraph":{"index":0},"find":"by email to","replacement":"by courier to","whole":true}]"#,
-    );
-    edit.existing_revisions = jubarte::edit::ExistingRevisions::Accept;
-    let result = apply_plan(&source, &edit).unwrap();
-    let xml = part_string(&result.redline, "word/document.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let ids: Vec<u64> = dom
-        .descendants(root, None)
-        .into_iter()
-        .filter_map(|n| {
-            let name = dom.name(n)?;
-            (name.namespace_name() == W::URI
-                && matches!(name.local_name(), "ins" | "del" | "rPrChange" | "pPrChange"))
-            .then(|| dom.attribute(n, &W::id()).unwrap().parse().unwrap())
-        })
-        .collect();
-    assert!(ids.len() >= 2, "both replacement sides must be tracked");
-    let bound = 10 + ids.len() as u64;
-    assert!(
-        ids.iter().all(|&id| id <= bound && id <= 2147483647),
-        "revision ids {ids:?} exceed input revision max 10 + {} records (bound {bound}) or signed 32-bit range",
-        ids.len()
-    );
-    assert_eq!(
-        marked_paragraphs(&result.redline),
-        ["Send notices [-by email to-]{+by courier to+} Alice."]
-    );
     assert_word_valid_package(&result.redline);
 }
 
@@ -2005,6 +1931,7 @@ fn rewrite_refuses_what_replace_refuses() {
     let source = docx(body);
     for ops in [
         r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"jubarte.law site"}]"#,
+        r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
         r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"bell\u0007"}]"#,
     ] {
         let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
@@ -2023,17 +1950,6 @@ fn rewrite_refuses_what_replace_refuses() {
     )
     .unwrap();
     assert_eq!(texts(&result.clean)[0], "arthur.law website");
-    // An empty paragraph takes the text in a new run (#1263).
-    let result = apply_plan(
-        &source,
-        &plan(
-            &source,
-            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
-        ),
-    )
-    .unwrap();
-    assert_eq!(texts(&result.clean)[1], "into an empty paragraph");
-    assert_word_valid_package(&result.redline);
     let unknown = EditPlan::from_json(
         r#"{"schema_version":1,"author":"a","operations":[{"kind":"rewrite","paragraph":{"index":0},"text":"x","find":"y"}]}"#,
     );
@@ -2087,9 +2003,8 @@ fn the_report_counts_the_listed_changes() {
             source_sha256(&source)
         )
     };
-    // Counted as `jubarte changes` lists them: logical changes (plan 11).
     let kept = apply_plan_json(&source, &json("keep")).unwrap();
-    let listed = jubarte::changes::list_logical_changes(&kept.redline).unwrap();
+    let listed = jubarte::changes::list_changes(&kept.redline).unwrap();
     let ours = listed
         .iter()
         .filter(|c| {
@@ -2106,14 +2021,9 @@ fn the_report_counts_the_listed_changes() {
     assert_eq!(total, summary(&compared.redline).unwrap().revisions);
     assert_eq!(
         total,
-        jubarte::changes::list_logical_changes(&compared.redline)
+        jubarte::changes::list_changes(&compared.redline)
             .unwrap()
             .len()
-    );
-    let counts = compared.report.revisions;
-    assert_eq!(
-        counts.inserted + counts.deleted + counts.moved + counts.format_changed + counts.replaced,
-        total
     );
 }
 

@@ -17,9 +17,7 @@
 #
 # wasm-opt flags (-O3, SIMD, bulk-memory, …) live in Cargo.toml
 # [package.metadata.wasm-pack.profile.*]; together those two files are the
-# FULL build recipe the bench's engine pin now records (tool_updater). The
-# published npm bytes also take build-npm.sh's --remap-path-prefix flags
-# (#1480): they change only the panic locations' paths, not the code.
+# FULL build recipe the bench's engine pin now records (tool_updater).
 [target.wasm32-unknown-unknown]
 rustflags = [
   "-C", "target-feature=+simd128",

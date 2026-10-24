@@ -1000,7 +1000,7 @@ fn consider_candidate(
 /// as the equivalence oracle for [`longest_common_run_indexed`] (`indexed_matches_scan`);
 /// not compiled into release builds.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn longest_common_run_scan(
     dom: Option<&Dom>,
     cul1: &[ComparisonUnit],
@@ -8893,7 +8893,7 @@ fn correlated_hash_run_threshold(
 /// Historical nested start-pair + suffix-extension scanner. Kept as the
 /// CORR-IDX-01 reference oracle; production dispatches to the indexed form.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn correlated_hash_run_scan(unknown: &CorrelatedSequence) -> Option<CorrelatedHashRun> {
     use ComparisonUnitGroupType::*;
     let cul1 = unknown.com_units_1.as_deref().unwrap_or(&[]);
@@ -9088,7 +9088,7 @@ pub fn process_correlated_hashes(unknown: &CorrelatedSequence) -> Option<Vec<Cor
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 /// Ownership-only form of [`process_correlated_hashes`], kept for the
 /// CORR-IDX tests; production runs [`process_correlated_hashes_in_story`]. A decline
 /// returns the original sequence intact so the next resolver can inspect it;
@@ -10099,7 +10099,7 @@ pub fn lcs(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod correlated_hash_owned_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -10204,7 +10204,7 @@ mod correlated_hash_owned_tests {
 /// CORR-IDX-01 — indexed correlated-hash run must equal the nested scan oracle
 /// (including atom-max ties → first-found `(i1, i2)`, thresholds, and decline).
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod correlated_hash_idx_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -10436,7 +10436,7 @@ mod correlated_hash_idx_tests {
 /// by the corpus canonical-structural-equality suite, since both paths share
 /// [`common_run_content_score`].
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod indexed_lcr_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitWord, Sha1Keyed};
@@ -10545,7 +10545,7 @@ mod indexed_lcr_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod story_final_mark_tests {
     use super::*;
 
@@ -10569,7 +10569,7 @@ mod story_final_mark_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deterministic_gap_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -11794,7 +11794,7 @@ mod deterministic_gap_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -12804,7 +12804,7 @@ mod coverage_round_three_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_four_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -14150,7 +14150,7 @@ mod coverage_round_four_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_next_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -15214,7 +15214,7 @@ mod coverage_round_next_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deep_lcs_source_conservation_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -17859,7 +17859,7 @@ mod deep_lcs_source_conservation_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_final_batch_lcs_tests {
     use super::*;
     use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
@@ -18165,7 +18165,7 @@ mod coverage_final_batch_lcs_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_real_source_route_matrix_tests {
     use super::*;
     use crate::namespaces::{M, R};
@@ -19621,7 +19621,8 @@ mod coverage_real_source_route_matrix_tests {
     fn opaque_source_events(bytes: &[u8], faithful: bool) -> Vec<String> {
         fn canonical(dom: &Dom, node: NodeId) -> String {
             let mut attrs = dom
-                .attributes_iter(node)
+                .attributes(node)
+                .into_iter()
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .map(|(name, value)| {
                     (

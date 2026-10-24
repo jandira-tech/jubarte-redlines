@@ -28,8 +28,7 @@
 //! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
 //! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
-//! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
-//! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
+//! | `DUPLICATE_REVISION_ID`, `DUPLICATE_DOCPR_ID` | no (leads) | yes: renumbered |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
 //! | `INSTR_TEXT_INSIDE_DELETION` | no (not probed in Word) | yes |
@@ -41,23 +40,11 @@
 //! | `RUN_OUTSIDE_PARAGRAPH` | yes | no |
 //! | `FIELD_UNBALANCED`, `FIELD_SPLIT_DELETION` | yes | no |
 //! | `FIELD_CODE_STATE` | no | no |
-//! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `SECTPR_NOT_LAST` | yes | no |
-//! | `NESTED_SAME_REVISION` | no: Word opens direct same-kind nests faithfully (info); alternating nests misread reject-all (warning); probe 2026-10-17, #1134 | no |
+//! | `EMPTY_FIELD_CODE`, `ROW_WITHOUT_CELL`, `NESTED_SAME_REVISION`, `SECTPR_NOT_LAST` | yes | no |
 //! | `CELL_WITHOUT_PARAGRAPH` | yes | yes: an empty paragraph is appended |
 //! | `NOTE_REFERENCE_DANGLING` | yes | no |
-//! | `DUPLICATE_EXPANDED_ATTRIBUTE` | yes: aliased duplicate refused by Word (#650) | no |
-//! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
-//! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
-//! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
-//!
-//! Revision ids are unique per OOXML record type within a part, as
-//! OpenXmlValidator checks them (`Sem_UniqueAttributeValue`): two `w:ins`
-//! runs sharing an id are a finding, a `w:ins` and a `w:del` sharing one are
-//! not, and neither is the `pPrChange`/`rPrChange` pair Word writes in style
-//! histories. Word opens every duplicate-id probe (102 files, 2026-10-18,
-//! #1137), so this is an error diagnostic, not Word-fatal.
 //!
 //! The comment codes follow a 98-file Word probe (2026-10-10). Word opens
 //! a comment whatever its range markers: missing, reversed, repeated, at
@@ -74,13 +61,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionError, InputLimits};
-use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
+use crate::changes::{ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
-use crate::namespaces::{MC, R, VML, W, W14, WP};
+use crate::namespaces::{MC, R, W, W14};
 use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -99,12 +87,10 @@ use crate::xmllinq::{Dom, NodeId, XName};
 pub struct Finding {
     /// Stable code (`TEXT_INSIDE_DELETION`, `MC_UNBOUND_PREFIX`, ...).
     pub code: String,
-    /// The rule set it belongs to: one of `RULE_SETS`.
+    /// The rule set it belongs to: one of [`RULE_SETS`].
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
-    /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
-    /// `warning` (a lead), or `info` for direct
-    /// same-kind revision nesting that Word reads faithfully.
+    /// Word-fatal and a `warning` (a lead) otherwise.
     pub severity: String,
     /// Package part the finding sits in.
     pub part: String,
@@ -124,12 +110,11 @@ pub struct Finding {
 }
 
 /// Every rule set `validate` runs, `word` (the default) first.
-pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
+pub const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "structure"];
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
-    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
-    /// are errors, though Word opens them.
+    /// code's table ([`traits`]) and the severity from `word_fatal`.
     pub fn new(
         code: &str,
         part: &str,
@@ -142,12 +127,7 @@ impl Finding {
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
-            severity: if word_fatal || code == "DUPLICATE_REVISION_ID" {
-                "error"
-            } else {
-                "warning"
-            }
-            .to_string(),
+            severity: if word_fatal { "error" } else { "warning" }.to_string(),
             part: part.to_string(),
             location,
             r#ref,
@@ -176,7 +156,6 @@ pub fn traits(code: &str) -> (bool, bool) {
         "MISSING_CONTENT_TYPE"
         | "OVERRIDE_WITHOUT_PART"
         | "MALFORMED_XML"
-        | "DUPLICATE_EXPANDED_ATTRIBUTE"
         | "MISSING_REL_TARGET"
         | "PICTURE_BULLET_UNDEFINED"
         | "COMMENT_PARTS_INCONSISTENT"
@@ -185,8 +164,8 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "FIELD_SPLIT_DELETION"
         | "EMPTY_FIELD_CODE"
         | "ROW_WITHOUT_CELL"
+        | "NESTED_SAME_REVISION"
         | "SECTPR_NOT_LAST"
-        | "NESTED_TEXT_BOX"
         | "NOTE_REFERENCE_DANGLING" => (true, false),
         "DUPLICATE_REVISION_ID"
         | "DUPLICATE_DOCPR_ID"
@@ -199,14 +178,10 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 28] = [
-    "DATA_BINDING_WITHOUT_STORE",
-    "MOVE_RANGE_COUNT_MISMATCH",
-    "NESTED_TEXT_BOX",
+const RING1_CODES: [&str; 23] = [
     "MC_UNBOUND_PREFIX",
     "MISSING_CONTENT_TYPE",
     "MALFORMED_XML",
-    "DUPLICATE_EXPANDED_ATTRIBUTE",
     "DANGLING_RELATIONSHIP",
     "DUPLICATE_RID",
     "MISSING_REL_TARGET",
@@ -215,7 +190,6 @@ const RING1_CODES: [&str; 28] = [
     "DUPLICATE_DOCPR_ID",
     "PARA_ID_OUT_OF_RANGE",
     "TEXT_INSIDE_DELETION",
-    "INSTR_TEXT_INSIDE_DELETION",
     "DELTEXT_OUTSIDE_DELETION",
     "MOVEFROM_WITH_DELTEXT",
     "BOOKMARK_IN_SINGLE_VALUE_CONTROL",
@@ -337,7 +311,7 @@ pub fn validate_with(
     if edits {
         let Some((before, author)) = original else {
             return Err(ValidateError::Usage(
-                "rules edits needs --author, and --original or --baseline".to_string(),
+                "rules edits needs --original and --author".to_string(),
             ));
         };
         out.extend(audit_tracked(before, docx, author)?);
@@ -354,40 +328,6 @@ pub fn validate_with(
         out.extend(report.findings.into_iter().map(Finding::from));
     }
     Ok(out)
-}
-
-/// [`validate_with`] on `docx`, split by the findings of `base`, the
-/// document the edits started from, under the same rules and against the
-/// same original ([`baseline_keyed`], each side's keys read in its own
-/// document by [`identities`]). That original is `base` unless `original`
-/// names another; `author` turns the `edits` rule on as `validate_with`'s
-/// `original` does, so the other party's changes `base` already had are
-/// the input's, not the edit's.
-///
-/// # Errors
-///
-/// As [`validate_with`], for either document.
-pub fn validate_baselined(
-    docx: &[u8],
-    base: &[u8],
-    rules: &[&str],
-    original: Option<&[u8]>,
-    author: Option<&str>,
-    mut layout: Option<crate::audit::LayoutPass<'_>>,
-) -> Result<Baselined, ValidateError> {
-    let against = original.or(Some(base)).zip(author);
-    let findings = validate_with(
-        docx,
-        rules,
-        against,
-        layout
-            .as_mut()
-            .map(|pass| &mut **pass as crate::audit::LayoutPass<'_>),
-    )?;
-    let inherited = validate_with(base, rules, against, layout)?;
-    let keys = identities(docx, &findings);
-    let inherited_keys = identities(base, &inherited);
-    Ok(baseline_keyed(findings, &keys, inherited, &inherited_keys))
 }
 
 /// The usage message for a rule that is neither a set nor an audit code.
@@ -419,7 +359,16 @@ pub fn fails(findings: &[Finding], strict: bool) -> bool {
 pub fn findings_text(findings: &[Finding]) -> String {
     let mut out = String::new();
     for f in findings {
-        out.push_str(&finding_line(f));
+        let star = if f.word_fatal { '*' } else { ' ' };
+        let place = if matches!(f.set.as_str(), "word" | "edits") {
+            format!("{}#{}", f.part, f.location)
+        } else {
+            f.location.clone()
+        };
+        out.push_str(&format!(
+            "{star} {}\t{}\t{place}\t{}\n",
+            f.code, f.severity, f.message
+        ));
     }
     if findings.is_empty() {
         out.push_str("no findings\n");
@@ -434,675 +383,6 @@ pub fn findings_text(findings: &[Finding]) -> String {
         ));
     }
     out
-}
-
-/// One [`findings_text`] line, newline included.
-fn finding_line(f: &Finding) -> String {
-    let star = if f.word_fatal { '*' } else { ' ' };
-    let place = if matches!(f.set.as_str(), "word" | "edits") {
-        format!("{}#{}", f.part, f.location)
-    } else {
-        f.location.clone()
-    };
-    format!(
-        "{star} {}\t{}\t{place}\t{}\n",
-        f.code, f.severity, f.message
-    )
-}
-
-/// What makes a finding in one version of a document the same finding in
-/// another ([`Finding::identity`]): its code, set and part, where it sits
-/// (its paragraph id or element chain, empty for a part-level finding), its
-/// message with element indices dropped (`w:p[3]` reads `w:p`) and
-/// paragraph ids spelled `p#`, and what surrounds it there ([`Place`]). A
-/// finding named by an entity, a durableId or a bookmark, keeps that
-/// entity in its message.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FindingKey {
-    /// [`Finding::code`].
-    pub code: String,
-    /// [`Finding::set`].
-    pub set: String,
-    /// [`Finding::part`].
-    pub part: String,
-    /// [`Finding::location`]; from [`identities`], an element chain with
-    /// its indices dropped, or `p#` for a paragraph id.
-    pub location: String,
-    /// [`Finding::message`], normalised.
-    pub message: String,
-    /// What surrounds the finding in its document, read by [`identities`];
-    /// empty from [`Finding::identity`].
-    pub place: Place,
-}
-
-/// What surrounds a finding in its document ([`identities`]), each part
-/// `None` where there is none: what [`baseline_keyed`] tells two findings
-/// of one kind apart by.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Place {
-    /// The text of the paragraph the finding sits in; outside one, of its
-    /// table, or else of its element with the attributes of that element
-    /// and of everything holding it (a style's `w:styleId`), leaving out
-    /// the ones an edit renumbers.
-    pub text: Option<String>,
-    /// That paragraph's `w14:paraId`.
-    pub paragraph_id: Option<String>,
-    /// The tracked change, or comment, the finding sits in: its element
-    /// and `w:id` (`del 3`); for `FOREIGN_AUTHOR`, the change's id (`r3`).
-    /// `jubarte edit` keeps the input's `w:id` values.
-    pub revision: Option<String>,
-    /// The text of the element before the one [`Self::text`] reads, of its
-    /// name and in the same parent.
-    pub previous: Option<String>,
-    /// The text of the element after it, of its name and in the same
-    /// parent.
-    pub next: Option<String>,
-}
-
-impl Finding {
-    /// This finding's [`FindingKey`]: [`baseline`] matches findings by it.
-    pub fn identity(&self) -> FindingKey {
-        FindingKey {
-            code: self.code.clone(),
-            set: self.set.clone(),
-            part: self.part.clone(),
-            location: self.location.clone(),
-            message: normalised(&self.message),
-            place: Place::default(),
-        }
-    }
-}
-
-/// Each of `findings`' [`FindingKey`], read in `docx`, the document they
-/// were found in. A finding at an element chain or a paragraph id, in any
-/// story, keys by the chain with its indices dropped (`p#` for the id) and
-/// by its [`Place`], so it keeps its identity when an edit moves or
-/// renumbers it. A `FOREIGN_AUTHOR` change keys by its kind, author and
-/// text, and by its id. Anything else keys as [`Finding::identity`] does.
-#[must_use]
-pub fn identities(docx: &[u8], findings: &[Finding]) -> Vec<FindingKey> {
-    let mut anchors = Anchors::new(docx);
-    findings
-        .iter()
-        .map(|f| {
-            let mut key = f.identity();
-            if f.code == "FOREIGN_AUTHOR" {
-                if let Some((id, rest)) = f.message.split_once(' ')
-                    && let Some(change) = anchors.change(id)
-                {
-                    key.message = normalised(rest);
-                    key.place = Place {
-                        text: Some(change),
-                        revision: Some(id.to_string()),
-                        ..Place::default()
-                    };
-                }
-            } else if let Some((location, place)) = anchors.place(&f.part, &f.location) {
-                key.location = location;
-                key.place = place;
-            }
-            key
-        })
-        .collect()
-}
-
-/// What [`identities`] reads a document's places by, each part parsed once.
-struct Anchors<'a> {
-    docx: &'a [u8],
-    pkg: Option<PartFs>,
-    parts: HashMap<String, Option<Part>>,
-    changes: Option<HashMap<String, String>>,
-}
-
-impl<'a> Anchors<'a> {
-    fn new(docx: &'a [u8]) -> Self {
-        Anchors {
-            docx,
-            pkg: PartFs::open(docx).ok(),
-            parts: HashMap::new(),
-            changes: None,
-        }
-    }
-
-    /// `kind, author, text` of change `id` (`r3`).
-    fn change(&mut self, id: &str) -> Option<String> {
-        let docx = self.docx;
-        self.changes
-            .get_or_insert_with(|| {
-                list_changes(docx)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|c| {
-                        let anchor = format!(
-                            "{:?}\u{1f}{}\u{1f}{}",
-                            c.kind,
-                            c.author.unwrap_or_default(),
-                            c.text
-                        );
-                        (c.id, anchor)
-                    })
-                    .collect()
-            })
-            .get(id)
-            .cloned()
-    }
-
-    /// The location `location` in `part` keys by, and its [`Place`];
-    /// `None` when it is neither an element chain of the part nor one of
-    /// the part's paragraph ids.
-    fn place(&mut self, part: &str, location: &str) -> Option<(String, Place)> {
-        if location.is_empty() {
-            return None;
-        }
-        let pkg = self.pkg.as_ref()?;
-        let part = self
-            .parts
-            .entry(part.to_string())
-            .or_insert_with(|| parse_part(pkg, part).map(|(dom, root)| Part::new(dom, root)))
-            .as_mut()?;
-        if location.contains('[') {
-            let node = part.resolve(location)?;
-            let chain: Vec<&str> = location
-                .split('/')
-                .map(|step| step.split_once('[').map_or(step, |(name, _)| name))
-                .collect();
-            Some((chain.join("/"), part.around(node)))
-        } else {
-            let (story, index) = crate::ids::paragraph_place(location)?;
-            let node = *part.paragraphs(&story).get(index)?;
-            Some(("p#".to_string(), part.around(node)))
-        }
-    }
-}
-
-/// A parsed part and the lookups [`Anchors`] made in it, so reading every
-/// finding's place costs one walk of the part.
-struct Part {
-    dom: Dom,
-    root: NodeId,
-    /// Each parent's child elements of one name, keyed by the parent, the
-    /// namespace and the local name.
-    children: HashMap<(NodeId, String, String), Vec<NodeId>>,
-    /// Where each element listed in `children` stands in its list.
-    rank: HashMap<NodeId, usize>,
-    /// The part's paragraphs in the order its paragraph ids count them.
-    paragraphs: Option<Vec<NodeId>>,
-}
-
-impl Part {
-    fn new(dom: Dom, root: NodeId) -> Self {
-        Part {
-            dom,
-            root,
-            children: HashMap::new(),
-            rank: HashMap::new(),
-            paragraphs: None,
-        }
-    }
-
-    /// The element `chain` ([`element_path`]) names under the root.
-    fn resolve(&mut self, chain: &str) -> Option<NodeId> {
-        let Part {
-            dom,
-            root,
-            children,
-            rank,
-            ..
-        } = self;
-        let mut node = *root;
-        for step in chain.split('/') {
-            let (name, index) = step.strip_suffix(']')?.split_once('[')?;
-            let index: usize = index.parse().ok()?;
-            let (namespace, local) = match name.split_once(':') {
-                Some((prefix, local)) => (well_known_namespace(prefix)?, local),
-                None => ("", name),
-            };
-            node = *named(dom, children, rank, node, namespace, local).get(index)?;
-        }
-        Some(node)
-    }
-
-    /// The paragraphs of `story`, this part's, in the order its paragraph
-    /// ids (`p3`, `header1.p2`) count them: the order `inspect` and the
-    /// audit number them in.
-    fn paragraphs(&mut self, story: &str) -> &[NodeId] {
-        let Part {
-            dom,
-            root,
-            paragraphs,
-            ..
-        } = self;
-        paragraphs.get_or_insert_with(|| {
-            if story == "body" {
-                dom.element(*root, &W::body())
-                    .map(|body| crate::inspect::body_paragraph_nodes(dom, body))
-                    .unwrap_or_default()
-            } else {
-                crate::inspect::story_paragraph_nodes(dom, *root)
-            }
-        })
-    }
-
-    /// The [`Place`] of `node`: what it sits in, read from its paragraph
-    /// (else its table, else itself), and the change around it.
-    fn around(&mut self, node: NodeId) -> Place {
-        let Part {
-            dom,
-            children,
-            rank,
-            ..
-        } = self;
-        let held: Vec<NodeId> = std::iter::once(node)
-            .chain(dom.ancestors(node, None))
-            .collect();
-        let anchor = [W::p(), W::tbl()]
-            .iter()
-            .find_map(|name| held.iter().copied().find(|&n| dom.name_is(n, name)));
-        let revision = held.iter().find_map(|&n| {
-            let id = dom.attribute(n, &W::id())?;
-            dom.attribute(n, &W::author())?;
-            Some(format!("{} {id}", dom.name(n)?.local_name()))
-        });
-        let (anchor, text) = match anchor {
-            Some(anchor) => (anchor, dom.value(anchor)),
-            None => (node, signature(dom, &held)),
-        };
-        let paragraph_id = if dom.name_is(anchor, &W::p()) {
-            dom.attribute(anchor, &W14::name("paraId"))
-                .map(str::to_string)
-        } else {
-            None
-        };
-        let (previous, next) = match (dom.parent(anchor), dom.name(anchor)) {
-            (Some(parent), Some(name)) => {
-                let siblings = named(
-                    dom,
-                    children,
-                    rank,
-                    parent,
-                    name.namespace_name(),
-                    name.local_name(),
-                );
-                let at = rank.get(&anchor).copied();
-                let text =
-                    |i: Option<usize>| i.and_then(|i| siblings.get(i)).map(|&n| dom.value(n));
-                (
-                    text(at.and_then(|at| at.checked_sub(1))),
-                    text(at.map(|at| at + 1)),
-                )
-            }
-            _ => (None, None),
-        };
-        Place {
-            text: Some(text),
-            paragraph_id,
-            revision,
-            previous,
-            next,
-        }
-    }
-}
-
-/// `parent`'s child elements named `local` in `namespace`, listed once
-/// into `children`, each one's place in the list into `rank`.
-fn named<'c>(
-    dom: &Dom,
-    children: &'c mut HashMap<(NodeId, String, String), Vec<NodeId>>,
-    rank: &mut HashMap<NodeId, usize>,
-    parent: NodeId,
-    namespace: &str,
-    local: &str,
-) -> &'c [NodeId] {
-    children
-        .entry((parent, namespace.to_string(), local.to_string()))
-        .or_insert_with(|| {
-            let list: Vec<NodeId> = dom
-                .elements(parent, None)
-                .into_iter()
-                .filter(|&e| {
-                    dom.name(e)
-                        .is_some_and(|n| n.local_name() == local && n.namespace_name() == namespace)
-                })
-                .collect();
-            for (i, &e) in list.iter().enumerate() {
-                rank.insert(e, i);
-            }
-            list
-        })
-}
-
-/// The text of `held[0]`, then the attributes of it and of each element
-/// holding it (`held[1..]`), but namespace declarations and the ones an
-/// edit renumbers (`rsid…`, `paraId`, `textId`, `id`).
-fn signature(dom: &Dom, held: &[NodeId]) -> String {
-    let mut out = held.first().map(|&n| dom.value(n)).unwrap_or_default();
-    for &n in held {
-        for (name, value) in dom.attributes(n) {
-            let local = name.local_name();
-            if dom.is_namespace_declaration(&name)
-                || local.starts_with("rsid")
-                || matches!(local, "paraId" | "textId" | "id")
-            {
-                continue;
-            }
-            out.push_str(&format!("\u{1f}{local}={value}"));
-        }
-    }
-    out
-}
-
-/// `message` with each `[N]` element index dropped and each paragraph or
-/// cell id ([`is_paragraph_id`]) spelled `p#`, so an inherited finding keeps
-/// its identity when an edit renumbers what it names in passing.
-fn normalised(message: &str) -> String {
-    let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(start) = rest.find(|c: char| c.is_ascii_alphanumeric() || c == '[') {
-        out.push_str(&rest[..start]);
-        rest = &rest[start..];
-        if let Some(tail) = rest.strip_prefix('[') {
-            let digits = tail.bytes().take_while(u8::is_ascii_digit).count();
-            if digits > 0 && tail[digits..].starts_with(']') {
-                rest = &tail[digits + 1..];
-            } else {
-                out.push('[');
-                rest = tail;
-            }
-            continue;
-        }
-        let end = rest
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
-            .unwrap_or(rest.len());
-        // A sentence's full stop is not part of the id before it.
-        let token = rest[..end].trim_end_matches('.');
-        if is_paragraph_id(token) {
-            out.push_str("p#");
-        } else {
-            out.push_str(token);
-        }
-        rest = &rest[token.len()..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// True for a paragraph or cell id `-p` takes (`p12`, `header1.p2`,
-/// `t0.row1.cell2`, `t0.row1.cell2.p1`): a position, which an edit
-/// renumbers. A story's bare name (`header1`) is no position, and a word
-/// that parses as one is not taken for an id.
-fn is_paragraph_id(token: &str) -> bool {
-    let last = token.rsplit('.').next().unwrap_or(token);
-    let numbered = |prefix: &str| {
-        last.strip_prefix(prefix)
-            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-    };
-    (numbered("p") || numbered("cell"))
-        && matches!(
-            crate::ids::parse_location(token),
-            Ok(crate::ids::Location::Paragraph(_))
-        )
-}
-
-/// A document's findings against those of the document it was made from
-/// ([`baseline`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Baselined {
-    /// The document's findings the baseline does not have: the edit's.
-    pub new: Vec<Finding>,
-    /// The document's findings the baseline already had.
-    pub baseline: Vec<Finding>,
-    /// The baseline's findings the document no longer has.
-    pub resolved: Vec<Finding>,
-}
-
-/// Splits `new` (the findings of an edited document) by those of `base`
-/// (the document before the edits), matched by [`Finding::identity`]: each
-/// baseline finding vouches for one finding of `new` with its identity, so
-/// a second finding with the same identity is new, and a finding that
-/// replaced another is new while the one it replaced is resolved, whatever
-/// the counts. Each list keeps its input's order.
-pub fn baseline(new: Vec<Finding>, base: Vec<Finding>) -> Baselined {
-    let new_keys: Vec<FindingKey> = new.iter().map(Finding::identity).collect();
-    let base_keys: Vec<FindingKey> = base.iter().map(Finding::identity).collect();
-    baseline_keyed(new, &new_keys, base, &base_keys)
-}
-
-/// [`baseline`] with each finding's key given, in step with its list:
-/// [`identities`] reads them in the documents themselves. Two findings
-/// match when their keys agree but for [`Place`] and they share a place,
-/// tried strongest first: all of it, then the change they sit in, their
-/// paragraph's id, their text with its neighbours, their text alone, and
-/// last their neighbours (their paragraph rewritten). Each pass pairs the
-/// findings left, in order, each with the earliest the baseline has left.
-#[must_use]
-pub fn baseline_keyed(
-    new: Vec<Finding>,
-    new_keys: &[FindingKey],
-    base: Vec<Finding>,
-    base_keys: &[FindingKey],
-) -> Baselined {
-    let mut paired = vec![false; new.len()];
-    let mut matched = vec![false; base.len()];
-    for pass in 0..PASSES {
-        let mut open: HashMap<_, Vec<usize>> = HashMap::new();
-        for (i, key) in base_keys.iter().enumerate().rev() {
-            if !matched[i]
-                && let Some(tier) = tier(pass, key)
-            {
-                open.entry(tier).or_default().push(i);
-            }
-        }
-        for (j, key) in new_keys.iter().enumerate() {
-            if !paired[j]
-                && let Some(tier) = tier(pass, key)
-                && let Some(i) = open.get_mut(&tier).and_then(Vec::pop)
-            {
-                paired[j] = true;
-                matched[i] = true;
-            }
-        }
-    }
-    let mut out = Baselined::default();
-    for (f, paired) in new.into_iter().zip(paired) {
-        if paired {
-            out.baseline.push(f);
-        } else {
-            out.new.push(f);
-        }
-    }
-    out.resolved = base
-        .into_iter()
-        .zip(matched)
-        .filter_map(|(f, matched)| (!matched).then_some(f))
-        .collect();
-    out
-}
-
-/// How many passes [`baseline_keyed`] makes ([`tier`]).
-const PASSES: usize = 6;
-
-/// What pass `pass` of [`baseline_keyed`] matches `key` by: the key but its
-/// [`Place`], and the parts of the place the pass reads; `None` when `key`
-/// lacks what the pass needs.
-fn tier(pass: usize, key: &FindingKey) -> Option<([&str; 5], [Option<&str>; 5])> {
-    let place = &key.place;
-    let text = place.text.as_deref();
-    let id = place.paragraph_id.as_deref();
-    let change = place.revision.as_deref();
-    let (previous, next) = (place.previous.as_deref(), place.next.as_deref());
-    let read = match pass {
-        // Nothing around it changed.
-        0 => [text, id, change, previous, next],
-        // The change it sits in.
-        1 if change.is_some() => [None, None, change, None, None],
-        // Its paragraph, by id.
-        2 if id.is_some() => [None, id, None, None, None],
-        // Its text, between the same neighbours.
-        3 if text.is_some() => [text, None, None, previous, next],
-        // Its text.
-        4 if text.is_some() => [text, None, None, None, None],
-        // Between the same neighbours, not both empty: its paragraph
-        // rewritten.
-        5 if previous.is_some() && next.is_some() && (previous != Some("") || next != Some("")) => {
-            [None, None, None, previous, next]
-        }
-        _ => return None,
-    };
-    let kind = [
-        key.code.as_str(),
-        key.set.as_str(),
-        key.part.as_str(),
-        key.location.as_str(),
-        key.message.as_str(),
-    ];
-    Some((kind, read))
-}
-
-/// [`baseline`]'s split as `validate --baseline` prints it: `new: none` or
-/// `new: N` and the new findings ([`findings_text`]'s lines), then
-/// `already in the input: N (not yours)` (or `none`), then, when the edits
-/// fixed some, `resolved: N (in the input, not in this file)` and those.
-pub fn baselined_text(split: &Baselined) -> String {
-    let count = |n: usize| {
-        if n == 0 {
-            "none".to_string()
-        } else {
-            n.to_string()
-        }
-    };
-    let mut out = format!("new: {}\n", count(split.new.len()));
-    for f in &split.new {
-        out.push_str(&finding_line(f));
-    }
-    out.push_str(&format!(
-        "already in the input: {}{}\n",
-        count(split.baseline.len()),
-        if split.baseline.is_empty() {
-            ""
-        } else {
-            " (not yours)"
-        }
-    ));
-    if !split.resolved.is_empty() {
-        out.push_str(&format!(
-            "resolved: {} (in the input, not in this file)\n",
-            split.resolved.len()
-        ));
-        for f in &split.resolved {
-            out.push_str(&finding_line(f));
-        }
-    }
-    out
-}
-
-/// [`baseline`]'s split as JSON Lines: each finding of the document, new
-/// ones first, as its JSON object with `"status": "new"` or `"baseline"`,
-/// then one `{"resolved": [...]}` line with the baseline's findings the
-/// document no longer has (an empty array when there are none).
-///
-/// # Errors
-///
-/// A finding that does not serialise.
-pub fn baselined_json(split: &Baselined) -> Result<String, serde_json::Error> {
-    #[derive(Serialize)]
-    struct Marked<'a> {
-        #[serde(flatten)]
-        finding: &'a Finding,
-        status: &'static str,
-    }
-    let mut out = String::new();
-    for (findings, status) in [(&split.new, "new"), (&split.baseline, "baseline")] {
-        for finding in findings {
-            out.push_str(&serde_json::to_string(&Marked { finding, status })?);
-            out.push('\n');
-        }
-    }
-    out.push_str(&serde_json::to_string(
-        &serde_json::json!({ "resolved": split.resolved }),
-    )?);
-    out.push('\n');
-    Ok(out)
-}
-
-/// The one stderr line `read`, `changes` and `comments` give an input with
-/// validity findings: `input has 2 validity warnings; jubarte validate FILE
-/// lists them` (an `error` counts as an error, `info` not at all), or
-/// `None` when there is nothing to say. `file` is the path as given, quoted
-/// for a shell when it needs to be ([`crate::util::shell_word`]).
-pub fn input_notice(findings: &[Finding], file: &str) -> Option<String> {
-    input_notice_of(&input_validity(findings, file))
-}
-
-/// [`input_notice`] from counts already taken, for a read that also
-/// reports them in its JSON (`read -o FILE.json`).
-pub fn input_notice_of(validity: &InputValidity) -> Option<String> {
-    let InputValidity {
-        errors,
-        warnings,
-        next,
-    } = validity;
-    let (errors, warnings) = (*errors, *warnings);
-    let next = next.as_deref()?;
-    let spell = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
-    let what = match (errors, warnings) {
-        (0, 0) => return None,
-        (0, w) => spell(w, "validity warning"),
-        (e, 0) => spell(e, "validity error"),
-        (e, w) => format!("{} and {}", spell(e, "validity error"), spell(w, "warning")),
-    };
-    let them = if errors + warnings == 1 { "it" } else { "them" };
-    Some(format!("input has {what}; {next} lists {them}"))
-}
-
-/// The input's own validity findings as the JSON reads report them
-/// (#1309): `read --json` in its snapshot's `summary`, `changes --json` and
-/// `comments --json` on their last line ([`input_validity_line`]), where
-/// [`input_notice`]'s stderr line would break `--json 2>&1 | jq`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InputValidity {
-    /// Findings of severity `error`.
-    pub errors: usize,
-    /// Findings of severity `warning`; `info` is not counted.
-    pub warnings: usize,
-    /// The command that lists them (`jubarte validate FILE`), when there
-    /// are any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next: Option<String>,
-}
-
-/// What [`InputValidity`] says of `findings`; `file` is the path as given,
-/// quoted for a shell when it needs to be ([`crate::util::shell_word`]).
-#[must_use]
-pub fn input_validity(findings: &[Finding], file: &str) -> InputValidity {
-    let count = |severity: &str| findings.iter().filter(|f| f.severity == severity).count();
-    let (errors, warnings) = (count("error"), count("warning"));
-    InputValidity {
-        errors,
-        warnings,
-        next: (errors + warnings > 0)
-            .then(|| format!("jubarte validate {}", crate::util::shell_word(file))),
-    }
-}
-
-/// [`input_validity`] of the package `docx` read from `file`, as the CLI
-/// and the bindings report it: a package that cannot be validated has no
-/// findings to count.
-#[must_use]
-pub fn input_validity_of(docx: &[u8], file: &str) -> InputValidity {
-    input_validity(&validate(docx).unwrap_or_default(), file)
-}
-
-/// The last line `changes --json` and `comments --json` print:
-/// `{"input_validity":{"errors":0,"warnings":2,"next":"jubarte validate FILE"}}`,
-/// its keys in that order.
-///
-/// # Errors
-/// When the validity does not serialize.
-pub fn input_validity_line(validity: &InputValidity) -> Result<String, serde_json::Error> {
-    Ok(format!(
-        r#"{{"input_validity":{}}}"#,
-        serde_json::to_string(validity)?
-    ))
 }
 
 impl From<crate::audit::AuditFinding> for Finding {
@@ -1176,159 +456,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_namespace_qname_contexts(pkg, &mut out);
     check_runs_inside_paragraphs(pkg, &mut out);
     check_style_names(pkg, &mut out);
-    check_nested_text_boxes(pkg, &mut out);
-    check_move_range_counts(pkg, &mut out);
-    check_data_bindings_have_stores(pkg, &mut out);
     out
-}
-
-/// Word fills a bound content control from the custom XML store its
-/// `w:storeItemID` names, and shows the control empty when the main part
-/// reaches no such store (#1427). Word opens the file: a lead. Word's own
-/// stores (the document properties) live in `docProps`.
-fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>) {
-    use crate::markdown::data_stores::{built_in, stores};
-    let Some(main) = main_part(pkg) else {
-        return;
-    };
-    let mut held: Option<Vec<String>> = None;
-    for part in xml_parts(pkg) {
-        if part.starts_with("customXml/")
-            || !pkg
-                .part_bytes(&part)
-                .is_some_and(|bytes| bytes.windows(11).any(|w| w == b"dataBinding"))
-        {
-            continue;
-        }
-        let Some((dom, root)) = parse_part(pkg, &part) else {
-            continue;
-        };
-        for binding in dom.descendants(root, Some(&W::name("dataBinding"))) {
-            let Some(store) = dom.attribute(binding, &W::name("storeItemID")) else {
-                continue;
-            };
-            if built_in(store)
-                || held
-                    .get_or_insert_with(|| stores(pkg, &main))
-                    .contains(&store.to_ascii_uppercase())
-            {
-                continue;
-            }
-            out.push(Finding::new(
-                "DATA_BINDING_WITHOUT_STORE",
-                &part,
-                element_path(&dom, binding),
-                format!("{store}: no custom XML store the main part reaches holds it; Word shows the bound control empty (#1427)"),
-            ));
-        }
-    }
-}
-
-/// Word opens unequal per-name move ranges cleanly, but Reject All can
-/// restore the destination over only one source range and duplicate text.
-fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for part in xml_parts(pkg) {
-        let Some((dom, root)) = parse_part(pkg, &part) else {
-            continue;
-        };
-        let mut moves = std::collections::BTreeMap::new();
-        for (side, source) in [("moveFromRangeStart", true), ("moveToRangeStart", false)] {
-            for start in dom.descendants(root, Some(&W::name(side))) {
-                let Some(name) = dom
-                    .attribute(start, &W::name("name"))
-                    .filter(|n| !n.is_empty())
-                else {
-                    continue;
-                };
-                let counts = moves
-                    .entry(name.to_string())
-                    .or_insert((0_usize, 0_usize, start));
-                if source {
-                    counts.0 += 1;
-                } else {
-                    counts.1 += 1;
-                }
-            }
-        }
-        for (name, (source, destination, start)) in moves {
-            if source != destination {
-                out.push(Finding::new(
-                    "MOVE_RANGE_COUNT_MISMATCH",
-                    &part,
-                    element_path(&dom, start),
-                    format!("{name}: {source} source ranges, {destination} destination ranges; Word opens it but Reject All can duplicate moved text (#1214)"),
-                ));
-            }
-        }
-    }
-}
-
-/// Word crashes or refuses a box in another box's readable content, even
-/// though OpenXmlValidator passes it. The 2026-10-18 A–H probes (#1132)
-/// establish that a nest only in an ignored MC Fallback is harmless.
-fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
-    let dml_box = XName::get(
-        "txbx",
-        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
-    );
-    let vml_box = VML::name("textbox");
-    for part in xml_parts(pkg) {
-        let Some((dom, root)) = parse_part(pkg, &part) else {
-            continue;
-        };
-        for node in dom.descendants(root, None) {
-            if !dom
-                .name(node)
-                .is_some_and(|name| name == dml_box || name == vml_box)
-            {
-                continue;
-            }
-            let ancestors = dom.ancestors(node, None);
-            if ancestors
-                .iter()
-                .any(|&a| dom.name(a).is_some_and(|n| n == MC::name("Fallback")))
-            {
-                continue;
-            }
-            if let Some(&outer) = ancestors
-                .iter()
-                .find(|&&a| dom.name(a).is_some_and(|n| n == W::name("txbxContent")))
-            {
-                out.push(Finding::new(
-                    "NESTED_TEXT_BOX",
-                    &part,
-                    element_path(&dom, node),
-                    format!(
-                        "text box {} holds another text box ({}); Word cannot open this document",
-                        text_box_name(&dom, outer),
-                        text_box_name(&dom, node)
-                    ),
-                ));
-            }
-        }
-    }
-}
-
-/// Prefer the shape's own name, with its stable element path as a fallback.
-fn text_box_name(dom: &Dom, node: NodeId) -> String {
-    for ancestor in dom.ancestors(node, None) {
-        if dom.name(ancestor).is_some_and(|n| n == W::name("drawing")) {
-            if let Some(name) = dom
-                .descendants(ancestor, Some(&WP::name("docPr")))
-                .into_iter()
-                .find_map(|id| dom.attribute(id, &XName::get("name", "")))
-                .filter(|name| !name.is_empty())
-            {
-                return name.to_string();
-            }
-        } else if dom.name(ancestor).is_some_and(|n| n == VML::name("shape"))
-            && let Some(name) = dom.attribute(ancestor, &XName::get("id", ""))
-            && !name.is_empty()
-        {
-            return name.to_string();
-        }
-    }
-    element_path(dom, node)
 }
 
 /// A style's `w:name` holds no comma: the schema's pattern is `[^,]*`
@@ -1415,7 +543,7 @@ fn check_runs_inside_paragraphs(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// `w:body[0]/w:p[3]/w:r[2]`: conventional prefix and local name with the
 /// index among same-named siblings, root excluded.
-pub(crate) fn element_path(dom: &Dom, node: NodeId) -> String {
+fn element_path(dom: &Dom, node: NodeId) -> String {
     let mut parts = Vec::new();
     let mut cur = Some(node);
     while let Some(n) = cur {
@@ -1490,42 +618,12 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
                 ));
                 continue;
             };
-            let mut reader = quick_xml::NsReader::from_str(&xml);
+            let mut reader = Reader::from_str(&xml);
             reader.config_mut().trim_text(false);
             let mut buf = Vec::new();
             loop {
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Eof) => break,
-                    Ok(Event::Start(tag) | Event::Empty(tag)) => {
-                        let mut expanded = HashSet::new();
-                        for attr in tag.attributes().with_checks(false).flatten() {
-                            if attr.key.as_ref() == "xmlns"
-                                || attr.key.as_ref().starts_with("xmlns:")
-                            {
-                                continue;
-                            }
-                            let (namespace, local) = reader.resolver().resolve_attribute(attr.key);
-                            let namespace = match namespace {
-                                quick_xml::name::ResolveResult::Bound(ns) => {
-                                    quick_xml::escape::unescape(ns.as_ref()).map_or_else(
-                                        |_| ns.as_ref().to_string(),
-                                        |uri| uri.into_owned(),
-                                    )
-                                }
-                                quick_xml::name::ResolveResult::Unbound => String::new(),
-                                quick_xml::name::ResolveResult::Unknown(_) => continue,
-                            };
-                            if !expanded.insert((namespace, local.as_ref().to_string())) {
-                                let element = tag.name().as_ref().to_string();
-                                out.push(Finding::new(
-                                    "DUPLICATE_EXPANDED_ATTRIBUTE",
-                                    &name,
-                                    &element,
-                                    format!("part '{name}', element <{element}>: attribute {} repeats an expanded name", attr.key.as_ref()),
-                                ));
-                            }
-                        }
-                    }
                     Ok(_) => {}
                     Err(e) => {
                         out.push(Finding::new(
@@ -1677,43 +775,15 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
-/// Revision elements whose `w:id` must be unique among elements of the
-/// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
-/// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
-/// Range ends share their starts' ids and comment/bookmark ids have other scopes.
-pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
-    name.namespace_name() == W::URI
-        && (name.local_name().ends_with("PrChange")
-            || matches!(
-                name.local_name(),
-                "ins"
-                    | "del"
-                    | "moveFrom"
-                    | "moveTo"
-                    | "moveFromRangeStart"
-                    | "moveToRangeStart"
-                    | "tblGridChange"
-                    | "tblPrExChange"
-                    | "numberingChange"
-                    | "cellIns"
-                    | "cellDel"
-                    | "cellMerge"
-            ))
-}
-
-/// The SDK distinguishes run revisions from row/paragraph-mark revisions,
-/// even though both use `ins`, `del`, `moveFrom` or `moveTo`. Row and
-/// paragraph marks share their own scope; the immediate parent alone is
-/// therefore not the scope. Keep detection and repair on the same key.
-fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
-    let property_mark = matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
-        && dom.parent(node).is_some_and(|parent| {
-            dom.name(parent).is_some_and(|parent| {
-                parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
-            })
-        });
-    format!("{}:{property_mark}:{id}", name.local_name())
-}
+/// Revision elements whose `w:id` must be unique within a part.
+const UNIQUE_REVISION_IDS: [&str; 6] = [
+    "ins",
+    "del",
+    "moveFrom",
+    "moveTo",
+    "moveFromRangeStart",
+    "moveToRangeStart",
+];
 
 fn collect_ids(
     dom: &Dom,
@@ -1728,11 +798,11 @@ fn collect_ids(
             continue;
         };
         let local = name.local_name();
-        // Revision ids are scoped by record type, not by the union of
-        // ins/del/move/property records. Comment ids have a separate scope.
-        if has_unique_revision_id(&name)
+        // comment* share one id space (start/end/ref/entry); ins/del/move*
+        // share another and are the ones enforced here.
+        if UNIQUE_REVISION_IDS.contains(&local)
             && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
+            && !rev_ids.insert(format!("rev:{id}"))
         {
             out.push(Finding::new(
                 "DUPLICATE_REVISION_ID",
@@ -1825,33 +895,28 @@ fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// `w:del` must carry `w:delText` (never `w:t`).
 /// `w:moveFrom` must carry `w:t` (never `w:delText`) — Word-required contract
 /// settled by Ring-3 probe 2026-07-16 (delText-under-moveFrom failed open).
-/// The nearest deletion owns the text: an insertion inside the move source
-/// does not shelter `w:delText` (Word refuses it), a `w:del` inside it does
-/// (Word opens it; probes M1/M5, 2026-10-18).
 fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
     for name in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
-        for (live, deleted, code) in [
-            ("t", "delText", "TEXT_INSIDE_DELETION"),
-            ("instrText", "delInstrText", "INSTR_TEXT_INSIDE_DELETION"),
-        ] {
-            for t in dom.descendants(root, Some(&W::name(live))) {
-                if under_deletion(&dom, t) {
-                    out.push(Finding::new(
-                        code,
-                        &name,
-                        element_path(&dom, t),
-                        format!("w:{live} under w:del in '{name}' (must be w:{deleted})"),
-                    ));
+        for del in dom.descendants(root, Some(&W::del())) {
+            for t in dom.descendants(del, Some(&W::t())) {
+                if ancestor_has(&dom, t, del, "ins") {
+                    continue;
                 }
+                out.push(Finding::new(
+                    "TEXT_INSIDE_DELETION",
+                    &name,
+                    element_path(&dom, t),
+                    format!("w:t under w:del in '{name}' (must be w:delText)"),
+                ));
             }
         }
         let move_from = W::name("moveFrom");
         for mf in dom.descendants(root, Some(&move_from)) {
             for dt in dom.descendants(mf, Some(&W::name("delText"))) {
-                if ancestor_has(&dom, dt, mf, "del") {
+                if ancestor_has(&dom, dt, mf, "ins") {
                     continue;
                 }
                 out.push(Finding::new(
@@ -1863,15 +928,6 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
         }
     }
-}
-
-/// Any enclosing deletion counts, even through an insertion, but only
-/// within the run's own story (#1134, Word probe 2026-10-17).
-fn under_deletion(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, None)
-        .into_iter()
-        .take_while(|&a| dom.name(a).is_none_or(|n| n.local_name() != "txbxContent"))
-        .any(|a| dom.name(a).is_some_and(|n| n == W::del()))
 }
 
 /// True when a `w:del` or `w:moveFrom` covers `node` in its own story (a
@@ -2025,33 +1081,6 @@ const COMMENT_FAMILY: [(&str, &str, &str); 4] = [
 
 const COMMENTS_PART: &str = "word/comments.xml";
 
-/// The comments part as Word finds it: the first relationship of the
-/// comments type whose target part exists (`word/comments.xml` is only the
-/// conventional name — Word follows the relationship, so a differently
-/// named part is the comments part), else the conventional name when it
-/// exists unlinked. A relationship whose target is missing does not stop
-/// the walk: a later live relationship still names the part.
-fn comments_part(pkg: &PartFs, main: &str) -> Option<String> {
-    if let Some(name) = pkg
-        .read_rels_for(main)
-        .into_iter()
-        .flat_map(|relationships| &relationships.items)
-        .filter(|r| {
-            r.rel_type == COMMENT_FAMILY[0].2 && r.target_mode.as_deref() != Some("External")
-        })
-        .map(|r| {
-            pkg.resolve_rel_target(main, &r.target)
-                .trim_start_matches('/')
-                .to_string()
-        })
-        .find(|name| pkg.part_bytes(name).is_some())
-    {
-        return Some(name);
-    }
-    pkg.part_bytes(COMMENTS_PART)
-        .map(|_| COMMENTS_PART.to_string())
-}
-
 fn main_part(pkg: &PartFs) -> Option<String> {
     pkg.main_document_part().or_else(|| {
         pkg.part_bytes("word/document.xml")
@@ -2075,7 +1104,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
     let ends = comment_id_counts(&main_dom, main_root, "commentRangeEnd");
     let references = comment_id_counts(&main_dom, main_root, "commentReference");
 
-    let Some(comments_name) = comments_part(pkg, &main) else {
+    let Some((comments_dom, comments_root)) = parse_part(pkg, COMMENTS_PART) else {
         for (kind, counts) in [
             ("commentRangeStart", &starts),
             ("commentRangeEnd", &ends),
@@ -2102,13 +1131,10 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         }
         return;
     };
-    let Some((comments_dom, comments_root)) = parse_part(pkg, &comments_name) else {
-        return;
-    };
 
     let definitions = comment_id_counts(&comments_dom, comments_root, "comment");
     for (kind, counts, part) in [
-        ("comment definition", &definitions, comments_name.as_str()),
+        ("comment definition", &definitions, COMMENTS_PART),
         ("commentRangeStart", &starts, main.as_str()),
         ("commentRangeEnd", &ends, main.as_str()),
         ("commentReference", &references, main.as_str()),
@@ -2142,7 +1168,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
         comment_finding(
             out,
             "COMMENT_UNANCHORED",
-            &comments_name,
+            COMMENTS_PART,
             format!(
                 "comment definition id '{id}' has no commentReference in the document: Word opens it and shows no comment"
             ),
@@ -2160,7 +1186,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
                 out,
                 code,
                 &main,
-                format!("{kind} id '{id}' has no entry in {comments_name}"),
+                format!("{kind} id '{id}' has no entry in word/comments.xml"),
             );
         }
     }
@@ -2182,13 +1208,13 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
                 continue;
             };
             let key = para_id.to_ascii_uppercase();
-            check_hex_id("paraId", para_id, true, &comments_name, out);
+            check_hex_id("paraId", para_id, true, COMMENTS_PART, out);
             if !all_para_ids.insert(key.clone()) {
                 comment_finding(
                     out,
                     "COMMENT_METADATA_MISMATCH",
-                    &comments_name,
-                    format!("duplicate comment paraId '{para_id}' in {comments_name}"),
+                    COMMENTS_PART,
+                    format!("duplicate comment paraId '{para_id}' in word/comments.xml"),
                 );
             }
             comment_para_ids.push(key);
@@ -2197,7 +1223,7 @@ fn check_comment_graph(pkg: &PartFs, out: &mut Vec<Finding>) {
             comment_finding(
                 out,
                 "COMMENT_METADATA_MISMATCH",
-                &comments_name,
+                COMMENTS_PART,
                 format!("comment id '{comment_id}' has no w14:paraId for its auxiliary metadata"),
             );
         }
@@ -2567,8 +1593,8 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, out: &mut Vec<Finding
         let Some(element_name) = dom.name(element) else {
             continue;
         };
-        for (name, value) in dom.attributes_iter(element) {
-            if !is_namespace_qname_list(&element_name, name) {
+        for (name, value) in dom.attributes(element) {
+            if !is_namespace_qname_list(&element_name, &name) {
                 continue;
             }
             for token in value.split_whitespace() {
@@ -2674,9 +1700,7 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
         });
     }
     for part in parts_with(&["DUPLICATE_REVISION_ID"]) {
-        edit_part(&mut pkg, &part, |dom, root| {
-            renumber_duplicate_revision_ids(dom, root);
-        });
+        edit_part(&mut pkg, &part, renumber_duplicate_revision_ids);
     }
     if has("PARA_ID_OUT_OF_RANGE") {
         renumber_out_of_range_para_ids(&mut pkg);
@@ -2732,16 +1756,18 @@ fn edit_part(pkg: &mut PartFs, part: &str, f: impl FnOnce(&mut Dom, NodeId)) {
 /// deletion covers, become live text again.
 fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
     let mut renames: Vec<(NodeId, XName)> = Vec::new();
-    for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
-        for t in dom.descendants(root, Some(&W::name(live))) {
-            if under_deletion(dom, t) {
-                renames.push((t, W::name(deleted)));
+    for del in dom.descendants(root, Some(&W::del())) {
+        for (live, deleted) in [("t", "delText"), ("instrText", "delInstrText")] {
+            for t in dom.descendants(del, Some(&W::name(live))) {
+                if !ancestor_has(dom, t, del, "ins") {
+                    renames.push((t, W::name(deleted)));
+                }
             }
         }
     }
     for mf in dom.descendants(root, Some(&W::name("moveFrom"))) {
         for dt in dom.descendants(mf, Some(&W::name("delText"))) {
-            if !ancestor_has(dom, dt, mf, "del") {
+            if !ancestor_has(dom, dt, mf, "ins") {
                 renames.push((dt, W::t()));
             }
         }
@@ -2825,13 +1851,9 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
     }
 }
 
-/// A second use of a revision id on the same record type is renumbered
-/// from the part's highest `w:id` upwards; a move range start takes its end
-/// along. Accepted cross-kind pairs retain their ids.
-pub(crate) fn renumber_duplicate_revision_ids(
-    dom: &mut Dom,
-    root: NodeId,
-) -> Vec<(String, String)> {
+/// A second use of a revision id is renumbered from the part's highest
+/// `w:id` upwards; a move range start takes its end along.
+fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
     let id_name = W::name("id");
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
@@ -2843,22 +1865,20 @@ pub(crate) fn renumber_duplicate_revision_ids(
         + 1;
     let mut seen: HashSet<String> = HashSet::new();
     let mut renames: Vec<(NodeId, String)> = Vec::new();
-    let mut revisions = Vec::new();
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
         let local = name.local_name();
-        if !has_unique_revision_id(&name) {
+        if !UNIQUE_REVISION_IDS.contains(&local) {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        if seen.insert(revision_id_key(dom, n, &name, &id)) {
+        if seen.insert(id.clone()) {
             continue;
         }
         let fresh = next.to_string();
         next += 1;
-        revisions.push((id.clone(), fresh.clone()));
         renames.push((n, fresh.clone()));
         let end_local = match local {
             "moveFromRangeStart" => Some("moveFromRangeEnd"),
@@ -2877,7 +1897,6 @@ pub(crate) fn renumber_duplicate_revision_ids(
     for (n, id) in renames {
         dom.set_attribute_value(n, &id_name, Some(&id));
     }
-    revisions
 }
 
 /// Every `w14:paraId` / `w14:textId` at or above `0x80000000` is masked
@@ -3008,18 +2027,8 @@ fn story_part(id: &str) -> String {
 /// difference between `original` and `edited` must sit in a revision by
 /// `author`. Rejecting that author's changes must give back `original`'s
 /// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
-/// at its paragraph id. Foreign revisions already in `original` may remain:
-/// only added, altered or removed foreign history is a `FOREIGN_AUTHOR`
-/// finding. Paragraphs are aligned by full text (including deleted text), story
-/// by story. An untracked paragraph merge or split around another author's
-/// revisions reports those revisions as new and gone alongside `UNTRACKED_EDIT`.
-/// Within each paragraph or non-paragraph owner, matching author,
-/// kind, target, date and move-side groups are compared in document order,
-/// ignoring revision ids. Split carriers combine only when they touch with
-/// no visible content or still-present revision between them; a boundary
-/// explained solely by a missing separator revision is not another change.
-/// Missing original permission endpoints are reported as
-/// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
+/// at its paragraph id, and a change by anyone else is a `FOREIGN_AUTHOR`
+/// finding.
 ///
 /// # Errors
 ///
@@ -3030,13 +2039,29 @@ pub fn audit_tracked(
     author: &str,
 ) -> Result<Vec<Finding>, ValidateError> {
     let mut out = Vec::new();
-    check_dropped_permissions(&PartFs::open(original)?, &PartFs::open(edited)?, &mut out);
+    let listed = list_changes(edited)?;
+    for c in listed
+        .iter()
+        .filter(|c| c.author.as_deref() != Some(author))
+    {
+        out.push(Finding::new(
+            "FOREIGN_AUTHOR",
+            &story_part(&c.id),
+            "",
+            format!(
+                "{} by {}",
+                c.id,
+                c.author
+                    .clone()
+                    .unwrap_or_else(|| "<no author>".to_string())
+            ),
+        ));
+    }
     let filter = ChangeFilter {
         authors: Some(vec![author.to_string()]),
         ..ChangeFilter::default()
     };
     let reverted = reject_changes(edited, &filter)?;
-    check_foreign_revisions(original, &reverted, author, &mut out)?;
     // Paragraph-by-paragraph text: the same projection `jubarte text` prints,
     // body first, then every header, footer and notes story.
     let before = all_paragraphs(original)?;
@@ -3070,598 +2095,6 @@ pub fn audit_tracked(
     Ok(as_edits(out))
 }
 
-/// Order-stable alignment. Sparse matches use Hunt--Szymanski with a linear
-/// link budget. Dense matches use Myers with at most 64 edits, then a
-/// deterministic forward-only fallback. Memory is O(N + 64²), even for
-/// repeated text; unlike a multiset no path can match both sides of a swap.
-fn ordered_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
-    let prefix = a.iter().zip(b).take_while(|(a, b)| a == b).count();
-    let suffix = a[prefix..]
-        .iter()
-        .rev()
-        .zip(b[prefix..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut positions: HashMap<&T, Vec<usize>> = HashMap::new();
-    for (j, value) in b.iter().enumerate().take(b.len() - suffix).skip(prefix) {
-        positions.entry(value).or_default().push(j);
-    }
-    let budget = a.len().saturating_add(b.len()).saturating_mul(8);
-    let matches = a[prefix..a.len() - suffix]
-        .iter()
-        .fold(0usize, |count, value| {
-            count.saturating_add(positions.get(value).map_or(0, Vec::len))
-        });
-    if matches > budget {
-        let middle_a = &a[prefix..a.len() - suffix];
-        let middle_b = &b[prefix..b.len() - suffix];
-        let middle = bounded_myers_pairs(middle_a, middle_b).map_or_else(
-            || {
-                // Earliest available counterpart, with no backtracking. A
-                // bounded approximation can add findings, never reorder a
-                // match or invent an equality that hides altered text.
-                let mut next = prefix;
-                let mut pairs = Vec::new();
-                for (i, value) in a.iter().enumerate().take(a.len() - suffix).skip(prefix) {
-                    if let Some(indices) = positions.get(value) {
-                        let at = indices.partition_point(|&j| j < next);
-                        if let Some(&j) = indices.get(at) {
-                            pairs.push((i, j));
-                            next = j + 1;
-                        }
-                    }
-                }
-                pairs
-            },
-            |pairs| {
-                pairs
-                    .into_iter()
-                    .map(|(i, j)| (i + prefix, j + prefix))
-                    .collect()
-            },
-        );
-        let mut pairs: Vec<_> = (0..prefix).map(|i| (i, i)).collect();
-        pairs.extend(middle);
-        pairs.extend((0..suffix).map(|i| (a.len() - suffix + i, b.len() - suffix + i)));
-        return pairs;
-    }
-    let mut links: Vec<(usize, usize, Option<usize>)> = Vec::new();
-    let mut tails: Vec<usize> = Vec::new();
-    for (i, value) in a.iter().enumerate().take(a.len() - suffix).skip(prefix) {
-        for &j in positions.get(value).into_iter().flatten().rev() {
-            let at = tails.partition_point(|&link| links[link].1 < j);
-            let previous = at.checked_sub(1).map(|at| tails[at]);
-            let link = links.len();
-            links.push((i, j, previous));
-            if at == tails.len() {
-                tails.push(link);
-            } else {
-                tails[at] = link;
-            }
-        }
-    }
-    let mut middle = Vec::new();
-    let mut link = tails.last().copied();
-    while let Some(at) = link {
-        let (i, j, previous) = links[at];
-        middle.push((i, j));
-        link = previous;
-    }
-    let mut pairs: Vec<_> = (0..prefix).map(|i| (i, i)).collect();
-    pairs.extend(middle.into_iter().rev());
-    pairs.extend((0..suffix).map(|i| (a.len() - suffix + i, b.len() - suffix + i)));
-    pairs
-}
-
-/// Myers' shortest edit path, bounded independently of input length. Keeping
-/// only 65 narrow frontiers bounds both the search and its reconstruction.
-fn bounded_myers_pairs<T: Eq>(a: &[T], b: &[T]) -> Option<Vec<(usize, usize)>> {
-    const LIMIT: usize = 64;
-    const OFFSET: usize = LIMIT + 1;
-    let mut frontier = vec![0; 2 * LIMIT + 3];
-    let mut trace = Vec::new();
-    for depth in 0..=LIMIT {
-        trace.push(frontier.clone());
-        for diagonal in (OFFSET - depth..=OFFSET + depth).step_by(2) {
-            let down = diagonal == OFFSET - depth
-                || (diagonal != OFFSET + depth && frontier[diagonal - 1] < frontier[diagonal + 1]);
-            let mut x = if down {
-                frontier[diagonal + 1]
-            } else {
-                frontier[diagonal - 1] + 1
-            };
-            let mut y = x + OFFSET - diagonal;
-            while x < a.len() && y < b.len() && a[x] == b[y] {
-                x += 1;
-                y += 1;
-            }
-            frontier[diagonal] = x;
-            if x == a.len() && y == b.len() {
-                let mut pairs = Vec::new();
-                for d in (1..=depth).rev() {
-                    let diagonal = x + OFFSET - y;
-                    let previous = &trace[d];
-                    let down = diagonal == OFFSET - d
-                        || (diagonal != OFFSET + d
-                            && previous[diagonal - 1] < previous[diagonal + 1]);
-                    let prior_diagonal = if down { diagonal + 1 } else { diagonal - 1 };
-                    let prior_x = previous[prior_diagonal];
-                    let prior_y = prior_x + OFFSET - prior_diagonal;
-                    while x > prior_x && y > prior_y {
-                        x -= 1;
-                        y -= 1;
-                        pairs.push((x, y));
-                    }
-                    x = prior_x;
-                    y = prior_y;
-                }
-                while x > 0 && y > 0 {
-                    x -= 1;
-                    y -= 1;
-                    pairs.push((x, y));
-                }
-                pairs.reverse();
-                return Some(pairs);
-            }
-        }
-    }
-    None
-}
-
-/// Pair replacement gaps between the LCS anchors. Inserted/deleted tails
-/// have no counterpart; a changed paragraph between anchors still has one.
-fn aligned_pairs<T: Eq + std::hash::Hash>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
-    let exact = ordered_pairs(a, b);
-    let mut pairs = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    for (x, y) in exact.into_iter().chain(std::iter::once((a.len(), b.len()))) {
-        pairs.extend((i..x).zip(j..y));
-        if x < a.len() {
-            pairs.push((x, y));
-        }
-        i = x + 1;
-        j = y + 1;
-    }
-    pairs
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ForeignKey {
-    part: String,
-    paragraph: Option<(bool, usize)>,
-    owner: String,
-    author: Option<String>,
-    kind: crate::changes::ChangeKind,
-    target: &'static str,
-    date: Option<String>,
-    move_side: Option<crate::changes::MoveSide>,
-}
-
-struct ForeignGroup<'a> {
-    key: ForeignKey,
-    change: &'a Change,
-    text: String,
-    start: usize,
-    end: usize,
-    relaxed_start: usize,
-    relaxed_end: usize,
-}
-
-/// Story-local paragraph identities. Full text includes deleted text, so a
-/// deletion-only paragraph participates in the alignment too.
-fn foreign_paragraphs(
-    before: &[crate::changes::AuditStory],
-    after: &[crate::changes::AuditStory],
-) -> HashMap<(String, String), usize> {
-    let mut identities = HashMap::new();
-    for original in before {
-        let Some(edited) = after.iter().find(|s| s.part == original.part) else {
-            continue;
-        };
-        let a: Vec<_> = original.paragraphs.iter().map(|(_, text)| text).collect();
-        let b: Vec<_> = edited.paragraphs.iter().map(|(_, text)| text).collect();
-        // An LCS alone can choose the moved paragraph as an anchor in a
-        // swap. Crossing unique text counterparts establish relocation;
-        // inserting a new paragraph above history creates no such crossing.
-        let mut old_positions: HashMap<&String, Vec<usize>> = HashMap::new();
-        let mut new_positions: HashMap<&String, Vec<usize>> = HashMap::new();
-        for (i, text) in a.iter().enumerate() {
-            old_positions.entry(text).or_default().push(i);
-        }
-        for (j, text) in b.iter().enumerate() {
-            new_positions.entry(text).or_default().push(j);
-        }
-        let unique: Vec<_> = a
-            .iter()
-            .map(|text| {
-                let old = old_positions.get(text)?;
-                let new = new_positions.get(text)?;
-                (old.len() == 1 && new.len() == 1).then_some(new[0])
-            })
-            .collect();
-        let mut crossed = vec![false; a.len()];
-        let mut maximum = None;
-        for (i, position) in unique.iter().enumerate() {
-            if let Some(j) = position {
-                crossed[i] |= maximum.is_some_and(|max| max > *j);
-                maximum = Some(maximum.map_or(*j, |max: usize| max.max(*j)));
-            }
-        }
-        let mut minimum = None;
-        for (i, position) in unique.iter().enumerate().rev() {
-            if let Some(j) = position {
-                crossed[i] |= minimum.is_some_and(|min| min < *j);
-                minimum = Some(minimum.map_or(*j, |min: usize| min.min(*j)));
-            }
-        }
-        for (i, j) in aligned_pairs(&a, &b) {
-            if !crossed[i] {
-                identities.insert((edited.part.clone(), edited.paragraphs[j].0.clone()), i);
-            }
-        }
-    }
-    identities
-}
-
-/// Keep each carrier for attribution. Windows may combine touching text,
-/// but an altered window must still name the carrier that actually changed.
-fn foreign_revisions<'a>(
-    stories: &'a [crate::changes::AuditStory],
-    paragraphs: &HashMap<(String, String), usize>,
-    edited: bool,
-) -> Vec<ForeignGroup<'a>> {
-    let mut out: Vec<ForeignGroup<'a>> = Vec::new();
-    for story in stories {
-        let paragraph_indices: HashMap<_, _> = story
-            .paragraphs
-            .iter()
-            .enumerate()
-            .map(|(i, (id, _))| (id.as_str(), i))
-            .collect();
-        for located in &story.changes {
-            let c = &located.change;
-            let paragraph = c.paragraph.as_ref().map(|id| {
-                if edited && let Some(&i) = paragraphs.get(&(story.part.clone(), id.clone())) {
-                    (false, i)
-                } else {
-                    (
-                        edited,
-                        paragraph_indices
-                            .get(id.as_str())
-                            .copied()
-                            .unwrap_or(usize::MAX),
-                    )
-                }
-            });
-            let key = ForeignKey {
-                part: story.part.clone(),
-                paragraph,
-                owner: located.owner.clone(),
-                author: c.author.clone(),
-                kind: c.kind,
-                target: c.target,
-                date: c.date.clone(),
-                move_side: c.move_side,
-            };
-            out.push(ForeignGroup {
-                key,
-                change: c,
-                text: c.text.clone(),
-                start: located.start,
-                end: located.end,
-                relaxed_start: located.start,
-                relaxed_end: located.end,
-            });
-        }
-    }
-    out
-}
-
-/// Remove only the document spans of revisions with no sequence counterpart.
-/// A still-present separator, even with changed text, remains a boundary.
-fn relax_foreign_boundaries(
-    groups: &mut [ForeignGroup<'_>],
-    present: &[bool],
-    mut missing: HashMap<String, Vec<(usize, usize)>>,
-) {
-    for (group, &present) in groups.iter().zip(present) {
-        if !present {
-            missing
-                .entry(group.key.part.clone())
-                .or_default()
-                .push((group.start, group.end));
-        }
-    }
-    let mut ranges: HashMap<String, Vec<(usize, usize, usize)>> = HashMap::new();
-    for (part, mut spans) in missing {
-        spans.sort_unstable();
-        let mut merged: Vec<(usize, usize)> = Vec::new();
-        for (start, end) in spans {
-            if let Some(last) = merged.last_mut()
-                && start <= last.1
-            {
-                last.1 = last.1.max(end);
-            } else {
-                merged.push((start, end));
-            }
-        }
-        let mut removed = 0;
-        ranges.insert(
-            part.to_string(),
-            merged
-                .into_iter()
-                .map(|(start, end)| {
-                    let prior = removed;
-                    removed += end - start;
-                    (start, end, prior)
-                })
-                .collect(),
-        );
-    }
-    for group in groups {
-        let Some(spans) = ranges.get(&group.key.part) else {
-            continue;
-        };
-        let position = |pos: usize| {
-            let index = spans.partition_point(|&(start, _, _)| start < pos);
-            if index == 0 {
-                return pos;
-            }
-            let (start, end, prior) = spans[index - 1];
-            pos - prior - (pos.min(end) - start)
-        };
-        group.relaxed_start = position(group.start);
-        group.relaxed_end = position(group.end);
-    }
-}
-
-/// A comparison window may lose boundaries only where a missing separator
-/// explains them. Retain every carrier for attribution if the text differs.
-fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(Vec<usize>, String)> {
-    let mut out: Vec<(Vec<usize>, String)> = Vec::new();
-    let mut previous = None;
-    for &index in indices {
-        let group = &groups[index];
-        if previous.is_some_and(|p: usize| groups[p].relaxed_end == group.relaxed_start)
-            && let Some((carriers, text)) = out.last_mut()
-        {
-            carriers.push(index);
-            text.push_str(&group.text);
-        } else {
-            out.push((vec![index], group.text.clone()));
-        }
-        previous = Some(index);
-    }
-    out
-}
-
-fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
-    let c = group.change;
-    let author = c.author.as_deref().unwrap_or("<no author>");
-    let message = if state == "gone" {
-        format!("{author}'s {} in the original is gone", c.id)
-    } else {
-        format!("{} by {author} {state}", c.id)
-    };
-    Finding::new("FOREIGN_AUTHOR", &group.key.part, "", message)
-}
-
-type ForeignSpans = HashMap<String, Vec<(usize, usize)>>;
-type ForeignFindings = Vec<(bool, usize, Finding)>;
-
-/// Match omitted markers within aligned paragraphs, ignoring revision ids.
-/// Retained slots remain boundaries. Only absent slots enter the span union.
-fn missing_foreign_markers(
-    before: &[crate::changes::AuditStory],
-    after: &[crate::changes::AuditStory],
-    paragraphs: &HashMap<(String, String), usize>,
-) -> (ForeignSpans, ForeignSpans) {
-    let keys = |stories: &[crate::changes::AuditStory], edited: bool| {
-        stories
-            .iter()
-            .flat_map(|story| {
-                story.markers.iter().map(move |marker| {
-                    let paragraph = marker.paragraph.map(|i| {
-                        if edited
-                            && let Some(&index) =
-                                paragraphs.get(&(story.part.clone(), story.paragraphs[i].0.clone()))
-                        {
-                            (false, index)
-                        } else {
-                            (edited, i)
-                        }
-                    });
-                    (
-                        story.part.clone(),
-                        paragraph,
-                        marker.owner.clone(),
-                        marker.kind.clone(),
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-    };
-    let a = keys(before, false);
-    let b = keys(after, true);
-    let pairs = ordered_pairs(&a, &b);
-    let present_a: HashSet<_> = pairs.iter().map(|&(i, _)| i).collect();
-    let present_b: HashSet<_> = pairs.iter().map(|&(_, j)| j).collect();
-    let missing = |stories: &[crate::changes::AuditStory], present: &HashSet<usize>| {
-        let mut spans: ForeignSpans = HashMap::new();
-        for (i, (story, marker)) in stories
-            .iter()
-            .flat_map(|story| story.markers.iter().map(move |marker| (story, marker)))
-            .enumerate()
-        {
-            if !present.contains(&i) {
-                spans
-                    .entry(story.part.clone())
-                    .or_default()
-                    .push((marker.start, marker.start + 1));
-            }
-        }
-        spans
-    };
-    (missing(before, &present_a), missing(after, &present_b))
-}
-
-/// Exact carriers within an unequal combined window precede replacements.
-/// No finding is allowed to borrow an unchanged neighbor's id.
-fn report_foreign_carriers(
-    before: &[ForeignGroup<'_>],
-    after: &[ForeignGroup<'_>],
-    old: &[usize],
-    new: &[usize],
-    findings: &mut ForeignFindings,
-) {
-    let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-    let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
-    let (mut i, mut j) = (0, 0);
-    for (x, y) in ordered_pairs(&a, &b)
-        .into_iter()
-        .chain(std::iter::once((a.len(), b.len())))
-    {
-        let paired = (x - i).min(y - j);
-        for (offset, &index) in new[j..y].iter().enumerate() {
-            let state = if offset < paired {
-                "differs from the original"
-            } else {
-                "is new"
-            };
-            findings.push((false, index, foreign_finding(&after[index], state)));
-        }
-        for &index in &old[i + paired..x] {
-            findings.push((true, index, foreign_finding(&before[index], "gone")));
-        }
-        i = x + 1;
-        j = y + 1;
-    }
-}
-
-fn check_foreign_revisions(
-    original: &[u8],
-    reverted: &[u8],
-    author: &str,
-    out: &mut Vec<Finding>,
-) -> Result<(), ValidateError> {
-    let original = crate::changes::audit_stories(original)?;
-    let reverted = crate::changes::audit_stories(reverted)?;
-    let paragraphs = foreign_paragraphs(&original, &reverted);
-    let mut before = foreign_revisions(&original, &paragraphs, false);
-    let mut after = foreign_revisions(&reverted, &paragraphs, true);
-    let mut by_key: HashMap<ForeignKey, (Vec<usize>, Vec<usize>)> = HashMap::new();
-    for (i, group) in before.iter().enumerate() {
-        by_key.entry(group.key.clone()).or_default().0.push(i);
-    }
-    for (i, group) in after.iter().enumerate() {
-        by_key.entry(group.key.clone()).or_default().1.push(i);
-    }
-    let mut before_present = vec![false; before.len()];
-    let mut after_present = vec![false; after.len()];
-    for (old, new) in by_key.values() {
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
-        for (i, j) in aligned_pairs(&a, &b) {
-            before_present[old[i]] = true;
-            after_present[new[j]] = true;
-        }
-    }
-    let (old_markers, new_markers) = missing_foreign_markers(&original, &reverted, &paragraphs);
-    relax_foreign_boundaries(&mut before, &before_present, old_markers);
-    relax_foreign_boundaries(&mut after, &after_present, new_markers);
-    let mut findings = Vec::new();
-    for (key, (old, new)) in &by_key {
-        if key.author.as_deref() == Some(author) {
-            continue;
-        }
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
-        let (mut i, mut j) = (0, 0);
-        for (x, y) in ordered_pairs(&a, &b)
-            .into_iter()
-            .chain(std::iter::once((a.len(), b.len())))
-        {
-            let left = foreign_window(&before, &old[i..x]);
-            let right = foreign_window(&after, &new[j..y]);
-            let left_text: Vec<_> = left.iter().map(|(_, text)| text).collect();
-            let right_text: Vec<_> = right.iter().map(|(_, text)| text).collect();
-            let (mut p, mut q) = (0, 0);
-            for (u, v) in ordered_pairs(&left_text, &right_text)
-                .into_iter()
-                .chain(std::iter::once((left.len(), right.len())))
-            {
-                let old_carriers: Vec<_> = left[p..u]
-                    .iter()
-                    .flat_map(|(indices, _)| indices.iter().copied())
-                    .collect();
-                let new_carriers: Vec<_> = right[q..v]
-                    .iter()
-                    .flat_map(|(indices, _)| indices.iter().copied())
-                    .collect();
-                report_foreign_carriers(
-                    &before,
-                    &after,
-                    &old_carriers,
-                    &new_carriers,
-                    &mut findings,
-                );
-                p = u + 1;
-                q = v + 1;
-            }
-            i = x + 1;
-            j = y + 1;
-        }
-    }
-    findings.sort_by_key(|(original, index, _)| (*original, *index));
-    out.extend(findings.into_iter().map(|(_, _, finding)| finding));
-    Ok(())
-}
-
-/// Permission exceptions are edit fidelity, not Word validity. Check both
-/// endpoints by id in every XML part, so dropping only one is visible too.
-fn check_dropped_permissions(original: &PartFs, edited: &PartFs, out: &mut Vec<Finding>) {
-    for part in xml_parts(original) {
-        if original
-            .part_string(&part)
-            .is_none_or(|xml| !xml.contains("permStart") && !xml.contains("permEnd"))
-        {
-            continue;
-        }
-        let Some((before, root)) = parse_part(original, &part) else {
-            continue;
-        };
-        let after = parse_part(edited, &part);
-        for kind in ["permStart", "permEnd"] {
-            let name = W::name(kind);
-            let mut remaining: HashMap<String, usize> = HashMap::new();
-            if let Some((dom, root)) = &after {
-                for n in dom.descendants(*root, Some(&name)) {
-                    if let Some(id) = dom.attribute(n, &W::id()) {
-                        *remaining.entry(id.to_string()).or_default() += 1;
-                    }
-                }
-            }
-            for n in before.descendants(root, Some(&name)) {
-                let Some(id) = before.attribute(n, &W::id()) else {
-                    continue;
-                };
-                if let Some(count) = remaining.get_mut(id)
-                    && *count > 0
-                {
-                    *count -= 1;
-                    continue;
-                }
-                out.push(Finding::new(
-                    "PERMISSION_RANGE_DROPPED",
-                    &part,
-                    element_path(&before, n),
-                    format!("original w:{kind} with w:id={id} is missing from the edited file"),
-                ));
-            }
-        }
-    }
-}
-
 /// [`audit_tracked`]'s findings belong to the `edits` set and fail a run.
 fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
     for f in &mut findings {
@@ -3672,7 +2105,7 @@ fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod validation_boundary_tests {
     use super::*;
 
@@ -3744,7 +2177,7 @@ mod validation_boundary_tests {
     }
 
     #[test]
-    fn deletion_scope_stops_at_textboxes_and_covers_nested_insertions() {
+    fn deletion_scope_stops_at_textboxes_and_nested_insertions_stay_live() {
         let mut dom = Dom::new();
         let root = xml(
             &mut dom,
@@ -3760,13 +2193,11 @@ mod validation_boundary_tests {
             .into_iter()
             .map(|n| dom.value(n))
             .collect::<Vec<_>>();
-        assert_eq!(live, ["uncovered", "moved", "stranded"]);
-        let deleted = dom
-            .descendants(root, Some(&W::name("delText")))
-            .into_iter()
-            .map(|n| dom.value(n))
-            .collect::<Vec<_>>();
-        assert_eq!(deleted, ["deleted", "inserted"]);
+        assert_eq!(live, ["inserted", "uncovered", "moved", "stranded"]);
+        assert_eq!(
+            dom.value(dom.descendants(root, Some(&W::name("delText")))[0]),
+            "deleted"
+        );
     }
 
     #[test]
@@ -3894,7 +2325,7 @@ mod validation_boundary_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod validation_owner_boundary_tests {
     use super::*;
     fn package() -> PartFs {
@@ -4003,7 +2434,7 @@ mod validation_owner_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_memory_validator_owner_boundary_tests {
     use super::*;
     fn package(body: &str) -> PartFs {
@@ -4149,7 +2580,7 @@ mod public_memory_validator_owner_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod literal_revision_repair_contract_tests {
     use super::*;
 
@@ -4204,7 +2635,7 @@ mod literal_revision_repair_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod paragraph_id_collision_owner_tests {
     use super::*;
 
@@ -4247,7 +2678,7 @@ mod paragraph_id_collision_owner_tests {
             let mut expected = before.clone();
             for (name, bytes) in &mut expected {
                 if name == "word/document.xml" || name == "word/commentsExtended.xml" {
-                    *bytes = std::str::from_utf8(bytes)
+                    *bytes = String::from_utf8(bytes.clone())
                         .unwrap()
                         .replace(&format!("=\"{old_id}\""), "=\"00000003\"")
                         .into_bytes();
@@ -4304,7 +2735,7 @@ mod paragraph_id_collision_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod authored_comment_family_validation_contract_tests {
     use super::*;
 
@@ -4440,7 +2871,7 @@ mod authored_comment_family_validation_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod retained_namespace_finding_source_contract_tests {
     use super::*;
 
@@ -4543,7 +2974,7 @@ mod retained_namespace_finding_source_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod duplicate_drawing_owned_repair_contract_tests {
     use super::*;
 
@@ -4594,286 +3025,5 @@ mod duplicate_drawing_owned_repair_contract_tests {
         assert!(again.repaired.is_empty());
         assert!(again.remaining.is_empty());
         assert_eq!(again.docx, repaired.docx);
-    }
-}
-
-#[cfg(test)]
-mod foreign_alignment_budget_tests {
-    use super::ordered_pairs;
-    use std::{
-        cell::Cell,
-        hash::{Hash, Hasher},
-        rc::Rc,
-    };
-
-    struct Counted<'a> {
-        text: &'a str,
-        comparisons: Rc<Cell<usize>>,
-    }
-    impl PartialEq for Counted<'_> {
-        fn eq(&self, other: &Self) -> bool {
-            let count = self.comparisons.get() + 1;
-            self.comparisons.set(count);
-            assert!(
-                count <= 1_000_000,
-                "alignment exceeded 1,000,000 equality comparisons"
-            );
-            self.text == other.text
-        }
-    }
-    impl Eq for Counted<'_> {}
-    impl Hash for Counted<'_> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            self.text.hash(state);
-        }
-    }
-
-    fn bounded_alignment(a: &[&'static str], b: &[&'static str], expected: usize) {
-        let comparisons = Rc::new(Cell::new(0));
-        let wrap = |values: &[&'static str]| {
-            values
-                .iter()
-                .map(|&text| Counted {
-                    text,
-                    comparisons: comparisons.clone(),
-                })
-                .collect::<Vec<_>>()
-        };
-        // The test values are static; keep the counting type independent of
-        // production code. The public audit tests separately bound allocation size.
-        let left = wrap(a);
-        let right = wrap(b);
-        let pairs = ordered_pairs(&left, &right);
-        assert_eq!(pairs.len(), expected);
-        assert!(pairs.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1));
-        assert!(pairs.iter().all(|&(i, j)| a[i] == b[j]));
-    }
-
-    #[test]
-    fn foreign_alignment_ten_thousand_empty_paragraphs_is_bounded() {
-        let mut a = vec![""; 10_002];
-        let mut b = a.clone();
-        a[0] = "old first";
-        a[10_001] = "old last";
-        b[0] = "new first";
-        b[10_001] = "new last";
-        bounded_alignment(&a, &b, 10_000);
-    }
-
-    #[test]
-    fn foreign_alignment_ten_thousand_same_key_deletions_is_bounded() {
-        let a = vec!["deleted"; 10_000];
-        let mut b = a.clone();
-        b[0] = "changed first";
-        b[9_999] = "changed last";
-        bounded_alignment(&a, &b, 9_998);
-    }
-
-    #[test]
-    fn foreign_alignment_ten_thousand_alternating_paragraphs_is_bounded() {
-        let a: Vec<_> = (0..10_000)
-            .map(|i| if i % 2 == 0 { "a" } else { "b" })
-            .collect();
-        let mut b = a.clone();
-        b[5_000] = "changed";
-        bounded_alignment(&a, &b, 9_999);
-    }
-    #[test]
-    fn foreign_alignment_dense_fallback_is_order_stable() {
-        let a = vec!["a"; 200];
-        let mut b = vec!["b"; 200];
-        b[32..168].fill("a");
-        bounded_alignment(&a, &b, 136);
-        assert_eq!(ordered_pairs(&a, &b), ordered_pairs(&a, &b));
-        // 66 edits exceed the Myers budget. The deterministic fallback can
-        // select fewer anchors, but must preserve order and exact equality.
-        let alternating: Vec<_> = (0..200)
-            .map(|i| if i % 2 == 0 { "a" } else { "b" })
-            .collect();
-        let mut changed = alternating.clone();
-        for i in 0..32 {
-            changed[i * 5] = "changed";
-        }
-        changed[199] = "changed";
-        bounded_alignment(&alternating, &changed, 135);
-    }
-
-    #[test]
-    fn foreign_alignment_dense_myers_matches_short_edit_lcs() {
-        for changed in [1, 8, 16, 31] {
-            let a: Vec<_> = (0..200)
-                .map(|i| if i % 2 == 0 { "a" } else { "b" })
-                .collect();
-            let mut b = a.clone();
-            for i in 0..changed {
-                b[i * 5] = "changed";
-            }
-            b[199] = "changed";
-            bounded_alignment(&a, &b, 199 - changed);
-        }
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod baseline_tests {
-    use super::*;
-
-    fn finding(code: &str, location: &str, message: &str) -> Finding {
-        Finding::new(code, "word/document.xml", location, message)
-    }
-
-    #[test]
-    fn a_chain_resolves_to_the_element_it_names() {
-        let mut dom = Dom::new();
-        let doc = dom.parse_xdocument(&format!(
-            r#"<w:document xmlns:w="{W_NS}"><w:body><w:p/><w:p><w:r/><w:r><w:t>x</w:t></w:r></w:p></w:body></w:document>"#,
-            W_NS = W::URI
-        ));
-        let root = dom.root(doc).unwrap();
-        let t = dom.descendants(root, Some(&W::t()))[0];
-        let chain = element_path(&dom, t);
-        assert_eq!(chain, "w:body[0]/w:p[1]/w:r[1]/w:t[0]");
-        let mut part = Part::new(dom, root);
-        assert_eq!(part.resolve(&chain), Some(t));
-        assert_eq!(part.resolve("w:body[0]/w:p[2]"), None);
-        assert_eq!(part.resolve("w:body[0]/w:p"), None);
-    }
-
-    #[test]
-    fn identity_drops_element_indices_and_paragraph_ids_from_the_message() {
-        let a = finding(
-            "BOOKMARK_CROSSES_REVISION",
-            "",
-            "_Hlk1: start w:body[0]/w:p[3]/w:bookmarkStart[0] and end p3, p4-p5.",
-        );
-        let b = finding(
-            "BOOKMARK_CROSSES_REVISION",
-            "",
-            "_Hlk1: start w:body[0]/w:p[9]/w:bookmarkStart[0] and end p9, p10-p11.",
-        );
-        assert_eq!(a.identity(), b.identity());
-        assert_eq!(
-            a.identity().message,
-            "_Hlk1: start w:body/w:p/w:bookmarkStart and end p#, p#-p#."
-        );
-        // The entity a message names stays: another bookmark is another
-        // finding, and so is a bracket that is no index.
-        let other = finding(
-            "BOOKMARK_CROSSES_REVISION",
-            "",
-            "_Hlk2: start w:body[0]/w:p[3]/w:bookmarkStart[0] and end p3, p4-p5.",
-        );
-        assert_ne!(a.identity(), other.identity());
-        assert_eq!(normalised("id [a] and [12x]"), "id [a] and [12x]");
-        assert_eq!(
-            normalised("header1.p2, t0.row1.cell2 and t0.row1.cell2.p1"),
-            "p#, p# and p#"
-        );
-        // Stories, parts and words are kept.
-        assert_eq!(
-            normalised("header1 footnotes commentsExtensible word/document.xml"),
-            "header1 footnotes commentsExtensible word/document.xml"
-        );
-        // Comments and revisions are entities, not positions.
-        assert_eq!(normalised("c5 on r12 and c5.text"), "c5 on r12 and c5.text");
-        assert_eq!(normalised("durableId '00251B63'"), "durableId '00251B63'");
-    }
-
-    #[test]
-    fn identity_keeps_where_the_finding_sits() {
-        let here = finding("TEXT_INSIDE_DELETION", "w:body[0]/w:p[3]", "w:t in w:del");
-        let there = finding("TEXT_INSIDE_DELETION", "w:body[0]/w:p[9]", "w:t in w:del");
-        assert_ne!(here.identity(), there.identity());
-        let mut audit = here.clone();
-        audit.set = "a11y".to_string();
-        assert_ne!(here.identity(), audit.identity());
-    }
-
-    #[test]
-    fn baseline_matches_one_for_one_by_identity() {
-        let x = finding("DUPLICATE_DOCPR_ID", "", "docPr id 1 appears 2 times");
-        let y = finding("DUPLICATE_DOCPR_ID", "", "docPr id 7 appears 2 times");
-        // The same identity twice in the output, once in the input: one of
-        // them is new.
-        let split = baseline(vec![x.clone(), x.clone()], vec![x.clone()]);
-        assert_eq!(split.baseline, vec![x.clone()]);
-        assert_eq!(split.new, vec![x.clone()]);
-        assert!(split.resolved.is_empty());
-        // One replaced by another at the same count.
-        let split = baseline(vec![y.clone()], vec![x.clone()]);
-        assert_eq!(split.new, vec![y.clone()]);
-        assert!(split.baseline.is_empty());
-        assert_eq!(split.resolved, vec![x.clone()]);
-        // Order is each input's own.
-        let split = baseline(
-            vec![y.clone(), x.clone()],
-            vec![x.clone(), y.clone(), x.clone()],
-        );
-        assert_eq!(split.baseline, vec![y.clone(), x.clone()]);
-        assert_eq!(split.resolved, vec![x]);
-    }
-
-    #[test]
-    fn baselined_text_and_json_name_each_list() {
-        let x = finding("DUPLICATE_DOCPR_ID", "", "docPr id 1 appears 2 times");
-        let empty = Baselined::default();
-        assert_eq!(
-            baselined_text(&empty),
-            "new: none\nalready in the input: none\n"
-        );
-        assert_eq!(baselined_json(&empty).unwrap(), "{\"resolved\":[]}\n");
-        let split = Baselined {
-            new: vec![x.clone()],
-            baseline: vec![x.clone()],
-            resolved: vec![x.clone()],
-        };
-        let line = finding_line(&x);
-        assert_eq!(
-            baselined_text(&split),
-            format!(
-                "new: 1\n{line}already in the input: 1 (not yours)\n\
-                 resolved: 1 (in the input, not in this file)\n{line}"
-            )
-        );
-        let json = baselined_json(&split).unwrap();
-        let rows: Vec<serde_json::Value> = json
-            .lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect();
-        assert_eq!(rows[0]["status"], "new");
-        assert_eq!(rows[1]["status"], "baseline");
-        assert_eq!(rows[0]["code"], "DUPLICATE_DOCPR_ID");
-        assert_eq!(rows[2]["resolved"][0]["code"], "DUPLICATE_DOCPR_ID");
-        assert!(rows[2]["resolved"][0].get("status").is_none());
-    }
-
-    #[test]
-    fn input_notice_counts_errors_and_warnings_but_not_info() {
-        let warning = finding("DUPLICATE_DOCPR_ID", "", "w");
-        let error = finding("TEXT_INSIDE_DELETION", "", "e");
-        let mut info = warning.clone();
-        info.severity = "info".to_string();
-        assert_eq!(warning.severity, "warning");
-        assert_eq!(error.severity, "error");
-        assert_eq!(input_notice(&[], "a.docx"), None);
-        assert_eq!(input_notice(std::slice::from_ref(&info), "a.docx"), None);
-        assert_eq!(
-            input_notice(std::slice::from_ref(&warning), "a.docx").unwrap(),
-            "input has 1 validity warning; jubarte validate a.docx lists it"
-        );
-        assert_eq!(
-            input_notice(&[warning.clone(), warning.clone(), info], "a.docx").unwrap(),
-            "input has 2 validity warnings; jubarte validate a.docx lists them"
-        );
-        assert_eq!(
-            input_notice(&[error.clone(), error.clone()], "a.docx").unwrap(),
-            "input has 2 validity errors; jubarte validate a.docx lists them"
-        );
-        assert_eq!(
-            input_notice(&[error, warning.clone(), warning.clone()], "my file.docx").unwrap(),
-            "input has 1 validity error and 2 warnings; \
-             jubarte validate 'my file.docx' lists them"
-        );
     }
 }

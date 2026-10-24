@@ -211,12 +211,6 @@ the error is what you initially thought because we get this wrong routinely.
   report), with a broken probe in `tests/m_validity_ring1.rs`;
   `tests/common/validity.rs` only wraps `ring1` for the test gate. Run
   `jubarte validate` on the broken file to see the new check fire.
-  The one exception is a shape the package open refuses before any part
-  is parsed, such as two ZIP entries with one part identity
-  (`DUPLICATE_PART`, #600): it never reaches `ring1`, so `jubarte
-  validate`, Python and WASM report it as the open's typed refusal, not
-  as a finding. Its broken probe still goes in
-  `tests/m_validity_ring1.rs`, asserting that refusal.
 - Double check with Word, always: open the broken file in Word (alone,
   under a fresh name) before calling a shape Word-invalid, and open the
   fixed output too. A check marked Word-fatal must have a file Word refused

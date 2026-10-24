@@ -5,7 +5,7 @@
 //! (`tests/fixtures/md-roundtrip/review`): table rows wider than their grid,
 //! an author's date range, the document owner; and the author and date a
 //! change or comment that names none takes (flag, front matter, the
-//! reference document's creator and creation time, else Jubarte and
+//! reference document's creator and creation time, else Redline and
 //! now).
 
 use std::path::{Path, PathBuf};
@@ -90,22 +90,19 @@ fn a_row_wider_than_its_grid_keeps_its_cells_and_merges() {
         // An empty cell past the grid.
         (
             "p19_wide_empty_extra.docx",
-            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7, widths 1.667in 1.667in 1.667in, \
-             width auto -->",
+            "<!-- t0 2x3, cells t0.row0 p1-p3 t0.row1 p4-p7 -->",
         ),
         // A gap after over columns cells take.
         (
             "p16_after_overflows_cell.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, widths 1.667in 1.667in 1.667in \
-             1.667in, width auto, merged t0.row0.cell1 across 2, gaps t0.row0 after 1; \
-             t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p3 t0.row1 p4, merged t0.row0.cell1 across 2, \
+             gaps t0.row0 after 1; t0.row1 after 3 -->",
         ),
         // A merged pad cell longer than the room the gap leaves.
         (
             "p17_span_cut_by_after.docx",
-            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, widths 1.667in 1.667in 1.667in \
-             1.667in, width auto, merged t0.row0.cell1 across 3, gaps t0.row0 after 2; \
-             t0.row1 after 3 -->",
+            "<!-- t0 2x4, cells t0.row0 p1-p2 t0.row1 p3, merged t0.row0.cell1 across 3, \
+             gaps t0.row0 after 2; t0.row1 after 3 -->",
         ),
     ] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
@@ -115,96 +112,15 @@ fn a_row_wider_than_its_grid_keeps_its_cells_and_merges() {
 }
 
 #[test]
-fn an_authors_latest_comes_back_whatever_change_ends_it() {
+fn an_authors_range_comes_back_whatever_change_ends_it() {
     let dir = tempfile::tempdir().unwrap();
-    // The latest timestamp on a formatting change, an inserted row, a
+    // The range's last day on a formatting change, an inserted row, a
     // header's insertion.
     for name in ["A-fmt.docx", "B-row.docx", "C-header.docx"] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
-        let latest = "2026-03-04T16:30:00Z";
-        assert!(
-            first.contains(&format!("# 2 revisions, latest {latest}")),
-            "{name}: {first}"
-        );
-        assert!(
-            second.contains(&format!("# 2 revisions, {latest}")),
-            "{name} written back:\n{second}"
-        );
-    }
-}
-
-fn legacy_range_docx(dir: &Path, name: &str) -> PathBuf {
-    let latest = read(dir, &fixture(name));
-    let legacy = latest.replace("latest 2026-03-04T16:30:00Z", "2026-03-02..2026-03-04");
-    assert_ne!(latest, legacy, "{name}: no latest header to replace");
-    let md = dir.join("legacy.md");
-    let out = dir.join("legacy.docx");
-    std::fs::write(&md, legacy).unwrap();
-    jubarte(
-        dir,
-        &[
-            "convert",
-            md.to_str().unwrap(),
-            "-o",
-            out.to_str().unwrap(),
-            "--force",
-            "-d",
-            "1970-01-01T00:00:00Z",
-        ],
-    );
-    out
-}
-
-fn assert_mark_date(docx: &Path, part_name: &str, kind: &str, id: &str, date: &str) {
-    use jubarte::namespaces::W;
-    let xml = part(docx, part_name);
-    let mut dom = jubarte::xmllinq::Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let marks: Vec<_> = dom
-        .descendants(root, Some(&W::name(kind)))
-        .into_iter()
-        .filter(|&node| dom.attribute(node, &W::id()) == Some(id))
-        .collect();
-    assert_eq!(marks.len(), 1, "{part_name} {kind} r{id}: {xml}");
-    assert_eq!(dom.attribute(marks[0], &W::author()), Some("Ann Lee"));
-    assert_eq!(
-        dom.attribute(marks[0], &W::date()),
-        Some(date),
-        "{part_name} {kind} r{id}"
-    );
-}
-
-#[test]
-fn legacy_range_dates_formatting_changes_rows_and_body_header_marks() {
-    let dir = tempfile::tempdir().unwrap();
-    for (name, last_part, last_kind, last_id) in [
-        ("A-fmt.docx", "word/document.xml", "pPrChange", "10"),
-        ("B-row.docx", "word/document.xml", "ins", "3"),
-        ("C-header.docx", "word/header1.xml", "ins", "4"),
-    ] {
-        let out = legacy_range_docx(dir.path(), name);
-        assert_mark_date(
-            &out,
-            "word/document.xml",
-            "ins",
-            "1",
-            "2026-03-02T00:00:00Z",
-        );
-        assert_mark_date(&out, last_part, last_kind, last_id, "2026-03-04T23:59:59Z");
-    }
-}
-
-#[test]
-fn legacy_range_dates_header_and_footer_only_marks() {
-    let dir = tempfile::tempdir().unwrap();
-    for (name, story) in [
-        ("H-hdr-only.docx", "word/header1.xml"),
-        ("I-ftr-only.docx", "word/footer1.xml"),
-    ] {
-        let out = legacy_range_docx(dir.path(), name);
-        assert_mark_date(&out, story, "ins", "40", "2026-03-02T00:00:00Z");
-        assert_mark_date(&out, story, "ins", "41", "2026-03-04T23:59:59Z");
+        let range = "# 2 revisions, 2026-03-02..2026-03-04";
+        assert!(first.contains(range), "{name}: {first}");
+        assert!(second.contains(range), "{name} written back:\n{second}");
     }
 }
 
@@ -228,7 +144,7 @@ fn a_date_the_view_writes_out_is_kept() {
     let at = |text: &str| comments.find(text).unwrap();
     assert!(at("2026-03-04T23:59:59Z") < at(">one<"), "{comments}");
     assert!(at("2026-03-02T00:00:00Z") > at(">one<"), "{comments}");
-    // A comment dated on the first day stays so beside the range's end.
+    // A comment dated on the first day, not at midnight, keeps the range.
     let out = dir.path().join("m.docx");
     jubarte(
         dir.path(),
@@ -241,7 +157,7 @@ fn a_date_the_view_writes_out_is_kept() {
         ],
     );
     assert!(
-        read(dir.path(), &out).contains("latest 2026-03-04T23:59:59Z"),
+        read(dir.path(), &out).contains("2026-03-02..2026-03-04"),
         "M-noon"
     );
 }
@@ -356,11 +272,11 @@ fn date_of(ins: &str) -> String {
 }
 
 #[test]
-fn an_unnamed_change_is_signed_jubarte_and_dated_now() {
+fn an_unnamed_change_is_signed_redline_and_dated_now() {
     let before = jubarte::convert::utc_now_iso8601();
     let ins = stamped("", &[]);
     let after = jubarte::convert::utc_now_iso8601();
-    assert!(ins.contains("w:author=\"Jubarte\""), "{ins}");
+    assert!(ins.contains("w:author=\"Redline\""), "{ins}");
     // The same format sorts by time.
     let date = date_of(&ins);
     assert!(
@@ -432,7 +348,7 @@ fn the_date_flag_is_gone_for_datetime() {
 /// null or comment-only `author:`, keys after a thematic break that opens
 /// no front matter (round-7 defaults review, findings 1, 4 and 5).
 #[test]
-fn front_matter_that_names_no_one_or_no_real_date_leaves_jubarte_and_now() {
+fn front_matter_that_names_no_one_or_no_real_date_leaves_redline_and_now() {
     for front in [
         "---\ndate: 2026-02-30\n---\n\n",
         "---\nlast_modified: 2026-99-99T99:99:99Z\n---\n\n",
@@ -444,7 +360,7 @@ fn front_matter_that_names_no_one_or_no_real_date_leaves_jubarte_and_now() {
         let before = jubarte::convert::utc_now_iso8601();
         let ins = stamped(front, &[]);
         let after = jubarte::convert::utc_now_iso8601();
-        assert!(ins.contains("w:author=\"Jubarte\""), "{front:?}: {ins}");
+        assert!(ins.contains("w:author=\"Redline\""), "{front:?}: {ins}");
         let date = date_of(&ins);
         assert!(before <= date && date <= after, "{front:?}: {ins}");
     }
@@ -491,21 +407,17 @@ fn an_unread_date_key_warns_only_when_nothing_else_dates_the_file() {
     )));
 }
 
-/// A latest timestamp only the headers or footers carry survives conversion.
+/// A range only headers or footers carry (round-7 dates review, finding
+/// 1): the first story mark keeps the first day, the later ones take the
+/// last.
 #[test]
-fn the_latest_only_headers_or_footers_carry_comes_back() {
+fn a_range_only_headers_or_footers_carry_comes_back() {
     let dir = tempfile::tempdir().unwrap();
     for name in ["H-hdr-only.docx", "I-ftr-only.docx"] {
         let (first, second) = round_trip(dir.path(), &fixture(name));
-        let latest = "2026-03-04T16:30:00Z";
-        assert!(
-            first.contains(&format!("# 2 revisions, latest {latest}")),
-            "{name}: {first}"
-        );
-        assert!(
-            second.contains(&format!("# 2 revisions, {latest}")),
-            "{name} written back:\n{second}"
-        );
+        let range = "# 2 revisions, 2026-03-02..2026-03-04";
+        assert!(first.contains(range), "{name}: {first}");
+        assert!(second.contains(range), "{name} written back:\n{second}");
     }
 }
 
@@ -528,12 +440,9 @@ fn a_timestamp_range_reads_as_days_and_a_tag_outside_it_warns() {
             "1970-01-01T00:00:00Z",
         ],
     );
-    let document = part(&out, "word/document.xml");
-    assert!(document.contains("2026-03-02T00:00:00Z"), "{document}");
-    assert!(document.contains("2026-03-04T23:59:59Z"), "{document}");
     let view = read(dir.path(), &out);
     assert!(
-        view.contains("# 2 revisions, latest 2026-03-04T23:59:59Z"),
+        view.contains("# 2 revisions, 2026-03-02..2026-03-04"),
         "{view}"
     );
     let out = dir.path().join("k.docx");

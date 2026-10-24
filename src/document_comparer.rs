@@ -651,7 +651,7 @@ fn doc_default_ppr_delta(
     let (a_sp, b_sp, b_own_sp) = (sp(dom, a_dd), sp(dom, b_dd), sp(dom, b_own));
     let mut attrs: Vec<(String, String)> = Vec::new();
     for s in [a_sp, b_sp].into_iter().flatten() {
-        for (n, _) in dom.attributes_iter(s) {
+        for (n, _) in dom.attributes(s) {
             let local = n.local_name();
             if n.namespace_name() == W::URI
                 && matches!(local, "beforeLines" | "afterLines")
@@ -3695,26 +3695,25 @@ fn canonicalize_style_ids(
 
     // Pass 2: drop collisions — target held by a non-renaming style, or two
     // styles racing for the same target (first wins; prefer already-matching).
-    let leaving: std::collections::HashSet<&str> =
-        desired.iter().map(|(_, old, _)| old.as_str()).collect();
-    let mut taken_targets: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let leaving: std::collections::HashSet<String> =
+        desired.iter().map(|(_, old, _)| old.clone()).collect();
+    let mut taken_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut renames: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut plan: Vec<(NodeId, String)> = Vec::new();
-    for (s, old, new_id) in &desired {
-        if taken_targets.contains(new_id.as_str()) {
+    for (s, old, new_id) in desired {
+        if taken_targets.contains(&new_id) {
             continue;
         }
         // Occupied by a style that stays put?
         let occupied_by_stayer = styles.iter().any(|&other| {
-            dom.attribute(other, &style_id) == Some(new_id.as_str())
-                && !leaving.contains(new_id.as_str())
+            dom.attribute(other, &style_id) == Some(new_id.as_str()) && !leaving.contains(&new_id)
         });
         if occupied_by_stayer {
             continue;
         }
-        taken_targets.insert(new_id.as_str());
-        renames.insert(old.clone(), new_id.clone());
-        plan.push((*s, new_id.clone()));
+        taken_targets.insert(new_id.clone());
+        renames.insert(old, new_id.clone());
+        plan.push((s, new_id));
     }
     for (s, new_id) in &plan {
         dom.set_attribute_value(*s, &style_id, Some(new_id));
@@ -3879,7 +3878,7 @@ fn prune_normal_rpr_context_equal_attrs(dom: &mut Dom, out_root: NodeId) -> bool
                 changed = true;
             }
         }
-        if !dom.has_attributes(fonts) {
+        if dom.attributes(fonts).is_empty() {
             dom.remove(fonts);
             changed = true;
         }
@@ -4268,7 +4267,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                         changed = true;
                     }
                 }
-                if !dom.has_attributes(rf) {
+                if dom.attributes(rf).is_empty() {
                     dom.remove(rf);
                 }
             }
@@ -4334,7 +4333,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
                 changed = true;
             }
         }
-        if !dom.has_attributes(sp) {
+        if dom.attributes(sp).is_empty() {
             dom.remove(sp);
         }
     }
@@ -4921,9 +4920,7 @@ fn admit_input(
 }
 
 /// Admit a single package under the compare budget before a public entry
-/// point opens it: the package constructor is bounded on its own (#645),
-/// and admission gives the typed refusal with the rules a budget alone
-/// does not check (part-name safety, encryption, XML depth, WML shape).
+/// point opens it: `PartFs::open` inflates every entry without a bound.
 pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
     admit_input("input", bytes, crate::admission::InputLimits::compare())
 }
@@ -4951,9 +4948,9 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 );
 
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
-/// tracked revision across main + headers/footers + notes + comments +
-/// styles parts and return the result as a `.docx` byte vector. The input
-/// is admitted under [`crate::admission::InputLimits::compare`] first.
+/// tracked revision across main + headers/footers + notes + styles parts
+/// and return the result as a `.docx` byte vector. The input is admitted
+/// under [`crate::admission::InputLimits::compare`] first.
 ///
 /// # Errors
 ///
@@ -4966,22 +4963,16 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
-/// [`accept_revisions`] under the caller's admission budget, which the
-/// compare flow already checked (#645). Bookmark and comment ids stay, so a
-/// redline names its comments by the ids the documents gave them, as
-/// `edit` reports them.
-fn accept_source_revisions(
-    docx: &[u8],
-    limits: crate::admission::InputLimits,
-) -> Result<Vec<u8>, OpcError> {
-    let mut pkg = PartFs::open_within(docx, limits)?;
-    crate::revision_processor::accept_revisions_package(&mut pkg);
+/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
+/// its comments by the ids the documents gave them, as `edit` reports them.
+fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    let mut pkg = PartFs::open(docx)?;
+    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
     pkg.to_zip()
 }
 
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
-/// tracked revision across main + headers/footers + notes + comments +
-/// styles parts.
+/// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
@@ -6298,7 +6289,7 @@ pub fn get_revisions(
     use crate::comparer::{preprocess, revisions};
 
     admit_input("input", docx, settings.input_limits)?;
-    let pkg = PartFs::open_within(docx, settings.input_limits)?;
+    let pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -6425,16 +6416,7 @@ pub fn compare_documents_with_settings(
     modified: &[u8],
     settings: &WmlComparerSettings,
 ) -> Result<Vec<u8>, OpcError> {
-    compare_documents_impl(original, modified, settings, true, true)
-}
-
-/// Edit restores permissions under its own revised-by-id policy (#1176).
-pub(crate) fn compare_documents_for_edit(
-    original: &[u8],
-    modified: &[u8],
-    settings: &WmlComparerSettings,
-) -> Result<Vec<u8>, OpcError> {
-    compare_documents_impl(original, modified, settings, true, false)
+    compare_documents_impl(original, modified, settings, true)
 }
 
 /// `WmlComparer.CompareInternal` (:152). `pre_process_original` mirrors C#'s
@@ -6452,7 +6434,7 @@ pub fn compare_documents_internal(
         date_time_for_revisions: date.to_string(),
         ..WmlComparerSettings::default()
     };
-    compare_documents_impl(original, modified, &settings, pre_process_original, true)
+    compare_documents_impl(original, modified, &settings, pre_process_original)
 }
 
 /// Resolve the footnotes/endnotes part names via the main-document rels,
@@ -6481,11 +6463,9 @@ fn notes_part_names(pkg: &PartFs) -> (String, String) {
 }
 
 /// True when any package part's XML carries tracked-change markup that Word
-/// Compare would fold into the final view before diffing. Opened under the
-/// same budget the caller admitted the input with, so a settings budget
-/// looser than the constructor's still governs (#645).
-fn main_part_xml(docx: &[u8], limits: crate::admission::InputLimits) -> Option<String> {
-    let pkg = PartFs::open_within(docx, limits).ok()?;
+/// Compare would fold into the final view before diffing.
+fn main_part_xml(docx: &[u8]) -> Option<String> {
+    let pkg = PartFs::open(docx).ok()?;
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -6493,8 +6473,8 @@ fn main_part_xml(docx: &[u8], limits: crate::admission::InputLimits) -> Option<S
     Some(normalize_strict_namespaces(&xml).into_owned())
 }
 
-fn docx_has_tracked_changes(docx: &[u8], limits: crate::admission::InputLimits) -> bool {
-    let Ok(pkg) = PartFs::open_within(docx, limits) else {
+fn docx_has_tracked_changes(docx: &[u8]) -> bool {
+    let Ok(pkg) = PartFs::open(docx) else {
         return false;
     };
     for name in pkg.parts() {
@@ -6523,7 +6503,6 @@ fn compare_documents_impl(
     modified: &[u8],
     settings: &WmlComparerSettings,
     pre_process_original: bool,
-    union_permissions: bool,
 ) -> Result<Vec<u8>, OpcError> {
     // Admit both packages before anything inflates them: the central
     // directory's sizes are untrusted, and an unbounded inflate aborts the
@@ -6536,20 +6515,14 @@ fn compare_documents_impl(
         let mut owned = crate::strict_translation::strict_to_transitional_docx_within(
             original,
             settings.input_limits,
-        )
-        .map_err(crate::opc::refused)?;
-        if settings.merge_replaced_paragraphs
-            && docx_has_tracked_changes(&owned, settings.input_limits)
-        {
-            owned = accept_source_revisions(&owned, settings.input_limits)?;
+        );
+        if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
+            owned = accept_source_revisions(&owned)?;
         }
         // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
         // may carry colliding wp:docPr/@id (strict01 corpus) that the full
         // produce path renumbers; skipping left S-dup-docpr-id regressions.
-        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
-            &owned,
-            settings.input_limits,
-        )?;
+        owned = crate::comparer::fixups::fix_up_drawing_ids_in_package(&owned)?;
         return Ok(owned);
     }
 
@@ -6561,21 +6534,19 @@ fn compare_documents_impl(
     let mut original_owned = crate::strict_translation::strict_to_transitional_docx_within(
         original,
         settings.input_limits,
-    )
-    .map_err(crate::opc::refused)?;
+    );
     let mut modified_owned = crate::strict_translation::strict_to_transitional_docx_within(
         modified,
         settings.input_limits,
-    )
-    .map_err(crate::opc::refused)?;
+    );
 
     // Accept-before-diff flattens a revised insertion into live text, so a late
     // pass can no longer see where that insertion ended. Keep both main parts
     // from this moment. Faithful mode never reads them.
     let ladder_sources = if settings.merge_replaced_paragraphs {
         match (
-            main_part_xml(&original_owned, settings.input_limits),
-            main_part_xml(&modified_owned, settings.input_limits),
+            main_part_xml(&original_owned),
+            main_part_xml(&modified_owned),
         ) {
             (Some(original_xml), Some(revised_xml)) => Some((original_xml, revised_xml)),
             _ => None,
@@ -6590,11 +6561,10 @@ fn compare_documents_impl(
     // file_8_file_9 37→56, file_27_file_28 38→61 with accept-then). PowerTools
     // faithful leaves inputs as-is.
     if settings.merge_replaced_paragraphs
-        && (docx_has_tracked_changes(&original_owned, settings.input_limits)
-            || docx_has_tracked_changes(&modified_owned, settings.input_limits))
+        && (docx_has_tracked_changes(&original_owned) || docx_has_tracked_changes(&modified_owned))
     {
-        original_owned = accept_source_revisions(&original_owned, settings.input_limits)?;
-        modified_owned = accept_source_revisions(&modified_owned, settings.input_limits)?;
+        original_owned = accept_source_revisions(&original_owned)?;
+        modified_owned = accept_source_revisions(&modified_owned)?;
     }
 
     // After prep, packages may still be byte-identical (rare non-self paths).
@@ -6605,8 +6575,8 @@ fn compare_documents_impl(
     let original: &[u8] = &original_owned;
     let modified: &[u8] = &modified_owned;
 
-    let mut pkg1 = PartFs::open_within(original, settings.input_limits)?;
-    let mut pkg2 = PartFs::open_within(modified, settings.input_limits)?;
+    let mut pkg1 = PartFs::open(original)?;
+    let mut pkg2 = PartFs::open(modified)?;
 
     // CompareInternal :154–:155 — disjoint footnote/endnote id spaces: doc A
     // gets starting_id+1000, doc B +2000 (block hashing ignores ref ids, so
@@ -6750,9 +6720,9 @@ fn compare_documents_impl(
     // preprocessed source1 (:197 comment: the renumbered/unid'd markup must be
     // the one appearing in the result). Note-free inputs keep the raw bytes.
     let mut out = if changed1.is_empty() {
-        PartFs::open_within(original, settings.input_limits)?
+        PartFs::open(original)?
     } else {
-        PartFs::open_within(&pkg1.to_zip()?, settings.input_limits)?
+        PartFs::open(&pkg1.to_zip()?)?
     };
     // M4.H.3: carry over / drop dangling relationship references from inserted
     // content so the output has no dangling rId (Word-repair preventer).
@@ -6822,15 +6792,6 @@ fn compare_documents_impl(
         (&pkg2, &main2),
         &settings.author_for_revisions,
     );
-    if union_permissions {
-        crate::comparer::bookmarks::carry_permission_union(
-            &mut dom,
-            result_root,
-            (&pkg1, &main1),
-            (&pkg2, &main2),
-            &settings.author_for_revisions,
-        );
-    }
 
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
@@ -7706,15 +7667,6 @@ fn compare_documents_impl(
         (en1.as_str(), notes_ctx.en_with_revisions, false),
     ] {
         if let Some(r) = root {
-            if union_permissions {
-                crate::comparer::bookmarks::carry_permission_union(
-                    &mut dom,
-                    r,
-                    (&pkg1, part),
-                    (&pkg2, if is_fn { &fn2 } else { &en2 }),
-                    &settings.author_for_revisions,
-                );
-            }
             let def = if is_fn { W::footnote() } else { W::endnote() };
             let ids: std::collections::HashSet<String> = dom
                 .elements(r, Some(&def))
@@ -7860,15 +7812,6 @@ fn compare_documents_impl(
                     }
                     if b_ends_with_table {
                         delete_story_closing_mark(&mut hd, container, settings);
-                    }
-                    if union_permissions {
-                        crate::comparer::bookmarks::carry_permission_union(
-                            &mut hd,
-                            container,
-                            (&pkg1, &part_a),
-                            (&pkg2, part_b),
-                            &settings.author_for_revisions,
-                        );
                     }
                     // M-PAG mech 1 guard: the diff must never leave a slot A
                     // populates with B's wholesale content. When B's matched
@@ -8072,11 +8015,11 @@ fn compare_documents_impl(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod based_style_record_tests;
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Word-validity regressions for synthesized revision records. Word treats
     //! a colliding `w:id` on two `w:*Change` records as the same revision and
@@ -8120,7 +8063,11 @@ mod tests {
         let d = dom.parse_xdocument(&restored);
         let root = dom.root(d).unwrap();
         let sp = dom.descendants(root, Some(&W::name("spacing")))[0];
-        let mut names: Vec<String> = dom.attributes_iter(sp).map(|(n, _)| n.clark()).collect();
+        let mut names: Vec<String> = dom
+            .attributes(sp)
+            .into_iter()
+            .map(|(n, _)| n.clark())
+            .collect();
         names.sort();
         let w = |l: &str| W::name(l).clark();
         assert_eq!(names, vec![w("line"), w("lineRule")], "{restored}");
@@ -8787,7 +8734,7 @@ mod tests {
                 (
                     dom.name(e).unwrap().local_name().to_string(),
                     dom.attribute(e, &W::val()).map(str::to_string),
-                    dom.attributes_iter(e).len(),
+                    dom.attributes(e).len(),
                 )
             })
             .collect();
@@ -8802,7 +8749,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_boundary_tests {
     use super::*;
     use std::collections::{HashMap, HashSet};
@@ -8877,61 +8824,6 @@ mod coverage_boundary_tests {
             date_time_for_revisions: "2001-02-03T04:05:06Z".to_string(),
             ..WmlComparerSettings::default()
         }
-    }
-
-    /// #1190: `compare_documents_with_settings` and
-    /// `compare_documents_for_edit` differ only in the permission union. A
-    /// pair without ranges compares to the same bytes either way; a pair with
-    /// one does not, so the control shows the flag reaches the union.
-    #[test]
-    fn the_permission_union_is_a_no_op_without_ranges() {
-        let body = |range: bool, last: &str| {
-            let (start, end) = if range {
-                (
-                    r#"<w:permStart w:id="5" w:edGrp="everyone"/>"#,
-                    r#"<w:permEnd w:id="5"/>"#,
-                )
-            } else {
-                ("", "")
-            };
-            format!(
-                "<w:body><w:p>{start}<w:r><w:t>The Customer shall pay.</w:t></w:r>{end}</w:p>\
-                 <w:p><w:r><w:t>{last}</w:t></w:r></w:p></w:body>"
-            )
-        };
-        let compared = |range: bool| {
-            let a = package(&body(range, "Next clause.")).to_zip().unwrap();
-            let b = package(&body(range, "Following clause.")).to_zip().unwrap();
-            (
-                compare_documents_with_settings(&a, &b, &settings()).unwrap(),
-                compare_documents_for_edit(&a, &b, &settings()).unwrap(),
-            )
-        };
-        let (union, edit) = compared(false);
-        assert!(union == edit, "without ranges the union changed the output");
-        let (union, edit) = compared(true);
-        assert!(union != edit, "the control did not reach the union");
-    }
-
-    /// #1215: bookmarks alone must not reach the permission union either.
-    /// Its early return keeps a bookmark-only redline byte-identical to the
-    /// edit path's output, which never runs the union.
-    #[test]
-    fn the_permission_union_is_a_no_op_with_bookmarks_only() {
-        let body = |last: &str| {
-            format!(
-                "<w:body><w:p><w:bookmarkStart w:id=\"5\" w:name=\"Alice\"/><w:r><w:t>The Customer shall pay.</w:t></w:r><w:bookmarkEnd w:id=\"5\"/></w:p>\
-                 <w:p><w:r><w:t>{last}</w:t></w:r></w:p></w:body>"
-            )
-        };
-        let a = package(&body("Next clause.")).to_zip().unwrap();
-        let b = package(&body("Following clause.")).to_zip().unwrap();
-        let union = compare_documents_with_settings(&a, &b, &settings()).unwrap();
-        let edit = compare_documents_for_edit(&a, &b, &settings()).unwrap();
-        assert!(
-            union == edit,
-            "the union changed a bookmark-only redline's bytes"
-        );
     }
 
     fn assert_revision(dom: &Dom, node: NodeId, id: &str) {
@@ -10134,14 +10026,8 @@ mod coverage_boundary_tests {
         assert!(admit_package(b"not a ZIP").is_err());
         let bytes = include_bytes!("../tests/fixtures/word_probes/tokens/cell_a.docx");
         assert!(admit_package(bytes).is_ok());
-        assert!(!docx_has_tracked_changes(
-            b"not a ZIP",
-            crate::admission::InputLimits::compare()
-        ));
-        assert_eq!(
-            main_part_xml(b"not a ZIP", crate::admission::InputLimits::compare()),
-            None
-        );
+        assert!(!docx_has_tracked_changes(b"not a ZIP"));
+        assert_eq!(main_part_xml(b"not a ZIP"), None);
     }
 
     #[test]
@@ -11388,10 +11274,7 @@ mod coverage_boundary_tests {
                     package("<w:body><w:p><w:r><w:t>Untracked body</w:t></w:r></w:p></w:body>");
                 pkg.set_part(story,xml("root",&format!("<w:{local} w:id='7' w:author='Prior' w:date='1999-01-01T00:00:00Z'>{carrier}</w:{local}>")).into_bytes());
                 let bytes = pkg.to_zip().unwrap();
-                assert!(
-                    docx_has_tracked_changes(&bytes, crate::admission::InputLimits::compare()),
-                    "{story}:{local}"
-                );
+                assert!(docx_has_tracked_changes(&bytes), "{story}:{local}");
                 assert_eq!(
                     PartFs::open(&bytes).unwrap().part_string(story),
                     pkg.part_string(story)
@@ -11402,10 +11285,7 @@ mod coverage_boundary_tests {
                     "word/media/source.bin",
                     format!("<w:{local}/>").into_bytes(),
                 );
-                assert!(!docx_has_tracked_changes(
-                    &pkg.to_zip().unwrap(),
-                    crate::admission::InputLimits::compare()
-                ));
+                assert!(!docx_has_tracked_changes(&pkg.to_zip().unwrap()));
             }
         }
     }
@@ -11476,7 +11356,7 @@ mod coverage_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_package_source_matrix_tests {
     use super::*;
 
@@ -11501,7 +11381,8 @@ mod coverage_package_source_matrix_tests {
     fn signature(dom: &Dom, node: NodeId) -> String {
         let name = dom.name(node).unwrap();
         let mut attrs: Vec<_> = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .map(|(n, v)| {
                 (
                     n.namespace_name().to_string(),
@@ -11539,7 +11420,7 @@ mod coverage_package_source_matrix_tests {
         // after the revision processor removes their last change child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(r, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
+                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
                     dom.remove(n);
                 }
             }
@@ -11565,7 +11446,7 @@ mod coverage_package_source_matrix_tests {
                     .copied()
                     .find(|&n| dom.name_is(n, &W::name(local)))
                     .and_then(|n| dom.element(n, &W::name(property)))
-                    .filter(|&n| !dom.elements(n, None).is_empty() || dom.has_attributes(n))
+                    .filter(|&n| !dom.elements(n, None).is_empty() || !dom.attributes(n).is_empty())
                     .map(|n| signature(&dom, n))
                     .unwrap_or_default()
             };
@@ -11730,10 +11611,7 @@ mod coverage_package_source_matrix_tests {
                             &settings,
                         )
                         .unwrap();
-                        assert!(docx_has_tracked_changes(
-                            &compared,
-                            crate::admission::InputLimits::compare()
-                        ));
+                        assert!(docx_has_tracked_changes(&compared));
                         let accepted = PartFs::open(&accept_revisions(&compared).unwrap()).unwrap();
                         let rejected = PartFs::open(&reject_revisions(&compared).unwrap()).unwrap();
                         let context = format!(
@@ -11944,17 +11822,9 @@ mod coverage_package_source_matrix_tests {
                 .replacen("</w:r>", "</w:r></w:ins>", 1);
             a.set_part(MAIN, source.into_bytes());
             let a_bytes = a.to_zip().unwrap();
-            assert!(docx_has_tracked_changes(
-                &a_bytes,
-                crate::admission::InputLimits::compare()
-            ));
-            let final_bytes =
-                accept_source_revisions(&a_bytes, crate::admission::InputLimits::compare())
-                    .unwrap();
-            assert!(!docx_has_tracked_changes(
-                &final_bytes,
-                crate::admission::InputLimits::compare()
-            ));
+            assert!(docx_has_tracked_changes(&a_bytes));
+            let final_bytes = accept_source_revisions(&a_bytes).unwrap();
+            assert!(!docx_has_tracked_changes(&final_bytes));
             let settings = WmlComparerSettings {
                 author_for_revisions: "Package matrix editor".into(),
                 date_time_for_revisions: "2001-02-03T04:05:06Z".into(),
@@ -11964,7 +11834,7 @@ mod coverage_package_source_matrix_tests {
             let result =
                 compare_documents_with_settings(&a_bytes, &final_bytes, &settings).unwrap();
             assert!(
-                !docx_has_tracked_changes(&result, crate::admission::InputLimits::compare()),
+                !docx_has_tracked_changes(&result),
                 "an accepted pre-existing revision is not a new edit"
             );
             let final_pkg = PartFs::open(&final_bytes).unwrap();
@@ -11986,7 +11856,7 @@ mod coverage_package_source_matrix_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod comparer_relationship_contract_tests {
     use super::*;
     fn package() -> PartFs {
@@ -12136,7 +12006,7 @@ mod comparer_relationship_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod authored_style_chain_boundary_tests {
     use super::*;
     use std::collections::{BTreeMap, HashMap};
@@ -12280,7 +12150,7 @@ mod authored_style_chain_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod isolated_header_container_revision_boundary_tests {
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {
@@ -12289,7 +12159,8 @@ mod isolated_header_container_revision_boundary_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -12300,7 +12171,13 @@ mod isolated_header_container_revision_boundary_tests {
         {
             return String::new();
         }
-        attrs.sort_by_key(|(n, v)| (n.namespace_name().to_owned(), n.local_name().to_owned(), *v));
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_owned(),
+                n.local_name().to_owned(),
+                v.clone(),
+            )
+        });
         format!(
             "{:?}{attrs:?}[{}]",
             name,
@@ -12429,7 +12306,7 @@ mod isolated_header_container_revision_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod redefined_style_chain_source_owner_tests {
     use super::*;
 
@@ -12538,7 +12415,7 @@ mod redefined_style_chain_source_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod namespace_declared_default_property_owner_tests {
     use super::*;
 
@@ -12592,7 +12469,7 @@ mod namespace_declared_default_property_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod adopted_story_relationship_owner_tests {
     use super::*;
     const MAIN: &str = "word/document.xml";
@@ -12609,7 +12486,8 @@ mod adopted_story_relationship_owner_tests {
             return String::new();
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12775,7 +12653,7 @@ mod adopted_story_relationship_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod word_style_line_owned_boundary_tests {
     use super::*;
     fn parse(xml: &str) -> (Dom, NodeId) {
@@ -12786,7 +12664,8 @@ mod word_style_line_owned_boundary_tests {
     }
     fn semantic(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();
@@ -12872,20 +12751,21 @@ mod word_style_line_owned_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_numbering_definition_source_owner_tests {
     use super::*;
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                *value,
+                value.clone(),
             )
         });
         if attrs.is_empty()

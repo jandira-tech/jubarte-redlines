@@ -15,7 +15,7 @@ styles:
 <!-- p0 -->
 Short:
 
-<!-- t0 3x3, cells p1-p8 by row, widths 1.667in 1.667in 1.667in, width auto, gaps t0.row1 after 1 -->
+<!-- t0 3x3, cells p1-p8 by row, gaps t0.row1 after 1 -->
 |a|b|c|
 |-|-|-|
 |d|e||
@@ -24,7 +24,7 @@ Short:
 <!-- p9 -->
 Past:
 
-<!-- t1 2x4, cells p10-p15 by row, widths 1.667in 1.667in 1.667in 1.667in, width auto, gaps t1.row0 after 1; t1.row1 after 1 -->
+<!-- t1 2x4, cells p10-p15 by row, gaps t1.row0 after 1; t1.row1 after 1 -->
 |j|k|l|
 |-|-|-|
 |m|n|o|
@@ -32,7 +32,7 @@ Past:
 <!-- p16 -->
 Merged:
 
-<!-- t2 2x2, cells p17-p20 by row, widths 1.667in 1.667in, width auto, merged t2.row0.cell1 down 2 -->
+<!-- t2 2x2, cells p17-p20 by row, merged t2.row0.cell1 down 2 -->
 |q|
 |-|
 |s|
@@ -40,7 +40,7 @@ Merged:
 <!-- p21 -->
 Empty:
 
-<!-- t3 2x2, cells p22-p25 by row, widths 1.667in 1.667in, width auto -->
+<!-- t3 2x2, cells p22-p25 by row -->
 ||
 |-|
 ||

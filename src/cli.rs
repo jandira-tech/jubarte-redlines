@@ -5,10 +5,6 @@
 //! Shared, platform-neutral command declarations and parsing. No runtime I/O.
 
 pub use crate::edit::flags::FlagOp;
-/// Typed edit action grammar, independent of legacy flag grouping.
-pub mod edit_actions;
-/// Desired-text template generation grammar.
-pub mod edit_template;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -34,13 +30,10 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// No status on success: no `wrote` lines, SUCCESS block or edit summary.
-    /// Files are still written; a reading task
+    /// No status on success: no `wrote` lines, and no summary or view of
+    /// what `edit`/`add` changed. Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
-    /// `read`, `changes` and `comments` drop their one stderr line naming
-    /// the input's validity findings; under --json and read --for-edit the
-    /// output counts them, -q or not.
     #[arg(
         short = 'q',
         long,
@@ -62,16 +55,11 @@ pub struct Cli {
 #[group(id = "read_options", multiple = true)]
 pub struct ReadArgs {
     /// Tracked changes inline (all, the default), or the text with every
-    /// change accepted or rejected (also spelled accepted, rejected); the
-    /// id lines then list what changed. --json and --tables read the
-    /// accepted text, or under reject the rejected one, every paragraph
-    /// keeping its id; the snapshot names an accept or a reject in
-    /// `track_changes`.
+    /// change accepted or rejected; the id lines then list what changed.
     #[arg(long, value_enum, value_name = "CHOICE", help_heading = "Read options")]
     pub track_changes: Option<TrackChanges>,
     /// Comments inline (default) or hidden, with their ids on the id line
-    /// of the paragraph that holds them; ignored by --json, --for-edit and
-    /// the --tables grids.
+    /// of the paragraph that holds them.
     #[arg(
         long,
         value_enum,
@@ -81,26 +69,19 @@ pub struct ReadArgs {
     )]
     pub comments: CommentsArg,
     /// Timestamps on the notes of an author whose changes do not all share
-    /// one (the header shows an author's single timestamp); ignored by
-    /// --json, --for-edit and the --tables grids.
+    /// one (the header shows an author's single timestamp).
     #[arg(long, help_heading = "Read options")]
     pub dates: bool,
     /// Skip the layout pass; page count from Word's cached breaks, no
-    /// `<!-- page N of M -->` lines; ignored by --json, --for-edit and the
-    /// --tables grids.
+    /// `<!-- page N of M -->` lines.
     #[arg(long, help_heading = "Read options")]
     pub no_page_markers: bool,
     /// Only these blocks: `p5`, `p4-p7`, `t0`, comma-separated (open-ended
     /// `p17-` / `-p3` spellings still parse, transitionally; the 17 October
-    /// 2026 contract retires them — spell the end, `p17-p20`). With --tables,
-    /// select top-level tables (including their nested tables) by the same
-    /// tN as the view, or by a pN inside them; a pick that reaches no table
-    /// is refused. Print their grid, then a blank line and the same view as
-    /// read -p SPEC.
+    /// 2026 contract retires them — spell the end, `p17-p20`).
     #[arg(
         short = 'p',
         long = "paragraphs",
-        visible_alias = "select",
         value_name = "SPEC",
         conflicts_with_all = ["head", "tail"],
         help_heading = "Read options"
@@ -139,141 +120,25 @@ pub struct ReadArgs {
     /// `controls`, `changes` and `comments`. -p, --head, --tail, --changed
     /// and --by keep the body paragraphs they select, and every change and
     /// comment that starts in one of them, whoever made it; the rest of the
-    /// snapshot stays whole. --track-changes accept or reject settles the
-    /// text.
-    #[arg(long, help_heading = "Read options")]
-    pub json: bool,
-    /// Print each top-level body table as a grid: a `table N:
-    /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
-    /// tab-separated `ids=text` cells. Use -p t0,t2 or -p pN (a cell
-    /// paragraph) to select top-level tables and all their nested tables,
-    /// in document order, each once. tN is the view's top-level index;
-    /// nested entries follow their cell row, indented two spaces per level,
-    /// labelled `nested in t0.row2.cell0` (recursively, e.g.
-    /// `t0.row2.cell0.t0.row0.cell1`). A pN or a range selects the tables
-    /// that hold its paragraphs; one that reaches no table is refused.
-    /// With -p, follow the selected grids with a blank line and the same
-    /// view as read -p SPEC, including its YAML header. Without -p, print
-    /// only the inventory. --track-changes reject reads the rejected text.
+    /// snapshot stays whole.
     #[arg(
         long,
-        conflicts_with_all = ["json", "head", "tail", "changed", "by"],
+        conflicts_with_all = ["track_changes", "comments", "dates", "no_page_markers"],
+        help_heading = "Read options"
+    )]
+    pub json: bool,
+    /// Print each body table as a grid instead of the view: a `table N:
+    /// ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
+    /// tab-separated `ids=text` cells.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "json", "track_changes", "comments", "dates", "no_page_markers",
+            "paragraphs", "head", "tail", "changed", "by",
+        ],
         help_heading = "Read options"
     )]
     pub tables: bool,
-    /// The working document template/apply derive, as JSON: source hash,
-    /// paired target ids, exact logical working text with `before_sha256`
-    /// and readiness per operation and range. The selection (-p/--select,
-    /// --head, --tail, --changed, --by, --find, --regex) resolves on the
-    /// original source and freezes before the decisions settle it. Given
-    /// filters narrow together: a paragraph is selected only when every
-    /// filter given matches it, and an empty result names the filters
-    /// applied in `coverage.omissions`.
-    #[arg(
-        long,
-        conflicts_with_all = ["json", "tables", "track_changes"],
-        help_heading = "Read options"
-    )]
-    pub for_edit: bool,
-    /// --for-edit: the working view after accepting this revision
-    /// (repeatable; it does not modify FILE).
-    #[arg(
-        long,
-        value_name = "ID",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub accept_change: Vec<String>,
-    /// --for-edit: the working view after rejecting this revision
-    /// (repeatable; it does not modify FILE).
-    #[arg(
-        long,
-        value_name = "ID",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub reject_change: Vec<String>,
-    /// --for-edit: the remaining-revision policy of the working basis
-    /// (default keep, matching new plans).
-    #[arg(
-        long,
-        value_enum,
-        value_name = "MODE",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub existing_revisions: Option<ExistingArg>,
-    /// --for-edit: readiness for tracked (on, the default) or direct
-    /// (off) new edits.
-    #[arg(
-        long,
-        value_enum,
-        value_name = "CHOICE",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub track: Option<TrackArg>,
-    /// --for-edit: literal search of the original final text. Combined
-    /// filters narrow: a paragraph must match every filter given, and an
-    /// empty result names the filters applied.
-    #[arg(
-        long,
-        value_name = "TEXT",
-        requires = "for_edit",
-        conflicts_with = "regex",
-        help_heading = "Read options"
-    )]
-    pub find: Option<String>,
-    /// --for-edit: regex search of the original final text; conflicts
-    /// with --find.
-    #[arg(
-        long,
-        value_name = "PATTERN",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub regex: Option<String>,
-    /// --for-edit: case-insensitive --find/--regex.
-    #[arg(long, requires = "for_edit", help_heading = "Read options")]
-    pub ignore_case: bool,
-    /// --for-edit: this many read-only original-source neighbours around
-    /// each row.
-    #[arg(
-        long,
-        value_name = "N",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub context: Option<usize>,
-    /// --for-edit: primary records a page returns (default 100).
-    #[arg(
-        long,
-        value_name = "N",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub limit: Option<usize>,
-    /// --for-edit: the text budget a page shares (default 24000);
-    /// a truncated row's preview is never complete text.
-    #[arg(
-        long,
-        value_name = "N",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub max_chars: Option<usize>,
-    /// --for-edit: continue an earlier bounded query (bound to its
-    /// source, selection, filters and working basis).
-    #[arg(
-        long,
-        value_name = "TOKEN",
-        requires = "for_edit",
-        help_heading = "Read options"
-    )]
-    pub cursor: Option<String>,
-    /// --for-edit: no presentation limits (admission limits still hold).
-    #[arg(long, requires = "for_edit", help_heading = "Read options")]
-    pub all: bool,
 }
 
 /// `--comments` of `read`.
@@ -287,23 +152,12 @@ pub enum CommentsArg {
     None,
 }
 
-/// `--track` of `read --for-edit`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TrackArg {
-    /// The new edits are tracked.
-    #[default]
-    On,
-    /// The new edits land directly.
-    Off,
-}
-
 /// Options `edit` and `add` share.
 #[derive(clap::Args, Debug, Serialize)]
 pub struct EditOptions {
     /// Author of the changes and comments (operation flags; a plan names
     /// its own).
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
+    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
     /// reproducible output.
@@ -418,10 +272,7 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             tokens.extend(indices.zip(values).map(|(i, v)| (i, name, Some(v.clone()))));
         }
     }
-    for name in [
-        "delete", "resolve", "before", "comment", "accept", "reject", "strike", "restore",
-        "visible",
-    ] {
+    for name in ["delete", "resolve", "before", "comment", "accept", "reject"] {
         // `try_get_many` is `Err` for a flag this command does not declare
         // (`add` has no --resolve or --accept); `indices_of` would panic on
         // it.
@@ -460,9 +311,6 @@ pub fn flag_operations(matches: &clap::ArgMatches) -> Result<Vec<FlagOp>, String
             "comment" => op.comment = true,
             "accept" => op.accept = true,
             "reject" => op.reject = true,
-            "strike" => op.strike = true,
-            "restore" => op.restore = true,
-            "visible" => op.visible = true,
             _ => {}
         }
     }
@@ -545,68 +393,8 @@ fn fill_task_date(task: &mut Command) {
 /// keep the native path. A `\` inside a file name is replaced too: these
 /// outputs name files the CLI itself resolved or wrote, whose names hold
 /// none.
-///
-/// Canonicalizing on Windows returns a verbatim path (`\\?\C:\…`), which
-/// this spelling would show as `//?/C:/…` — a string that is no path at
-/// all (#1222). [`unverbatimed`] drops that prefix from the components
-/// first, so an agent-facing canonical path spells `C:/…`.
 pub fn slash_path(path: &Path) -> String {
-    let path = unverbatimed(path).unwrap_or_else(|| path.to_path_buf());
     path.to_string_lossy().replace('\\', "/")
-}
-
-/// `path` without the verbatim prefix `canonicalize` adds on Windows, or
-/// `None` when there is none to drop. Built on `Path::components()` so the
-/// head is the parsed prefix, never a string match: `\\?\C:\a` loses its
-/// `VerbatimDisk` head and comes back `C:\a`, and `\\?\UNC\server\share\x`
-/// comes back `\\server\share\x`, which [`slash_path`] spells
-/// `//server/share/x`. A `\\?\` path neither disk nor UNC keeps its head's
-/// text as the path's start.
-fn unverbatimed(path: &Path) -> Option<PathBuf> {
-    let mut components = path.components();
-    let (mut stripped, keeps_root) = verbatim_head(components.next())?;
-    for component in components {
-        // A disk or UNC head keeps the root: `C:` + `\` is `C:\`, while
-        // `C:` + `a` would be the drive-relative `C:a` (a bare drive takes
-        // no separator). Any other `\\?\` head is no prefix once stripped,
-        // so its root is dropped and the parts join onto the head's text.
-        if keeps_root || !matches!(component, std::path::Component::RootDir) {
-            stripped.push(component.as_os_str());
-        }
-    }
-    Some(stripped)
-}
-
-/// The path head a verbatim prefix becomes, and whether the root after it
-/// stays, or `None` for any other first component (`Prefix` is a Windows
-/// notion; off Windows this is always `None` and [`unverbatimed`] changes
-/// nothing).
-#[cfg(windows)]
-fn verbatim_head(component: Option<std::path::Component>) -> Option<(PathBuf, bool)> {
-    use std::path::{Component, Prefix};
-    match component {
-        Some(Component::Prefix(prefix)) => match prefix.kind() {
-            Prefix::VerbatimDisk(letter) => Some((
-                PathBuf::from(format!("{}:", (letter as char).to_ascii_uppercase())),
-                true,
-            )),
-            Prefix::VerbatimUNC(server, share) => {
-                let mut head = PathBuf::from(r"\\");
-                head.push(server);
-                head.push(share);
-                Some((head, true))
-            }
-            Prefix::Verbatim(rest) => Some((PathBuf::from(rest), false)),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Off Windows no component carries a prefix, so there is nothing to drop.
-#[cfg(not(windows))]
-fn verbatim_head(_component: Option<std::path::Component>) -> Option<(PathBuf, bool)> {
-    None
 }
 
 /// `--plan` without a value (D16) is `<FILE's dir>/<stem>_plan.json`.
@@ -663,36 +451,14 @@ fn swallowed_file(flag: &str, value: &Path) -> String {
     )
 }
 
-/// Rewrite known usage traps through clap's own error formatter. A read
-/// view conflict teaches the valid invocation; `edit --plan a.docx -p p1 …`
-/// identifies the swallowed FILE from the raw tokens. Other errors stay
-/// clap's own (including help, unknown options and invalid values).
-fn usage_error(command: &clap::Command, tokens: &[String], mut error: clap::Error) -> clap::Error {
-    if error.kind() == clap::error::ErrorKind::ArgumentConflict {
-        use clap::error::ContextKind;
-        // Use clap's identified arguments, not option-looking values in
-        // the raw tokens, so unrelated conflicts retain their diagnosis.
-        let conflicts = [ContextKind::InvalidArg, ContextKind::PriorArg]
-            .into_iter()
-            .filter_map(|kind| error.get(kind))
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(" ");
-        let names = |flag: &&str| conflicts.split_whitespace().any(|word| word == *flag);
-        // --json and --tables take the view's options; only --for-edit,
-        // which settles through its own --accept-change, refuses one.
-        if names(&"--track-changes") && names(&"--for-edit") {
-            return read_usage_error(command, read_view_conflict("--track-changes"));
-        }
-        if names(&"--tables") {
-            error.insert(
-                ContextKind::Usage,
-                clap::error::ContextValue::StyledStr(
-                    format!("Usage: {} read [OPTIONS] <FILE>", command.get_name()).into(),
-                ),
-            );
-        }
-    }
+/// `edit --plan a.docx -p p1 …`: clap reads the document as the plan and
+/// then misses FILE. The raw tokens show it, so that error says so instead;
+/// any other error (help, an unknown flag, …) is clap's own.
+fn swallowed_file_error(
+    command: &clap::Command,
+    tokens: &[String],
+    error: clap::Error,
+) -> clap::Error {
     if error.kind() != clap::error::ErrorKind::MissingRequiredArgument {
         return error;
     }
@@ -781,7 +547,7 @@ pub struct CompareArgs {
     pub output: Option<PathBuf>,
 
     /// Author name recorded on the revisions.
-    #[arg(short = 'a', long, value_name = "NAME", default_value = "Jubarte")]
+    #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
     pub author: String,
 
     /// Revision timestamp (ISO 8601) [default: now, UTC]; pin it for
@@ -826,9 +592,6 @@ pub struct CompareArgs {
 
     /// Where images named by the Markdown are found (default: the
     /// original's directory when it is Markdown, else the modified's).
-    /// Only images that resolve inside that directory are read, symlinks
-    /// resolved; a URL or a path out of it is written as its alt text,
-    /// with a warning that says why.
     #[arg(long, value_name = "DIR", help_heading = "Markdown inputs")]
     pub resource_path: Option<PathBuf>,
 
@@ -879,18 +642,6 @@ impl std::ops::Deref for Cli {
 #[derive(clap::Subcommand, Debug, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "command", content = "args")]
 pub enum Command {
-    /// Internal dispatch for the typed `edit ACTION` grammar.
-    #[command(name = "__edit-v2", hide = true, bin_name = "jubarte edit")]
-    #[serde(rename = "edit")]
-    TypedEdit(edit_actions::TypedEdit),
-    /// Generate a complete source-bound PlanV2 without applying edits.
-    #[command(
-        name = "__edit-template",
-        hide = true,
-        bin_name = "jubarte edit template"
-    )]
-    #[serde(rename = "edit")]
-    EditTemplate(edit_template::TemplateDispatch),
     /// Compare documents: print the redline as the agent view, or write it with -o.
     #[command(
         visible_alias = "redline",
@@ -898,10 +649,6 @@ pub enum Command {
     )]
     Compare(CompareArgs),
     /// List tracked changes with IDs for accept, reject and edit plans.
-    ///
-    /// One line per logical change: the marks Word wrote for one edit are
-    /// one change with a joined id (`r7+8+9+10`), its text followed by
-    /// `(N elements)`.
     Changes {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -911,11 +658,6 @@ pub enum Command {
         json: bool,
     },
     /// Accept all tracked changes, or select by ID, author or kind.
-    ///
-    /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -938,11 +680,6 @@ pub enum Command {
         render: RenderArgs,
     },
     /// Reject all tracked changes, or select by ID, author or kind.
-    ///
-    /// Every part counts: the body, headers, footers, notes and comment
-    /// bodies. An author or kind selection reaches comment bodies too, but
-    /// no ID names a comment-body change, so an ID selection leaves those
-    /// tracked.
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -1103,7 +840,7 @@ pub enum Command {
             short = 'a',
             long,
             value_name = "NAME",
-            default_value = "Jubarte",
+            default_value = "Redline",
             help_heading = "Paragraph patch"
         )]
         author: String,
@@ -1122,7 +859,7 @@ pub enum Command {
     ///
     /// A YAML header, then Markdown with an `<!-- pN -->` id line before every
     /// paragraph, tracked changes as CriticMarkup
-    /// followed by their ids (`{++text++}{r12 @AC}`) and comments with
+    /// followed by their ids (`{++text++}{>>r12 @AC<<}`) and comments with
     /// theirs (`{>>c5 @AC: …<<}`).
     #[command(aliases = ["text", "inspect"])]
     Read {
@@ -1142,10 +879,10 @@ pub enum Command {
         args: ReadArgs,
     },
     /// Edit a document: -p WHERE with --anchor, --content, --delete,
-    /// --resolve, --reply, --accept, --reject, --strike, --restore or --style
-    /// (several -p per command), or a JSON plan. Writes FILE_modified.docx
-    /// (--out-dir: the bundle), then prints SUCCESS and a fenced before/after
-    /// diff of the full agent views (refusal: exit 3).
+    /// --resolve, --reply, --accept, --reject or --style (several -p per
+    /// command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
+    /// bundle), then prints the changed paragraphs as the agent view (a
+    /// pure --accept/--reject prints the resolved changes; refusal: exit 3).
     #[command(after_help = "Examples:\n  \
         jubarte edit a.docx -p p12 --anchor \"thirty days\" --content \"forty-five days\"\n  \
         jubarte edit a.docx -p p12 --anchor thirty --content \"thirty (30)\"   an insertion\n  \
@@ -1162,7 +899,7 @@ pub enum Command {
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
         t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12\n\
-        (a revision).\n\nTyped actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  jubarte edit template FILE --select p12,p20-p25 -o edits.json\n  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
+        (a revision).")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
@@ -1178,14 +915,13 @@ pub enum Command {
         #[arg(skip)]
         plan_default: bool,
         /// Delete PLAN.json once it has been applied and the outputs are
-        /// written (with --plan and no operation flags). Kept when
-        /// --skip-failed left operations out.
+        /// written (with --plan and no operation flags).
         #[arg(long, requires = "plan")]
         consume: bool,
         /// Where: p12, header1, footer2.p1, t0.row1.cell2, c5 (a comment),
-        /// c5.text (the text c5 covers) or r12 (a revision, with --accept,
-        /// --reject, --strike or --restore). Each -p starts an operation; the
-        /// flags after it belong to it.
+        /// c5.text (the text c5 covers) or r12 (a revision, with --accept or
+        /// --reject). Each -p starts an operation; the flags after it belong
+        /// to it.
         #[arg(short = 'p', long = "location", value_name = "WHERE", action = clap::ArgAction::Append)]
         location: Vec<String>,
         /// Text inside WHERE the operation applies to (must occur once).
@@ -1204,11 +940,6 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Let `-p c5 --content` change a comment another author wrote; it
-        /// keeps their name. Without it that is refused
-        /// (COMMENT_NOT_YOURS): one author answers another with --reply.
-        #[arg(long)]
-        rewrite_others_comments: bool,
         /// Accept revision r12 (with -p r12; r1+2 for several); prints the
         /// resolved change (`accepted r1+2 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
@@ -1217,20 +948,6 @@ pub enum Command {
         /// resolved change (`rejected r0 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
-        /// Strike another author's insertion r12 (with -p r12): our tracked
-        /// deletion inside it, so the decision shows. --content is a comment
-        /// on the struck words.
-        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
-        strike: Vec<bool>,
-        /// Restore another author's deletion r12 (with -p r12): their deletion
-        /// stays and our tracked insertion of its words follows it. --content
-        /// is a comment on the restored words.
-        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
-        restore: Vec<bool>,
-        /// With --reject: strike each insertion and restore each deletion
-        /// instead of removing the change without a trace.
-        #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
-        visible: Vec<bool>,
         /// Formatting for the anchored text: bold, italic, underline, strike,
         /// caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any
         /// other value is a paragraph style (Heading2).
@@ -1240,21 +957,9 @@ pub enum Command {
         #[command(flatten)]
         #[serde(flatten)]
         options: EditOptions,
-        /// Resolve and report only; write nothing. When every operation
-        /// passes, stderr ends with the command that applies it (`next:`).
+        /// Resolve and report only; write nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Apply every operation that passes; leave out the ones that fail
-        /// and every operation of their "group". Exit 0 when one landed.
-        /// The failed ones go to PLAN.failed.json (FILE_plan.failed.json for
-        /// operation flags): a plan to fix and run on the output.
-        #[arg(long)]
-        skip_failed: bool,
-        /// Refuse when the edit would change nothing in the document
-        /// (NO_CHANGES_REQUESTED); reports, renders and bundles do not
-        /// count as a change.
-        #[arg(long)]
-        require_change: bool,
         /// Also write the PDF beside the document (the bundle: redline.pdf
         /// and clean.pdf).
         #[arg(long)]
@@ -1279,7 +984,7 @@ pub enum Command {
     },
     /// Add a paragraph, a comment or a reply: -p WHERE --content TEXT
     /// (several -p per command). Writes FILE_modified.docx, as edit does,
-    /// and prints SUCCESS and a fenced before/after diff of the full agent views.
+    /// and prints the changed paragraphs as the agent view.
     #[command(after_help = "Examples:\n  \
         jubarte add a.docx -p p12 --content \"Time is of the essence.\"   new paragraph after p12\n  \
         jubarte add a.docx -p p12 --content Recitals --before --style Heading2\n  \
@@ -1340,18 +1045,9 @@ pub enum Command {
     },
     /// What this binary can do, for agents choosing an operation.
     Capabilities {
-        /// The manifest or focused answer as JSON instead of text.
+        /// The manifest as JSON instead of the text summary.
         #[arg(long)]
         json: bool,
-        /// Discover one edit kind, including its fields and execution conditions.
-        #[arg(long)]
-        operation: Option<String>,
-        /// Discover one field, optionally within --operation.
-        #[arg(long)]
-        field: Option<String>,
-        /// Publish operation × target × policy edit support.
-        #[arg(long, conflicts_with_all = ["operation", "field"])]
-        matrix: bool,
     },
     /// Check or install a release from GitHub.
     #[command(after_help = "Examples:\n  \
@@ -1420,10 +1116,6 @@ pub enum Command {
         /// text/xml/runs of two files: common lines shown around each change.
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
-        /// text/xml/runs/changes/styledefs/numbering/render: show complete
-        /// lines instead of clipping them at 200 characters.
-        #[arg(long)]
-        full_lines: bool,
     },
     /// Compare rendered pages pixel by pixel (different pages: exit 5).
     #[command(
@@ -1516,25 +1208,22 @@ pub enum Command {
     /// structure; or repair Word validity.
     ///
     /// A word or edits finding fails the run (exit 2), and so does any
-    /// error; --strict fails on warnings too. With --baseline, only the
-    /// findings the baseline lacks count. An unreadable file exits 1.
+    /// error; --strict fails on warnings too. An unreadable file exits 1.
     #[command(alias = "audit")]
     #[command(after_help = "Examples:\n  \
         jubarte validate contract.docx\n  \
         jubarte validate contract.docx --json\n  \
         jubarte validate contract.docx --repair fixed.docx\n  \
         jubarte validate review/redline.docx --original contract.docx --author Claude\n  \
-        jubarte validate review/redline.docx --baseline contract.docx\n  \
         jubarte validate contract.docx --rules word,a11y,style,structure --strict\n\n\
-        Rule sets: word (default: Word validity), edits (with --author, and \
-        --original or --baseline), a11y, style, structure.\n\
+        Rule sets: word (default: Word validity), edits (with --original and \
+        --author), a11y, style, structure.\n\
         Audit codes (code, set, severity):\n  \
         HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
         TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
         LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
         DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
         STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
-    #[command(group(clap::ArgGroup::new("edits_against").args(["original", "baseline"]).multiple(true)))]
     Validate {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
@@ -1543,62 +1232,25 @@ pub enum Command {
         #[arg(long)]
         json: bool,
         /// Rule sets or audit codes, comma-separated [default: word; with
-        /// --original, or --baseline and --author, word and edits].
+        /// --original, word and edits].
         #[arg(long, value_name = "RULES", value_delimiter = ',', value_parser = parse_rule)]
         rules: Vec<String>,
-        /// Also fail (exit 2) on warnings from other rule sets; word and edits
-        /// findings fail without it.
+        /// Fail (exit 2) on warnings too, not only on errors.
         #[arg(long)]
         strict: bool,
         /// Write the repaired package here; remaining findings still fail.
         #[arg(long, value_name = "FILE")]
         repair: Option<PathBuf>,
-        /// The document the edits started from: its findings print as
-        /// already in the input (not yours), and only new ones fail the run.
-        /// A finding is new by identity (code, part, place and message),
-        /// never by count. With --author and no --original, the edits are
-        /// checked against it too.
-        #[arg(long, value_name = "FILE", conflicts_with = "repair")]
-        baseline: Option<PathBuf>,
         /// Check tracked edits: every text change against ORIGINAL must be a
         /// revision by --author.
         #[arg(long, value_name = "FILE", requires = "author")]
         original: Option<PathBuf>,
-        /// The author every change must carry (with --original or
-        /// --baseline).
-        #[arg(long, value_name = "NAME", requires = "edits_against")]
+        /// The author every change must carry (with --original).
+        #[arg(long, value_name = "NAME", requires = "original")]
         author: Option<String>,
         /// Replace an existing --repair output.
         #[arg(long)]
         force: bool,
-    },
-    /// Check a document against a source-bound expectation contract.
-    ///
-    /// The only profile this build supports is `--expect`: an optional,
-    /// separately supplied, hash-bound expectations file whose typed
-    /// paragraph-text predicates (exact equality, containment, absence)
-    /// are evaluated on FILE's own final projection. The other check
-    /// profiles (integrity, quality, layout, baseline tracking) are #961;
-    /// `jubarte validate` remains the validity audit. Passing checks and
-    /// natural-language requirements without executable checks never claim
-    /// the task complete.
-    #[command(after_help = "Examples:\n  \
-        jubarte check revised.docx --expect expectations.json\n  \
-        jubarte check revised.docx --expect expectations.json --json\n\n\
-        The expectations' source.sha256 must name FILE's own bytes: an\n\
-        expectation file bound to the pre-edit source refuses as stale on\n\
-        the edited output. Use the output-bound copy an `edit apply --expect`\n\
-        receipt carries to re-check a published output.")]
-    Check {
-        /// The document (.docx) whose own digest the expectations must name.
-        #[arg(value_name = "FILE")]
-        file: PathBuf,
-        /// Expectation contract (the only supported profile in this build).
-        #[arg(long, value_name = "FILE")]
-        expect: Option<PathBuf>,
-        /// One result envelope, including refusals.
-        #[arg(long)]
-        json: bool,
     },
     /// Remove authors, editing IDs, metadata and comments before sharing.
     #[command(after_help = "Examples:\n  \
@@ -2066,75 +1718,6 @@ pub fn wrote_line(path: &Path, format: Format, bytes: usize, pages: Option<usize
     )
 }
 
-/// Confirmation of the published document, comparing the two agent views.
-pub fn success_block(before_name: &str, before: &str, after_name: &str, after: &str) -> String {
-    let body = if before == after {
-        "no differences\n".to_string()
-    } else {
-        similar::TextDiff::from_lines(before, after)
-            .unified_diff()
-            .context_radius(3)
-            .header(
-                &format!("before {before_name}"),
-                &format!("after {after_name}"),
-            )
-            .to_string()
-    };
-    let longest = body
-        .lines()
-        .map(|line| line.bytes().take_while(|b| *b == b'~').count())
-        .max()
-        .unwrap_or(0);
-    let fence = "~".repeat(4.max(longest + 1));
-    format!("SUCCESS:\n{fence}diff\n{body}{fence}\n")
-}
-
-#[cfg(test)]
-mod success_tests {
-    use super::success_block;
-
-    #[test]
-    fn equal_views() {
-        assert_eq!(
-            success_block("in.docx", "same", "out.docx", "same"),
-            "SUCCESS:\n~~~~diff\nno differences\n~~~~\n"
-        );
-    }
-
-    #[test]
-    fn labels_and_known_hunk() {
-        assert_eq!(
-            success_block(
-                "dir/in.docx",
-                "one\ntwo\nthree\n",
-                "out.docx",
-                "one\nnew\nthree\n"
-            ),
-            "SUCCESS:\n~~~~diff\n--- before dir/in.docx\n+++ after out.docx\n@@ -1,3 +1,3 @@\n one\n-two\n+new\n three\n~~~~\n"
-        );
-    }
-
-    #[test]
-    fn fence_exceeds_leading_tildes_in_diff_body() {
-        let block = success_block("a", "a\n", "b\n~~~~~", "b\n");
-        assert!(block.starts_with("SUCCESS:\n~~~~~~diff\n"), "{block}");
-        assert!(block.ends_with("~~~~~~\n"), "{block}");
-        // Tildes after a diff marker do not begin the line.
-        assert!(success_block("a", "~~~~~~\n", "b", "x\n").starts_with("SUCCESS:\n~~~~diff\n"));
-    }
-
-    #[test]
-    fn three_context_lines_and_missing_newline() {
-        let block = success_block(
-            "a",
-            "0\n1\n2\n3\n4\n5\n6\n7",
-            "b",
-            "0\n1\n2\n3\n4\n5\n6\nnew",
-        );
-        assert!(block.contains("@@ -5,4 +5,4 @@\n 4\n 5\n 6\n-7\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n"), "{block}");
-    }
-}
-
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
 /// `pattern` naming them all.
 pub fn wrote_png_line(pattern: &Path, pages: usize, dpi: f32) -> String {
@@ -2229,7 +1812,7 @@ pub const RETIRED: &[Retired] = &[
 /// Every task name that is gone and parses as the shorthand's first file
 /// again (`jubarte revisions x.docx` compares a file called `revisions`):
 /// a [`removed_task_note`] names what to say instead.
-pub(crate) const REMOVED_TASKS: &[Retired] = &[Retired {
+pub const REMOVED_TASKS: &[Retired] = &[Retired {
     old: "revisions",
     now: "changes",
     on: None,
@@ -2237,7 +1820,7 @@ pub(crate) const REMOVED_TASKS: &[Retired] = &[Retired {
 
 /// Each [`REMOVED_TASKS`] name `argv` puts where the task goes, as
 /// [`retired_spellings`] finds them.
-pub(crate) fn removed_tasks<'a>(
+pub fn removed_tasks<'a>(
     argv: impl IntoIterator<Item = &'a str>,
 ) -> Vec<(&'static str, &'static str)> {
     spellings_in(REMOVED_TASKS, argv)
@@ -2245,7 +1828,7 @@ pub(crate) fn removed_tasks<'a>(
 
 /// The note a removed task name earns: the run goes on, reading it as a
 /// file.
-pub(crate) fn removed_task_note(old: &str, now: &str) -> String {
+pub fn removed_task_note(old: &str, now: &str) -> String {
     format!("note: {old} is no longer a task, so it reads as a file name; use {now}")
 }
 
@@ -2281,11 +1864,9 @@ pub const REMOVED: &[Retired] = &[
 ];
 
 /// One option as `argv` spells it: `-p`, `--location` (a long's `=value`
-/// split off), and the index of its token. The value it takes is skipped,
-/// not kept.
+/// split off). The value it takes is skipped, not kept.
 struct Spelled {
     name: String,
-    at: usize,
 }
 
 /// How many values `arg` takes after it: `None` for a flag (an option `cmd`
@@ -2347,22 +1928,20 @@ fn spelled_options(cmd: &clap::Command, tokens: &[&str]) -> (Vec<Spelled>, usize
             }
             found.push(Spelled {
                 name: format!("--{name}"),
-                at: i - 1,
             });
         } else if let Some(cluster) = token.strip_prefix('-').filter(|c| !c.is_empty()) {
-            let at = i - 1;
-            for (offset, short) in cluster.char_indices() {
+            for (at, short) in cluster.char_indices() {
                 let name = format!("-{short}");
                 let Some(optional) = value_taken(short_arg(cmd, short)) else {
-                    found.push(Spelled { name, at });
+                    found.push(Spelled { name });
                     continue;
                 };
                 // The rest of the cluster is the value (`-pt0`, `-p=t0`),
                 // else the next token is.
-                if cluster[offset + short.len_utf8()..].is_empty() {
+                if cluster[at + short.len_utf8()..].is_empty() {
                     skip_value(&mut i, optional);
                 }
-                found.push(Spelled { name, at });
+                found.push(Spelled { name });
                 break;
             }
         } else {
@@ -2443,12 +2022,10 @@ fn spellings_in<'a>(
     found
 }
 
-pub use crate::util::shell_word;
-
 /// What a retired spelling still means once parsed: `audit` with no
 /// `--rules` checks `a11y,style,structure`, as the retired task did, not
 /// `validate`'s default `word`.
-pub(crate) fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
+pub fn apply_retired(task: &mut Command, retired: &[(&str, &str)]) {
     if let Command::Validate { rules, .. } = task
         && rules.is_empty()
         && retired.iter().any(|(old, _)| *old == "audit")
@@ -2491,10 +2068,8 @@ pub enum TrackChanges {
     /// Keep them: CriticMarkup becomes Word tracked changes and comments.
     All,
     /// Accept every change.
-    #[value(alias = "accepted")]
     Accept,
     /// Reject every change.
-    #[value(alias = "rejected")]
     Reject,
 }
 
@@ -2619,14 +2194,12 @@ pub struct MarkdownArgs {
     #[arg(long, value_name = "FILE")]
     pub reference_doc: Option<PathBuf>,
     /// Markdown to Word: where images are found [default: the Markdown
-    /// file's directory]. Only images that resolve inside that directory
-    /// are read, symlinks resolved; a URL or a path out of it is written
-    /// as its alt text, with a warning that says why.
+    /// file's directory].
     #[arg(long, value_name = "DIR")]
     pub resource_path: Option<PathBuf>,
     /// Markdown to Word: author of the tracked changes and comments that
     /// name none [default: the front matter's `author:`, else the
-    /// --reference-doc's creator, else Jubarte].
+    /// --reference-doc's creator, else Redline].
     #[arg(short = 'a', long, value_name = "NAME")]
     pub author: Option<String>,
     /// Markdown to Word: timestamp (ISO 8601) of the tracked changes and
@@ -2713,8 +2286,7 @@ pub enum Revisions {
 /// Filters selecting individual tracked changes.
 pub struct Selection {
     /// Only this change: `r12` (as the view and `jubarte changes` print
-    /// it), `header1.r1`, or `r1+2` (both). Repeatable. Comment-body
-    /// changes have no ids and stay tracked.
+    /// it), `header1.r1`, or `r1+2` (both). Repeatable.
     #[arg(long = "id", value_name = "ID")]
     pub ids: Vec<String>,
     /// Only changes by this author. Repeatable.
@@ -2737,12 +2309,6 @@ pub enum KindArg {
     Move,
     /// Changes to text or paragraph formatting.
     Formatting,
-    /// The kind `changes` prints for a deletion and the insertion that
-    /// replaces it. It names no mark, so a filter of it is refused, with
-    /// how to select one (by its id, or its marks by kind); hidden, it is
-    /// no value to offer.
-    #[value(hide = true)]
-    Replacement,
 }
 
 fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
@@ -2953,27 +2519,6 @@ fn compare_output(
     Ok(kind)
 }
 
-/// The diagnosis for a view-only flag beside --for-edit.
-fn read_view_conflict(flag: &str) -> String {
-    format!(
-        "{flag} shapes the Markdown view, and --for-edit prints the working document JSON, \
-         which has no view; drop {flag}, or drop --for-edit to read the view"
-    )
-}
-
-/// As in the swallowed-FILE diagnosis, rebuild a task error through clap.
-/// A generic usage line gives a valid invocation instead of repeating the
-/// conflicting flags. The same model serves native and binding parsers.
-fn read_usage_error(command: &clap::Command, message: String) -> clap::Error {
-    let mut task = command
-        .find_subcommand("read")
-        .unwrap_or(command)
-        .clone()
-        .override_usage(format!("{} read [OPTIONS] <FILE>", command.get_name()));
-    task.set_bin_name(format!("{} read", command.get_name()));
-    task.error(clap::error::ErrorKind::ArgumentConflict, message)
-}
-
 /// What `read -o PATH` (and the one-document shorthand's -o) writes: `.md`
 /// the view, `.json` the snapshot. `given` says which argument ids the
 /// command line spells out.
@@ -2982,14 +2527,19 @@ fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, St
     if given("tables") {
         return Err("--tables prints the grids; drop -o".to_string());
     }
-    if given("for_edit") && kind != Format::Json {
-        return Err("--for-edit prints JSON: name the file FILE.json or drop -o".to_string());
-    }
     if given("json") && kind != Format::Json {
         return Err("--json writes the snapshot: name the file FILE.json".to_string());
     }
-    // A .json snapshot is --json's: --track-changes settles its text, and
-    // the view's other options change nothing in it.
+    if kind == Format::Json
+        && let Some(id) = ["track_changes", "comments", "dates", "no_page_markers"]
+            .into_iter()
+            .find(|id| given(id))
+    {
+        return Err(format!(
+            "--{} shapes the view; a .json snapshot has none",
+            id.replace('_', "-")
+        ));
+    }
     Ok(kind)
 }
 
@@ -3029,7 +2579,7 @@ fn validate_matches(
             // One document: `read`, whose -o writes the view or the snapshot.
             if let Some(output) = output {
                 read_output(output, &given)
-                    .map_err(|message| read_usage_error(command, message))?;
+                    .map_err(|message| command.error(ErrorKind::ArgumentConflict, message))?;
             }
             // Compare's own options and the rendering ones mean nothing to
             // read.
@@ -3106,13 +2656,13 @@ fn validate_matches(
         && args
             .get_many::<String>("rules")
             .is_some_and(|mut rules| rules.any(|rule| rule == "edits"))
-        && !args.contains_id("author")
+        && !args.contains_id("original")
     {
         let mut task = command.find_subcommand(name).expect("parsed task").clone();
         task.set_bin_name(format!("{} {name}", command.get_name()));
         return Err(task.error(
             ErrorKind::MissingRequiredArgument,
-            "--rules edits needs --author, and --original or --baseline",
+            "--rules edits needs --original and --author",
         ));
     }
     if name == "compare"
@@ -3127,12 +2677,6 @@ fn validate_matches(
             "compare needs <MODIFIED> (or -m FILE)",
         ));
     }
-    if name == "__edit-template" {
-        return edit_template::validate(args, command);
-    }
-    if name == "__edit-v2" {
-        return edit_actions::validate(args, command);
-    }
     let mut task = command.find_subcommand(name).expect("parsed task").clone();
     task.set_bin_name(format!("{} {name}", command.get_name()));
     let error =
@@ -3144,7 +2688,7 @@ fn validate_matches(
     if name == "read"
         && let Some(output) = args.get_one::<PathBuf>("output")
     {
-        read_output(output, &given).map_err(|message| read_usage_error(command, message))?;
+        read_output(output, &given).map_err(|message| error(&mut task, &message))?;
     }
     if name == "compare" {
         compare_output(
@@ -3355,137 +2899,6 @@ const RENDER_ONLY: [&str; 7] = [
     "revision_palette",
 ];
 
-/// Normalize edit routing identically for parsing and usage-error reporting.
-pub fn edit_arguments(
-    command: &clap::Command,
-    arguments: &[std::ffi::OsString],
-) -> Vec<std::ffi::OsString> {
-    edit_actions::route(&hoist_quiet(command, arguments), command)
-}
-
-/// Requested protocol on a recognized typed edit route, respecting values and `--`:
-/// the action name, whether the protocol is JSONL (else JSON), and the FILE
-/// operand the tokens named when they carried one before the grammar failure
-/// (used to keep the usage envelope's `source.path` honest).
-pub fn typed_edit_protocol(
-    arguments: &[std::ffi::OsString],
-) -> Option<(String, bool, Option<String>)> {
-    let model = top_level_command();
-    let routed = edit_arguments(&model, arguments);
-    if routed.get(1).is_none_or(|a| a != "__edit-v2") {
-        return None;
-    }
-    let typed = model.find_subcommand("__edit-v2")?;
-    let tokens: Vec<_> = routed
-        .iter()
-        .skip(2)
-        .filter_map(|a| a.to_str())
-        .take_while(|a| *a != "--")
-        .collect();
-    let (_, at) = spelled_options(typed, &tokens);
-    let action = *tokens.get(at)?;
-    let command = typed.find_subcommand(action)?;
-    let mut rest = &tokens[at + 1..];
-    let mut json = false;
-    let mut jsonl = false;
-    let mut file = None;
-    while !rest.is_empty() {
-        let (options, next) = spelled_options(command, rest);
-        for option in options {
-            json |= option.name == "--json";
-            jsonl |= option.name == "--jsonl";
-        }
-        // The action's leading positional is its FILE operand.
-        if file.is_none()
-            && let Some(operand) = rest.get(next)
-        {
-            file = Some(operand.to_string());
-        }
-        rest = rest.get(next + 1..).unwrap_or_default();
-    }
-    (json || jsonl).then(|| (action.to_string(), jsonl, file))
-}
-
-/// `argv` (the arguments after the program name) as a dry run's `next:`
-/// command: without its `--dry-run` flag, and with `--force` before any
-/// `--` when `force`. A `--dry-run` that is no flag stays: a FILE after
-/// `--`, or an option's value (`--text --dry-run`). Pure: no I/O.
-pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
-    let model = top_level_command();
-    let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
-        .chain(argv.iter().map(Into::into))
-        .collect();
-    // Read as the parser reads it (the typed edit forms routed), then
-    // matched back to `argv` by count: routing moves no `--dry-run`.
-    let routed = edit_arguments(&model, &arguments);
-    let tokens: Vec<&str> = routed
-        .iter()
-        .skip(1)
-        .filter_map(|a| a.to_str())
-        .take_while(|a| *a != "--")
-        .collect();
-    let mut flags = std::collections::BTreeSet::new();
-    let mut command = &model;
-    let mut start = 0;
-    loop {
-        let (options, next) = spelled_options(command, &tokens[start..]);
-        flags.extend(
-            options
-                .iter()
-                .filter(|option| option.name == "--dry-run")
-                .map(|option| start + option.at),
-        );
-        let Some(word) = tokens.get(start + next) else {
-            break;
-        };
-        if let Some(task) = command.find_subcommand(word) {
-            command = task;
-        }
-        start += next + 1;
-    }
-    // Which of the tokens spelled `--dry-run`, in order, are the flag.
-    let dropped: std::collections::BTreeSet<usize> = tokens
-        .iter()
-        .enumerate()
-        .filter(|(_, token)| **token == "--dry-run")
-        .enumerate()
-        .filter(|(_, (at, _))| flags.contains(at))
-        .map(|(nth, _)| nth)
-        .collect();
-    let mut next = Vec::with_capacity(argv.len() + 1);
-    let mut spelled = 0;
-    let mut delimited = false;
-    for arg in argv {
-        if !delimited && arg == "--" {
-            delimited = true;
-            if force {
-                next.push("--force".to_string());
-            }
-        }
-        if !delimited && arg == "--dry-run" {
-            spelled += 1;
-            if dropped.contains(&(spelled - 1)) {
-                continue;
-            }
-        }
-        next.push(arg.clone());
-    }
-    if force && !delimited {
-        next.push("--force".to_string());
-    }
-    next
-}
-
-/// The first positional operand the tokens name for `cmd`, when they carry
-/// one before any grammar failure: options and their values are skipped
-/// through the command model's own spelling, so an option's value is never
-/// mistaken for the operand. Recognized-mode usage envelopes use it to name
-/// the file the caller supplied (proposal §11: `source` keeps the path).
-pub fn first_positional(cmd: &clap::Command, tokens: &[&str]) -> Option<String> {
-    let (_, at) = spelled_options(cmd, tokens);
-    tokens.get(at).map(ToString::to_string)
-}
-
 impl Cli {
     /// Parse native arguments with clap and validate cross-option constraints.
     pub fn try_parse_from<I, T>(arguments: I) -> Result<Self, clap::Error>
@@ -3495,7 +2908,7 @@ impl Cli {
     {
         let mut command = top_level_command();
         let arguments: Vec<std::ffi::OsString> = arguments.into_iter().map(Into::into).collect();
-        let arguments = edit_arguments(&command, &arguments);
+        let arguments = hoist_quiet(&command, &arguments);
         let matches = command
             .try_get_matches_from_mut(arguments.clone())
             .map_err(|e| {
@@ -3503,7 +2916,7 @@ impl Cli {
                     .iter()
                     .map(|a| a.to_string_lossy().into_owned())
                     .collect();
-                usage_error(&command, &tokens, e)
+                swallowed_file_error(&command, &tokens, e)
             })?;
         validate_matches(&matches, &mut command)?;
         let mut cli = Self::from_arg_matches(&matches)?;
@@ -3604,335 +3017,12 @@ fn error_json(error: &clap::Error) -> String {
     .to_string()
 }
 
-/// Whether a command line (without the program name) asks for JSON: a
-/// `--json` flag before any `--`. An error then prints on stdout too, as one
-/// [`json_error`] line, for a reader that pipes stdout to a JSON parser
-/// (#1158); stderr and the exit code stay as they are.
-pub fn wants_json(argv: &[String]) -> bool {
-    // Read as the typed edit protocol reads it: a `--json` where an option
-    // takes its value (`--text --json`) is no request for JSON.
-    let model = top_level_command();
-    let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
-        .chain(argv.iter().map(Into::into))
-        .collect();
-    let routed = edit_arguments(&model, &arguments);
-    let tokens: Vec<&str> = routed
-        .iter()
-        .skip(1)
-        .filter_map(|a| a.to_str())
-        .take_while(|a| *a != "--")
-        .collect();
-    let mut command = &model;
-    let mut rest = &tokens[..];
-    loop {
-        let (options, next) = spelled_options(command, rest);
-        if options.iter().any(|option| option.name == "--json") {
-            return true;
-        }
-        let Some(word) = rest.get(next) else {
-            return false;
-        };
-        if let Some(task) = command.find_subcommand(word) {
-            command = task;
-        }
-        rest = &rest[next + 1..];
-    }
-}
-
-/// `{"error":{"code":…,"message":…,"usage":…}}` and a newline: the line an
-/// error prints on stdout under `--json`. `usage` only when given.
-pub fn json_error(code: &str, message: &str, usage: Option<&str>) -> String {
-    let mut error = serde_json::json!({ "code": code, "message": message });
-    if let Some(usage) = usage {
-        error["usage"] = usage.into();
-    }
-    format!("{}\n", serde_json::json!({ "error": error }))
-}
-
-/// The [`json_error`] line of a runtime error that ends a run with `exit`,
-/// `message` being what follows `error: ` on stderr. Its code is the
-/// message's leading `CODE:` (`STALE_SOURCE: …`), else `USAGE` for an exit
-/// 2 and `ERROR` for any other.
-pub fn runtime_json_error(message: &str, exit: u8) -> String {
-    let lead = message.split_once(": ").map_or("", |(lead, _)| lead);
-    let coded = lead.len() >= 3
-        && lead.starts_with(|c: char| c.is_ascii_uppercase())
-        && lead
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-    let code = if coded {
-        lead
-    } else if exit == 2 {
-        "USAGE"
-    } else {
-        "ERROR"
-    };
-    json_error(code, message, None)
-}
-
-/// The [`json_error`] line of a usage error clap reports for `argv` (no
-/// program name) run as `program`: its message without `error: `, on one
-/// line (a list clap names under it joined on, each tip after it), and the
-/// task's usage (`jubarte read [OPTIONS] <FILE>`; clap's own usage, which
-/// names the flags given, when no task is named), a line per form. `None`
-/// for help and version, which are not errors.
-pub fn usage_json_error(error: &clap::Error, argv: &[String], program: &str) -> Option<String> {
-    let (message, usage) = usage_parts(error, argv, program)?;
-    Some(json_error("USAGE", &message, usage.as_deref()))
-}
-
-/// The [`json_error`] line of a removed spelling's error, `message` being
-/// what follows `error: ` ([`removed_error`]), with the usage
-/// [`usage_json_error`] gives clap's `error` for the same `argv`.
-pub fn removed_json_error(
-    error: &clap::Error,
-    argv: &[String],
-    program: &str,
-    message: &str,
-) -> String {
-    let usage = usage_parts(error, argv, program).and_then(|(_, usage)| usage);
-    json_error("USAGE", message, usage.as_deref())
-}
-
-/// [`usage_json_error`]'s message and usage.
-fn usage_parts(
-    error: &clap::Error,
-    argv: &[String],
-    program: &str,
-) -> Option<(String, Option<String>)> {
-    if !error.use_stderr() {
-        return None;
-    }
-    #[derive(Clone, Copy)]
-    enum Part {
-        Message,
-        Tip,
-        Usage,
-        Other,
-    }
-    let text = error.render().to_string();
-    let (mut message, mut tips, mut usage) = (String::new(), Vec::<String>::new(), Vec::new());
-    let mut part = Part::Other;
-    // Blank lines part clap's text: the message, its tips, the usage and
-    // the pointer to --help; an indented line goes on with its part.
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(first) = line.strip_prefix("error: ") {
-            message.push_str(first);
-            part = Part::Message;
-        } else if let Some(tip) = trimmed.strip_prefix("tip: ") {
-            tips.push(tip.to_string());
-            part = Part::Tip;
-        } else if let Some(first) = line.strip_prefix("Usage: ") {
-            usage.push(first.trim());
-            part = Part::Usage;
-        } else if trimmed.is_empty() {
-            part = Part::Other;
-        } else {
-            match (part, tips.last_mut()) {
-                (Part::Message, _) => {
-                    message.push(' ');
-                    message.push_str(trimmed);
-                }
-                (Part::Tip, Some(tip)) => {
-                    tip.push(' ');
-                    tip.push_str(trimmed);
-                }
-                (Part::Usage, _) => usage.push(trimmed),
-                _ => {}
-            }
-        }
-    }
-    for tip in tips {
-        message.push_str(&format!(" (tip: {tip})"));
-    }
-    let usage = task_usage(argv, program).or_else(|| (!usage.is_empty()).then(|| usage.join("\n")));
-    Some((message, usage))
-}
-
-/// The usage of the task `argv` names (`jubarte read [OPTIONS] <FILE>`), a
-/// line per form, or `None` when its first word is no task.
-fn task_usage(argv: &[String], program: &str) -> Option<String> {
-    let mut model = Cli::command().bin_name(program.to_string());
-    model.build();
-    let name = argv
-        .iter()
-        .take_while(|a| *a != "--")
-        .find(|a| !a.starts_with('-'))?;
-    let usage = model.find_subcommand_mut(name)?.render_usage().to_string();
-    let usage = usage.strip_prefix("Usage: ")?;
-    Some(usage.lines().map(str::trim).collect::<Vec<_>>().join("\n"))
-}
-
 /// The usage error for a task the host (`program`) does not have.
 fn missing_task(command: &mut clap::Command, program: &str, task: &str) -> clap::Error {
     command.error(
         clap::error::ErrorKind::InvalidSubcommand,
         format!("this {program} has no {task} task; the `jubarte` binary has it"),
     )
-}
-
-/// The `{exit_code, command, args}` value for a subcommand clap matched:
-/// the task with its flag operations, plan, retired spellings and date
-/// resolved, and compare's view or read routing. [`parse_json`] adds
-/// `args.quiet` and `notes` to it.
-fn parse_subcommand_json(
-    command: &mut clap::Command,
-    matches: &clap::ArgMatches,
-    arguments: &[String],
-    accepts: &dyn Fn(&str) -> bool,
-) -> Result<serde_json::Value, clap::Error> {
-    let mut task = Command::from_arg_matches(matches)?;
-    fill_flag_operations(&mut task, matches, command)?;
-    resolve_plan(&mut task);
-    apply_retired(
-        &mut task,
-        &retired_spellings(arguments.iter().map(String::as_str)),
-    );
-    fill_task_date(&mut task);
-    let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
-    if let Command::Compare(compare) = &mut task {
-        if let Some((_, args)) = matches.subcommand() {
-            compare.view_given = view_given(args);
-        }
-        value["args"] = compare_json(compare);
-        if view_is_output(&value["args"]) && !accepts("read") {
-            return Err(view_not_supported(command));
-        }
-    }
-    if let Command::Diff {
-        old,
-        new,
-        output,
-        to,
-        from,
-        ..
-    } = &task
-    {
-        let input_format = |path: &std::path::Path| {
-            from.or_else(|| {
-                Format::of_path(path).filter(|f| matches!(f, Format::Docx | Format::Md))
-            })
-        };
-        value["args"]["old_format"] = serde_json::to_value(input_format(old)).expect("format");
-        value["args"]["new_format"] = serde_json::to_value(input_format(new)).expect("format");
-        value["args"]["output_format"] = serde_json::to_value(
-            output_format(Task::Diff, output.as_deref(), *to)
-                .ok()
-                .flatten(),
-        )
-        .expect("format");
-    }
-    if let Command::Convert {
-        output,
-        markdown,
-        pdf,
-        png,
-        ..
-    } = &task
-    {
-        let alias = pdf
-            .then_some(Format::Pdf)
-            .or_else(|| png.then_some(Format::Png));
-        value["args"]["output_format"] = serde_json::to_value(
-            output_format(Task::Convert, output.as_deref(), markdown.to.or(alias))
-                .ok()
-                .flatten(),
-        )
-        .expect("format");
-    }
-    if let Command::Edit {
-        file,
-        options,
-        plan,
-        operations,
-        ..
-    }
-    | Command::Add {
-        file,
-        options,
-        plan,
-        operations,
-        ..
-    } = &task
-    {
-        let recording = plan.is_some() && !operations.is_empty();
-        let (output, out_dir) = match options.target(file) {
-            _ if recording => (None, None),
-            EditTarget::Single(path) => (Some(path), None),
-            EditTarget::Bundle(dir) => (None, Some(dir)),
-        };
-        let slashed = |path: Option<&std::path::PathBuf>| {
-            path.map(|p| serde_json::Value::String(slash_path(p)))
-                .unwrap_or(serde_json::Value::Null)
-        };
-        value["args"]["plan"] = slashed(plan.as_ref());
-        value["args"]["output"] = slashed(output.as_ref());
-        value["args"]["out_dir"] = slashed(out_dir.as_ref());
-    }
-    let written = match &task {
-        Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
-        Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
-        Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
-        Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
-        Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
-        _ => None,
-    };
-    if let Some((writer, output)) = written {
-        value["args"]["output_format"] =
-            serde_json::to_value(output_format(writer, output, None).ok().flatten())
-                .expect("format");
-    }
-    value["exit_code"] = 0.into();
-    Ok(value)
-}
-
-fn parse_implicit_compare_json(
-    command: &mut clap::Command,
-    matches: &clap::ArgMatches,
-    model: &clap::Command,
-    program: &str,
-    accepts: &dyn Fn(&str) -> bool,
-) -> Result<serde_json::Value, clap::Error> {
-    let mut compare = CompareArgs::from_arg_matches(matches)?;
-    fill_date(&mut compare.datetime);
-    if let Some(name) = compare
-        .original_pos
-        .as_ref()
-        .and_then(|p| p.to_str())
-        .and_then(|name| model.find_subcommand(name))
-        .map(|task| task.get_name().to_string())
-        .filter(|name| !accepts(name))
-    {
-        return Err(missing_task(command, program, &name));
-    }
-    if compare.modified.is_none() && compare.modified_pos.is_none() {
-        if !accepts("read") {
-            return Err(command.error(
-                clap::error::ErrorKind::InvalidSubcommand,
-                "this task is not supported by this adapter",
-            ));
-        }
-        let mut args = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
-        args["file"] =
-            serde_json::to_value(compare.original.as_ref().or(compare.original_pos.as_ref()))
-                .expect("UTF-8 path");
-        args["output"] = serde_json::to_value(&compare.output).expect("UTF-8 path");
-        args["force"] = compare.force.into();
-        args["output_format"] = serde_json::to_value(
-            output_format(Task::Read, compare.output.as_deref(), None)
-                .ok()
-                .flatten(),
-        )
-        .expect("format");
-        return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
-    }
-    compare.view_given = view_given(matches);
-    let args = compare_json(&compare);
-    if view_is_output(&args) && !accepts("read") {
-        return Err(view_not_supported(command));
-    }
-    Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
 }
 
 /// Parse arguments (excluding argv0) for native-compatible adapters.
@@ -3946,7 +3036,7 @@ fn parse_implicit_compare_json(
 /// string paths, defaults and null optional fields. Nested subcommands use
 /// `{command, args}`. Compare inputs include resolved named-over-positional
 /// values; compare's output path stays null (the host picks it), while the
-/// author is `Jubarte` (D12) and the date now (D17), as for the binary.
+/// author is `Redline` (D12) and the date now (D17), as for the binary.
 /// `edit` and `add` carry where they write, resolved: `output` for the one
 /// document or `out_dir` for the bundle, both null while recording into a plan. Informational/error results contain
 /// `{exit_code, stream, text}`.
@@ -3967,7 +3057,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         .subcommands(
             model
                 .get_subcommands()
-                .filter(|s| accepts(s.get_name()) || s.get_name() == "__edit-v2" && accepts("edit"))
+                .filter(|s| accepts(s.get_name()))
                 .cloned(),
         );
     if accepts("compare") {
@@ -4013,25 +3103,165 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             return Err(missing_task(&mut command, program, &name));
         }
         let tokens: Vec<String> = hoist_quiet(&command, &argv.collect::<Vec<_>>());
-        let tokens: Vec<String> = edit_actions::route(
-            &tokens
-                .iter()
-                .map(std::ffi::OsString::from)
-                .collect::<Vec<_>>(),
-            &command,
-        )
-        .into_iter()
-        .map(|s| s.to_string_lossy().into_owned())
-        .collect();
         let matches = command
             .try_get_matches_from_mut(tokens.clone())
-            .map_err(|e| usage_error(&command, &tokens, e))?;
+            .map_err(|e| swallowed_file_error(&command, &tokens, e))?;
         validate_matches(&matches, &mut command)?;
         quiet = matches.get_flag("quiet");
         if matches.subcommand().is_some() {
-            parse_subcommand_json(&mut command, &matches, arguments, &accepts)
+            let mut task = Command::from_arg_matches(&matches)?;
+            fill_flag_operations(&mut task, &matches, &mut command)?;
+            resolve_plan(&mut task);
+            apply_retired(
+                &mut task,
+                &retired_spellings(arguments.iter().map(String::as_str)),
+            );
+            fill_task_date(&mut task);
+            let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
+            if let Command::Compare(compare) = &mut task {
+                if let Some((_, args)) = matches.subcommand() {
+                    compare.view_given = view_given(args);
+                }
+                value["args"] = compare_json(compare);
+                if view_is_output(&value["args"]) && !accepts("read") {
+                    return Err(view_not_supported(&mut command));
+                }
+            }
+            if let Command::Diff {
+                old,
+                new,
+                output,
+                to,
+                from,
+                ..
+            } = &task
+            {
+                let input_format = |path: &Path| {
+                    from.or_else(|| {
+                        Format::of_path(path).filter(|f| matches!(f, Format::Docx | Format::Md))
+                    })
+                };
+                value["args"]["old_format"] =
+                    serde_json::to_value(input_format(old)).expect("format");
+                value["args"]["new_format"] =
+                    serde_json::to_value(input_format(new)).expect("format");
+                value["args"]["output_format"] = serde_json::to_value(
+                    output_format(Task::Diff, output.as_deref(), *to)
+                        .ok()
+                        .flatten(),
+                )
+                .expect("format");
+            }
+            if let Command::Convert {
+                output,
+                markdown,
+                pdf,
+                png,
+                ..
+            } = &task
+            {
+                // validate_matches refused a disagreement, so the rule holds.
+                let alias = pdf
+                    .then_some(Format::Pdf)
+                    .or_else(|| png.then_some(Format::Png));
+                value["args"]["output_format"] = serde_json::to_value(
+                    output_format(Task::Convert, output.as_deref(), markdown.to.or(alias))
+                        .ok()
+                        .flatten(),
+                )
+                .expect("format");
+            }
+            // edit and add: the one document or the bundle, resolved, so a
+            // host never rebuilds the default names.
+            if let Command::Edit {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            }
+            | Command::Add {
+                file,
+                options,
+                plan,
+                operations,
+                ..
+            } = &task
+            {
+                // Recording writes the plan only.
+                let recording = plan.is_some() && !operations.is_empty();
+                let (output, out_dir) = match options.target(file) {
+                    _ if recording => (None, None),
+                    EditTarget::Single(path) => (Some(path), None),
+                    EditTarget::Bundle(dir) => (None, Some(dir)),
+                };
+                // Resolved paths are identifiers: `/` on every OS (#568).
+                let slashed = |path: Option<&PathBuf>| {
+                    path.map(|p| serde_json::Value::String(slash_path(p)))
+                        .unwrap_or(serde_json::Value::Null)
+                };
+                value["args"]["plan"] = slashed(plan.as_ref());
+                value["args"]["output"] = slashed(output.as_ref());
+                value["args"]["out_dir"] = slashed(out_dir.as_ref());
+            }
+            let written = match &task {
+                Command::Accept { output, .. } => Some((Task::Accept, Some(output.as_path()))),
+                Command::Reject { output, .. } => Some((Task::Reject, Some(output.as_path()))),
+                Command::Append { output, .. } => Some((Task::Append, Some(output.as_path()))),
+                Command::Scrub { output, .. } => Some((Task::Scrub, Some(output.as_path()))),
+                Command::Read { output, .. } => Some((Task::Read, output.as_deref())),
+                _ => None,
+            };
+            if let Some((writer, output)) = written {
+                // validate_matches refused a format the task cannot write.
+                value["args"]["output_format"] =
+                    serde_json::to_value(output_format(writer, output, None).ok().flatten())
+                        .expect("format");
+            }
+            value["exit_code"] = 0.into();
+            Ok(value)
         } else {
-            parse_implicit_compare_json(&mut command, &matches, &model, program, &accepts)
+            let mut compare = CompareArgs::from_arg_matches(&matches)?;
+            fill_date(&mut compare.datetime);
+            if let Some(name) = compare
+                .original_pos
+                .as_ref()
+                .and_then(|p| p.to_str())
+                .and_then(|name| model.find_subcommand(name))
+                .map(|task| task.get_name().to_string())
+                .filter(|name| !accepts(name))
+            {
+                return Err(missing_task(&mut command, program, &name));
+            }
+            if compare.modified.is_none() && compare.modified_pos.is_none() {
+                if !accepts("read") {
+                    return Err(command.error(
+                        clap::error::ErrorKind::InvalidSubcommand,
+                        "this task is not supported by this adapter",
+                    ));
+                }
+                let mut args = serde_json::to_value(&compare.read).expect("UTF-8 CLI arguments");
+                args["file"] = serde_json::to_value(
+                    compare.original.as_ref().or(compare.original_pos.as_ref()),
+                )
+                .expect("UTF-8 path");
+                // As `read FILE -o …` has them.
+                args["output"] = serde_json::to_value(&compare.output).expect("UTF-8 path");
+                args["force"] = compare.force.into();
+                args["output_format"] = serde_json::to_value(
+                    output_format(Task::Read, compare.output.as_deref(), None)
+                        .ok()
+                        .flatten(),
+                )
+                .expect("format");
+                return Ok(serde_json::json!({"exit_code": 0, "command": "read", "args": args}));
+            }
+            compare.view_given = view_given(&matches);
+            let args = compare_json(&compare);
+            if view_is_output(&args) && !accepts("read") {
+                return Err(view_not_supported(&mut command));
+            }
+            Ok(serde_json::json!({"exit_code": 0, "command": "compare", "args": args}))
         }
     })();
     match result {
@@ -4041,20 +3271,12 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             value.to_string()
         }
         Err(error) => match removed_spellings(arguments.iter().map(String::as_str)).first() {
-            Some((old, now)) => {
-                let removed = removed_error(old, now);
-                let mut value = serde_json::json!({
-                    "exit_code": 2,
-                    "stream": "stderr",
-                    "text": format!("{removed}\n"),
-                });
-                // Under --json, the line a host prints on stdout too.
-                if wants_json(arguments) {
-                    let message = removed.strip_prefix("error: ").unwrap_or(&removed);
-                    value["json"] = removed_json_error(&error, arguments, program, message).into();
-                }
-                value.to_string()
-            }
+            Some((old, now)) => serde_json::json!({
+                "exit_code": 2,
+                "stream": "stderr",
+                "text": format!("{}\n", removed_error(old, now)),
+            })
+            .to_string(),
             None => {
                 let mut value: serde_json::Value =
                     serde_json::from_str(&error_json(&error)).unwrap_or_default();
@@ -4062,79 +3284,8 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
                 // run that fails is the one that needs the new name. Hosts
                 // print them before `text`.
                 value["notes"] = notes(arguments).into();
-                if wants_json(arguments)
-                    && let Some(line) = usage_json_error(&error, arguments, program)
-                {
-                    value["json"] = line.into();
-                }
                 value.to_string()
             }
         },
-    }
-}
-
-#[cfg(test)]
-mod slash_path_tests {
-    use super::{slash_path, unverbatimed};
-    use std::path::Path;
-
-    #[test]
-    fn slash_path_uses_forward_slashes() {
-        assert_eq!(slash_path(Path::new(r"dir\sub\name.md")), "dir/sub/name.md");
-        assert_eq!(slash_path(Path::new("plain")), "plain");
-    }
-
-    /// The agent-facing contract: a canonical drive-letter path spelled
-    /// `C:/…` regardless of the OS the test runs on (#1244).
-    #[test]
-    fn slash_path_canonical_drive_letter_spells_agent_facing() {
-        let formatted = slash_path(Path::new(r"C:\Users\Alice\out.docx"));
-        assert_eq!(formatted, "C:/Users/Alice/out.docx");
-        assert!(!formatted.contains('\\'), "backslashes: {formatted}");
-    }
-
-    #[test]
-    fn unverbatimed_keeps_every_nonverbatim_path() {
-        // The parsed-component contract, portable: only a Windows verbatim
-        // prefix is ever stripped, so a drive or UNC path keeps its head.
-        for path in ["plain", r"dir\sub", r"C:\a\b", r"\\server\share\x"] {
-            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
-        }
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn a_verbatim_literal_is_an_ordinary_name_off_windows() {
-        for path in [r"\\?\C:\a\b", r"\\?\UNC\s\sh\x"] {
-            assert_eq!(unverbatimed(Path::new(path)), None, "{path}");
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unverbatimed_strips_every_verbatim_prefix_kind() {
-        for (path, stripped) in [
-            (r"\\?\C:\a\b", "C:/a/b"),
-            (r"\\?\c:\a", "C:/a"),
-            (r"\\?\C:", "C:"),
-            (r"\\?\UNC\server\share\x", "//server/share/x"),
-            (r"\\?\GLOBALROOT\Device\Foo", "GLOBALROOT/Device/Foo"),
-        ] {
-            assert_eq!(slash_path(Path::new(path)), stripped, "{path}");
-            assert!(!slash_path(Path::new(path)).contains("//?"), "{path}");
-        }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unverbatimed_returns_the_stripped_components() {
-        assert_eq!(
-            unverbatimed(Path::new(r"\\?\C:\a\b")).as_deref(),
-            Some(Path::new(r"C:\a\b"))
-        );
-        assert_eq!(
-            unverbatimed(Path::new(r"\\?\UNC\server\share\x")).as_deref(),
-            Some(Path::new(r"\\server\share\x"))
-        );
     }
 }

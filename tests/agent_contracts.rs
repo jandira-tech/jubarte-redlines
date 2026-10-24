@@ -25,8 +25,6 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"resolve_comment", "comment_id":1, "done":false}),
         json!({"kind":"edit_comment", "comment_id":1, "text":"reworded"}),
         json!({"kind":"delete_comment", "comment_id":1}),
-        json!({"kind":"strike", "revision":"r1", "comment":"Not acceptable."}),
-        json!({"kind":"restore", "revision":"r2"}),
         json!({"kind":"insert_table", "paragraph":{"index":0}, "position":"before", "rows":[["a","b"],["c","d"]], "header_row":true, "widths_dxa":[4680,4680], "style":"TableGrid"}),
         json!({"kind":"list", "paragraphs":[{"index":0}, "p1"], "kind_of_list":"lower_letter", "level":1, "restart":false}),
         json!({"kind":"watermark", "text":"DRAFT", "color":"C0C0C0", "diagonal":true, "font":"Calibri"}),

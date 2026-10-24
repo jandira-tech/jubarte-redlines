@@ -182,11 +182,11 @@ fn a_whole_paragraph_edit_of_a_merged_or_removed_paragraph_is_refused_by_name() 
     for (op, says) in [
         (
             r#"{"kind":"rewrite","paragraph":"p1","text":"Bravo"}"#,
-            "p1 (as read) merges with p0",
+            "p1 merged into p0",
         ),
         (
             r#"{"kind":"delete_paragraph","paragraph":"p0"}"#,
-            "p0 (as read) merges with p1",
+            "p0 merged into p0",
         ),
         (
             r#"{"kind":"rewrite","paragraph":"p2","text":"Gamma"}"#,

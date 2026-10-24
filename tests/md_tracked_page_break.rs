@@ -55,7 +55,7 @@ fn break_paragraph(wrapper: &str, extra: &str) -> String {
 fn a_deleted_page_break_names_its_deletion() {
     let (first, again, second) = round_trip(&break_paragraph("del", ""));
     assert!(
-        first.contains("<!-- p0 page-break-del r5+4 @SW, break-del r5+4 @SW -->"),
+        first.contains("<!-- p0 page-break-del r5 @SW, break-del r4 @SW -->"),
         "{first}"
     );
     assert!(!first.contains("rev r5"), "{first}");
@@ -68,20 +68,10 @@ fn a_deleted_page_break_names_its_deletion() {
     assert_eq!(second, first);
 }
 
-/// The inserted break and its paragraph's deleted mark after it are one
-/// replacement (#1359), which both clauses name and the header counts as
-/// one substitution (#1362).
 #[test]
 fn an_inserted_page_break_names_its_insertion() {
     let (first, again, second) = round_trip(&break_paragraph("ins", ""));
-    assert!(
-        first.contains("<!-- p0 page-break-ins r5+4 @SW, break-del r5+4 @SW -->"),
-        "{first}"
-    );
-    assert!(
-        first.contains("# 2 marks shown as 1 change: 1 substitution"),
-        "{first}"
-    );
+    assert!(first.contains("page-break-ins r5 @SW"), "{first}");
     assert!(!first.contains("rev r5"), "{first}");
     let xml = document(&again);
     assert!(
@@ -96,8 +86,8 @@ fn an_inserted_page_break_names_its_insertion() {
 fn a_page_break_deleted_with_text_shares_the_texts_deletion() {
     let extra = r#"<w:r><w:delText>Gone.</w:delText></w:r>"#;
     let (first, again, second) = round_trip(&break_paragraph("del", extra));
-    assert!(first.contains("page-break-del r5+4 @SW"), "{first}");
-    assert!(first.contains("{--Gone.--}{r5+4 @SW}"), "{first}");
+    assert!(first.contains("page-break-del r5 @SW"), "{first}");
+    assert!(first.contains("{--Gone.--}{>>r5 @SW<<}"), "{first}");
     let xml = document(&again);
     assert_eq!(xml.matches(r#"<w:del w:id="5""#).count(), 1, "{xml}");
     assert_eq!(second, first);

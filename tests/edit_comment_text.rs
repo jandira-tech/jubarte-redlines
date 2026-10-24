@@ -345,8 +345,7 @@ fn the_cli_edits_c0_text_and_c0_keeps_meaning_the_comment() {
         "{}",
         String::from_utf8_lossy(&outside.stderr)
     );
-    // `-p c0 --content` still rewrites the comment's own text, for its
-    // author (#1264: another author is refused).
+    // `-p c0 --content` still rewrites the comment's own text.
     let note = jubarte(
         &[
             "edit",
@@ -355,8 +354,6 @@ fn the_cli_edits_c0_text_and_c0_keeps_meaning_the_comment() {
             "c0",
             "--content",
             "Rate checked",
-            "--author",
-            "Ann",
             "--out-dir",
             "note",
         ],
@@ -574,11 +571,6 @@ fn note_definitions_carry_settled_ids_in_settled_views() {
     let view = ids_of(&["read", "edited.docx"]);
     assert!(
         view.contains(&"<!-- footnotes.p1 -->".to_string()),
-        "{view:?}"
-    );
-    // Case-only spellings are Word's own style for both note kinds.
-    assert!(
-        view.contains(&"<!-- endnotes.p0-p2 -->".to_string()),
         "{view:?}"
     );
 }

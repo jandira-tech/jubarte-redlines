@@ -116,7 +116,7 @@ pub fn count_words_and_tokenize(
 /// Collapse runs of whitespace so reformatted charter paragraphs (dense vs
 /// spaced) compare as the same text for move detection.
 fn collapse_ws(text: &str) -> String {
-    crate::util::collapse_whitespace(text)
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Jaccard similarity over unique word sets: `|intersection| / |union|`,
@@ -691,7 +691,7 @@ fn detect_moves_memoized(
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn detect_moves_reference(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -848,7 +848,7 @@ fn detect_moves_reference(
 /// obvious-move case and thousands of seeded-random sequences under several
 /// settings profiles.
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memoized_moves_tests {
     use super::*;
     use crate::xmllinq::NodeId;
@@ -1106,7 +1106,7 @@ mod memoized_moves_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod repeated_source_anchor_promotion_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1213,7 +1213,7 @@ mod repeated_source_anchor_promotion_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod source_paragraph_promotion_boundary_tests {
     use super::super::atoms::{ComparisonUnit, CorrelatedSequence};
     use super::*;
@@ -1539,7 +1539,7 @@ mod source_paragraph_promotion_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_lexical_empty_move_boundary_tests {
     use super::*;
     #[test]
@@ -1569,84 +1569,5 @@ mod public_lexical_empty_move_boundary_tests {
                 assert_eq!(score, jaccard(right, left, &settings));
             }
         }
-    }
-
-    #[test]
-    fn public_jaccard_similarity_edge_cases() {
-        let settings = WmlComparerSettings::default();
-
-        // 0. Empty strings
-        assert_eq!(jaccard("", "", &settings), 0.0);
-        assert_eq!(jaccard("hello", "", &settings), 0.0);
-        assert_eq!(jaccard("", "world", &settings), 0.0);
-
-        // 1. Order invariance: {hello, world} vs {world, hello} -> 1.0
-        assert_eq!(jaccard("hello world", "world hello", &settings), 1.0);
-
-        // 2. Set uniqueness / duplication invariance: {hello, world} vs {world, hello} -> 1.0
-        assert_eq!(jaccard("hello hello world", "world hello", &settings), 1.0);
-        assert_eq!(jaccard("hello world", "world hello hello", &settings), 1.0);
-
-        // 3. Disjoint sets: {hello, world} vs {foo, bar} -> 0.0
-        assert_eq!(jaccard("hello world", "foo bar", &settings), 0.0);
-
-        // 4. Partial overlap: {hello, world} vs {hello, foo}
-        // Intersection = {hello} (1)
-        // Union = {hello, world, foo} (3)
-        // Jaccard = 1 / 3
-        assert!((jaccard("hello world", "hello foo", &settings) - 1.0 / 3.0).abs() < 1e-12);
-
-        // 5. Whitespace independence
-        assert_eq!(jaccard("hello    world", "hello\nworld", &settings), 1.0);
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod split_by_chars_tests {
-    use super::*;
-
-    #[test]
-    fn empty_input() {
-        assert_eq!(split_by_chars("", &[' ', '\t']), vec![""]);
-    }
-
-    #[test]
-    fn empty_separators() {
-        assert_eq!(split_by_chars("hello", &[]), vec!["hello"]);
-    }
-
-    #[test]
-    fn empty_input_and_empty_separators() {
-        assert_eq!(split_by_chars("", &[]), vec![""]);
-    }
-
-    #[test]
-    fn text_containing_only_separators() {
-        assert_eq!(split_by_chars(" \t ", &[' ', '\t']), vec!["", "", "", ""]);
-    }
-
-    #[test]
-    fn text_with_separators_at_edges_and_middle() {
-        assert_eq!(
-            split_by_chars(" hello world ", &[' ']),
-            vec!["", "hello", "world", ""]
-        );
-    }
-
-    #[test]
-    fn text_with_consecutive_separators() {
-        assert_eq!(
-            split_by_chars("hello  world", &[' ']),
-            vec!["hello", "", "world"]
-        );
-    }
-
-    #[test]
-    fn unicode_characters() {
-        assert_eq!(
-            split_by_chars("hello🦀world", &['🦀']),
-            vec!["hello", "world"]
-        );
     }
 }

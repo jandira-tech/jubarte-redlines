@@ -783,7 +783,7 @@ pub(crate) fn add_row_mark(dom: &mut Dom, trpr: NodeId, rev: NodeId) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod row_mark_tests {
     use super::*;
 
@@ -817,7 +817,7 @@ mod row_mark_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod horizontal_partition_tests {
     use super::*;
 
@@ -862,7 +862,8 @@ mod horizontal_partition_tests {
     }
     fn prop(dom: &Dom, n: NodeId) -> String {
         let mut attrs: Vec<_> = dom
-            .attributes_iter(n)
+            .attributes(n)
+            .into_iter()
             .map(|(k, v)| format!("{}={v}", k.local_name()))
             .collect();
         attrs.sort();
@@ -1405,7 +1406,7 @@ mod horizontal_partition_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nested_lifecycle_owner_regressions {
     use super::*;
 
@@ -1491,7 +1492,7 @@ mod nested_lifecycle_owner_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod m42_word_context_boundaries {
     use super::*;
 
@@ -1612,7 +1613,7 @@ mod m42_word_context_boundaries {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deterministic_table_dispatch_tests {
     use super::*;
     use crate::namespaces::PT;
@@ -1875,7 +1876,7 @@ mod deterministic_table_dispatch_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod shared_word_alignment_tests {
     use super::*;
     use std::collections::HashSet;

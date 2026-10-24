@@ -4,9 +4,8 @@
 //! The YAML header of the agent view.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 
-use super::agent::Handles;
+use super::agent::{Handles, RevTag};
 use super::ooxml::Element;
 use crate::markdown::view_notes::WORD_PAGE_SIZES;
 
@@ -77,12 +76,6 @@ pub(crate) struct ParaFact {
     /// Its own borders (`w:pBdr`), as a border prints them (`bottom single
     /// 0.5pt 8496B0 space 4pt`).
     pub border: Option<String>,
-    /// The frame it lays out in (`w:framePr`, its style's under its own),
-    /// as [`crate::markdown::frames::describe`] prints it.
-    pub frame: Option<String>,
-    /// Its own indent (`w:ind`), as the id lines say it: `first-line`,
-    /// `hanging`, `left`, `right` and each one's inches.
-    pub indent: Vec<(&'static str, String)>,
 }
 
 /// A section of the body (Task 11 fills these).
@@ -116,8 +109,7 @@ pub(crate) struct Facts<'a> {
     pub resolved: Option<bool>,
     pub comments_inline: bool,
     pub tracking_on: bool,
-    /// One kind per change printed in the body.
-    pub tags: Vec<&'static str>,
+    pub tags: Vec<RevTag>,
     /// The document's changes, as `jubarte changes` lists them: the one
     /// revision count.
     pub changes: Vec<crate::changes::Change>,
@@ -143,9 +135,6 @@ pub(crate) struct Facts<'a> {
     pub heading_styles: Vec<(usize, String)>,
     /// Every other paragraph style the body uses, in first-use order.
     pub other_styles: Vec<String>,
-    /// Canonical note style ids whose legend uses a source definition's name
-    /// and formatting, even when its localized id differs.
-    pub note_style_sources: HashMap<String, String>,
     pub table_styles: Vec<String>,
     /// The tables differ in style: their lines name theirs, and the
     /// legend lists them all as `tables:`.
@@ -223,10 +212,8 @@ fn join(items: &[String]) -> String {
 
 /// The `revisions:` line's comment: the body's marks and the changes the
 /// view shows them as, then formatting (body and styles) and each other
-/// story's changes, with its marks when they differ: `9 marks shown as 5
-/// changes: 1 insertion, 4 substitutions; 2 formatting; 3 in header1 (7
-/// marks)`. Resolved views describe the raw marks by kind, without
-/// `shown as`. Empty for no change.
+/// story's count: `9 marks shown as 5 changes: 1 insertion, 4
+/// substitutions; 2 formatting; 1 in header1`. Empty for no change.
 fn revisions_comment(f: &Facts) -> String {
     use crate::changes::ChangeKind;
     let story = |c: &crate::changes::Change| {
@@ -276,49 +263,12 @@ fn revisions_comment(f: &Facts) -> String {
             order.push(s);
         }
     }
-    // Each story counts the changes `jubarte changes` lists for it, as the
-    // body does, and its marks when they differ; a resolved view counts
-    // the raw marks.
-    let listed = f
-        .resolved
-        .is_none()
-        .then(super::agent::story_changes)
-        .flatten();
-    let others: Vec<(String, usize, usize)> = order
+    let others: Vec<(String, usize)> = order
         .into_iter()
-        .filter_map(|s| {
-            let marks = *counts.get(&s)?;
-            let changes = listed
-                .as_ref()
-                .map_or(marks, |l| l.get(&s).copied().unwrap_or(marks));
-            Some((s, changes, marks))
-        })
+        .filter_map(|s| counts.get(&s).map(|n| (s, *n)))
         .collect();
     let mut parts = Vec::new();
-    let raw_kinds = if f.resolved.is_some() {
-        f.changes
-            .iter()
-            .filter(|c| story(c) == "body" && c.kind != ChangeKind::Formatting)
-            .map(|c| match (c.target, c.kind) {
-                ("paragraph_mark", _) => "mark",
-                ("table_row", _) => "row",
-                ("table_cell", _) => "cell",
-                (_, ChangeKind::Insertion) => "ins",
-                (_, ChangeKind::Deletion) => "del",
-                (_, ChangeKind::Move) => "move",
-                (_, ChangeKind::Formatting) => "fmt",
-                (_, ChangeKind::Replacement) => "sub",
-            })
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-    let tags = if f.resolved.is_some() {
-        &raw_kinds
-    } else {
-        &f.tags
-    };
-    if marks > 0 || !tags.is_empty() {
+    if marks > 0 {
         let mut kinds = Vec::new();
         for (kind, one, many) in [
             ("ins", "insertion", "insertions"),
@@ -327,22 +277,19 @@ fn revisions_comment(f: &Facts) -> String {
             ("mark", "paragraph mark", "paragraph marks"),
             ("row", "table row", "table rows"),
             ("cell", "table cell", "table cells"),
-            ("move", "move", "moves"),
         ] {
-            let n = tags.iter().filter(|&&t| t == kind).count();
+            let n = f.tags.iter().filter(|t| t.kind == kind).count();
             if n > 0 {
                 kinds.push(plural(n, one, many));
             }
         }
         let marks = plural(marks, "mark", "marks");
-        parts.push(if tags.is_empty() {
+        parts.push(if f.tags.is_empty() {
             marks
-        } else if f.resolved.is_some() {
-            format!("{marks}: {}", join(&kinds))
         } else {
             format!(
                 "{marks} shown as {}: {}",
-                plural(tags.len(), "change", "changes"),
+                plural(f.tags.len(), "change", "changes"),
                 join(&kinds)
             )
         });
@@ -350,12 +297,8 @@ fn revisions_comment(f: &Facts) -> String {
     if formatting > 0 {
         parts.push(format!("{formatting} formatting"));
     }
-    for (name, changes, marks) in others {
-        parts.push(if changes == marks {
-            format!("{changes} in {name}")
-        } else {
-            format!("{changes} in {name} ({})", plural(marks, "mark", "marks"))
-        });
+    for (name, n) in others {
+        parts.push(format!("{n} in {name}"));
     }
     parts.join("; ")
 }
@@ -564,8 +507,8 @@ pub(crate) fn render(f: &Facts) -> String {
         }
         if let Some(date) = f.handles.unique_date(author) {
             parts.push(date.to_string());
-        } else if let Some(date) = f.handles.latest_date(author) {
-            parts.push(format!("latest {date}"));
+        } else if let Some(range) = f.handles.date_range(author) {
+            parts.push(range);
         }
         kv(
             &mut out,
@@ -621,19 +564,6 @@ fn twips(e: &Element, attr: &str) -> Option<f64> {
             .ok()
             .or_else(|| crate::util::universal_measure_twips(v))
     })
-}
-
-/// The page width less the side margins of `sect`, in twips, as the
-/// writer computes it (`package.rs`): what it splits a table's columns
-/// over when the table line gives no widths (#1472).
-pub(crate) fn text_width(sect: Option<&Element>) -> u32 {
-    let size = sect.and_then(|s| s.child("pgSz"));
-    let margins = sect.and_then(|s| s.child("pgMar"));
-    let width = size.and_then(|s| twips(s, "w")).unwrap_or(12240.0);
-    let side = |a: &str| margins.and_then(|m| twips(m, a)).unwrap_or(1440.0);
-    let text = (width - side("left") - side("right")).round().max(1440.0);
-    // `as` saturates: a width past u32 is no page Word writes.
-    text as u32
 }
 
 /// `Letter portrait, margins 1in, header/footer 0.5in` for a `w:sectPr`.
@@ -775,8 +705,6 @@ struct Resolved {
     contextual_spacing: bool,
     /// Twips.
     left: Option<f64>,
-    /// Twips.
-    right: Option<f64>,
     first_line: Option<f64>,
     hanging: Option<f64>,
     align: Option<String>,
@@ -853,9 +781,6 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
             if r.left.is_none() {
                 r.left = twips(ind, "left").or_else(|| twips(ind, "start"));
             }
-            if r.right.is_none() {
-                r.right = twips(ind, "right").or_else(|| twips(ind, "end"));
-            }
             if r.first_line.is_none() {
                 r.first_line = twips(ind, "firstLine");
             }
@@ -907,40 +832,6 @@ fn resolve(styles: Option<&Element>, theme: Option<&Element>, id: &str) -> Resol
     r
 }
 
-/// Whether `style` is a paragraph style: ECMA-376 `w:style` reads "If
-/// this attribute is not specified, then the default value shall be
-/// assumed to be paragraph" (#1485 review).
-pub(crate) fn is_paragraph_style(style: &Element) -> bool {
-    style.attr("type").is_none_or(|t| t == "paragraph")
-}
-
-/// Each paragraph style's text size through its `basedOn` chain and the
-/// document defaults, in half-points, and the size of a paragraph with no
-/// `w:pStyle` (the default paragraph style's): what a paragraph's own
-/// `size` clause is measured against (#1474). Word's own default is 10pt.
-pub(crate) fn paragraph_style_sizes(
-    styles: Option<&Element>,
-    default_style: Option<&str>,
-) -> (HashMap<String, u32>, u32) {
-    let size = |id: &str| {
-        let half = resolve(styles, None, id)
-            .size_half_points
-            .filter(|h| h.is_finite())
-            .unwrap_or(20.0)
-            .round();
-        // `as` cannot truncate: the value is clamped to ST_HpsMeasure.
-        half.clamp(1.0, 3276.0) as u32
-    };
-    let sizes = styles
-        .into_iter()
-        .flat_map(|root| root.children_named("style"))
-        .filter(|s| is_paragraph_style(s))
-        .filter_map(|s| s.attr("styleId"))
-        .map(|id| (id.to_string(), size(id)))
-        .collect();
-    (sizes, size(default_style.unwrap_or("")))
-}
-
 fn points(twips: f64) -> String {
     let v = format!("{:.1}", twips / 20.0);
     v.trim_end_matches('0').trim_end_matches('.').to_string()
@@ -984,37 +875,23 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.character {
         return format!("character, {}", parts.join(", "));
     }
-    // An omitted space is zero and an omitted line single. The default
-    // style names neither; a style based on it names a zero or a single
-    // line its base does not have, or the writer would give it the base's.
-    for (word, pick) in [
-        (
-            "before",
-            (|x: &Resolved| x.before) as fn(&Resolved) -> Option<f64>,
-        ),
-        ("after", |x: &Resolved| x.after),
-    ] {
-        let space = pick(r).unwrap_or(0.0);
-        let shown = match base {
-            None => space > 0.0,
-            Some(b) => space != pick(b).unwrap_or(0.0),
-        };
-        if shown {
-            parts.push(format!("{word} {}pt", points(space)));
-        }
+    if differs(|x| format!("{:?}", x.before))
+        && let Some(b) = r.before.filter(|&b| b > 0.0)
+    {
+        parts.push(format!("before {}pt", points(b)));
     }
-    let single = (240.0, "auto".to_string());
-    let line = r.line.clone().unwrap_or_else(|| single.clone());
-    let shown = match base {
-        None => line != single,
-        Some(b) => line != b.line.clone().unwrap_or(single),
-    };
-    if shown {
-        let (line, rule) = &line;
+    if differs(|x| format!("{:?}", x.after))
+        && let Some(a) = r.after.filter(|&a| a > 0.0)
+    {
+        parts.push(format!("after {}pt", points(a)));
+    }
+    if differs(|x| format!("{:?}", x.line))
+        && let Some((line, rule)) = &r.line
+    {
         if rule == "auto" {
             let ratio = format!("{:.2}", line / 240.0);
             let ratio = ratio.trim_end_matches('0').trim_end_matches('.');
-            if ratio != "1" || base.is_some() {
+            if ratio != "1" {
                 parts.push(format!("line {ratio}"));
             }
         } else {
@@ -1027,8 +904,7 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     if r.keep_lines && differs(|x| x.keep_lines.to_string()) {
         parts.push("keep-lines".to_string());
     }
-    // Left, then first-line, hanging and right (#1489): the order the
-    // writer reads back.
+    // Left, then first-line, then hanging: the order the writer reads back.
     if differs(|x| format!("{:?}", x.left))
         && let Some(left) = r.left
         && (base.is_some() || left != 0.0)
@@ -1046,12 +922,6 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
         && (base.is_some() || hanging != 0.0)
     {
         parts.push(format!("hanging {}", super::agent::inches(hanging)));
-    }
-    if differs(|x| format!("{:?}", x.right))
-        && let Some(right) = r.right
-        && (base.is_some() || right != 0.0)
-    {
-        parts.push(format!("right {}", super::agent::inches(right)));
     }
     if r.contextual_spacing && differs(|x| x.contextual_spacing.to_string()) {
         parts.push("contextual spacing".to_string());
@@ -1142,53 +1012,8 @@ fn table_style_line(styles: Option<&Element>, id: &str) -> String {
                 pt.trim_end_matches('0').trim_end_matches('.')
             )
         }
-        // Word's own styles are written as Word defines them, borders
-        // and all.
-        _ if super::super::package::is_built_in_table_style(id) => {
-            format!("{id}, borders vary{named}")
-        }
-        _ => {
-            let sides: Vec<String> = sides
-                .iter()
-                .zip(super::super::view_styles::TABLE_BORDER_SIDES)
-                .filter_map(|(names, side)| {
-                    let b = names.iter().find_map(|name| borders.child(name))?;
-                    border_side(side, b)
-                })
-                .collect();
-            if sides.is_empty() {
-                format!("{id}{named}")
-            } else {
-                format!("{id}, borders {}{named}", sides.join(" "))
-            }
-        }
+        _ => format!("{id}, borders vary{named}"),
     }
-}
-
-/// One side of a `borders …` clause: `bottom double 0.75pt`, with
-/// `#RRGGBB` for a colour that is not `auto` and `space Npt` for a
-/// spacing that is not zero. A side with no value says nothing.
-fn border_side(side: &str, b: &Element) -> Option<String> {
-    let val = b.attr("val").filter(|v| !v.is_empty())?;
-    let mut out = format!("{side} {val}");
-    if let Some(sz) = b.attr("sz").and_then(|sz| sz.parse::<f64>().ok()) {
-        let pt = format!("{:.2}", sz / 8.0);
-        let _ = write!(out, " {}pt", pt.trim_end_matches('0').trim_end_matches('.'));
-    }
-    if let Some(color) = b
-        .attr("color")
-        .filter(|c| c.len() == 6 && c.chars().all(|c| c.is_ascii_hexdigit()))
-    {
-        let _ = write!(out, " #{color}");
-    }
-    if let Some(space) = b
-        .attr("space")
-        .and_then(|s| s.parse::<u32>().ok())
-        .filter(|s| *s > 0)
-    {
-        let _ = write!(out, " space {space}pt");
-    }
-    Some(out)
 }
 
 /// The style the writer gives a `header` or `footer` paragraph the view
@@ -1198,20 +1023,15 @@ pub(crate) fn story_style(kind: &str) -> &'static str {
 }
 
 /// A story prints paragraph by paragraph (`p0: {text: …, color: …}`) when
-/// one carries its own colour, borders, frame or indent, or their
-/// alignments differ.
+/// one carries its own colour or borders, or their alignments differ.
 fn by_paragraph(s: &StoryFact) -> bool {
-    s.paras.iter().any(|p| {
-        p.color.is_some()
-            || p.border.is_some()
-            || p.frame.is_some()
-            || !p.indent.is_empty()
-            || p.align != s.align
-    })
+    s.paras
+        .iter()
+        .any(|p| p.color.is_some() || p.border.is_some() || p.align != s.align)
 }
 
-/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt,
-/// frame: {wrap: none, y: 1}}`, one per paragraph.
+/// `p0: {text: …, center, color: "595959", border: bottom single 0.5pt}`,
+/// one per paragraph.
 fn paragraph_entries(s: &StoryFact) -> Vec<String> {
     std::iter::once(&s.text)
         .chain(&s.more)
@@ -1222,22 +1042,11 @@ fn paragraph_entries(s: &StoryFact) -> Vec<String> {
             if let Some(align) = p.align {
                 inner.push_str(&format!(", {align}"));
             }
-            if !p.indent.is_empty() {
-                let sides: Vec<String> = p
-                    .indent
-                    .iter()
-                    .map(|(side, inches)| format!("{side}: {inches}"))
-                    .collect();
-                inner.push_str(&format!(", indent: {{{}}}", sides.join(", ")));
-            }
             if let Some(color) = &p.color {
                 inner.push_str(&format!(", color: {}", scalar(color, true)));
             }
             if let Some(border) = &p.border {
                 inner.push_str(&format!(", border: {}", scalar(border, true)));
-            }
-            if let Some(frame) = &p.frame {
-                inner.push_str(&format!(", frame: {frame}"));
             }
             format!("p{}: {{{inner}}}", s.first + k)
         })
@@ -1425,7 +1234,7 @@ fn section_changes(section: &SectionFact, handles: &Handles) -> Option<String> {
     let sect = section.sect_pr.as_ref()?;
     let tags: Vec<String> = sect
         .children_named("sectPrChange")
-        .map(|change| super::agent::required_date_tag_of(change, handles))
+        .map(|change| super::agent::tag_of(change, handles))
         .collect();
     (!tags.is_empty()).then(|| super::agent::format_tags(&tags))
 }
@@ -1448,10 +1257,7 @@ fn style_changes(styles: &Element, handles: &Handles) -> Vec<(String, String)> {
         collect(holder, &mut carriers);
         let mut tags: Vec<String> = Vec::new();
         for carrier in carriers {
-            let tag = format!(
-                "styles#{}",
-                super::agent::required_date_tag_of(carrier, handles)
-            );
+            let tag = format!("styles#{}", super::agent::tag_of(carrier, handles));
             if !tags.contains(&tag) {
                 tags.push(tag);
             }
@@ -1544,7 +1350,6 @@ fn part_two(out: &mut String, f: &Facts) {
         );
     }
     for style in &f.other_styles {
-        let source = f.note_style_sources.get(style).unwrap_or(style);
         kv(
             out,
             &format!(
@@ -1553,8 +1358,8 @@ fn part_two(out: &mut String, f: &Facts) {
                 scalar(
                     &format!(
                         "{}{}",
-                        describe(&resolve(f.styles, f.theme, source), Some(&base)),
-                        named(f.styles, source, style)
+                        describe(&resolve(f.styles, f.theme, style), Some(&base)),
+                        named(f.styles, style, style)
                     ),
                     false
                 )
@@ -1722,7 +1527,7 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
 #[derive(Clone, Copy)]
 pub(crate) enum StoryView<'a> {
     /// The agent's tracked view, with the handles and the part's stem:
-    /// `{++DRAFT++}{header1.r1 @AC}`, `{--old--}{header1.r2 @AC}`;
+    /// `{++DRAFT++}{>>header1.r1 @AC<<}`, `{--old--}{>>header1.r2 @AC<<}`;
     /// document text that reads like CriticMarkup is escaped.
     Tagged(&'a super::agent::Handles, &'a str),
     /// Every change accepted: inserted and moved-to runs count, deleted and
@@ -1763,12 +1568,26 @@ pub(crate) fn story_text_with(
         view: StoryView<'a>,
         /// Inside deleted text the view shows.
         deleting: bool,
-        /// The body's revision fold, fed the story's already-rendered pieces.
-        critic: super::critic::Critic,
-        /// Text already handed to the fold; field offsets stay in `out`.
-        flushed: usize,
+        /// The tagged view's last change, while nothing follows it yet.
+        last: Option<Shown>,
         /// How many printed fields' results the walk is in.
         in_result: usize,
+    }
+    /// One side of a change the tagged view printed: its text, its marks'
+    /// tags, and their author.
+    struct Side {
+        text: String,
+        tags: Vec<String>,
+        author: Option<String>,
+    }
+    /// A change the tagged view printed from `start` to `end`: an
+    /// insertion, a deletion, or the insertion then the deletion Word's
+    /// Compare writes for a substitution.
+    struct Shown {
+        start: usize,
+        end: usize,
+        new: Option<Side>,
+        old: Option<Side>,
     }
     /// A complex field being read.
     #[derive(Default)]
@@ -1870,29 +1689,23 @@ pub(crate) fn story_text_with(
                     if !shown {
                         continue;
                     }
-                    let mark = if inserted {
-                        super::critic::Mark::Insertion
-                    } else {
-                        super::critic::Mark::Deletion
-                    };
-                    if let Some((handles, stem)) = tagged {
-                        s.flush();
-                        let by = format!(
-                            "{}{stem}#{}",
-                            super::critic::TAG,
-                            super::agent::required_date_tag_of(run, handles)
-                        );
-                        s.critic.open(mark, Some(&by));
-                    }
-                    // #1134: an insertion inside a deletion still carries
-                    // delText. Keep that enclosing deletion while reading it.
-                    let deleting = s.deleting;
-                    s.deleting |= !inserted;
+                    let start = s.out.len();
+                    let deleting = std::mem::replace(&mut s.deleting, !inserted);
                     walk(run, s, draw);
                     s.deleting = deleting;
-                    if tagged.is_some() {
-                        s.flush();
-                        s.critic.close(mark);
+                    if let Some((handles, stem)) = tagged {
+                        let text = s.out.split_off(start);
+                        if !text.is_empty() {
+                            let tag = format!("{stem}#{}", super::agent::tag_of(run, handles));
+                            s.change(
+                                inserted,
+                                Side {
+                                    text,
+                                    tags: vec![tag],
+                                    author: run.attr("author").map(str::to_string),
+                                },
+                            );
+                        }
                     }
                 }
                 "hyperlink" | "smartTag" | "customXml" => walk(run, s, draw),
@@ -2001,9 +1814,59 @@ pub(crate) fn story_text_with(
         }
     }
     impl State<'_> {
-        fn flush(&mut self) {
-            self.critic.raw(&self.out[self.flushed..]);
-            self.flushed = self.out.len();
+        /// A tagged change, as the body prints its neighbours: marks of one
+        /// kind by one author join, and an insertion directly followed by
+        /// a deletion is one substitution.
+        fn change(&mut self, inserted: bool, side: Side) {
+            let at = self.out.len();
+            let mut shown = match self.last.take().filter(|last| last.end == at) {
+                Some(mut last) => {
+                    let joins = |own: &Option<Side>| {
+                        own.as_ref().is_some_and(|own| own.author == side.author)
+                    };
+                    if inserted && last.old.is_none() && joins(&last.new) {
+                        let new = last.new.as_mut().expect("checked above");
+                        new.text.push_str(&side.text);
+                        new.tags.extend(side.tags);
+                        last
+                    } else if !inserted && joins(&last.old) {
+                        let old = last.old.as_mut().expect("checked above");
+                        old.text.push_str(&side.text);
+                        old.tags.extend(side.tags);
+                        last
+                    } else if !inserted && last.old.is_none() && last.new.is_some() {
+                        last.old = Some(side);
+                        last
+                    } else {
+                        Shown::alone(at, inserted, side)
+                    }
+                }
+                None => Shown::alone(at, inserted, side),
+            };
+            self.out.truncate(shown.start);
+            let tag = |side: &Side| super::agent::join_tags(&side.tags);
+            let printed = match (&shown.old, &shown.new) {
+                (Some(old), Some(new)) => format!(
+                    "{{~~{}~>{}~~}}{{>>{}<<}}",
+                    old.text,
+                    new.text,
+                    super::agent::format_tag(&super::agent::join_tags(&[tag(old), tag(new)]))
+                ),
+                (None, Some(new)) => format!(
+                    "{{++{}++}}{{>>{}<<}}",
+                    new.text,
+                    super::agent::format_tag(&tag(new))
+                ),
+                (Some(old), None) => format!(
+                    "{{--{}--}}{{>>{}<<}}",
+                    old.text,
+                    super::agent::format_tag(&tag(old))
+                ),
+                (None, None) => String::new(),
+            };
+            self.out.push_str(&printed);
+            shown.end = self.out.len();
+            self.last = Some(shown);
         }
 
         /// Document text; the tagged view escapes what reads like a mark,
@@ -2017,34 +1880,31 @@ pub(crate) fn story_text_with(
             }
         }
     }
+    impl Shown {
+        fn alone(start: usize, inserted: bool, side: Side) -> Self {
+            let (new, old) = if inserted {
+                (Some(side), None)
+            } else {
+                (None, Some(side))
+            };
+            Shown {
+                start,
+                end: start,
+                new,
+                old,
+            }
+        }
+    }
     let mut s = State {
         out: String::new(),
         fields: Vec::new(),
         view,
         deleting: false,
-        critic: super::critic::Critic::default(),
-        flushed: 0,
+        last: None,
         in_result: 0,
     };
     walk(p, &mut s, draw);
-    if matches!(view, StoryView::Tagged(..)) {
-        s.flush();
-        let mut text = s.critic.into_story().trim().to_string();
-        if let StoryView::Tagged(handles, story) = view
-            && let Some(pr) = p.path(&["pPr", "rPr"])
-        {
-            for mark in pr.elements().filter(|mark| mark.is("ins")) {
-                let tag = super::agent::format_tag(&format!(
-                    "{story}#{}",
-                    super::agent::required_date_tag_of(mark, handles)
-                ));
-                text.push_str(&format!("¶{{{tag}}}"));
-            }
-        }
-        text
-    } else {
-        s.out.trim().to_string()
-    }
+    s.out.trim().to_string()
 }
 
 /// `text` with a backslash before each `{` the writer would read as a
@@ -2218,10 +2078,7 @@ mod tests {
         let varied = borders(
             r#"<w:top w:val="single" w:sz="4"/><w:start w:val="single" w:sz="8"/><w:bottom w:val="single" w:sz="4"/><w:end w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/>"#,
         );
-        assert_eq!(
-            table_style_line(Some(&varied), "T"),
-            "T, borders top single 0.5pt left single 1pt bottom single 0.5pt right single 0.5pt insideH single 0.5pt insideV single 0.5pt"
-        );
+        assert_eq!(table_style_line(Some(&varied), "T"), "T, borders vary");
     }
 
     #[test]
@@ -2435,73 +2292,9 @@ mod tests {
         assert_eq!(describe(&flat, None), "Calibri 11pt, left");
     }
 
-    /// A style's right indent is named, as `right 0.5in` (the id line's
-    /// word): the legend dropped it, and the written text ran wider (#1489).
-    /// It inherits through `basedOn` as the left indent does, and Strict's
-    /// `w:end` reads as `w:right`.
-    #[test]
-    fn the_legend_names_a_right_indent() {
-        let xml = format!(
-            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Quote"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:styleId="Inherits"><w:basedOn w:val="Quote"/></w:style><w:style w:styleId="Reset"><w:basedOn w:val="Quote"/><w:pPr><w:ind w:right="0"/></w:pPr></w:style><w:style w:styleId="End"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:end="1440"/></w:pPr></w:style><w:style w:styleId="Hang"><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="2520" w:right="720" w:hanging="2520"/></w:pPr></w:style></w:styles>"#
-        );
-        let styles = parse_xml(xml.as_bytes()).unwrap();
-        let base = resolve(Some(&styles), None, "Normal");
-        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
-        assert_eq!(describe(&base, None), "Calibri 11pt, left");
-        assert_eq!(line("Quote"), "Calibri 11pt, indent 0.5in, right 0.5in");
-        assert_eq!(line("Inherits"), "Calibri 11pt, indent 0.5in, right 0.5in");
-        assert_eq!(line("Reset"), "Calibri 11pt, indent 0.5in, right 0in");
-        assert_eq!(line("End"), "Calibri 11pt, right 1in");
-        assert_eq!(
-            line("Hang"),
-            "Calibri 11pt, indent 1.75in, hanging 1.75in, right 0.5in"
-        );
-        let flat = Resolved {
-            font: Some("Calibri".to_string()),
-            size_half_points: Some(22.0),
-            right: Some(0.0),
-            ..Resolved::default()
-        };
-        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
-    }
-
     /// A strict style carries its measures as universal measures (`11pt`,
     /// `1in`) and its font size in half-points either way: the legend reads
     /// the same as the transitional integers.
-    #[test]
-    fn a_zero_space_or_a_single_line_apart_from_the_base_is_named() {
-        let xml = format!(
-            r#"<w:styles {W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:styleId="Heading1"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="480" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style><w:style w:styleId="Same"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="200"/></w:pPr></w:style><w:style w:styleId="Alone"><w:pPr><w:spacing w:before="120"/></w:pPr></w:style></w:styles>"#
-        );
-        let styles = parse_xml(xml.as_bytes()).unwrap();
-        let base = resolve(Some(&styles), None, "Normal");
-        let line = |id: &str| describe(&resolve(Some(&styles), None, id), Some(&base));
-        assert_eq!(
-            describe(&base, None),
-            "Calibri 11pt, after 10pt, line 1.15, left"
-        );
-        // Written back on a style based on the default, an omitted zero
-        // would take the default's space.
-        assert_eq!(
-            line("Heading1"),
-            "Calibri bold 14pt, before 24pt, after 0pt, line 1"
-        );
-        // A zero the base has too is no deviation.
-        assert_eq!(line("Same"), "Calibri 11pt");
-        assert_eq!(line("Alone"), "Calibri 11pt, before 6pt");
-        // The default style omits them: an omitted space is zero, and an
-        // omitted line single.
-        let flat = Resolved {
-            font: Some("Calibri".to_string()),
-            size_half_points: Some(22.0),
-            before: Some(0.0),
-            after: Some(0.0),
-            line: Some((240.0, "auto".to_string())),
-            ..Resolved::default()
-        };
-        assert_eq!(describe(&flat, None), "Calibri 11pt, left");
-    }
-
     #[test]
     fn a_style_s_universal_measures_read_as_their_integers() {
         let legend = |rpr: &str, ppr: &str| {

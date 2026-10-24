@@ -472,11 +472,11 @@ fn accept_and_reject_resolve_every_change() {
     ok(&["reject", "redline.docx", "-o", "rejected.docx"], &dir);
     assert!(ok(&["read", "accepted.docx"], &dir).contains("The term is six months."));
     assert!(ok(&["read", "rejected.docx"], &dir).contains("The term is twelve months."));
-    // No change is left: the one line is the input's validity (#1309).
-    let listed = ok(&["changes", "accepted.docx", "--json"], &dir);
-    let lines: Vec<&str> = listed.lines().collect();
-    assert_eq!(lines.len(), 1, "{listed}");
-    assert!(lines[0].starts_with(r#"{"input_validity":"#), "{listed}");
+    assert!(
+        ok(&["changes", "accepted.docx", "--json"], &dir)
+            .trim()
+            .is_empty()
+    );
 }
 
 /// Comments row: the engine places the anchors; threads reply and resolve;

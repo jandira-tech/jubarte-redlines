@@ -191,7 +191,8 @@ fn two_word_documents_are_located_in_each() {
     )
     .unwrap();
     assert_located(&patch, &old, &new, "original/modified");
-    // The comparer's changes are the owner's: no attribution follows them.
+    // The comparer's changes are the owner's: no attribution (`Name (date)`
+    // with no comment text) follows any of them.
     assert!(!patch.render(0).contains(")<<}"), "{patch}");
 }
 
@@ -211,7 +212,7 @@ fn markdown_against_word_is_located_in_the_word_document() {
     .unwrap();
     assert_eq!(patch.hunks.len(), 1, "{patch}");
     assert!(
-        patch.render(0).contains("{+**eighteen**+}[-**twelve**-]"),
+        patch.render(0).contains("[-**twelve**-]{+**eighteen**+}"),
         "{patch}"
     );
     let index = body_index(&patch.hunks[0].at);
@@ -225,7 +226,7 @@ fn markdown_against_word_is_located_in_the_word_document() {
     )
     .unwrap();
     assert!(
-        patch.render(0).contains("{+**twelve**+}[-**eighteen**-]"),
+        patch.render(0).contains("[-**eighteen**-]{+**twelve**+}"),
         "{patch}"
     );
     assert_eq!(body_index(&patch.hunks[0].at), index);
@@ -258,59 +259,4 @@ fn identical_word_documents_give_an_empty_patch() {
     .unwrap();
     assert!(patch.hunks.is_empty(), "{patch}");
     assert_eq!(patch.to_string(), "");
-}
-
-/// Paragraphs `Heading`, `Middle.` and `Last.`, with the paragraph at
-/// `gone` deleted as Word deletes a whole paragraph: its runs in a
-/// `w:del`, and the paragraph mark that joins it to the next one deleted.
-/// Word cannot delete the last paragraph's mark, so for the last paragraph
-/// the deleted mark is the one before it.
-fn deleting(gone: usize) -> Vec<u8> {
-    let del = r#"w:author="Claude" w:id="ID" w:date="2026-09-25T12:00:00Z""#;
-    let mark = |id: u32| {
-        format!(
-            r"<w:pPr><w:rPr><w:del {}/></w:rPr></w:pPr>",
-            del.replace("ID", &id.to_string())
-        )
-    };
-    let texts = ["Heading", "Middle.", "Last."];
-    let mut body = String::new();
-    for (i, text) in texts.iter().enumerate() {
-        let mark_deleted = if gone == texts.len() - 1 {
-            i + 1 == gone
-        } else {
-            i == gone
-        };
-        let props = if mark_deleted { mark(1) } else { String::new() };
-        let run = format!("<w:r><w:t>{text}</w:t></w:r>");
-        let run = if i == gone {
-            format!(
-                r#"<w:del {}><w:r><w:delText>{text}</w:delText></w:r></w:del>"#,
-                del.replace("ID", "2")
-            )
-        } else {
-            run
-        };
-        body.push_str(&format!("<w:p>{props}{run}</w:p>"));
-    }
-    common::docx::docx(&body)
-}
-
-#[test]
-fn a_paragraph_deleted_whole_is_one_removed_hunk_at_its_id() {
-    for (gone, id, text) in [(1, "p1", "Middle."), (2, "p2", "Last.")] {
-        let patch = patch_redline(&deleting(gone), &options("a.docx", "a.docx")).unwrap();
-        let hunks: Vec<_> = patch
-            .hunks
-            .iter()
-            .map(|h| (body_index(&h.at), h.removed))
-            .collect();
-        assert_eq!(hunks, [(gone, true)], "{id}:\n{patch}");
-        assert!(
-            patch
-                .to_string()
-                .contains(&format!("@@ -[{id}] @@\n[-{text}-]")),
-            "{id}:\n{patch}"
-        );
-    }
 }

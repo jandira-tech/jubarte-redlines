@@ -6,8 +6,7 @@
 mod common;
 
 use common::docx::{docx, para};
-use jubarte::edit::{AnchorRefusal, EditPlan, Working, apply_plan, v2_resolve};
-use jubarte::inspect::paragraphs;
+use jubarte::edit::{EditPlan, apply_plan};
 
 fn plan(operations: &str) -> EditPlan {
     EditPlan::from_json(&format!(
@@ -38,19 +37,19 @@ fn marks_are_dropped_when_the_literal_anchor_is_absent_and_the_report_says_so() 
         ),
         (
             "p1",
-            "keep {++it++}{r0 @AC} secret",
+            "keep {++it++}{>>r0 @AC<<} secret",
             "keep it secret",
             "keep secret",
         ),
         (
             "p1",
-            "keep {~~that~>it~~}{r0 @AC} secret",
+            "keep {~~that~>it~~}{>>r0 @AC<<} secret",
             "keep it secret",
             "keep secret",
         ),
         (
             "p1",
-            "keep it {--very --}{r1 @AC}secret",
+            "keep it {--very --}{>>r1 @AC<<}secret",
             "keep it secret",
             "keep secret",
         ),
@@ -161,21 +160,6 @@ fn an_anchor_typed_with_plain_lookalikes_is_found_and_the_report_says_how_it_rea
             "\u{201C}Officer\u{201D} shall mean (1)\u{A0}any officer\u{2019}s attorney\u{2011}in\u{2011}fact"
         )
     );
-    // Only the words that change are written: the document's curly quotes,
-    // non-breaking space and apostrophe stay (plan 12).
-    let text = &jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text;
-    assert_eq!(
-        text,
-        "\u{201C}Officer\u{201D} means\u{A0}any officer\u{2019}s agent."
-    );
-    // `whole` writes the replacement as typed.
-    let out = apply_plan(
-        &lookalikes(),
-        &plan(
-            r#"[{"kind":"replace","paragraph":"p0","find":"\"Officer\" shall mean (1) any officer's attorney-in-fact","replacement":"\"Officer\" means any officer's agent","whole":true}]"#,
-        ),
-    )
-    .unwrap();
     let text = &jubarte::inspect::paragraphs(&out.clean).unwrap()[0].text;
     assert_eq!(text, "\"Officer\" means any officer's agent.");
 }
@@ -517,325 +501,4 @@ fn a_leading_space_the_view_writes_as_a_reference_is_found_as_a_space() {
     .expect("the anchor reads as the paragraph's leading space");
     let op = &out.report.operations[0];
     assert_eq!(op.anchor_read_as.as_deref(), Some(" lead"));
-}
-
-/// V2-11 (#841), edit plan §5: exact occurrence semantics, bounded context
-/// and no automatic retargeting, on the exact characters a reader cannot
-/// tell apart. The document's curly apostrophe and NBSP repeat, so the exact
-/// anchor reports the complete count and the occurrence picks one; the
-/// lookalike anchor misses and the refusal carries the target's actual
-/// characters, escaped; an anchor that lives in another paragraph is a read
-/// suggestion while the refusal keeps naming the requested target; and the
-/// engine still refuses the wrong-target plan, so nothing is edited.
-#[test]
-fn wrong_target_and_repeated_anchor_return_context() {
-    let exact = "don’t pay\u{a0}upfront";
-    let source = docx(&format!(
-        "{}{}",
-        para(&format!("{exact}, {exact}.")),
-        para("pay later instead")
-    ));
-    let p0 = paragraphs(&source).unwrap()[0].text.clone();
-    assert_eq!(p0, format!("{exact}, {exact}."));
-
-    // The exact repeated anchor: the complete count, the first match shown
-    // in context, and the occurrence that picks one.
-    let refused = v2_resolve(
-        &source,
-        Working::InSource,
-        &AnchorRefusal {
-            operation: Some("/operations/0"),
-            target: "p0",
-            anchor: exact,
-            path: Some("exact.docx"),
-        },
-        None,
-    )
-    .unwrap_err();
-    assert_eq!(refused.code, "AMBIGUOUS_ANCHOR");
-    assert_eq!(refused.matches, Some(2));
-    let context = refused.context.as_ref().unwrap();
-    assert_eq!(context.matched, exact);
-    assert_eq!(context.before, "");
-    assert!(context.after.starts_with(", "), "{context:?}");
-    assert!(!context.truncated);
-    assert!(
-        refused.message.contains("occurs 2 times")
-            && refused.message.contains(r#"set "occurrence" to 1..=2"#),
-        "{}",
-        refused.message
-    );
-    // Occurrence selection: replacing the picked span spells the result.
-    let (start, end) = v2_resolve(
-        &source,
-        Working::InSource,
-        &AnchorRefusal::new("p0", exact),
-        Some(2),
-    )
-    .unwrap();
-    assert_eq!(
-        format!("{}[X]{}", &p0[..start], &p0[end..]),
-        format!("{exact}, [X].")
-    );
-    let (start, end) = v2_resolve(
-        &source,
-        Working::InSource,
-        &AnchorRefusal::new("p0", exact),
-        Some(1),
-    )
-    .unwrap();
-    assert_eq!((start, end), (0, exact.len()));
-
-    // The lookalike anchor (straight apostrophe, plain spaces) misses under
-    // the v2 exact rules; the refusal carries the document's actual
-    // characters as data and escapes them in the message.
-    let refused = v2_resolve(
-        &source,
-        Working::InSource,
-        &AnchorRefusal {
-            operation: Some("/operations/1"),
-            target: "p0",
-            anchor: "don't pay upfront",
-            path: Some("exact.docx"),
-        },
-        None,
-    )
-    .unwrap_err();
-    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(refused.target.as_deref(), Some("p0"));
-    assert_eq!(refused.matches, Some(0));
-    let context = refused.context.as_ref().unwrap();
-    assert!(context.before.starts_with("don’t pay\u{a0}"), "{context:?}");
-    assert_eq!(context.matched, "");
-    assert!(
-        refused.message.contains("\\u{2019}") && refused.message.contains("\\u{a0}"),
-        "{}",
-        refused.message
-    );
-    assert_eq!(
-        refused.next_actions[0].argv,
-        ["jubarte", "read", "exact.docx", "-p", "p0"]
-    );
-
-    // No automatic retargeting: the anchor that lives in p1 is offered as a
-    // read suggestion — the caller's decision, said as a prerequisite —
-    // while the refusal keeps naming p0.
-    let refused = v2_resolve(
-        &source,
-        Working::InSource,
-        &AnchorRefusal {
-            operation: Some("/operations/2"),
-            target: "p0",
-            anchor: "pay later",
-            path: Some("exact.docx"),
-        },
-        None,
-    )
-    .unwrap_err();
-    assert_eq!(refused.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(refused.target.as_deref(), Some("p0"));
-    assert!(refused.message.contains("p1 (1)"), "{}", refused.message);
-    let suggestion = refused
-        .next_actions
-        .iter()
-        .find(|a| a.argv == ["jubarte", "read", "exact.docx", "-p", "p1"])
-        .unwrap();
-    assert!(
-        suggestion
-            .purpose
-            .as_deref()
-            .unwrap_or_default()
-            .contains("suggestion"),
-        "{:?}",
-        suggestion.purpose
-    );
-    assert!(
-        suggestion
-            .prerequisites
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .any(|p| p.contains("re-targeting")),
-        "{:?}",
-        suggestion.prerequisites
-    );
-
-    // The engine refuses the wrong-target plan, so p1 is not edited by a
-    // request that named p0. The v1 lookalike reading stays in its own
-    // versioned adapter, distinct from the v2 exact rules above.
-    let wrong =
-        plan(r#"[{"kind":"replace","paragraph":"p0","find":"pay later","replacement":"pay now"}]"#);
-    assert_eq!(
-        apply_plan(&source, &wrong).unwrap_err().code,
-        "ANCHOR_NOT_FOUND"
-    );
-}
-
-fn whitespace_refusal(text: &str, anchor: &str) -> serde_json::Value {
-    let error = jubarte::edit::v2_select(text, anchor, None).unwrap_err();
-    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(
-        error.message,
-        format!("{anchor:?} occurs 0 times in the text")
-    );
-    serde_json::to_value(error).unwrap()
-}
-
-fn assert_whitespace_near(text: &str, anchor: &str, shown: &str) {
-    let value = whitespace_refusal(text, anchor);
-    assert_eq!(value["near"]["total"], 1, "{value}");
-    assert_eq!(value["near"]["occurrences"][0]["text"], text);
-    assert_eq!(value["near"]["occurrences"][0]["shown"], shown);
-    assert_eq!(value["near"]["occurrences"][0]["offset"], 0);
-    let all = jubarte::edit::v2_select_all(text, anchor, 0).unwrap_err();
-    assert_eq!(serde_json::to_value(all).unwrap()["near"], value["near"]);
-    // A different word is never suggested, and exact matching still succeeds.
-    assert!(
-        whitespace_refusal(text, "unrelated words")
-            .get("near")
-            .is_none()
-    );
-    assert_eq!(
-        jubarte::edit::v2_select(text, text, None).unwrap(),
-        (0, text.len())
-    );
-}
-
-#[test]
-fn whitespace_near_double_space() {
-    assert_whitespace_near("services.  Such", "services. Such", r#""services.  Such""#);
-}
-
-#[test]
-fn whitespace_near_nbsp() {
-    assert_whitespace_near("Alice\u{a0}Bob", "Alice Bob", r#""Alice\u{a0}Bob""#);
-}
-
-#[test]
-fn whitespace_near_tab() {
-    assert_whitespace_near("Alice\tBob", "Alice Bob", r#""Alice\tBob""#);
-}
-
-#[test]
-fn whitespace_near_soft_break() {
-    let bytes = docx(r#"<w:p><w:r><w:t>Alice</w:t><w:br/><w:t>Bob</w:t></w:r></w:p>"#);
-    let text = paragraphs(&bytes).unwrap()[0].text.clone();
-    assert_eq!(text, "Alice\nBob");
-    assert_whitespace_near(&text, "Alice Bob", r#""Alice\nBob""#);
-}
-
-#[test]
-fn whitespace_near_unicode_class_and_document_format_characters() {
-    for whitespace in [
-        ' ', '\u{a0}', '\t', '\u{2007}', '\u{202f}', '\n', '\r', '\u{85}', '\u{2028}', '\u{2029}',
-    ] {
-        let text = format!("Alice{whitespace}{whitespace}Bob");
-        let value = whitespace_refusal(&text, "Alice Bob");
-        assert_eq!(value["near"]["occurrences"][0]["text"], text);
-    }
-    for format in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{feff}'] {
-        let text = format!("Al{format}ice {format} Bob");
-        let value = whitespace_refusal(&text, "Alice Bob");
-        assert_eq!(value["near"]["occurrences"][0]["text"], text);
-        // Only the document's format characters are skipped.
-        let anchor = format!("Al{format}ice Bob");
-        assert!(
-            serde_json::to_value(jubarte::edit::v2_select("Alice Bob", &anchor, None).unwrap_err())
-                .unwrap()
-                .get("near")
-                .is_none()
-        );
-    }
-}
-
-#[test]
-fn whitespace_near_reports_all_overlapping_occurrences_but_caps_entries() {
-    let text = format!("é {}", "a  a  ".repeat(9));
-    let value = whitespace_refusal(&text, "a a");
-    assert_eq!(value["near"]["total"], 17);
-    let entries = value["near"]["occurrences"].as_array().unwrap();
-    assert_eq!(entries.len(), 5);
-    assert_eq!(entries[0]["offset"], 3, "offsets are UTF-8 bytes");
-    assert_eq!(entries[0]["text"], "a  a");
-    assert_eq!(entries[1]["offset"], 6);
-    // Whitespace must exist on both sides; punctuation is never folded.
-    for anchor in ["aa", "a-a", "a\u{ad} a"] {
-        assert!(whitespace_refusal(&text, anchor).get("near").is_none());
-    }
-}
-
-#[test]
-fn whitespace_near_v1_find_before_and_after_keep_refusing() {
-    let source = docx(&para("Alice services.  Such Bob"));
-    for operation in [
-        serde_json::json!({"kind":"replace","paragraph":"p0","find":"services. Such","replacement":"Carol Diaz"}),
-        serde_json::json!({"kind":"insert","paragraph":"p0","before":"services. Such","text":"Carol Diaz"}),
-        serde_json::json!({"kind":"insert","paragraph":"p0","after":"services. Such","text":"Carol Diaz"}),
-    ] {
-        let error =
-            apply_plan(&source, &plan(&serde_json::json!([operation]).to_string())).unwrap_err();
-        assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-        let value = serde_json::to_value(&error.outcomes[0]).unwrap();
-        assert_eq!(value["matches"], 0);
-        assert_eq!(value["near"]["occurrences"][0]["text"], "services.  Such");
-        assert_eq!(value["near"]["occurrences"][0]["offset"], 6);
-    }
-}
-
-#[test]
-fn whitespace_near_v2_context_points_at_the_near_match() {
-    let source = docx(&para(
-        "Alice has a long introduction before services.  Such Bob",
-    ));
-    for all in [false, true] {
-        let refusal = AnchorRefusal::new("p0", "services. Such");
-        let error = if all {
-            jubarte::edit::v2_resolve_all(&source, Working::InSource, &refusal, 1).unwrap_err()
-        } else {
-            v2_resolve(&source, Working::InSource, &refusal, None).unwrap_err()
-        };
-        assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-        assert_eq!(error.matches, Some(0));
-        let context = error.context.as_ref().unwrap();
-        assert_eq!(context.matched, "services.  Such");
-        assert!(context.before.ends_with("before "));
-        assert_eq!(context.after, " Bob");
-        let value = serde_json::to_value(error).unwrap();
-        assert_eq!(value["near"]["total"], 1);
-    }
-}
-
-#[test]
-fn whitespace_near_v2_all_alone_reports_refusal() {
-    let error = jubarte::edit::v2_select_all("Alice\tBob", "Alice Bob", 1).unwrap_err();
-    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(serde_json::to_value(error).unwrap()["near"]["total"], 1);
-}
-
-#[test]
-fn whitespace_near_v1_before_alone_reports_refusal() {
-    let error = apply_plan(
-        &docx(&para("Alice\tBob")),
-        &plan(r#"[{"kind":"insert","paragraph":"p0","before":"Alice Bob","text":"Carol Diaz"}]"#),
-    )
-    .unwrap_err();
-    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(
-        serde_json::to_value(&error.outcomes[0]).unwrap()["near"]["occurrences"][0]["text"],
-        "Alice\tBob"
-    );
-}
-
-#[test]
-fn whitespace_near_v1_after_alone_reports_refusal() {
-    let error = apply_plan(
-        &docx(&para("Alice\tBob")),
-        &plan(r#"[{"kind":"insert","paragraph":"p0","after":"Alice Bob","text":"Carol Diaz"}]"#),
-    )
-    .unwrap_err();
-    assert_eq!(error.code, "ANCHOR_NOT_FOUND");
-    assert_eq!(
-        serde_json::to_value(&error.outcomes[0]).unwrap()["near"]["occurrences"][0]["text"],
-        "Alice\tBob"
-    );
 }

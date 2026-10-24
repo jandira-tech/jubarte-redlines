@@ -12,14 +12,12 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::xml::Label;
 
-/// An author of the `authors:` table and its timestamps.
+/// An author of the `authors:` table: the full name, and the timestamp
+/// every one of their changes and comments shares, when they share one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Author {
     pub name: String,
-    /// The timestamp every change and comment shares, when they share one.
     pub date: Option<String>,
-    /// The latest timestamp of marks with several timestamps (`latest X`).
-    pub latest: Option<String>,
     /// The first and last days of an author whose marks have several
     /// timestamps (`# 2 revisions, 2026-03-02..2026-03-04`).
     pub range: Option<(String, String)>,
@@ -64,18 +62,12 @@ pub(super) fn authors(yaml: &str) -> HashMap<String, Author> {
                 super::write::is_date(&midnight).then_some(midnight)
             }
         });
-        let latest = last
-            .and_then(|d| d.strip_prefix("latest "))
-            .map(str::trim)
-            .filter(|d| super::write::is_date(d))
-            .map(str::to_string);
         let range = last.and_then(day_range);
         table.insert(
             handle.to_string(),
             Author {
                 name: value,
                 date,
-                latest,
                 range,
             },
         );
@@ -411,7 +403,7 @@ pub(super) struct PlainRevision {
     pub date: String,
 }
 
-/// The tags of a nested revision note, its own change first: `r3 @BO re
+/// The tags of a nested revision note, its own change first: `r3 @BO on
 /// r1 @AL` is Ben's deletion inside Ana's insertion, each tag with its
 /// own date as [`revision_tags`] reads it. `None` for any other comment
 /// text.
@@ -420,7 +412,7 @@ pub(super) fn nested_revision_tags(text: &str) -> Option<Vec<Tag>> {
     (tags.len() > 1).then_some(tags)
 }
 
-/// One tag, exactly: a note names one change per ` re ` part.
+/// One tag, exactly: a note names one change per ` on ` part.
 fn one_tag(part: &str) -> Option<Tag> {
     match revision_tags(part)?.as_slice() {
         [tag] => Some(tag.clone()),
@@ -429,7 +421,7 @@ fn one_tag(part: &str) -> Option<Tag> {
 }
 
 /// The parts of a plain nested revision note, its own change first: `r3
-/// Ben Ode (2026-…) re r1 Ana Lima (2026-…)`. `None` for any other
+/// Ben Ode (2026-…) on r1 Ana Lima (2026-…)`. `None` for any other
 /// comment text.
 pub(super) fn nested_plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
     let parts = nested_parts(text, plain_part)?;
@@ -487,19 +479,19 @@ pub(super) fn trailing_bare_group(text: &str) -> Option<usize> {
     None
 }
 
-/// The parts of a note joined by ` re `, each parsed by `one`: the first
+/// The parts of a note joined by ` on `, each parsed by `one`: the first
 /// part is the note's own change, and each part after it names the change
-/// the one before sits inside. The last ` re ` that splits the note wins:
-/// the left side must parse as one part — its author may hold ` re ` of
-/// its own (`Bo re r1 Kim`) — and the right side all the way down.
+/// the one before sits inside. The last ` on ` that splits the note wins:
+/// the left side must parse as one part — its author may hold ` on ` of
+/// its own (`Bo on r1 Kim`) — and the right side all the way down.
 /// Earlier boundaries are tried only when these fail.
 fn nested_parts<T>(text: &str, one: fn(&str) -> Option<T>) -> Option<Vec<T>> {
     let text = text.trim();
     let mut from = text.len();
-    while let Some(at) = text[..from].rfind(" re ") {
+    while let Some(at) = text[..from].rfind(" on ") {
         from = at;
         if let Some(head) = one(text[..at].trim())
-            && let Some(rest) = nested_parts(&text[at + " re ".len()..], one)
+            && let Some(rest) = nested_parts(&text[at + " on ".len()..], one)
         {
             return Some([head].into_iter().chain(rest).collect());
         }
@@ -539,22 +531,12 @@ pub(super) fn plain_revision(text: &str) -> Option<PlainRevision> {
     Some(PlainRevision { ids, author, date })
 }
 
-/// Plain attributions of a substitution whose sides retain distinct dates.
-/// A semicolon separates complete revision parts, as in the handle grammar.
-pub(super) fn plain_revisions(text: &str) -> Option<Vec<PlainRevision>> {
-    text.split("; ")
-        .map(plain_revision)
-        .collect::<Option<Vec<_>>>()
-        .or_else(|| plain_revision(text).map(|part| vec![part]))
-}
-
 /// The largest `w:id` Word reads (`ST_DecimalNumber` is an `int`): a
 /// larger number a view names is left for a fresh one.
 pub(super) const MOST_ID: u32 = 0x7FFF_FFFF;
 
 /// A comment head the view writes: `c5 @AC: `, `c5 @AC 2026-…: `,
-/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `, and any of them with
-/// `in r13` last (`c6 @AS re c5 in r13: `).
+/// `c6 @AS re c5: `, `c5 @AC resolved: `, `c5: `.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CommentHead {
     /// The comment's number in the source (`c5` → 5).
@@ -564,9 +546,6 @@ pub(super) struct CommentHead {
     /// The number of the comment this one replies to.
     pub reply_to: Option<u32>,
     pub resolved: bool,
-    /// The `w:id`s of the change that holds the comment's reference mark
-    /// (`in r13` → 13): the note prints outside it, so it says so.
-    pub held_in: Vec<u32>,
 }
 
 /// The cells a `cell-borders` group names: every cell, a row's, or one.
@@ -615,15 +594,6 @@ pub(super) struct TableLine {
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`,
     /// `p6-p9 Caption`), by paragraph.
     pub styles: HashMap<usize, String>,
-    /// Cell paragraphs' own spacing (`p8-p38 line 8.65pt exact`), by
-    /// paragraph (#1473).
-    pub spacings: HashMap<usize, super::xml::Spacing>,
-    /// Cell paragraphs' own text size (`p8-p38 size 9pt`), in half-points,
-    /// by paragraph (#1474).
-    pub sizes: HashMap<usize, u32>,
-    /// The grid's widths, the table's width, indent and layout (`widths
-    /// 2.14in 1in, width auto, indent 0.25in, layout fixed`), #1472.
-    pub geometry: super::xml::TableGeometry,
     /// The table's style (`style Ledger`) when tables differ in theirs.
     pub style: Option<String>,
     /// The table's own borders (`borders single 0.5pt 000000`).
@@ -796,9 +766,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         merges: HashMap::new(),
         aligns: HashMap::new(),
         styles: HashMap::new(),
-        spacings: HashMap::new(),
-        sizes: HashMap::new(),
-        geometry: super::xml::TableGeometry::default(),
         style: None,
         borders: None,
         cell_borders: Vec::new(),
@@ -828,22 +795,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             parsed.aligns.insert(at, jc);
             continue;
         }
-        // `p8-p38 line 8.65pt exact`, `p5 before 2pt after 2pt size 9pt`:
-        // cell paragraphs' own spacing and text size.
-        if let Some((at, tail)) = clause.split_once(' ')
-            && let Some((first, count)) = paragraph_range(at)
-            && let Some((spacing, size)) = spacing_words(tail)
-        {
-            for n in first..first + count {
-                if !spacing.is_empty() {
-                    parsed.spacings.insert(n, spacing);
-                }
-                if let Some(size) = size {
-                    parsed.sizes.insert(n, size);
-                }
-            }
-            continue;
-        }
         // `p5 ListParagraph`, `p6-p9 Caption`, `p7 "My Style"`: cell
         // paragraphs in a style.
         if let Some((at, tail)) = clause.split_once(' ')
@@ -853,10 +804,6 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
             for n in first..first + count {
                 parsed.styles.insert(n, style.clone());
             }
-            continue;
-        }
-        // `widths 2.14in 1in`, `width 50%`, `indent 0.25in`, `layout fixed`.
-        if i > 0 && parsed.geometry.clause(clause).is_some() {
             continue;
         }
         if clause == "header row repeats" {
@@ -1187,7 +1134,7 @@ pub(super) fn empty_paragraphs(line: &str) -> Option<usize> {
 
 /// The words that open an id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): any other word after the id is a style.
-const CLAUSE_WORDS: [&str; 25] = [
+const CLAUSE_WORDS: [&str; 21] = [
     "empty",
     "outline",
     "center",
@@ -1196,10 +1143,6 @@ const CLAUSE_WORDS: [&str; 25] = [
     "left",
     "first-line",
     "hanging",
-    "before",
-    "after",
-    "line",
-    "size",
     "bullet",
     "num",
     "level",
@@ -1218,12 +1161,8 @@ const CLAUSE_WORDS: [&str; 25] = [
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
 /// read as.
-const TABLE_WORDS: [&str; 14] = [
+const TABLE_WORDS: [&str; 10] = [
     "cells",
-    "widths",
-    "width",
-    "indent",
-    "layout",
     "borders",
     "cell-borders",
     "row-borders",
@@ -1346,11 +1285,6 @@ pub(super) struct IdLine {
     pub hanging: Option<i64>,
     pub left: Option<i64>,
     pub right: Option<i64>,
-    /// Its own spacing (`before 6pt`, `after 0pt`, `line 1.5`, `line
-    /// 8.65pt exact`), #1473.
-    pub spacing: super::xml::Spacing,
-    /// Its own text size (`size 9pt`), in half-points (#1474).
-    pub size: Option<u32>,
     /// The paragraph holds a page break (`page-break`).
     pub page_break: bool,
     /// The page break's tracked change, `true` for an insertion
@@ -1445,17 +1379,6 @@ impl IdLine {
             Some(("hanging", v)) => self.hanging = twips(v),
             Some(("left", v)) => self.left = twips(v),
             Some(("right", v)) => self.right = twips(v),
-            Some((word @ ("before" | "after" | "line"), v)) => {
-                // A value out of range leaves what an earlier clause said.
-                let mut spacing = self.spacing;
-                if spacing.clause(word, v).is_some() {
-                    self.spacing = spacing;
-                }
-            }
-            // A size out of range leaves what an earlier clause said.
-            Some(("size", v)) => {
-                self.size = super::xml::size_half_points(v).or(self.size);
-            }
             Some(("level", v)) => self.level = v.parse().ok().filter(|&n| n <= 8),
             Some(("outline", v)) => self.outline = v.parse().ok().filter(|&n| (1..=9).contains(&n)),
             // A mark has one change: the first tag names it.
@@ -1475,29 +1398,6 @@ impl IdLine {
             Some(_) => {}
         }
     }
-}
-
-/// `before 2pt after 2pt line 8.65pt exact size 9pt`: a cell paragraph's
-/// spacing and text size on the table line, the id line's clauses joined
-/// by spaces. `None` unless every word is one of them.
-fn spacing_words(text: &str) -> Option<(super::xml::Spacing, Option<u32>)> {
-    let mut spacing = super::xml::Spacing::default();
-    let mut size = None;
-    let mut words = text.split(' ').peekable();
-    while let Some(word) = words.next() {
-        let mut value = words.next()?.to_string();
-        if word == "size" {
-            size = Some(super::xml::size_half_points(&value)?);
-            continue;
-        }
-        if word == "line"
-            && let Some(rule) = words.next_if(|w| matches!(*w, "exact" | "atLeast"))
-        {
-            value = format!("{value} {rule}");
-        }
-        spacing.clause(word, &value)?;
-    }
-    (!spacing.is_empty() || size.is_some()).then_some((spacing, size))
 }
 
 /// `c5 c6`: the comment numbers of an `in` clause.
@@ -1574,7 +1474,6 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         date: None,
         reply_to: None,
         resolved: false,
-        held_in: Vec::new(),
     };
     if let Some(handle) = words.peek().and_then(|w| w.strip_prefix('@')) {
         if !is_handle(handle) {
@@ -1587,24 +1486,10 @@ pub(super) fn comment_head(text: &str) -> Option<(CommentHead, &str)> {
         parsed.date = Some((*date).to_string());
         words.next();
     }
-    let mut rest: Vec<&str> = words.collect();
-    // `in r13` last: the change whose mark holds the reference.
-    if let [.., "in", change] = rest.as_slice() {
-        let ids = crate::ids::parse_change_ids(change).ok()?;
-        if change.starts_with(|c: char| c.is_ascii_digit()) || ids.iter().any(|c| c.story != "body")
-        {
-            return None;
-        }
-        parsed.held_in = ids
-            .iter()
-            .map(|c| c.wid.parse().ok().filter(|&id| id <= MOST_ID))
-            .collect::<Option<_>>()?;
-        rest.truncate(rest.len() - 2);
-    }
-    match rest.as_slice() {
-        [] => {}
-        ["resolved"] => parsed.resolved = true,
-        ["re", root] if root.starts_with('c') => {
+    match (words.next(), words.next(), words.next()) {
+        (None, ..) => {}
+        (Some("resolved"), None, _) => parsed.resolved = true,
+        (Some("re"), Some(root), None) if root.starts_with('c') => {
             parsed.reply_to = Some(crate::ids::parse_comment_id(root).ok()?);
         }
         _ => return None,
@@ -1801,36 +1686,6 @@ mod tests {
     }
 
     #[test]
-    fn latest_is_not_a_shared_date_or_a_range() {
-        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n";
-        let table = authors(yaml);
-        assert_eq!(table["AL"].date, None);
-        assert_eq!(table["AL"].range, None);
-        assert_eq!(table["AL"].latest.as_deref(), Some("2026-10-17T16:59:00Z"));
-        assert!(reversed_ranges(yaml).is_empty());
-        for invalid in ["", "2026-02-30T16:59:00Z", "2026-10-17", "yesterday"] {
-            let yaml = format!("authors:\n  AL: Ann Lee  # 2 revisions, latest {invalid}\n");
-            let table = authors(&yaml);
-            assert_eq!(table["AL"].date, None);
-            assert_eq!(table["AL"].latest, None);
-            assert_eq!(table["AL"].range, None);
-        }
-    }
-
-    #[test]
-    fn old_author_ranges_keep_their_days_and_reversed_warning() {
-        let yaml = "authors:\n  AL: Ann Lee  # 2 revisions, 2026-03-02..2026-03-04\n  BC: Bo Chen  # 2 revisions, 2026-03-04..2026-03-02\n";
-        let table = authors(yaml);
-        assert_eq!(table["AL"].date, None);
-        assert_eq!(
-            table["AL"].range,
-            Some(("2026-03-02".into(), "2026-03-04".into()))
-        );
-        assert_eq!(table["BC"].range, None);
-        assert_eq!(reversed_ranges(yaml), ["BC"]);
-    }
-
-    #[test]
     fn the_authors_table_names_each_handle() {
         let yaml = "source: r.docx\nauthors:\n  document_owner: Arthur Souza Rodrigues  # cp:lastModifiedBy\n  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z\n  AS: Arthur Souza Rodrigues       # 1 comment, 2026-10-09T16:13:00Z\n  JD: \"Jo #1 Doe\"  # 2 revisions, 2026-10-01..2026-10-02\n  R: Redline\nbody: p0-p20\n  XX: not an author\n";
         let table = authors(yaml);
@@ -1840,7 +1695,6 @@ mod tests {
             Author {
                 name: "Ann Counsel".into(),
                 date: Some("2026-10-01T09:00:00Z".into()),
-                latest: None,
                 range: None,
             }
         );
@@ -1850,7 +1704,6 @@ mod tests {
             Author {
                 name: "Jo #1 Doe".into(),
                 date: None,
-                latest: None,
                 range: Some(("2026-10-01".into(), "2026-10-02".into())),
             }
         );
@@ -1908,11 +1761,11 @@ mod tests {
             })
         };
         assert_eq!(
-            nested_revision_tags("r3 @BO re r1 @AL"),
+            nested_revision_tags("r3 @BO on r1 @AL"),
             Some(vec![tag("BO", None, &[3]), tag("AL", None, &[1])])
         );
         assert_eq!(
-            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z re r1 @AL"),
+            nested_revision_tags("r3 @BO 2026-01-02T10:00:00Z on r1 @AL"),
             Some(vec![
                 tag("BO", Some("2026-01-02T10:00:00Z"), &[3]),
                 tag("AL", None, &[1])
@@ -1920,7 +1773,7 @@ mod tests {
         );
         // Deeper nests chain the same way, innermost first.
         assert_eq!(
-            nested_revision_tags("r5 @CD re r3 @BO re r1 @AL"),
+            nested_revision_tags("r5 @CD on r3 @BO on r1 @AL"),
             Some(vec![
                 tag("CD", None, &[5]),
                 tag("BO", None, &[3]),
@@ -1929,18 +1782,18 @@ mod tests {
         );
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode", "2026-01-02T10:00:00Z").unwrap(),
                 plain(&[1], "Ana Lima", "2026-01-01T09:00:00Z").unwrap()
             ])
         );
-        // An author's own name may hold ` re `: the ids still part the
+        // An author's own name may hold ` on `: the ids still part the
         // changes only where both sides parse.
         assert_eq!(
             nested_plain_revisions(
-                "r3 Ben Ode on High (2026-01-02T10:00:00Z) re r1 Ana Lima (2026-01-01T09:00:00Z)"
+                "r3 Ben Ode on High (2026-01-02T10:00:00Z) on r1 Ana Lima (2026-01-01T09:00:00Z)"
             ),
             Some(vec![
                 plain(&[3], "Ben Ode on High", "2026-01-02T10:00:00Z").unwrap(),
@@ -2049,8 +1902,7 @@ mod tests {
                 handle: Some("AC".into()),
                 date: None,
                 reply_to: None,
-                resolved: false,
-                held_in: Vec::new(),
+                resolved: false
             }
         );
         assert_eq!(text, "Is one percent the cap?");
@@ -2071,32 +1923,6 @@ mod tests {
             "c5 @AC maybe: x",
             "p5 @AC: x",
             "c5 @A-C: x",
-        ] {
-            assert_eq!(comment_head(text), None, "{text}");
-        }
-    }
-
-    #[test]
-    fn a_head_names_the_change_that_holds_its_mark_last() {
-        let (head, text) = comment_head("c0 @B in r13: Bob's note.").unwrap();
-        assert_eq!(
-            (head.held_in, head.reply_to, text),
-            (vec![13], None, "Bob's note.")
-        );
-        let (head, _) = comment_head("c1 @C re c0 in r13: Carol agrees.").unwrap();
-        assert_eq!((head.reply_to, head.held_in), (Some(0), vec![13]));
-        let (head, _) = comment_head("c2 @B 2026-10-01T09:00:00Z resolved in r4+5: ok").unwrap();
-        assert!(head.resolved);
-        assert_eq!(head.held_in, [4, 5]);
-        let (head, text) = comment_head("c3 in r7:").unwrap();
-        assert_eq!((head.handle, head.held_in, text), (None, vec![7], ""));
-        for text in [
-            "c0 @B in: x",
-            "c0 @B in c3: x",
-            "c0 @B in 13: x",
-            "c0 @B in r13 re c1: x",
-            "c0 @B in r13 in r14: x",
-            "c0 @B in footnotes.r2: x",
         ] {
             assert_eq!(comment_head(text), None, "{text}");
         }

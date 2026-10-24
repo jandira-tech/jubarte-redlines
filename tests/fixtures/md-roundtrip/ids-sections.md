@@ -5,7 +5,7 @@ revisions: 2                       # 2 formatting
 comments: 0
 authors:
   document_owner: Christoffer Krogager  # dc:creator
-  APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00-04:00
+  APS: Alcaldia Pasto SSI          # 2 revisions, 2026-09-22T12:47:00Z
 body: p0-p142, 1 table, 2 pages    # pages from layout
 page: 8.264x11.6944in portrait, margins top 1.181in, right 0.7875in, bottom 1.181in, left 0.7875in, header/footer 0.492in
 styles:
@@ -28,7 +28,7 @@ Supplementary Table 1. Difference in baseline charactheristics of patients accep
 
 <!-- p2 empty -->
 
-<!-- t0 17x4, cells t0.row0 p3-p6 t0.row1 p7-p10 t0.row2 p11-p14 t0.row3 p15-p18 t0.row4 p19-p22 t0.row5 p23-p26 t0.row6 p27-p30 t0.row7 p31-p34 t0.row8 p35-p38 t0.row9 p39-p42 t0.row10 p43-p46 t0.row11 p47-p50 t0.row12 p51-p64 t0.row13 p65-p96 t0.row14 p97-p132 t0.row15 p133-p136 t0.row16 p137-p140, p52-p54 ListParagraph, p66-p72 ListParagraph, p98-p105 ListParagraph, p3-p38 size 10pt, p40-p140 size 10pt, widths 2.1424in 0.985in 1.049in 0.8576in, width auto, borders none, cell-borders bottom single 0.5pt in t0.row0 t0.row16; top single 0.5pt in t0.row1 -->
+<!-- t0 17x4, cells t0.row0 p3-p6 t0.row1 p7-p10 t0.row2 p11-p14 t0.row3 p15-p18 t0.row4 p19-p22 t0.row5 p23-p26 t0.row6 p27-p30 t0.row7 p31-p34 t0.row8 p35-p38 t0.row9 p39-p42 t0.row10 p43-p46 t0.row11 p47-p50 t0.row12 p51-p64 t0.row13 p65-p96 t0.row14 p97-p132 t0.row15 p133-p136 t0.row16 p137-p140, p52-p54 ListParagraph, p66-p72 ListParagraph, p98-p105 ListParagraph, borders none, cell-borders bottom single 0.5pt in t0.row0 t0.row16; top single 0.5pt in t0.row1 -->
 ||Accepted Participation|Rejected Participation|p|
 |-|-|-|-|
 |n (%)|46 (63.9%)|26 (36.1%)|-|
@@ -48,7 +48,7 @@ Supplementary Table 1. Difference in baseline charactheristics of patients accep
 |Statin use (n(%))|36 (78.3%)|21 (80.8%)|0.56|
 |Asprin use (n(%))|25 (54.3%)|12 (46.2%)|0.61|
 
-<!-- p141 size 10pt, section-break -->
+<!-- p141 section-break -->
 Abbreviations: BP, blood pressure; cfPWV, carotid-femoral pulse wave velocity; GLP1, glucagon like peptide; DPP4, di-peptidyl  peptidase 4; SGLT2, sodium-glucose co-transporter 2; ACE, angiotensin converting enzyme; AT2, angiotensin-
 
 <!-- p142 Cuerpo empty, justify, fmt r0 @APS -->

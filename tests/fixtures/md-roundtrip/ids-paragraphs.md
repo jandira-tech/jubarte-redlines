@@ -12,17 +12,17 @@ styles:
   Normal: Times New Roman 12pt, left  # default; unannotated paragraphs use it
   "#": Heading1, Arial bold 16pt, after 18pt, line 20pt exact, keep-next, keep-lines, center
   "##": Heading2, Arial bold 12pt, before 12pt, after 6pt, keep-next, keep-lines
-  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines, right 0.5in
-  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines, right 1in
+  "###": Heading3, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
+  "####": Heading4, Arial bold 12pt, before 6pt, after 6pt, keep-next, keep-lines
   DocumentTitle: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document Title
   TitlePage: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Title Page
   TitleDocument: Arial bold 18pt, line 20pt exact, center, named Title Document
   DocumentTOC: Arial bold 18pt, after 24pt, line 20pt exact, keep-next, keep-lines, center, named Document TOC
-  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, indent 1.75in, hanging 1.75in, right 0.5in, named toc 1
-  TOC2: Times New Roman 12pt, indent 1.75in, hanging 1.75in, right 0.5in, named toc 2
+  TOC1: Arial bold 12pt, before 18pt, after 3pt, keep-next, indent 1.75in, hanging 1.75in, named toc 1
+  TOC2: Times New Roman 12pt, indent 1.75in, hanging 1.75in, named toc 2
   TextHeading2: Times New Roman 12pt, before 6pt, after 6pt, justify, named Text Heading 2
-  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, right 0.5in, justify, named Text Heading 3
-  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, right 1in, justify, named Text Heading 4
+  TextHeading3: Times New Roman 12pt, before 6pt, after 6pt, indent 0.5in, justify, named Text Heading 3
+  TextHeading4: Times New Roman 12pt, before 6pt, after 6pt, indent 1in, justify, named Text Heading 4
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 sections:
   2: {p11-p147, page: Letter portrait, margins top 1in, right 1.25in, bottom 1in, left 1.25in, header/footer 0.5in, footers: {default: {id: footer1.p1, text: [Smith Family Trust, "{PAGE}i{/}"], center}}}
@@ -66,13 +66,13 @@ sections:
 
 <!-- p7 TitlePage empty -->
 
-<!-- p8 center, before 2pt, after 2pt -->
+<!-- p8 center -->
 sit dolore, adipiscing eiusmod ut
 
-<!-- p9 center, before 2pt, after 2pt, size 6pt -->
+<!-- p9 center -->
 do labore eiusmod
 
-<!-- p10 center, line 12pt atLeast, size 8pt, section-break -->
+<!-- p10 center, section-break -->
 1363 ipsum eiusmod, magna 8\
 eiusmod, dolor 93003
 
@@ -486,7 +486,7 @@ eiusmod, dolor 93003
 <!-- p147 section-break -->
 {/}
 
-<!-- p148 TitleDocument after 24pt -->
+<!-- p148 TitleDocument -->
 **eiusmod elit sit ipsum**
 
 <!-- p149 num "Article One", level 1 -->
@@ -525,7 +525,7 @@ elit adipiscing adipiscing adipiscing adipiscing do incididunt ipsum consectetur
 <!-- p160 TextHeading2 -->
 adipiscing et consectetur adipiscing tempor incididunt eiusmod dolore elit consectetur consectetur aliqua elit dolor et sed tempor eiusmod do ipsum sit sit consectetur tempor. adipiscing et consectetur consectetur incididunt eiusmod dolore elit consectetur incididunt magna labore ipsum dolor amet amet sed ipsum et consectetur magna lorem et lorem dolore consectetur lorem incididunt ipsum sit sit consectetur ipsum dolore elit consectetur.
 
-<!-- p161 after 10pt, line 1.15, page-break -->
+<!-- p161 page-break -->
 
 <!-- p162 TextHeading2 -->
 adipiscing et consectetur magna tempor et sed incididunt lorem magna tempor do incididunt lorem ipsum consectetur’et sit lorem ipsum labore elit et sed, lorem do sit do ipsum adipiscing elit do lorem ipsum tempor lorem dolor et sed. consectetur sed’et incididunt elit dolor do lorem tempor eiusmod, aliqua, lorem do do et sed incididunt magna eiusmod labore consectetur do ipsum et consectetur ipsum do amet consectetur dolor tempor magna adipiscing. adipiscing tempor incididunt dolor et sed aliqua et amet elit et sed’et labore. elit adipiscing sit lorem sed amet dolor aliqua adipiscing ipsum incididunt lorem aliqua eiusmod tempor incididunt dolor et sed labore et sed’et labore lorem ut do lorem eiusmod dolor elit tempor do lorem ipsum ipsum consectetur.
@@ -563,7 +563,7 @@ lorem 1244 (eiusmod do) do; incididunt
 <!-- p173 TextHeading4 -->
 dolor tempor, ipsum dolor elit lorem adipiscing tempor consectetur ipsum lorem amet elit amet consectetur do amet lorem ipsum elit, adipiscing tempor consectetur ipsum aliqua elit eiusmod lorem lorem, lorem adipiscing elit eiusmod elit aliqua dolor ut.
 
-<!-- p174 after 10pt, line 1.15, page-break -->
+<!-- p174 page-break -->
 
 <!-- p175 num "(b)", level 3 -->
 ### (b) ipsum dolor consectetur sed
@@ -598,13 +598,13 @@ sed adipiscing sed tempor tempor incididunt elit consectetur aliqua aliqua do et
 <!-- p185 TextHeading3 -->
 sed sit labore sed lorem lorem consectetur ipsum eiusmod et lorem eiusmod ut tempor ut, ipsum sit elit consectetur ut incididunt adipiscing ipsum aliqua elit tempor adipiscing consectetur ipsum lorem elit et consectetur. sed ipsum adipiscing elit eiusmod ut tempor ut, tempor adipiscing consectetur ipsum lorem elit et consectetur incididunt magna dolore dolor ipsum sit elit ipsum consectetur.
 
-<!-- p186 line 1.15, num "Section One.04", level 2 -->
+<!-- p186 num "Section One.04", level 2 -->
 ## Section One.04 <a id="5201678956552310085"></a><a id="_Toc218523782"></a>eiusmod et dolor lorem labore elit
 
-<!-- p187 TextHeading2 line 1.15 -->
+<!-- p187 TextHeading2 -->
 elit elit, sit sed ipsum magna consectetur lorem consectetur ipsum lorem consectetur ut do dolor magna consectetur sit magna consectetur ipsum ut elit ipsum sed.
 
-<!-- p188 after 10pt, line 1.15, page-break -->
+<!-- p188 page-break -->
 
 <!-- p189 num "(a)", level 3 -->
 ### (a) do aliqua adipiscing elit consectetur ipsum
@@ -789,7 +789,7 @@ sed ipsum ipsum dolor aliqua sit lorem magna do eiusmod amet dolor ut, sit lorem
 <!-- p249 TextHeading3 -->
 do ipsum ipsum elit tempor elit elit, ipsum sed dolor adipiscing tempor ipsum sit lorem lorem adipiscing amet dolor consectetur do et ipsum sed. eiusmod sed dolor adipiscing dolore lorem ut ipsum amet. sed amet ipsum sed elit ipsum aliqua’et ipsum, dolor sed consectetur dolor ipsum sed dolor do eiusmod consectetur elit lorem ipsum sed dolor aliqua eiusmod adipiscing amet magna sit lorem lorem do consectetur consectetur aliqua lorem do lorem ipsum do ipsum sed dolor eiusmod ipsum aliqua elit labore ipsum ut lorem 672(elit).
 
-<!-- p250 after 10pt, line 1.15, page-break -->
+<!-- p250 page-break -->
 
 <!-- p251 num "(c)", level 3 -->
 ### (c) sed elit eiusmod sed
@@ -857,7 +857,7 @@ sit do consectetur elit et ipsum sed labore eiusmod sed amet magna eiusmod dolor
 <!-- p272 TextHeading2 -->
 sed dolor lorem sed elit elit, ipsum elit sed dolore lorem magna labore sed. magna adipiscing ipsum ipsum tempor elit elit, eiusmod tempor dolore elit tempor dolor ipsum aliqua-sed lorem, do aliqua, dolor ipsum consectetur eiusmod do sed ipsum elit sed do sit consectetur ut ipsum incididunt tempor ipsum magna. sed ipsum sed eiusmod consectetur ipsum tempor dolore do consectetur labore do tempor elit ipsum magna eiusmod 10 tempor elit aliqua ipsum dolore elit tempor, eiusmod tempor consectetur elit tempor elit dolor eiusmod incididunt elit dolore tempor ipsum elit sed amet magna ut sed ipsum magna incididunt magna lorem. eiusmod sed incididunt do tempor elit magna amet do ipsum ipsum eiusmod ipsum amet do ipsum ipsum incididunt’et tempor consectetur, lorem ipsum magna incididunt magna lorem consectetur tempor.
 
-<!-- p273 after 10pt, line 1.15, page-break -->
+<!-- p273 page-break -->
 
 <!-- p274 num "Section Three.08", level 2 -->
 ## Section Three.08 <a id="_Ref521104654"></a><a id="_Toc218523793"></a>ipsum elit tempor elit sed
@@ -889,7 +889,7 @@ eiusmod ipsum elit ipsum ipsum eiusmod aliqua do ut et sed consectetur ut adipis
 <!-- p283 TextHeading2 -->
 sit ipsum eiusmod do lorem consectetur et ipsum lorem amet magna eiusmod do consectetur lorem sit lorem elit aliqua lorem do lorem ipsum do ut elit elit incididunt sit sit adipiscing eiusmod, lorem do dolor adipiscing eiusmod ipsum aliqua elit labore ipsum ut lorem 672(elit). aliqua dolor adipiscing consectetur adipiscing eiusmod do ipsum aliqua, eiusmod ipsum eiusmod sed amet adipiscing ipsum ipsum sit elit ipsum tempor elit lorem lorem ipsum ipsum elit tempor lorem incididunt elit elit. sit ipsum ipsum eiusmod’et labore do adipiscing incididunt lorem eiusmod do dolor labore elit ipsum consectetur sed lorem ipsum tempor lorem dolore-elit consectetur dolore ipsum ut do ut lorem dolore ipsum consectetur ut.
 
-<!-- p284 after 10pt, line 1.15, page-break -->
+<!-- p284 page-break -->
 
 <!-- p285 num "(a)", level 3 -->
 ### (a) sed elit ipsum eiusmod
@@ -930,43 +930,43 @@ sed eiusmod ipsum eiusmod aliqua dolore, adipiscing, lorem do dolore do eiusmod 
 <!-- p297 TextHeading3 -->
 sit ipsum eiusmod, do lorem ipsum sit, adipiscing tempor eiusmod lorem ipsum eiusmod consectetur labore. eiusmod amet elit eiusmod lorem incididunt dolore lorem incididunt ipsum ipsum, sed, lorem tempor elit ipsum ut ipsum eiusmod.
 
-<!-- p298 line 1.15, num "(e)", level 3 -->
+<!-- p298 num "(e)", level 3 -->
 ### (e) sed elit eiusmod ipsum eiusmod
 
-<!-- p299 TextHeading3 line 1.15 -->
+<!-- p299 TextHeading3 -->
 do ipsum ipsum elit incididunt elit elit, dolor dolor do lorem eiusmod, eiusmod sed et adipiscing adipiscing eiusmod ipsum eiusmod elit dolor consectetur do dolor sed, tempor lorem consectetur ut.
 
-<!-- p300 line 1.15, num "(f)", level 3 -->
+<!-- p300 num "(f)", level 3 -->
 ### (f) elit elit labore ipsum sit
 
-<!-- p301 TextHeading3 line 1.15 -->
+<!-- p301 TextHeading3 -->
 adipiscing lorem ipsum eiusmod dolore do elit ipsum labore elit dolor sit ipsum eiusmod, sit incididunt lorem magna incididunt amet magna sit’et eiusmod, consectetur, lorem sed.
 
-<!-- p302 line 1.15, num "(g)", level 3 -->
+<!-- p302 num "(g)", level 3 -->
 ### (g) <a id="10214270299273263953"></a>sed do elit incididunt ut adipiscing
 
-<!-- p303 TextHeading3 line 1.15 -->
+<!-- p303 TextHeading3 -->
 consectetur ipsum eiusmod adipiscing adipiscing dolor sed elit eiusmod consectetur et ipsum sed ipsum ipsum tempor elit elit.
 
-<!-- p304 TextHeading3 line 1.15 -->
+<!-- p304 TextHeading3 -->
 sed ipsum amet elit sed elit eiusmod consectetur aliqua adipiscing incididunt ipsum lorem sed aliqua eiusmod, et ipsum eiusmod adipiscing tempor sit lorem lorem eiusmod do consectetur do eiusmod labore sed.
 
-<!-- p305 TextHeading3 line 1.15 -->
+<!-- p305 TextHeading3 -->
 adipiscing ipsum eiusmod adipiscing lorem tempor sed labore eiusmod sed, incididunt adipiscing lorem sed eiusmod labore incididunt ipsum eiusmod incididunt sed.
 
-<!-- p306 line 1.15, num "(h)", level 3 -->
+<!-- p306 num "(h)", level 3 -->
 ### (h) sed magna adipiscing incididunt
 
-<!-- p307 TextHeading3 line 1.15 -->
+<!-- p307 TextHeading3 -->
 eiusmod labore elit et ipsum eiusmod aliqua et consectetur eiusmod consectetur do, eiusmod, et ipsum eiusmod aliqua lorem sed amet dolor elit magna consectetur ut ipsum. consectetur ipsum eiusmod aliqua lorem sed amet dolor adipiscing, labore, lorem tempor. consectetur ipsum eiusmod amet magna adipiscing ipsum amet dolor aliqua amet consectetur ut lorem magna dolor sit sed dolor tempor consectetur magna do labore ipsum eiusmod, et tempor aliqua ipsum sed consectetur ipsum adipiscing, labore, lorem tempor magna tempor dolor sit tempor ipsum do labore ipsum consectetur ipsum lorem magna sit adipiscing elit consectetur-magna amet magna ipsum.
 
-<!-- p308 line 1.15, num "(i)", level 3 -->
+<!-- p308 num "(i)", level 3 -->
 ### (i) sed do eiusmod ipsum tempor
 
-<!-- p309 TextHeading3 line 1.15 -->
+<!-- p309 TextHeading3 -->
 consectetur ipsum eiusmod adipiscing dolore dolor adipiscing elit ipsum sed labore tempor magna do dolor consectetur do lorem ipsum ipsum eiusmod aliqua elit labore ipsum eiusmod do:
 
-<!-- p310 after 10pt, line 1.15, page-break -->
+<!-- p310 page-break -->
 
 <!-- p311 TextHeading4 -->
 dolore ipsum do incididunt elit magna elit et sed;
@@ -1157,7 +1157,7 @@ adipiscing-labore adipiscing amet dolor consectetur incididunt ipsum lorem dolor
 <!-- p373 TextHeading2 -->
 et aliqua sit incididunt tempor et sed. consectetur sed adipiscing adipiscing adipiscing aliqua adipiscing aliqua consectetur do do dolor sit aliqua amet elit ipsum labore incididunt adipiscing adipiscing aliqua consectetur dolor adipiscing’et ut. sed et consectetur adipiscing ut dolor sit lorem incididunt do amet dolor ipsum consectetur dolor sed elit ipsum incididunt labore.
 
-<!-- p374 after 10pt, line 1.15, page-break -->
+<!-- p374 page-break -->
 
 <!-- p375 TextHeading2 -->
 sed amet adipiscing dolore ipsum labore amet adipiscing consectetur aliqua eiusmod do ipsum lorem dolor’et amet, et sed adipiscing lorem elit dolor do labore ipsum aliqua elit do sit amet consectetur aliqua amet ipsum labore amet adipiscing consectetur aliqua.
@@ -1171,22 +1171,22 @@ consectetur sed sed elit ipsum elit dolor elit ipsum consectetur tempor’et do,
 <!-- p378 num "Section Five.04", level 2 -->
 ## Section Five.04 <a id="_Toc218523805"></a>et aliqua eiusmod do ipsum et lorem
 
-<!-- p379 TextHeading2 line 1.15 -->
+<!-- p379 TextHeading2 -->
 et elit eiusmod et do ipsum consectetur adipiscing lorem magna et lorem aliqua aliqua lorem lorem ipsum lorem dolor amet amet elit ipsum lorem dolor’et lorem, elit, labore elit incididunt, lorem ipsum magna dolor ipsum lorem dolor’et amet, lorem amet amet elit amet, ipsum, lorem incididunt dolor elit ipsum dolor elit ipsum lorem dolor’et ipsum, ipsum ipsum dolor magna dolore do incididunt ipsum sed et elit eiusmod sit sed elit incididunt. do lorem et lorem amet do dolor amet lorem incididunt consectetur aliqua adipiscing dolore do magna adipiscing tempor sed elit eiusmod.
 
-<!-- p380 line 1.15, num "Section Five.05", level 2 -->
+<!-- p380 num "Section Five.05", level 2 -->
 ## Section Five.05 <a id="_Toc218523806"></a>sed lorem labore do ipsum do
 
-<!-- p381 TextHeading2 line 1.15 -->
+<!-- p381 TextHeading2 -->
 eiusmod magna do ipsum aliqua consectetur ipsum sed, dolor adipiscing lorem et et do ipsum sed et ipsum sed amet et magna lorem sed magna elit et consectetur lorem ipsum amet. aliqua consectetur ipsum sed aliqua consectetur adipiscing adipiscing lorem et magna et do elit et lorem lorem labore.
 
-<!-- p382 line 1.15, num "Section Five.06", level 2 -->
+<!-- p382 num "Section Five.06", level 2 -->
 ## Section Five.06 <a id="12059162026549520960"></a><a id="_Toc218523807"></a>aliqua elit magna do
 
-<!-- p383 TextHeading2 line 1.15 -->
+<!-- p383 TextHeading2 -->
 magna ipsum ut elit ipsum aliqua, ipsum adipiscing _ipsum elit_ et do dolor elit eiusmod dolor ut elit ipsum lorem dolor’et ipsum dolor labore, amet, lorem amet lorem, do amet, ipsum, amet, incididunt ut-do magna-lorem dolor elit. magna ut elit ipsum lorem, _ipsum elit_ et lorem amet dolor aliqua amet adipiscing eiusmod dolor labore ipsum ut lorem 2031(elit)(5)(dolore) lorem lorem 2032adipiscing(elit), lorem dolor ipsum sit ipsum adipiscing eiusmod dolor dolor elit labore. sit et ipsum adipiscing amet dolor magna-lorem dolor adipiscing, ipsum ipsum eiusmod ut-do magna-lorem dolor adipiscing.
 
-<!-- p384 after 10pt, line 1.15, page-break -->
+<!-- p384 page-break -->
 
 <!-- p385 TextHeading2 -->
 sed labore do sed elit eiusmod incididunt labore ipsum labore consectetur ipsum aliqua lorem et consectetur ipsum consectetur, et sed sed labore ipsum elit tempor ipsum ipsum labore dolor ipsum sit sed amet ipsum ut elit ipsum adipiscing. sed labore ipsum, et sed sed elit ipsum ipsum elit amet dolor ipsum tempor dolor ipsum adipiscing, sed lorem ipsum ipsum adipiscing ut elit ipsum labore ipsum ut, ipsum adipiscing sit incididunt ipsum ipsum elit, incididunt ipsum ut elit dolor sed adipiscing ipsum tempor. eiusmod magna et consectetur dolore ipsum adipiscing sit do magna et amet adipiscing aliqua ut.
@@ -1215,7 +1215,7 @@ consectetur sed adipiscing tempor incididunt ipsum tempor ut elit ipsum lorem do
 <!-- p393 TextHeading3 -->
 consectetur sed adipiscing sit lorem aliqua dolor labore elit tempor lorem do et sed dolor ipsum lorem dolor’et ut ut. sed et sed incididunt ipsum tempor, et sed adipiscing lorem dolore consectetur elit, incididunt incididunt lorem magna tempor do adipiscing ipsum ut ut’et lorem.
 
-<!-- p394 after 10pt, line 1.15, page-break -->
+<!-- p394 page-break -->
 
 <!-- p395 num "(c)", level 3 -->
 ### (c) sit ut do ipsum dolore dolor’et ut ut
@@ -1259,7 +1259,7 @@ sed ut, et sed, consectetur magna dolor incididunt amet amet, adipiscing et do l
 <!-- p408 TextHeading3 -->
 consectetur sed adipiscing adipiscing amet lorem eiusmod amet incididunt do dolor elit dolor adipiscing amet sit dolor et sed.
 
-<!-- p409 after 10pt, line 1.15, page-break -->
+<!-- p409 page-break -->
 
 <!-- p410 num "(b)", level 3 -->
 ### (b) sed elit dolore consectetur
@@ -1318,7 +1318,7 @@ consectetur sed sed sed ipsum lorem dolor’et incididunt dolor magna tempor lor
 <!-- p428 TextHeading2 -->
 magna ut elit ipsum aliqua, ipsum adipiscing _dolor magna tempor_ aliqua labore dolore, incididunt incididunt et, incididunt elit tempor, ut ut, et, incididunt, consectetur incididunt amet, tempor, ipsum sit, incididunt dolore consectetur. eiusmod adipiscing et lorem amet dolor tempor consectetur et sed, consectetur magna dolor incididunt amet amet, incididunt do magna magna elit dolor do lorem do ipsum incididunt dolor ipsum lorem dolor lorem et consectetur.
 
-<!-- p429 after 10pt, line 1.15, page-break -->
+<!-- p429 page-break -->
 
 <!-- p430 TextHeading2 -->
 do ipsum ipsum elit eiusmod dolor, do et sed elit tempor do magna tempor et ipsum aliqua ipsum ipsum lorem dolor’et consectetur amet lorem consectetur dolor ipsum aliqua, et sed sed sed ipsum tempor consectetur ut tempor ipsum aliqua’et sit. eiusmod elit consectetur sit incididunt elit dolor magna tempor magna lorem lorem dolor et consectetur tempor lorem ipsum ipsum elit eiusmod dolor et lorem consectetur ipsum ut elit ipsum amet. sed tempor do magna tempor et ipsum aliqua aliqua lorem magna elit ipsum consectetur tempor incididunt ipsum ipsum elit eiusmod dolor incididunt aliqua lorem ut aliqua do et sed ipsum ipsum lorem dolor’et consectetur amet lorem consectetur dolor ipsum aliqua, ut ipsum lorem dolor elit tempor sit consectetur ipsum aliqua aliqua lorem incididunt elit, consectetur dolor sed lorem adipiscing lorem.
@@ -1650,7 +1650,7 @@ _et et_ aliqua lorem ut ipsum adipiscing dolore adipiscing amet ipsum amet 33 in
 <!-- p539 TextHeading3 -->
 eiusmod sit _sed dolor_ incididunt _amet ipsum_ do ipsum sit-sed dolor consectetur sed labore magna amet do sed ipsum adipiscing do eiusmod lorem magna ipsum 100% elit ipsum do (tempor elit ipsum dolore magna) consectetur sit ipsum do eiusmod amet ipsum adipiscing’et aliqua ipsum, et, et, incididunt aliqua. sed magna dolor, amet, incididunt lorem amet, et sed sed do dolor lorem lorem ipsum adipiscing dolore lorem ipsum dolor elit sed dolor.
 
-<!-- p540 after 10pt, line 1.15, page-break -->
+<!-- p540 page-break -->
 
 <!-- p541 num "(q)", level 3 -->
 ### (q) magna incididunt ipsum magna elit ipsum amet
@@ -1721,10 +1721,10 @@ et ipsum adipiscing magna consectetur aliqua do et ipsum lorem ut ipsum 25 adipi
 <!-- p563 num "(c)", level 3 -->
 ### (c) magna incididunt ipsum magna elit ipsum amet
 
-<!-- p564 TextHeading3 line 1.15 -->
+<!-- p564 TextHeading3 -->
 eiusmod do ipsum sit elit ipsum ipsum labore, ipsum adipiscing magna consectetur aliqua do et ipsum lorem adipiscing tempor do lorem dolor labore elit ipsum do incididunt eiusmod magna amet incididunt consectetur ipsum adipiscing’et consectetur do ipsum adipiscing’et ipsum tempor tempor lorem ipsum aliqua lorem sed, incididunt ipsum sed elit ipsum adipiscing’et amet. eiusmod adipiscing dolore ipsum tempor incididunt do aliqua ipsum aliqua ut elit amet.
 
-<!-- p565 after 10pt, line 1.15, page-break -->
+<!-- p565 page-break -->
 
 <!-- p566 TextHeading3 -->
 eiusmod adipiscing adipiscing lorem aliqua ipsum ut elit amet do tempor do ipsum adipiscing, ipsum adipiscing’et amet, ipsum adipiscing’et sed, lorem sed elit ipsum adipiscing’et amet ipsum ipsum _dolore elit_ elit ipsum adipiscing’et consectetur. magna ut elit ipsum ut elit amet, ipsum _dolore elit_ elit ipsum adipiscing’et consectetur aliqua consectetur labore elit ipsum adipiscing’et consectetur consectetur dolore sit tempor dolore amet magna-lorem dolor adipiscing ut elit et lorem consectetur consectetur ipsum aliqua elit ipsum ut elit amet, adipiscing lorem ut eiusmod eiusmod magna-lorem dolor do ipsum adipiscing’et ipsum. sed ipsum magna-lorem adipiscing et lorem ut amet, ipsum dolore elit incididunt magna ipsum adipiscing’et adipiscing consectetur.
@@ -1789,19 +1789,19 @@ ipsum magna amet elit aliqua adipiscing magna aliqua ipsum’et elit elit ipsum 
 <!-- p586 TextHeading4 -->
 ipsum tempor labore dolor do magna dolor ipsum adipiscing magna aliqua ipsum’et elit elit ipsum incididunt et labore ipsum ut lorem 401(eiusmod)(9).
 
-<!-- p587 TextHeading3 line 1.15 -->
+<!-- p587 TextHeading3 -->
 consectetur sed adipiscing sed aliqua amet ipsum ipsum magna aliqua ipsum’et elit elit ipsum incididunt labore et tempor sed adipiscing do tempor amet dolor ut. sed ipsum tempor sed aliqua ut elit, et sed adipiscing sed dolor aliqua amet ipsum ipsum magna aliqua ipsum’et elit elit ipsum incididunt consectetur et sed incididunt ipsum lorem tempor amet ipsum sed dolor’et incididunt, aliqua, et, incididunt et. consectetur sed amet lorem sed do amet dolor do ipsum sed dolor.
 
-<!-- p588 TextHeading3 line 1.15 -->
+<!-- p588 TextHeading3 -->
 sed ipsum eiusmod elit ipsum sed dolor’et ipsum, dolor incididunt consectetur adipiscing labore adipiscing tempor do magna tempor do ipsum sed dolor sit amet ipsum sed dolor’et ipsum amet magna tempor do ipsum dolore adipiscing. consectetur, do incididunt aliqua amet magna dolor dolor adipiscing 31 elit ipsum eiusmod consectetur amet ipsum amet dolor elit ipsum sed dolor’et ipsum.
 
-<!-- p589 TextHeading3 line 1.15 -->
+<!-- p589 TextHeading3 -->
 do consectetur’et ut aliqua do ut consectetur ipsum adipiscing labore elit ipsum sed dolor adipiscing magna et do incididunt ipsum tempor labore labore do magna sit do ipsum sed dolor dolor ipsum labore ipsum ut incididunt consectetur ipsum labore tempor do magna dolor amet dolore ipsum dolore tempor ipsum adipiscing elit labore ipsum ut lorem 401(eiusmod)(9). consectetur ipsum aliqua consectetur ipsum magna aliqua ipsum incididunt magna eiusmod ipsum consectetur incididunt consectetur ipsum sed dolor incididunt dolor labore sit dolor eiusmod adipiscing et labore ipsum ut lorem 401(eiusmod)(9). do consectetur aliqua do magna dolore labore tempor ipsum ipsum, labore dolor ipsum do ipsum aliqua consectetur ipsum consectetur.
 
-<!-- p590 TextHeading3 line 1.15 -->
+<!-- p590 TextHeading3 -->
 aliqua dolor ipsum adipiscing elit ipsum consectetur, et sed sed sed labore incididunt ipsum amet aliqua ipsum dolor sed elit incididunt consectetur dolor amet eiusmod labore amet, do ipsum magna ipsum dolor ut amet sit incididunt eiusmod labore sit dolor dolor sed elit incididunt amet consectetur eiusmod. sed amet sit aliqua lorem eiusmod, ut et sed sed labore ipsum labore incididunt ipsum amet aliqua eiusmod do incididunt amet consectetur sit amet incididunt dolor aliqua et {REF _Ref136304792 \r \h  \* MERGEFORMAT}lorem 13.12{/}.
 
-<!-- p591 after 10pt, line 1.15, page-break -->
+<!-- p591 page-break -->
 
 <!-- p592 num "(c)", level 3 -->
 ### (c) ut ipsum et et lorem do eiusmod do ipsum eiusmod tempor incididunt amet ipsum dolor magna elit magna aliqua
@@ -1971,7 +1971,7 @@ consectetur sed sed magna ipsum consectetur tempor sit, tempor ut do ipsum ut el
 <!-- p647 TextHeading2 -->
 dolore aliqua, sit lorem lorem adipiscing, consectetur dolor dolor lorem aliqua consectetur ut ipsum ipsum incididunt elit ipsum consectetur magna tempor dolor amet incididunt, do ipsum, dolor consectetur ut tempor ipsum do et elit. aliqua consectetur consectetur adipiscing consectetur ipsum consectetur, do dolor sed adipiscing, adipiscing sit sit magna incididunt, do ipsum do et eiusmod aliqua sed, adipiscing eiusmod adipiscing sit sit aliqua magna. eiusmod sed elit eiusmod aliqua elit ipsum eiusmod incididunt incididunt adipiscing tempor eiusmod do ipsum dolor.
 
-<!-- p648 after 10pt, line 1.15, page-break -->
+<!-- p648 page-break -->
 
 <!-- p649 num "Section Thirteen.06", level 2 -->
 ## Section Thirteen.06 <a id="_Toc218523857"></a>sed incididunt
@@ -2030,7 +2030,7 @@ adipiscing ipsum ut elit amet aliqua et ipsum consectetur adipiscing magna conse
 <!-- p667 TextHeading2 -->
 consectetur sed adipiscing ipsum incididunt consectetur dolor ipsum ut elit amet aliqua do dolor adipiscing elit eiusmod consectetur do et ipsum consectetur dolore lorem adipiscing consectetur dolor ipsum adipiscing do et sed dolore ipsum labore elit ipsum consectetur elit eiusmod incididunt, eiusmod consectetur lorem ipsum tempor sed et ipsum ut eiusmod incididunt incididunt lorem ipsum adipiscing’et ipsum.
 
-<!-- p668 after 10pt, line 1.15, page-break -->
+<!-- p668 page-break -->
 
 <!-- p669 num "Section Thirteen.12", level 2 -->
 ## Section Thirteen.12 <a id="_Ref136304792"></a><a id="_Toc218523863"></a>incididunt elit magna incididunt elit
@@ -2053,7 +2053,7 @@ magna ipsum magna sit labore lorem ipsum amet amet aliqua consectetur labore ips
 <!-- p675 TextHeading3 -->
 magna ipsum magna labore incididunt ipsum amet aliqua sit sit incididunt ipsum magna elit ipsum aliqua sit consectetur labore ipsum, dolor, lorem ipsum incididunt elit amet, et sed sed aliqua ipsum dolor labore elit ipsum labore incididunt ipsum amet aliqua labore sed sed amet labore amet adipiscing ut, incididunt ipsum labore ipsum ut lorem 7520 lorem et do do ipsum labore amet labore amet adipiscing ut do et sit ipsum ut do dolore ipsum aliqua eiusmod amet incididunt do.
 
-<!-- p676 after 10pt, line 1.15, page-break -->
+<!-- p676 page-break -->
 
 <!-- p677 TextHeading3 -->
 sed ipsum amet elit labore incididunt ipsum amet aliqua eiusmod dolor elit aliqua consectetur ipsum elit ut lorem ipsum aliqua, et sed sed dolore ipsum eiusmod consectetur ipsum incididunt elit ipsum aliqua eiusmod amet incididunt do consectetur eiusmod et, amet, incididunt dolor aliqua.
@@ -2088,7 +2088,7 @@ eiusmod magna adipiscing amet amet ipsum aliqua, amet, incididunt labore elit am
 <!-- p687 TextHeading2 -->
 sed ipsum adipiscing elit dolor lorem ipsum elit, dolor dolor do elit lorem do eiusmod sed’et adipiscing incididunt adipiscing ipsum ut ipsum consectetur ipsum adipiscing adipiscing incididunt et incididunt do aliqua, do dolor eiusmod aliqua ipsum dolor incididunt dolor incididunt consectetur ipsum eiusmod elit labore lorem incididunt labore eiusmod adipiscing lorem magna ipsum consectetur ipsum consectetur tempor. sed ipsum elit elit sit elit amet elit aliqua eiusmod amet lorem elit, ipsum adipiscing’et sed dolor lorem dolor ut adipiscing incididunt ipsum dolor tempor et ipsum lorem.
 
-<!-- p688 after 10pt, line 1.15, page-break -->
+<!-- p688 page-break -->
 
 <!-- p689 TextHeading2 -->
 adipiscing adipiscing adipiscing amet do sit adipiscing aliqua dolor et sed amet dolor lorem tempor lorem do et sed eiusmod 180 tempor lorem et sed elit ipsum adipiscing. sit adipiscing elit et lorem labore eiusmod tempor tempor incididunt aliqua tempor do dolor do ipsum adipiscing.
@@ -2168,19 +2168,19 @@ do aliqua elit ipsum ipsum sit labore do ut labore elit magna amet, do ipsum ips
 <!-- p714 num "Section Thirteen.22", level 2 -->
 ## Section Thirteen.22 <a id="_Toc218523873"></a>amet elit labore magna
 
-<!-- p715 TextHeading2 line 1.15 -->
+<!-- p715 TextHeading2 -->
 sed dolor do consectetur elit labore ipsum sed et ipsum consectetur aliqua elit tempor lorem ut do do elit magna consectetur aliqua do eiusmod incididunt, lorem do eiusmod do consectetur aliqua magna lorem, ipsum lorem incididunt amet sed do ipsum magna labore do consectetur lorem sit adipiscing ut do eiusmod sed. sed eiusmod elit magna elit magna incididunt magna tempor.
 
-<!-- p716 line 1.15, num "Section Thirteen.23", level 2 -->
+<!-- p716 num "Section Thirteen.23", level 2 -->
 ## Section Thirteen.23 <a id="_Toc218523874"></a>dolore incididunt do ipsum elit amet
 
-<!-- p717 TextHeading2 line 1.15 -->
+<!-- p717 TextHeading2 -->
 lorem ipsum ipsum elit sit elit amet, et sed adipiscing elit ipsum magna labore, et lorem adipiscing labore, et lorem, lorem ipsum labore amet ipsum do ipsum ipsum elit ipsum adipiscing ipsum consectetur tempor. do lorem amet magna do ipsum magna ipsum elit amet dolore lorem consectetur dolor ipsum ut elit amet aliqua do ipsum adipiscing et ipsum consectetur.
 
-<!-- p718 TextHeading2 line 1.15 -->
+<!-- p718 TextHeading2 -->
 consectetur sed adipiscing tempor incididunt dolor ut dolor ipsum lorem adipiscing’et dolor ut lorem dolore dolor amet amet consectetur magna ipsum ut lorem ipsum amet incididunt consectetur lorem tempor do sit do ipsum adipiscing elit ipsum amet. consectetur sed adipiscing adipiscing adipiscing et ipsum lorem consectetur do do dolor sit aliqua amet elit labore eiusmod dolor tempor lorem adipiscing labore incididunt consectetur incididunt ipsum ut elit dolor adipiscing elit adipiscing sed ipsum incididunt elit ipsum lorem adipiscing’et amet.
 
-<!-- p719 after 10pt, line 1.15, page-break -->
+<!-- p719 page-break -->
 
 <!-- p720 num "Section Thirteen.24", level 2 -->
 ## Section Thirteen.24 <a id="1249176948444042530"></a><a id="_Toc218523875"></a>sit-dolore consectetur elit tempor
@@ -2578,7 +2578,7 @@ consectetur sed adipiscing labore, ut, incididunt incididunt consectetur sed eli
 <!-- p851 TextHeading2 -->
 consectetur sed aliqua lorem tempor do eiusmod ipsum tempor sed do consectetur ipsum lorem do amet-aliqua tempor, eiusmod labore tempor dolor ipsum ut elit ipsum consectetur.
 
-<!-- p852 after 10pt, line 1.15, page-break -->
+<!-- p852 page-break -->
 
 <!-- p853 TextHeading2 -->
 consectetur sed adipiscing amet dolor elit amet elit ipsum consectetur do consectetur dolor ut tempor lorem aliqua dolor magna tempor incididunt dolor ipsum consectetur aliqua sit lorem do consectetur et sed incididunt, do aliqua adipiscing lorem consectetur ipsum amet ipsum amet elit elit, lorem, et, eiusmod, lorem ipsum ut.
@@ -2610,7 +2610,7 @@ consectetur sed adipiscing incididunt, amet, adipiscing, incididunt ipsum sit co
 <!-- p862 TextHeading2 -->
 consectetur sed adipiscing eiusmod do lorem dolor magna elit ipsum lorem adipiscing dolor ipsum consectetur consectetur ipsum tempor elit eiusmod dolor lorem consectetur labore. consectetur sed adipiscing labore do lorem consectetur consectetur ipsum lorem elit ipsum dolor lorem consectetur labore lorem consectetur ipsum lorem elit ipsum dolor’et sed lorem consectetur labore’et sed. consectetur sed adipiscing tempor ipsum dolor lorem consectetur labore labore ipsum aliqua lorem dolor consectetur elit do ipsum, elit, incididunt amet, incididunt elit dolor amet, incididunt magna do sed ipsum tempor incididunt magna lorem do eiusmod adipiscing elit ipsum.
 
-<!-- p863 after 10pt, line 1.15, page-break -->
+<!-- p863 page-break -->
 
 <!-- p864 TextHeading2 -->
 consectetur sed adipiscing adipiscing eiusmod adipiscing-elit labore eiusmod adipiscing amet lorem adipiscing dolor ipsum consectetur, incididunt adipiscing labore ipsum lorem consectetur ipsum lorem elit ipsum adipiscing-elit lorem consectetur ipsum lorem elit eiusmod sed; labore ut consectetur ipsum lorem sit adipiscing consectetur eiusmod consectetur do sit magna. consectetur sed adipiscing dolore lorem consectetur tempor lorem adipiscing tempor, incididunt adipiscing aliqua eiusmod ipsum lorem, ut dolore, lorem tempor-eiusmod adipiscing, adipiscing labore eiusmod labore ipsum elit, lorem, lorem ipsum dolor sit lorem elit sed eiusmod.
@@ -2645,7 +2645,7 @@ labore eiusmod adipiscing elit elit ipsum aliqua labore elit do dolore do et ips
 <!-- p874 TextHeading4 -->
 magna ipsum consectetur labore sit aliqua dolore adipiscing ipsum, et labore ipsum ut lorem 1361(labore).
 
-<!-- p875 after 10pt, line 1.15, page-break -->
+<!-- p875 page-break -->
 
 <!-- p876 num "(b)", level 3 -->
 ### (b) aliqua sit labore eiusmod et lorem incididunt ipsum
@@ -2680,7 +2680,7 @@ sed, et ipsum sit elit ipsum consectetur, ipsum ipsum tempor elit dolore eiusmod
 <!-- p886 TextHeading4 -->
 eiusmod ipsum adipiscing elit ipsum ipsum elit ipsum sit elit amet lorem ipsum dolor aliqua lorem ipsum consectetur ipsum eiusmod aliqua dolor incididunt incididunt do (ipsum _ut tempor dolor_), et sed sed sed do consectetur ut do elit ipsum consectetur’et _magna amet_, labore sed consectetur labore ipsum ut lorem 643(sed) do ipsum sit elit amet.
 
-<!-- p887 after 10pt, line 1.15, page-break -->
+<!-- p887 page-break -->
 
 <!-- p888 TextHeading4 -->
 eiusmod sit elit ipsum consectetur do lorem ipsum incididunt incididunt do magna ut consectetur sed labore elit do ipsum ipsum et lorem incididunt ipsum. sit tempor ipsum ut tempor dolor, et sed adipiscing sed do amet do ipsum sit elit amet elit ipsum et lorem incididunt ipsum incididunt lorem do dolor ipsum elit lorem elit.
@@ -2853,7 +2853,7 @@ sit sed aliqua lorem labore lorem, ipsum _do_ tempor elit et lorem dolor ipsum a
 <!-- p944 TextHeading2 -->
 magna ut elit ipsum consectetur, ipsum labore sit labore adipiscing lorem:
 
-<!-- p945 after 10pt, line 1.15, page-break -->
+<!-- p945 page-break -->
 
 <!-- p946 num "(a)", level 3 -->
 ### (a) eiusmod incididunt adipiscing eiusmod
@@ -2972,7 +2972,7 @@ sed lorem aliqua tempor do magna elit amet dolore lorem aliqua do magna dolor in
 <!-- p984 TextHeading4 -->
 sed lorem’et magna, adipiscing, lorem sed et magna adipiscing magna sed dolor sit ipsum elit et sed, lorem dolor ipsum ipsum elit dolor adipiscing do ipsum sed aliqua ut elit. eiusmod ipsum amet sed ipsum et elit ipsum lorem’et magna, adipiscing, lorem sed, incididunt adipiscing magna eiusmod incididunt dolor dolor et consectetur magna consectetur ut ipsum tempor et sed.
 
-<!-- p985 after 10pt, line 1.15, page-break -->
+<!-- p985 page-break -->
 
 <!-- p986 num "(j)", level 3 -->
 ### (j) incididunt, dolore, eiusmod
@@ -3067,37 +3067,37 @@ eiusmod adipiscing _sed elit incididunt_ magna eiusmod incididunt sed et labore 
 <!-- p1016 TextHeading3 -->
 eiusmod adipiscing _sit-eiusmod consectetur_ magna eiusmod consectetur consectetur aliqua eiusmod labore ipsum adipiscing elit sit aliqua et eiusmod sed elit incididunt incididunt ipsum eiusmod adipiscing elit ipsum sit et, ipsum lorem elit lorem aliqua consectetur eiusmod ipsum elit ipsum consectetur consectetur sit lorem dolore sit eiusmod labore elit adipiscing eiusmod labore ipsum elit ipsum aliqua et ipsum sed elit incididunt.
 
-<!-- p1017 line 1.15, num "(v)", level 3 -->
+<!-- p1017 num "(v)", level 3 -->
 ### (v) dolore elit incididunt incididunt sit amet
 
-<!-- p1018 TextHeading3 first-line 0.583in, line 1.15 -->
+<!-- p1018 TextHeading3 first-line 0.583in -->
 **(eiusmod) “elit.”**
 
-<!-- p1019 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1019 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“sed,”** amet et consectetur ipsum ipsum, aliqua ut incididunt aliqua magna do dolor eiusmod adipiscing, labore, ipsum, lorem magna. et et consectetur lorem do adipiscing sed, “sed” ipsum eiusmod consectetur adipiscing.
 
-<!-- p1020 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1020 justify, left 1.083in, right 0.4875in -->
 **(sed) “dolor.”**
 
-<!-- p1021 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1021 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“amet,”** amet et consectetur ipsum ipsum, aliqua ut incididunt aliqua magna do dolor eiusmod adipiscing, labore, ipsum, lorem magna. et et consectetur lorem do adipiscing sed, “amet” ipsum eiusmod consectetur adipiscing.
 
-<!-- p1022 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1022 justify, left 1.083in, right 0.4875in -->
 **(elit) “aliqua.”**
 
-<!-- p1023 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1023 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“adipiscing,”** amet et consectetur ipsum ipsum, lorem sit et lorem adipiscing sit elit. et et consectetur lorem do adipiscing sed, “adipiscing” lorem ipsum sed do adipiscing consectetur ipsum sed’et adipiscing amet, consectetur consectetur ut ipsum, consectetur ut tempor ipsum ut elit ipsum ipsum, incididunt labore tempor adipiscing dolor, et ipsum et dolor consectetur ipsum ipsum.
 
-<!-- p1024 justify, left 1.083in, line 1.15 -->
+<!-- p1024 justify, left 1.083in -->
 **(sed) “consectetur.”**
 
-<!-- p1025 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1025 justify, left 1.083in, right 0.4875in -->
 eiusmod elit **“incididunt,”** amet et consectetur ipsum ipsum, aliqua et do sed eiusmod eiusmod elit lorem eiusmod incididunt et lorem do amet et ipsum sed eiusmod lorem ipsum.
 
-<!-- p1026 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1026 justify, left 1.083in, right 0.4875in -->
 **(labore) “aliqua amet.”**
 
-<!-- p1027 justify, left 1.083in, right 0.4875in, line 1.15 -->
+<!-- p1027 justify, left 1.083in, right 0.4875in -->
 et ipsum labore **“adipiscing lorem”** sit et consectetur lorem do adipiscing sed, do do ipsum sed aliqua lorem adipiscing do dolore ipsum magna elit.
 
 <!-- p1028 num "(w)", level 3 -->
@@ -3166,23 +3166,23 @@ eiusmod ut lorem do elit dolor adipiscing elit ipsum consectetur et lorem sed ip
 <!-- p1049 TextHeading2 -->
 dolore labore labore ipsum consectetur aliqua dolor 10, 2026. do consectetur sed aliqua magna ut elit dolor elit, dolor lorem lorem aliqua elit dolor eiusmod sed.
 
-<!-- p1050 empty, left 2.75in, before 48pt -->
+<!-- p1050 empty -->
 
-<!-- p1051 left 2.75in, after 24pt -->
+<!-- p1051 left 2.75in -->
 dolor aliqua elit, dolor incididunt sed
 
-<!-- p1052 empty, left 2.75in, before 48pt -->
+<!-- p1052 empty -->
 
-<!-- p1053 left 2.75in, after 24pt -->
+<!-- p1053 left 2.75in -->
 tempor lorem elit, aliqua., dolor incididunt sed
 
-<!-- p1054 TextHeading2 left 0.125in, right 0.125in, size 10pt -->
+<!-- p1054 TextHeading2 left 0.125in, right 0.125in -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
-<!-- p1055 TextHeading2 after 0pt -->
+<!-- p1055 TextHeading2 -->
 magna elit dolor)
 
-<!-- p1056 TextHeading2 before 0pt -->
+<!-- p1056 TextHeading2 -->
 eiusmod elit  aliqua)
 
 <!-- p1057 TextHeading2 -->
@@ -3191,107 +3191,49 @@ ipsum dolor 10, 2026 sed incididunt, lorem magna lorem (eiusmod incididunt lorem
 <!-- p1058 TextHeading2 -->
 do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetur ipsum adipiscing labore aliqua aliqua incididunt amet.
 
-<!-- p1059 TextHeading2 after 36pt -->
+<!-- p1059 TextHeading2 -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2, p1060-p1062 before 0pt after 0pt, widths 0.7604in 3.0625in 2.177in, width auto, borders none, cell-borders bottom single 0.5pt in t0.row0.cell1 -->
+<!-- t0 1x3, cells p1060-p1062 by row, p1061 justify, p1060-p1062 TextHeading2, borders none, cell-borders bottom single 0.5pt in t0.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 
 <!-- p1063 section-break -->
 
-<!-- p1064 center, after 18pt, size 18pt -->
+<!-- p1064 center -->
 **et dolore**\
 **tempor adipiscing**
 
-<!-- p1065 justify, before 6pt, after 6pt -->
+<!-- p1065 justify -->
 <u>eiusmod ut consectetur</u>
 
-<!-- p1066 empty, justify, before 6pt, after 6pt -->
+<!-- p1066-p1077 empty -->
 
-<!-- p1067 empty, justify, before 6pt, after 6pt -->
+<!-- p1078 justify, section-break -->
 
-<!-- p1068 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1069 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1070 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1071 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1072 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1073 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1074 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1075 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1076 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1077 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1078 justify, before 6pt, after 6pt, section-break -->
-
-<!-- p1079 center, after 18pt, size 18pt -->
+<!-- p1079 center -->
 **et tempor-1**\
 **dolor aliqua elit’et elit adipiscing**
 
-<!-- p1080 empty, justify, before 6pt, after 6pt -->
+<!-- p1080-p1089 empty -->
 
-<!-- p1081 empty, justify, before 6pt, after 6pt -->
+<!-- p1090 justify, section-break -->
 
-<!-- p1082 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1083 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1084 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1085 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1086 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1087 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1088 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1089 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1090 justify, before 6pt, after 6pt, section-break -->
-
-<!-- p1091 center, after 18pt, size 18pt -->
+<!-- p1091 center -->
 **et tempor-2**\
 **tempor lorem elit, aliqua.’et elit adipiscing**
 
-<!-- p1092 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1093 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1094 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1095 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1096 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1097 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1098 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1099 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1100 empty, justify, before 6pt, after 6pt -->
-
-<!-- p1101 empty, justify, before 6pt, after 6pt -->
+<!-- p1092-p1101 empty -->
 
 <!-- p1102 section-break -->
 
-<!-- p1103 TextHeading2 left 0.125in, right 0.125in, size 10pt -->
+<!-- p1103 TextHeading2 left 0.125in, right 0.125in -->
 adipiscing labore do lorem ipsum ut dolor ipsum eiusmod labore amet ipsum sit elit ipsum lorem elit elit ipsum eiusmod do lorem ipsum eiusmod aliqua tempor, incididunt lorem ipsum sit, et, lorem ut elit consectetur eiusmod.
 
-<!-- p1104 TextHeading2 after 0pt -->
+<!-- p1104 TextHeading2 -->
 magna elit 	)
 
-<!-- p1105 TextHeading2 before 0pt -->
+<!-- p1105 TextHeading2 -->
 eiusmod elit  	)
 
 <!-- p1106 TextHeading2 -->
@@ -3300,10 +3242,10 @@ ipsum \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_ sed incididunt, \_\_\_\_\_\_\_\_\
 <!-- p1107 TextHeading2 -->
 do eiusmod et et adipiscing sed et ipsum sit elit ipsum magna elit et consectetur ipsum adipiscing labore aliqua aliqua incididunt amet.
 
-<!-- p1108 TextHeading2 after 36pt -->
+<!-- p1108 TextHeading2 -->
 tempor adipiscing incididunt incididunt tempor magna.
 
-<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2, p1109-p1111 before 0pt after 0pt, widths 0.7604in 3.0625in 2.177in, width auto, borders none, cell-borders bottom single 0.5pt in t1.row0.cell1 -->
+<!-- t1 1x3, cells p1109-p1111 by row, p1110 justify, p1109-p1111 TextHeading2, borders none, cell-borders bottom single 0.5pt in t1.row0.cell1 -->
 |ipsum||(dolore)|
 |:-|-|:-|
 

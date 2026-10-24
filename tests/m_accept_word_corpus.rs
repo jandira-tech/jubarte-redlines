@@ -5,15 +5,9 @@
 //! Accept All against Word's own, on the `_to_improve_accepted_changes`
 //! corpus copied into `tests/corpus` (Word's redlines and Word's Accept All
 //! of each): every story paragraph's text and mark state match
-//! (`jubarte debug WORD JUB -c text` prints `text identical`). Comment ids
-//! are compared by position: Word's Accept All numbers them afresh, and
-//! jubarte keeps them (#1264, `docs/WORD_DIFFERENCES.md`).
-
-mod common;
+//! (`jubarte debug WORD JUB -c text` prints `text identical`).
 
 use std::path::PathBuf;
-
-use common::comment_ids::dense_comment_ids;
 
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::accept_revisions;
@@ -41,9 +35,8 @@ fn accept_matches_words_accept_all_on_words_redlines() {
             continue;
         }
         pairs += 1;
-        let ours = dense_comment_ids(&accept_revisions(&std::fs::read(&redline).unwrap()).unwrap());
-        let word_accepted = dense_comment_ids(&std::fs::read(&word).unwrap());
-        let out = report(&word_accepted, Some(&ours), &opts).unwrap();
+        let ours = accept_revisions(&std::fs::read(&redline).unwrap()).unwrap();
+        let out = report(&std::fs::read(&word).unwrap(), Some(&ours), &opts).unwrap();
         if out != "text identical\n" {
             differ.push(format!("{}:\n{out}", word.display()));
         }

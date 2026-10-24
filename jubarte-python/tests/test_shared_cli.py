@@ -18,7 +18,7 @@ def test_shared_aliases_defaults_and_selection_mapping():
         args = parser.parse_args([command, "a.docx", "b.docx"])
         assert args.command == "compare"
         assert args.original == Path("a.docx") and args.modified == Path("b.docx")
-        assert args.author == "Jubarte"
+        assert args.author == "Redline"
     args = parser.parse_args(["a.docx", "b.docx"])
     assert args.command == "compare"
     args = parser.parse_args(["accept", "a.docx", "-o", "b.docx", "--id", "r1", "--author", "A"])
@@ -90,14 +90,12 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     assert main([str(a), str(b), "-d", "1970-01-01T00:00:00Z"]) == 0
     out = capsys.readouterr().out
     assert out.startswith(f"---\nsource: {word} (not written; -o keeps it)\n"), out
-    # Compare writes the pair insertion-first, as Word Compare does, so it
-    # prints as two marks; only a deletion-first pair is one {~~old~>new~~}.
-    assert "Due in {++45++}{r1 @R}{--30--}{r2 @R} days." in out, out
+    assert "{~~30~>45~~}" in out, out
     assert not word.exists()
     # The view is the output, so --quiet does not hide it (pi review av5 F6);
     # read options apply to it.
     assert main([str(a), str(b), "--quiet", "-d", "1970-01-01T00:00:00Z"]) == 0
-    assert "{++45++}{r1 @R}{--30--}{r2 @R}" in capsys.readouterr().out
+    assert "{~~30~>45~~}" in capsys.readouterr().out
     assert main([str(a), str(b), "--track-changes", "accept", "-d", "1970-01-01T00:00:00Z"]) == 0
     accepted = capsys.readouterr().out
     assert "{~~" not in accepted and "<!-- p0 rev r" in accepted, accepted
@@ -118,7 +116,7 @@ def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, ca
     for by in ("AC", "Ann Counsel"):
         assert main(["read", str(signed), "--changed", "--by", by, "--no-page-markers"]) == 0
         out = capsys.readouterr().out
-        assert "\nrange: changed by @AC (p0) of p0" in out and "{++45++}{r1 @AC}{--30--}{r2 @AC}" in out, out
+        assert "\nrange: changed by @AC (p0) of p0" in out and "{~~30~>45~~}" in out, out
     # diff prints its patch and writes nothing.
     assert main(["diff", str(word), str(word)]) == 0
     assert not (tmp_path / "before_v_after_v_before_v_after.docx").exists()
@@ -167,13 +165,13 @@ def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
     # diff -o FILE.md of a Word side writes the patch; compare's is the
     # redline's view.
     assert main(["diff", str(word), str(b), "-o", str(tmp_path / "d.md")]) == 0
-    assert "{+45+}[-30-]" in (tmp_path / "d.md").read_text()
+    assert "[-30-]{+45+}" in (tmp_path / "d.md").read_text()
     capsys.readouterr()
     assert main(["compare", str(word), str(b), "-o", str(tmp_path / "c.md")]) == 0
     view = (tmp_path / "c.md").read_text()
     redline = word.with_name(f"{word.stem}_v_{b.stem}.docx")
     assert view.startswith(f"---\nsource: {redline} (not written; -o keeps it)\n"), view
-    assert "{++45++}{r1 @R}{--30--}{r2 @R}" in view, view
+    assert "{~~30~>45~~}" in view, view
 
     # --format critic needs two Markdown documents.
     assert main(["diff", str(word), str(b), "--format", "critic"]) == 1
@@ -270,163 +268,4 @@ def test_an_unreadable_word_input_reads_as_the_binary_says(tmp_path, monkeypatch
         assert code == 1, arguments
         captured = capsys.readouterr()
         assert captured.err == expected, (arguments, captured.err)
-        if "--json" in arguments:
-            # With --json, stdout says it as JSON too (#1255).
-            message = expected.removeprefix("error: ").rstrip("\n")
-            line = {"error": {"code": message.split(": ", 1)[0], "message": message}}
-            assert json.loads(captured.out) == line, arguments
-        else:
-            assert captured.out == "", arguments
-
-
-REVISED = ('<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
-           '<w:ins w:id="1" w:author="Ann" w:date="2026-10-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>'
-           '<w:del w:id="2" w:author="Ann" w:date="2026-10-01T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>')
-
-
-def _grid(cell: str) -> str:
-    return ('<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr>'
-            f'<w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{cell}</w:tc></w:tr></w:tbl>')
-
-
-def _tables_document(tmp_path) -> Path:
-    """p0, t0 (a revised cell over a nested table), p3, t1."""
-    outer = _grid(REVISED + _grid(para("inner")) + "<w:p/>")
-    path = tmp_path / "d.docx"
-    path.write_bytes(docx(REVISED + outer + para("between") + _grid(para("second"))))
-    return path
-
-
-def _main(arguments) -> int:
-    try:
-        return main(arguments)
-    except SystemExit as exit:
-        return exit.code
-
-
-def test_read_json_and_tables_take_the_view_options(tmp_path, capsys):
-    # #1255: what the binary does, from the Python CLI.
-    file = str(_tables_document(tmp_path))
-    for spelling, choice, text in (("accepted", "accept", "keep new"), ("reject", "reject", "keep old")):
-        assert _main(["read", file, "--json", "--track-changes", spelling]) == 0
-        snapshot = json.loads(capsys.readouterr().out)
-        assert snapshot["track_changes"] == choice
-        assert snapshot["paragraphs"][0]["text"] == snapshot["paragraphs"][1]["text"] == text
-    assert _main(["read", file, "--json", "--no-page-markers", "--dates"]) == 0
-    plain = capsys.readouterr().out
-    assert _main(["read", file, "--json"]) == 0
-    assert capsys.readouterr().out == plain
-    # --tables -p: the grids of the tables the view's pick reaches, each
-    # with the tables nested in it, an empty line, then that view (#1161).
-    def out(*arguments):
-        assert _main(["read", file, *arguments]) == 0
-        return capsys.readouterr().out
-
-    every = out("--tables")
-    grids = [f"table {chunk}" for chunk in every.split("table ") if chunk]
-    # Schema 2: the nested table prints under its cell row, inside t0's grid.
-    assert len(grids) == 2 and "nested in t0.row0.cell0" in grids[0] and "inner" in grids[0] and "second" in grids[1]
-    for pick, kept in (("t1", [1]), ("t0", [0]), ("t1,t0", [0, 1]), ("p2", [0]), ("p1-p5", [0, 1])):
-        assert out("--tables", "-p", pick) == "".join(grids[i] for i in kept) + "\n" + out("-p", pick), pick
-    rejected = out("--tables", "--track-changes", "reject", "-p", "t0")
-    assert "keep old" in rejected.split("\n---\n")[0]
-    # The view's own refusal is the view's; a pick outside every table is a
-    # usage error.
-    assert _main(["read", file, "--tables", "-p", "t5"]) == 1
-    missing = capsys.readouterr()
-    assert "t5 is not a table of this document" in missing.err and "(2 tables)" not in missing.err
-    assert _main(["read", file, "--tables", "-p", "p4"]) == 2
-    refused = capsys.readouterr()
-    assert "p4 is not in a table; --tables -p takes tN, or a pN inside a table" in refused.err and refused.out == ""
-
-
-def test_an_error_under_json_is_a_json_line_on_stdout(tmp_path, capsys):
-    # #1255: a usage error carries the task's usage; stderr stays as it is.
-    file = str(_tables_document(tmp_path))
-    assert _main(["read", file, "--json", "--tables"]) == 2
-    captured = capsys.readouterr()
-    line = json.loads(captured.out)
-    assert line["error"]["code"] == "USAGE"
-    assert "--tables" in line["error"]["message"]
-    assert line["error"]["usage"] == "jubarte-redlines read [OPTIONS] <FILE>"
-    assert captured.err.startswith("error: ")
-    assert _main(["read", "missing.docx", "--json"]) == 1
-    captured = capsys.readouterr()
-    assert json.loads(captured.out)["error"]["code"] == "ERROR"
-    assert captured.err.startswith("error: ")
-    # Help is no error; nor is a --json that is an option's value.
-    assert _main(["read", "--json", "--help"]) == 0
-    assert capsys.readouterr().out.startswith("Read the agent view")
-    assert _native.wants_json(["read", "f.docx", "--json"])
-    assert not _native.wants_json(["edit", "replace", "f.docx", "--find", "x", "--text", "--json"])
-    assert not _native.wants_json(["read", "f.docx", "--", "--json"])
-
-
-DELETED_AS_TEXT = ('<w:p><w:del w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z">'
-                   '<w:r><w:t>gone</w:t></w:r></w:del></w:p>')
-
-
-def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
-    # #1256: what the binary does, from the Python CLI.
-    broken = tmp_path / "broken.docx"
-    broken.write_bytes(docx(DELETED_AS_TEXT + para("x")))
-    clean = tmp_path / "clean.docx"
-    clean.write_bytes(docx(para("x")))
-    assert _main(["validate", str(broken), "--baseline", str(broken)]) == 0
-    assert capsys.readouterr().out == "new: none\nalready in the input: 1 (not yours)\n"
-    assert _main(["validate", str(broken), "--baseline", str(clean)]) == 2
-    out = capsys.readouterr().out
-    assert out.startswith("new: 1\n* TEXT_INSIDE_DELETION\terror\t"), out
-    assert out.endswith("already in the input: none\n"), out
-    assert _main(["validate", str(clean), "--baseline", str(broken), "--json"]) == 0
-    (resolved,) = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert resolved["resolved"][0]["code"] == "TEXT_INSIDE_DELETION"
-    assert _main(["validate", str(broken), "--baseline", str(broken), "--repair", str(tmp_path / "f.docx")]) == 2
-    assert "cannot be used with" in capsys.readouterr().err
-    # One stderr line on each reading task; -q drops it; a clean input has none.
-    # The path is quoted for a shell as the binary quotes it (a Windows path
-    # holds backslashes), so the line comes from the same formatter.
-    notice = _native.input_notice(broken.read_bytes(), str(broken))
-    assert notice.startswith("input has 1 validity error; jubarte validate "), notice
-    assert notice.endswith(" lists it"), notice
-    line = f"{notice}\n"
-    for arguments in (["read", str(broken), "--no-page-markers"], ["changes", str(broken)],
-                      ["comments", str(broken)]):
-        assert _main(arguments) == 0
-        captured = capsys.readouterr()
-        assert captured.err == line, arguments
-        assert "validity" not in captured.out
-    for arguments in (["-q", "changes", str(broken)], ["changes", str(clean)]):
-        assert _main(arguments) == 0
-        assert capsys.readouterr().err == "", arguments
-    # #1309: a JSON read carries the counts instead, -q or not; stderr stays
-    # empty for `--json 2>&1 | jq`.
-    wanted = {"errors": 1, "warnings": 0, "next": notice.removeprefix("input has 1 validity error; ").removesuffix(" lists it")}
-    for quiet in ([], ["-q"]):
-        assert _main(["read", str(broken), "--json", *quiet]) == 0
-        captured = capsys.readouterr()
-        assert captured.err == ""
-        assert json.loads(captured.out)["summary"]["input_validity"] == wanted
-        for task in ("changes", "comments"):
-            assert _main([task, str(broken), "--json", *quiet]) == 0
-            captured = capsys.readouterr()
-            assert captured.err == "", task
-            rows = [json.loads(row) for row in captured.out.splitlines()]
-            assert rows[-1] == {"input_validity": wanted}, task
-            assert all("input_validity" not in row for row in rows[:-1]), task
-    # -o FILE.json writes what --json prints; its stdout is free, so the
-    # stderr line stays.
-    assert _main(["read", str(broken), "--json"]) == 0
-    printed = capsys.readouterr().out
-    written = tmp_path / "s.json"
-    assert _main(["read", str(broken), "-o", str(written)]) == 0
-    assert capsys.readouterr().err.startswith(line)
-    assert written.read_text(encoding="utf-8") == printed
-    # A clean input counts none, with nothing to run next.
-    assert _main(["changes", str(clean), "--json"]) == 0
-    assert capsys.readouterr().out == '{"input_validity":{"errors":0,"warnings":0}}\n'
-    assert _native.input_validity_line(broken.read_bytes(), "my file.docx") == (
-        '{"input_validity":{"errors":1,"warnings":0,"next":"jubarte validate \'my file.docx\'"}}')
-    assert _native.input_notice(clean.read_bytes(), "clean.docx") is None
-    assert _native.input_notice(broken.read_bytes(), "my file.docx") == (
-        "input has 1 validity error; jubarte validate 'my file.docx' lists it")
+        assert captured.out == "", arguments

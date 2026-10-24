@@ -87,7 +87,7 @@ fn validate_exit_codes_prose_json_and_repair() {
         dir.path(),
         &["validate", "broken.docx", "--repair", "fixed.docx"],
     );
-    assert_eq!(code, 2);
+    assert_eq!(code, 1);
     assert!(err.contains("already exists"), "{err}");
     let (code, _, _) = run(
         dir.path(),
@@ -185,14 +185,17 @@ fn validate_audits_tracked_edits_against_an_original() {
 }
 
 #[test]
-fn an_ooxml_revision_error_fails_but_audit_warnings_fail_only_under_strict() {
+fn a_word_lead_still_fails_but_audit_warnings_fail_only_under_strict() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("lead.docx"), docx(SAME_ID)).unwrap();
     std::fs::write(dir.path().join("bullets.docx"), docx(&para("• item"))).unwrap();
 
     let (code, out, _) = run(dir.path(), &["validate", "lead.docx"]);
     assert_eq!(code, 2, "{out}");
-    assert!(out.starts_with("  DUPLICATE_REVISION_ID\terror\t"), "{out}");
+    assert!(
+        out.starts_with("  DUPLICATE_REVISION_ID\twarning\t"),
+        "{out}"
+    );
 
     let (code, out, _) = run(
         dir.path(),
@@ -225,313 +228,11 @@ fn rules_usage_errors_exit_two() {
     let (code, _, err) = run(dir.path(), &["validate", "a.docx", "--rules", "edits"]);
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("--rules edits needs --author, and --original or --baseline"),
+        err.contains("--rules edits needs --original and --author"),
         "{err}"
     );
     let (code, _, err) = run(dir.path(), &["validate", "a.docx", "--rules", "BOGUS"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("BOGUS"), "{err}");
     assert!(err.contains("word, edits, a11y, style, structure"), "{err}");
-}
-
-#[test]
-fn issue_1137_preexisting_duplicate_does_not_block_edit_publication() {
-    let source = docx(&format!(
-        "{}{}",
-        para("old words"),
-        r#"<w:p><w:ins w:id="5" w:author="Alice"><w:r><w:t>a</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> x </w:t></w:r><w:ins w:id="5" w:author="Alice"><w:r><w:t>b</w:t></w:r></w:ins></w:p>"#
-    ));
-    let baseline = jubarte::validate::validate(&source).unwrap();
-    let duplicate = baseline
-        .iter()
-        .find(|f| f.code == "DUPLICATE_REVISION_ID")
-        .unwrap();
-    assert_eq!(duplicate.severity, "error");
-    assert!(!duplicate.word_fatal);
-    let json = r#"{"schema_version":1,"author":"Carol Diaz","date":"2026-10-01T09:00:00Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"p0","find":"old","replacement":"new"}]}"#;
-    let plan = jubarte::edit::EditPlan::from_json(json).unwrap();
-    let prepared = jubarte::edit::prepare(
-        &source,
-        &plan,
-        &jubarte::edit::PrepareOptions {
-            role: jubarte::edit::PrimaryRole::Redline,
-            ..jubarte::edit::PrepareOptions::default()
-        },
-    )
-    .unwrap();
-    assert!(
-        prepared
-            .checks
-            .baseline
-            .iter()
-            .any(|f| f.code == "DUPLICATE_REVISION_ID")
-    );
-    assert!(
-        prepared
-            .checks
-            .introduced
-            .iter()
-            .all(|f| f.code != "DUPLICATE_REVISION_ID")
-    );
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("source.docx"), source).unwrap();
-    std::fs::write(dir.path().join("plan.json"), json).unwrap();
-    let (code, out, err) = run(dir.path(), &["edit", "source.docx", "--plan", "plan.json"]);
-    assert_eq!(code, 0, "{out}\n{err}");
-    let published = std::fs::read(dir.path().join("source_modified.docx")).unwrap();
-    assert_eq!(
-        jubarte::inspect::paragraphs(&published).unwrap()[0].text,
-        "new words"
-    );
-    assert!(
-        jubarte::validate::validate(&published)
-            .unwrap()
-            .iter()
-            .any(|f| f.code == "DUPLICATE_REVISION_ID")
-    );
-}
-
-#[test]
-fn received_word_warnings_fail_with_and_without_strict() {
-    let dir = tempfile::tempdir().unwrap();
-    let received =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent-view/received.docx");
-    std::fs::copy(received, dir.path().join("received.docx")).unwrap();
-    for strict in [false, true] {
-        let mut args = vec!["validate", "received.docx"];
-        if strict {
-            args.push("--strict");
-        }
-        let (code, out, err) = run(dir.path(), &args);
-        assert_eq!(code, 2, "{args:?}: {out}{err}");
-        assert!(
-            out.contains("COMMENT_METADATA_MISMATCH\twarning\t"),
-            "{out}"
-        );
-        assert!(
-            out.ends_with("2 finding(s): 0 error, 2 warning, 0 info\n"),
-            "{out}"
-        );
-    }
-}
-
-#[test]
-fn strict_help_explains_the_additional_warning_threshold() {
-    let dir = tempfile::tempdir().unwrap();
-    let (code, out, err) = run(dir.path(), &["validate", "--help"]);
-    assert_eq!(code, 0, "{err}");
-    let normalized = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(normalized.contains(
-        "--strict Also fail (exit 2) on warnings from other rule sets; word and edits findings fail without it"
-    ), "{out}");
-}
-
-const FOREIGN_HISTORY: &str = r#"<w:p><w:ins w:id="1" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>alpha beta gamma</w:t></w:r></w:ins><w:del w:id="2" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#;
-
-fn foreign_audit(edited: &[u8]) -> (i32, Vec<serde_json::Value>) {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("original.docx"), docx(FOREIGN_HISTORY)).unwrap();
-    std::fs::write(dir.path().join("edited.docx"), edited).unwrap();
-    let (code, out, err) = run(
-        dir.path(),
-        &[
-            "validate",
-            "edited.docx",
-            "--rules",
-            "edits",
-            "--original",
-            "original.docx",
-            "--author",
-            "Bob",
-            "--json",
-        ],
-    );
-    assert!(err.is_empty(), "{err}");
-    let findings = out
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    (code, findings)
-}
-
-fn foreign_plan(author: &str, kind: &str) -> Vec<u8> {
-    let operation = if kind == "replace" {
-        serde_json::json!({"kind":"replace", "paragraph":"p0", "find":"beta", "replacement":"new"})
-    } else {
-        serde_json::json!({"kind":"insert", "paragraph":"p0", "after":"tail", "text":" extra"})
-    };
-    let plan = jubarte::edit::EditPlan::from_json(
-        &serde_json::json!({
-            "schema_version":1, "author":author, "date":"2026-02-01T00:00:00Z",
-            "existing_revisions":"keep", "operations":[operation]
-        })
-        .to_string(),
-    )
-    .unwrap();
-    jubarte::edit::apply_plan(&docx(FOREIGN_HISTORY), &plan)
-        .unwrap()
-        .redline
-}
-
-#[test]
-fn foreign_history_self_audit_exits_zero() {
-    let (code, findings) = foreign_audit(&docx(FOREIGN_HISTORY));
-    assert_eq!((code, findings), (0, vec![]));
-}
-
-#[test]
-fn foreign_history_bobs_split_insertion_exits_zero() {
-    let (code, findings) = foreign_audit(&foreign_plan("Bob", "replace"));
-    assert_eq!((code, findings), (0, vec![]));
-}
-
-#[test]
-fn foreign_history_alices_new_revision_exits_two_with_one_finding() {
-    let (code, findings) = foreign_audit(&foreign_plan("Alice", "insert"));
-    assert_eq!(code, 2);
-    let foreign: Vec<_> = findings
-        .iter()
-        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
-        .collect();
-    assert_eq!(foreign.len(), 1, "{findings:?}");
-    assert!(
-        foreign[0]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with(" by Alice is new")
-    );
-}
-
-#[test]
-fn foreign_history_rejected_insertion_exits_two_and_names_the_gone_revision() {
-    let edited = jubarte::changes::reject_changes(
-        &docx(FOREIGN_HISTORY),
-        &jubarte::changes::ChangeFilter::ids(["r1"]),
-    )
-    .unwrap();
-    let (code, findings) = foreign_audit(&edited);
-    assert_eq!(code, 2);
-    let foreign: Vec<_> = findings
-        .iter()
-        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
-        .collect();
-    assert_eq!(foreign.len(), 1, "{findings:?}");
-    assert_eq!(foreign[0]["message"], "Alice's r1 in the original is gone");
-}
-
-#[test]
-fn foreign_history_carols_new_revision_exits_two_with_one_finding() {
-    let (code, findings) = foreign_audit(&foreign_plan("Carol Diaz", "insert"));
-    assert_eq!(code, 2);
-    let foreign: Vec<_> = findings
-        .iter()
-        .filter(|f| f["code"] == "FOREIGN_AUTHOR")
-        .collect();
-    assert_eq!(foreign.len(), 1, "{findings:?}");
-    assert!(
-        foreign[0]["message"]
-            .as_str()
-            .unwrap()
-            .ends_with(" by Carol Diaz is new")
-    );
-}
-
-#[test]
-fn foreign_swapped_deletions_exit_two() {
-    let carrier = |id, text| {
-        format!(
-            r#"<w:del w:id="{id}" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
-        )
-    };
-    let body = |left, right| {
-        format!(
-            r#"<w:p>{}<w:ins w:id="2" w:author="Carol Diaz"><w:r><w:t>new rate</w:t></w:r></w:ins>{}</w:p>"#,
-            carrier(1, left),
-            carrier(3, right)
-        )
-    };
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("original.docx"),
-        docx(&body("penalty", "bonus")),
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("edited.docx"),
-        docx(&body("bonus", "penalty")),
-    )
-    .unwrap();
-    let (code, out, err) = run(
-        dir.path(),
-        &[
-            "validate",
-            "edited.docx",
-            "--rules",
-            "edits",
-            "--original",
-            "original.docx",
-            "--author",
-            "Bob",
-            "--json",
-        ],
-    );
-    assert!(err.is_empty(), "{err}");
-    assert_eq!(code, 2, "{out}");
-    assert!(
-        out.lines().any(
-            |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["code"]
-                == "FOREIGN_AUTHOR"
-        ),
-        "{out}"
-    );
-}
-
-/// Settling keeps every id (#1264); `--repair` is where ids still change,
-/// and only the duplicated ones: two insertions sharing w:id 5 come apart,
-/// while the comment and bookmark beside them keep theirs.
-#[test]
-fn repair_still_renumbers_duplicates() {
-    use common::docx::{Part, W_NS, docx_with};
-    let dir = tempfile::tempdir().unwrap();
-    let body = format!(
-        r#"{SAME_ID}<w:p><w:commentRangeStart w:id="7"/><w:bookmarkStart w:id="42" w:name="kept"/><w:r><w:t>Noted.</w:t></w:r><w:bookmarkEnd w:id="42"/><w:commentRangeEnd w:id="7"/><w:r><w:commentReference w:id="7"/></w:r></w:p>"#
-    );
-    let comments = format!(
-        r#"<w:comments xmlns:w="{W_NS}"><w:comment w:id="7" w:author="Bob" w:date="2026-10-18T12:00:00Z" w:initials="B"><w:p><w:r><w:t>Note.</w:t></w:r></w:p></w:comment></w:comments>"#
-    );
-    let source = docx_with(
-        &body,
-        &[Part {
-            name: "word/comments.xml",
-            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
-            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
-            xml: &comments,
-        }],
-    );
-    std::fs::write(dir.path().join("same.docx"), source).unwrap();
-    let (code, out, _) = run(
-        dir.path(),
-        &["validate", "same.docx", "--repair", "fixed.docx", "-q"],
-    );
-    assert_eq!(code, 0, "{out}");
-    let fixed = std::fs::read(dir.path().join("fixed.docx")).unwrap();
-    let xml = common::docx::part_string(&fixed, "word/document.xml").unwrap();
-    let ins: Vec<&str> = xml
-        .match_indices("<w:ins w:id=\"")
-        .map(|(at, m)| {
-            let id = &xml[at + m.len()..];
-            &id[..id.find('"').unwrap()]
-        })
-        .collect();
-    assert_eq!(ins.len(), 2, "{xml}");
-    assert_ne!(ins[0], ins[1], "{xml}");
-    for marker in [
-        r#"<w:commentRangeStart w:id="7""#,
-        r#"<w:commentReference w:id="7""#,
-        r#"<w:bookmarkStart w:id="42""#,
-    ] {
-        assert!(xml.contains(marker), "{marker} in {xml}");
-    }
-    let comments = common::docx::part_string(&fixed, "word/comments.xml").unwrap();
-    assert!(comments.contains(r#"w:id="7""#), "{comments}");
 }

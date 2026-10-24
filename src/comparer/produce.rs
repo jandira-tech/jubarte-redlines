@@ -1579,7 +1579,8 @@ fn props_signature(dom: &Dom, n: NodeId) -> String {
         return String::new();
     };
     let mut attrs: Vec<String> = dom
-        .attributes_iter(n)
+        .attributes(n)
+        .into_iter()
         .filter(|(k, _)| k.namespace_name() != PT::URI && !k.local_name().starts_with("rsid"))
         .map(|(k, v)| {
             format!(
@@ -1777,7 +1778,7 @@ pub fn produce_new_wml_markup_from_correlated_sequence(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod opaque_text_tests {
     //! Direct coverage for `delete_text_in_opaque` (private). Pins the
     //! status→text-kind contract — in particular that `MovedSource` renames `w:t`
@@ -1875,7 +1876,7 @@ mod opaque_text_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tblpr_order_tests {
     //! Word-validity regression: a synthesized `w:tblW` must land in its
     //! `CT_TblPrBase` schema slot (after tblpPr/bidiVisual/...), not pinned
@@ -1910,7 +1911,7 @@ mod tblpr_order_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod content_control_source_order_regressions {
     use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
     use crate::namespaces::W;
@@ -2031,7 +2032,7 @@ mod content_control_source_order_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod run_format_history_regressions {
     use super::*;
     use crate::comparer::atoms::FormatChangeInfo;
@@ -2268,7 +2269,7 @@ mod run_format_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod authored_control_identity_regressions {
     use super::same_authored_control;
     use crate::namespaces::W;
@@ -2314,7 +2315,7 @@ mod authored_control_identity_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod repeated_control_tag_regressions {
     use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
     use crate::namespaces::W;
@@ -2411,7 +2412,7 @@ mod repeated_control_tag_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod reordered_retained_control_identity_regression {
     use super::*;
     use std::sync::Arc;
@@ -2496,7 +2497,7 @@ mod reordered_retained_control_identity_regression {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_ruby_math_ownership {
     use super::*;
     use crate::namespaces::M;
@@ -2506,7 +2507,8 @@ mod coverage_ruby_math_ownership {
             return format!("text:{:?}", dom.text_value(node));
         };
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| {
                 name.namespace_name() != PT::URI
                     && name.namespace_name() != "http://www.w3.org/2000/xmlns/"
@@ -2647,7 +2649,7 @@ mod coverage_ruby_math_ownership {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nontext_run_format_history_tests {
     use super::*;
     use crate::comparer::atoms::FormatChangeInfo;
@@ -2657,7 +2659,8 @@ mod nontext_run_format_history_tests {
 
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| (format!("{name:?}"), value))
             .collect::<Vec<_>>();

@@ -48,12 +48,3 @@ def test_keep_adds_my_changes_beside_theirs() -> None:
 def test_keep_is_the_only_new_policy() -> None:
     with pytest.raises(ValueError, match="keep"):
         EditPlan(author="A", existing_revisions="maybe")  # type: ignore[arg-type]
-
-
-def test_capabilities_do_not_claim_skip_failed() -> None:
-    # The binding's apply takes no --skip-failed; only the CLI skips.
-    import jubarte_redlines as jubarte
-
-    caps = jubarte.capabilities()
-    assert caps["runtime"] == "python"
-    assert caps["operations"]["edit_skip_failed"] is False

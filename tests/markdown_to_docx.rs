@@ -195,7 +195,7 @@ fn critic_markup_becomes_revisions_and_comments() {
     let xml = document_xml(&docx);
     assert_eq!(xml.matches("<w:commentRangeStart ").count(), 3);
     assert_eq!(xml.matches("<w:commentReference ").count(), 3);
-    assert!(xml.contains("w:author=\"Jubarte\""));
+    assert!(xml.contains("w:author=\"Redline\""));
     assert!(
         !xml.contains("<w:highlight"),
         "a commented highlight is the comment's range"
@@ -594,8 +594,7 @@ fn images_are_embedded_through_the_loader() {
     assert!(
         part_string(&written.docx, "word/media/image1.png").is_some() || {
             let zip = zip::ZipArchive::new(Cursor::new(&written.docx)).unwrap();
-            zip.file_names()
-                .any(|n| n.expect("decode ZIP fixture name") == "word/media/image1.png")
+            zip.file_names().any(|n| n == "word/media/image1.png")
         }
     );
 }
@@ -1077,8 +1076,8 @@ fn a_block_added_after_a_paragraph_leaves_that_paragraph_as_it_was() {
 #[test]
 fn attributions_name_the_author_and_date_of_the_change_before_them() {
     let docx = write(
-        "A{++b++}{noid Ana Lima (2026-01-02T03:04:00Z)} c{~~d~>e~~}{noid Bo (2026-02-03T04:05:06Z)}\
-         {noid Cy (2026-03-04T05:06:07Z)} f{--g--}{noid (2026-04-05T06:07:08+01:00)}.\n\n\
+        "A{++b++}{>>Ana Lima (2026-01-02T03:04:00Z)<<} c{~~d~>e~~}{>>Bo (2026-02-03T04:05:06Z)<<}\
+         {>>Cy (2026-03-04T05:06:07Z)<<} f{--g--}{>>(2026-04-05T06:07:08+01:00)<<}.\n\n\
          {==h==}{>>Dee (2026-05-06T07:08:09Z): Why?<<} i{++j++}{>>Ana Lima<<}\n",
     );
     let xml = document_xml(&docx);
@@ -1091,12 +1090,12 @@ fn attributions_name_the_author_and_date_of_the_change_before_them() {
         changes,
         [
             r#"w:author="Ana Lima" w:date="2026-01-02T03:04:00Z""#,
-            // A substitution writes its deleted side before its live insertion.
-            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            // A substitution is written as Word writes one: the inserted
+            // side (Cy's) before the deleted side (Bo's).
             r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
-            // View offsets write Word's wall clock beside the UTC instant.
-            r#"w:author="Jubarte" w:date="2026-04-05T06:07:08Z" w16du:dateUtc="2026-04-05T05:07:08Z""#,
-            r#"w:author="Jubarte" w:date="1970-01-01T00:00:00Z""#,
+            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
+            r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
         ]
     );
     // Two real comments: one named, and one whose text has no date.
@@ -1303,7 +1302,7 @@ fn a_range_split_into_highlights_is_one_comment() {
     // How a comment range that crosses paragraphs and changes is read from
     // Word: pieces, with the comment after the last.
     let docx = write(
-        "Start {==of a range.==}\n\n{==The middle.==}\n\n{==The{++ new++}{noid Ana (2026-01-02T03:04:00Z)} end==}{>>Bo (2026-01-02T03:05:00Z): Note<<} after.\n\n\
+        "Start {==of a range.==}\n\n{==The middle.==}\n\n{==The{++ new++}{>>Ana (2026-01-02T03:04:00Z)<<} end==}{>>Bo (2026-01-02T03:05:00Z): Note<<} after.\n\n\
          {==apart==} text {==b==}{>>n<<}\n",
     );
     let xml = document_xml(&docx);
@@ -1315,7 +1314,7 @@ fn a_range_split_into_highlights_is_one_comment() {
     assert_eq!(xml.matches("<w:highlight ").count(), 1, "{xml}");
     // A comment after an attribution is on its own point, not the change.
     let docx =
-        write("a{--b--}{noid Bo (2026-01-02T03:04:00Z)}{>>Cy (2026-01-02T03:05:00Z): why<<} c\n");
+        write("a{--b--}{>>Bo (2026-01-02T03:04:00Z)<<}{>>Cy (2026-01-02T03:05:00Z): why<<} c\n");
     let xml = document_xml(&docx);
     let start = xml.find("<w:commentRangeStart").unwrap();
     assert!(xml.find("</w:del>").unwrap() < start, "{xml}");
@@ -1325,7 +1324,7 @@ fn a_range_split_into_highlights_is_one_comment() {
 fn comments_as_read_from_word_keep_their_ranges_and_authors() {
     let docx = write(
         "An {==empty comment==}{>>Émile Zola-Ng (2026-10-01T00:20:00Z)<<} and \
-         {++{==inserted text==}++}{noid Ana (2026-10-01T00:45:00Z)}{>>Carla (2026-10-01T00:50:00Z): Good.<<}.\n",
+         {++{==inserted text==}++}{>>Ana (2026-10-01T00:45:00Z)<<}{>>Carla (2026-10-01T00:50:00Z): Good.<<}.\n",
     );
     let comments = part_string(&docx, "word/comments.xml").unwrap();
     assert!(
@@ -2126,19 +2125,12 @@ fn scholar_sets_a_manuscript_as_latex_does() {
     for expected in [
         r#"w:ascii="Latin Modern Roman""#,
         r#"<w:sz w:val="20"/>"#,
+        r#"w:line="240" w:lineRule="exact""#,
+        r#"w:after="120""#,
         r#"<w:jc w:val="both"/>"#,
     ] {
         assert!(normal.contains(expected), "{expected}: {normal}");
     }
-    // The body's spacing is the document's default, where Word keeps it.
-    let styles = part_string(&docx, "word/styles.xml").unwrap();
-    assert!(
-        styles.contains(
-            r#"<w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="exact"/></w:pPr></w:pPrDefault>"#
-        ),
-        "{styles}"
-    );
-    assert!(!normal.contains("<w:spacing"), "{normal}");
     // A heading takes Latin Modern Roman from Normal, which it is based
     // on, so it names no font of its own. Heading 3 is 10pt like Normal,
     // so it names no size either.
@@ -2271,79 +2263,4 @@ fn converting_the_same_markdown_is_deterministic() {
             .docx;
         assert_eq!(first, docx, "the same Markdown wrote a different docx");
     }
-}
-
-/// A reference whose kept custom XML part carries `w16du:dateUtc`: the
-/// namespace pass rewrites only WordprocessingML roots, so the writer
-/// neither panics nor touches a part it did not write (PR #1127 review).
-fn written_with_custom_part(item: &str) -> Vec<u8> {
-    let template = std::fs::read("tests/fixtures/redline-inpi/original-new.docx").unwrap();
-    let reference = common::docx::replace_entry(&template, "customXml/item1.xml", item.as_bytes());
-    let docx = markdown_to_docx(
-        "Body {++text++}{noid Ana (2026-10-01T09:00:00-04:00)}.\n",
-        &DocxOptions {
-            reference: Some(&reference),
-            ..DocxOptions::default()
-        },
-    )
-    .expect("the writer accepts a reference with any custom XML part")
-    .docx;
-    assert_word_valid_package(&docx);
-    assert!(
-        document_xml(&docx).contains(
-            r#"xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du""#
-        ),
-        "the main part still declares the extension it uses"
-    );
-    docx
-}
-
-#[test]
-fn a_kept_part_with_no_word_element_is_left_alone() {
-    let item = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><data xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/>"#;
-    let docx = written_with_custom_part(item);
-    assert_eq!(
-        part_string(&docx, "customXml/item1.xml").as_deref(),
-        Some(item)
-    );
-}
-
-#[test]
-fn a_kept_part_whose_first_word_tag_is_a_child_keeps_its_root() {
-    let item = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><!-- <w:note/> --><data xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du"><w:p w16du:dateUtc="2026-10-01T13:00:00Z"/></data>"#;
-    let docx = written_with_custom_part(item);
-    assert_eq!(
-        part_string(&docx, "customXml/item1.xml").as_deref(),
-        Some(item)
-    );
-}
-
-#[test]
-fn a_kept_part_whose_w_prefix_is_custom_is_left_alone() {
-    let item = r#"<w:data xmlns:w="urn:custom" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"><w:x/></w:data>"#;
-    let docx = written_with_custom_part(item);
-    assert_eq!(
-        part_string(&docx, "customXml/item1.xml").as_deref(),
-        Some(item)
-    );
-}
-
-#[test]
-fn a_kept_part_whose_w_prefix_is_custom_and_date_is_on_a_child_is_left_alone() {
-    let item = r#"<w:data xmlns:w="urn:custom"><w:x xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/></w:data>"#;
-    let docx = written_with_custom_part(item);
-    assert_eq!(
-        part_string(&docx, "customXml/item1.xml").as_deref(),
-        Some(item)
-    );
-}
-
-#[test]
-fn a_kept_part_whose_w_prefix_is_unbound_on_the_root_is_left_alone() {
-    let item = r#"<w:data><w:x xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-01T13:00:00Z"/></w:data>"#;
-    let docx = written_with_custom_part(item);
-    assert_eq!(
-        part_string(&docx, "customXml/item1.xml").as_deref(),
-        Some(item)
-    );
 }

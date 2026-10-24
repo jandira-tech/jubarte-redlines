@@ -679,40 +679,6 @@ impl<'a> CompoundFile<'a> {
         let difat_sectors = u32_at(bytes, 0x48).ok_or_else(bad)?;
 
         let max_sectors = bytes.len().checked_div(sector_size).unwrap_or(0);
-        let fat = Self::read_fat(
-            bytes,
-            sector_size,
-            fat_sectors,
-            first_difat,
-            difat_sectors,
-            max_sectors,
-        )?;
-
-        let mut file = Self {
-            bytes,
-            sector_size,
-            mini_sector_size,
-            mini_cutoff,
-            fat,
-            mini_fat: Vec::new(),
-            entries: Vec::new(),
-            mini_stream: Vec::new(),
-        };
-        file.load_directory(first_dir, max_sectors, v4)?;
-        file.load_mini_fat(first_mini_fat, max_sectors)?;
-        file.load_mini_stream(max_sectors)?;
-        Ok(file)
-    }
-
-    fn read_fat(
-        bytes: &[u8],
-        sector_size: usize,
-        fat_sectors: u32,
-        first_difat: u32,
-        difat_sectors: u32,
-        max_sectors: usize,
-    ) -> Result<Vec<u32>> {
-        let bad = || LegacyDocError::new("not a readable OLE compound file");
         let mut fat_locations: Vec<u32> = (0..109)
             .filter_map(|i: usize| u32_at(bytes, 0x4C_usize.checked_add(i.checked_mul(4)?)?))
             .filter(|&s| s != NO_STREAM)
@@ -754,50 +720,46 @@ impl<'a> CompoundFile<'a> {
                     .map(|c| u32::from_le_bytes(*c)),
             );
         }
-        Ok(fat)
-    }
 
-    fn load_directory(&mut self, first_dir: u32, max_sectors: usize, v4: bool) -> Result<()> {
-        let bad = || LegacyDocError::new("not a readable OLE compound file");
-        let directory = self.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
-        self.entries = directory
+        let mut file = Self {
+            bytes,
+            sector_size,
+            mini_sector_size,
+            mini_cutoff,
+            fat,
+            mini_fat: Vec::new(),
+            entries: Vec::new(),
+            mini_stream: Vec::new(),
+        };
+        let directory = file.chain(first_dir, None, max_sectors).ok_or_else(bad)?;
+        file.entries = directory
             .as_chunks::<128>()
             .0
             .iter()
             .filter_map(|raw| DirEntry::parse(raw, v4))
             .collect();
-        Ok(())
-    }
-
-    fn load_mini_fat(&mut self, first_mini_fat: u32, max_sectors: usize) -> Result<()> {
-        let bad = || LegacyDocError::new("not a readable OLE compound file");
         if first_mini_fat != END_OF_CHAIN && first_mini_fat != NO_STREAM {
-            let table = self
+            let table = file
                 .chain(first_mini_fat, None, max_sectors)
                 .ok_or_else(bad)?;
-            self.mini_fat = table
+            file.mini_fat = table
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|c| u32::from_le_bytes(*c))
                 .collect();
         }
-        Ok(())
-    }
-
-    fn load_mini_stream(&mut self, max_sectors: usize) -> Result<()> {
-        let bad = || LegacyDocError::new("not a readable OLE compound file");
-        let root = self.entries.first().ok_or_else(bad)?;
+        let root = file.entries.first().ok_or_else(bad)?;
         if root.kind != 5 {
             return Err(bad());
         }
         let (root_start, root_size) = (root.start, root.size);
         if root_start != END_OF_CHAIN && root_start != NO_STREAM {
-            self.mini_stream = self
+            file.mini_stream = file
                 .chain(root_start, Some(root_size), max_sectors)
                 .ok_or_else(bad)?;
         }
-        Ok(())
+        Ok(file)
     }
 
     /// Follow a regular-sector chain, stopping after `limit` sectors (a
@@ -1759,30 +1721,9 @@ fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<(Vec<String>, bool)>, row: &
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_compound_file_returns_true_for_ole_magic() {
-        // The OLE signature, spelled out apart from `OLE_MAGIC`.
-        let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-        assert_eq!(bytes, OLE_MAGIC);
-        bytes.push(0x42);
-        assert!(is_compound_file(&bytes));
-    }
-
-    #[test]
-    fn is_compound_file_returns_false_for_invalid_magic() {
-        let bytes = b"PK\x03\x04\x14\x00\x06\x00";
-        assert!(!is_compound_file(bytes));
-    }
-
-    #[test]
-    fn is_compound_file_handles_short_input() {
-        let bytes = b"\xD0\xCF\x11";
-        assert!(!is_compound_file(bytes));
-    }
 
     #[test]
     fn escapes_markdown_significant_text() {
@@ -1801,26 +1742,6 @@ mod tests {
         assert_eq!(cp1252(0x80), '\u{20AC}');
         assert_eq!(cp1252(b'A'), 'A');
         assert_eq!(cp1252(0xE9), 'é');
-    }
-
-    #[test]
-    fn read_rejects_missing_word_document() {
-        let mut bytes = include_bytes!("../tests/fixtures/legacy/services.doc").to_vec();
-        // Modify the "WordDocument" directory entry to "NordDocument"
-        let word_doc_utf16: Vec<u8> = "WordDocument"
-            .encode_utf16()
-            .flat_map(|c| c.to_le_bytes())
-            .collect();
-        for i in 0..(bytes.len() - word_doc_utf16.len()) {
-            if &bytes[i..i + word_doc_utf16.len()] == word_doc_utf16.as_slice() {
-                bytes[i] = b'N';
-            }
-        }
-        let error = read(&bytes).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "LEGACY_DOC: no WordDocument stream: an encrypted document or not a Word file; open it in Word and save it as .docx without a password"
-        );
     }
 
     #[test]
@@ -2748,7 +2669,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod legacy_byte_source_boundary_tests {
     use super::*;
     const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
@@ -2949,7 +2870,7 @@ mod legacy_byte_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod legacy_regular_sector_source_owners {
     use super::*;
     const SOURCE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");

@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 16                      # 16 marks shown as 12 changes: 4 insertions, 4 deletions, 4 substitutions
+revisions: 16                      # 16 marks shown as 13 changes: 5 insertions, 5 deletions, 3 substitutions
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -14,19 +14,19 @@ styles:
 ---
 
 <!-- p0 -->
-Del then ins: {~~old~>new~~}{r50+51 @AL}.
+Del then ins: {--old--}{>>r50 @AL<<}{++new++}{>>r51 @AL<<}.
 
 <!-- p1 -->
-Ins then del: {++new++}{r52+53 @AL}{--old--}{r52+53 @AL}.
+Ins then del: {~~old~>new~~}{>>r53+52 @AL<<}.
 
 <!-- p2 -->
-Ins ins del del: {++one ++}{r54 @AL}{++two ++}{r55 @BC}{--three --}{r56 @AL}{--four--}{r57 @BC}.
+Ins ins del del: {++one ++}{>>r54 @AL<<}{~~three ~>two ~~}{>>r56 @AL<<}{>>r55 @BC<<}{--four--}{>>r57 @BC<<}.
 
 <!-- p3 -->
-Two authors: {--hers--}{r58 @AL}{++his++}{r59 @BC}.
+Two authors: {--hers--}{>>r58 @AL<<}{++his++}{>>r59 @BC<<}.
 
 <!-- p4 -->
-Side by side: {~~a~>b~~}{r60+61 @AL}{~~c~>d~~}{r62+63 @AL}.
+Side by side: {--a--}{>>r60 @AL<<}{~~c~>b~~}{>>r62+61 @AL<<}{++d++}{>>r63 @AL<<}.
 
 <!-- p5 -->
-Spaced: {--x--}{r64 @AL} {++y++}{r65 @AL}.
+Spaced: {--x--}{>>r64 @AL<<} {++y++}{>>r65 @AL<<}.

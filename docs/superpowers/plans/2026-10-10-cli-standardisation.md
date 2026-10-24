@@ -1,7 +1,5 @@
 # CLI standardisation: one `-o` rule, one id grammar, one count, one writer
 
-> DOCX publication output is superseded by issue #1140: SUCCESS and a fenced diff of the full before/after agent views replace empty stdout, changed-range views and resolved-lines output. Status lines remain on stderr; non-DOCX output is unchanged.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development or superpowers:executing-plans, task by task. Steps use `- [ ]` checkboxes. Move this file to `docs/superpowers/plans/2026-10-10-cli-standardisation.md` when work starts (Task 0); a copy would leave an untracked original that `jubarte-wasm/build-npm.sh` refuses.
 
 > **Status (reconciled 2026-10-17 against `main` `aba48bd5`): IMPLEMENTED — every D-item landed on `main` under `[Unreleased]` in `CHANGELOG.md` (the version is still 0.12.0 in `Cargo.toml`; the release it ships in is pending).** Evidence: `Format::Json`, `Task`, `output_format()`, one `RenderArgs` and global `-q` in `src/cli.rs`; `read` aliases `text`/`inspect`, `visual-diff` alias `diff-render`, `validate` alias `audit`, `--changed-only` → `--changed-pages` notes (`src/cli.rs:1738-1784`); `inspect::snapshot()`, `changes`/`comments` `ref` fields, `read --json`/`--tables`, `sha256:`, `c5.text`, `ccN`/`pN.ccK`, `edit`/`add` → `FILE_modified.docx`, valueless `--plan`, `-d/--datetime` everywhere, `Redline` default author, one `wrote` line, unified `validate --rules`/`Finding`, `capabilities` text + manifest `formats`/`ids`, Python/npm printing the engine's text.

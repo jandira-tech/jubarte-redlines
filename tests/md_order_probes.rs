@@ -82,141 +82,134 @@ fn again(dir: &Path, markdown: &str, name: &str) -> String {
 /// What the view prints for each probe, and how its `revisions:` line pairs
 /// the same marks.
 const SEEN: &[(&str, &str, &str)] = &[
-    // Nothing between the marks that was there before them: one
-    // replacement, printed in document order (#1359).
+    // Nothing printed between the marks: one substitution.
+    (
+        "direct-vanish",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
+    ),
+    (
+        "style-vanish",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
+    ),
+    (
+        "style-basedon",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
+    ),
+    (
+        "style-vanish-tab",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
+    ),
+    (
+        "soft-hyphen",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
+    ),
+    ("sym", "A {~~old~>new~~}{>>r2+1 @AL<<} Z", "1 substitution"),
     (
         "lrp-only",
-        "A {++new++}{r1+2 @AL}{--old--}{r1+2 @AL} Z",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
         "1 substitution",
     ),
     (
         "empty-run",
-        "A {++new++}{r1+2 @AL}{--old--}{r1+2 @AL} Z",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
         "1 substitution",
-    ),
-    // Content that was there before the marks keeps them two changes, even
-    // where the view prints nothing of it: hidden text, a soft hyphen, a
-    // symbol, a page break.
-    (
-        "direct-vanish",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
-    ),
-    (
-        "style-vanish",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
-    ),
-    (
-        "style-basedon",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
-    ),
-    (
-        "style-vanish-tab",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
-    ),
-    (
-        "soft-hyphen",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
-    ),
-    (
-        "sym",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
     ),
     (
         "page-br",
-        "A {++new++}{r1 @AL}{--old--}{r2 @AL} Z",
-        "1 insertion, 1 deletion",
+        "A {~~old~>new~~}{>>r2+1 @AL<<} Z",
+        "1 substitution",
     ),
     (
         "t-style-vanish",
-        "|{++new++}{r1 @AL}{--old--}{r2 @AL}|",
-        "1 insertion, 1 deletion",
+        "|{~~old~>new~~}{>>r2+1 @AL<<}|",
+        "1 substitution",
     ),
     // A printed tab keeps them apart.
     (
         "empty-t-tab",
-        "A {++new++}{r1 @AL}\t{--old--}{r2 @AL} Z",
+        "A {++new++}{>>r1 @AL<<}\t{--old--}{>>r2 @AL<<} Z",
         "1 insertion, 1 deletion",
     ),
-    // Comments inside, beside or across the marks part nothing.
+    // A comment inside one side stays a substitution; one beside or across
+    // the marks parts them.
     (
         "c-inside",
-        "A {++{==new==}++}{r1+2 @A}{--old--}{r1+2 @A}{>>c0 @A: note<<} Z",
+        "A {~~old~>{==new==}~~}{>>r2+1 @A<<}{>>c0 @A: note<<} Z",
         "1 substitution",
     ),
     (
         "c-between",
-        "A {++new++}{r1+2 @A}{=={--old--}{r1+2 @A}==}{>>c0 @A: note<<} Z",
-        "1 substitution",
+        "A {++new++}{>>r1 @A<<}{=={--old--}{>>r2 @A<<}==}{>>c0 @A: note<<} Z",
+        "1 insertion, 1 deletion",
     ),
     (
         "c-cross",
-        "A {++{==new==}++}{r1+2 @A}{=={--old--}{r1+2 @A}==}{>>c0 @A: note<<} Z",
-        "1 substitution",
+        "A {++{==new==}++}{>>r1 @A<<}{=={--old--}{>>r2 @A<<}==}{>>c0 @A: note<<} Z",
+        "1 insertion, 1 deletion",
     ),
     // A heading's own slug bookmark prints nothing and parts nothing; a
     // name the writer would not give it (`title-01`, a lone `title-1`) is
-    // an anchor of its own, which parts nothing either.
+    // an anchor of its own.
     (
         "h-own-slug",
-        "# {++Title++}{r1+2 @AL}{--Old--}{r1+2 @AL}",
+        "# {~~Old~>Title~~}{>>r2+1 @AL<<}",
         "1 substitution",
     ),
     (
         "h-two",
-        "# {++Title++}{r1+2 @AL}{--Old--}{r1+2 @AL}",
+        "# {~~Old~>Title~~}{>>r2+1 @AL<<}",
         "1 substitution",
     ),
     (
         "h-suffix-01",
-        "# {++Title++}{r1+2 @AL}<a id=\"title-01\"></a>{--Old--}{r1+2 @AL}",
-        "1 substitution",
+        "# {++Title++}{>>r1 @AL<<}<a id=\"title-01\"></a>{--Old--}{>>r2 @AL<<}",
+        "1 insertion, 1 deletion",
     ),
     (
         "h-suffix-1",
-        "# {++Title++}{r1+2 @AL}<a id=\"title-1\"></a>{--Old--}{r1+2 @AL}",
-        "1 substitution",
+        "# {++Title++}{>>r1 @AL<<}<a id=\"title-1\"></a>{--Old--}{>>r2 @AL<<}",
+        "1 insertion, 1 deletion",
     ),
     (
         "h-suffix-1-1",
-        "# {++Intro 1++}{r1+2 @AL}<a id=\"intro-1-1\"></a>{--Old--}{r1+2 @AL}",
-        "1 substitution",
+        "# {++Intro 1++}{>>r1 @AL<<}<a id=\"intro-1-1\"></a>{--Old--}{>>r2 @AL<<}",
+        "1 insertion, 1 deletion",
     ),
     (
         "h-foreign",
-        "# {++Title++}{r1+2 @AL}<a id=\"other\"></a>{--Old--}{r1+2 @AL}",
-        "1 substitution",
+        "# {++Title++}{>>r1 @AL<<}<a id=\"other\"></a>{--Old--}{>>r2 @AL<<}",
+        "1 insertion, 1 deletion",
     ),
     // A cell writes no heading, so its bookmark is an anchor.
     (
         "t-heading",
-        "|{++Title++}{r1+2 @AL}<a id=\"title\"></a>{--Old--}{r1+2 @AL}|",
-        "1 substitution",
+        "|{++Title++}{>>r1 @AL<<}<a id=\"title\"></a>{--Old--}{>>r2 @AL<<}|",
+        "1 insertion, 1 deletion",
     ),
-    // Headers and notes group as the body does, and print no hidden run.
+    // Headers pair as the body does, and print no hidden run.
     (
         "hdr-direct-vanish",
-        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
+        "text: \"{~~old~>new~~}{>>header1.r2+1 @AL<<}\"",
         "2 in header1",
     ),
     (
         "hdr-style-vanish",
-        "text: \"{++new++}{header1.r1 @AL}{--old--}{header1.r2 @AL}\"",
+        "text: \"{~~old~>new~~}{>>header1.r2+1 @AL<<}\"",
         "2 in header1",
     ),
     (
         "fn-style-vanish",
-        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
+        "[^1]: {~~old~>new~~}{>>footnotes.r2+1 @AL<<}",
         "2 in footnotes",
     ),
     (
         "fn-soft",
-        "[^1]: {++new++}{footnotes.r1 @AL}{--old--}{footnotes.r2 @AL}",
+        "[^1]: {~~old~>new~~}{>>footnotes.r2+1 @AL<<}",
         "2 in footnotes",
     ),
 ];
@@ -242,11 +235,11 @@ fn the_text_and_the_count_pair_the_same_marks() {
 
 /// Accepting names the change by the tag the tracked text gives it.
 #[test]
-fn the_accept_id_line_preserves_the_texts_distinct_ids() {
+fn the_accept_id_line_joins_what_the_text_joins() {
     for (name, id_line) in [
-        ("h-own-slug", "<!-- p0 rev r1+2 @AL -->"),
-        ("c-inside", "<!-- p0 rev r1+2 @A -->"),
-        ("style-vanish", "<!-- p0 rev r1 @AL; r2 @AL -->"),
+        ("h-own-slug", "<!-- p0 rev r2+1 @AL -->"),
+        ("c-inside", "<!-- p0 rev r2+1 @A -->"),
+        ("style-vanish", "<!-- p0 rev r2+1 @AL -->"),
     ] {
         let view = read(&probe(name), &["--track-changes", "accept"]);
         assert!(view.contains(id_line), "{name}: no {id_line:?} in\n{view}");
@@ -285,21 +278,6 @@ const SETTLED_LATER: &[(&str, &str)] = &[
     ("hdr-between", "header comment"),
     ("fn-cross", "footnote comment"),
     ("fn-inside", "footnote comment"),
-    // Content between the marks that the view does not print in place
-    // (hidden text, a soft hyphen, a symbol, a page break) is not written
-    // back there: the marks then touch, and are one replacement (#1359).
-    ("direct-vanish", "unprinted content between the marks"),
-    ("style-vanish", "unprinted content between the marks"),
-    ("style-basedon", "unprinted content between the marks"),
-    ("style-vanish-tab", "unprinted content between the marks"),
-    ("soft-hyphen", "unprinted content between the marks"),
-    ("sym", "unprinted content between the marks"),
-    ("page-br", "unprinted content between the marks"),
-    ("hdr-direct-vanish", "unprinted content between the marks"),
-    ("hdr-style-vanish", "unprinted content between the marks"),
-    ("fn-direct-vanish", "unprinted content between the marks"),
-    ("fn-style-vanish", "unprinted content between the marks"),
-    ("fn-soft", "unprinted content between the marks"),
 ];
 
 #[test]
