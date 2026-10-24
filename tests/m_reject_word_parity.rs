@@ -1921,6 +1921,42 @@ fn reject_of_a_paragraph_change_keeps_its_section_break() {
     }
 }
 
+/// Review of #1721: a saved pPr holding a run-mark rPr or a section break
+/// (CT_PPrBase has neither, so only a non-conforming source writes one)
+/// gives neither back on Reject. The live ones stay, once each: no doubled
+/// rPr, and no section break the live paragraph does not have.
+#[test]
+fn reject_of_a_paragraph_change_ignores_a_saved_run_mark_or_section_break() {
+    let stale_mark = "<w:rPr><w:i/></w:rPr>";
+    let stale_section = r#"<w:sectPr><w:pgSz w:w="9000" w:h="15840"/></w:sectPr>"#;
+    let live_mark = "<w:rPr><w:b/></w:rPr>";
+    for (saved, live, marks, sections) in [
+        (stale_mark.to_owned(), live_mark.to_owned(), 1, 1),
+        (stale_section.to_owned(), String::new(), 0, 1),
+        (stale_section.to_owned(), SECTION_ONE.to_owned(), 0, 2),
+        (
+            format!("{stale_mark}{stale_section}"),
+            format!("{live_mark}{SECTION_ONE}"),
+            1,
+            2,
+        ),
+    ] {
+        let body = format!(
+            r#"<w:p><w:pPr><w:jc w:val="center"/>{live}<w:pPrChange w:id="9" {REV}><w:pPr>{saved}</w:pPr></w:pPrChange></w:pPr><w:r><w:t>Y.</w:t></w:r></w:p><w:p><w:r><w:t>Z.</w:t></w:r></w:p>"#
+        );
+        let rejected = reject_revisions(&docx(&body)).unwrap();
+        assert_word_valid_package(&rejected);
+        let xml = part_string(&rejected, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:rPr").count(), marks, "{saved}: {xml}");
+        assert!(
+            !xml.contains("<w:i/>") && !xml.contains("<w:i />"),
+            "{saved}: {xml}"
+        );
+        assert_eq!(xml.matches("<w:sectPr").count(), sections, "{saved}: {xml}");
+        assert!(!xml.contains(r#"w:w="9000""#), "{saved}: {xml}");
+    }
+}
+
 /// #1708: Reject All of jubarte's own redline gives the original back. A
 /// section-final paragraph whose alignment changed keeps its section break
 /// (Word's Reject All of the same redline keeps two sections).
