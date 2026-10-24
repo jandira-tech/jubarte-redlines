@@ -3061,6 +3061,15 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// [`read_word`] for an input a task must open before it writes anything
+/// (`validate --original`): the package is admitted whole
+/// ([`jubarte::admission::admit`]), so a ZIP that holds no Word main part
+/// is refused by name, `CODE: FILE is …`, before any output exists.
+fn read_package(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = read_word(path)?;
+    jubarte::cli::refused_package(path, &bytes).map_or(Ok(bytes), Err)
+}
+
 /// [`read_word`] for a task that reads the document (`read`, `changes`,
 /// `comments`): unless `quiet`, one stderr line says how many validity
 /// findings the input has ([`jubarte::validate::input_notice`]), so they
@@ -3964,19 +3973,29 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
+    // An original that cannot be read, or is no Word package, stops the run
+    // before any repair.
+    let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
         if !job.json {
-            outln!("repaired {} finding(s)", fixed.repaired.len());
+            // A structural repair: the edits' history is a separate check.
+            let history = match job.original {
+                Some(original) => format!("history check against {} follows", original.display()),
+                None => "history not checked (--original, --author)".to_string(),
+            };
+            outln!(
+                "repaired {} finding(s), structure only; {history}",
+                fixed.repaired.len()
+            );
         }
         if !job.quiet {
             eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));
         }
         docx = fixed.docx;
     }
-    let before = job.original.map(read).transpose()?;
     let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
     if let Some(path) = job.baseline {
         // A baseline that is no Word package is refused by its name.

@@ -1523,7 +1523,10 @@ Options:
           fail without it
 
       --repair <FILE>
-          Write the repaired package here; remaining findings still fail
+          Write the repaired package here; remaining findings still fail.
+
+          A structural repair: it does not check the edits' history. Add --original and
+          --author for that.
 
       --baseline <FILE>
           The document the edits started from: its findings print as already in the

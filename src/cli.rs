@@ -1614,6 +1614,9 @@ pub enum Command {
         #[arg(long)]
         strict: bool,
         /// Write the repaired package here; remaining findings still fail.
+        ///
+        /// A structural repair: it does not check the edits' history.
+        /// Add --original and --author for that.
         #[arg(long, value_name = "FILE")]
         repair: Option<PathBuf>,
         /// The document the edits started from: its findings print as
@@ -2116,6 +2119,25 @@ pub fn refused_input(path: &Path, bytes: &[u8], word: bool) -> Option<String> {
             refused.message
         )
     })
+}
+
+/// [`refused_input`] for a package a task reads whole (`validate
+/// --original`): the bytes must also pass admission
+/// ([`crate::admission::admit`]), so a ZIP that holds no Word document is
+/// refused before anything is written. `None` when the package is
+/// admitted.
+#[must_use]
+pub fn refused_package(path: &Path, bytes: &[u8]) -> Option<String> {
+    crate::admission::admit(bytes, crate::admission::InputLimits::default())
+        .err()
+        .map(|refused| {
+            format!(
+                "{}: {} is {}",
+                refused.code(),
+                path.display(),
+                refused.message
+            )
+        })
 }
 
 /// The line a writing task prints on stderr for the file it wrote:

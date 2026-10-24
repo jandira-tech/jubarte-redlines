@@ -1474,10 +1474,37 @@ fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     Some((dom, root))
 }
 
+/// The package's XML parts: by name, or by content type (a main document
+/// part may be `word/main.dat`).
 fn xml_parts(pkg: &PartFs) -> Vec<String> {
     pkg.parts()
         .into_iter()
-        .filter(|name| name.ends_with(".xml"))
+        .filter(|name| {
+            crate::opc::ends_with_ignore_case(name, ".xml")
+                || pkg
+                    .content_type_for(name)
+                    .is_some_and(|ct| crate::opc::is_xml_content_type(&ct))
+        })
+        .collect()
+}
+
+/// The XML parts that hold WordprocessingML: every XML part but custom XML
+/// data, which holds the application's own XML whatever its name
+/// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
+/// reach, the package's own included). OpenXmlValidator checks no revision
+/// id there, and no paragraph id (codex on #1666).
+fn wordml_parts(pkg: &PartFs) -> Vec<String> {
+    let parts = pkg.parts();
+    let data =
+        crate::opc::custom_xml_data(std::iter::once(("", pkg.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                pkg.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ));
+    xml_parts(pkg)
+        .into_iter()
+        .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
         .collect()
 }
 
@@ -1694,7 +1721,7 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
@@ -1707,7 +1734,9 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Revision elements whose `w:id` must be unique among elements of the
 /// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
 /// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
-/// Range ends share their starts' ids and comment/bookmark ids have other scopes.
+/// A range end shares its start's id, but two ends of one kind may not
+/// share one; OpenXmlValidator lets two `customXmlMoveToRangeEnd` do so.
+/// Comment and bookmark ids have other scopes.
 pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
@@ -1718,7 +1747,16 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
                     | "moveFrom"
                     | "moveTo"
                     | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
                     | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "customXmlInsRangeStart"
+                    | "customXmlInsRangeEnd"
+                    | "customXmlDelRangeStart"
+                    | "customXmlDelRangeEnd"
+                    | "customXmlMoveFromRangeStart"
+                    | "customXmlMoveFromRangeEnd"
+                    | "customXmlMoveToRangeStart"
                     | "tblGridChange"
                     | "tblPrExChange"
                     | "numberingChange"
@@ -1732,14 +1770,100 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
 /// even though both use `ins`, `del`, `moveFrom` or `moveTo`. Row and
 /// paragraph marks share their own scope; the immediate parent alone is
 /// therefore not the scope. Keep detection and repair on the same key.
-fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
-    let property_mark = matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+/// The SDK compares some kinds' ids case-blind (`ABC` repeats `abc`).
+fn revision_id_key(dom: &Dom, node: NodeId, local: &str, id: &str) -> String {
+    let property_mark = matches!(local, "ins" | "del" | "moveFrom" | "moveTo")
         && dom.parent(node).is_some_and(|parent| {
             dom.name(parent).is_some_and(|parent| {
                 parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
             })
         });
-    format!("{}:{property_mark}:{id}", name.local_name())
+    if id_case_blind(local) {
+        format!("{local}:{property_mark}:{}", id.to_lowercase())
+    } else {
+        format!("{local}:{property_mark}:{id}")
+    }
+}
+
+/// Whether the SDK compares a kind's ids case-blind (`ABC` repeats `abc`).
+fn id_case_blind(local: &str) -> bool {
+    matches!(
+        local,
+        "customXmlDelRangeStart" | "customXmlDelRangeEnd" | "moveToRangeStart"
+    )
+}
+
+/// Two ids compared as [`revision_id_key`] compares them, without building
+/// either key.
+fn same_revision_id(case_blind: bool, a: &str, b: &str) -> bool {
+    if !case_blind {
+        a == b
+    } else if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a.to_lowercase() == b.to_lowercase()
+    }
+}
+
+/// The end that closes a range start of this kind.
+fn range_end_of(start: &str) -> Option<&'static str> {
+    Some(match start {
+        "moveFromRangeStart" => "moveFromRangeEnd",
+        "moveToRangeStart" => "moveToRangeEnd",
+        "customXmlInsRangeStart" => "customXmlInsRangeEnd",
+        "customXmlDelRangeStart" => "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart" => "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart" => "customXmlMoveToRangeEnd",
+        _ => return None,
+    })
+}
+
+/// The range start a range end of this kind closes.
+fn range_start_of(end: &str) -> Option<&'static str> {
+    Some(match end {
+        "moveFromRangeEnd" => "moveFromRangeStart",
+        "moveToRangeEnd" => "moveToRangeStart",
+        "customXmlInsRangeEnd" => "customXmlInsRangeStart",
+        "customXmlDelRangeEnd" => "customXmlDelRangeStart",
+        "customXmlMoveFromRangeEnd" => "customXmlMoveFromRangeStart",
+        "customXmlMoveToRangeEnd" => "customXmlMoveToRangeStart",
+        _ => return None,
+    })
+}
+
+/// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
+/// checks: part, then record type and id ([`revision_id_key`]). A Strict
+/// package is read as the Transitional one an edit writes.
+pub(crate) fn revision_id_occurrences(
+    docx: &[u8],
+) -> Result<HashMap<(String, String), usize>, ValidateError> {
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
+    let pkg = PartFs::open(&transitional)?;
+    let mut out = HashMap::new();
+    for part in wordml_parts(&pkg) {
+        let Some((dom, root)) = parse_part(&pkg, &part) else {
+            continue;
+        };
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let id_name = W::id();
+        for e in dom.descendants(root, None) {
+            if let Some(name) = dom.name(e)
+                && has_unique_revision_id(&name)
+                && let Some(id) = dom.attribute(e, &id_name)
+            {
+                *counts
+                    .entry(revision_id_key(&dom, e, name.local_name(), id))
+                    .or_default() += 1;
+            }
+        }
+        out.extend(
+            counts
+                .into_iter()
+                .map(|(key, count)| ((part.clone(), key), count)),
+        );
+    }
+    Ok(out)
 }
 
 fn collect_ids(
@@ -1750,6 +1874,9 @@ fn collect_ids(
     out: &mut Vec<Finding>,
     part: &str,
 ) {
+    // Repeated range starts not yet paired with a repeated end, by key.
+    let mut repeated_starts: HashMap<String, usize> = HashMap::new();
+    let id_name = W::id();
     for e in dom.descendants(root, None) {
         let Some(name) = dom.name(e) else {
             continue;
@@ -1758,15 +1885,30 @@ fn collect_ids(
         // Revision ids are scoped by record type, not by the union of
         // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
-            && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
+            && let Some(id) = dom.attribute(e, &id_name)
         {
-            out.push(Finding::new(
+            let key = revision_id_key(dom, e, name.local_name(), id);
+            if rev_ids.insert(key.clone()) {
+                continue;
+            }
+            let mut finding = Finding::new(
                 "DUPLICATE_REVISION_ID",
                 part,
                 element_path(dom, e),
                 format!("duplicate w:id '{id}' on revision markup in '{part}' ({local}:{id})"),
-            ));
+            );
+            // Repair renames an end only with a repeated start before it
+            // ([`renumber_duplicate_revision_ids`]); an end with none stays
+            // as it was (CodeRabbit on #1666).
+            if local.ends_with("RangeStart") {
+                *repeated_starts.entry(key).or_default() += 1;
+            } else if let Some(start) = range_start_of(local) {
+                match repeated_starts.get_mut(&revision_id_key(dom, e, start, id)) {
+                    Some(n) if *n > 0 => *n -= 1,
+                    _ => finding.repairable = false,
+                }
+            }
+            out.push(finding);
         }
         if local == "docPr" {
             let wp_id = XName::get(
@@ -1832,7 +1974,7 @@ fn out_of_range_para_ids(xml: &str) -> Vec<(&'static str, String)> {
 }
 
 fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some(xml) = pkg.part_string(&name) else {
             continue;
         };
@@ -2859,13 +3001,14 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
 }
 
 /// A second use of a revision id on the same record type is renumbered
-/// from the part's highest `w:id` upwards; a move range start takes its end
-/// along. Accepted cross-kind pairs retain their ids.
+/// from the part's highest `w:id` upwards; a range start takes its end
+/// along. An end is never renumbered on its own: which start it closes is
+/// not known. Accepted cross-kind pairs retain their ids.
 pub(crate) fn renumber_duplicate_revision_ids(
     dom: &mut Dom,
     root: NodeId,
 ) -> Vec<(String, String)> {
-    let id_name = W::name("id");
+    let id_name = W::id();
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
         .iter()
@@ -2874,36 +3017,59 @@ pub(crate) fn renumber_duplicate_revision_ids(
         .max()
         .unwrap_or(0)
         + 1;
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut renames: Vec<(NodeId, String)> = Vec::new();
-    let mut revisions = Vec::new();
+    // The revision records with an id (range ends aside), and how often
+    // each key occurs.
+    let mut starts = Vec::new();
+    let mut count: HashMap<String, usize> = HashMap::new();
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
-        let local = name.local_name();
-        if !has_unique_revision_id(&name) {
+        if !has_unique_revision_id(&name) || name.local_name().ends_with("RangeEnd") {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        if seen.insert(revision_id_key(dom, n, &name, &id)) {
+        let key = revision_id_key(dom, n, name.local_name(), &id);
+        *count.entry(key.clone()).or_default() += 1;
+        starts.push((i, n, name, id, key));
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    // Range ends a start before has taken.
+    let mut taken: HashSet<NodeId> = HashSet::new();
+    let mut renames: Vec<(NodeId, String)> = Vec::new();
+    let mut revisions = Vec::new();
+    for (i, n, name, id, key) in starts {
+        if count[&key] < 2 {
+            continue;
+        }
+        // A range start's end shares its id: the first that follows with
+        // it, by the rule the duplicate check reads (`ABC` closes `abc`
+        // where ids compare case-blind, MiniMax on #1666), and that no
+        // start before has taken, so three starts of one id before their
+        // three ends pair one to one (codex on #1666).
+        let end = range_end_of(name.local_name()).and_then(|end_local| {
+            let blind = id_case_blind(end_local);
+            all[i + 1..].iter().copied().find(|&e| {
+                !taken.contains(&e)
+                    && dom.name(e).is_some_and(|x| {
+                        x.namespace_name() == W::URI && x.local_name() == end_local
+                    })
+                    && dom
+                        .attribute(e, &id_name)
+                        .is_some_and(|own| same_revision_id(blind, own, &id))
+            })
+        });
+        if let Some(end) = end {
+            taken.insert(end);
+        }
+        if seen.insert(key) {
             continue;
         }
         let fresh = next.to_string();
         next += 1;
-        revisions.push((id.clone(), fresh.clone()));
+        revisions.push((id, fresh.clone()));
         renames.push((n, fresh.clone()));
-        let end_local = match local {
-            "moveFromRangeStart" => Some("moveFromRangeEnd"),
-            "moveToRangeStart" => Some("moveToRangeEnd"),
-            _ => None,
-        };
-        if let Some(end_local) = end_local
-            && let Some(&end) = all[i + 1..].iter().find(|&&e| {
-                dom.name(e).is_some_and(|x| x.local_name() == end_local)
-                    && dom.attribute(e, &id_name) == Some(id.as_str())
-            })
-        {
+        if let Some(end) = end {
             renames.push((end, fresh));
         }
     }
@@ -2917,7 +3083,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
 /// into Word's range, and every reference to it (`paraIdParent`, the
 /// comment parts) follows.
 fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
-    let parts = xml_parts(pkg);
+    let parts = wordml_parts(pkg);
     let mut used: HashSet<u32> = HashSet::new();
     for name in &parts {
         let Some(xml) = pkg.part_string(name) else {
@@ -4322,6 +4488,26 @@ mod literal_revision_repair_contract_tests {
         let (mut dom, doc) = tree(source);
         let root = dom.root(doc).unwrap();
         let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+
+    #[test]
+    fn three_starts_of_one_id_before_their_ends_pair_one_to_one() {
+        // Each start takes the first end of its id that no earlier start
+        // has taken; the first start keeps its id (codex on #1666).
+        let range = |tag: &str, id: u32| format!(r#"<w:customXmlIns{tag} w:id="{id}"/>"#);
+        let body = |ids: [u32; 3]| {
+            let starts: String = ids.iter().map(|&id| range("RangeStart", id)).collect();
+            let ends: String = ids.iter().map(|&id| range("RangeEnd", id)).collect();
+            format!("<w:p>{starts}<w:r><w:t>held</w:t></w:r>{ends}</w:p>")
+        };
+        let (mut dom, doc) = tree(&body([9, 9, 9]));
+        let root = dom.root(doc).unwrap();
+        let (expected_dom, expected_doc) = tree(&body([9, 10, 11]));
         renumber_duplicate_revision_ids(&mut dom, root);
         assert_eq!(
             dom.serialize_document(doc),

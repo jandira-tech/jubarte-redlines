@@ -305,12 +305,14 @@ fn a_dangling_relationship_attribute_is_dropped() {
 fn a_duplicate_revision_id_is_renumbered_and_a_move_range_keeps_its_end() {
     let body = r#"<w:p><w:ins w:id="5" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:id="5" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>b</w:t></w:r></w:ins><w:moveFromRangeStart w:id="5" w:name="m1"/><w:moveFrom w:id="9" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:r><w:t>c</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="5"/><w:moveFromRangeStart w:id="5" w:name="m2"/><w:r><w:t>d</w:t></w:r><w:moveFromRangeEnd w:id="5"/></w:p>"#;
     let findings = validate(&docx(body)).unwrap();
+    // The second insertion, range start and range end: OpenXmlValidator
+    // reports the same three (`Sem_UniqueAttributeValue`).
     assert_eq!(
         findings
             .iter()
             .filter(|f| f.code == "DUPLICATE_REVISION_ID")
             .count(),
-        2,
+        3,
         "{findings:?}"
     );
     assert!(findings.iter().all(|f| !f.word_fatal), "{findings:?}");

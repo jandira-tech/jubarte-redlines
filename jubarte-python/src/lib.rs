@@ -475,6 +475,13 @@ fn refused_input(path: std::path::PathBuf, data: &[u8], word: bool) -> Option<St
     jubarte::cli::refused_input(&path, data, word)
 }
 
+/// [`refused_input`] for a package read whole (`validate --original`): it
+/// must also pass admission, as the binary's does; `None` when admitted.
+#[pyfunction]
+fn refused_package(path: std::path::PathBuf, data: &[u8]) -> Option<String> {
+    jubarte::cli::refused_package(&path, data)
+}
+
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
 /// `pattern` naming them all.
 #[pyfunction]
@@ -1621,6 +1628,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
     m.add_function(wrap_pyfunction!(refused_input, m)?)?;
+    m.add_function(wrap_pyfunction!(refused_package, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
