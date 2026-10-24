@@ -661,3 +661,57 @@ fn a_cells_paragraphs_merged_or_split_resolve_both_ways() {
         }
     }
 }
+
+/// A part that is no story the comparison wrote, though it holds a cell
+/// whose final marks carry revisions, comes out as it went in: a custom
+/// XML data item (the data behind a bound content control) or the
+/// glossary's building blocks. Only stories, found by their relationship
+/// types, settle their final marks (minimax on #1680, round 11).
+#[test]
+fn a_part_that_is_no_story_is_copied_as_it_was() {
+    use common::docx::{Part, W_NS, docx_with};
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+    let rev = r#"w:author="Ann" w:date="2026-10-01T00:00:00Z""#;
+    let table = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:rPr><w:del w:id="31" {rev}/></w:rPr></w:pPr><w:r><w:t>One.</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="32" {rev}/></w:rPr></w:pPr><w:ins w:id="33" {rev}><w:r><w:t>Two.</w:t></w:r></w:ins></w:p></w:tc></w:tr></w:tbl>"#
+    );
+    let data = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:customData xmlns:w="{W_NS}">{table}</w:customData>"#
+    );
+    let glossary = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:glossaryDocument xmlns:w="{W_NS}"><w:docParts><w:docPart><w:docPartPr><w:name w:val="Block"/></w:docPartPr><w:docPartBody>{table}<w:p/></w:docPartBody></w:docPart></w:docParts></w:glossaryDocument>"#
+    );
+    let customxml_rel = format!("{REL}customXml");
+    let glossary_rel = format!("{REL}glossaryDocument");
+    for (what, name, content_type, rel_type, xml) in [
+        (
+            "custom XML data",
+            "word/customXml/item1.xml",
+            "application/xml",
+            customxml_rel.as_str(),
+            data.as_str(),
+        ),
+        (
+            "glossary",
+            "word/glossary/document.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml",
+            glossary_rel.as_str(),
+            glossary.as_str(),
+        ),
+    ] {
+        let part = Part {
+            name,
+            content_type,
+            rel_type,
+            xml,
+        };
+        let a = docx_with(&para("Body one."), std::slice::from_ref(&part));
+        let b = docx_with(&para("Body two."), std::slice::from_ref(&part));
+        let out = compare_documents(&a, &b, "Redline").expect("compare");
+        assert_eq!(
+            part_string(&out, name).unwrap(),
+            part_string(&a, name).unwrap(),
+            "{what}"
+        );
+    }
+}
