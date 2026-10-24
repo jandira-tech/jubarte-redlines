@@ -1,0 +1,9 @@
+a.docx validate 0 
+a.docx ['Before.', 'Fixed.', 'Alpha gamma.', 'Alpha gamma.', 'Two.', 'After.']
+b.docx validate 0 
+b.docx ['Before.', 'Fixed.', 'Alpha gamma.', 'Three.', 'After.']
+out.docx validate 0 
+accept.docx validate 0 
+accept.docx ['Before.', 'Fixed.', 'Alpha gamma.', 'Three.', '', 'After.']
+reject.docx validate 0 
+reject.docx ['Before.', 'Fixed.', 'Alpha gamma.', 'Alpha gamma.', 'Two.', 'After.']

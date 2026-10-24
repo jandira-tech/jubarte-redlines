@@ -1,0 +1,54 @@
+Read, edit, compare and render Word documents
+
+Usage: jubarte [OPTIONS]
+       jubarte <COMMAND>
+
+Tasks:
+  compare       Compare documents: print the redline as the agent view, or write it with
+                -o [alias: redline]
+  changes       List tracked changes with IDs for accept, reject and edit plans
+  accept        Accept all tracked changes, or select by ID, author or kind
+  reject        Reject all tracked changes, or select by ID, author or kind
+  convert       Convert Word or Markdown to DOCX, PDF, PNG or Markdown
+  diff          Review differences as GitHub, word, normal, context or side-by-side text
+  read          Read the agent view: YAML header, `<!-- pN -->` id lines, changes and
+                comments with ids
+  edit          Edit a document: -p WHERE with --anchor, --content, --delete, --resolve,
+                --reply, --accept, --reject, --strike, --restore or --style (several -p
+                per command), or a JSON plan. Writes FILE_modified.docx (--out-dir: the
+                bundle), then prints SUCCESS and a fenced before/after diff of the full
+                agent views (refusal: exit 3)
+  add           Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several
+                -p per command). Writes FILE_modified.docx, as edit does, and prints
+                SUCCESS and a fenced before/after diff of the full agent views
+  capabilities  What this binary can do, for agents choosing an operation
+  visual-diff   Compare rendered pages pixel by pixel (different pages: exit 5)
+  comments      List comments, threads and the text they annotate
+  append        Join documents in order, preserving images, styles, lists and notes
+  validate      Check Word validity, tracked edits, accessibility, style and structure;
+                or repair Word validity
+  check         Check a document against a source-bound expectation contract
+  scrub         Remove authors, editing IDs, metadata and comments before sharing
+  help          Print this message or the help of the given subcommand(s)
+  self-update   Check or install a release from GitHub
+
+Options:
+  -q, --quiet    No status on success: no `wrote` lines, SUCCESS block or edit summary.
+                 Files are still written; a reading task (`read`, `changes`, `compare`
+                 without -o, `diff`, `capabilities`) still prints what it read, and
+                 warnings and errors still print. `read`, `changes` and `comments` drop
+                 their one stderr line naming the input's validity findings; under
+                 --json and read --for-edit the output counts them, -q or not
+  -h, --help     Print help
+  -V, --version  Print version
+
+Examples:
+  jubarte compare old.docx new.docx -o redline.docx
+  jubarte contract.docx                    print the agent view (read)
+  jubarte old.docx new.docx                redline printed as the agent view (-o writes
+  it)
+  jubarte read contract.docx --json
+  jubarte diff old.docx new.docx --format github
+  jubarte convert contract.docx -o contract.pdf
+
+Run jubarte <task> --help for task options.

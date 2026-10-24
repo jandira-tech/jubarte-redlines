@@ -1,0 +1,11 @@
+a.docx validate 0 
+a.docx ['Before.', 'Fixed.', 'Alpha beta gamma delta.', 'Inner fixed.', 'Inner.', 'Two.', 'After.']
+b.docx validate 0 
+b.docx ['Before.', 'Fixed.', 'Epsilon zeta eta theta.', 'One.', 'After.']
+out.docx validate 0 
+accept.docx validate 0 
+accept.docx ['Before.', 'Fixed.', 'Epsilon zeta eta theta.One.', 'After.']
+reject.docx validate 0 
+reject.docx ['Before.', 'Fixed.', 'Alpha beta gamma delta.', 'Inner fixed.', 'Inner.', 'Two.', 'After.']
+accept-pt.docx validate 0 
+accept-pt.docx ['Before.', 'Fixed.', 'Epsilon zeta eta theta.', 'One.', 'After.']

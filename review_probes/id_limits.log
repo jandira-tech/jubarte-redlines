@@ -1,0 +1,13 @@
+2147483647 a.docx 0 
+2147483647 b.docx 0 
+2147483647 out.docx 0 
+{"id":"r1","ref":"r1","kind":"insertion","target":"paragraph_mark","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"","paragraph":"p2"}
+{"id":"r2147483649","ref":"r2147483649","kind":"formatting","target":"properties","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"","paragraph":"p3"}
+{"id":"r2147483648","ref":"r2147483648","kind":"formatting","target":"properties","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"New0.","paragraph":"p3"}
+{"id":"r2","ref":"r2","kind":"insertion","target":"text","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"New0.","paragraph":"p3"}
+{"id":"r3","ref":"r3","kind":"insertion","target":"paragraph_mark","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"","paragraph":"p4"}
+{"id":"r2147483651","ref":"r2147483651","kind":"formatting","target":"properties","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"","paragraph":"p5"}
+{"id":"r2147483650","ref":"r2147483650","kind":"formatting","target":"properties","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"New1.","paragraph":"p5"}
+{"id":"r4","ref":"r4","kind":"insertion","target":"text","author":"Jubarte","date":"2026-10-23T00:00:00Z","text":"New1.","paragraph":"p5"}
+{"input_validity":{"errors":0,"warnings":0}}
+

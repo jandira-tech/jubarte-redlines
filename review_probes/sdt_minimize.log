@@ -1,0 +1,3 @@
+sdt-delta1 [["Alpha gamma.", "Alpha gamma."], ["Two."]] [["Two.", "Alpha gamma."], ["Three."]] ["Before.", "Fixed.", "Two.", "Alpha gamma.", "Three.", "", "After."]
+sdt-delta2 [["Alpha gamma.", "Alpha gamma."], ["Two."]] [["Alpha beta.", "Alpha gamma."], ["Three."]] ["Before.", "Fixed.", "Alpha beta.", "Alpha gamma.", "Three.", "", "After."]
+sdt-delta4 [["Alpha gamma.", "Alpha gamma."], ["Two."]] [["Alpha gamma."], ["Three."]] ["Before.", "Fixed.", "Alpha gamma.", "Three.", "", "After."]

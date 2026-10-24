@@ -1,0 +1,2328 @@
+diff --git a/src/changes.rs b/src/changes.rs
+index a8f45291..76986fda 100644
+--- a/src/changes.rs
++++ b/src/changes.rs
+@@ -1369,9 +1369,14 @@ fn resolve_for_edit_or_cli(
+             .filter(|c| c.change.as_ref().is_some_and(|ch| filter.matches(ch)))
+             .map(|c| &c.group)
+             .collect();
++        let with_rows: HashSet<NodeId> = found
++            .iter()
++            .filter(|c| selected.contains(&c.group))
++            .flat_map(|c| final_marks_of_row(dom, c.node))
++            .collect();
+         let keep: Vec<NodeId> = found
+             .iter()
+-            .filter(|c| !selected.contains(&c.group))
++            .filter(|c| !selected.contains(&c.group) && !with_rows.contains(&c.node))
+             .flat_map(|c| {
+                 std::iter::once(c.node)
+                     .chain(deleted_text(dom, c.node))
+@@ -1410,6 +1415,68 @@ fn resolve_for_edit_or_cli(
+     })
+ }
+ 
++/// The same revision on the final marks of the cells `carrier` inserts or
++/// deletes, when it is a row's (`w:trPr/w:ins`, `w:trPr/w:del`) or a cell's
++/// (`w:cellIns`, `w:cellDel`), nested tables' cells included. Word writes a
++/// cell's final mark inserted or deleted only with its row, and a row
++/// resolved without it leaves the revision on the mark, where Accept All or
++/// Reject All never returns (#1669): the two resolve together.
++fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
++    let Some(name) = dom.name(carrier) else {
++        return Vec::new();
++    };
++    let Some(parent) = dom.parent(carrier) else {
++        return Vec::new();
++    };
++    let (kind, top) = match name.local_name() {
++        kind @ ("ins" | "del") if dom.name_is(parent, &W::tr_pr()) => (kind, dom.parent(parent)),
++        "cellIns" | "cellDel" if dom.name_is(parent, &W::tc_pr()) => (
++            if name.local_name() == "cellIns" {
++                "ins"
++            } else {
++                "del"
++            },
++            dom.parent(parent),
++        ),
++        _ => return Vec::new(),
++    };
++    let Some(top) = top else {
++        return Vec::new();
++    };
++    // The cells under `top`, nested tables' too, that no row or cell
++    // between them and `top` covers by itself (#1684): `top`'s revision is
++    // the one that covers them.
++    let covered_below = |cell: NodeId| {
++        let mut cell = cell;
++        loop {
++            if cell == top {
++                return false;
++            }
++            let Some(&row) = dom.ancestors(cell, Some(&W::tr())).first() else {
++                return false;
++            };
++            if row == top {
++                return false;
++            }
++            if crate::validate::row_revised(dom, row, cell, kind) {
++                return true;
++            }
++            let Some(&outer) = dom.ancestors(row, Some(&W::tc())).first() else {
++                return false;
++            };
++            cell = outer;
++        }
++    };
++    dom.descendants_and_self(top, Some(&W::tc()))
++        .into_iter()
++        .filter(|&cell| !covered_below(cell))
++        .filter_map(|cell| crate::validate::last_block_paragraph(dom, cell))
++        .filter_map(|p| dom.element(p, &W::p_pr()))
++        .filter_map(|ppr| dom.element(ppr, &W::r_pr()))
++        .filter_map(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
++        .collect()
++}
++
+ /// The listed changes of the comments part only (empty when the package
+ /// has none): `changes_in` skips it because the view has no ids there.
+ pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
+diff --git a/src/comparer/final_marks.rs b/src/comparer/final_marks.rs
+new file mode 100644
+index 00000000..611e7fa9
+--- /dev/null
++++ b/src/comparer/final_marks.rs
+@@ -0,0 +1,450 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! A table cell's final paragraph mark carries no revision its row does
++//! not: Word opens such a cell, but Accept All or Reject All never returns
++//! (#1669). Word's Compare pairs a cell's two final marks and puts the
++//! revision on the mark before (Word 16 oracles on #1669). This pass
++//! settles the finished redline, part by part, by the validator's own rule
++//! ([`crate::validate::uncovered_final_marks`]), so the two cannot
++//! disagree (#1684).
++//!
++//! An inserted final mark changes places with the nearest earlier mark that
++//! is not inserted: that mark becomes the inserted one, and Reject All
++//! joins its words to the final mark, which records that paragraph's
++//! original properties. A deleted final mark changes places with the
++//! nearest earlier mark that is not deleted: Accept All joins that
++//! paragraph's words to the final mark, which takes its properties and
++//! records its own. When the earlier mark carries the other revision, its
++//! words join the paragraph after it, whose mark is then the cell's
++//! original (or revised) one. Paragraphs carrying the same revision, and
++//! tables every row of which carries it, lie between. With no such mark the
++//! final mark loses its revision, as Word writes a cell a row gains.
++
++use crate::namespaces::W;
++use crate::xmllinq::{Dom, NodeId, XName};
++
++/// Settle every cell's final mark under `root`.
++pub fn settle_cell_final_marks(dom: &mut Dom, root: NodeId) {
++    let cells = dom.descendants(root, Some(&W::tc()));
++    let mut ids = None;
++    for cell in cells {
++        // Each step clears the final mark, or joins one paragraph away.
++        for _ in 0..=dom.descendants(cell, Some(&W::p())).len() {
++            let Some(&(last, kind)) = crate::validate::uncovered_final_marks(dom, cell).first()
++            else {
++                break;
++            };
++            settle(dom, root, cell, last, kind, &mut ids);
++        }
++    }
++}
++
++/// One step towards settling `cell`, whose final paragraph `last` carries
++/// `kind` (`"ins"` or `"del"`).
++fn settle(
++    dom: &mut Dom,
++    root: NodeId,
++    cell: NodeId,
++    last: NodeId,
++    kind: &str,
++    ids: &mut Option<u32>,
++) {
++    let other = if kind == "ins" { "del" } else { "ins" };
++    let blocks = blocks(dom, cell);
++    let Some(at) = blocks.iter().position(|&b| b == last) else {
++        return;
++    };
++    let partner = blocks[..at].iter().rev().copied().find_map(|block| {
++        if dom.name_is(block, &W::tbl()) {
++            return if table_revised(dom, block, kind) {
++                None
++            } else {
++                Some(None)
++            };
++        }
++        mark_revision(dom, block, kind)
++            .is_none()
++            .then_some(Some(block))
++    });
++    let revision = mark_revision(dom, last, kind).expect("an uncovered final mark");
++    let mut stamp = Stamp {
++        root,
++        ids,
++        author: dom.attribute(revision, &W::author()).map(str::to_string),
++        date: dom.attribute(revision, &W::date()).map(str::to_string),
++    };
++    match partner.flatten() {
++        Some(partner) if mark_revision(dom, partner, other).is_none() => {
++            if kind == "ins" {
++                take_inserted_mark(dom, partner, last, &mut stamp);
++            } else {
++                take_deleted_mark(dom, partner, last, &mut stamp);
++            }
++        }
++        Some(partner) => {
++            // The next paragraph, past tables the same revision removes.
++            let next = blocks
++                .iter()
++                .position(|&b| b == partner)
++                .and_then(|i| {
++                    blocks[i + 1..]
++                        .iter()
++                        .copied()
++                        .find(|&b| !(dom.name_is(b, &W::tbl()) && table_revised(dom, b, kind)))
++                })
++                // Words do not leave their content control or custom XML
++                // element; an empty paragraph has none to move.
++                .filter(|&n| {
++                    dom.name_is(n, &W::p())
++                        && (dom.parent(n) == dom.parent(partner)
++                            || dom
++                                .nodes(partner)
++                                .into_iter()
++                                .all(|c| dom.name_is(c, &W::p_pr())))
++                });
++            match next {
++                Some(next) => join(dom, partner, next, kind, &mut stamp),
++                None => unrevise(dom, last, kind),
++            }
++        }
++        None => unrevise(dom, last, kind),
++    }
++}
++
++/// The paragraphs and tables of `container` in order, through block
++/// content controls and custom XML elements, not into nested tables.
++fn blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
++    let mut out = Vec::new();
++    for child in dom.elements(container, None) {
++        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
++            out.push(child);
++        } else if dom.name_is(child, &W::sdt()) {
++            if let Some(content) = dom.element(child, &W::sdt_content()) {
++                out.extend(blocks(dom, content));
++            }
++        } else if dom.name_is(child, &W::name("customXml")) {
++            out.extend(blocks(dom, child));
++        }
++    }
++    out
++}
++
++/// Whether every row of `table` is inserted or deleted as `kind` says.
++fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
++    let rows: Vec<NodeId> = dom
++        .descendants(table, Some(&W::tr()))
++        .into_iter()
++        .filter(|&row| dom.ancestors(row, Some(&W::tbl())).first() == Some(&table))
++        .collect();
++    !rows.is_empty()
++        && rows.iter().all(|&row| {
++            dom.element(row, &W::tr_pr()).is_some_and(|pr| {
++                dom.element(pr, &crate::validate::revision_name(kind))
++                    .is_some()
++            })
++        })
++}
++
++/// The `kind` revision on `paragraph`'s mark (`w:pPr/w:rPr`).
++fn mark_revision(dom: &Dom, paragraph: NodeId, kind: &str) -> Option<NodeId> {
++    dom.element(paragraph, &W::p_pr())
++        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
++        .and_then(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
++}
++
++/// The final mark `last`'s insertion moves to `partner`'s mark. Rejected,
++/// `partner`'s words join `last`'s mark, which records `partner`'s
++/// properties and mark formatting where they differ from its own; a
++/// change record `partner` holds moves to it.
++fn take_inserted_mark(dom: &mut Dom, partner: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
++    let revision = mark_revision(dom, last, "ins").expect("an inserted final mark");
++    dom.remove(revision);
++    record_original(dom, partner, last, stamp);
++    let rpr = mark_properties(dom, partner);
++    dom.add_first(rpr, revision);
++}
++
++/// The final mark `last`'s deletion moves to `partner`'s mark. Accepted,
++/// `partner`'s words join `last`'s mark, which takes `partner`'s properties
++/// and mark formatting and records its own where they differ.
++fn take_deleted_mark(dom: &mut Dom, partner: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
++    let revision = mark_revision(dom, last, "del").expect("a deleted final mark");
++    dom.remove(revision);
++    take_properties(dom, partner, last, stamp);
++    let rpr = mark_properties(dom, partner);
++    match dom.element(rpr, &W::ins()) {
++        Some(ins) => dom.add_after_self(ins, revision),
++        None => dom.add_first(rpr, revision),
++    }
++}
++
++/// `head`, whose mark carries the revision other than `kind`, joins `next`,
++/// whose mark carries `kind`: its words move to the start of `next`, whose
++/// mark is no longer revised. An inserted `next` keeps its properties and
++/// records `head`'s original ones; a deleted `next` takes the inserted
++/// `head`'s and records its own.
++fn join(dom: &mut Dom, head: NodeId, next: NodeId, kind: &str, stamp: &mut Stamp<'_>) {
++    if let Some(revision) = mark_revision(dom, next, kind) {
++        dom.remove(revision);
++    }
++    if kind == "ins" {
++        record_original(dom, head, next, stamp);
++    } else {
++        take_properties(dom, head, next, stamp);
++    }
++    let words: Vec<NodeId> = dom
++        .nodes(head)
++        .into_iter()
++        .filter(|&c| !dom.name_is(c, &W::p_pr()))
++        .collect();
++    let anchor = dom.element(next, &W::p_pr());
++    for word in words.into_iter().rev() {
++        dom.remove(word);
++        match anchor {
++            Some(ppr) => dom.add_after_self(ppr, word),
++            None => dom.add_first(next, word),
++        }
++    }
++    dom.remove(head);
++}
++
++/// `last`'s mark loses its `kind` revision.
++fn unrevise(dom: &mut Dom, last: NodeId, kind: &str) {
++    if let Some(revision) = mark_revision(dom, last, kind) {
++        dom.remove(revision);
++    }
++}
++
++/// `to` records `from`'s original properties and mark formatting: the
++/// change records `from` holds move to `to`, or, where `from` holds none,
++/// new records keep `from`'s own where they differ from `to`'s. A record
++/// `to` already held goes.
++fn record_original(dom: &mut Dom, from: NodeId, to: NodeId, stamp: &mut Stamp<'_>) {
++    if let Some(change) = paragraph_change(dom, to) {
++        dom.remove(change);
++    }
++    if let Some(change) = paragraph_change(dom, from) {
++        dom.remove(change);
++        let ppr = paragraph_properties(dom, to);
++        dom.add(ppr, change);
++    } else if serialized(dom, &bare_properties(dom, from))
++        != serialized(dom, &bare_properties(dom, to))
++    {
++        let record = stamp.record(
++            dom,
++            W::p_pr_change(),
++            W::p_pr(),
++            &bare_properties(dom, from),
++        );
++        let ppr = paragraph_properties(dom, to);
++        dom.add(ppr, record);
++    }
++    if let Some(change) = mark_change(dom, to) {
++        dom.remove(change);
++    }
++    if let Some(change) = mark_change(dom, from) {
++        dom.remove(change);
++        let rpr = mark_properties(dom, to);
++        dom.add(rpr, change);
++    } else if serialized(dom, &mark_formatting(dom, from))
++        != serialized(dom, &mark_formatting(dom, to))
++    {
++        let record = stamp.record(
++            dom,
++            W::r_pr_change(),
++            W::r_pr(),
++            &mark_formatting(dom, from),
++        );
++        let rpr = mark_properties(dom, to);
++        dom.add(rpr, record);
++    }
++}
++
++/// `to` takes `from`'s properties and mark formatting, and records its own
++/// original ones (its change records, or what it held) where they differ.
++fn take_properties(dom: &mut Dom, from: NodeId, to: NodeId, stamp: &mut Stamp<'_>) {
++    let copies = |dom: &mut Dom, nodes: Vec<NodeId>| -> Vec<NodeId> {
++        nodes.into_iter().map(|n| dom.clone_subtree(n)).collect()
++    };
++    let original = original_properties(dom, to);
++    let original = copies(dom, original);
++    let wanted = bare_properties(dom, from);
++    let ppr = paragraph_properties(dom, to);
++    for child in bare_properties(dom, to) {
++        dom.remove(child);
++    }
++    for child in wanted.into_iter().rev() {
++        let copy = dom.clone_subtree(child);
++        dom.add_first(ppr, copy);
++    }
++    if let Some(change) = paragraph_change(dom, to) {
++        dom.remove(change);
++    }
++    if serialized(dom, &original) != serialized(dom, &bare_properties(dom, to)) {
++        let record = stamp.record(dom, W::p_pr_change(), W::p_pr(), &original);
++        dom.add(ppr, record);
++    }
++    let original = original_mark_formatting(dom, to);
++    let original = copies(dom, original);
++    let wanted = mark_formatting(dom, from);
++    let rpr = mark_properties(dom, to);
++    for child in mark_formatting(dom, to) {
++        dom.remove(child);
++    }
++    if let Some(change) = mark_change(dom, to) {
++        dom.remove(change);
++    }
++    for child in wanted {
++        let copy = dom.clone_subtree(child);
++        dom.add(rpr, copy);
++    }
++    if serialized(dom, &original) != serialized(dom, &mark_formatting(dom, to)) {
++        let record = stamp.record(dom, W::r_pr_change(), W::r_pr(), &original);
++        dom.add(rpr, record);
++    }
++}
++
++/// `paragraph`'s original properties: what its `w:pPrChange` recorded, or
++/// its own.
++fn original_properties(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
++    match paragraph_change(dom, paragraph).and_then(|c| dom.element(c, &W::p_pr())) {
++        Some(recorded) => dom.elements(recorded, None),
++        None => bare_properties(dom, paragraph),
++    }
++}
++
++/// `paragraph`'s original mark formatting: what its mark's `w:rPrChange`
++/// recorded, or its own.
++fn original_mark_formatting(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
++    match mark_change(dom, paragraph).and_then(|c| dom.element(c, &W::r_pr())) {
++        Some(recorded) => dom.elements(recorded, None),
++        None => mark_formatting(dom, paragraph),
++    }
++}
++
++/// `paragraph`'s properties without the mark's own (`w:rPr`), its section
++/// or a change record.
++fn bare_properties(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
++    dom.element(paragraph, &W::p_pr())
++        .map(|ppr| dom.elements(ppr, None))
++        .unwrap_or_default()
++        .into_iter()
++        .filter(|&child| {
++            !dom.name_is(child, &W::r_pr())
++                && !dom.name_is(child, &W::sect_pr())
++                && !dom.name_is(child, &W::p_pr_change())
++        })
++        .collect()
++}
++
++/// The formatting of `paragraph`'s mark (`w:pPr/w:rPr`), without its
++/// revisions or a change record.
++fn mark_formatting(dom: &Dom, paragraph: NodeId) -> Vec<NodeId> {
++    const RECORDS: [&str; 5] = ["ins", "del", "moveFrom", "moveTo", "rPrChange"];
++    dom.element(paragraph, &W::p_pr())
++        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
++        .map(|rpr| dom.elements(rpr, None))
++        .unwrap_or_default()
++        .into_iter()
++        .filter(|&child| {
++            !dom.name(child)
++                .is_some_and(|n| n.namespace_name() == W::URI && RECORDS.contains(&n.local_name()))
++        })
++        .collect()
++}
++
++/// `paragraph`'s `w:pPr/w:pPrChange`.
++fn paragraph_change(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
++    dom.element(paragraph, &W::p_pr())
++        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
++}
++
++/// `paragraph`'s mark's `w:pPr/w:rPr/w:rPrChange`.
++fn mark_change(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
++    dom.element(paragraph, &W::p_pr())
++        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
++        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
++}
++
++/// `children` as XML, to compare property sets.
++fn serialized(dom: &Dom, children: &[NodeId]) -> Vec<String> {
++    children.iter().map(|&c| dom.serialize_element(c)).collect()
++}
++
++/// `paragraph`'s `w:pPr`, created when missing.
++fn paragraph_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
++    match dom.element(paragraph, &W::p_pr()) {
++        Some(ppr) => ppr,
++        None => {
++            let ppr = dom.new_element(W::p_pr());
++            dom.add_first(paragraph, ppr);
++            ppr
++        }
++    }
++}
++
++/// `paragraph`'s mark properties (`w:pPr/w:rPr`), created when missing,
++/// before the paragraph's section and change record.
++fn mark_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
++    let ppr = paragraph_properties(dom, paragraph);
++    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
++        return rpr;
++    }
++    let rpr = dom.new_element(W::r_pr());
++    let after = dom
++        .elements(ppr, None)
++        .into_iter()
++        .find(|&c| dom.name_is(c, &W::sect_pr()) || dom.name_is(c, &W::p_pr_change()));
++    match after {
++        Some(after) => dom.add_before_self(after, rpr),
++        None => dom.add(ppr, rpr),
++    }
++    rpr
++}
++
++/// The stamp of the change records a step writes: the moved revision's
++/// author and date, and the part's next free revision id.
++struct Stamp<'a> {
++    root: NodeId,
++    ids: &'a mut Option<u32>,
++    author: Option<String>,
++    date: Option<String>,
++}
++
++impl Stamp<'_> {
++    /// A `record` (`w:pPrChange`, `w:rPrChange`) holding a `holder` with
++    /// copies of `children`.
++    fn record(
++        &mut self,
++        dom: &mut Dom,
++        record: XName,
++        holder: XName,
++        children: &[NodeId],
++    ) -> NodeId {
++        let next = *self.ids.get_or_insert_with(|| {
++            dom.descendants(self.root, None)
++                .into_iter()
++                .filter_map(|e| dom.attribute(e, &W::id())?.parse::<u32>().ok())
++                .max()
++                .map_or(1, |max| max.saturating_add(1))
++        });
++        *self.ids = Some(next.saturating_add(1));
++        let node = dom.new_element(record);
++        dom.set_attribute_value(node, &W::id(), Some(&next.to_string()));
++        if let Some(author) = &self.author {
++            dom.set_attribute_value(node, &W::author(), Some(author));
++        }
++        if let Some(date) = &self.date {
++            dom.set_attribute_value(node, &W::date(), Some(date));
++        }
++        let inner = dom.new_element(holder);
++        for &child in children {
++            let copy = dom.clone_subtree(child);
++            dom.add(inner, copy);
++        }
++        dom.add(node, inner);
++        node
++    }
++}
+diff --git a/src/comparer/mod.rs b/src/comparer/mod.rs
+index d4c73206..84f90d8b 100644
+--- a/src/comparer/mod.rs
++++ b/src/comparer/mod.rs
+@@ -34,6 +34,7 @@ pub mod comments;
+ pub mod cross_para;
+ // Word-parity passes, public for the tests that run one at a time; outside
+ // the version promise (docs/VERSIONING.md).
++pub(crate) mod final_marks;
+ #[doc(hidden)]
+ pub mod finalize;
+ pub mod fixups;
+diff --git a/src/document_comparer.rs b/src/document_comparer.rs
+index a4360121..3504f357 100644
+--- a/src/document_comparer.rs
++++ b/src/document_comparer.rs
+@@ -7511,14 +7511,32 @@ fn compare_documents_impl(
+                     let dd = pd.parse_xdocument(&doc_xml);
+                     if let Some(droot) = pd.root(dd) {
+                         let mut doc_changed = false;
+-                        for p in pd.descendants(droot, Some(&W::name("p"))) {
++                        for p in pd.descendants(droot, Some(&W::p())) {
+                             let Some(ppr) = pd.element(p, &W::p_pr()) else {
+                                 continue;
+                             };
+                             let mark_inserted = pd
+                                 .element(ppr, &W::r_pr())
+-                                .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+-                            if !mark_inserted {
++                                .is_some_and(|r| pd.element(r, &W::ins()).is_some());
++                            // A container's last paragraph keeps its mark when
++                            // a paragraph is added after it, so the new words
++                            // end on the old mark, under a record of its old
++                            // properties (#1669): every word inserted, that
++                            // paragraph is B's as much as an inserted one, and
++                            // Reject All restores the record whatever is baked.
++                            let words_inserted = || {
++                                let words = pd.descendants(p, Some(&W::t()));
++                                !words.is_empty()
++                                    && pd.element(ppr, &W::p_pr_change()).is_some()
++                                    && words.iter().all(|&t| {
++                                        pd.ancestors(t, Some(&W::ins())).first().is_some_and(
++                                            |&ins| {
++                                                pd.ancestors(ins, Some(&W::p())).first() == Some(&p)
++                                            },
++                                        )
++                                    })
++                            };
++                            if !mark_inserted && !words_inserted() {
+                                 continue;
+                             }
+                             // EMPTY inserted paragraphs keep their bare pPr —
+@@ -8045,6 +8063,18 @@ fn compare_documents_impl(
+                         );
+                     }
+                 }
++                // A cell's final mark carries no revision its row does not
++                // (#1669, #1684), in every story: the body (its text boxes
++                // too), the notes, the headers and footers. After every pass
++                // that writes marks.
++                if part == main1
++                    || part == "word/footnotes.xml"
++                    || part == "word/endnotes.xml"
++                    || part.starts_with("word/header")
++                    || part.starts_with("word/footer")
++                {
++                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
++                }
+                 // Last: every pass above may append properties out of order.
+                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+diff --git a/src/edit/prepared.rs b/src/edit/prepared.rs
+index 1ba06a33..06e5a603 100644
+--- a/src/edit/prepared.rs
++++ b/src/edit/prepared.rs
+@@ -55,7 +55,9 @@ pub fn introduced_findings(baseline: &[Finding], candidate: &[Finding]) -> Vec<F
+ /// edit introduces it. `BOOKMARK_CROSSES_REVISION` is a protected-range
+ /// regression the general validator reports as a warning; an introduced
+ /// crossing is a failed invariant, never a disclosed lead.
+-const BLOCKING_CODES: &[&str] = &["BOOKMARK_CROSSES_REVISION"];
++/// `CELL_FINAL_MARK_REVISION` opens in Word, but its Accept All or Reject
++/// All never returns (#1669).
++const BLOCKING_CODES: &[&str] = &["BOOKMARK_CROSSES_REVISION", "CELL_FINAL_MARK_REVISION"];
+ 
+ /// Whether `f` blocks publication when it is newly introduced.
+ fn blocking(f: &Finding) -> bool {
+diff --git a/src/edit/tracked.rs b/src/edit/tracked.rs
+index b680e850..db1c4f58 100644
+--- a/src/edit/tracked.rs
++++ b/src/edit/tracked.rs
+@@ -172,6 +172,32 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
+                     None
+                 }
+             }
++            Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
++                if appended_final(tx, resolved).is_some_and(|para| {
++                    last_appended(tx, para) == Some(*op)
++                        && !tx.resolved.iter().any(|(_, r)| {
++                            matches!(r, Resolved::DeleteParagraph { para: p } if *p == para)
++                        })
++                }) =>
++            {
++                let para = appended_final(tx, resolved).expect("matched");
++                let node = tx.paragraph_nodes[para];
++                if let Some(mark) = mark_revision(dom, node, &TRACKED) {
++                    Some(named(
++                        "under keep, a paragraph cannot be added after a container's last paragraph whose mark is already tracked, since the inserted mark goes there: that mark is",
++                        mark,
++                    ))
++                } else if matches!(resolved, Resolved::InsertParagraph { .. }) {
++                    record_replaced(tx, node, *op).map(|change| {
++                        named(
++                            "under keep, a paragraph formatted otherwise cannot be added after a container's last paragraph whose formatting change is still tracked: that change is",
++                            change,
++                        )
++                    })
++                } else {
++                    None
++                }
++            }
+             Resolved::MergeParagraphs { para, .. } => {
+                 mark_revision(dom, tx.paragraph_nodes[*para], &TRACKED).map(|mark| {
+                     named(
+@@ -509,6 +535,14 @@ fn emit(
+         .iter()
+         .filter_map(|&para| t.final_carrier(para).map(|carrier| (para, carrier)))
+         .collect();
++    // The container-final paragraphs that stay, with blocks placed after
++    // them (#1669).
++    let appended: BTreeSet<usize> = t
++        .resolved
++        .iter()
++        .filter_map(|(_, r)| appended_final(t, r))
++        .filter(|para| !finals.contains(para))
++        .collect();
+     // 0. Run formatting, on source offsets (no text edit overlaps it), each
+     // run's old properties in `w:rPrChange`.
+     for (_, r) in &t.resolved {
+@@ -749,6 +783,19 @@ fn emit(
+             anchor_comment(dom, new, 0, projection.text.len(), id, &mut stamp.ids);
+         }
+     }
++    // 2b. The last new paragraph after a container's last paragraph takes
++    // the final mark, unrevised, and the inserted mark is the one before
++    // it, as Word's Compare writes an append: a revision on a table cell's
++    // final mark hangs Word's Accept All and Reject All (#1669).
++    for para in appended {
++        let Some(&last) = last_after.get(&para) else {
++            continue;
++        };
++        let dom = &mut t.opened.dom;
++        if dom.name_is(last, &W::p()) {
++            rotate_final_mark(dom, t.paragraph_nodes[para], last, stamp);
++        }
++    }
+     // 3. Paragraph formatting, with the old properties in `w:pPrChange`.
+     for (_, r) in &t.resolved {
+         let Resolved::FormatParagraph {
+@@ -983,6 +1030,86 @@ fn keep_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'
+     dom.remove(last);
+ }
+ 
++/// The container-final paragraph that `r` places a block after, if any.
++fn appended_final(tx: &Transaction<'_>, r: &Resolved) -> Option<usize> {
++    let (Resolved::InsertParagraph {
++        anchor,
++        side: Side::After,
++        ..
++    }
++    | Resolved::InsertTable {
++        anchor,
++        side: Side::After,
++        ..
++    }) = r
++    else {
++        return None;
++    };
++    let node = tx.paragraph_nodes[*anchor];
++    (tx.final_paragraph(node) == Some(node)).then_some(*anchor)
++}
++
++/// The operation whose block lands last after the container-final
++/// `para`: blocks placed after one paragraph follow each other in plan
++/// order.
++fn last_appended(tx: &Transaction<'_>, para: usize) -> Option<usize> {
++    tx.resolved
++        .iter()
++        .filter(|(_, r)| appended_final(tx, r) == Some(para))
++        .map(|(op, _)| *op)
++        .last()
++}
++
++/// `last`, the new paragraph placed last after the container-final `old`,
++/// takes the final mark: its inserted mark goes, and `old`'s mark is the
++/// inserted one. Rejected, `old`'s words join `last`'s mark, so that mark
++/// records `old`'s properties and mark formatting where they differ from
++/// its own; a change record `old` already holds moves to it (`check`
++/// refuses, under keep, the plans whose new paragraph that record would
++/// misdescribe).
++fn rotate_final_mark(dom: &mut Dom, old: NodeId, last: NodeId, stamp: &mut Stamp<'_>) {
++    if let Some(inserted) = mark_revision(dom, last, &["ins"]) {
++        dom.remove(inserted);
++    }
++    let had = bare_properties(dom, old);
++    if let Some(change) = paragraph_format_change(dom, old) {
++        dom.remove(change);
++        let ppr = paragraph_properties(dom, last);
++        insert_ppr_child(dom, ppr, change);
++    } else if serialized(dom, &bare_properties(dom, last)) != serialized(dom, &had) {
++        let before = dom.new_element(W::p_pr());
++        for child in had {
++            let copy = dom.clone_subtree(child);
++            dom.add(before, copy);
++        }
++        let record = stamp.container(dom, W::p_pr_change());
++        dom.add(record, before);
++        let ppr = paragraph_properties(dom, last);
++        insert_ppr_child(dom, ppr, record);
++    }
++    let had = mark_formatting(dom, old);
++    let ppr = paragraph_properties(dom, old);
++    let change = dom
++        .element(ppr, &W::r_pr())
++        .and_then(|rpr| dom.element(rpr, &W::r_pr_change()));
++    if let Some(change) = change {
++        dom.remove(change);
++        let rpr = mark_properties(dom, last);
++        dom.add(rpr, change);
++    } else if serialized(dom, &mark_formatting(dom, last)) != serialized(dom, &had) {
++        let before = dom.new_element(W::r_pr());
++        for child in had {
++            let copy = dom.clone_subtree(child);
++            dom.add(before, copy);
++        }
++        let record = stamp.container(dom, W::r_pr_change());
++        dom.add(record, before);
++        let rpr = mark_properties(dom, last);
++        dom.add(rpr, record);
++    }
++    mark(dom, old, W::ins(), stamp);
++}
++
+ /// Whether `a` comes before `b` in document order.
+ fn precedes(dom: &Dom, a: NodeId, b: NodeId) -> bool {
+     let chain = dom.ancestors_and_self(a, None);
+diff --git a/src/validate.rs b/src/validate.rs
+index 79df2979..b1c1d0f3 100644
+--- a/src/validate.rs
++++ b/src/validate.rs
+@@ -50,6 +50,7 @@
+ //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
+ //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
+ //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
++//! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
+ //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
+ //!
+ //! Revision ids are unique per OOXML record type within a part, as
+@@ -102,7 +103,8 @@ pub struct Finding {
+     /// The rule set it belongs to: one of `RULE_SETS`.
+     pub set: String,
+     /// `error`, `warning` or `info`. A `word` finding is an `error` when
+-    /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
++    /// Word-fatal, OOXML-invalid (`DUPLICATE_REVISION_ID`), or a revision
++    /// Word cannot resolve (`CELL_FINAL_MARK_REVISION`); otherwise a
+     /// `warning` (a lead), or `info` for direct
+     /// same-kind revision nesting that Word reads faithfully.
+     pub severity: String,
+@@ -128,8 +130,8 @@ pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "struc
+ 
+ impl Finding {
+     /// A `word` finding with `word_fatal` and `repairable` taken from the
+-    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
+-    /// are errors, though Word opens them.
++    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids and
++    /// a cell's final mark revision are errors, though Word opens them.
+     pub fn new(
+         code: &str,
+         part: &str,
+@@ -142,7 +144,7 @@ impl Finding {
+         Finding {
+             code: code.to_string(),
+             set: "word".to_string(),
+-            severity: if word_fatal || code == "DUPLICATE_REVISION_ID" {
++            severity: if word_fatal || ERROR_LEADS.contains(&code) {
+                 "error"
+             } else {
+                 "warning"
+@@ -158,6 +160,11 @@ impl Finding {
+     }
+ }
+ 
++/// Codes that are errors though Word opens the file: OOXML-invalid
++/// duplicate revision ids, and a cell's final mark revision Word's Accept
++/// All or Reject All never returns from (#1669).
++const ERROR_LEADS: [&str; 2] = ["DUPLICATE_REVISION_ID", "CELL_FINAL_MARK_REVISION"];
++
+ /// `(word_fatal, repairable)` for a code; an unknown code is a lead with
+ /// no repair.
+ pub fn traits(code: &str) -> (bool, bool) {
+@@ -199,7 +206,7 @@ pub fn traits(code: &str) -> (bool, bool) {
+ 
+ /// Codes the Ring-1 checks own; the triage checks' findings under these
+ /// codes are the same problems seen twice and are left out of [`validate`].
+-const RING1_CODES: [&str; 29] = [
++const RING1_CODES: [&str; 30] = [
+     "DATA_BINDING_WITHOUT_STORE",
+     "MOVE_RANGE_COUNT_MISMATCH",
+     "NESTED_TEXT_BOX",
+@@ -229,6 +236,7 @@ const RING1_CODES: [&str; 29] = [
+     "COMMENT_ID_REPEATED",
+     "COMMENT_METADATA_MISMATCH",
+     "STYLE_NAME_COMMA",
++    "CELL_FINAL_MARK_REVISION",
+ ];
+ 
+ /// Why a package could not be validated at all (a finding is never an
+@@ -1181,9 +1189,121 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
+     check_nested_ppr(pkg, &mut out);
+     check_move_range_counts(pkg, &mut out);
+     check_data_bindings_have_stores(pkg, &mut out);
++    check_cell_final_marks(pkg, &mut out);
+     out
+ }
+ 
++/// A table cell's final paragraph mark inserted or deleted while its row
++/// is not: Word opens the file, but Accept All or Reject All never returns
++/// (#1669, Word 16, 2026-10-23). Word's Compare puts such a revision on the
++/// mark before, and revises every mark of a row it inserts or deletes with
++/// the row (`w:trPr/w:ins`, `w:trPr/w:del`). A nested table's cells in a
++/// revised outer row pass whether or not their own rows repeat the
++/// revision, as Open-Xml-PowerTools writes them: Word resolves those
++/// (2026-10-23). The body's final mark is not flagged: Word resolves it.
++fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
++    for part in revision_parts(pkg) {
++        // A cell's start tag, whatever its prefix (none included) and
++        // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
++        if !pkg.part_bytes(&part).is_some_and(|bytes| {
++            bytes.windows(4).any(|w| {
++                matches!(w[0], b'<' | b':')
++                    && &w[1..3] == b"tc"
++                    && matches!(w[3], b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n')
++            })
++        }) {
++            continue;
++        }
++        let Some((dom, root)) = parse_part(pkg, &part) else {
++            continue;
++        };
++        for cell in dom.descendants(root, Some(&W::tc())) {
++            for (last, kind) in uncovered_final_marks(&dom, cell) {
++                out.push(Finding::new(
++                    "CELL_FINAL_MARK_REVISION",
++                    &part,
++                    element_path(&dom, last),
++                    format!("a table cell's final paragraph mark carries w:{kind} while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before"),
++                ));
++            }
++        }
++    }
++}
++
++/// The revisions (`"ins"`, `"del"`) on `cell`'s final paragraph mark that
++/// no row covers, with that paragraph: `CELL_FINAL_MARK_REVISION`'s rule,
++/// which the comparer's settle pass applies too. The cell and every cell
++/// around it count, through nested tables (an outer row's revision covers
++/// a nested table's cells), each with the row that holds it, through any
++/// content control between them.
++pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
++    let Some(last) = last_block_paragraph(dom, cell) else {
++        return Vec::new();
++    };
++    let Some(rpr) = dom
++        .element(last, &W::p_pr())
++        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
++    else {
++        return Vec::new();
++    };
++    let cells: Vec<NodeId> = std::iter::once(cell)
++        .chain(dom.ancestors(cell, Some(&W::tc())))
++        .collect();
++    ["ins", "del"]
++        .into_iter()
++        .filter(|kind| {
++            dom.element(rpr, &revision_name(kind)).is_some()
++                && !cells.iter().any(|&c| {
++                    dom.ancestors(c, Some(&W::tr()))
++                        .first()
++                        .is_some_and(|&row| row_revised(dom, row, c, kind))
++                })
++        })
++        .map(|kind| (last, kind))
++        .collect()
++}
++
++/// Whether `row` (or the cell itself) is inserted or deleted as `kind`
++/// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
++/// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
++pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
++    let cell_kind = if kind == "ins" {
++        W::cell_ins()
++    } else {
++        W::cell_del()
++    };
++    dom.element(row, &W::tr_pr())
++        .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
++        || dom
++            .element(cell, &W::tc_pr())
++            .is_some_and(|pr| dom.element(pr, &cell_kind).is_some())
++}
++
++/// `w:ins` for `"ins"`, `w:del` for `"del"`.
++pub(crate) fn revision_name(kind: &str) -> XName {
++    if kind == "ins" { W::ins() } else { W::del() }
++}
++
++/// The last paragraph among a container's blocks, through block content
++/// controls and custom XML elements, not into nested tables.
++pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
++    let mut last = None;
++    for child in dom.elements(container, None) {
++        let found = if dom.name_is(child, &W::p()) {
++            Some(child)
++        } else if dom.name_is(child, &W::sdt()) {
++            dom.element(child, &W::sdt_content())
++                .and_then(|content| last_block_paragraph(dom, content))
++        } else if dom.name_is(child, &W::name("customXml")) {
++            last_block_paragraph(dom, child)
++        } else {
++            None
++        };
++        last = found.or(last);
++    }
++    last
++}
++
+ /// Word fills a bound content control from the custom XML store its
+ /// `w:storeItemID` names, and shows the control empty when the main part
+ /// reaches no such store (#1427). Word opens the file: a lead. Word's own
+diff --git a/tests/compare_boundary_matrix.rs b/tests/compare_boundary_matrix.rs
+index 1e78b982..e92af43b 100644
+--- a/tests/compare_boundary_matrix.rs
++++ b/tests/compare_boundary_matrix.rs
+@@ -8,7 +8,7 @@
+ mod common;
+ 
+ use common::docx::{docx, para, part_string, run};
+-use common::validity::assert_word_valid_package;
++use common::validity::{assert_word_valid_package, check_word_valid_package};
+ use jubarte::comparer::WmlComparerSettings;
+ use jubarte::document_comparer::{
+     accept_revisions, compare_documents_with_settings, reject_revisions,
+@@ -1116,7 +1116,8 @@ fn structured_documents_recover_text_across_every_ordered_pair() {
+                 let label = format!("{mode}: {left_name} -> {right_name}");
+                 let compared = compare_documents_with_settings(left, right, &settings)
+                     .unwrap_or_else(|error| panic!("{label}: {error}"));
+-                assert_word_valid_package(&compared);
++                let report = check_word_valid_package(&compared);
++                assert!(report.ok(), "{label}: {:?}", report.errors);
+                 let accepted = accept_revisions(&compared).unwrap();
+                 let rejected = reject_revisions(&compared).unwrap();
+ 
+diff --git a/tests/edit_empty_paragraph.rs b/tests/edit_empty_paragraph.rs
+index af9083ad..af7ffb1e 100644
+--- a/tests/edit_empty_paragraph.rs
++++ b/tests/edit_empty_paragraph.rs
+@@ -1756,3 +1756,141 @@ fn a_block_placed_before_a_deleted_final_paragraph_empties_it() {
+         );
+     }
+ }
++
++/// #1669, as Word's Compare writes an append: the paragraph a plan adds
++/// after a container's last paragraph takes the final mark, unrevised, and
++/// the inserted mark is the one before it. A revision on a table cell's
++/// final mark hangs Word's Accept All or Reject All. In a cell, in a
++/// content control closing a cell, and in the body, once and twice.
++#[test]
++fn an_append_after_a_containers_last_paragraph_inserts_the_mark_before_it() {
++    let wrapped = format!(
++        "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
++        para("Old.")
++    );
++    for mode in MODES {
++        for (what, cell) in [
++            ("a cell", para("Old.")),
++            ("a content control", wrapped.clone()),
++        ] {
++            let source = table_with_cell(&cell);
++            let result = check_outputs(
++                &source,
++                &plan_of(mode, &[insert("p2", "after", "New.")]),
++                &["Before.", "Full.", "Old.", "New.", "After."],
++                &format!("{mode} {what}"),
++            );
++            assert_cell(
++                mode,
++                &result.redline,
++                &[("+", &["Old."]), ("", &["+New."])],
++                &format!("{mode} {what}"),
++            );
++            let result = check_outputs(
++                &source,
++                &plan_of(
++                    mode,
++                    &[insert("p2", "after", "One."), insert("p2", "after", "Two.")],
++                ),
++                &["Before.", "Full.", "Old.", "One.", "Two.", "After."],
++                &format!("{mode} {what}, twice"),
++            );
++            assert_cell(
++                mode,
++                &result.redline,
++                &[("+", &["Old."]), ("+", &["+One."]), ("", &["+Two."])],
++                &format!("{mode} {what}, twice"),
++            );
++        }
++        let body = docx(&format!("{}{}", para("Alpha."), para("Beta.")));
++        let result = check_outputs(
++            &body,
++            &plan_of(mode, &[insert("p1", "after", "New.")]),
++            &["Alpha.", "Beta.", "New."],
++            &format!("{mode} the body"),
++        );
++        assert_body(
++            mode,
++            &result.redline,
++            &[("", &["Alpha."]), ("+", &["Beta."]), ("", &["+New."])],
++            &format!("{mode} the body"),
++        );
++    }
++}
++
++/// The paragraph properties of each paragraph of `bytes`' body and cells,
++/// with their change records' ids, authors and dates left out.
++fn properties(bytes: &[u8]) -> Vec<(String, String)> {
++    let xml = normalized(&part_string(bytes, "word/document.xml").unwrap());
++    let stamp = regex::Regex::new(r#" w:(id|author|date)="[^"]*""#).unwrap();
++    paragraphs_in(&xml)
++        .iter()
++        .map(|p| {
++            let text: String = words(p).concat();
++            (text, stamp.replace_all(&ppr(p), "").into_owned())
++        })
++        .collect()
++}
++
++/// When the paragraph that takes the final mark is formatted otherwise
++/// than the container's last one, the final mark records the old
++/// formatting: Reject All gives the last paragraph its own properties and
++/// mark formatting back, and Accept All keeps both paragraphs' (#1669).
++/// Under keep only: the comparer records no change of a mark's formatting
++/// alone (#1677); `m_cell_final_marks` checks its pairing with a paragraph
++/// property changed too.
++#[test]
++fn an_appended_final_mark_records_the_last_paragraphs_formatting() {
++    let formatted = format!("<w:p>{MARK_PPR}<w:r><w:t>Old.</w:t></w:r></w:p>");
++    let mode = MODES[1];
++    let source = table_with_cell(&formatted);
++    let result = check_outputs(
++        &source,
++        &plan_of(mode, &[insert("p2", "after", "New.")]),
++        &["Before.", "Full.", "Old.", "New.", "After."],
++        mode,
++    );
++    let accepted = accept_revisions(&result.redline).unwrap();
++    assert_eq!(
++        properties(&accepted),
++        properties(&result.clean),
++        "{mode}: Accept All"
++    );
++    let rejected = reject_revisions(&result.redline).unwrap();
++    assert_eq!(
++        properties(&rejected),
++        properties(&source),
++        "{mode}: Reject All"
++    );
++}
++
++/// Under keep, another author's tracked formatting change on the last
++/// paragraph goes with the final mark when the new paragraph is formatted
++/// the same, so Reject All still undoes it; a revision already on that
++/// mark is refused, since the inserted mark has to go there (#1669).
++#[test]
++fn an_append_keeps_another_authors_change_on_the_final_mark() {
++    let changed = r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="90" w:author="Other" w:date="2026-01-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#;
++    let source = table_with_cell(changed);
++    let result = check_outputs(
++        &source,
++        &plan_of(MODES[1], &[insert("p2", "after", "New.")]),
++        &["Before.", "Full.", "Old.", "New.", "After."],
++        "keep",
++    );
++    let cell = cell_paragraphs(&result.redline);
++    assert!(!cell[0].contains("pPrChange"), "{cell:?}");
++    assert!(cell[1].contains(r#"w:author="Other""#), "{cell:?}");
++    let rejected = reject_revisions(&result.redline).unwrap();
++    assert_eq!(
++        properties(&rejected),
++        properties(&reject_revisions(&source).unwrap())
++    );
++
++    let inserted = r#"<w:p><w:pPr><w:rPr><w:ins w:id="91" w:author="Other" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t>Beta.</w:t></w:r></w:p>"#;
++    let body = docx(&format!("{}{inserted}", para("Alpha.")));
++    let error = apply_plan(&body, &plan_of(MODES[1], &[insert("p1", "after", "New.")]))
++        .expect_err("refused");
++    assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{error:?}");
++    assert!(error.message.contains("already tracked"), "{error:?}");
++}
+diff --git a/tests/edit_insert_table.rs b/tests/edit_insert_table.rs
+index bc585c7d..b044aeea 100644
+--- a/tests/edit_insert_table.rs
++++ b/tests/edit_insert_table.rs
+@@ -306,6 +306,16 @@ fn a_table_inside_a_table_cell_is_refused() {
+         r#"[{"kind":"insert_table","paragraph":"p0","rows":[["a"]]}]"#,
+     );
+     assert_eq!(code, "UNSUPPORTED_STRUCTURE");
++    // Keeping the existing revisions refuses it too, after the cell's
++    // final paragraph or before it (codex on #1680).
++    for position in ["after", "before"] {
++        let keep = EditPlan::from_json(&format!(
++            r#"{{"schema_version":1,"author":"A","date":"2026-10-02T12:00:00Z","existing_revisions":"keep","operations":[{{"kind":"insert_table","paragraph":"p0","position":"{position}","rows":[["a"]]}}]}}"#
++        ))
++        .unwrap();
++        let error = apply_plan(&source, &keep).unwrap_err();
++        assert_eq!(error.code, "UNSUPPORTED_STRUCTURE", "{position}");
++    }
+ }
+ 
+ #[test]
+diff --git a/tests/m_cell_final_marks.rs b/tests/m_cell_final_marks.rs
+new file mode 100644
+index 00000000..7a4f33f6
+--- /dev/null
++++ b/tests/m_cell_final_marks.rs
+@@ -0,0 +1,433 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! A table cell's two final marks pair, as Word's Compare pairs them: a
++//! paragraph added at the end of a cell, a cell's paragraph replaced by
++//! two, or every paragraph of a cell deleted leaves the cell's final mark
++//! unrevised, and the inserted or deleted mark is the one before it. A
++//! revision on a cell's final mark hangs Word's Accept All or Reject All
++//! (#1669; Word 16 oracles of 2026-10-23 on the issue).
++
++mod common;
++
++use common::docx::{docx, para, part_string};
++use common::validity::check_word_valid_package;
++use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
++use jubarte::inspect::paragraphs;
++
++/// A table between two paragraphs: its first cell holds "Full.", its
++/// second `cell` (a row whose every cell changes is #1672's).
++fn table(cell: &str) -> Vec<u8> {
++    let tc = |inner: &str| {
++        format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
++    };
++    docx(&format!(
++        "{}<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>{}",
++        para("Before."),
++        tc(&para("Full.")),
++        tc(cell),
++        para("After.")
++    ))
++}
++
++fn texts(bytes: &[u8]) -> Vec<String> {
++    paragraphs(bytes)
++        .unwrap()
++        .into_iter()
++        .map(|p| p.text)
++        .collect()
++}
++
++/// The second cell's paragraphs, each as its mark's revision (`+`, `-` or none)
++/// and its text, inserted words after `+`, deleted ones after `-`.
++fn cell(bytes: &[u8]) -> Vec<(&'static str, String)> {
++    let xml = part_string(bytes, "word/document.xml").unwrap();
++    let start = xml.rfind("<w:tc>").unwrap();
++    let end = start + xml[start..].find("</w:tc>").unwrap();
++    let paragraph = regex::Regex::new(r"(?s)<w:p(?: [^>]*)?(?:/>|>.*?</w:p>)").unwrap();
++    let mark = regex::Regex::new(r"(?s)<w:pPr>.*?<w:rPr>(.*?)</w:rPr>.*?</w:pPr>").unwrap();
++    let token =
++        regex::Regex::new(r"<w:(ins|del) |</w:(ins|del)>|<w:(?:t|delText)(?: [^>]*)?>([^<]*)</w:")
++            .unwrap();
++    paragraph
++        .find_iter(&xml[start..end])
++        .map(|p| {
++            let p = p.as_str();
++            let revision = match mark.captures(p).map(|c| c[1].to_string()) {
++                Some(rpr) if rpr.contains("<w:ins ") => "+",
++                Some(rpr) if rpr.contains("<w:del ") => "-",
++                _ => "",
++            };
++            let body = p.find("</w:pPr>").map_or(p, |e| &p[e..]);
++            let (mut side, mut text) = ("", String::new());
++            for c in token.captures_iter(body) {
++                if let Some(open) = c.get(1) {
++                    side = if open.as_str() == "ins" { "+" } else { "-" };
++                } else if c.get(2).is_some() {
++                    side = "";
++                } else {
++                    text.push_str(&format!("{side}{}", &c[3]));
++                }
++            }
++            (revision, text)
++        })
++        .collect()
++}
++
++/// Compare `a` with `b`: the redline is Word-valid (no revision on a cell's
++/// final mark), accepts to `b` and rejects to `a`; its cell is `expected`.
++fn check(a: &[u8], b: &[u8], expected: &[(&str, &str)], what: &str) -> Vec<u8> {
++    let out = check_valid(a, b, what);
++    let expected: Vec<(&str, String)> = expected.iter().map(|(m, t)| (*m, t.to_string())).collect();
++    assert_eq!(cell(&out), expected, "{what}");
++    out
++}
++
++#[test]
++fn a_paragraph_appended_to_a_cell_inserts_the_mark_before_the_final_one() {
++    check(
++        &table(&para("Old.")),
++        &table(&format!("{}{}", para("Old."), para("New."))),
++        &[("+", "Old."), ("", "+New.")],
++        "append",
++    );
++    check(
++        &table(&para("Old.")),
++        &table(&format!("{}{}{}", para("Old."), para("One."), para("Two."))),
++        &[("+", "Old."), ("+", "+One."), ("", "+Two.")],
++        "append two",
++    );
++}
++
++#[test]
++fn a_cells_paragraph_replaced_by_two_inserts_the_mark_before_the_final_one() {
++    let out = check(
++        &table(&para("Old.")),
++        &table(&format!("{}{}", para("One."), para("Two."))),
++        &[("+", "+One-Old."), ("", "+Two.")],
++        "replace by two",
++    );
++    // The first paragraph's words are the two sides' first words, in
++    // either order; the mark after them is the inserted one.
++    assert!(cell(&out)[0].1.contains("+One") && cell(&out)[0].1.contains("-Old"));
++}
++
++#[test]
++fn deleting_every_paragraph_of_a_cell_deletes_the_mark_before_the_final_one() {
++    check(
++        &table(&format!("{}{}", para("One."), para("Two."))),
++        &table("<w:p/>"),
++        &[("-", "-One."), ("", "-Two.")],
++        "delete all",
++    );
++}
++
++/// The final mark records the original's properties when the revised last
++/// paragraph is formatted otherwise: Reject All gives the original its
++/// properties back, Accept All keeps the revision's.
++#[test]
++fn an_appended_cell_paragraph_records_the_original_final_properties() {
++    let centered = r#"<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>Old.</w:t></w:r></w:p>"#;
++    let a = table(centered);
++    let b = table(&format!("{centered}{}", para("New.")));
++    let out = check(&a, &b, &[("+", "Old."), ("", "+New.")], "formatted");
++    let properties = |bytes: &[u8]| -> Vec<String> {
++        let xml = part_string(bytes, "word/document.xml").unwrap();
++        let start = xml.rfind("<w:tc>").unwrap();
++        let end = start + xml[start..].find("</w:tc>").unwrap();
++        let ppr = regex::Regex::new(r"(?s)<w:p(?: [^>]*)?(?:/>|>(.*?)</w:p>)").unwrap();
++        ppr.captures_iter(&xml[start..end])
++            .map(|c| {
++                let p = c.get(1).map_or("", |m| m.as_str()).replace(" />", "/>");
++                let jc = p.contains(r#"<w:jc w:val="center"/>"#);
++                let bold = p.contains("<w:b/>");
++                format!("jc={jc} b={bold}")
++            })
++            .collect()
++    };
++    assert_eq!(
++        properties(&accept_revisions(&out).unwrap()),
++        properties(&b),
++        "Accept All"
++    );
++    assert_eq!(
++        properties(&reject_revisions(&out).unwrap()),
++        properties(&a),
++        "Reject All"
++    );
++}
++
++/// A cell's paragraphs replaced by others that share no word: whichever
++/// order the comparer writes the two sides in, the closing marks pair and
++/// the cell's final mark stays unrevised.
++#[test]
++fn a_cells_paragraphs_replaced_whole_keep_the_final_mark() {
++    for (old, new) in [
++        (para("Alpha beta gamma."), para("Delta epsilon zeta.")),
++        (
++            format!("{}{}", para("Alpha beta."), para("Gamma delta.")),
++            para("Epsilon zeta eta theta."),
++        ),
++        (
++            para("Alpha beta gamma delta."),
++            format!("{}{}", para("Epsilon zeta."), para("Eta theta.")),
++        ),
++    ] {
++        let a = table(&old);
++        let b = table(&new);
++        let out = check_valid(&a, &b, "replaced whole");
++        assert_eq!(cell(&out).last().unwrap().0, "", "{:?}", cell(&out));
++    }
++}
++
++/// A cell holding a nested table between two paragraphs, replaced by an
++/// empty paragraph: the outer cell's closing marks pair over the deleted
++/// table, as Word writes it.
++#[test]
++fn a_cells_tail_replaced_over_a_nested_table_keeps_the_final_mark() {
++    let nested = format!(
++        r#"{}<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
++        para("Lead."),
++        para("Inner."),
++        para("Tail.")
++    );
++    check_valid(&table(&nested), &table("<w:p/>"), "nested tail");
++}
++
++/// A row gaining a cell. Here the comparer rewrites the row (the old one
++/// deleted, the new one inserted, every mark with its row); where it keeps
++/// the row and adds the cell, the new cell's mark stays unrevised and only
++/// its words are inserted (Word 16, ff42b4a7a3's "Role" cell:
++/// `observed_m348_rewritten_cells_keep_revised_properties_and_complete_original_history`).
++/// Either way no cell's final mark carries a revision its row does not.
++#[test]
++fn a_row_gaining_a_cell_resolves_both_ways() {
++    let row = |cells: &[&str]| {
++        let tc = |text: &str| {
++            format!(
++                "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{}</w:tc>",
++                para(text)
++            )
++        };
++        let grid: String = cells.iter().map(|_| "<w:gridCol w:w=\"2000\"/>").collect();
++        docx(&format!(
++            "{}<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid><w:tr>{}</w:tr></w:tbl>{}",
++            para("Before."),
++            cells.iter().map(|c| tc(c)).collect::<String>(),
++            para("After.")
++        ))
++    };
++    let a = row(&["Name", "Department"]);
++    let b = row(&["Name", "Department", "Role"]);
++    check_valid(&a, &b, "added cell");
++    check_valid(&b, &a, "removed cell");
++}
++
++/// A row added or removed whole keeps every final mark's revision, a
++/// cell in a row-level content control (`w:tr/w:sdt/…/w:tc`) included:
++/// the row's revision covers it (codex on #1680, round 9).
++#[test]
++fn a_wrapped_cell_of_a_whole_row_keeps_its_revised_marks() {
++    let rows = |second: Option<(&str, &str)>| {
++        let tc = |inner: String| {
++            format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
++        };
++        let wrapped = second.map_or(String::new(), |(one, two)| {
++            format!(
++                "<w:tr><w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt></w:tr>",
++                tc(para(one) + &para(two))
++            )
++        });
++        docx(&format!(
++            "{}<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}</w:tr>{wrapped}</w:tbl>{}",
++            para("Before."),
++            tc(para("Keep.")),
++            para("After.")
++        ))
++    };
++    let short = rows(None);
++    let long = rows(Some(("New.", "Two.")));
++    check(
++        &short,
++        &long,
++        &[("+", "+New."), ("+", "+Two.")],
++        "row added",
++    );
++    check(
++        &long,
++        &short,
++        &[("-", "-New."), ("-", "-Two.")],
++        "row removed",
++    );
++}
++
++/// The redline of `a` against `b` is Word-valid, accepts to `b` and rejects
++/// to `a`.
++fn check_valid(a: &[u8], b: &[u8], what: &str) -> Vec<u8> {
++    let out = compare_documents(a, b, "Redline").expect("compare");
++    let report = check_word_valid_package(&out);
++    assert!(
++        report.ok(),
++        "{what}: {:?}\n{}",
++        report.errors,
++        part_string(&out, "word/document.xml").unwrap()
++    );
++    assert_eq!(
++        texts(&accept_revisions(&out).unwrap()),
++        texts(b),
++        "{what}: Accept All"
++    );
++    assert_eq!(
++        texts(&reject_revisions(&out).unwrap()),
++        texts(a),
++        "{what}: Reject All"
++    );
++    out
++}
++
++/// `body` with `cell` as the one cell of a table in `story`: a footnote,
++/// an endnote, a header, a footer, or a text box in the body. Returns the
++/// package and the part the table is in.
++fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
++    use common::docx::{Part, W_NS, docx_with, docx_with_sect};
++    let table = format!(
++        r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl><w:p/>"#
++    );
++    let r_ns = common::docx::R_NS;
++    let note = |kind: &str| {
++        format!(
++            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{kind}s xmlns:w="{W_NS}"><w:{kind} w:id="1">{table}</w:{kind}></w:{kind}s>"#
++        )
++    };
++    let reference = |kind: &str| {
++        format!(r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:{kind}Reference w:id="1"/></w:r></w:p>"#)
++    };
++    let chrome = |root: &str| {
++        format!(
++            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="{W_NS}" xmlns:r="{r_ns}">{table}</w:{root}>"#
++        )
++    };
++    const CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
++    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
++    match story {
++        "footnote" | "endnote" => {
++            let name: &'static str = if story == "footnote" {
++                "word/footnotes.xml"
++            } else {
++                "word/endnotes.xml"
++            };
++            let xml = note(story);
++            let content_type = format!("{CT}{story}s+xml");
++            let rel_type = format!("{REL}{story}s");
++            let part = Part {
++                name,
++                content_type: &content_type,
++                rel_type: &rel_type,
++                xml: &xml,
++            };
++            (docx_with(&reference(story), &[part]), name)
++        }
++        "header" | "footer" => {
++            let (name, root): (&'static str, &str) = if story == "header" {
++                ("word/header1.xml", "hdr")
++            } else {
++                ("word/footer1.xml", "ftr")
++            };
++            let xml = chrome(root);
++            let content_type = format!("{CT}{story}+xml");
++            let rel_type = format!("{REL}{story}");
++            let part = Part {
++                name,
++                content_type: &content_type,
++                rel_type: &rel_type,
++                xml: &xml,
++            };
++            let sect = format!(r#"<w:{story}Reference w:type="default" r:id="rIdX0"/>"#);
++            (docx_with_sect(&para("Body."), &[part], &sect), name)
++        }
++        "text box" => (
++            docx(&format!(
++                r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="box" style="width:200pt;height:100pt"><v:textbox><w:txbxContent>{table}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#
++            )),
++            "word/document.xml",
++        ),
++        _ => unreachable!("no story {story}"),
++    }
++}
++
++/// `part`'s blocks as `[tbl [tr [tc [p text]]]]`.
++fn blocks_of(bytes: &[u8], part: &str) -> String {
++    let xml = part_string(bytes, part).unwrap();
++    let token = regex::Regex::new(
++        r"<w:(tbl|tr|tc|p)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
++    )
++    .unwrap();
++    let mut out = String::new();
++    for c in token.captures_iter(&xml) {
++        if let Some(open) = c.get(1) {
++            out.push('[');
++            out.push_str(open.as_str());
++            if !c[2].is_empty() {
++                out.push(']');
++            }
++        } else if c.get(3).is_some() {
++            out.push(']');
++        } else {
++            out.push_str(&c[4]);
++        }
++    }
++    out
++}
++
++/// A cell in every story beside the body, in both modes: a paragraph
++/// appended, and a nested table at the cell's start cleared with the text
++/// after it. The redline is Word-valid, accepts to the revised story and
++/// rejects to the original (#1684: the pairing never ran in the notes,
++/// and missed headers, footers and text boxes).
++#[test]
++fn a_cells_final_mark_settles_in_every_story() {
++    use jubarte::comparer::{CompareMode, WmlComparerSettings};
++    use jubarte::document_comparer::compare_documents_with_settings;
++    let nested = format!(
++        r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
++        para("Inner."),
++        para("Tail.")
++    );
++    let pairs = [
++        (para("Old."), format!("{}{}", para("Old."), para("New."))),
++        (nested, "<w:p/>".to_string()),
++    ];
++    let mut failures = Vec::new();
++    for story in ["footnote", "endnote", "header", "footer", "text box"] {
++        for (old, new) in &pairs {
++            let (a, part) = in_story(story, old);
++            let (b, _) = in_story(story, new);
++            for mode in [CompareMode::Word, CompareMode::PowerTools] {
++                let what = format!(
++                    "{story}, {} ({mode:?})",
++                    if new == "<w:p/>" {
++                        "cleared"
++                    } else {
++                        "appended"
++                    }
++                );
++                let out = compare_documents_with_settings(&a, &b, &WmlComparerSettings::new(mode))
++                    .expect("compare");
++                let report = check_word_valid_package(&out);
++                if !report.ok() {
++                    failures.push(format!("{what}: {:?}", report.errors));
++                }
++                let accepted = blocks_of(&accept_revisions(&out).unwrap(), part);
++                if accepted != blocks_of(&b, part) {
++                    failures.push(format!("{what}: Accept All gives {accepted}"));
++                }
++                let rejected = blocks_of(&reject_revisions(&out).unwrap(), part);
++                if rejected != blocks_of(&a, part) {
++                    failures.push(format!("{what}: Reject All gives {rejected}"));
++                }
++            }
++        }
++    }
++    assert!(failures.is_empty(), "{}", failures.join("\n"));
++}
+diff --git a/tests/m_cell_final_marks_pairs.rs b/tests/m_cell_final_marks_pairs.rs
+new file mode 100644
+index 00000000..3f0fcecd
+--- /dev/null
++++ b/tests/m_cell_final_marks_pairs.rs
+@@ -0,0 +1,252 @@
++// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
++//
++// SPDX-License-Identifier: AGPL-3.0-only
++
++//! Every pair of small table cells, compared in both modes: the redline is
++//! Word-valid (no revision on a cell's final mark, #1669; no cell ending in
++//! a table), accepts to the revised document and rejects to the original,
++//! block for block (#1684). A cell is one or two blocks from paragraphs
++//! `One.` and `Two.`, an empty paragraph, a nested table holding `Inner.` or
++//! `Other.`, and a content control around `Sdt.`; it ends in a paragraph or
++//! the content control.
++//!
++//! Every redline must be Word-valid. The pairs in [`KNOWN`] still miss B
++//! or A in Word mode, as their issues say; one that starts to pass must
++//! leave the list.
++
++mod common;
++
++use common::docx::{docx, para, part_string};
++use common::validity::check_word_valid_package;
++use jubarte::comparer::{CompareMode, WmlComparerSettings};
++use jubarte::document_comparer::{
++    accept_revisions, compare_documents_with_settings, reject_revisions,
++};
++
++/// The block a cell code's character stands for.
++fn block(code: char) -> String {
++    let nested = |text: &str| {
++        format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
++            para(text)
++        )
++    };
++    match code {
++        '1' => para("One."),
++        '2' => para("Two."),
++        'e' => "<w:p/>".to_string(),
++        'n' => nested("Inner."),
++        'm' => nested("Other."),
++        's' => format!(
++            "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
++            para("Sdt.")
++        ),
++        _ => unreachable!("no block {code}"),
++    }
++}
++
++/// Every cell code: one block, or two, ending in a paragraph or the
++/// content control.
++fn cells() -> Vec<String> {
++    let ends = ['1', '2', 'e', 's'];
++    let all = ['1', '2', 'e', 'n', 'm', 's'];
++    let mut out: Vec<String> = ends.iter().map(|c| c.to_string()).collect();
++    for first in all {
++        for last in ends {
++            out.push(format!("{first}{last}"));
++        }
++    }
++    out
++}
++
++/// A table between two paragraphs: its first cell holds "Full.", its
++/// second the blocks of `cell`.
++fn document(cell: &str) -> Vec<u8> {
++    let tc = |inner: &str| {
++        format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
++    };
++    let blocks: String = cell.chars().map(block).collect();
++    docx(&format!(
++        "{}<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>{}",
++        para("Before."),
++        tc(&para("Full.")),
++        tc(&blocks),
++        para("After.")
++    ))
++}
++
++/// The body's blocks as `[tbl [tr [tc [p text]]]]`: tables, rows, cells and
++/// paragraphs with their visible text, through content controls.
++fn shape(bytes: &[u8]) -> String {
++    let xml = part_string(bytes, "word/document.xml").unwrap();
++    let token = regex::Regex::new(
++        r"<w:(tbl|tr|tc|p)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
++    )
++    .unwrap();
++    let mut out = String::new();
++    for c in token.captures_iter(&xml) {
++        if let Some(open) = c.get(1) {
++            out.push('[');
++            out.push_str(open.as_str());
++            if !c[2].is_empty() {
++                out.push(']');
++            }
++        } else if c.get(3).is_some() {
++            out.push(']');
++        } else {
++            out.push_str(&c[4]);
++        }
++    }
++    out
++}
++
++/// The Word-mode pairs whose Accept All (or Reject All) still misses B (or
++/// A), each with its issue: `(from, to, which)`.
++const KNOWN: &[(&str, &str, &str)] = &[
++    // #1686: the comparer drops an empty paragraph the cell gains or loses.
++    ("1", "ee", "Accept"),
++    ("11", "2e", "Accept"),
++    ("2", "ee", "Accept"),
++    ("22", "1e", "Accept"),
++    ("ee", "1", "Reject"),
++    ("ee", "2", "Reject"),
++    // #1687: one side's cell ends inside a content control, and the final
++    // marks do not pair across it (Word-valid since #1684).
++    ("11", "2s", "Accept"),
++    ("11", "es", "Accept"),
++    ("11", "ms", "Accept"),
++    ("11", "ns", "Accept"),
++    ("11", "s", "Accept"),
++    ("11", "ss", "Accept"),
++    ("22", "1s", "Accept"),
++    ("22", "es", "Accept"),
++    ("22", "ms", "Accept"),
++    ("22", "ns", "Accept"),
++    ("22", "s", "Accept"),
++    ("22", "ss", "Accept"),
++    ("e", "1s", "Accept"),
++    ("e", "2s", "Accept"),
++    ("e", "ms", "Accept"),
++    ("e", "ns", "Accept"),
++    ("e", "ss", "Accept"),
++    ("ee", "1s", "Accept"),
++    ("ee", "2s", "Accept"),
++    ("ee", "ms", "Accept"),
++    ("ee", "ns", "Accept"),
++    ("ee", "s", "Accept"),
++    ("ee", "ss", "Accept"),
++    ("m1", "ns", "Accept"),
++    ("m2", "ns", "Accept"),
++    ("me", "1s", "Accept"),
++    ("me", "2s", "Accept"),
++    ("me", "es", "Accept"),
++    ("me", "s", "Accept"),
++    ("me", "ss", "Accept"),
++    ("ms", "n1", "Accept"),
++    ("ms", "n2", "Accept"),
++    ("n1", "ms", "Accept"),
++    ("n2", "ms", "Accept"),
++    ("ne", "1s", "Accept"),
++    ("ne", "2s", "Accept"),
++    ("ne", "es", "Accept"),
++    ("ne", "s", "Accept"),
++    ("ne", "ss", "Accept"),
++    ("ns", "m1", "Accept"),
++    ("ns", "m2", "Accept"),
++    ("ss", "1", "Accept"),
++    ("ss", "11", "Accept"),
++    ("ss", "12", "Accept"),
++    ("ss", "2", "Accept"),
++    ("ss", "21", "Accept"),
++    ("ss", "22", "Accept"),
++    ("ss", "e1", "Accept"),
++    ("ss", "e2", "Accept"),
++    ("ss", "m1", "Accept"),
++    ("ss", "m2", "Accept"),
++    ("ss", "n1", "Accept"),
++    ("ss", "n2", "Accept"),
++];
++
++/// Compare `from` with every other cell in both modes; every failure, at
++/// once.
++fn check_from(from: &str) {
++    let a = document(from);
++    let mut failures = Vec::new();
++    for to in cells().iter().filter(|to| to.as_str() != from) {
++        let b = document(to);
++        for mode in [CompareMode::Word, CompareMode::PowerTools] {
++            let settings = WmlComparerSettings::new(mode);
++            let what = format!("{from} -> {to} ({mode:?})");
++            let out = match compare_documents_with_settings(&a, &b, &settings) {
++                Ok(out) => out,
++                Err(e) => {
++                    failures.push(format!("{what}: compare failed: {e}"));
++                    continue;
++                }
++            };
++            let report = check_word_valid_package(&out);
++            if !report.ok() {
++                failures.push(format!("{what}: {:?}", report.errors));
++            }
++            let known = |which: &str| {
++                mode == CompareMode::Word && KNOWN.contains(&(from, to.as_str(), which))
++            };
++            for (which, got, wanted) in [
++                ("Accept", shape(&accept_revisions(&out).unwrap()), shape(&b)),
++                ("Reject", shape(&reject_revisions(&out).unwrap()), shape(&a)),
++            ] {
++                match (got == wanted, known(which)) {
++                    (false, false) => {
++                        failures.push(format!("{what}: {which} All gives {got}"));
++                    }
++                    (true, true) => {
++                        failures.push(format!(
++                            "{what}: {which} All now passes; drop it from KNOWN"
++                        ));
++                    }
++                    _ => {}
++                }
++            }
++        }
++    }
++    assert!(failures.is_empty(), "{}", failures.join("\n"));
++}
++
++#[test]
++fn the_cell_codes_cover_every_shape_once() {
++    let cells = cells();
++    assert_eq!(cells.len(), 28);
++    let mut unique = cells.clone();
++    unique.sort();
++    unique.dedup();
++    assert_eq!(unique.len(), cells.len());
++    assert_eq!(
++        shape(&document("n1")),
++        "[pBefore.][tbl[tr[tc[pFull.]][tc[tbl[tr[tc[pInner.]]]][pOne.]]]][pAfter.]"
++    );
++    assert_eq!(
++        shape(&document("es")),
++        "[pBefore.][tbl[tr[tc[pFull.]][tc[p][pSdt.]]]][pAfter.]"
++    );
++}
++
++macro_rules! from {
++    ($($name:ident: $cell:literal),* $(,)?) => {
++        $(
++            #[test]
++            fn $name() {
++                check_from($cell);
++            }
++        )*
++    };
++}
++
++from! {
++    from_1: "1", from_2: "2", from_e: "e", from_s: "s",
++    from_11: "11", from_12: "12", from_1e: "1e", from_1s: "1s",
++    from_21: "21", from_22: "22", from_2e: "2e", from_2s: "2s",
++    from_e1: "e1", from_e2: "e2", from_ee: "ee", from_es: "es",
++    from_n1: "n1", from_n2: "n2", from_ne: "ne", from_ns: "ns",
++    from_m1: "m1", from_m2: "m2", from_me: "me", from_ms: "ms",
++    from_s1: "s1", from_s2: "s2", from_se: "se", from_ss: "ss",
++}
+diff --git a/tests/m_selective_revisions.rs b/tests/m_selective_revisions.rs
+index c6b64d44..a2684cb8 100644
+--- a/tests/m_selective_revisions.rs
++++ b/tests/m_selective_revisions.rs
+@@ -594,7 +594,27 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
+                     || story != "body"
+                         && part_string(&partial, &format!("word/{story}.xml")).is_none()
+             };
+-            if !left.is_subset(&expected) || expected.difference(&left).any(|id| !story_went(id)) {
++            // A cell's final mark inserted or deleted with its row goes
++            // with the row (#1669): the two resolve together.
++            let with_row = |id: &str| {
++                let Some(c) = by_id.get(id) else {
++                    return false;
++                };
++                c.target == "paragraph_mark"
++                    && c.inside
++                        .as_deref()
++                        .and_then(|h| by_id.get(h))
++                        .is_some_and(|holder| {
++                            matches!(holder.target, "table_row" | "table_cell")
++                                && holder.kind == c.kind
++                                && selected(holder)
++                        })
++            };
++            if !left.is_subset(&expected)
++                || expected
++                    .difference(&left)
++                    .any(|id| !story_went(id) && !with_row(id))
++            {
+                 let mut lost: Vec<_> = expected.difference(&left).collect();
+                 let mut stayed: Vec<_> = left.difference(&expected).collect();
+                 lost.sort();
+@@ -1229,3 +1249,159 @@ fn cli_id_selection_reports_comment_body_changes_left() {
+         "{stderr}"
+     );
+ }
++
++/// A table whose second row the revision inserts (`inserted`) or deletes:
++/// the row's revision is `w:id="1"`, its two cells' final marks `2` and
++/// `4`, their words `3` and `5`, as Word writes a row added or removed
++/// whole.
++fn revised_row(inserted: bool) -> Vec<u8> {
++    let (kind, text) = if inserted {
++        ("ins", "t")
++    } else {
++        ("del", "delText")
++    };
++    let cell = |mark: u32, words: u32, value: &str| {
++        format!(
++            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p></w:tc>"#
++        )
++    };
++    let plain = |value: &str| {
++        format!(
++            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:tc>"#
++        )
++    };
++    docx(&format!(
++        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr>{}{}</w:tr></w:tbl><w:p/>"#,
++        plain("Kept."),
++        plain("Also kept."),
++        cell(2, 3, "Left."),
++        cell(4, 5, "Right.")
++    ))
++}
++
++/// Resolving only a row's insertion or deletion so the row stays resolves
++/// the same revision on its cells' final marks, which Word writes only
++/// with the row's: left on them, Word's Accept All or Reject All never
++/// returns (#1679, #1669). The cells' words stay tracked.
++#[test]
++fn resolving_a_row_alone_takes_its_cells_final_marks_along() {
++    for (inserted, name, resolve) in [
++        (
++            true,
++            "accept the inserted row",
++            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
++        ),
++        (false, "reject the deleted row", reject_elements),
++    ] {
++        let source = revised_row(inserted);
++        assert!(check_word_valid_package(&source).ok(), "{name}: source");
++        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
++        let report = check_word_valid_package(&partial);
++        assert!(
++            report.ok(),
++            "{name}: {:?}\n{}",
++            report.errors,
++            part_string(&partial, "word/document.xml").unwrap()
++        );
++        let mut left = ids(&partial);
++        left.sort();
++        assert_eq!(left, ["r3", "r5"], "{name}: the words stay tracked");
++    }
++}
++
++/// The same with a nested table in the row's cell whose own row carries
++/// no revision, as Open-Xml-PowerTools writes it: the outer row's revision
++/// covers the nested cell's final mark, so resolving the row alone takes
++/// that mark along too (#1684, G2 of #1680's round 9).
++#[test]
++fn resolving_a_row_alone_takes_its_nested_cells_final_marks_along() {
++    for (inserted, name, resolve) in [
++        (
++            true,
++            "accept the inserted row",
++            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
++        ),
++        (false, "reject the deleted row", reject_elements),
++    ] {
++        let (kind, text) = if inserted {
++            ("ins", "t")
++        } else {
++            ("del", "delText")
++        };
++        let marked = |mark: u32, words: u32, value: &str| {
++            format!(
++                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p>"#
++            )
++        };
++        let nested = format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
++            marked(6, 7, "Inner.")
++        );
++        let source = docx(&format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kept.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{nested}{}</w:tc></w:tr></w:tbl><w:p/>"#,
++            marked(2, 3, "Outer.")
++        ));
++        assert!(check_word_valid_package(&source).ok(), "{name}: source");
++        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
++        let report = check_word_valid_package(&partial);
++        assert!(
++            report.ok(),
++            "{name}: {:?}\n{}",
++            report.errors,
++            part_string(&partial, "word/document.xml").unwrap()
++        );
++        let mut left = ids(&partial);
++        left.sort();
++        assert_eq!(left, ["r3", "r7"], "{name}: the words stay tracked");
++    }
++}
++
++/// A nested row that carries the outer row's revision itself covers its
++/// own cells: resolving the outer row alone leaves that row, its cell's
++/// final mark and its words tracked (CodeRabbit on #1680).
++#[test]
++fn a_nested_row_revised_on_its_own_stays_when_its_outer_row_resolves() {
++    for (inserted, name, resolve) in [
++        (
++            true,
++            "accept the inserted row",
++            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
++        ),
++        (false, "reject the deleted row", reject_elements),
++    ] {
++        let (kind, text) = if inserted {
++            ("ins", "t")
++        } else {
++            ("del", "delText")
++        };
++        let marked = |mark: u32, words: u32, value: &str| {
++            format!(
++                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p>"#
++            )
++        };
++        let nested = format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:trPr><w:{kind} w:id="8" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
++            marked(6, 7, "Inner.")
++        );
++        let source = docx(&format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kept.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{nested}{}</w:tc></w:tr></w:tbl><w:p/>"#,
++            marked(2, 3, "Outer.")
++        ));
++        assert!(check_word_valid_package(&source).ok(), "{name}: source");
++        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
++        let report = check_word_valid_package(&partial);
++        assert!(
++            report.ok(),
++            "{name}: {:?}\n{}",
++            report.errors,
++            part_string(&partial, "word/document.xml").unwrap()
++        );
++        let mut left = ids(&partial);
++        left.sort();
++        assert_eq!(
++            left,
++            ["r3", "r6", "r7", "r8"],
++            "{name}: the nested row stays"
++        );
++    }
++}
+diff --git a/tests/m_validity_ring1.rs b/tests/m_validity_ring1.rs
+index 437b2a98..78a02a48 100644
+--- a/tests/m_validity_ring1.rs
++++ b/tests/m_validity_ring1.rs
+@@ -2500,3 +2500,260 @@ fn repair_pairs_a_case_blind_range_end_with_its_start() {
+     assert_eq!(starts[1], ends[1], "{xml}");
+     assert!(!starts[1].eq_ignore_ascii_case("abc"), "{xml}");
+ }
++
++/// A one-row table whose two cells hold `cells`, the row's properties
++/// `tr_pr`, in a document.
++fn table_package(tr_pr: &str, cells: [&str; 2]) -> Vec<u8> {
++    let cell = |content: &str| {
++        format!(r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{content}</w:tc>"#)
++    };
++    common::docx::docx(&format!(
++        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{tr_pr}{}{}</w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
++        cell(cells[0]),
++        cell(cells[1])
++    ))
++}
++
++/// A paragraph whose mark carries `revision` (`ins` or `del`, or none).
++fn marked(text: &str, revision: Option<&str>) -> String {
++    let mark = revision.map_or(String::new(), |kind| {
++        format!(
++            r#"<w:pPr><w:rPr><w:{kind} w:id="{}" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:rPr></w:pPr>"#,
++            text.bytes().map(u32::from).sum::<u32>()
++        )
++    });
++    format!("<w:p>{mark}<w:r><w:t>{text}</w:t></w:r></w:p>")
++}
++
++fn cell_final_marks(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
++    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
++        .into_iter()
++        .filter(|f| f.code == "CELL_FINAL_MARK_REVISION")
++        .collect()
++}
++
++/// Word opens a table cell whose final paragraph mark is inserted or
++/// deleted while its row is not, but Accept All or Reject All never
++/// returns (#1669: `zapk`, `z2c`, `z3c`, `zap`, Word 16, 2026-10-23).
++/// Word's own Compare never writes it: the revision goes on the mark
++/// before. An error, not Word-fatal (the file opens), not repairable.
++#[test]
++fn probe_a_revision_on_a_cells_final_mark_fails() {
++    for kind in ["ins", "del"] {
++        let bytes = table_package(
++            "",
++            [
++                &format!("{}{}", marked("Old.", None), marked("New.", Some(kind))),
++                &marked("B.", None),
++            ],
++        );
++        let found = cell_final_marks(&bytes);
++        assert_eq!(found.len(), 1, "{kind}: {found:?}");
++        let finding = &found[0];
++        assert_eq!(finding.part, "word/document.xml");
++        assert_eq!(
++            finding.location,
++            "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
++        );
++        assert_eq!(finding.severity, "error", "{finding:?}");
++        assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
++        assert!(
++            finding.message.contains(&format!("w:{kind}")),
++            "{finding:?}"
++        );
++        assert!(!check_word_valid_package(&bytes).ok());
++    }
++    // A cell's only paragraph, and one in a block content control.
++    let only = table_package("", [&marked("New.", Some("ins")), &marked("B.", None)]);
++    assert_eq!(cell_final_marks(&only).len(), 1);
++    let wrapped = table_package(
++        "",
++        [
++            &format!(
++                r#"{}<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
++                marked("Old.", None),
++                marked("New.", Some("del"))
++            ),
++            &marked("B.", None),
++        ],
++    );
++    assert_eq!(cell_final_marks(&wrapped).len(), 1);
++}
++
++/// Word's own shapes pass: the revision on the mark before the cell's
++/// last (an append, as Word's Compare writes it), and every mark of an
++/// inserted or deleted row revised with the row (`w:trPr/w:ins`,
++/// `w:trPr/w:del`; Word 16 Compare, 2026-10-23, #1669). The body's
++/// final mark is not a cell's: Word resolves it (#1669, `zbap`, `zbak`).
++#[test]
++fn word_shapes_of_a_cells_final_mark_pass() {
++    let append = table_package(
++        "",
++        [
++            &format!("{}{}", marked("Old.", Some("ins")), marked("New.", None)),
++            &marked("B.", None),
++        ],
++    );
++    assert_eq!(cell_final_marks(&append), []);
++    for kind in ["ins", "del"] {
++        let row = table_package(
++            &format!(
++                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
++            ),
++            [&marked("C.", Some(kind)), &marked("D.", Some(kind))],
++        );
++        assert_eq!(cell_final_marks(&row), [], "{kind}");
++        assert_word_valid_package(&row);
++    }
++    let body = common::docx::docx(&format!(
++        "{}{}",
++        marked("Alpha.", None),
++        marked("Beta.", Some("ins"))
++    ));
++    assert_eq!(cell_final_marks(&body), []);
++    // A nested table's cells in a deleted or inserted outer row: the outer
++    // row's revision covers them, whether or not the nested rows repeat it
++    // (Open-Xml-PowerTools marks only the outer row). Word 16 resolves
++    // both ways (2026-10-23, `nl`: Accept All and Reject All return the
++    // two sources).
++    for kind in ["ins", "del"] {
++        let nested = format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
++            marked("Inner.", Some(kind)),
++            marked("Outer.", Some(kind))
++        );
++        let outer = table_package(
++            &format!(
++                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
++            ),
++            [&nested, &marked("D.", Some(kind))],
++        );
++        assert_eq!(cell_final_marks(&outer), [], "nested {kind}");
++        assert_word_valid_package(&outer);
++    }
++}
++
++/// A part that writes WordprocessingML in the default namespace (`<tc>`,
++/// no prefix) is checked like any other (codex on #1680, round 9: the
++/// check's byte prefilter looked for `:tc>` only).
++#[test]
++fn probe_a_revised_final_mark_in_an_unprefixed_part_fails() {
++    let w = common::docx::W_NS;
++    let document = format!(
++        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<document xmlns="{w}" xmlns:w="{w}"><body><tbl><tblPr><tblW w:w="2000" w:type="dxa"/></tblPr><tblGrid><gridCol w:w="2000"/></tblGrid><tr><tc><tcPr><tcW w:w="2000" w:type="dxa"/></tcPr><p><r><t>Old.</t></r></p><p><pPr><rPr><ins w:id="1" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></rPr></pPr><r><t>New.</t></r></p></tc></tr></tbl><p><r><t>After.</t></r></p><sectPr><pgSz w:w="12240" w:h="15840"/></sectPr></body></document>"#
++    );
++    let bytes = common::docx::replace_entry(
++        &common::docx::docx("<w:p/>"),
++        "word/document.xml",
++        document.as_bytes(),
++    );
++    let found = cell_final_marks(&bytes);
++    assert_eq!(found.len(), 1, "{found:?}");
++    assert_eq!(
++        found[0].location,
++        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
++    );
++}
++
++/// A cell that a row-level content control wraps (`w:tr/w:sdt/…/w:tc`)
++/// takes its row's revision like any other (codex on #1680, round 9: the
++/// check read the cell's parent as its row, a false positive).
++#[test]
++fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
++    for kind in ["ins", "del"] {
++        let cell = |text: &str| {
++            format!(
++                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc>"#,
++                marked(text, Some(kind))
++            )
++        };
++        let bytes = common::docx::docx(&format!(
++            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>{}<w:sdt><w:sdtPr><w:id w:val="7"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
++            cell("C."),
++            cell("D.")
++        ));
++        assert_eq!(cell_final_marks(&bytes), [], "{kind}");
++        // Without the row's revision the wrapped cell is flagged.
++        let bare = String::from_utf8(
++            common::docx::part_string(&bytes, "word/document.xml")
++                .unwrap()
++                .into_bytes(),
++        )
++        .unwrap()
++        .replace(
++            &format!(r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#),
++            "",
++        );
++        let bare = common::docx::replace_entry(&bytes, "word/document.xml", bare.as_bytes());
++        assert_eq!(cell_final_marks(&bare).len(), 2, "{kind}");
++    }
++}
++
++/// A cell's tags may carry whitespace before their `>` (`<w:tc >`,
++/// `</w:tc\n>`): the check still reads the part (codex on #1680: the
++/// byte prefilter wanted a literal `tc>`).
++#[test]
++fn probe_a_revised_final_mark_in_cells_with_spaced_tags_fails() {
++    let w = common::docx::W_NS;
++    let document = format!(
++        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:document xmlns:w="{w}"><w:body><w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc ><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc
++></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
++        marked("New.", Some("ins"))
++    );
++    let bytes = common::docx::replace_entry(
++        &common::docx::docx("<w:p/>"),
++        "word/document.xml",
++        document.as_bytes(),
++    );
++    let found = cell_final_marks(&bytes);
++    assert_eq!(found.len(), 1, "{found:?}");
++    assert_eq!(
++        found[0].location,
++        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
++    );
++}
++
++/// A custom XML data part is application data, not a Word story: a cell
++/// shape in it is no cell of the document (codex on #1680).
++#[test]
++fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
++    let w = common::docx::W_NS;
++    let doc = format!(
++        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:document xmlns:w="{w}"><w:body><w:p><w:r><w:t>Body.</w:t></w:r></w:p></w:body></w:document>"#
++    );
++    let item = format!(
++        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<w:tbl xmlns:w="{w}"><w:tr><w:tc><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc></w:tr></w:tbl>"#,
++        marked("New.", Some("ins"))
++    );
++    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
++<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
++  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/>
++</Relationships>"#;
++    let bytes = zip_with_parts(&[
++        ("word/document.xml", &doc),
++        ("word/_rels/document.xml.rels", rels),
++        ("customXml/item1.xml", &item),
++    ]);
++    assert_eq!(cell_final_marks(&bytes), []);
++    // The same shape in the main part is flagged.
++    let main = doc.replace(
++        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
++        &format!(
++            "{}<w:p/>",
++            item.split_once("?>\n")
++                .unwrap()
++                .1
++                .replace(&format!(r#" xmlns:w="{w}""#), "")
++        ),
++    );
++    let bytes = zip_with_parts(&[
++        ("word/document.xml", &main),
++        ("word/_rels/document.xml.rels", rels),
++        ("customXml/item1.xml", &item),
++    ]);
++    assert_eq!(cell_final_marks(&bytes).len(), 1);
++}

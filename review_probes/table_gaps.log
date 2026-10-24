@@ -1,0 +1,17 @@
+progress 500 
+progress 500 powertools
+fuzz510 [{"op": "accept", "base_ok": false, "base": [["Epsilon zeta eta theta.", [["jc", [["val", "right"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null]]], ["Epsilon zeta eta theta.", [["jc", [["val", "center"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null]]], ["One.", [["rPr", [], "", [["i", [], "", []]]]], [["O", null], ["n", null], ["e", null], [".", null]]]], "new": [["Epsilon zeta eta theta.", [["jc", [["val", "right"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null]]], ["Epsilon zeta eta theta.One.", [["jc", [["val", "center"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null], ["O", null], ["n", null], ["e", null], [".", null]]]], "want": [["Epsilon zeta eta theta.", [["jc", [["val", "right"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null]]], ["Epsilon zeta eta theta.", [["jc", [["val", "center"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["E", null], ["p", null], ["s", null], ["i", null], ["l", null], ["o", null], ["n", null], [" ", null], ["z", null], ["e", null], ["t", null], ["a", null], [" ", null], ["e", null], ["t", null], ["a", null], [" ", null], ["t", null], ["h", null], ["e", null], ["t", null], ["a", null], [".", null]]], ["One.", [["jc", [["val", "center"]], "", []], ["rPr", [], "", [["sz", [["val", "32"]], "", []]]]], [["O", null], ["n", null], ["e", null], [".", null]]]]}]
+progress 510 
+progress 510 powertools
+progress 520 
+progress 520 powertools
+progress 530 
+progress 530 powertools
+progress 540 
+progress 540 powertools
+progress 550 
+progress 550 powertools
+progress 560 
+progress 560 powertools
+progress 570 
+progress 570 powertools

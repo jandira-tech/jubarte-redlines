@@ -1,0 +1,28 @@
+header False  exit 0 
+header False powertools exit 0 
+header True  exit 2 {"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/chrome.xml","location":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+header True powertools exit 2 {"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/chrome.xml","location":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+footer False  exit 0 
+footer False powertools exit 0 
+footer True  exit 2 {"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/bottom.xml","location":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+footer True powertools exit 2 {"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/bottom.xml","location":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+footnotes False  exit 0 
+footnotes False powertools exit 0 
+footnotes True  exit 2 {"code":"NOTE_REFERENCE_DANGLING","set":"word","severity":"error","part":"word/document.xml","location":"","ref":"","message":"footnoteReference-dangling in 'word/document.xml': id 1","word_fatal":true,"repairable":false}
+{"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/notes.xml","location":"w:footnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:footnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+footnotes True powertools exit 2 {"code":"NOTE_REFERENCE_DANGLING","set":"word","severity":"error","part":"word/document.xml","location":"","ref":"","message":"footnoteReference-dangling in 'word/document.xml': id 1","word_fatal":true,"repairable":false}
+{"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/notes.xml","location":"w:footnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:footnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+endnotes False  exit 0 
+endnotes False powertools exit 0 
+endnotes True  exit 2 {"code":"NOTE_REFERENCE_DANGLING","set":"word","severity":"error","part":"word/document.xml","location":"","ref":"","message":"endnoteReference-dangling in 'word/document.xml': id 1","word_fatal":true,"repairable":false}
+{"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/tailnotes.xml","location":"w:endnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:endnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
+endnotes True powertools exit 2 {"code":"NOTE_REFERENCE_DANGLING","set":"word","severity":"error","part":"word/document.xml","location":"","ref":"","message":"endnoteReference-dangling in 'word/document.xml': id 1","word_fatal":true,"repairable":false}
+{"code":"CELL_FINAL_MARK_REVISION","set":"word","severity":"error","part":"word/tailnotes.xml","location":"w:endnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","ref":"w:endnote[0]/w:tbl[0]/w:tr[0]/w:tc[1]/w:p[1]","message":"a table cell's final paragraph mark carries w:ins while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before","word_fatal":false,"repairable":false}
+
