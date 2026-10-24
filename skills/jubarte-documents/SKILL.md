@@ -53,10 +53,12 @@ jubarte validate review/redline.docx --original contract.orig.docx --author Clau
 - Check the exit status after every command and stop the chain on a
   non-zero one: 0 done, 1 error (an unreadable input, a failed write),
   2 usage (a flag or combination refused before any work, an existing
-  output), 3 an edit plan refused (nothing written; the report on stdout
-  names the operation), 4 a substituted font under
+  output), 3 an edit plan refused (nothing written; see stderr and any
+  report on stdout), 4 a substituted font under
   `--fail-on-substitution`. `validate` exits 2 on any error, on any
   `word` or `edits` finding, and with `--strict` on any warning.
+  Parse/schema refusals may leave stdout empty; read stderr for the reason.
+  Execution refusals report on stdout; plan-level refusals may have no operation.
 - Validate the delivered file against the preserved original, not against
   an intermediate. `--original` is the document the user gave you, and
   `--author` is the author your plan or flags wrote.
@@ -206,12 +208,14 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `review/patch.diff` (the edits as `jubarte diff` prints them),
 `review/report.jsonl`, and with the flags `redline.pdf`, `clean.pdf`,
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
-matched exactly once. Exit 3 means the plan was refused: the report on stdout
-says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
+matched exactly once. Exit 3 means the plan was refused. Parse/schema failures
+may leave stdout empty and explain the reason on stderr. Execution reports on
+stdout name the operation when applicable; plan-level refusals have no operation.
+Refusal codes include `ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
 `PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
-`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
+`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`;
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
