@@ -718,6 +718,12 @@ if [ "$SKIP_GATES" = 0 ]; then
   say "5. Gates (sequential cargo, per AGENTS.md)"
   cargo fmt --check
   cargo clippy --all-targets --all-features -- -D warnings
+  # The library for WASM (the binding's own clippy run does not see engine
+  # warnings: it is a path dependency there). Same feature set as
+  # jubarte-wasm (default features do not compile on wasm32: self-update
+  # pulls getrandom without its js feature).
+  rustup target add wasm32-unknown-unknown
+  cargo clippy --lib --target wasm32-unknown-unknown --no-default-features --features cli -- -D warnings
   cargo test --all-features
   # The docs.rs build: a dead intra-doc link renders as bare brackets there.
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
