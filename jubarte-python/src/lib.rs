@@ -33,6 +33,13 @@ fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
+/// A selection refusal as `JubarteError` with `USAGE: ` before its
+/// message, the category the CLI exits 2 for; the hosts map that prefix
+/// to the binary's usage exit and code.
+fn usage_err(message: String) -> PyErr {
+    JubarteError::new_err(format!("USAGE: {message}"))
+}
+
 /// Where a PDF's comments go and which pages it keeps: the binary's
 /// `--move-comments` and `--changed-only`.
 #[derive(Clone, Copy, Default)]
@@ -264,7 +271,7 @@ fn tables_view(
         dates,
         page_markers,
         select: jubarte::markdown::Select::from_flags(paragraphs, None, None, false, None)
-            .map_err(err)?,
+            .map_err(usage_err)?,
         source,
     };
     let view = py
@@ -325,8 +332,8 @@ fn read_json(
     validity_file: Option<&str>,
 ) -> PyResult<String> {
     let track_changes = track_changes_of(track_changes)?;
-    let select =
-        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
+    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by)
+        .map_err(usage_err)?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         select,
@@ -1102,8 +1109,8 @@ fn read_view(
     source: Option<String>,
 ) -> PyResult<(String, Vec<String>)> {
     let track_changes = track_changes_of(track_changes)?;
-    let select =
-        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
+    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by)
+        .map_err(usage_err)?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         comments,
@@ -1163,7 +1170,7 @@ fn record_plan(
     options: &str,
     held: Option<&str>,
 ) -> PyResult<String> {
-    use jubarte::edit::record::{record_json, RecordError};
+    use jubarte::edit::record::{RecordError, record_json};
     py.detach(|| record_json(verb, operations, docx, held, options))
         .map_err(|e| match e {
             RecordError::Usage(m) => pyo3::exceptions::PyValueError::new_err(m),
@@ -1691,10 +1698,12 @@ mod publication_tests {
                 .enumerate()
             {
                 let warning = caught.get_item(index).unwrap();
-                assert!(warning
-                    .getattr("category")
-                    .unwrap()
-                    .is(py.get_type::<PyRuntimeWarning>()));
+                assert!(
+                    warning
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
                 assert_eq!(
                     warning
                         .getattr("message")
@@ -1736,12 +1745,14 @@ mod publication_tests {
             let raised = publish_result(py, Err(error)).unwrap_err();
             assert_eq!(caught.len().unwrap(), 2);
             for index in 0..2 {
-                assert!(caught
-                    .get_item(index)
-                    .unwrap()
-                    .getattr("category")
-                    .unwrap()
-                    .is(py.get_type::<PyRuntimeWarning>()));
+                assert!(
+                    caught
+                        .get_item(index)
+                        .unwrap()
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
             }
             context
                 .call_method1("__exit__", (py.None(), py.None(), py.None()))
