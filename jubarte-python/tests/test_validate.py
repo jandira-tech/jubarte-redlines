@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,15 @@ def test_validate_repair_tells_structure_from_history(tmp_path: Path, capsys: py
     assert main(["validate", str(broken), "--repair", str(unwritten), "--original", str(missing), "--author", "A"]) == 1
     captured = capsys.readouterr()
     assert "history" not in captured.out and str(missing) in captured.err
+    assert not unwritten.exists()
+    # So does one that is no Word package: the binary admits the original
+    # whole before it writes (codex on #1666).
+    notes = tmp_path / "notes.docx"
+    with zipfile.ZipFile(notes, "w") as z:
+        z.writestr("notes.txt", "not a document")
+    assert main(["validate", str(broken), "--repair", str(unwritten), "--original", str(notes), "--author", "A"]) == 1
+    captured = capsys.readouterr()
+    assert "history" not in captured.out and str(notes) in captured.err
     assert not unwritten.exists()
 
 

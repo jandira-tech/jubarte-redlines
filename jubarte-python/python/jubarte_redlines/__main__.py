@@ -30,6 +30,7 @@ findings.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -84,6 +85,18 @@ def _read(path: Path) -> Document:
     if refused is not None:
         raise CliError(refused)
     return doc
+
+
+def _read_package(path: Path) -> bytes:
+    """``_read`` for a package read whole (``validate --original``): it must
+    pass admission too, so a ZIP that holds no Word document stops the run
+    before anything is written, as the binary's ``read_package`` does."""
+    data = _read(path).to_bytes()
+    from . import _native
+    refused = _native.refused_package(path, data)
+    if refused is not None:
+        raise CliError(refused)
+    return data
 
 
 def _read_side(path: Path, force_kind: str | None) -> bytes | str:
@@ -644,8 +657,10 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         return EXIT_OK
     # A pure accept/reject prints the resolved lines on stdout, nothing
     # else; the bundle's report.jsonl still holds the summary.
+    # Any failure falls back to the summary and the view, as the binary
+    # does; the bundle already holds the result.
     if _is_pure_resolution(parsed, result):
-        try:
+        with contextlib.suppress(Exception):
             resolved = result.report.resolved_revisions
             text = _native.resolution_text(
                 source_bytes,
@@ -658,8 +673,6 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
                 print(note, file=sys.stderr)
             sys.stdout.write(text)
             return EXIT_OK
-        except Exception:
-            pass
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
@@ -703,7 +716,7 @@ def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult,
     from . import _native
 
     if _is_pure_resolution(parsed, result):
-        try:
+        with contextlib.suppress(Exception):
             resolved = result.report.resolved_revisions
             text = _native.resolution_text(
                 source,
@@ -711,8 +724,6 @@ def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult,
             )
             sys.stdout.write(text)
             return
-        except Exception:
-            pass
     _print_changed_view(result, editing, shown)
 
 
@@ -1094,7 +1105,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     doc = _read(args.file)
     docx = doc.to_bytes()
     # An original that cannot be read stops the run before any repair.
-    original = _read(args.original).to_bytes() if args.original is not None else None
+    original = _read_package(args.original) if args.original is not None else None
     if args.repair is not None:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()

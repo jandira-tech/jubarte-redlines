@@ -3067,17 +3067,7 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
 /// is refused by name, `CODE: FILE is …`, before any output exists.
 fn read_package(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = read_word(path)?;
-    jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::default()).map_err(
-        |refused| {
-            format!(
-                "{}: {} is {}",
-                refused.code(),
-                path.display(),
-                refused.message
-            )
-        },
-    )?;
-    Ok(bytes)
+    jubarte::cli::refused_package(path, &bytes).map_or(Ok(bytes), Err)
 }
 
 /// [`read_word`] for a task that reads the document (`read`, `changes`,
