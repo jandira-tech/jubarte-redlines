@@ -1126,7 +1126,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_11_the_app_checkout_is_named_and_checked_first(self) -> None:
         self.kw("JUBARTE_APP_DIR")
-        self.kw("jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir . --preflight")
+        self.kw('jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir "$PWD" --preflight')
 
     def test_item_12_mac_app_store(self) -> None:
         self.kw("App Store")
