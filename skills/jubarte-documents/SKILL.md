@@ -30,6 +30,42 @@ then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
 `doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`,
 `doc.validate()`, `doc.repair()`, `doc.audit_tracked(original, author=...)`.
 
+## Chain commands, deliver files, check exit status
+
+A chain passes files by path, not through stdout. Each command writes what
+`-o` or `--out-dir` names; without them, legacy `edit FILE` and `add FILE`
+write `FILE_modified.docx`. Typed edit actions require `-o` or `--out-dir` to write;
+use `--dry-run` to preview or inline `--save-plan FILE` to save without applying.
+
+```bash
+cp contract.docx contract.orig.docx                  # keep the original as received
+jubarte read contract.docx -p p3 -p p12             # -p repeats: same as -p p3,p12
+jubarte read contract.docx --tables -o tables.md    # the table grids, to a file
+jubarte changes contract.docx --author "Ann" --json # one author's changes, one JSON per line
+jubarte edit contract.docx --plan plan.json --out-dir review   # review/redline.docx, clean.docx
+jubarte validate review/redline.docx --original contract.orig.docx --author Claude
+```
+
+- Name every file you deliver with `-o PATH` or `--out-dir DIR`, and give
+  the user that path. An existing output is refused (`OUTPUT_EXISTS`)
+  unless you pass `--force`. `edit` and `add` refuse an output that names
+  their input; `accept`, `reject`, `convert` and `compare` overwrite it
+  under `--force`, so keep the original under its own name.
+- Check the exit status after every command and stop the chain on a
+  non-zero one: 0 done, 1 error (an unreadable input, a failed write),
+  2 usage (a flag or combination refused before any work, an existing
+  output), 3 an edit plan refused (nothing written; see stderr and any
+  report on stdout), 4 a substituted font under
+  `--fail-on-substitution`. `validate` exits 2 on any error, on any
+  `word` or `edits` finding, and with `--strict` on any warning.
+  Parse/schema refusals may leave stdout empty; read stderr for the reason.
+  Execution refusals report on stdout; plan-level refusals may have no operation.
+- Validate the delivered file against the preserved original, not against
+  an intermediate. `--original` is the document the user gave you, and
+  `--author` is the author your plan or flags wrote.
+- `read`, `changes` and `comments` print to stdout; `--json` prints one
+  object (`read`) or one object per line (`changes`, `comments`).
+
 ## 1. Read before you edit
 
 ```bash
@@ -173,12 +209,14 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `review/patch.diff` (the edits as `jubarte diff` prints them),
 `review/report.jsonl`, and with the flags `redline.pdf`, `clean.pdf`,
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
-matched exactly once. Exit 3 means the plan was refused: the report on stdout
-says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
+matched exactly once. Exit 3 means the plan was refused. Parse/schema failures
+may leave stdout empty and explain the reason on stderr. Execution reports on
+stdout name the operation when applicable; plan-level refusals have no operation.
+Refusal codes include `ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
 `PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
-`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
+`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`;
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 

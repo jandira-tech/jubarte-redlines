@@ -20,7 +20,7 @@ export const capabilityQuery: (a: number, b: number, c: number, d: number, e: nu
 export const capabilityQueryText: (a: number, b: number, c: number, d: number, e: number) => void;
 export const changeFilter: (a: number, b: number, c: number) => void;
 export const changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-export const changesText: (a: number, b: number, c: number) => void;
+export const changesText: (a: number, b: number, c: number, d: number, e: number) => void;
 export const commentsText: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
 export const convertMarkdown: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
@@ -47,7 +47,7 @@ export const initPanicHook: () => void;
 export const inputNotice: (a: number, b: number, c: number, d: number, e: number) => void;
 export const inputValidityLine: (a: number, b: number, c: number, d: number, e: number) => void;
 export const inspectDocument: (a: number, b: number, c: number) => void;
-export const listChanges: (a: number, b: number, c: number) => void;
+export const listChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const listComments: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const markdownStamp: (a: number, b: number, c: number, d: number, e: number) => void;
 export const markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
