@@ -303,9 +303,16 @@ fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
     let reference = |kind: &str| {
         format!(r#"<w:p><w:r><w:t>Body.</w:t></w:r><w:r><w:{kind}Reference w:id="1"/></w:r></w:p>"#)
     };
-    let chrome = |root: &str| {
+    let chrome = |root: &str, ignorable: bool| {
+        // Word's own header root declares extension namespaces it may not
+        // use, and lists them ignorable.
+        let mc = if ignorable {
+            r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" mc:Ignorable="w14 w15""#
+        } else {
+            ""
+        };
         format!(
-            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="{W_NS}" xmlns:r="{r_ns}">{table}</w:{root}>"#
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:{root} xmlns:w="{W_NS}" xmlns:r="{r_ns}"{mc}>{table}</w:{root}>"#
         )
     };
     const CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
@@ -328,19 +335,27 @@ fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
             };
             (docx_with(&reference(story), &[part]), name)
         }
-        "header" | "footer" | "renamed header" | "renamed footer" | "header.dat" | "footer.dat" => {
+        "header"
+        | "footer"
+        | "renamed header"
+        | "renamed footer"
+        | "renamed ignorable header"
+        | "header.dat"
+        | "footer.dat" => {
             // A story part is known by its relationship and content type,
             // not its name: `word/chrome.xml` can hold a header, and so can
             // `word/headerA.dat`, whose name starts as a header's does.
             let (name, root, kind): (&'static str, &str, &str) = match story {
                 "header" => ("word/header1.xml", "hdr", "header"),
                 "footer" => ("word/footer1.xml", "ftr", "footer"),
-                "renamed header" => ("word/chrome.xml", "hdr", "header"),
+                "renamed header" | "renamed ignorable header" => {
+                    ("word/chrome.xml", "hdr", "header")
+                }
                 "header.dat" => ("word/headerA.dat", "hdr", "header"),
                 "footer.dat" => ("word/footerA.dat", "ftr", "footer"),
                 _ => ("word/bottom.xml", "ftr", "footer"),
             };
-            let xml = chrome(root);
+            let xml = chrome(root, story == "renamed ignorable header");
             let content_type = format!("{CT}{kind}+xml");
             let rel_type = format!("{REL}{kind}");
             let part = Part {
@@ -413,6 +428,7 @@ fn a_cells_final_mark_settles_in_every_story() {
         "header",
         "footer",
         "renamed header",
+        "renamed ignorable header",
         "renamed footer",
         "header.dat",
         "footer.dat",
@@ -728,5 +744,32 @@ fn a_part_that_is_no_story_is_copied_as_it_was() {
             part_string(&a, name).unwrap(),
             "{what}"
         );
+    }
+}
+
+/// A renamed header whose revised side alone carries Word 2010 paragraph
+/// ids keeps them declared and ignorable when its cells settle (CodeRabbit
+/// on #1680: the story sweep ran no namespace finalizer).
+#[test]
+fn a_renamed_headers_extension_ids_stay_declared_when_its_cells_settle() {
+    use jubarte::comparer::{CompareMode, WmlComparerSettings};
+    use jubarte::document_comparer::compare_documents_with_settings;
+    let (a, part) = in_story("renamed header", &para("Old."));
+    let revised = format!("{}{}", para("Old."), para("New.")).replace(
+        "<w:p>",
+        r#"<w:p w14:paraId="1A2B3C4D" w14:textId="77777777">"#,
+    );
+    let (b, _) = in_story("renamed ignorable header", &revised);
+    assert!(part_string(&b, part).unwrap().contains("w14:paraId"));
+    for mode in [CompareMode::Word, CompareMode::PowerTools] {
+        let out = compare_documents_with_settings(&a, &b, &WmlComparerSettings::new(mode))
+            .expect("compare");
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{mode:?}: {:?}", report.errors);
+        let xml = part_string(&out, part).unwrap();
+        if xml.contains("w14:") {
+            assert!(xml.contains("xmlns:w14="), "{mode:?}: {xml}");
+            assert!(xml.contains("mc:Ignorable="), "{mode:?}: {xml}");
+        }
     }
 }

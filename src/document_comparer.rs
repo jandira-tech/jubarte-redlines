@@ -8138,7 +8138,12 @@ fn compare_documents_impl(
                 .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
         if unsettled {
             crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+            // The finalizers the sweep above runs, so a renamed story keeps
+            // its extension namespaces declared and ignorable (CodeRabbit on
+            // #1680).
             crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+            crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+            crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
             out.set_part(&part, vd.serialize_element(vr).into_bytes());
         }
     }
