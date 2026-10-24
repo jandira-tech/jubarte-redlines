@@ -116,14 +116,28 @@ test("field refresh reads its input first and overwrites nothing without --force
     assert.equal(result.out, "");
   }
   const kept = run("convert", untracked, "-o", out, "--update-fields");
-  assert.equal(kept.code, 1, kept.err);
-  assert.match(kept.err, /already exists/);
+  assert.equal(kept.code, 2, kept.err);
+  assert.match(kept.err, /OUTPUT_EXISTS: output .* already exists \(use --force to overwrite\)/);
   assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
   assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
   const written = run("convert", untracked, "-o", out, "--update-fields", "--report", report, "--force");
   assert.equal(written.code, 0, written.err);
   assert.equal(typeof JSON.parse(fs.readFileSync(report, "utf8")).page_count, "number");
   assert.equal(fs.readFileSync(out).subarray(0, 2).toString(), "PK");
+});
+
+test("an existing output is a usage refusal, exit 2 with the OUTPUT_EXISTS code", () => {
+  // #1692: every task's no-clobber refusal matches the binary — exit 2
+  // with the OUTPUT_EXISTS code, not a CliError exit 1 without it.
+  for (const [task, ext] of [["read", "md"], ["accept", "docx"], ["reject", "docx"]]) {
+    const out = path.join(tmp, `existing-${task}.${ext}`);
+    fs.writeFileSync(out, "existing");
+    const refused = run(task, untracked, "-o", out);
+    assert.equal(refused.code, 2, refused.err);
+    assert.match(refused.err, new RegExp(`^error: OUTPUT_EXISTS: output .*${path.basename(out)}.* already exists \\(use --force to overwrite\\)\\n$`));
+    assert.equal(fs.readFileSync(out, "utf8"), "existing");
+    assert.equal(run(task, untracked, "-o", out, "--force").code, 0);
+  }
 });
 
 test("removed command help and legacy listing flags are unavailable", () => {
@@ -166,8 +180,8 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   const changes = records(run("changes", out, "--json").out);
   assert.ok(changes.length > 0 && changes.every((c) => c.author === "Legal"));
   const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
-  assert.equal(again.code, 1);
-  assert.match(again.err, /already exists \(use --force to overwrite\)/);
+  assert.equal(again.code, 2);
+  assert.match(again.err, /OUTPUT_EXISTS: output .* already exists \(use --force to overwrite\)/);
   assert.equal(run(
     "compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"),
     "-d", "1970-01-01T00:00:00Z", "-o", out, "--force",
@@ -502,7 +516,9 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
   for (const name of ["clean.docx", "redline.docx", "report.jsonl"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
   const rows = fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows.at(-1).ev, "summary");
-  assert.equal(run("edit", untracked, "--plan", plan, "--out-dir", dir).code, 1);
+  const taken = run("edit", untracked, "--plan", plan, "--out-dir", dir);
+  assert.equal(taken.code, 2, taken.err);
+  assert.match(taken.err, /OUTPUT_EXISTS: output .* already exists \(use --force to overwrite\)/);
   const refused = run("edit", tracked, "--plan", plan, "--out-dir", path.join(tmp, "refused"));
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.out.trim().split("\n").at(-1)).code, "EXISTING_REVISIONS");
@@ -1411,8 +1427,8 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   assert.equal(explicit.code, 0, explicit.err);
   assert.ok(explicit.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
   const written = run("compare", a, b, "-o", fallback);
-  assert.equal(written.code, 1);
-  assert.match(written.err, /already exists/);
+  assert.equal(written.code, 2);
+  assert.match(written.err, /OUTPUT_EXISTS: output .* already exists \(use --force to overwrite\)/);
   assert.deepEqual(fs.readFileSync(fallback), sentinel);
   // Two Markdown documents written to a .md are CriticMarkup, which view
   // options cannot shape; the host reads that from the bytes, as natively.

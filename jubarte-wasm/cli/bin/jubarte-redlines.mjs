@@ -95,8 +95,9 @@ function readInput(file, o, json = false) {
 }
 
 function ensureWritable(file, force) {
+  // The binary's usage refusal: exit 2 with the OUTPUT_EXISTS code (#1692).
   if (fs.existsSync(file) && !force) {
-    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${file}' already exists (use --force to overwrite)`);
   }
 }
 
@@ -613,7 +614,7 @@ function applyEdit(verb, file, docx, o) {
   const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
-    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${outDir}' already exists (use --force to overwrite)`);
   }
   if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
     throw new CliError("--out-dir must not be the input's own directory");
@@ -732,7 +733,7 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
   for (const taken of [output, pdfPath]) {
     if (taken != null && fs.existsSync(taken) && !o.force) {
-      throw new UsageError(`output '${taken}' already exists (use --force to overwrite)`);
+      throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.

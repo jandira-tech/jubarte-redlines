@@ -115,8 +115,11 @@ def _named_kind(path: Path) -> str | None:
 
 
 def _ensure_writable(path: Path, force: bool) -> None:
+    """An existing output without ``--force``: the binary's usage refusal,
+    exit 2 with the ``OUTPUT_EXISTS:`` code (#1692)."""
     if path.exists() and not force:
-        raise CliError(f"output '{path}' already exists (use --force to overwrite)")
+        _error(f"OUTPUT_EXISTS: output '{path}' already exists (use --force to overwrite)", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -606,7 +609,8 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if out_dir is None:
         return _write_edited(args, args.output, result, notes, source_bytes, parsed)
     if out_dir.exists() and not args.force:
-        raise CliError(f"output directory '{out_dir}' already exists (use --force to replace its files)")
+        _error(f"OUTPUT_EXISTS: output '{out_dir}' already exists (use --force to overwrite)", EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE)
     if out_dir.resolve() == args.file.resolve().parent:
         raise CliError("--out-dir must not be the input's own directory")
     lines = result.report.to_jsonl().splitlines()
@@ -744,7 +748,7 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     # replaced only with --force (D15). The PNG names wait for the page count.
     for taken in [path] + ([path.with_suffix(".pdf")] if pdf else []):
         if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
+            _error(f"OUTPUT_EXISTS: output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
     pages, png_count = None, 0
     if pdf or png:
@@ -760,7 +764,7 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     # The PNG names are known only now: nothing is written over a file.
     for taken, _ in outputs:
         if taken.exists() and not args.force:
-            _error(f"output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
+            _error(f"OUTPUT_EXISTS: output '{taken}' already exists (use --force to overwrite)", EXIT_USAGE)
             raise SystemExit(EXIT_USAGE)
     for output, data in outputs:
         _write(output, data)

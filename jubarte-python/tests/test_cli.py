@@ -208,10 +208,35 @@ def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Pat
     assert lines[-1] == {**lines[-1], "ev": "summary", "status": "ok"}
     stdout = capsys.readouterr().out
     assert '"ev":"summary"' in stdout or '"ev": "summary"' in stdout
-    # Existing directory refused without --force, accepted with it.
-    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)]) == 1
-    assert "already exists" in capsys.readouterr().err
+    # Existing directory refused without --force, accepted with it: the
+    # binary's usage refusal, exit 2 with the OUTPUT_EXISTS code (#1692).
+    with pytest.raises(SystemExit) as refused:
+        main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir)])
+    assert refused.value.code == 2
+    assert capsys.readouterr().err == (
+        f"error: OUTPUT_EXISTS: output '{out_dir}' already exists (use --force to overwrite)\n"
+    )
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--force"]) == 0
+
+
+def test_an_existing_output_is_a_usage_refusal_on_every_task(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """#1692: every task's no-clobber refusal is the binary's — exit 2 with
+    the ``OUTPUT_EXISTS:`` code, not a CliError exit 1 without it."""
+    for task, out in (
+        (["read", str(letter), "-o"], tmp_path / "view.md"),
+        (["accept", str(letter), "-o"], tmp_path / "clean.docx"),
+        (["reject", str(letter), "-o"], tmp_path / "clean.docx"),
+    ):
+        out.write_bytes(b"existing")
+        with pytest.raises(SystemExit) as refused:
+            main([*task, str(out)])
+        assert refused.value.code == 2, task
+        assert capsys.readouterr().err == (
+            f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)\n"
+        )
+        assert out.read_bytes() == b"existing"
+        assert main([*task, str(out), "--force"]) == 0
+        capsys.readouterr()
 
 
 def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -268,7 +293,9 @@ def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Pa
 def test_convert_checks_every_png_path_before_writing_one(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "letter-page-01.png").write_bytes(b"keep")
     report = tmp_path / "pages.json"
-    assert main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)]) == 1
+    with pytest.raises(SystemExit) as refused:
+        main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)])
+    assert refused.value.code == 2
     assert "letter-page-01.png" in capsys.readouterr().err
     assert not report.exists(), "a refused PNG leaves no partial bundle"
     assert (tmp_path / "letter-page-01.png").read_bytes() == b"keep"
@@ -288,8 +315,10 @@ def test_convert_pdf_png_and_report(letter: Path, tmp_path: Path, capsys: pytest
     assert data["page_count"] == 1 and "Heading" in data["pages"][0]["text"]
     assert main(["convert", str(letter)]) == 0
     assert (tmp_path / "letter.pdf").is_file()
-    assert main(["convert", str(letter)]) == 1, "no clobber without --force"
-    assert "already exists" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refused:
+        main(["convert", str(letter)])
+    assert refused.value.code == 2, "no clobber without --force: a usage refusal"
+    assert "OUTPUT_EXISTS: output" in capsys.readouterr().err
     assert main(["convert", str(letter), "--force", "-o", str(tmp_path / "out.pdf")]) == 0
     assert (tmp_path / "out.pdf").is_file()
 
@@ -340,7 +369,9 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert main(["reject", str(redline), "-o", str(base)]) == 0
     assert main(["text", str(base)]) == 0
     assert "alpha beta" in capsys.readouterr().out
-    assert main(["accept", str(redline), "-o", str(clean)]) == 1, "no clobber"
+    with pytest.raises(SystemExit) as refused:
+        main(["accept", str(redline), "-o", str(clean)])
+    assert refused.value.code == 2, "no clobber: a usage refusal"
 
 
 def test_capabilities_and_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -776,8 +807,10 @@ def test_shorthand_view_preserves_existing_output(
     # compare prints the same view; only -o writes, and never over a file.
     assert main(["compare", str(old), str(new), "-d", "1970-01-01T00:00:00Z"]) == 0
     assert capsys.readouterr().out.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
-    assert main(["compare", str(old), str(new), "-o", str(output)]) == 1
-    assert "already exists" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as refused:
+        main(["compare", str(old), str(new), "-o", str(output)])
+    assert refused.value.code == 2
+    assert "OUTPUT_EXISTS: output" in capsys.readouterr().err
     assert output.read_bytes() == sentinel
     # Two Markdown documents written to a .md are CriticMarkup, which view
     # options cannot shape; the host reads that from the bytes, as natively.
