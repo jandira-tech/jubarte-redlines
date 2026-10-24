@@ -8067,12 +8067,7 @@ fn compare_documents_impl(
                 // (#1669, #1684), in every story: the body (its text boxes
                 // too), the notes, the headers and footers. After every pass
                 // that writes marks.
-                if part == main1
-                    || part == "word/footnotes.xml"
-                    || part == "word/endnotes.xml"
-                    || part.starts_with("word/header")
-                    || part.starts_with("word/footer")
-                {
+                if sweeps_final_marks(&part, &main1) {
                     crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
                 }
                 // Last: every pass above may append properties out of order.
@@ -8105,11 +8100,10 @@ fn compare_documents_impl(
         })
         .unwrap_or_default();
     for part in stories {
-        let settled = part == "word/footnotes.xml"
-            || part == "word/endnotes.xml"
-            || part.starts_with("word/header")
-            || part.starts_with("word/footer");
-        if settled {
+        // Settled above already. One predicate for both sweeps, so a story
+        // part cannot fall between them (`word/headerA.dat`, CodeRabbit on
+        // #1680, round 12).
+        if sweeps_final_marks(&part, &main1) {
             continue;
         }
         let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
@@ -8174,6 +8168,17 @@ fn compare_documents_impl(
     // own redlines carry none, and its half-matched fields read as broken.
     crate::revision_processor::drop_unreferenced_headers_footers(&mut out);
     out.to_zip()
+}
+
+/// The parts the validity sweep settles cells' final marks in, by name: the
+/// main part, the notes, and `word/header*.xml` / `word/footer*.xml`. The
+/// story sweep after it settles every other story part.
+fn sweeps_final_marks(part: &str, main: &str) -> bool {
+    part == main
+        || part == "word/footnotes.xml"
+        || part == "word/endnotes.xml"
+        || ((part.starts_with("word/header") || part.starts_with("word/footer"))
+            && part.ends_with(".xml"))
 }
 
 #[cfg(test)]

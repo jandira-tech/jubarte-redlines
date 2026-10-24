@@ -328,13 +328,16 @@ fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
             };
             (docx_with(&reference(story), &[part]), name)
         }
-        "header" | "footer" | "renamed header" | "renamed footer" => {
+        "header" | "footer" | "renamed header" | "renamed footer" | "header.dat" | "footer.dat" => {
             // A story part is known by its relationship and content type,
-            // not its name: `word/chrome.xml` can hold a header.
+            // not its name: `word/chrome.xml` can hold a header, and so can
+            // `word/headerA.dat`, whose name starts as a header's does.
             let (name, root, kind): (&'static str, &str, &str) = match story {
                 "header" => ("word/header1.xml", "hdr", "header"),
                 "footer" => ("word/footer1.xml", "ftr", "footer"),
                 "renamed header" => ("word/chrome.xml", "hdr", "header"),
+                "header.dat" => ("word/headerA.dat", "hdr", "header"),
+                "footer.dat" => ("word/footerA.dat", "ftr", "footer"),
                 _ => ("word/bottom.xml", "ftr", "footer"),
             };
             let xml = chrome(root);
@@ -388,7 +391,8 @@ fn blocks_of(bytes: &[u8], part: &str) -> String {
 /// after it. The redline is Word-valid, accepts to the revised story and
 /// rejects to the original (#1684: the pairing never ran in the notes,
 /// and missed headers, footers and text boxes; a header or footer under
-/// another name was missed too, codex on #1680, round 10).
+/// another name was missed too, codex on #1680, round 10, and one whose
+/// name starts `word/header` but does not end `.xml`, CodeRabbit, round 12).
 #[test]
 fn a_cells_final_mark_settles_in_every_story() {
     use jubarte::comparer::{CompareMode, WmlComparerSettings};
@@ -410,6 +414,8 @@ fn a_cells_final_mark_settles_in_every_story() {
         "footer",
         "renamed header",
         "renamed footer",
+        "header.dat",
+        "footer.dat",
         "text box",
     ] {
         for (old, new) in &pairs {
