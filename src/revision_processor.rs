@@ -1862,7 +1862,17 @@ fn is_run_content(name: &XName) -> Option<bool> {
         return None;
     }
     match name.local_name() {
-        "r" | "fldSimple" | "hyperlink" | "subDoc" | "smartTag" | "smartTagPr" => Some(true),
+        // `customXml` is not in the C# list: upstream `CollapseTransform`
+        // never splices it, so the C# throws "Internal error 20" on it too
+        // (#1704's neighbour). Classify it as content — like `hyperlink` —
+        // so a merged paragraph carrying a run-level `w:customXml` keeps it
+        // instead of panicking. A shell whose runs are all deleted then
+        // keeps the paragraph alive; whether Word drops that empty shell
+        // needs a Word A/B before seeing through it (Docxodus #281/#789
+        // chose to collapse `w:hyperlink` for exactly that reason).
+        "r" | "fldSimple" | "hyperlink" | "subDoc" | "smartTag" | "smartTagPr" | "customXml" => {
+            Some(true)
+        }
         "bookmarkStart"
         | "bookmarkEnd"
         | "commentRangeStart"
@@ -1889,11 +1899,19 @@ fn is_run_content(name: &XName) -> Option<bool> {
 }
 
 /// A.5a — `CollapseTransform` (:2331): splice `w:dir`/`w:bdr`/`w:ins`/
-/// `w:moveTo`/`w:smartTag` to their element children and `w:sdt` to its
-/// `sdtContent` element children — ONE level, un-recursed, exactly like the
-/// C# (`return element.Elements()`); drop `w:pPr`; rebuild everything else
-/// recursively. (Yes, `w:bdr` — the C# comment says `bdo` but the code tests
-/// `W.bdr`; reproduced as written.)
+/// `w:moveTo`/`w:smartTag` to their (recursively collapsed) child nodes and
+/// `w:sdt` to its `sdtContent` child nodes, dropping `w:pPr` and rebuilding
+/// everything else recursively — Docxodus #281 (9378da06)
+/// `element.Nodes().Select(n => CollapseTransform(n))`. Inline wrappers
+/// nest (`w:smartTag` > `w:ins` > `w:r`, #1704): splicing only ONE level
+/// leaves the inner `w:ins`/`w:moveTo` at paragraph level, where
+/// [`is_run_content`] cannot classify it and `AllParaContentIsDeleted`
+/// throws. Recursing keeps the semantics of the old single-level splice:
+/// `w:ins`/`w:moveTo` (kept content) splice through to their runs, while
+/// `w:del`/`w:moveFrom` are NOT in the splice list, so they survive the
+/// rebuild whole and classify as non-content. (Yes, `w:bdr` — the old C#
+/// tests `W.bdr` where the comment says `bdo`; Docxodus #789 later renamed
+/// it. Reproduced as written pending a Word A/B for `w:bdo` handling.)
 fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     if !dom.is_element(node) {
         return vec![dom.clone_subtree(node)];
@@ -1905,14 +1923,17 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
             "dir" | "bdr" | "ins" | "moveTo" | "smartTag"
         )
     {
-        let kids = dom.elements(node, None);
-        return kids.into_iter().map(|e| dom.clone_subtree(e)).collect();
+        let mut out = Vec::new();
+        for c in dom.nodes(node) {
+            out.extend(collapse_transform(dom, c));
+        }
+        return out;
     }
     if name == W::sdt() {
         let mut out = Vec::new();
         for sc in dom.elements(node, Some(&W::sdt_content())) {
-            for e in dom.elements(sc, None) {
-                out.push(dom.clone_subtree(e));
+            for c in dom.nodes(sc) {
+                out.extend(collapse_transform(dom, c));
             }
         }
         return out;
