@@ -230,6 +230,40 @@ fn hand_tables_agree_with_schema_particles() {
         assert_hand_agrees_with_schema("numPr", order_tables::NUMPR_ORDER, &order, &allow);
     }
 
+    // Borders and cell margins (#1712: the cell-border ranks once put
+    // `start` before `left`, and margins were not sorted at all).
+    for (label, hand, particle) in [
+        (
+            "tcBorders",
+            order_tables::TCBORDERS_ORDER,
+            "w:CT_TcBorders/w:tcBorders",
+        ),
+        (
+            "tblBorders",
+            order_tables::TBLBORDERS_ORDER,
+            "w:CT_TblBorders/w:tblBorders",
+        ),
+        ("pBdr", order_tables::PBDR_ORDER, "w:CT_PBdr/w:pBdr"),
+        (
+            "tblCellMar",
+            order_tables::CELL_MARGINS_ORDER,
+            "w:CT_TblCellMar/w:tblCellMar",
+        ),
+        (
+            "tcMar",
+            order_tables::CELL_MARGINS_ORDER,
+            "w:CT_TcMar/w:tcMar",
+        ),
+    ] {
+        let found = find_type_particle(&schema, particle);
+        let found = found.unwrap_or_else(|| panic!("{particle} particle in schema"));
+        let mut g = Vec::new();
+        flatten_particle(found, &mut g);
+        let order = ordered_names_from_groups(&g);
+        assert_eq!(order.len(), hand.len(), "{label}: {order:?}");
+        assert_hand_agrees_with_schema(label, hand, &order, &allow);
+    }
+
     // rPr: full EG_RPrBase particle order in the schema does not match the
     // PowerTools hand table (shadow/highlight/… rank drift). The documented
     // divergence that the oracle must pin is only the revision-mark prefix
