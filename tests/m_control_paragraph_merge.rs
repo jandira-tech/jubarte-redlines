@@ -66,11 +66,12 @@ fn cell(blocks: &str) -> String {
 
 /// The body between "Before." and "After." as nested blocks:
 /// `[sdt[pOne.]]` is a block control around a paragraph, `[p[sdtOne.]]` an
-/// inline control in one, `{jc=right}` a paragraph's alignment.
+/// inline control in one, `{jc=right}` a paragraph's alignment, `{eq}` an
+/// equation.
 fn shape(bytes: &[u8]) -> String {
     let xml = common::docx::part_string(bytes, "word/document.xml").unwrap();
     let token = regex::Regex::new(
-        r#"<w:(tbl|tr|tc|p|sdt)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p|sdt)>|<w:(?:t|delText)(?: [^>]*)?>([^<]*)</w:|<w:jc w:val="(\w+)""#,
+        r#"<w:(tbl|tr|tc|p|sdt)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p|sdt)>|<w:(?:t|delText)(?: [^>]*)?>([^<]*)</w:|<w:jc w:val="(\w+)"|<(m:oMath)\b"#,
     )
     .unwrap();
     let body = &xml[xml.find("<w:body").unwrap()..];
@@ -86,6 +87,8 @@ fn shape(bytes: &[u8]) -> String {
             out.push(']');
         } else if let Some(jc) = c.get(5) {
             out.push_str(&format!("{{jc={}}}", jc.as_str()));
+        } else if c.get(6).is_some() {
+            out.push_str("{eq}");
         } else {
             out.push_str(&c[4]);
         }
@@ -327,6 +330,37 @@ fn an_emptied_control_stays_inline_where_both_paragraphs_bring_something() {
     for (word, body, mode, expected) in cases {
         assert_eq!(shape(&resolve(&body, mode)), expected, "{word} {mode}");
     }
+}
+
+/// An emptied control keeps its place at the join when the paragraph after
+/// it starts with an equation, not a run: before the equation, as before
+/// a run (the #1714 A/B, Word 16: m1–m4; codex on #1714).
+#[test]
+fn an_emptied_control_stays_before_an_equation_it_joins() {
+    let eq = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+    let emptied = || sdt(&p(&mark("del", 3), &tracked("del", "Sdt.", 4)));
+    let cases = [
+        ("m1", emptied() + &p("", eq), "[p[sdt]{eq}]"),
+        (
+            "m2",
+            p(&mark("del", 1), &run("One.")) + &emptied() + &p("", eq),
+            "[pOne.[sdt]{eq}]",
+        ),
+        (
+            "m3",
+            emptied() + &p("", &format!("{eq}{}", run("Two."))),
+            "[p[sdt]{eq}Two.]",
+        ),
+        ("m4", emptied() + &p("", &run("Two.")), "[p[sdt]Two.]"),
+    ];
+    let mut failures = Vec::new();
+    for (word, body, expected) in cases {
+        let got = shape(&resolve(&body, "accept"));
+        if got != expected {
+            failures.push(format!("{word}: {got}, Word {expected}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

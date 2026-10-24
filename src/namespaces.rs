@@ -197,6 +197,13 @@ impl W {
     cached_xname!(W::URI, p, "p");
     cached_xname!(W::URI, r, "r");
     cached_xname!(W::URI, t, "t");
+    // The markers a paragraph may hold and still bring nothing to a join.
+    cached_xname!(W::URI, proof_err, "proofErr");
+    cached_xname!(W::URI, comment_range_start, "commentRangeStart");
+    cached_xname!(W::URI, comment_range_end, "commentRangeEnd");
+    cached_xname!(W::URI, comment_reference, "commentReference");
+    cached_xname!(W::URI, perm_start, "permStart");
+    cached_xname!(W::URI, perm_end, "permEnd");
     cached_xname!(W::URI, p_pr, "pPr");
     cached_xname!(W::URI, r_pr, "rPr");
     cached_xname!(W::URI, footnote, "footnote");

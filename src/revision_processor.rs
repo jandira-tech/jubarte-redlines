@@ -2152,7 +2152,7 @@ fn accept_paragraph_marks_with_owners(
             let last_this = group.last().unwrap().0.this_block_content_element.unwrap();
             let np = dom.new_element(W::p());
             if let Some(&next) = held_marks.get(&last_this) {
-                if let Some(ppr) = held_mark_properties(dom, last_this, next) {
+                if let Some(ppr) = held_mark_properties(dom, next) {
                     dom.add(np, ppr);
                 }
             } else {
@@ -2216,7 +2216,7 @@ fn accept_paragraph_marks_with_owners(
                 }
                 let held = held_marks.get(&this).copied();
                 if let Some(next) = held
-                    && let Some(ppr) = held_mark_properties(dom, this, next)
+                    && let Some(ppr) = held_mark_properties(dom, next)
                 {
                     dom.add(re, ppr);
                 }
@@ -2381,6 +2381,26 @@ fn annotate_paragraph_elements_with_id(dom: &mut Dom, element: NodeId) {
     }
 }
 
+/// Number what a paragraph holds besides its properties and its runs
+/// (`pt:UniqueId` `c0`, `c1`, …: an equation, a hyperlink, a field), so an
+/// emptied control can anchor on the content of the paragraph after it when
+/// that content starts with no run (the #1714 A/B: Word keeps the control
+/// before an equation, as before a run).
+fn annotate_paragraph_content_with_id(dom: &mut Dom, element: NodeId) {
+    let unique_id = PT::unique_id();
+    let (p_pr, r) = (W::p_pr(), W::r());
+    let mut content_id = 0;
+    for p in dom.descendants(element, Some(&W::p())) {
+        for child in dom.elements(p, None) {
+            if dom.name_is(child, &p_pr) || dom.name_is(child, &r) {
+                continue;
+            }
+            dom.set_attribute_value(child, &unique_id, Some(&format!("c{content_id}")));
+            content_id += 1;
+        }
+    }
+}
+
 /// Descendants of `element` in document order, not descending INTO elements
 /// named `trim` (the `DescendantsTrimmed` helper the annotators use).
 fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> {
@@ -2496,6 +2516,18 @@ fn add_content_controls_with_owners(
             original_run_by_id.entry(id.to_string()).or_insert(r);
         }
     }
+    // What a paragraph holds besides runs, by its `c` id: where an emptied
+    // control goes when no run follows it.
+    let mut original_content_by_id: HashMap<String, NodeId> = HashMap::new();
+    for p in dom.descendants(original, Some(&W::p())) {
+        for child in dom.elements(p, None) {
+            if let Some(id) = dom.attribute(child, &unique_id) {
+                original_content_by_id
+                    .entry(id.to_string())
+                    .or_insert(child);
+            }
+        }
+    }
 
     for cc in original_ccs {
         let cc_id = dom.attribute(cc, &unique_id).unwrap_or("").to_string();
@@ -2556,9 +2588,7 @@ fn add_content_controls_with_owners(
         let cc_ancestors = dom.ancestors(cc, None);
         let brings = |dom: &Dom, source: NodeId| {
             !brings_nothing(dom, source)
-                || dom
-                    .ancestors(source, None)
-                    .into_iter()
+                || std::iter::successors(dom.parent(source), |&a| dom.parent(a))
                     .any(|a| dom.name_is(a, &sdt) && a != cc && !cc_ancestors.contains(&a))
         };
         let foreign = |dom: &Dom, owners: &[NodeId]| {
@@ -2586,23 +2616,26 @@ fn add_content_controls_with_owners(
                 .rposition(|source| owned_paragraphs.contains(source))
                 .map(|last| owners[last + 1..].to_vec())
                 .unwrap_or_default();
-            let later = dom
-                .descendants(joined, Some(&W::r()))
-                .into_iter()
-                .find(|&r| {
-                    dom.attribute(r, &unique_id)
-                        .and_then(|id| original_run_by_id.get(id))
-                        .is_some_and(|&source| {
-                            dom.ancestors(source, None)
-                                .iter()
-                                .any(|a| after.contains(a))
-                        })
-                })
-                .and_then(|r| {
-                    dom.ancestors_and_self(r, None)
-                        .into_iter()
-                        .find(|&c| dom.parent(c) == Some(joined))
-                });
+            // The first of the joined paragraph's children that came from a
+            // paragraph after the control: a run, or content without one
+            // (an equation, codex on #1714).
+            let from_after = |dom: &Dom, node: NodeId| {
+                dom.attribute(node, &unique_id)
+                    .and_then(|id| {
+                        original_run_by_id
+                            .get(id)
+                            .or_else(|| original_content_by_id.get(id))
+                    })
+                    .is_some_and(|&source| {
+                        std::iter::successors(dom.parent(source), |&a| dom.parent(a))
+                            .any(|a| after.contains(&a))
+                    })
+            };
+            let later = dom.elements(joined, None).into_iter().find(|&child| {
+                dom.descendants_and_self(child, None)
+                    .into_iter()
+                    .any(|node| from_after(dom, node))
+            });
             let emptied = dom.new_element(sdt.clone());
             for (an, av) in dom.attributes(cc) {
                 dom.set_attribute_value(emptied, &an, Some(&av));
@@ -2867,24 +2900,25 @@ fn add_content_controls_with_owners(
 /// ranges. Anything not known to be empty brings something (#1694: only
 /// these shapes were checked against Word, rounds 1 to 9).
 fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+    let reference = W::comment_reference();
     dom.elements(paragraph, None).into_iter().all(|child| {
-        let Some(name) = dom.name(child) else {
-            return true;
-        };
-        name == W::p_pr()
-            || name == W::del()
-            || name == W::move_from()
-            || name == W::bookmark_start()
-            || name == W::bookmark_end()
-            || name == W::name("proofErr")
-            || name == W::name("commentRangeStart")
-            || name == W::name("commentRangeEnd")
-            || name == W::name("permStart")
-            || name == W::name("permEnd")
-            || (name == W::r()
-                && dom.elements(child, None).into_iter().all(|e| {
-                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::name("commentReference"))
-                }))
+        dom.name(child).is_none_or(|name| {
+            name == W::p_pr()
+                || name == W::del()
+                || name == W::move_from()
+                || name == W::bookmark_start()
+                || name == W::bookmark_end()
+                || name == W::proof_err()
+                || name == W::comment_range_start()
+                || name == W::comment_range_end()
+                || name == W::perm_start()
+                || name == W::perm_end()
+                || (name == W::r()
+                    && dom
+                        .elements(child, None)
+                        .into_iter()
+                        .all(|e| dom.name_is(e, &W::r_pr()) || dom.name_is(e, &reference)))
+        })
     })
 }
 
@@ -2908,17 +2942,23 @@ fn holds_mark(dom: &Dom, a: NodeId, b: NodeId, a_keeps: bool) -> bool {
     let a_keeps = a_keeps || own(&around_a, &around_b);
     let b_keeps = !brings_nothing(dom, b) || own(&around_b, &around_a);
     let paragraphs = |s: NodeId| dom.descendants(s, Some(&W::p()));
-    let multi = |s: NodeId| paragraphs(s).len() > 1;
-    let keeps_a_mark = |s: NodeId| {
-        paragraphs(s)
-            .into_iter()
-            .any(|p| !paragraph_mark_is_deleted_or_moved_from(dom, p))
+    // Several paragraphs, one of them keeping its mark: each control's
+    // paragraphs are listed once.
+    let multi_keeping_a_mark = |s: NodeId| {
+        let ps = paragraphs(s);
+        ps.len() > 1
+            && ps
+                .into_iter()
+                .any(|p| !paragraph_mark_is_deleted_or_moved_from(dom, p))
     };
-    (a_keeps && around_b.iter().any(|&s| !around_a.contains(&s) && multi(s)))
+    (a_keeps
+        && around_b
+            .iter()
+            .any(|&s| !around_a.contains(&s) && paragraphs(s).len() > 1))
         || (b_keeps
             && around_a
                 .iter()
-                .any(|&s| !around_b.contains(&s) && multi(s) && keeps_a_mark(s)))
+                .any(|&s| !around_b.contains(&s) && multi_keeping_a_mark(s)))
 }
 
 /// The properties of a paragraph whose deleted mark Word kept: those of the
@@ -2926,8 +2966,7 @@ fn holds_mark(dom: &Dom, a: NodeId, b: NodeId, a_keeps: bool) -> bool {
 /// and numbering included, round 9: c02). No mark of the next paragraph's
 /// goes with them, nor its section break (c03); the kept paragraph's own
 /// section break goes with the deleted mark that carried it (c04, e05).
-fn held_mark_properties(dom: &mut Dom, held: NodeId, next: NodeId) -> Option<NodeId> {
-    debug_assert!(dom.name_is(held, &W::p()));
+fn held_mark_properties(dom: &mut Dom, next: NodeId) -> Option<NodeId> {
     let ppr = dom.new_element(W::p_pr());
     if let Some(source) = dom.element(next, &W::p_pr()) {
         for child in dom.elements(source, None) {
@@ -2945,7 +2984,7 @@ fn held_mark_properties(dom: &mut Dom, held: NodeId, next: NodeId) -> Option<Nod
             dom.add(ppr, copy);
         }
     }
-    (!dom.elements(ppr, None).is_empty()).then_some(ppr)
+    dom.has_elements(ppr).then_some(ppr)
 }
 
 /// A.5b — `AcceptDeletedAndMoveFromParagraphMarks` (:2098): annotate runs and
@@ -2962,6 +3001,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
     }
     annotate_run_elements_with_id(dom, element);
     annotate_paragraph_elements_with_id(dom, element);
+    annotate_paragraph_content_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let mut paragraph_owners = HashMap::new();
     let new_element = accept_paragraph_marks_with_owners(dom, element, &mut paragraph_owners);
