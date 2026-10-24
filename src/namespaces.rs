@@ -222,6 +222,12 @@ impl W {
     cached_xname!(W::URI, tbl_pr, "tblPr");
     cached_xname!(W::URI, tr_pr, "trPr");
     cached_xname!(W::URI, grid_span, "gridSpan");
+    // The schema-hygiene pass: a table grid's columns and their `w:type`,
+    // shading and its `w:fill` (#1719).
+    cached_xname!(W::URI, grid_col, "gridCol");
+    cached_xname!(W::URI, type_, "type");
+    cached_xname!(W::URI, shd, "shd");
+    cached_xname!(W::URI, fill, "fill");
     cached_xname!(W::URI, bookmark_start, "bookmarkStart");
     cached_xname!(W::URI, bookmark_end, "bookmarkEnd");
     cached_xname!(W::URI, del_text, "delText");

@@ -14860,8 +14860,8 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     }
     // `ST_HexColor` has no empty value: an empty fill says nothing, and the
     // schema refuses it (#1712).
-    let fill = W::name("fill");
-    for shd in dom.descendants_and_self(root, Some(&W::name("shd"))) {
+    let fill = W::fill();
+    for shd in dom.descendants_and_self(root, Some(&W::shd())) {
         if dom.attribute(shd, &W::val()).is_none() {
             dom.set_attribute_value(shd, &W::val(), Some("clear"));
         }
@@ -14874,8 +14874,8 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
     }
     // `CT_TblGridCol` declares `w:w` alone: the width is in twips already
     // (#1712).
-    let kind = W::name("type");
-    for col in dom.descendants_and_self(root, Some(&W::name("gridCol"))) {
+    let kind = W::type_();
+    for col in dom.descendants_and_self(root, Some(&W::grid_col())) {
         dom.set_attribute_value(col, &kind, None);
     }
     // A theme colour with no `val` (the schema requires one): `auto` changes
