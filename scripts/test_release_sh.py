@@ -139,7 +139,7 @@ class ApiDocDrift(unittest.TestCase):
         )
 
     def test_the_gates_test_the_drift_report(self) -> None:
-        self.assertIn("python3 scripts/test_api_snapshot.py", step(5))
+        self.assertIn('"${py312[@]}" scripts/test_api_snapshot.py', step(5))
 
     def test_release_commit_adds_docs_api(self) -> None:
         text = RELEASE_SH.read_text()
@@ -237,7 +237,7 @@ class Lessons0101(unittest.TestCase):
     def test_the_gates_test_the_engine_commit_check(self) -> None:
         text = RELEASE_SH.read_text()
         gates = text[text.index('say "5. Gates'):text.index('say "5. Gates — SKIPPED')]
-        self.assertIn("python3 scripts/test_check_engine_commit.py", gates)
+        self.assertIn('"${py312[@]}" scripts/test_check_engine_commit.py', gates)
         row = next(l for l in text.splitlines() if l.startswith("8|auto|Release commit"))
         self.assertIn("scripts/check_engine_commit.sh v@V@", row)
 
@@ -639,8 +639,8 @@ class LibraryReadmes(unittest.TestCase):
 
     def test_gates_run_the_generator_tests(self) -> None:
         gates = self.section('say "5. Gates', 'say "5. Gates — SKIPPED')
-        self.assertIn("python3 scripts/test_library_readmes.py", gates)
-        self.assertIn("python3 scripts/test_check_release_info.py", gates)
+        self.assertIn('"${py312[@]}" scripts/test_library_readmes.py', gates)
+        self.assertIn('"${py312[@]}" scripts/test_check_release_info.py', gates)
 
     def test_the_crate_points_at_its_generated_readme(self) -> None:
         cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
@@ -660,7 +660,7 @@ class QuietGates(unittest.TestCase):
 
     def script_gates(self):
         """The script tests step 5 runs, this file aside (it runs them)."""
-        found = re.findall(r"^\s*python3 (\S*test_\w+\.py)$", step(5), re.M)
+        found = re.findall(r'^\s*"\$\{py312\[@\]\}" (\S*test_\w+\.py)$', step(5), re.M)
         return [rel for rel in found if Path(rel).name != Path(__file__).name]
 
     def test_every_script_gate_prints_only_its_summary(self) -> None:
@@ -1301,6 +1301,349 @@ class CiPublishing(unittest.TestCase):
 
     def test_local_publish_is_a_documented_flag(self) -> None:
         self.assertIn("--local-publish", RELEASE_SH.read_text().split("set -euo pipefail")[0])
+
+
+# stub cargo for the bump gate: every call is recorded in $CALLS; the
+# semver-checks verdict is $SEMVER (0 passes).
+CARGO_SEMVER_STUB = r"""#!/bin/bash
+echo "cargo $*" >> "$CALLS"
+case "$1" in
+  semver-checks) exit "${SEMVER:-0}" ;;
+  *) echo "unexpected cargo $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class BumpGate(unittest.TestCase):
+    """#1742: docs/VERSIONING.md's bump rule is proven before step 1 writes
+    anything. Pre-1.0, a patch carries no new feature (`### Added`) and no
+    change cargo-semver-checks reports; a minor or major may."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="bumpgate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "cargo").write_text(CARGO_SEMVER_STUB)
+        (self.tmp / "bin" / "cargo").chmod(0o755)
+        self.calls = self.tmp / "calls"
+
+    def gate(self, ver: str, prev: str, section: str, **env: str) -> subprocess.CompletedProcess[str]:
+        (self.tmp / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## [Unreleased]\n\n## [{ver}] - 2026-10-25\n\n{section}\n"
+            f"## [{prev}] - 2026-10-22\n\n### Fixed\n\n- old\n"
+        )
+        functions = shell_functions("bump_kind", "changelog_section", "bump_gate")
+        script = (
+            f"set -euo pipefail\nVER={ver}; TAG=v{ver}\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"{functions}\nbump_gate v{prev}\n"
+        )
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                    CALLS=str(self.calls), **env)
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def cargo_calls(self) -> str:
+        return self.calls.read_text() if self.calls.exists() else ""
+
+    def test_the_bump_kind_reads_the_two_versions(self) -> None:
+        functions = shell_functions("bump_kind")
+        for prev, ver, want in (("0.13.0", "0.13.1", "patch"), ("0.13.0", "0.14.0", "minor"),
+                                ("0.13.2", "0.14.0", "minor"), ("0.13.0", "1.0.0", "major")):
+            r = subprocess.run(["bash", "-c", f"{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, want), (prev, ver, r.stderr))
+
+    def test_a_version_not_above_the_previous_one_is_no_bump(self) -> None:
+        functions = shell_functions("bump_kind")
+        for prev, ver in (("0.13.0", "0.13.0"), ("0.13.1", "0.13.0"), ("0.14.0", "0.13.9")):
+            r = subprocess.run(["bash", "-c", f"{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(r.returncode, 0, (prev, ver))
+
+    def test_a_patch_with_new_features_takes_the_minor_instead(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Added\n\n- **`read -p` repeats**.\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("### Added", r.stderr)
+        self.assertIn("0.14.0", r.stderr)
+        self.assertIn("docs/VERSIONING.md", r.stderr)
+        self.assertEqual(self.cargo_calls(), "", "the heading alone decides; no build")
+
+    def test_a_patch_semver_checks_refuses_stops_the_release(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n", SEMVER="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("0.14.0", r.stderr)
+        calls = self.cargo_calls()
+        self.assertIn("semver-checks check-release", calls)
+        self.assertIn("--baseline-rev v0.13.0", calls)
+        self.assertIn("--release-type patch", calls)
+        self.assertIn("--default-features", calls)
+
+    def test_a_clean_patch_passes(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("semver-checks", self.cargo_calls())
+
+    def test_a_minor_may_change_the_api(self) -> None:
+        r = self.gate("0.14.0", "0.13.0", "### Added\n\n- a feature\n### Changed\n\n- an API\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cargo_calls(), "")
+
+    def test_step_0_runs_it_before_step_1_writes_anything(self) -> None:
+        s0 = step(0)
+        self.assertIn("bump_gate", s0)
+        self.assertRegex(s0, r"for t in [^\n]*cargo-semver-checks")
+
+    def test_the_previous_release_is_never_this_tag(self) -> None:
+        # a resumed run (the tag exists) still gates against the release before
+        self.assertRegex(step(0), r"--exclude \"\$TAG\"")
+
+
+# stub gh for the changelog completeness check: closing issues and titles of
+# the PRs the fixture repository merged.
+GH_PR_STUB = r"""#!/bin/bash
+case "$*" in
+  "pr view 11 "*) printf '21\nfix(edit): a thing\n' ;;
+  "pr view 13 "*) printf 'feat(cli): another (#23)\n' ;;
+  "pr view 15 "*) printf '25\nperf(convert): faster\n' ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class ChangelogCompleteness(unittest.TestCase):
+    """#1742: the release notes are the CHANGELOG section verbatim; every
+    fix/feat/perf/security PR merged since the previous tag is cited in it,
+    by its own number or an issue it closes, or skipped on purpose."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="clcomplete-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(GH_PR_STUB)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        subprocess.run([*git, "tag", "v0.1.0"], check=True)
+        for subject in ("Merge pull request #11 from o/fix/a-thing",
+                        "Merge pull request #12 from o/chore/tidy",
+                        "feat(cli): another (#13)",
+                        "docs: a page (#14)",
+                        "Merge pull request #15 from o/perf/faster",
+                        "Merge pull request #16 from o/pre-release-0-1-1"):
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", subject], check=True)
+        self.repo = repo
+
+    def unlisted(self, section: str) -> subprocess.CompletedProcess[str]:
+        (self.repo / "CHANGELOG.md").write_text(
+            f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- old (#99)\n"
+        )
+        functions = shell_functions("changelog_section", "user_facing_prs", "unlisted_prs")
+        script = f"set -euo pipefail\nVER=0.1.1\n{functions}\nunlisted_prs v0.1.0\n"
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}")
+        return subprocess.run(["bash", "-c", script], cwd=self.repo, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_only_user_facing_prs_are_owed(self) -> None:
+        functions = shell_functions("user_facing_prs")
+        r = subprocess.run(["bash", "-c", f"{functions}\nuser_facing_prs v0.1.0"],
+                           cwd=self.repo, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout.split(), ["11", "13", "15"], r.stderr)
+
+    def test_a_pr_cited_by_its_closing_issue_or_its_number_is_listed(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+    def test_a_pr_cited_by_an_issue_its_title_names_is_listed(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#23)\n- faster (#25)\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
+    def test_a_missing_pr_is_named(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n")
+        self.assertEqual(r.stdout.split(), ["13", "15"], r.stderr)
+
+    def test_a_pr_can_be_skipped_on_purpose(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #13 #15 -->\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
+    def test_an_older_section_does_not_count(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n")
+        self.assertIn("15", r.stdout.split())
+
+    def test_step_2_dies_on_an_unlisted_pr(self) -> None:
+        s2 = step(2)
+        self.assertIn("unlisted_prs", s2)
+        self.assertIn("die", s2.split("unlisted_prs", 1)[1])
+
+
+# stub gh for the CI cancel: three runs in flight, one of them release.yml.
+GH_RUNS_STUB = r"""#!/bin/bash
+case "$*" in
+  "run list"*) printf '101 CI\n102 Release\n103 Docs\n' ;;
+  "run cancel"*) echo "$*" >> "$CALLS" ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class CiCancel(unittest.TestCase):
+    """Queued CI is cancelled right before the tag goes up, so release.yml
+    gets the runners first; the push to main has just started CI again."""
+
+    def test_every_run_but_the_release_is_cancelled(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="cicancel-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "gh").write_text(GH_RUNS_STUB)
+        (tmp / "gh").chmod(0o755)
+        calls = tmp / "calls"
+        functions = shell_functions("cancel_queued_ci")
+        script = f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n{functions}\ncancel_queued_ci\n'
+        r = subprocess.run(["bash", "-c", script],
+                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", CALLS=str(calls)),
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cancelled = calls.read_text().split("\n")
+        self.assertIn("run cancel 101", cancelled[0])
+        self.assertIn("run cancel 103", calls.read_text())
+        self.assertNotIn("102", calls.read_text())
+
+    def test_it_runs_after_main_and_before_the_tag(self) -> None:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "POINT OF NO RETURN"')
+        tail = text[start:text.index('say "9.', start)]
+        self.assertLess(tail.index("push_main "), tail.index("cancel_queued_ci"))
+        self.assertLess(tail.index("cancel_queued_ci"), tail.index('git push origin "$TAG"'))
+
+
+GH_ATTEST_STUB = """#!/bin/sh
+echo "$*" >> "$CALLS"
+case "$1 $2" in
+  "release download")
+    dir=""; pat=""
+    while [ $# -gt 0 ]; do
+      case "$1" in -D) dir=$2; shift ;; -p) pat=$2; shift ;; esac
+      shift
+    done
+    mkdir -p "$dir" && : > "$dir/$pat"
+    exit 0 ;;
+  "attestation verify") exit "${ATTEST_RC:-0}" ;;
+esac
+exit 0
+"""
+
+
+class BuildProvenance(unittest.TestCase):
+    """release.yml attests every asset (actions/attest); step 12 downloads one
+    archive and verifies it against the release workflow that signed it."""
+
+    def run_attested(self, rc: int) -> tuple[subprocess.CompletedProcess, str]:
+        tmp = Path(tempfile.mkdtemp(prefix="attest-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "gh").write_text(GH_ATTEST_STUB)
+        (tmp / "gh").chmod(0o755)
+        calls = tmp / "calls"
+        script = f'set -euo pipefail\nTAG=v9.9.9 VER=9.9.9\n{shell_functions("gh_attested")}\ngh_attested\n'
+        r = subprocess.run(["bash", "-c", script], cwd=tmp,
+                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
+                                    CALLS=str(calls), ATTEST_RC=str(rc)),
+                           capture_output=True, text=True, timeout=30)
+        return r, calls.read_text() if calls.exists() else ""
+
+    def test_an_attested_archive_passes(self) -> None:
+        r, calls = self.run_attested(0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("release download v9.9.9 -p jubarte-9.9.9-linux-x86_64.tar.gz", calls)
+        verify = [c for c in calls.splitlines() if c.startswith("attestation verify")]
+        self.assertEqual(len(verify), 1, calls)
+        self.assertIn("-R jandira-tech/jubarte-redlines", verify[0])
+        self.assertIn("--signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml",
+                      verify[0])
+        self.assertIn("--deny-self-hosted-runners", verify[0])
+
+    def test_an_unattested_archive_fails(self) -> None:
+        r, _ = self.run_attested(1)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_step_12_reports_provenance_without_failing_the_release(self) -> None:
+        # A release made from run artifacts (release.yml's release job did
+        # not run) has no attestation; that is a warning, not a failure.
+        s12 = step(12)
+        self.assertIn("gh_attested", s12)
+        self.assertNotRegex(s12, r'check "[^"]*"\s+"?(eventually )?gh_attested')
+
+
+class AutomatedReview(unittest.TestCase):
+    """#1742: checks a script can make are made by the script, not owed by a
+    person: the release.yml review, the scripts' Python floor, the crate's
+    keyword limits, and the API sign-off (now cargo-semver-checks)."""
+
+    def test_step_0_checks_release_yml(self) -> None:
+        self.assertIn("scripts/test_release_workflow.py", step(0))
+
+    def test_step_0_checks_the_release_environment_and_the_signing_secret(self) -> None:
+        s0 = step(0)
+        self.assertIn("environments/release", s0)
+        self.assertIn("ZIPSIGN_PRIVATE_KEY", s0)
+
+    def test_the_script_tests_run_on_the_python_floor(self) -> None:
+        self.assertIn("--python 3.12", step(5))
+
+    def test_step_7_checks_the_crate_keyword_limits(self) -> None:
+        self.assertIn("crate_keywords_ok", step(7))
+
+    def test_the_keyword_check_counts_against_crates_io(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="kw-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        functions = shell_functions("crate_keywords_ok")
+        for keywords, categories, ok in (
+            ('["docx", "redline"]', '["text-processing"]', True),
+            ('["a", "b", "c", "d", "e", "f"]', '["text-processing"]', False),
+            ('["docx"]', '["a", "b", "c", "d", "e", "f"]', False),
+            ('["a-keyword-that-is-far-too-long"]', '["text-processing"]', False),
+        ):
+            (tmp / "Cargo.toml").write_text(
+                f'[package]\nname = "x"\nversion = "0.1.0"\nkeywords = {keywords}\ncategories = {categories}\n'
+            )
+            r = subprocess.run(["bash", "-c", f"{functions}\ncrate_keywords_ok"], cwd=tmp,
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode == 0, ok, (keywords, categories, r.stderr))
+
+    def test_the_rendered_docs_open_only_on_request(self) -> None:
+        s6 = step(6)
+        self.assertIn('RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items', s6)
+        self.assertRegex(s6, r'if \[ "\$OPEN_DOCS" = 1 \]')
+
+
+class ChangelogPlaceholders(unittest.TestCase):
+    """The section ships verbatim as the GitHub release notes: a TODO in it
+    stops the release at step 2, a word that merely contains one does not."""
+
+    def found(self, section: str) -> subprocess.CompletedProcess[str]:
+        tmp = Path(tempfile.mkdtemp(prefix="clph-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "CHANGELOG.md").write_text(f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- TODO old\n")
+        functions = shell_functions("changelog_section", "changelog_placeholders")
+        return subprocess.run(["bash", "-c", f"VER=0.1.1\n{functions}\nchangelog_placeholders"],
+                              cwd=tmp, capture_output=True, text=True, timeout=30)
+
+    def test_a_placeholder_is_found_with_its_line(self) -> None:
+        for word in ("TODO", "TBD", "FIXME", "XXX"):
+            r = self.found(f"### Fixed\n\n- {word}: describe the fix\n")
+            self.assertEqual(r.returncode, 0, word)
+            self.assertIn(word, r.stdout)
+
+    def test_a_word_containing_one_is_not(self) -> None:
+        r = self.found("### Fixed\n\n- TODOS list and XXXL sizes render\n")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    def test_step_2_dies_on_one(self) -> None:
+        s2 = step(2)
+        self.assertIn("changelog_placeholders", s2)
+        self.assertIn("die", s2.split("changelog_placeholders", 1)[1])
 
 
 if __name__ == "__main__":

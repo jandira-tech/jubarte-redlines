@@ -39,6 +39,9 @@
 #                               the fallback when a trusted publisher fails
 #                 --no-wait     with --local-publish: PyPI gets sdist+local
 #                               wheel instead of CI wheels
+#                 --open-docs   step 6 also opens the rendered rustdoc in the
+#                               browser (the API sign-off itself is automatic:
+#                               cargo-semver-checks in step 0)
 #                 --checklist   print the whole release checklist — before the
 #                               script, each step, after the script — every
 #                               line [auto] or [you] with its proving command;
@@ -50,7 +53,12 @@
 #                               print it in the commands)
 #
 # What it does, in order:
-#   0. preflight — tools, registry credentials, main branch, clean tree
+#   0. preflight — tools, registry credentials, main branch, clean tree;
+#      the bump kind docs/VERSIONING.md asks for (a patch has no ### Added
+#      and passes cargo-semver-checks against the previous release); the
+#      release.yml review (scripts/test_release_workflow.py) and the
+#      GitHub settings it relies on (the release environment, the signing
+#      secret)
 #   1. version sync — Cargo.toml and the README's Socket badge version
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
 #      jubarte-wasm/npm/package.json, jubarte-wasm/cli/package.json (the
@@ -58,7 +66,10 @@
 #      README per published library (crates.io, PyPI, both npm packages)
 #      cut from README.md by scripts/library_readmes.py, links pinned to
 #      the tag
-#   2. changelog check — dated `## [x.y.z]` section + release-link footer
+#   2. changelog check — dated `## [x.y.z]` section + release-link footer;
+#      every fix/feat/perf/security PR merged since the previous release is
+#      cited in the section (its number or an issue it closes), and the
+#      section holds no placeholder
 #   3. release evidence — scripts/check_release_info.py proves the six
 #      release_info/ files of $VER (the two 600-item sample CSVs with every
 #      file's sha256 — hashed against the bench's own files when a bench
@@ -72,20 +83,21 @@
 #      channels
 #   5. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
-#   6. api docs drift — REQUIRED review: `cargo doc --no-deps
-#      --document-private-items --open` opens the rendered docs for the
-#      releaser to assess drift against what this release ships; a
-#      machine-readable snapshot lands in docs/api/ (rustdoc JSON + flat
-#      api.txt + the wasm .d.ts files) and its drift from the previous
-#      release's copy is shown, the public surface first
+#   6. api docs drift — the private docs build with warnings denied (and
+#      open in the browser with --open-docs); a machine-readable snapshot
+#      lands in docs/api/ (rustdoc JSON + flat api.txt + the wasm .d.ts
+#      files) and its drift from the previous release's copy is logged,
+#      the public surface first; the bump it implies was proven in step 0
 #   7. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
-#      (with the pypi comment proven inside the sdist)
+#      (with the pypi comment proven inside the sdist); the crate's
+#      keywords and categories inside crates.io's limits
 #   8. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
 #      point of no return — type `vX.Y.Z` to confirm, then push (where main
 #      takes changes only through a pull request, scripts/push_main.sh opens
-#      one for the release commits and merges it at once); release.yml
+#      one for the release commits and merges it at once), cancel the CI
+#      runs in flight so release.yml gets the runners, push the tag; release.yml
 #      builds the five CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
 #   9. crates.io — release.yml's `publish crates.io` job publishes through
@@ -97,7 +109,8 @@
 #      sdist; this step waits for the GitHub release and for PyPI
 #      With --local-publish, steps 9-11 publish from here instead:
 #      `cargo publish`, `npm publish` ×2, `uv publish` of the CI wheels
-#  12. verify — every registry answers with the new version AND its summary
+#  12. verify — every registry answers with the new version AND its summary;
+#      one archive's build provenance is verified (a warning when missing)
 #  13. app — the app repository's scripts/release-engine.sh, from its
 #      checkout (jubarte-app/, untracked here, or JUBARTE_APP_DIR; step 0 has
 #      already run its --preflight): jubarte.pro moves to the release — the
@@ -146,17 +159,17 @@ before|you|Decide where the release runs: a clean worktree on main, release PR m
 before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
 before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run), or the assumption is stated in the release notes when skipped|python3 identity27.py <candidate> <release-commit binary> <out dir> (from the bench root; keeps only differences)
 before|you|parity: the CLI, PyO3 and WASM bindings agree on the samples, build identity proven (--expect-commit HEAD), stale artifacts refused|zsh agents/parity_v2/parity_build_v2.sh then parity_check.py --expect-commit <sha> --engine-dir <engine>
-before|you|release.yml reviewed before the tag: the wheel matrix (7 jobs) equals the README's supported-environments rows and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's failure list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642), third-party actions are SHA-pinned with Dependabot current, and the ZIPSIGN_PRIVATE_KEY secret is set whenever keys/ holds a public key — the signed era refuses unsigned archives|grep -n -e 'artifact:' -e 'environment:' .github/workflows/release.yml; ls keys/ 2>/dev/null; gh secret list -R jandira-tech/jubarte-redlines (docs/SELF_UPDATE.md, Signed releases)
+0|auto|release.yml reviewed before the tag, by scripts/test_release_workflow.py on Python 3.12: the wheel matrix (7 jobs) equals the README's supported-environments row and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642) and alone with the GitHub-release attestation may mint an id-token, every action is SHA-pinned; GitHub holds the release environment and, whenever keys/ holds a public key, the ZIPSIGN_PRIVATE_KEY secret — the signed era refuses unsigned archives|uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py; gh api repos/jandira-tech/jubarte-redlines/environments/release (docs/SELF_UPDATE.md, Signed releases)
 before|you|CI of the release PR: read each red check's log — fix only genuine test or coverage failures; billing, quota, paused-bot and runner-offline reds are reported and left; pushes that start hosted runners are batched into ONE|gh run view <run-id> --log-failed (one batched push per review round)
-before|you|main's rules let the releaser land the release: a bypass for the owner, or a pull request that can merge — a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets|gh api repos/jandira-tech/jubarte-redlines/rulesets
+8|auto|main takes the release: scripts/push_main.sh pushes, or opens a pull request for the release commits and merges it at once; a refusal (a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets) stops the run with nothing published|gh api repos/jandira-tech/jubarte-redlines/rulesets
 before|you|a run in flight owns its worktree: the version bump stays uncommitted from step 1 to step 8 by design — nobody commits, pushes, edits or tidies there until the script ends (0.11.2: the bump was committed mid-run with a .gitignore line that made step 8 unable to stage the vendored app)|git -C <release worktree> status --short (changes there during a run are the release, not dirt)
-before|you|queued CI is cancelled before the tag is pushed, so release.yml gets the runners first; the pushes to main start CI and Docs runs again — cancel those too|gh run list --repo jandira-tech/jubarte-redlines --json databaseId,status --jq 'map(select(.status != "completed").databaseId)[]' (no pipes: the checklist printer splits on them)
+8|auto|Queued CI is cancelled right before the tag goes up, after the push to main started CI and Docs again, so release.yml gets the runners first; release.yml's own run is kept|scripts/release.sh (cancel_queued_ci, between push_main and the tag push)
 before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows' default) on the release samples — every job exits zero|python3 scripts/stack1m.py <release binary> <bench root> <out dir> release_info/sample_*_<version>_*.csv
-before|you|Python 3.12: the script tests pass on the scripts' floor, Python 3.12 (ruff.toml targets py312 and reports newer syntax)|uv run -q --no-project --python 3.12 python scripts/test_release_sh.py
+5|auto|Python 3.12: the script tests run on the scripts' floor, Python 3.12 (ruff.toml targets py312 and reports newer syntax), not on the machine's python3|uv run -q --no-project --python 3.12 python scripts/test_release_sh.py
 before|you|unused: scan every manifest for dependencies nothing references — each workspace Cargo.toml, every package.json, pyproject (0.11.2 found js-sys in jubarte-wasm/Cargo.toml)|grep -rn <crate> src jubarte-wasm/src benches examples (empty output = removable)
-before|you|keywords: every channel's tags are current and inside its limits — crates.io at most 5 keywords and 5 categories, npm jubarte-wasm AND jubarte-redlines, PyPI keywords, GitHub topics|grep -n keywords Cargo.toml jubarte-python/pyproject.toml jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json; gh api repos/jandira-tech/jubarte-redlines/topics
-before|you|The bump kind is decided against docs/VERSIONING.md before the changelog is written: pre-1.0 table — public surface growth or shipped features take minor, Q0 fixes and docs stay patch; the API drift is read as semver (0.10.1 shipped four breaking fields as a patch)|docs/VERSIONING.md (the bump table and the drift-as-semver rule)
-before|you|The engine CHANGELOG section is complete before the run: release.yml cuts it verbatim into the GitHub release notes — every user-facing change since the previous tag is in it, headings render, no placeholder text; step 2 only proves the section exists and is dated|sed -n '/^## \[@V@\] - /,/^## \[/p' CHANGELOG.md
+7|auto|keywords: the crate's keywords and categories are inside crates.io's limits (at most 5 each, keywords ASCII, a letter first, at most 20 characters) — one more fails the publish after the point of no return|scripts/release.sh step 7 (crate_keywords_ok)
+0|auto|The bump kind docs/VERSIONING.md asks for, proven before step 1 writes anything: pre-1.0 a patch carries no new feature (a ### Added heading) and no public API change cargo-semver-checks finds against the previous release's tag (0.10.1 shipped four breaking fields as a patch); a minor or major may|cargo semver-checks check-release -p jubarte-redlines --baseline-rev <previous tag> --release-type patch --default-features
+2|auto|The engine CHANGELOG section is complete: release.yml cuts it verbatim into the GitHub release notes, so it cites every fix/feat/perf/security PR merged since the previous release (by its number, an issue it closes, or a <!-- changelog-skip: #N --> line) and holds no TODO, TBD, FIXME or XXX|scripts/release.sh step 2 (unlisted_prs, changelog_placeholders)
 before|you|The six one-line notes are drafted before the run — the changelog, crates, npm, pypi and github summaries and the docs statement are mandatory flags; the github note leads the release notes from the tag body, the other four are grepped back out of their registries at verify|scripts/release.sh --help (the five --*-summary flags and --how-readme-and-other-docs-were-updated)
 before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the app repository's own CHANGELOG carries its ## [@V@] section naming jubarte-redlines @V@ on its main (step 0 checks it)|JUBARTE_CHANGELOG_DIR=<dir> NUMBERS="<measured sentence>" python3 apply_changelogs_v2.py <engine> <app repo>
 before|you|NUMBERS: the measured sentence is set before the changelog tooling runs — a missing value is a hard error, never guessed|NUMBERS="jubarte <mean> / <median> vs <comparator> <mean> / <median>, paired CI" — the bench's reported aggregates
@@ -165,7 +178,7 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 before|you|the app builds against the engine at the tag (src-tauri takes it by path "../.."): build in a fresh engine-at-tag + app-at-main layout, never in a release worktree mid-run|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir> (clones, discards the vendored copy)
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present and out of every commit (gitignored; if one ever reached a repository's history, accept it knowingly or rotate it), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
-before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token; a new npm configuration expires unless its first publish lands within two days|the registries' trusted-publishing settings pages; gh api repos/jandira-tech/jubarte-redlines/environments --jq '.environments[].name' lists release
+before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token. npm: each configuration must allow npm publish (one made after 2026-09-03 allows only npm stage publish unless that box is ticked, and a plain publish then fails E404), and a new configuration expires unless its first publish lands within two days — 0.13.0 never reached npm for this|npm trust list jubarte-wasm; npm trust list jubarte-redlines (both after npm login); npm trust github <package> --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y
 before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv; an output the validator cannot even open needs a Word probe before it ships|scripts/redline-sweep.sh <csvs> <src> <out> --validate (then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under parity/_scratch|scripts/redline-sweep.sh release_info/sample_*_@V@_*.csv <src> parity/_scratch/sweep_<date> --probe
@@ -182,13 +195,13 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 4|you|docs/adoption pages: a row this release ships still labelled main flips to released by hand (the README's labels name no moving version); the docs statement is checked against the diff, these pages are not|grep -rn ' main ' docs/adoption
 5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint — every new file needs its SPDX headers|uv tool run --from reuse[charset-normalizer] reuse lint
 5|auto|Security scan: cargo-deny advisories across the five workspace manifests and gitleaks over the whole reachable history plus every publishable file — it runs even under --skip-gates|bash scripts/security-check.sh (unconditionally, just above the gates block)
-6|you|rustdoc drift review — REQUIRED sign-off: read the opened docs and the diff against the previous release's API snapshot before the point of no return|cargo doc --no-deps --document-private-items --open (step 6 opens it; --skip-gates skips it on a resume only)
+6|auto|API drift: the private rustdoc builds with warnings denied and its drift from the previous release's snapshot is logged; the sign-off is step 0's cargo-semver-checks gate (--open-docs also opens the rendered docs)|scripts/release.sh step 6; scripts/api_snapshot.py --drift <previous tag> v@V@
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
 8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag carrying the github summary; a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
 8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
-10|you|When a publish job of release.yml fails, read its log: a refused token is a trusted publisher that does not match; fix it and rerun the job, or publish from here with --local-publish (then each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s)|gh run view <run-id> --log-failed; gh run rerun <run-id> --failed; NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates --local-publish (the resume skips what is live)
+10|you|When a publish job of release.yml fails, read its log: a refused token is a trusted publisher that does not match; npm's E404 on PUT with no provenance line is a configuration that does not allow npm publish, or one that expired before its first publish; fix it and rerun the job, or publish from here with --local-publish (then each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s)|gh run view <run-id> --log-failed; gh run rerun <run-id> --failed; NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates --local-publish (the resume skips what is live)
 11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
 11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --local-publish --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --local-publish --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
@@ -260,7 +273,7 @@ check_now() {
 }
 
 VER=""
-DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0; LOCAL_PUBLISH=0
+DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0; LOCAL_PUBLISH=0; OPEN_DOCS=0
 CHANGELOG_SUMMARY=""; CRATES_SUMMARY=""; NPM_SUMMARY=""
 PYPI_SUMMARY=""; GITHUB_SUMMARY=""; DOCS_UPDATED=""
 need() { [ -n "${2:-}" ] || { echo "missing value for $1" >&2; exit 2; }; }
@@ -272,6 +285,7 @@ while [ $# -gt 0 ]; do
     --no-wait)    NO_WAIT=1 ;;
     --local-publish) LOCAL_PUBLISH=1 ;;
     --checklist)  CHECKLIST=1 ;;
+    --open-docs)  OPEN_DOCS=1 ;;
     --changelog-summary|--changelog-comments) need "$@"; CHANGELOG_SUMMARY=$2; shift ;;
     --crates-summary|--crates-comments)       need "$@"; CRATES_SUMMARY=$2; shift ;;
     --npm-summary|--npm-comments)             need "$@"; NPM_SUMMARY=$2; shift ;;
@@ -428,6 +442,118 @@ eventually() {
   return 1
 }
 
+# --- the bump kind (docs/VERSIONING.md) and the CHANGELOG section ---------------
+# patch, minor or major from the previous release's version $1 to $2; fails
+# when $2 is not above $1.
+bump_kind() {
+  local a b
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  if [ "${b[0]}" -ne "${a[0]}" ]; then
+    [ "${b[0]}" -gt "${a[0]}" ] && echo major
+  elif [ "${b[1]}" -ne "${a[1]}" ]; then
+    [ "${b[1]}" -gt "${a[1]}" ] && echo minor
+  else
+    [ "${b[2]}" -gt "${a[2]}" ] && echo patch
+  fi
+}
+# The body of CHANGELOG.md's `## [$VER] - date` section: the lines
+# release.yml cuts into the GitHub release notes.
+changelog_section() {
+  awk -v ver="$VER" '
+    index($0, "## [" ver "] - ") == 1 { on = 1; next }
+    on && /^## \[/ { exit }
+    on { print }
+  ' CHANGELOG.md
+}
+# Pre-1.0 (docs/VERSIONING.md) a patch carries no new feature and no public
+# API change; a minor or a major may. Proven before step 1 writes anything
+# (#1742): a patch whose section has `### Added` ships features, and
+# cargo-semver-checks compares the public API with the previous release's
+# tag. $1 is that tag.
+bump_gate() {
+  local prev=${1#v} kind minor
+  kind=$(bump_kind "$prev" "$VER") || die "$VER is not above the previous release $prev"
+  if [ "$kind" != patch ]; then
+    step "$prev -> $VER is a $kind bump: new features and API changes may ship"
+    return 0
+  fi
+  minor="${prev%%.*}.$(( $(echo "$prev" | cut -d. -f2) + 1 )).0"
+  if changelog_section | grep -E '^### Added' >/dev/null; then
+    die "$VER is a patch, but its CHANGELOG section has ### Added: new features take a minor bump (docs/VERSIONING.md) — release $minor instead"
+  fi
+  cargo semver-checks check-release -p jubarte-redlines --baseline-rev "v$prev" \
+      --release-type patch --default-features \
+    || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
+  step "$prev -> $VER is a patch: no ### Added, and cargo-semver-checks finds no API change"
+}
+# The placeholder words left in the CHANGELOG section, with their line
+# numbers (whole words: TODOS is no placeholder).
+changelog_placeholders() { changelog_section | grep -nwE '(TODO|TBD|FIXME|XXX)'; }
+# PRs merged since the release tag $1 that a user meets: a merge commit from
+# a fix/, feat/, perf/ or security/ branch, or a squashed commit whose subject
+# says so. Release, chore, docs, test and CI branches owe the notes nothing.
+user_facing_prs() {
+  git log --format=%s "$1..HEAD" | sed -nE \
+    -e 's@^Merge pull request #([0-9]+) from [^/ ]+/(fix|feat|perf|security)[/-].*@\1@p' \
+    -e 's@^(fix|feat|perf|security)(\([^)]*\))?!?: .* \(#([0-9]+)\)$@\3@p' \
+    | sort -un
+}
+# The user-facing PRs since $1 that the CHANGELOG section cites nowhere: by
+# the PR's own number, an issue it closes, or an issue its title names. A
+# `<!-- changelog-skip: #N ... -->` line in the section cites one on purpose
+# (the release notes render it invisible).
+unlisted_prs() {
+  local cited n r hit refs
+  cited=" $(changelog_section | grep -oE '#[0-9]+' | tr -d '#' | tr '\n' ' ') "
+  for n in $(user_facing_prs "$1"); do
+    case "$cited" in *" $n "*) continue ;; esac
+    refs=$(gh pr view "$n" --json closingIssuesReferences,title \
+             -q '(.closingIssuesReferences[].number), .title' </dev/null 2>/dev/null || true)
+    hit=0
+    for r in $(printf '%s\n' "$refs" | awk '
+        /^[0-9]+$/ { print; next }
+        { while (match($0, /#[0-9]+/)) { print substr($0, RSTART + 1, RLENGTH - 1); $0 = substr($0, RSTART + RLENGTH) } }'); do
+      case "$cited" in *" $r "*) hit=1; break ;; esac
+    done
+    [ "$hit" = 1 ] || echo "$n"
+  done
+}
+# Queued CI waits behind nothing once release.yml needs the runners: every
+# run still in flight but release.yml's own is cancelled right before the
+# tag goes up (the push to main has just started CI and Docs again).
+cancel_queued_ci() {
+  local id name n=0
+  while read -r id name; do
+    [ -n "$id" ] && [ "$name" != Release ] || continue
+    gh run cancel "$id" >/dev/null 2>&1 && n=$((n + 1))
+  done < <(gh run list -L 100 --json databaseId,name,status \
+             -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' </dev/null 2>/dev/null)
+  step "cancelled $n CI run(s) in flight so release.yml gets the runners"
+}
+# crates.io takes at most five keywords (ASCII, a letter first, then letters,
+# digits, _, - or +, at most 20 characters) and five categories; one more
+# fails the publish itself, after the point of no return.
+crate_keywords_ok() {
+  python3 - <<'PY'
+import re
+import sys
+import tomllib
+
+with open("Cargo.toml", "rb") as f:
+    package = tomllib.load(f)["package"]
+keywords, categories = package.get("keywords", []), package.get("categories", [])
+problems = [f"{len(keywords)} keywords (crates.io takes 5)"] if len(keywords) > 5 else []
+if len(categories) > 5:
+    problems.append(f"{len(categories)} categories (crates.io takes 5)")
+problems += [f"keyword crates.io refuses: {k}" for k in keywords
+             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]{0,19}", k)]
+for problem in problems:
+    print(f"  ! {problem}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+}
+
 # =============================================================================
 say "0. Preflight"
 # =============================================================================
@@ -443,7 +569,7 @@ git fetch --quiet origin main
   || die "working tree is dirty — commit or stash first:
 $(git status --porcelain | sed 's/^/       /')"
 
-for t in cargo cargo-deny gitleaks bun npm gh wasm-pack node uvx; do
+for t in cargo cargo-deny cargo-semver-checks gitleaks bun npm gh wasm-pack node uv uvx; do
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
@@ -467,6 +593,27 @@ APP_REPO=${JUBARTE_APP_DIR:-jubarte-app}
   || die "no app checkout with scripts/release-engine.sh at $APP_REPO — git clone https://github.com/arthrod/jubarte-app jubarte-app (or export JUBARTE_APP_DIR)"
 app_release() { "$APP_REPO/scripts/release-engine.sh" "$VER" --engine-dir "$PWD" "$@"; }
 app_release --preflight
+
+# The release.yml review — the wheel and binary matrices against the README
+# and steps 11's lists, SHA-pinned actions, the publish jobs in the release
+# environment with the only id-token grants — is scripts/test_release_workflow.py,
+# on the scripts' floor. What it cannot read lives in GitHub's settings.
+uv run -q --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py >/dev/null 2>&1 \
+  || die "release.yml fails its review — run: uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py"
+gh api repos/jandira-tech/jubarte-redlines/environments/release >/dev/null 2>&1 \
+  || die "no \`release\` environment on GitHub — the registries trust release.yml in that environment (#1642)"
+if compgen -G 'keys/*.pub' >/dev/null; then
+  gh secret list -R jandira-tech/jubarte-redlines --json name -q '.[].name' </dev/null 2>/dev/null \
+    | grep -x ZIPSIGN_PRIVATE_KEY >/dev/null \
+    || die "keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set — signed-era binaries would refuse this release"
+fi
+step "release.yml reviewed; the release environment and the signing secret are in place"
+
+# The bump kind, before step 1 writes it. A resumed run (the tag exists)
+# still gates against the release before this one.
+PREV_RELEASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude "$TAG" 2>/dev/null) \
+  || die "no earlier release tag (v*) to gate the bump against — git fetch --tags"
+bump_gate "$PREV_RELEASE"
 
 # =============================================================================
 say "1. Version sync → $VER"
@@ -564,6 +711,14 @@ grep -q "^## \[$VER\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" CHANGELOG.md \
 grep -q "^\[$VER\]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v$VER" CHANGELOG.md \
   || die "CHANGELOG.md is missing the \`[$VER]: …/tag/$TAG\` release-link footer"
 step "$VER section + link footer present"
+# release.yml cuts the section verbatim into the GitHub release notes.
+if changelog_placeholders >&2; then
+  die "CHANGELOG.md's $VER section holds placeholder text (above) — it ships as the release notes"
+fi
+missing_prs=$(unlisted_prs "$PREV_RELEASE")
+[ -z "$missing_prs" ] \
+  || die "CHANGELOG.md's $VER section cites none of these user-facing PRs merged since $PREV_RELEASE: $(echo $missing_prs) — cite each by its number or an issue it closes, or skip it with a \`<!-- changelog-skip: #N -->\` line"
+step "every user-facing PR merged since $PREV_RELEASE is cited"
 check_now 2
 
 # =============================================================================
@@ -740,12 +895,15 @@ if [ "$SKIP_GATES" = 0 ]; then
   cargo test --all-features
   # The docs.rs build: a dead intra-doc link renders as bare brackets there.
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-  python3 scripts/test_convert_sweep.py
-  python3 scripts/test_release_sh.py
-  python3 scripts/test_check_engine_commit.py
-  python3 scripts/test_check_release_info.py
-  python3 scripts/test_library_readmes.py
-  python3 scripts/test_api_snapshot.py
+  # The script tests run on the scripts' floor, Python 3.12 (ruff.toml
+  # targets py312), not on whatever python3 this machine has.
+  py312=(uv run -q --no-project --python 3.12 python)
+  "${py312[@]}" scripts/test_convert_sweep.py
+  "${py312[@]}" scripts/test_release_sh.py
+  "${py312[@]}" scripts/test_check_engine_commit.py
+  "${py312[@]}" scripts/test_check_release_info.py
+  "${py312[@]}" scripts/test_library_readmes.py
+  "${py312[@]}" scripts/test_api_snapshot.py
   # Python bindings: build the extension from this checkout and run pytest.
   # jubarte-python/uv.lock is tracked; whatever uv rewrites in it ships in
   # the release commit (step 8), so the tree stays clean for a resumed run.
@@ -763,14 +921,16 @@ fi
 say "6. API docs — drift assessment"
 # =============================================================================
 
-# Required release review: the releaser reads the rendered docs (--open) and
-# assesses the drift between them and what this release actually ships —
-# before the point of no return. Re-running a failed release does not reopen
-# the browser: the assessment already happened on the first run.
+# The API sign-off is automatic (#1742): step 0 proved the bump kind with
+# cargo-semver-checks, and the drift below is logged. --open-docs opens the
+# rendered docs for a releaser who wants to read them too.
 if [ "$SKIP_GATES" = 0 ]; then
   # Warnings denied here too: step 5 builds the public docs only, and the
   # private items carried 12 dead links and stray HTML tags in 0.11.2.
-  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --open
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+  if [ "$OPEN_DOCS" = 1 ]; then
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --open
+  fi
 else
   step "doc review skipped (--skip-gates — assessed on the first run)"
 fi
@@ -807,6 +967,7 @@ check_now 6
 
 # =============================================================================
 say "7. Publish dry-runs"
+crate_keywords_ok || die "Cargo.toml's keywords or categories break crates.io's limits (above)"
 # The bump and summaries are staged but not committed until step 8, so the
 # dry run packages the dirty tree; the real publish (step 9) stays clean.
 # A resumed run skips the dry run of a registry that already holds $VER:
@@ -961,7 +1122,7 @@ cat <<EOF
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
   Summaries ride along on every channel — verify greps them afterwards.
-  The rustdoc drift review (step 6) is a required sign-off on this release.
+  The bump kind was proven in step 0 (cargo-semver-checks); the API drift is in the log above.
 EOF
 if [ "$YES" = 0 ]; then
   read -r -p "  type 'v$VER' to confirm: " a
@@ -973,6 +1134,7 @@ fi
 push_main "release/$TAG" "chore(release): $TAG" \
   "The release commits of jubarte $TAG, from scripts/release.sh. Merged at once with a merge commit: the tag names the commit the gates ran on." \
   || die "main was not updated — nothing is published; the release commits and the tag are local, rerun once main takes them"
+cancel_queued_ci
 if git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
   step "tag $TAG already on origin — push skipped"
 else
@@ -1182,6 +1344,19 @@ gh_note() {
   gh release view "$TAG" --json body -q .body 2>/dev/null \
     | grep -F "$GITHUB_SUMMARY" >/dev/null
 }
+# release.yml's release job attests every asset SHA256SUMS.txt names; one
+# archive, verified against the workflow that signed it on a GitHub-hosted
+# runner, proves the attestation ran.
+gh_attested() {
+  local f="jubarte-$VER-linux-x86_64.tar.gz" rc=0
+  rm -rf dist/attest
+  gh release download "$TAG" -p "$f" -D dist/attest >/dev/null 2>&1 || return 1
+  gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte-redlines \
+    --signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml \
+    --deny-self-hosted-runners >/dev/null 2>&1 || rc=1
+  rm -rf dist/attest
+  return "$rc"
+}
 
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
@@ -1192,6 +1367,13 @@ check "npm        releaseNotes.$VER shipped" npm_note
 check "PyPI       jubarte-redlines $VER" "eventually pypi_has"
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
+# A warning, not a failure: a release made here from run artifacts (step
+# 11, when release.yml's release job did not run) has no attestation.
+if gh_attested; then
+  step "ok — GitHub     assets carry build provenance (gh attestation verify)"
+else
+  echo "  ! GitHub     jubarte-$VER-linux-x86_64.tar.gz has no build provenance that verifies — release.yml's release job did not attest it" >&2
+fi
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"
 check_now 12
 
