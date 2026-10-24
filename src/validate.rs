@@ -529,11 +529,14 @@ impl Finding {
     /// indices, which a rerun of fewer operations shifts, do not.
     pub(crate) fn unnumbered(&self) -> String {
         let location = if self.location.contains('[') {
-            self.location
-                .split('/')
-                .map(|step| step.split_once('[').map_or(step, |(name, _)| name))
-                .collect::<Vec<_>>()
-                .join("/")
+            let mut out = String::with_capacity(self.location.len());
+            for (i, step) in self.location.split('/').enumerate() {
+                if i > 0 {
+                    out.push('/');
+                }
+                out.push_str(step.split_once('[').map_or(step, |(name, _)| name));
+            }
+            out
         } else if is_paragraph_id(&self.location) {
             "p#".to_string()
         } else {
