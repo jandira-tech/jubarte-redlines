@@ -1806,8 +1806,8 @@ mod body_section_source_ownership_tests {
                 // The closing carrier `a` takes the break as a pPr change,
                 // whose saved pPr cannot hold it, so Reject keeps it on `a`
                 // too, as Word's Reject All does (#1708): three sections where
-                // the original has two. Word's Compare leaves `a` no break
-                // (#1718).
+                // the original has two. What Word's Compare writes for this
+                // case is still to be measured (#1718).
                 expected_original[1].1 = expected_original[0].1.clone();
             }
             let expected_revised = source_view(&mut dom, revised, true);
