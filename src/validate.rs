@@ -1287,21 +1287,28 @@ pub(crate) fn revision_name(kind: &str) -> XName {
 /// The last paragraph among a container's blocks, through block content
 /// controls and custom XML elements, not into nested tables.
 pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
-    let mut last = None;
+    container_blocks(dom, container)
+        .into_iter()
+        .rev()
+        .find(|&block| dom.name_is(block, &W::p()))
+}
+
+/// The paragraphs and tables of `container` in order, through block
+/// content controls and custom XML elements, not into nested tables.
+pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
     for child in dom.elements(container, None) {
-        let found = if dom.name_is(child, &W::p()) {
-            Some(child)
+        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
+            out.push(child);
         } else if dom.name_is(child, &W::sdt()) {
-            dom.element(child, &W::sdt_content())
-                .and_then(|content| last_block_paragraph(dom, content))
-        } else if dom.name_is(child, &W::name("customXml")) {
-            last_block_paragraph(dom, child)
-        } else {
-            None
-        };
-        last = found.or(last);
+            if let Some(content) = dom.element(child, &W::sdt_content()) {
+                out.extend(container_blocks(dom, content));
+            }
+        } else if dom.name_is(child, &W::custom_xml()) {
+            out.extend(container_blocks(dom, child));
+        }
     }
-    last
+    out
 }
 
 /// Word fills a bound content control from the custom XML store its

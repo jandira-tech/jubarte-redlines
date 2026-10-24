@@ -287,8 +287,8 @@ fn check_valid(a: &[u8], b: &[u8], what: &str) -> Vec<u8> {
 }
 
 /// `body` with `cell` as the one cell of a table in `story`: a footnote,
-/// an endnote, a header, a footer, or a text box in the body. Returns the
-/// package and the part the table is in.
+/// an endnote, a header, a footer (either under a name of its own), or a
+/// text box in the body. Returns the package and the part the table is in.
 fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
     use common::docx::{Part, W_NS, docx_with, docx_with_sect};
     let table = format!(
@@ -328,22 +328,25 @@ fn in_story(story: &str, cell: &str) -> (Vec<u8>, &'static str) {
             };
             (docx_with(&reference(story), &[part]), name)
         }
-        "header" | "footer" => {
-            let (name, root): (&'static str, &str) = if story == "header" {
-                ("word/header1.xml", "hdr")
-            } else {
-                ("word/footer1.xml", "ftr")
+        "header" | "footer" | "renamed header" | "renamed footer" => {
+            // A story part is known by its relationship and content type,
+            // not its name: `word/chrome.xml` can hold a header.
+            let (name, root, kind): (&'static str, &str, &str) = match story {
+                "header" => ("word/header1.xml", "hdr", "header"),
+                "footer" => ("word/footer1.xml", "ftr", "footer"),
+                "renamed header" => ("word/chrome.xml", "hdr", "header"),
+                _ => ("word/bottom.xml", "ftr", "footer"),
             };
             let xml = chrome(root);
-            let content_type = format!("{CT}{story}+xml");
-            let rel_type = format!("{REL}{story}");
+            let content_type = format!("{CT}{kind}+xml");
+            let rel_type = format!("{REL}{kind}");
             let part = Part {
                 name,
                 content_type: &content_type,
                 rel_type: &rel_type,
                 xml: &xml,
             };
-            let sect = format!(r#"<w:{story}Reference w:type="default" r:id="rIdX0"/>"#);
+            let sect = format!(r#"<w:{kind}Reference w:type="default" r:id="rIdX0"/>"#);
             (docx_with_sect(&para("Body."), &[part], &sect), name)
         }
         "text box" => (
@@ -384,7 +387,8 @@ fn blocks_of(bytes: &[u8], part: &str) -> String {
 /// appended, and a nested table at the cell's start cleared with the text
 /// after it. The redline is Word-valid, accepts to the revised story and
 /// rejects to the original (#1684: the pairing never ran in the notes,
-/// and missed headers, footers and text boxes).
+/// and missed headers, footers and text boxes; a header or footer under
+/// another name was missed too, codex on #1680, round 10).
 #[test]
 fn a_cells_final_mark_settles_in_every_story() {
     use jubarte::comparer::{CompareMode, WmlComparerSettings};
@@ -399,7 +403,15 @@ fn a_cells_final_mark_settles_in_every_story() {
         (nested, "<w:p/>".to_string()),
     ];
     let mut failures = Vec::new();
-    for story in ["footnote", "endnote", "header", "footer", "text box"] {
+    for story in [
+        "footnote",
+        "endnote",
+        "header",
+        "footer",
+        "renamed header",
+        "renamed footer",
+        "text box",
+    ] {
         for (old, new) in &pairs {
             let (a, part) = in_story(story, old);
             let (b, _) = in_story(story, new);
@@ -430,4 +442,222 @@ fn a_cells_final_mark_settles_in_every_story() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A nested table holding `Inner fixed.` and `Inner.` in two cells.
+fn two_cell_nested() -> String {
+    let tc = |text: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="900" w:type="dxa"/></w:tcPr>{}</w:tc>"#,
+            para(text)
+        )
+    };
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="900"/><w:gridCol w:w="900"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>"#,
+        tc("Inner fixed."),
+        tc("Inner.")
+    )
+}
+
+/// A paragraph with properties `ppr` (the inside of `w:pPr`) and the runs
+/// `runs` (each its formatting, the inside of `w:rPr`, and its text).
+fn styled(ppr: &str, runs: &[(&str, &str)]) -> String {
+    let runs: String = runs
+        .iter()
+        .map(|(rpr, text)| {
+            let rpr = if rpr.is_empty() {
+                String::new()
+            } else {
+                format!("<w:rPr>{rpr}</w:rPr>")
+            };
+            format!(r#"<w:r>{rpr}<w:t xml:space="preserve">{text}</w:t></w:r>"#)
+        })
+        .collect();
+    let ppr = if ppr.is_empty() {
+        String::new()
+    } else {
+        format!("<w:pPr>{ppr}</w:pPr>")
+    };
+    format!("<w:p>{ppr}{runs}</w:p>")
+}
+
+/// A final mark's revision moves only where resolving it joins nothing the
+/// other version keeps apart: here the paragraphs after the mark before
+/// keep words of their own in B, so the final mark loses its deletion, as
+/// Word writes the first pair (Word 16 oracle o14, 2026-10-23). Codex and
+/// GLM on #1680, round 10: the move joined `Epsilon zeta eta theta.` and
+/// `One.`, two of B's paragraphs, and a join of the paragraphs around a
+/// formatting change merged B's last two.
+#[test]
+fn a_final_mark_keeps_apart_the_paragraphs_b_keeps() {
+    let center = r#"<w:jc w:val="center"/>"#;
+    let both = styled("", &[("", "Ka."), ("<w:b/>", "Kb.")]);
+    let pairs = [
+        (
+            "over a deleted nested table",
+            format!(
+                "{}{}{}",
+                para("Alpha beta gamma delta."),
+                two_cell_nested(),
+                para("Two.")
+            ),
+            format!("{}{}", para("Epsilon zeta eta theta."), para("One.")),
+        ),
+        (
+            "around a formatting change",
+            format!("{}{}", styled(center, &[("", "Ka.")]), para("Ka.")),
+            format!("{}{both}{both}", para("Gb.")),
+        ),
+        (
+            "around a formatting change, one more",
+            format!("{}{}", styled(center, &[("", "Ka.")]), para("Ka.")),
+            format!("{}{both}{both}{}", para("Gb."), para("Zz.")),
+        ),
+    ];
+    for (what, old, new) in pairs {
+        check_valid(&table(&old), &table(&new), what);
+    }
+}
+
+/// A cell losing an empty paragraph while it gains words: the comparer
+/// drops one of the two empty paragraphs (#1686), and the deletion left on
+/// the final mark does not move onto `Ka.`'s, which would join `Ka.` and
+/// `Gb.`, two of B's paragraphs (GLM on #1680, round 10). Reject All still
+/// misses one empty paragraph: that is #1686.
+#[test]
+fn a_dropped_empty_paragraph_does_not_join_the_paragraphs_b_keeps() {
+    let pairs = [
+        (
+            format!("{}<w:p/><w:p/>", para("Ka.")),
+            format!("{}{}", para("Ka."), para("Gb.")),
+        ),
+        (
+            format!("{}{}<w:p/><w:p/>", para("Ka."), para("Kb.")),
+            format!("{}{}{}", para("Ka."), para("Kb."), para("Gb.")),
+        ),
+    ];
+    for (old, new) in pairs {
+        let (a, b) = (table(&old), table(&new));
+        let out = compare_documents(&a, &b, "Redline").expect("compare");
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{old}: {:?}", report.errors);
+        assert_eq!(
+            texts(&accept_revisions(&out).unwrap()),
+            texts(&b),
+            "{old}: Accept All\n{}",
+            part_string(&out, "word/document.xml").unwrap()
+        );
+    }
+}
+
+/// The change records the settle pass writes take ids Word's schema
+/// accepts (a signed 32-bit number), whatever the part already holds: a
+/// comment id of 2147483647 sent them past it (codex on #1680, round 10;
+/// the OOXML validator refused 2147483648).
+#[test]
+fn a_settled_cells_records_take_ids_the_schema_accepts() {
+    use common::docx::{Part, W_NS, docx_with};
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{W_NS}"><w:comment w:id="2147483647" w:author="Ann" w:date="2026-10-01T00:00:00Z" w:initials="A"><w:p><w:r><w:t>Comment.</w:t></w:r></w:p></w:comment></w:comments>"#
+    );
+    let document = |cells: [String; 2]| {
+        let tc = |inner: &str| {
+            format!("<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc>")
+        };
+        let body = format!(
+            r#"<w:p><w:commentRangeStart w:id="2147483647"/><w:r><w:t>Anchor.</w:t></w:r><w:commentRangeEnd w:id="2147483647"/><w:r><w:commentReference w:id="2147483647"/></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="6000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}{}</w:tr></w:tbl>{}"#,
+            tc(&para("Fixed.")),
+            tc(&cells[0]),
+            tc(&cells[1]),
+            para("After.")
+        );
+        let part = Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        };
+        docx_with(&body, &[part])
+    };
+    let old = |text: &str| {
+        styled(
+            r#"<w:jc w:val="center"/><w:rPr><w:b/></w:rPr>"#,
+            &[("", text)],
+        )
+    };
+    let new = |text: &str| styled(r#"<w:jc w:val="right"/>"#, &[("", text)]);
+    let a = document([old("Old0."), old("Old1.")]);
+    let b = document([
+        format!("{}{}", old("Old0."), new("New0.")),
+        format!("{}{}", old("Old1."), new("New1.")),
+    ]);
+    let out = check_valid(&a, &b, "a comment id at the top of the range");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    let ids = regex::Regex::new(r#"<w:(?:pPrChange|rPrChange|ins|del) [^>]*w:id="(\d+)""#).unwrap();
+    let too_big: Vec<u64> = ids
+        .captures_iter(&xml)
+        .map(|c| c[1].parse::<u64>().unwrap())
+        .filter(|&id| id > i32::MAX as u64)
+        .collect();
+    assert!(
+        too_big.is_empty(),
+        "ids past 2147483647: {too_big:?}\n{xml}"
+    );
+    assert!(xml.contains("<w:pPrChange "), "no record written: {xml}");
+}
+
+/// A cell's paragraphs merged, split, or ending in an empty paragraph
+/// gained or lost resolve both ways in both modes: the paragraphs a final
+/// mark's revision joins once moved keep no words of their own there, so
+/// the move stands (the rule `a_final_mark_keeps_apart_the_paragraphs_b_keeps`
+/// pins from the other side).
+#[test]
+fn a_cells_paragraphs_merged_or_split_resolve_both_ways() {
+    use jubarte::comparer::{CompareMode, WmlComparerSettings};
+    use jubarte::document_comparer::compare_documents_with_settings;
+    let (x, y, z, w) = (
+        para("Alpha beta."),
+        para("Gamma delta."),
+        para("Zeta eta."),
+        para("Omega."),
+    );
+    let e = "<w:p/>";
+    let pairs = [
+        (format!("{x}{e}"), para("Alpha beta. Zeta eta.")),
+        (format!("{x}{y}"), para("Alpha beta. Zeta eta.")),
+        (format!("{x}{y}"), para("Alpha beta. Gamma delta.")),
+        (para("Alpha beta. Gamma delta."), format!("{x}{y}")),
+        (para("Alpha beta. Gamma delta."), format!("{x}{z}")),
+        (para("Alpha beta. Zeta eta."), format!("{x}{e}")),
+        (
+            format!("{w}{x}{y}"),
+            format!("{w}{}", para("Alpha beta. Gamma delta.")),
+        ),
+        (
+            format!("{w}{}", para("Alpha beta. Gamma delta.")),
+            format!("{w}{x}{y}"),
+        ),
+        (x.clone(), format!("{x}{e}")),
+        (format!("{x}{e}"), x.clone()),
+    ];
+    for (old, new) in pairs {
+        let (a, b) = (table(&old), table(&new));
+        for mode in [CompareMode::Word, CompareMode::PowerTools] {
+            let what = format!("{old} -> {new} ({mode:?})");
+            let out = compare_documents_with_settings(&a, &b, &WmlComparerSettings::new(mode))
+                .expect("compare");
+            let report = check_word_valid_package(&out);
+            assert!(report.ok(), "{what}: {:?}", report.errors);
+            assert_eq!(
+                texts(&accept_revisions(&out).unwrap()),
+                texts(&b),
+                "{what}: Accept All"
+            );
+            assert_eq!(
+                texts(&reject_revisions(&out).unwrap()),
+                texts(&a),
+                "{what}: Reject All"
+            );
+        }
+    }
 }

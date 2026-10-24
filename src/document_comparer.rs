@@ -8083,6 +8083,39 @@ fn compare_documents_impl(
             }
         }
     }
+    // A story part under a name of its own (a header at `word/chrome.xml`)
+    // is not swept above, but its cells' final marks settle too (codex on
+    // #1680, round 10): every other WordprocessingML part holding a cell
+    // whose final mark carries a revision no row covers, as the validator
+    // checks every part.
+    for part in out.parts() {
+        let settled = part == main1
+            || part == "word/footnotes.xml"
+            || part == "word/endnotes.xml"
+            || part.starts_with("word/header")
+            || part.starts_with("word/footer");
+        if settled || !part.ends_with(".xml") {
+            continue;
+        }
+        let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
+            continue;
+        };
+        let mut vd = Dom::new();
+        let doc = vd.parse_xdocument(&x);
+        let Some(vr) = vd.root(doc) else {
+            continue;
+        };
+        let unsettled = vd.name(vr).is_some_and(|n| n.namespace_name() == W::URI)
+            && vd
+                .descendants(vr, Some(&W::tc()))
+                .into_iter()
+                .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
+        if unsettled {
+            crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+            crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+            out.set_part(&part, vd.serialize_element(vr).into_bytes());
+        }
+    }
     // Final package-level notes↔settings coherence (after the validity sweep
     // re-serialized those parts). Dangling special-note ids in settings are a
     // package bug, not a document.xml bug.

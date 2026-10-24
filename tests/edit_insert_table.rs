@@ -388,3 +388,41 @@ fn cells_of_an_unstyled_anchor_have_no_paragraph_properties() {
     let cell = &xml[xml.find("<w:tc>").unwrap()..xml.find("</w:tc>").unwrap()];
     assert!(!cell.contains("<w:pPr>"), "{cell}");
 }
+
+/// Under keep, a table placed after a container's last paragraph whose
+/// mark is already tracked lands: the paragraph after the new table takes
+/// the inserted mark, and the tracked one stays as it was (CodeRabbit on
+/// #1680). A paragraph placed there last is still refused: its inserted
+/// mark would go on the tracked one.
+#[test]
+fn a_table_after_a_tracked_final_mark_lands_under_keep() {
+    let tracked = r#"<w:p><w:pPr><w:rPr><w:ins w:id="5" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr></w:pPr><w:ins w:id="6" w:author="Ann" w:date="2026-09-01T00:00:00Z"><w:r><w:t>Added.</w:t></w:r></w:ins></w:p>"#;
+    let source = docx(&(para("Intro.") + tracked));
+    let keep = |operation: &str| {
+        EditPlan::from_json(&format!(
+            r#"{{"schema_version":1,"author":"A","date":"2026-10-02T12:00:00Z","existing_revisions":"keep","operations":[{operation}]}}"#
+        ))
+        .unwrap()
+    };
+    let out = apply_plan(
+        &source,
+        &keep(r#"{"kind":"insert_table","paragraph":"p1","position":"after","rows":[["a"]]}"#),
+    )
+    .expect("a table after a tracked final mark");
+    assert_word_valid_package(&out.redline);
+    let xml = part(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<w:ins w:id="5" w:author="Ann" w:date="2026-09-01T00:00:00Z"/>"#),
+        "{xml}"
+    );
+    let error = apply_plan(
+        &source,
+        &keep(r#"{"kind":"insert_paragraph","paragraph":"p1","position":"after","runs":[{"text":"New."}]}"#),
+    )
+    .unwrap_err();
+    assert!(
+        error.message.contains("since the inserted mark goes there"),
+        "{}",
+        error.message
+    );
+}

@@ -3025,7 +3025,7 @@ fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
             children.push(child);
         } else if dom.name(child) == Some(W::name("sdt"))
             || dom.name(child) == Some(W::name("sdtContent"))
-            || dom.name(child) == Some(W::name("customXml"))
+            || dom.name(child) == Some(W::custom_xml())
         {
             children.extend(wrapped_children(dom, child, name));
         }
@@ -3615,7 +3615,7 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
 /// Give every `w:comment` under a `w:comments` root without a block child
 /// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
 fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
-    let block = [W::p(), W::tbl(), W::sdt(), W::name("customXml")];
+    let block = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
     for comment in dom.elements(root, Some(&W::name("comment"))) {
         if !dom
             .elements(comment, None)
