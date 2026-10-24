@@ -32,10 +32,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 from dataclasses import asdict
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from . import __version__, capabilities
 from .document import Document, EditPlanError, EditResult, diff_render
@@ -151,6 +153,54 @@ def _write(path: Path, data: bytes | str) -> int:
     except OSError as exc:
         raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
+
+
+def _replace(path: Path, data: bytes | str) -> int:
+    """Writes ``data`` beside ``path`` and renames it over, as the binary
+    publishes: an existing output — a hard or symbolic link among them —
+    has its own directory entry replaced, never its target written
+    through; a replaced regular file keeps its mode. Returns the bytes
+    written."""
+    raw = data.encode("utf-8") if isinstance(data, str) else data
+    staged = path.with_name(f".{path.name}.jubarte-{os.getpid()}.tmp")
+    try:
+        with open(staged, "wb") as handle:
+            handle.write(raw)
+        try:
+            replaced = os.stat(path, follow_symlinks=False).st_mode
+        except OSError:
+            replaced = 0
+        if stat.S_ISREG(replaced):
+            os.chmod(staged, replaced & 0o777)
+        os.replace(staged, path)
+    except OSError as exc:
+        try:
+            os.unlink(staged)
+        except OSError:
+            pass
+        raise CliError(f"writing {path}: {_os(exc)}") from exc
+    return len(raw)
+
+
+def _refuse_alias_output(args: argparse.Namespace) -> None:
+    """Refuses a ``read --tables -o`` that names its input — the same
+    path, or the same file through a hard or symbolic link — before any
+    work: ``--force`` authorizes replacing an output, never an input
+    alias (#1698). Any other existing output is the binary's
+    ``OUTPUT_EXISTS`` usage refusal."""
+    output, file = args.output, args.file
+    if _same_file(output, file):
+        _error(
+            f"OUTPUT_ALIAS: the output '{_spelled(args, 'output')}' is the same file as the input '{_spelled(args, 'file')}'",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
+    if output.exists() and not args.force:
+        _error(
+            f"OUTPUT_EXISTS: output '{_spelled(args, 'output')}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
 
 
 def _pdf_options(args: argparse.Namespace) -> PdfOptions:
@@ -322,7 +372,30 @@ def _for_edit_json(args: argparse.Namespace, docx: bytes) -> str | None:
         return None
 
 
+def _usage_exit(exc: Exception) -> NoReturn:
+    """Exit 2 with the binary's usage wording for an engine refusal raised
+    with its ``USAGE`` category (a selection the flags do not spell); any
+    other error is raised unchanged, keeping the ordinary exit 1."""
+    message = str(exc)
+    stripped = message.removeprefix("USAGE: ")
+    if stripped != message:
+        _error(stripped, EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE) from exc
+    raise exc
+
+
 def cmd_read(args: argparse.Namespace) -> int:
+    from . import _native
+
+    try:
+        return _read_task(args)
+    except _native.JubarteError as exc:
+        # A selection refusal carries its USAGE category; the binary exits
+        # 2 for it, in the view, snapshot and tables paths alike.
+        _usage_exit(exc)
+
+
+def _read_task(args: argparse.Namespace) -> int:
     from . import _native
 
     if args.for_edit:
@@ -339,29 +412,24 @@ def cmd_read(args: argparse.Namespace) -> int:
         return EXIT_OK
     if args.tables:
         # With -p, the grids of the tables it reaches, then its view; a
-        # pick that reaches no table is a usage error. -o FILE writes them.
+        # pick that reaches no table is a usage error. -o FILE writes them,
+        # never over the input itself, and only over an existing file with
+        # --force (#1698).
         if args.output is not None:
-            _ensure_writable(args.output, args.force)
-        try:
-            markdown, warnings = _native.tables_view(
-                _input(args),
-                track_changes=args.track_changes,
-                comments=args.comments == "inline",
-                dates=bool(args.dates),
-                page_markers=not args.no_page_markers,
-                paragraphs=args.paragraphs,
-                source=args.file.name,
-            )
-        except _native.JubarteError as exc:
-            usage = str(exc).removeprefix("USAGE: ")
-            if usage == str(exc):
-                raise
-            _error(usage, EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE) from exc
+            _refuse_alias_output(args)
+        markdown, warnings = _native.tables_view(
+            _input(args),
+            track_changes=args.track_changes,
+            comments=args.comments == "inline",
+            dates=bool(args.dates),
+            page_markers=not args.no_page_markers,
+            paragraphs=args.paragraphs,
+            source=args.file.name,
+        )
         for warning in warnings:
             print(f"warning: {warning}", file=sys.stderr)
         if args.output is not None:
-            size = _write(args.output, markdown)
+            size = _replace(args.output, markdown)
             if not args.quiet:
                 # The binary's line for a text output with no format of its own.
                 sys.stdout.flush()
