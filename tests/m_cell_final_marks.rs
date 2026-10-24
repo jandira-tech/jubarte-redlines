@@ -13,7 +13,10 @@ mod common;
 
 use common::docx::{docx, para, part_string};
 use common::validity::check_word_valid_package;
-use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::{
+    accept_revisions, compare_documents, compare_documents_with_settings, reject_revisions,
+};
 use jubarte::inspect::paragraphs;
 
 /// A table between two paragraphs: its first cell holds "Full.", its
@@ -772,4 +775,62 @@ fn a_renamed_headers_extension_ids_stay_declared_when_its_cells_settle() {
             assert!(xml.contains("mc:Ignorable="), "{mode:?}: {xml}");
         }
     }
+}
+
+/// A cell whose paragraph an author moved away compares Word-valid in
+/// PowerTools mode, which takes the sources as they are: the moves resolve
+/// before the cell's final marks settle, and no mark ends with two of
+/// `w:ins`, `w:del`, `w:moveFrom`, `w:moveTo` (codex on #1680).
+#[test]
+fn a_cell_with_an_authored_move_compares_valid_in_powertools_mode() {
+    let stamp = r#"w:author="Ana" w:date="2026-10-01T00:00:00Z""#;
+    let moved = format!(
+        r#"<w:p><w:pPr><w:rPr><w:moveFrom w:id="1" {stamp}/></w:rPr></w:pPr><w:moveFromRangeStart w:id="2" w:name="move1" {stamp}/><w:moveFrom w:id="3" {stamp}><w:r><w:t>Moved.</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="2"/></w:p>"#
+    );
+    let destination = format!(
+        r#"<w:p><w:pPr><w:rPr><w:moveTo w:id="4" {stamp}/></w:rPr></w:pPr><w:moveToRangeStart w:id="5" w:name="move1" {stamp}/><w:moveTo w:id="6" {stamp}><w:r><w:t>Moved.</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="5"/></w:p>"#
+    );
+    let document = |cell: &str| {
+        docx(&format!(
+            "{}<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>{destination}{}",
+            para("Before."),
+            para("After.")
+        ))
+    };
+    let (a, b) = (
+        document(&moved),
+        document(&format!("{moved}{}", para("New."))),
+    );
+    let settings = WmlComparerSettings {
+        author_for_revisions: "Redline".into(),
+        ..WmlComparerSettings::powertools_faithful()
+    };
+    let out = compare_documents_with_settings(&a, &b, &settings).expect("compare");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    let mark = regex::Regex::new(r"(?s)<w:pPr>.*?</w:pPr>").unwrap();
+    let record = regex::Regex::new(r"<w:(ins|del|moveFrom|moveTo) ").unwrap();
+    for ppr in mark.find_iter(&xml) {
+        let rpr = ppr
+            .as_str()
+            .split("<w:pPrChange")
+            .next()
+            .unwrap_or_default();
+        assert!(
+            record.find_iter(rpr).count() <= 1,
+            "{}\n{xml}",
+            ppr.as_str()
+        );
+    }
+    let report = check_word_valid_package(&out);
+    assert!(report.ok(), "{:?}\n{xml}", report.errors);
+    assert_eq!(
+        texts(&accept_revisions(&out).unwrap()),
+        texts(&accept_revisions(&b).unwrap()),
+        "Accept All"
+    );
+    assert_eq!(
+        texts(&reject_revisions(&out).unwrap()),
+        texts(&reject_revisions(&a).unwrap()),
+        "Reject All"
+    );
 }

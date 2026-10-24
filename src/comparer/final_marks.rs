@@ -74,9 +74,7 @@ fn settle(
                 Some(None)
             };
         }
-        mark_revision(dom, block, kind)
-            .is_none()
-            .then_some(Some(block))
+        (!mark_revised_as(dom, block, kind)).then_some(Some(block))
     });
     // Paragraphs the move would join to the partner's, which keep words of
     // their own once resolved.
@@ -96,7 +94,7 @@ fn settle(
         date: dom.attribute(revision, &W::date()).map(str::to_string),
     };
     match partner.flatten() {
-        Some(partner) if mark_revision(dom, partner, other).is_none() => {
+        Some(partner) if !mark_revised_as(dom, partner, other) => {
             if kind == "ins" {
                 take_inserted_mark(dom, partner, last, &mut stamp);
             } else {
@@ -173,6 +171,21 @@ fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
                     .is_some()
             })
         })
+}
+
+/// Whether `paragraph`'s mark is revised as `kind` (`"ins"` or `"del"`)
+/// says, a mark moved in (`w:moveTo`) or away (`w:moveFrom`) counting as
+/// its resolution does, as in [`keeps_words`]: a mark holds one of the
+/// four, so a moved one is no partner for a second (codex on #1680).
+fn mark_revised_as(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
+    let records = if kind == "del" {
+        [W::del(), W::move_from()]
+    } else {
+        [W::ins(), W::move_to()]
+    };
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| records.iter().any(|name| dom.element(rpr, name).is_some()))
 }
 
 /// The `kind` revision on `paragraph`'s mark (`w:pPr/w:rPr`).
@@ -513,10 +526,6 @@ mod tests {
             .map(|&p| mark_revision(&dom, p, "del").is_some())
             .collect();
         assert_eq!(deleted, [false, true, false]);
-        assert_eq!(
-            dom.descendants(paragraphs[1], Some(&M::o_math()))
-                .len(),
-            1
-        );
+        assert_eq!(dom.descendants(paragraphs[1], Some(&M::o_math())).len(), 1);
     }
 }
