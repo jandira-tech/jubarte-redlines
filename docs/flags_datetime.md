@@ -646,7 +646,7 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 | `--json` |  |  | false |  |  | JSON Lines: one object per finding, nothing when there is none |
 | `--rules` |  | <RULES> |  |  | append | Rule sets or audit codes, comma-separated [default: word; with --original, or --baseline and --author, word and edits] |
 | `--strict` |  |  | false |  |  | Also fail (exit 2) on warnings from other rule sets; word and edits findings fail without it |
-| `--repair` |  | <FILE> |  |  | conflicts --baseline | Write the repaired package here; remaining findings still fail |
+| `--repair` |  | <FILE> |  |  | conflicts --baseline | Write the repaired package here; remaining findings still fail. A structural repair: it does not check the edits' history. Add --original and --author for that. |
 | `--baseline` |  | <FILE> |  |  | conflicts --repair | The document the edits started from: its findings print as already in the input (not yours), and only new ones fail the run. A finding is new by identity (code, part, place and message), never by count. With --author and no --original, the edits are checked against it too |
 | `--original` |  | <FILE> |  |  |  | Check tracked edits: every text change against ORIGINAL must be a revision by --author |
 | `--author` |  | <NAME> |  |  |  | The author every change must carry (with --original or --baseline) |

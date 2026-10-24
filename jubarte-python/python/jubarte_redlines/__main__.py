@@ -1093,17 +1093,24 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     doc = _read(args.file)
     docx = doc.to_bytes()
+    # An original that cannot be read stops the run before any repair.
+    original = _read(args.original).to_bytes() if args.original is not None else None
     if args.repair is not None:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()
         docx = repaired.document.to_bytes()
         size = _write(args.repair, docx)
         if not args.json:
-            print(f"repaired {len(repaired.repaired)} finding(s)")
+            # A structural repair: the edits' history is a separate check.
+            history = (
+                f"history check against {args.original} follows"
+                if args.original is not None
+                else "history not checked (--original, --author)"
+            )
+            print(f"repaired {len(repaired.repaired)} finding(s), structure only; {history}")
         if not args.quiet:
             sys.stdout.flush()  # stdout's lines first when both streams share a pipe
             print(_native.wrote_line(_spelled(args, "repair"), "docx", size), file=sys.stderr)
-    original = _read(args.original).to_bytes() if args.original is not None else None
     baseline = _read(args.baseline).to_bytes() if args.baseline is not None else None
     jsonl, text, failed = _native.validate_run(
         docx,

@@ -1474,10 +1474,37 @@ fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     Some((dom, root))
 }
 
+/// The package's XML parts: by name, or by content type (a main document
+/// part may be `word/main.dat`).
 fn xml_parts(pkg: &PartFs) -> Vec<String> {
     pkg.parts()
         .into_iter()
-        .filter(|name| name.ends_with(".xml"))
+        .filter(|name| {
+            crate::opc::ends_with_ignore_case(name, ".xml")
+                || pkg
+                    .content_type_for(name)
+                    .is_some_and(|ct| crate::opc::is_xml_content_type(&ct))
+        })
+        .collect()
+}
+
+/// The XML parts that hold WordprocessingML revisions: every XML part but
+/// custom XML data, which holds the application's own XML whatever its name
+/// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
+/// reach, the package's own included). OpenXmlValidator checks no revision
+/// id there.
+fn revision_parts(pkg: &PartFs) -> Vec<String> {
+    let parts = pkg.parts();
+    let data =
+        crate::opc::custom_xml_data(std::iter::once(("", pkg.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                pkg.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ));
+    xml_parts(pkg)
+        .into_iter()
+        .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
         .collect()
 }
 
@@ -1694,7 +1721,7 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in revision_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
@@ -1707,7 +1734,9 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Revision elements whose `w:id` must be unique among elements of the
 /// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
 /// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
-/// Range ends share their starts' ids and comment/bookmark ids have other scopes.
+/// A range end shares its start's id, but two ends of one kind may not
+/// share one; OpenXmlValidator lets two `customXmlMoveToRangeEnd` do so.
+/// Comment and bookmark ids have other scopes.
 pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
@@ -1718,7 +1747,16 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
                     | "moveFrom"
                     | "moveTo"
                     | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
                     | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "customXmlInsRangeStart"
+                    | "customXmlInsRangeEnd"
+                    | "customXmlDelRangeStart"
+                    | "customXmlDelRangeEnd"
+                    | "customXmlMoveFromRangeStart"
+                    | "customXmlMoveFromRangeEnd"
+                    | "customXmlMoveToRangeStart"
                     | "tblGridChange"
                     | "tblPrExChange"
                     | "numberingChange"
@@ -1732,14 +1770,57 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
 /// even though both use `ins`, `del`, `moveFrom` or `moveTo`. Row and
 /// paragraph marks share their own scope; the immediate parent alone is
 /// therefore not the scope. Keep detection and repair on the same key.
+/// The SDK compares some kinds' ids case-blind (`ABC` repeats `abc`).
 fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
-    let property_mark = matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+    let local = name.local_name();
+    let property_mark = matches!(local, "ins" | "del" | "moveFrom" | "moveTo")
         && dom.parent(node).is_some_and(|parent| {
             dom.name(parent).is_some_and(|parent| {
                 parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
             })
         });
-    format!("{}:{property_mark}:{id}", name.local_name())
+    if matches!(
+        local,
+        "customXmlDelRangeStart" | "customXmlDelRangeEnd" | "moveToRangeStart"
+    ) {
+        format!("{local}:{property_mark}:{}", id.to_lowercase())
+    } else {
+        format!("{local}:{property_mark}:{id}")
+    }
+}
+
+/// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
+/// checks: part, then record type and id ([`revision_id_key`]). A Strict
+/// package is read as the Transitional one an edit writes.
+pub(crate) fn revision_id_occurrences(
+    docx: &[u8],
+) -> Result<HashMap<(String, String), usize>, ValidateError> {
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
+    let pkg = PartFs::open(&transitional)?;
+    let mut out = HashMap::new();
+    for part in revision_parts(&pkg) {
+        let Some((dom, root)) = parse_part(&pkg, &part) else {
+            continue;
+        };
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for e in dom.descendants(root, None) {
+            if let Some(name) = dom.name(e)
+                && has_unique_revision_id(&name)
+                && let Some(id) = dom.attribute(e, &W::name("id"))
+            {
+                *counts
+                    .entry(revision_id_key(&dom, e, &name, id))
+                    .or_default() += 1;
+            }
+        }
+        out.extend(
+            counts
+                .into_iter()
+                .map(|(key, count)| ((part.clone(), key), count)),
+        );
+    }
+    Ok(out)
 }
 
 fn collect_ids(
@@ -1750,6 +1831,8 @@ fn collect_ids(
     out: &mut Vec<Finding>,
     part: &str,
 ) {
+    // Repeated range starts not yet paired with a repeated end, by key.
+    let mut repeated_starts: HashMap<String, usize> = HashMap::new();
     for e in dom.descendants(root, None) {
         let Some(name) = dom.name(e) else {
             continue;
@@ -1759,14 +1842,30 @@ fn collect_ids(
         // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
             && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
         {
-            out.push(Finding::new(
+            let key = revision_id_key(dom, e, &name, id);
+            if rev_ids.insert(key.clone()) {
+                continue;
+            }
+            let mut finding = Finding::new(
                 "DUPLICATE_REVISION_ID",
                 part,
                 element_path(dom, e),
                 format!("duplicate w:id '{id}' on revision markup in '{part}' ({local}:{id})"),
-            ));
+            );
+            // Repair renames an end only with a repeated start before it
+            // ([`renumber_duplicate_revision_ids`]); an end with none stays
+            // as it was (CodeRabbit on #1666).
+            if local.ends_with("RangeStart") {
+                *repeated_starts.entry(key).or_default() += 1;
+            } else if let Some(kind) = local.strip_suffix("RangeEnd") {
+                let start = W::name(&format!("{kind}RangeStart"));
+                match repeated_starts.get_mut(&revision_id_key(dom, e, &start, id)) {
+                    Some(n) if *n > 0 => *n -= 1,
+                    _ => finding.repairable = false,
+                }
+            }
+            out.push(finding);
         }
         if local == "docPr" {
             let wp_id = XName::get(
@@ -2859,8 +2958,9 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
 }
 
 /// A second use of a revision id on the same record type is renumbered
-/// from the part's highest `w:id` upwards; a move range start takes its end
-/// along. Accepted cross-kind pairs retain their ids.
+/// from the part's highest `w:id` upwards; a range start takes its end
+/// along. An end is never renumbered on its own: which start it closes is
+/// not known. Accepted cross-kind pairs retain their ids.
 pub(crate) fn renumber_duplicate_revision_ids(
     dom: &mut Dom,
     root: NodeId,
@@ -2880,7 +2980,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
         let local = name.local_name();
-        if !has_unique_revision_id(&name) {
+        if !has_unique_revision_id(&name) || local.ends_with("RangeEnd") {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
@@ -2893,15 +2993,28 @@ pub(crate) fn renumber_duplicate_revision_ids(
         next += 1;
         revisions.push((id.clone(), fresh.clone()));
         renames.push((n, fresh.clone()));
+        // A range start's end shares its id.
         let end_local = match local {
             "moveFromRangeStart" => Some("moveFromRangeEnd"),
             "moveToRangeStart" => Some("moveToRangeEnd"),
+            "customXmlInsRangeStart" => Some("customXmlInsRangeEnd"),
+            "customXmlDelRangeStart" => Some("customXmlDelRangeEnd"),
+            "customXmlMoveFromRangeStart" => Some("customXmlMoveFromRangeEnd"),
+            "customXmlMoveToRangeStart" => Some("customXmlMoveToRangeEnd"),
             _ => None,
         };
+        // Its end is the first that follows with the start's id, by the key
+        // the duplicate check reads: `ABC` closes `abc` where ids compare
+        // case-blind (MiniMax on #1666).
         if let Some(end_local) = end_local
             && let Some(&end) = all[i + 1..].iter().find(|&&e| {
-                dom.name(e).is_some_and(|x| x.local_name() == end_local)
-                    && dom.attribute(e, &id_name) == Some(id.as_str())
+                dom.name(e).is_some_and(|x| {
+                    x.namespace_name() == W::URI
+                        && x.local_name() == end_local
+                        && dom.attribute(e, &id_name).is_some_and(|own| {
+                            revision_id_key(dom, e, &x, own) == revision_id_key(dom, e, &x, &id)
+                        })
+                })
             })
         {
             renames.push((end, fresh));

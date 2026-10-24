@@ -12,7 +12,7 @@
 //! validated and then swapped for the source at commit. Dry run and apply
 //! share this whole path; they differ only at publication.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
@@ -400,9 +400,12 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     // no baseline nothing is claimed introduced (the candidate's own
     // validation below still gates what the edit produced).
     let baseline = validate::validate(source).ok();
+    // Counted only when a candidate repeats an id at all: its own
+    // `DUPLICATE_REVISION_ID` reads the same parts, records and keys.
+    let mut source_ids = None;
     let mut introduced = Vec::new();
     let mut unresolved = Vec::new();
-    for bytes in [&result.clean, &result.redline] {
+    for (artifact, bytes) in [("clean copy", &result.clean), ("redline", &result.redline)] {
         let findings = validate::validate(bytes).map_err(|e| {
             err(
                 "CANDIDATE_INVALID",
@@ -410,6 +413,12 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
                 format!("the serialized candidate cannot be validated: {e}"),
             )
         })?;
+        if findings.iter().any(|f| f.code == "DUPLICATE_REVISION_ID")
+            && let Some(source_ids) =
+                source_ids.get_or_insert_with(|| validate::revision_id_occurrences(source).ok())
+        {
+            check_revision_ids(source_ids, artifact, bytes)?;
+        }
         for finding in &findings {
             if !unresolved
                 .iter()
@@ -447,6 +456,50 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
         integrity: true,
         operation_postconditions: false,
     })
+}
+
+/// A candidate may not give a revision id a same-kind duplicate the source
+/// did not have: per part, record type and id, an id that occurs more than
+/// once may occur no more often than in the source. Inherited duplicates
+/// pass, healing one hides no collision under another, and kinds may share
+/// an id. `jubarte validate` still calls the duplicate non-fatal: Word
+/// opens it; publication refuses it. `artifact` names the candidate.
+fn check_revision_ids(
+    source: &HashMap<(String, String), usize>,
+    artifact: &str,
+    candidate: &[u8],
+) -> Result<(), EditError> {
+    let occurrences = validate::revision_id_occurrences(candidate).map_err(|e| {
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!("the serialized candidate cannot be read: {e}"),
+        )
+    })?;
+    let mut introduced: Vec<_> = occurrences
+        .iter()
+        .filter(|&(key, &count)| count > 1 && count > source.get(key).copied().unwrap_or(0))
+        .collect();
+    introduced.sort();
+    let Some(&(entry, count)) = introduced.first() else {
+        return Ok(());
+    };
+    let (part, key) = entry;
+    let mut fields = key.splitn(3, ':');
+    let (kind, mark, id) = (
+        fields.next().unwrap_or_default(),
+        fields.next() == Some("true"),
+        fields.next().unwrap_or_default(),
+    );
+    let mark = if mark { " on a mark" } else { "" };
+    let had = source.get(entry).copied().unwrap_or(0);
+    Err(err(
+        "CANDIDATE_INVALID",
+        None,
+        format!(
+            "the edit introduces a duplicate revision id in the {artifact}: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
+        ),
+    ))
 }
 
 /// What one paragraph reads as once the plan applies, and whether symbol
@@ -1166,6 +1219,245 @@ pub(crate) mod tests {
         let checks = check_candidates(b"not a zip at all", &result_of(orphan)).unwrap();
         assert!(checks.introduced.is_empty(), "{:?}", checks.introduced);
         assert!(checks.baseline.is_empty());
+    }
+
+    /// A paragraph of revisions: each `(kind, id)` around one word.
+    fn revisions(records: &[(&str, u32)]) -> Vec<u8> {
+        let body: String = records
+            .iter()
+            .map(|&(kind, id)| match kind {
+                "customXmlInsRangeStart" => format!(
+                    r#"<w:customXmlInsRangeStart w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>w</w:t></w:r><w:customXmlInsRangeEnd w:id="{id}"/>"#
+                ),
+                "rPrChange" => format!(
+                    r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>w</w:t></w:r>"#
+                ),
+                _ => format!(
+                    r#"<w:{kind} w:id="{id}" w:author="A" w:date="2026-10-17T09:00:00Z"><w:r><w:{t}>w</w:{t}></w:r></w:{kind}>"#,
+                    t = if kind == "del" { "delText" } else { "t" }
+                ),
+            })
+            .collect();
+        deeper_boundary_fixture::docx(&format!("<w:p>{body}</w:p>"))
+    }
+
+    fn gate(
+        source: &[(&str, u32)],
+        candidate: &[(&str, u32)],
+    ) -> Result<CandidateChecks, EditError> {
+        check_candidates(&revisions(source), &result_of(revisions(candidate)))
+    }
+
+    /// `result` refuses `record` (`w:ins w:id 5`), repeated in `part` of
+    /// the clean copy.
+    fn refused_as_duplicate(result: Result<CandidateChecks, EditError>, record: &str, part: &str) {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert!(
+            error
+                .message
+                .contains("introduces a duplicate revision id in the clean copy: ")
+                && error.message.contains(&format!(": {record} occurs "))
+                && error.message.contains(&format!(" times in {part} (")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_candidate_may_not_introduce_a_duplicate_revision_id() {
+        refused_as_duplicate(
+            gate(&[("ins", 5), ("ins", 6)], &[("ins", 5), ("ins", 5)]),
+            "w:ins w:id 5",
+            "word/document.xml",
+        );
+        refused_as_duplicate(
+            gate(&[("rPrChange", 5)], &[("rPrChange", 5), ("rPrChange", 5)]),
+            "w:rPrChange w:id 5",
+            "word/document.xml",
+        );
+    }
+
+    #[test]
+    fn a_candidate_may_not_add_an_occurrence_to_an_inherited_duplicate() {
+        refused_as_duplicate(
+            gate(
+                &[("ins", 5), ("ins", 5)],
+                &[("ins", 5), ("ins", 5), ("ins", 5)],
+            ),
+            "w:ins w:id 5",
+            "word/document.xml",
+        );
+    }
+
+    #[test]
+    fn healing_one_duplicate_revision_id_hides_no_new_one() {
+        refused_as_duplicate(
+            gate(
+                &[("ins", 5), ("ins", 5)],
+                &[("ins", 5), ("ins", 7), ("ins", 7)],
+            ),
+            "w:ins w:id 7",
+            "word/document.xml",
+        );
+    }
+
+    #[test]
+    fn a_custom_xml_range_start_may_not_take_a_duplicate_id() {
+        // A range start and its end share an id; two starts may not.
+        assert!(
+            gate(
+                &[("customXmlInsRangeStart", 5)],
+                &[("customXmlInsRangeStart", 5)]
+            )
+            .is_ok()
+        );
+        // Their ends repeat too, and come first by name (Codex on #1666).
+        refused_as_duplicate(
+            gate(
+                &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 6)],
+                &[("customXmlInsRangeStart", 5), ("customXmlInsRangeStart", 5)],
+            ),
+            "w:customXmlInsRangeEnd w:id 5",
+            "word/document.xml",
+        );
+    }
+
+    /// `bytes` with its main part's WordprocessingML namespace made Strict's.
+    fn strict(bytes: &[u8]) -> Vec<u8> {
+        let mut pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let xml = pkg.part_string("word/document.xml").unwrap().replace(
+            "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        );
+        pkg.set_part("word/document.xml", xml.into_bytes());
+        pkg.to_zip().unwrap()
+    }
+
+    #[test]
+    fn a_strict_sources_duplicates_are_inherited() {
+        // The edit writes a Strict source's revisions in Transitional.
+        let source = strict(&revisions(&[("ins", 5), ("ins", 5)]));
+        let candidate = revisions(&[("ins", 5), ("ins", 5)]);
+        let result = check_candidates(&source, &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// `bytes` with its main part at `name`, wherever its relationship
+    /// and content type point.
+    fn main_named(bytes: &[u8], name: &str) -> Vec<u8> {
+        const OFFICE_DOCUMENT: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        let mut pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let xml = pkg.part_bytes("word/document.xml").unwrap().to_vec();
+        pkg.remove_part("word/document.xml");
+        pkg.set_part(name, xml);
+        pkg.add_content_type_override(
+            &format!("/{name}"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        );
+        pkg.remove_package_relationships_by_type(OFFICE_DOCUMENT);
+        pkg.add_package_relationship(OFFICE_DOCUMENT, name);
+        pkg.to_zip().unwrap()
+    }
+
+    #[test]
+    fn a_main_part_without_an_xml_extension_is_gated_too() {
+        let source = main_named(&revisions(&[("ins", 5), ("ins", 6)]), "word/main.dat");
+        let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
+        refused_as_duplicate(
+            check_candidates(&source, &result_of(candidate)),
+            "w:ins w:id 5",
+            "word/main.dat",
+        );
+    }
+
+    #[test]
+    fn a_strict_main_part_without_an_xml_extension_is_read_as_transitional() {
+        // Codex on #1666: its inherited duplicates stay inherited.
+        let source = main_named(
+            &strict(&revisions(&[("ins", 5), ("ins", 5)])),
+            "word/main.dat",
+        );
+        let candidate = main_named(&revisions(&[("ins", 5), ("ins", 5)]), "word/main.dat");
+        let result = check_candidates(&source, &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    fn prepared(source: &[u8], operation: &str) -> Result<PreparedEdit, EditError> {
+        let json = format!(
+            r#"{{"schema_version":1,"author":"Bob","date":"2026-10-17T12:00:00Z","existing_revisions":"keep","operations":[{operation}]}}"#
+        );
+        let plan = EditPlan::from_json(&json).unwrap();
+        prepare(source, &plan, &PrepareOptions::default())
+    }
+
+    #[test]
+    fn a_paragraph_marks_revision_id_survives_paragraph_edits() {
+        // `w:pPr/w:rPr/w:ins`: a new paragraph made like it, one split off
+        // it, and a replacement inside it publish.
+        let source = deeper_boundary_fixture::docx(
+            r#"<w:p><w:pPr><w:rPr><w:ins w:id="7" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">abcd efgh</w:t></w:r></w:p><w:p><w:r><w:t>next</w:t></w:r></w:p>"#,
+        );
+        for operation in [
+            r#"{"kind":"insert_paragraph","paragraph":{"index":1},"runs":[{"text":"b"}],"like":{"index":0}}"#,
+            r#"{"kind":"insert","paragraph":"p0","after":"abcd","text":"\nnew para"}"#,
+            r#"{"kind":"replace","paragraph":"p0","find":"cd","replacement":"X"}"#,
+        ] {
+            let result = prepared(&source, operation);
+            assert!(result.is_ok(), "{operation}: {:?}", result.err());
+        }
+    }
+
+    #[test]
+    fn a_run_marks_revision_id_split_in_two_is_refused() {
+        // A run's `w:rPr` holds no `w:ins` (OpenXmlValidator:
+        // `Sch_InvalidElementContentExpectingComplex`). Splitting such a run
+        // copies the mark's id: the candidate is refused, not published.
+        let source = deeper_boundary_fixture::docx(
+            r#"<w:p><w:r><w:rPr><w:ins w:id="7" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr><w:t>abcd</w:t></w:r></w:p>"#,
+        );
+        let error = prepared(
+            &source,
+            r#"{"kind":"replace","paragraph":"p0","find":"bc","replacement":"X"}"#,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert!(
+            error.message.contains("w:ins on a mark w:id 7"),
+            "{error:?}"
+        );
+    }
+
+    /// The KI-8 shape: the clean copy resolves the edit's insertion away
+    /// and only the redline repeats an id. The refusal names the redline.
+    #[test]
+    fn a_duplicate_only_the_redline_carries_is_refused_by_its_artifact() {
+        let source = revisions(&[("ins", 5), ("ins", 6)]);
+        let mut result = result_of(revisions(&[("ins", 5), ("ins", 6)]));
+        result.redline = revisions(&[("ins", 5), ("ins", 5)]);
+        let error = check_candidates(&source, &result).unwrap_err();
+        assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+        assert_eq!(
+            error.message,
+            "the edit introduces a duplicate revision id in the redline: w:ins w:id 5 occurs 2 times in word/document.xml (the source has 1)"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_source_skips_the_duplicate_gate() {
+        let candidate = revisions(&[("ins", 5), ("ins", 5)]);
+        let result = check_candidates(b"not a zip at all", &result_of(candidate));
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn inherited_duplicates_and_ids_shared_across_kinds_publish() {
+        let inherited = [("ins", 5), ("ins", 5)];
+        assert!(gate(&inherited, &inherited).is_ok());
+        assert!(gate(&inherited, &[("ins", 5)]).is_ok());
+        let shared = [("ins", 5), ("del", 5), ("rPrChange", 5)];
+        assert!(gate(&[("ins", 5)], &shared).is_ok());
     }
 
     #[test]
