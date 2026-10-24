@@ -2633,6 +2633,113 @@ fn word_shapes_of_a_cells_final_mark_pass() {
     }
 }
 
+/// A cell whose last block is a block-level `mc:AlternateContent`:
+/// the MCE rule (ISO/IEC 29500-3 §10.1.2) selects the first `mc:Choice`
+/// whose `@Requires` prefixes the document binds, else the `mc:Fallback` —
+/// the same branch the comparer keeps (`finalize::mce_branch`). A revision
+/// on that branch's final paragraph is the cell's final-mark violation
+/// (#1699), wherever the AlternateContent sits; a revision on an unselected
+/// branch's is not. Which namespaces Word 16 understands is unverified
+/// here; a bound prefix is the proxy both engines already use.
+#[test]
+fn probe_a_cells_final_mark_inside_block_alternate_content_fails() {
+    let w14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let ac = |requires: &str, choice: &str, fallback: &str| {
+        format!(
+            r#"<mc:AlternateContent xmlns:w14="{w14}"><mc:Choice Requires="{requires}">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"#
+        )
+    };
+    for kind in ["ins", "del"] {
+        // w14 is bound in scope: the Choice is the selected branch.
+        let bytes = table_package(
+            "",
+            [
+                &format!(
+                    "{}{}",
+                    marked("Old.", None),
+                    ac(
+                        "w14",
+                        &format!(
+                            "{}{}",
+                            marked("C1.", None),
+                            marked("C2.", Some(kind))
+                        ),
+                        &format!("{}{}", marked("F1.", None), marked("F2.", None))
+                    )
+                ),
+                &marked("B.", None),
+            ],
+        );
+        let found = cell_final_marks(&bytes);
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        assert_eq!(
+            found[0].location,
+            "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Choice[0]/w:p[1]",
+            "{kind}"
+        );
+        // w99 is bound nowhere: the Fallback is the selected branch, and a
+        // revision on the (unselected) Choice's final paragraph is not the
+        // cell's final mark.
+        let unbound = table_package(
+            "",
+            [
+                &format!(
+                    "{}{}",
+                    marked("Old.", None),
+                    ac(
+                        "w99",
+                        &format!(
+                            "{}{}",
+                            marked("C1.", None),
+                            marked("C2.", Some(kind))
+                        ),
+                        &format!(
+                            "{}{}",
+                            marked("F1.", None),
+                            marked("F2.", Some(kind))
+                        )
+                    )
+                ),
+                &marked("B.", None),
+            ],
+        );
+        let found = cell_final_marks(&unbound);
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        assert_eq!(
+            found[0].location,
+            "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/mc:AlternateContent[0]/mc:Fallback[0]/w:p[1]",
+            "{kind}"
+        );
+    }
+}
+
+/// A revision on the paragraph before a block-level
+/// `mc:AlternateContent` is not on the cell's final mark: Word renders the
+/// selected branch's paragraphs after it (branch selection unverified
+/// without Word; the MCE rule and the comparer agree either way). The
+/// cell itself is still `CELL_WITHOUT_PARAGRAPH`'s to judge.
+#[test]
+fn probe_a_mark_before_a_cells_alternate_content_is_not_final() {
+    let w14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+    for kind in ["ins", "del"] {
+        let bytes = table_package(
+            "",
+            [
+                &format!(
+                    "{}<mc:AlternateContent xmlns:w14=\"{w14}\"><mc:Choice Requires=\"w14\">{}{}</mc:Choice><mc:Fallback>{}{}</mc:Fallback></mc:AlternateContent>",
+                    marked("Old.", Some(kind)),
+                    marked("C1.", None),
+                    marked("C2.", None),
+                    marked("F1.", None),
+                    marked("F2.", None)
+                ),
+                &marked("B.", None),
+            ],
+        );
+        assert_eq!(cell_final_marks(&bytes), [], "{kind}");
+    }
+}
+
 /// A part that writes WordprocessingML in the default namespace (`<tc>`,
 /// no prefix) is checked like any other (codex on #1680, round 9: the
 /// check's byte prefilter looked for `:tc>` only).

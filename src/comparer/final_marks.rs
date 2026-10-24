@@ -22,7 +22,7 @@
 //! tables every row of which carries it, lie between. With no such mark the
 //! final mark loses its revision, as Word writes a cell a row gains.
 
-use crate::namespaces::W;
+use crate::namespaces::{MC, W};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
@@ -36,6 +36,19 @@ pub fn settle_cell_final_marks(dom: &mut Dom, root: NodeId) {
             else {
                 break;
             };
+            // A paragraph mark inside mc:AlternateContent exists once per
+            // branch: repairing the selected branch's copy would leave the
+            // other branch's copy unrevised. Jubarte never authors a
+            // revision inside an AlternateContent atom (produce clones
+            // them verbatim), so a real violation here is a third-party
+            // file the validator reports (#1699), not a redline to settle.
+            if dom
+                .ancestors_and_self(last, None)
+                .iter()
+                .any(|&a| dom.name_is(a, &MC::name("AlternateContent")))
+            {
+                break;
+            }
             settle(dom, root, cell, last, kind, &mut ids);
         }
     }

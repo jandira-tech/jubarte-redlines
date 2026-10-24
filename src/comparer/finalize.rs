@@ -1332,16 +1332,26 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
         // is the one Word selects. "Understood" here means every prefix in
         // `@Requires` resolves to an in-scope `xmlns:*` declaration — you cannot
         // satisfy a requirement for a vocabulary the document never declares.
-        let src = dom
-            .elements(ac, Some(&MC::name("Choice")))
-            .into_iter()
-            .find(|&choice| choice_requires_understood(dom, choice))
-            .or_else(|| dom.element(ac, &MC::name("Fallback")));
-        if let Some(src) = src {
+        // [`mce_branch`] is shared with the validator, so the two cannot pick
+        // different branches (#1699).
+        if let Some(src) = mce_branch(dom, ac) {
             let kids = dom.nodes(src);
             dom.replace_with(ac, &kids);
         }
     }
+}
+
+/// The branch of `mc:AlternateContent` `ac` that the MCE rule selects
+/// (ISO/IEC 29500-3 §10.1.2): the first `mc:Choice` whose `@Requires`
+/// namespaces are all understood, else the `mc:Fallback`. Shared by this
+/// resolution and the validator's cell-final-mark rule
+/// (`crate::validate::last_block_paragraph`), so a cell's final paragraph
+/// is the same paragraph the comparer keeps (#1699).
+pub(crate) fn mce_branch(dom: &Dom, ac: NodeId) -> Option<NodeId> {
+    dom.elements(ac, Some(&MC::name("Choice")))
+        .into_iter()
+        .find(|&choice| choice_requires_understood(dom, choice))
+        .or_else(|| dom.element(ac, &MC::name("Fallback")))
 }
 
 /// Strip non-standard `w:`-namespace children from `<w:sdtPr>`.

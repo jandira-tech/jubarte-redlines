@@ -431,3 +431,39 @@ fn a_cells_final_mark_settles_in_every_story() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// A drawing-gated `mc:AlternateContent` the comparer keeps verbatim can
+/// end a cell. The paragraph before it is then not the cell's final
+/// paragraph: a deleted paragraph there keeps its own mark revision, as it
+/// does when a plain paragraph follows (#1699: the settle pass treated it
+/// as the final mark and moved the revision one paragraph earlier). The
+/// AlternateContent-ending cell itself is `CELL_WITHOUT_PARAGRAPH`'s to
+/// judge, a separate question.
+#[test]
+fn a_deleted_paragraph_before_a_kept_alternate_content_keeps_its_mark() {
+    let ac = |text: &str| {
+        format!(
+            r#"<mc:AlternateContent xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:v="urn:schemas-microsoft-com:vml"><mc:Choice Requires="w14"><w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:p><w:r><w:pict><v:rect id="r1" style="width:12pt;height:12pt"/></w:pict></w:r></w:p></mc:Choice><mc:Fallback><w:p><w:r><w:t>Fallback.</w:t></w:r></w:p></mc:Fallback></mc:AlternateContent>"#
+        )
+    };
+    let a = table(&format!("{}{}{}", para("one"), para("two"), ac("Kept.")));
+    let b = table(&format!("{}{}", para("one"), ac("Kept.")));
+    let out = compare_documents(&a, &b).expect("compare");
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    let paragraph = |needle: &str| {
+        xml.split("</w:p>")
+            .find(|p| p.contains(needle))
+            .unwrap_or_else(|| panic!("no paragraph with {needle}: {xml}"))
+            .to_string()
+    };
+    let two = paragraph(">two<");
+    assert!(
+        two.matches("<w:del ").count() >= 2,
+        "the deleted paragraph keeps its run and mark deletions: {two}"
+    );
+    let one = paragraph(">one<");
+    assert!(
+        !one.contains("<w:del "),
+        "the paragraph before it keeps its mark live: {one}"
+    );
+}

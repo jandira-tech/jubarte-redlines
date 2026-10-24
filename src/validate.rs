@@ -1285,7 +1285,9 @@ pub(crate) fn revision_name(kind: &str) -> XName {
 }
 
 /// The last paragraph among a container's blocks, through block content
-/// controls and custom XML elements, not into nested tables.
+/// controls, custom XML elements and block-level `mc:AlternateContent`
+/// (the MCE-selected branch, [`crate::comparer::finalize::mce_branch`]),
+/// not into nested tables.
 pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
     let mut last = None;
     for child in dom.elements(container, None) {
@@ -1296,6 +1298,13 @@ pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeI
                 .and_then(|content| last_block_paragraph(dom, content))
         } else if dom.name_is(child, &W::name("customXml")) {
             last_block_paragraph(dom, child)
+        } else if dom.name_is(child, &MC::name("AlternateContent")) {
+            // The final paragraph Word renders is the selected branch's
+            // (#1699): a drawing-gated AlternateContent the comparer keeps
+            // verbatim can end a cell, and a revision on the paragraph
+            // before it is not on the final mark then.
+            crate::comparer::finalize::mce_branch(dom, child)
+                .and_then(|branch| last_block_paragraph(dom, branch))
         } else {
             None
         };
