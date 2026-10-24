@@ -693,6 +693,21 @@ def test_read_repeated_empty_paragraph_flags_exit_usage_as_the_binary(
     assert json.loads(captured.out) == {"error": {"code": "USAGE", "message": "no paragraphs selected"}}
 
 
+def test_edit_help_does_not_advertise_the_plan_v2_routes_the_host_cannot_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The Python host has no `edit template` / `edit apply` handler, so
+    its `edit --help` must not advertise them; the advice it can stand
+    behind stays (#1698)."""
+    for argv in (["edit", "--help"], ["edit", "-h"]):
+        with pytest.raises(SystemExit) as shown:
+            main([*argv])
+        assert shown.value.code == 0
+        text = capsys.readouterr().out
+        assert "edit template" not in text and "edit apply" not in text, argv
+        assert "PlanV2" not in text, argv
+        assert "Typed actions:" in text and "Routing:" in text, argv
+
 
 def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(
     letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
