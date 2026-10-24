@@ -831,10 +831,12 @@ for (const change of ["rename", "overwrite", "append"]) {
     const out = path.join(tmp, `consume-${change}.docx`);
     assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
     const held = fs.readFileSync(plan);
-    // The CLI writes synchronously. Interpose only at that write to reproduce
-    // another actor replacing the plan, including an identical-bytes rename.
+    // The CLI writes synchronously, through a staged file renamed over the
+    // output. Interpose only at that rename to reproduce another actor
+    // replacing the plan, including an identical-bytes rename.
     const hook = (fs, mock, assert, plan, change) => {
       const write = fs.writeFileSync;
+      const rename = fs.renameSync;
       let changed = false, planFd;
       const open = fs.openSync;
       mock.method(fs, "openSync", (name, ...args) => {
@@ -842,9 +844,9 @@ for (const change of ["rename", "overwrite", "append"]) {
         if (name === plan && planFd === undefined) planFd = fd;
         return fd;
       });
-      mock.method(fs, "writeFileSync", (name, ...args) => {
-        const result = write(name, ...args);
-        if (!changed && String(name).endsWith(".docx")) {
+      mock.method(fs, "renameSync", (from, to, ...rest) => {
+        const result = rename(from, to, ...rest);
+        if (!changed && String(to).endsWith(".docx")) {
           changed = true;
           assert.doesNotThrow(() => fs.fstatSync(planFd), "keep the descriptor open until deletion");
           const original = fs.readFileSync(plan);
@@ -1795,4 +1797,51 @@ test("read refuses an existing output before it reads the input (#1698)", () => 
   assert.equal(tables.code, 2, tables.err);
   assert.equal(tables.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
   assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+});
+
+test("read --tables -o refuses an output that names the input (#1698)", () => {
+  // An extensionless input: the tables view would destroy the document.
+  const input = path.join(tmp, "extensionless-input");
+  fs.copyFileSync(untracked, input);
+  const before = fs.readFileSync(input);
+  const refused = runTables("read", input, "--tables", "-o", input, "--force");
+  assert.equal(refused.code, 2, refused.err);
+  assert.equal(refused.err, `error: OUTPUT_ALIAS: the output '${input}' is the same file as the input '${input}'\n`);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+  // A link to the input is the input.
+  const link = path.join(tmp, "link-to-input.md");
+  fs.symlinkSync(input, link);
+  const throughLink = runTables("read", input, "--tables", "-o", link, "--force");
+  assert.equal(throughLink.code, 2, throughLink.err);
+  assert.match(throughLink.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'\n$/);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+  // Another spelling of the same path is the same file.
+  const spelled = runTables("read", input, "--tables", "-o", `${tmp}/./extensionless-input`, "--force");
+  assert.equal(spelled.code, 2, spelled.err);
+  assert.match(spelled.err, /OUTPUT_ALIAS/);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+});
+
+test("read --tables -o replaces a link, never writing through it (#1698)", () => {
+  const referent = path.join(tmp, "referent.md");
+  fs.writeFileSync(referent, "keep me\n");
+  const link = path.join(tmp, "link.md");
+  fs.symlinkSync(referent, link);
+  const written = runTables("read", untracked, "--tables", "-o", link, "--force");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n", "the link's referent keeps its bytes");
+  assert.ok(!fs.lstatSync(link).isSymbolicLink(), "the link itself is replaced");
+  assert.match(fs.readFileSync(link, "utf8"), /^table 0: /);
+  // A hard link to the input is the input: it is refused, not written
+  // through, and the document keeps its bytes.
+  const source = path.join(tmp, "hard-link-source.docx");
+  fs.copyFileSync(untracked, source);
+  const before = fs.readFileSync(source);
+  const hard = path.join(tmp, "hard-link.md");
+  fs.linkSync(source, hard);
+  const refused = runTables("read", source, "--tables", "-o", hard, "--force");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'\n$/);
+  assert.deepEqual(fs.readFileSync(source), before, "the input keeps its bytes");
+  assert.deepEqual(fs.readFileSync(hard), before, "the hard link keeps the input's bytes");
 });
