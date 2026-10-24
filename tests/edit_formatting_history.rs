@@ -15,6 +15,7 @@ use jubarte::changes::{ChangeFilter, accept_changes, reject_changes};
 use jubarte::edit::{EditPlan, apply_plan};
 use jubarte::inspect::paragraphs;
 use jubarte::namespaces::W;
+use jubarte::validate::audit_tracked;
 use jubarte::xmllinq::{Dom, NodeId};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -57,7 +58,8 @@ fn plan(operations: Value) -> EditPlan {
     EditPlan::from_json(&request.to_string()).unwrap()
 }
 
-/// Bob's edit; both outputs must hold unique revision ids.
+/// Bob's edit; both outputs must hold unique revision ids, and the
+/// redline must hold Alice's history as she wrote it.
 fn edit(source: &[u8], operations: Value) -> Vec<u8> {
     let out = apply_plan(source, &plan(operations));
     let out = out.unwrap_or_else(|e| panic!("edit must succeed: {e:?}"));
@@ -65,6 +67,8 @@ fn edit(source: &[u8], operations: Value) -> Vec<u8> {
         assert_unique_ids(bytes);
         assert_validates(bytes);
     }
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the edits audit: {audit:#?}");
     alice_records(&out.clean);
     out.redline
 }
@@ -664,4 +668,50 @@ fn an_id_the_settling_removed_names_no_new_record() {
             );
         }
     }
+}
+
+/// Bob's typed (v2) plan for `source`: the template's own binding, with
+/// `operations` aimed at its first paragraph.
+fn edit_v2(
+    source: &[u8],
+    operations: impl Fn(&Value) -> Value,
+) -> jubarte::edit::v2_apply::V2EditResult {
+    use jubarte::edit::{
+        for_edit::ForEditRequest,
+        template::{TemplateRequest, generate},
+        v2::PlanV2,
+        v2_apply,
+    };
+    let generated = generate(
+        source,
+        &TemplateRequest {
+            view: ForEditRequest::default(),
+            author: BOB.into(),
+            date: DATE.into(),
+        },
+    )
+    .unwrap();
+    let mut q: Value = serde_json::from_str(&generated.plan.to_json()).unwrap();
+    q["operations"] = operations(&q["operations"][0]["target"]);
+    let out = v2_apply::apply_plan(source, &PlanV2::from_json(&q.to_string()).unwrap());
+    let out = out.unwrap_or_else(|e| panic!("the typed edit must keep Alice's history: {e:?}"));
+    let audit = audit_tracked(source, &out.redline, BOB).unwrap();
+    assert!(audit.is_empty(), "the typed edit audits: {audit:#?}");
+    out
+}
+
+#[test]
+fn a_typed_comment_that_splits_the_run_keeps_alices_history() {
+    let out = edit_v2(
+        &outside(TEXT),
+        |target| json!([{"kind":"comment","target":target,"find":"beta","text":"note"}]),
+    );
+    for bytes in [&out.redline, &out.clean] {
+        assert_unique_ids(bytes);
+        assert_validates(bytes);
+    }
+    let records = alice_records(&out.redline);
+    assert!(records.len() > 1, "the comment splits Alice's run");
+    assert_eq!(records[0].id, "5");
+    assert_eq!(covered(&records), TEXT);
 }

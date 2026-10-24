@@ -6,7 +6,7 @@
 //! This module does no publication. `clean` means new edits applied directly;
 //! it is never an implicitly all-accepted copy of retained negotiation history.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::v2::{self, AttachedComment, ContextKind, PlanV2, Scope, Target, Track};
 use super::{
@@ -14,7 +14,7 @@ use super::{
     OperationKind, ResolveRevisions, Resolved, ResolvedRevisions, Selector, Transaction, anchor,
     err, load_stories, open_error, origin, tracked,
 };
-use crate::changes::{Change, ChangeFilter, ChangeKind, MoveSide};
+use crate::changes::{Change, ChangeFilter, ChangeKind, MoveSide, Recorded};
 use crate::ids::{ShortId, Step, Story};
 use crate::inspect::{Opened, source_sha256};
 use crate::namespaces::{W, W14};
@@ -2434,25 +2434,72 @@ fn compare_history(
             "candidate changed revision history retained in W",
         )
     };
+    // Each document's changes and its formatting changes' records (the old
+    // properties and, a run's, the characters covered), from one parse.
     // The comment marks a revision holds are the comments' history, not
     // the revision's: a comment added or removed beside one moves them.
-    let history = |bytes| {
-        changes(bytes).map(|listed| {
-            listed
-                .into_iter()
-                .map(|change| Change {
-                    holds_comments: Vec::new(),
-                    ..change
-                })
-                .collect::<Vec<_>>()
-        })
+    let history = |bytes, skip: &dyn Fn(&Change) -> bool| {
+        crate::changes::changes_and_records(bytes, skip)
+            .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))
+            .map(|(listed, records)| {
+                let listed = listed
+                    .into_iter()
+                    .map(|change| Change {
+                        holds_comments: Vec::new(),
+                        ..change
+                    })
+                    .collect::<Vec<_>>();
+                (listed, records)
+            })
     };
-    let mut before = history(working)?;
-    let ids: BTreeSet<_> = before.iter().map(|c| c.id.clone()).collect();
-    let mut after = Vec::new();
+    let (source, mut old_records) = history(working, &|_| false)?;
+    let ids: BTreeSet<_> = source.iter().map(|c| c.id.clone()).collect();
+    // The editor's own new revisions, in a tracked candidate.
+    let editors = |c: &Change, kind: ChangeKind| {
+        tracked && c.kind == kind && !ids.contains(&c.id) && c.author.as_deref() == Some(author)
+    };
+    // A tracked candidate's characters count where the source has them:
+    // the editor's new insertions count for nothing.
+    let (listed, mut new_records) = history(candidate, &|c| editors(c, ChangeKind::Insertion))?;
+    // Accepting the editor's deletion takes what it holds along, as that
+    // deletion's words go: what it holds depends on what the deletion sits in.
+    let deletions: BTreeMap<String, Option<String>> = listed
+        .iter()
+        .filter(|c| editors(c, ChangeKind::Deletion))
+        .map(|c| (c.id.clone(), c.inside.clone()))
+        .collect();
+    let dependency = |mut inside: Option<String>| {
+        for _ in 0..=deletions.len() {
+            match inside.as_ref().and_then(|id| deletions.get(id)) {
+                Some(outer) => inside.clone_from(outer),
+                None => break,
+            }
+        }
+        inside
+    };
+    // Ids may repeat, so each formatting change takes its next record in
+    // order.
+    let next = |records: &mut HashMap<String, Vec<Recorded>>, c: &Change| {
+        (c.kind == ChangeKind::Formatting)
+            .then(|| {
+                records
+                    .get_mut(&c.id)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| r.remove(0))
+            })
+            .flatten()
+    };
+    let mut before: Vec<(Change, Option<Recorded>)> = source
+        .into_iter()
+        .map(|c| {
+            let record = next(&mut old_records, &c);
+            (c, record)
+        })
+        .collect();
+    let mut after: Vec<(Change, Option<Recorded>)> = Vec::new();
     let mut seen_insertions = BTreeSet::new();
     let mut insertion_text = BTreeMap::<String, String>::new();
-    for mut change in history(candidate)? {
+    for mut change in listed {
         if let Some(origin) = change
             .inside
             .as_ref()
@@ -2470,6 +2517,7 @@ fn compare_history(
         {
             return Err(failure());
         }
+        change.inside = dependency(change.inside.take());
         if change.kind == ChangeKind::Insertion
             && change.target == "text"
             && let Some(origin) = insertion_origins
@@ -2478,7 +2526,8 @@ fn compare_history(
         {
             let original = before
                 .iter()
-                .find(|old| old.id == *origin)
+                .map(|(old, _)| old)
+                .find(|old| old.id == *origin && old.kind == change.kind)
                 .ok_or_else(failure)?;
             if change.id != *origin && !edited.contains(origin) {
                 return Err(failure());
@@ -2503,12 +2552,45 @@ fn compare_history(
                 continue;
             }
         }
+        let record = next(&mut new_records, &change);
+        // Another author's run formatting change under a fresh id is a
+        // fragment of one the edit split: it joins the fragment before it
+        // when both recorded the same author, date, paragraph, dependency and
+        // old properties, and their characters touch (#1656).
+        if !ids.contains(&change.id)
+            && change.kind == ChangeKind::Formatting
+            && change.author.as_deref() != Some(author)
+            && let Some((payload, Some((start, end)))) =
+                record.as_ref().map(|r| (&r.payload, r.characters))
+        {
+            let Some((last, Some(joined))) = after
+                .iter_mut()
+                .rfind(|entry| entry.0.kind == ChangeKind::Formatting)
+            else {
+                return Err(failure());
+            };
+            let Some(covered) = joined.characters.as_mut() else {
+                return Err(failure());
+            };
+            if last.author != change.author
+                || last.date != change.date
+                || last.paragraph != change.paragraph
+                || last.inside != change.inside
+                || joined.payload != *payload
+                || covered.1 != start
+            {
+                return Err(failure());
+            }
+            last.text.push_str(&change.text);
+            covered.1 = end;
+            continue;
+        }
         if ids.contains(&change.id) {
-            after.push(change);
+            after.push((change, record));
         }
     }
     if tracked {
-        for original in &before {
+        for (original, _) in &before {
             if original.kind == ChangeKind::Insertion
                 && original.target == "text"
                 && edited.contains(&original.id)
@@ -2519,12 +2601,18 @@ fn compare_history(
             }
         }
     }
-    before.retain_mut(|c| {
+    let kept = |c: &Change| {
+        after
+            .iter()
+            .map(|(new, _)| new)
+            .find(|new| new.id == c.id && new.kind == c.kind)
+    };
+    before.retain_mut(|(c, _)| {
         if !edited.contains(&c.id) {
             return true;
         }
         if c.kind == ChangeKind::Insertion && c.target == "text" {
-            if let Some(new) = after.iter().find(|new| new.id == c.id) {
+            if let Some(new) = kept(c) {
                 c.text.clone_from(&new.text);
             } else if c.author.as_deref() == Some(author) || !tracked {
                 // Deleting one's entire insertion removes its carrier; so
@@ -2532,15 +2620,21 @@ fn compare_history(
                 // author's (`check_dom_realized` holds the text).
                 return false;
             }
-        } else if !tracked && after.iter().all(|new| new.id != c.id) {
+        } else if !tracked && kept(c).is_none() {
             // A direct paragraph deletion takes the paragraph's other
             // revisions with it; a tracked one keeps them (#1136).
             return false;
         }
         true
     });
-    for c in before.iter_mut().chain(after.iter_mut()) {
+    // A tracked candidate keeps each record over the characters it covered;
+    // a direct one moves them with the edit, so only how many compare.
+    for (c, record) in before.iter_mut().chain(after.iter_mut()) {
         c.paragraph = None;
+        if !tracked && let Some((start, end)) = record.as_mut().and_then(|r| r.characters.as_mut())
+        {
+            (*start, *end) = (0, *end - *start);
+        }
     }
     if before != after {
         return Err(failure());
@@ -2696,6 +2790,356 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn history_guard_joins_the_fragments_of_a_split_formatting_record() {
+        // Alice made a run bold (italic before); Carol's edit split it. Each
+        // fragment carries Alice's record under its own id (#1656).
+        let formatted = |id: u32, author: &str, old: &str, text: &str| {
+            format!(
+                r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="{author}" w:date="2026-10-17T09:00:00Z"><w:rPr>{old}</w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+            )
+        };
+        let alice = |id: u32, text: &str| formatted(id, "Alice", "<w:i/>", text);
+        let plain = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+        let carol = r#"<w:ins w:id="20" w:author="Carol Diaz" w:date="2026-10-23T10:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+        let source = docx(&format!("<w:p>{}</w:p>", alice(5, "alpha beta gamma")));
+        for (content, valid) in [
+            (
+                format!("{}{}", alice(5, "alpha "), alice(9, "beta gamma")),
+                true,
+            ),
+            (
+                format!("{}{carol}{}", alice(5, "alpha "), alice(9, "beta gamma")),
+                true,
+            ),
+            (
+                format!(
+                    "{}{}{}",
+                    alice(5, "alpha "),
+                    alice(9, "beta"),
+                    alice(10, " gamma")
+                ),
+                true,
+            ),
+            // The fragment recorded other old properties.
+            (
+                format!(
+                    "{}{}",
+                    alice(5, "alpha "),
+                    formatted(9, "Alice", r#"<w:u w:val="single"/>"#, "beta gamma")
+                ),
+                false,
+            ),
+            // The original record's own old properties changed.
+            (
+                formatted(5, "Alice", r#"<w:u w:val="single"/>"#, "alpha beta gamma"),
+                false,
+            ),
+            // Another author's record.
+            (
+                format!(
+                    "{}{}",
+                    alice(5, "alpha "),
+                    formatted(9, "Dan", "<w:i/>", "beta gamma")
+                ),
+                false,
+            ),
+            // A fragment lost its record.
+            (
+                format!(
+                    "{}{}{}",
+                    alice(5, "alpha "),
+                    plain("beta"),
+                    alice(9, " gamma")
+                ),
+                false,
+            ),
+            // The record spread over text it never covered.
+            (
+                format!("{}{}", alice(5, "alpha beta gamma"), alice(9, " more")),
+                false,
+            ),
+        ] {
+            let result = preserve_history(
+                &source,
+                &docx(&format!("<w:p>{content}</w:p>")),
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert_eq!(result.is_ok(), valid, "{content}: {result:?}");
+            if let Err(error) = result {
+                assert_eq!(error.code, "REVISION_PRESERVATION_FAILED");
+            }
+        }
+    }
+
+    /// Alice's run formatting change `id` over `text`: bold now, italic
+    /// before. `deleted` spells the words as `w:delText`.
+    fn alice_formatted(id: u32, text: &str, deleted: bool) -> String {
+        let t = if deleted { "delText" } else { "t" };
+        format!(
+            r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:{t} xml:space="preserve">{text}</w:{t}></w:r>"#
+        )
+    }
+
+    fn plain_run(text: &str) -> String {
+        format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+    }
+
+    /// Carol's new revision `kind` (`ins` or `del`) around `content`.
+    fn carols(kind: &str, id: u32, content: &str) -> String {
+        format!(
+            r#"<w:{kind} w:id="{id}" w:author="Carol Diaz" w:date="2026-10-23T10:00:00Z">{content}</w:{kind}>"#
+        )
+    }
+
+    fn paragraph(content: &str) -> Vec<u8> {
+        docx(&format!("<w:p>{content}</w:p>"))
+    }
+
+    #[test]
+    fn history_guard_joins_fragments_only_where_they_touch_in_the_source() {
+        // `abXb`: Alice's record moves from the first `ab` onto `a` and the
+        // last `b`, around unrelated words (#1656).
+        let source = paragraph(&[alice_formatted(5, "ab", false), plain_run("Xb")].concat());
+        let moved = paragraph(
+            &[
+                alice_formatted(5, "a", false),
+                plain_run("bX"),
+                alice_formatted(9, "b", false),
+            ]
+            .concat(),
+        );
+        // A record of Alice's under a fresh id that touches none of hers is
+        // new history, not a fragment.
+        let spread = paragraph(
+            &[
+                alice_formatted(5, "ab", false),
+                plain_run("X"),
+                alice_formatted(9, "b", false),
+            ]
+            .concat(),
+        );
+        for candidate in [moved, spread] {
+            for guard in [preserve_history, preserve_direct_history] {
+                let result = guard(
+                    &source,
+                    &candidate,
+                    &BTreeSet::new(),
+                    "Carol Diaz",
+                    &BTreeMap::new(),
+                );
+                assert_eq!(
+                    result.map_err(|e| e.code).unwrap_err(),
+                    "REVISION_PRESERVATION_FAILED"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn history_guard_keeps_a_record_out_of_the_editors_new_insertion() {
+        // Rejecting Carol's insertion would take part of Alice's history.
+        let source = paragraph(&alice_formatted(5, "ab", false));
+        let candidate = paragraph(
+            &[
+                alice_formatted(5, "a", false),
+                carols("ins", 20, &alice_formatted(9, "b", false)),
+            ]
+            .concat(),
+        );
+        let result = preserve_history(
+            &source,
+            &candidate,
+            &BTreeSet::new(),
+            "Carol Diaz",
+            &BTreeMap::new(),
+        );
+        assert_eq!(
+            result.map_err(|e| e.code).unwrap_err(),
+            "REVISION_PRESERVATION_FAILED"
+        );
+    }
+
+    #[test]
+    fn history_guard_keeps_a_record_whose_words_the_editor_deleted() {
+        // Carol's tracked deletion holds a fragment of Alice's record: the
+        // record covers the same words, deleted ones included.
+        let source = paragraph(&alice_formatted(5, "alpha beta gamma", false));
+        for content in [
+            [
+                carols("del", 20, &alice_formatted(5, "alpha ", true)),
+                alice_formatted(9, "beta gamma", false),
+            ]
+            .concat(),
+            [
+                alice_formatted(5, "alpha ", false),
+                carols("del", 20, &alice_formatted(9, "beta", true)),
+                alice_formatted(10, " gamma", false),
+            ]
+            .concat(),
+        ] {
+            let result = preserve_history(
+                &source,
+                &paragraph(&content),
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert!(result.is_ok(), "{content}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn history_guard_tells_an_insertion_from_a_formatting_change_with_its_id() {
+        // An insertion and a run formatting change may share `w:id` 5; Carol
+        // edits only the insertion.
+        let insertion = |content: &str| {
+            format!(
+                r#"<w:ins w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z">{content}</w:ins>"#
+            )
+        };
+        let source = paragraph(
+            &[
+                alice_formatted(5, "foo", false),
+                insertion(&plain_run("old")),
+            ]
+            .concat(),
+        );
+        let edited = BTreeSet::from(["r5".to_string()]);
+        let direct = paragraph(
+            &[
+                alice_formatted(5, "foo", false),
+                insertion(&plain_run("new")),
+            ]
+            .concat(),
+        );
+        let result =
+            preserve_direct_history(&source, &direct, &edited, "Carol Diaz", &BTreeMap::new());
+        assert!(result.is_ok(), "{result:?}");
+        let tracked = paragraph(
+            &[
+                alice_formatted(5, "foo", false),
+                insertion(&carols(
+                    "del",
+                    20,
+                    r#"<w:r><w:delText>old</w:delText></w:r>"#,
+                )),
+                carols("ins", 21, &plain_run("new")),
+            ]
+            .concat(),
+        );
+        let result = preserve_history(
+            &source,
+            &tracked,
+            &edited,
+            "Carol Diaz",
+            &BTreeMap::from([("r5".into(), "r5".into())]),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        // The formatting change itself was not edited: its words stay.
+        let moved = paragraph(
+            &[
+                plain_run("foo"),
+                insertion(&plain_run("new")),
+                alice_formatted(5, "", false),
+            ]
+            .concat(),
+        );
+        let result =
+            preserve_direct_history(&source, &moved, &edited, "Carol Diaz", &BTreeMap::new());
+        assert_eq!(
+            result.map_err(|e| e.code).unwrap_err(),
+            "REVISION_PRESERVATION_FAILED"
+        );
+    }
+
+    #[test]
+    fn history_guard_reads_each_record_where_ids_repeat() {
+        // Two of Alice's records share `w:id` 5; the candidate rewrites the
+        // first one's old properties.
+        let record = |old: &str, text: &str| {
+            format!(
+                r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:rPr>{old}</w:rPr></w:rPrChange></w:rPr><w:t>{text}</w:t></w:r>"#
+            )
+        };
+        let source = paragraph(&[record("<w:i/>", "one"), record("<w:u/>", "two")].concat());
+        let candidate = paragraph(&[record("<w:caps/>", "one"), record("<w:u/>", "two")].concat());
+        for guard in [preserve_history, preserve_direct_history] {
+            assert!(
+                guard(
+                    &source,
+                    &source,
+                    &BTreeSet::new(),
+                    "Carol Diaz",
+                    &BTreeMap::new()
+                )
+                .is_ok()
+            );
+            let result = guard(
+                &source,
+                &candidate,
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert_eq!(
+                result.map_err(|e| e.code).unwrap_err(),
+                "REVISION_PRESERVATION_FAILED"
+            );
+        }
+    }
+
+    #[test]
+    fn history_guard_keeps_a_record_off_a_neighbouring_drawing() {
+        // Alice's record covers a tab; the candidate spreads it over the
+        // drawing beside it, under a fresh id.
+        let record = |id: u32| {
+            format!(
+                r#"<w:rPr><w:b/><w:rPrChange w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr>"#
+            )
+        };
+        let tab = format!("<w:r>{}<w:tab/></w:r>", record(5));
+        let source = paragraph(&format!("{tab}<w:r><w:drawing/></w:r>"));
+        let candidate = paragraph(&format!("{tab}<w:r>{}<w:drawing/></w:r>", record(9)));
+        for guard in [preserve_history, preserve_direct_history] {
+            let result = guard(
+                &source,
+                &candidate,
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert_eq!(
+                result.map_err(|e| e.code).unwrap_err(),
+                "REVISION_PRESERVATION_FAILED"
+            );
+        }
+    }
+
+    #[test]
+    fn history_guard_keeps_a_paragraph_records_old_properties() {
+        let aligned = |jc: &str| {
+            docx(&format!(
+                r#"<w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="6" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:pPr><w:jc w:val="{jc}"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>alpha</w:t></w:r></w:p>"#
+            ))
+        };
+        for guard in [preserve_history, preserve_direct_history] {
+            let result = guard(
+                &aligned("left"),
+                &aligned("right"),
+                &BTreeSet::new(),
+                "Carol Diaz",
+                &BTreeMap::new(),
+            );
+            assert_eq!(
+                result.map_err(|e| e.code).unwrap_err(),
+                "REVISION_PRESERVATION_FAILED"
+            );
+        }
     }
 
     #[test]
@@ -2954,6 +3398,56 @@ mod tests {
                 "text": "A note.",
             }),
             other => panic!("unknown plan kind {other}"),
+        }
+    }
+
+    /// A style's formatting record and a comment body's share `w:id` 3 but
+    /// not a story: removing the comment leaves the style's record its own
+    /// (Jules, #1661, one parse for listing and records).
+    #[test]
+    fn a_comment_bodys_formatting_record_stands_in_for_no_listed_change() {
+        use crate::edit::deeper_boundary_fixture::{Part, docx_with};
+        let styles = format!(
+            r#"<w:styles xmlns:w="{}"><w:style w:type="character" w:styleId="S"><w:name w:val="S"/><w:rPr><w:b/><w:rPrChange w:id="3" w:author="Ann" w:date="2026-09-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style></w:styles>"#,
+            W::URI
+        );
+        let comments = format!(
+            r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="Cy"><w:p><w:r><w:rPr><w:i/><w:rPrChange w:id="3" w:author="Cy" w:date="2026-09-01T00:00:00Z"><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr><w:t>Note</w:t></w:r></w:p></w:comment></w:comments>"#,
+            W::URI
+        );
+        let styles_part = Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        };
+        let comments_part = Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        };
+        let source = docx_with(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Text</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#,
+            &[styles_part, comments_part],
+        );
+        let styles_part = Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: &styles,
+        };
+        let candidate = docx_with(r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#, &[styles_part]);
+        for tracked in [false, true] {
+            let result = compare_history(
+                &source,
+                &candidate,
+                &BTreeSet::new(),
+                "Bob",
+                &BTreeMap::new(),
+                tracked,
+            );
+            assert!(result.is_ok(), "tracked {tracked}: {result:?}");
         }
     }
 
