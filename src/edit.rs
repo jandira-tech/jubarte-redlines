@@ -23,7 +23,7 @@
 //! documents, for dry-run checks. Recording an edit from operation flags is
 //! in [`flags`] / [`record`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -2663,6 +2663,13 @@ struct Transaction<'p> {
     /// The story indices `finish` last wrote, body included: the
     /// serialized-stories check compares each one's DOM against the bytes.
     written_stories: std::collections::BTreeSet<usize>,
+    /// The ids `apply` gives the records it copies onto the retained
+    /// fragments of a split run: none a source record uses, so the copy of
+    /// another author's formatting history collides with nothing (#1656).
+    revision_ids: RevisionCounter,
+    /// Every revision id the source and its settled base use. An id the
+    /// settling removed never names a new record in the same report.
+    used_revision_ids: HashSet<u64>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -2713,6 +2720,7 @@ impl<'p> Transaction<'p> {
         }
         let source_bytes = source;
         let source_comment_max = existing_comment_ids(&probe);
+        let mut used_revision_ids = tracked::used_ids(&probe, &[]);
         let Settled {
             mut base,
             mut opened,
@@ -2720,9 +2728,14 @@ impl<'p> Transaction<'p> {
             comment_changes,
             changed,
         } = settle(source, plan, probe)?;
+        let mut renumbered = false;
         if let Some(normalized) = ranges::normalize_permission_ids(&base)? {
             base = normalized;
             opened = Opened::open(&base).map_err(open_error)?;
+            renumbered = true;
+        }
+        if changed || renumbered {
+            used_revision_ids.extend(tracked::used_ids(&opened, &[]));
         }
         let (removed_comments, kept_comments) = comment_changes.records(source)?;
         let base_sha256 = source_sha256(&base);
@@ -2768,6 +2781,7 @@ impl<'p> Transaction<'p> {
         let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
+        let revision_ids = RevisionCounter::new(used_revision_ids.clone());
         Ok(Self {
             plan,
             revision_refusal: std::cell::RefCell::new(None),
@@ -2807,6 +2821,8 @@ impl<'p> Transaction<'p> {
             notes_story: None,
             settings: None,
             written_stories: std::collections::BTreeSet::new(),
+            revision_ids,
+            used_revision_ids,
         })
     }
 
@@ -6080,6 +6096,7 @@ impl<'p> Transaction<'p> {
                         s,
                         s + edit.replacement.len(),
                         format,
+                        &mut self.revision_ids,
                     );
                 }
             }
@@ -6087,7 +6104,14 @@ impl<'p> Transaction<'p> {
             for (start, end, format) in format_runs.remove(&para).unwrap_or_default() {
                 let s = new_position(&edits, start, true, None);
                 let e = new_position(&edits, end, false, None);
-                format_range(&mut self.opened.dom, node, s, e, &format);
+                format_range(
+                    &mut self.opened.dom,
+                    node,
+                    s,
+                    e,
+                    &format,
+                    &mut self.revision_ids,
+                );
             }
             // Footnote reference marks; reversed so marks sharing a point
             // end up in plan order.
@@ -6098,7 +6122,14 @@ impl<'p> Transaction<'p> {
                 .rev()
             {
                 let at = new_position(&edits, at, true, None);
-                notes::insert_reference(&mut self.opened.dom, node, at, id, reference_style);
+                notes::insert_reference(
+                    &mut self.opened.dom,
+                    node,
+                    at,
+                    id,
+                    reference_style,
+                    &mut self.revision_ids,
+                );
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -6124,6 +6155,7 @@ impl<'p> Transaction<'p> {
                     (s, end),
                     (edit.op, part),
                     (&find, &edit.replacement),
+                    &mut self.revision_ids,
                 ) {
                     self.whole_marks.push(mark);
                 }
@@ -6150,7 +6182,14 @@ impl<'p> Transaction<'p> {
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
             for (start, end, i, _) in pending {
-                anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
+                anchor_comment(
+                    &mut self.opened.dom,
+                    node,
+                    start,
+                    end,
+                    ids[&i],
+                    &mut self.revision_ids,
+                );
             }
         }
         // 1a. Restores: plain copies of the deletion's runs after it, which
@@ -6177,6 +6216,7 @@ impl<'p> Transaction<'p> {
                     self.paragraph_nodes[*para],
                     self.paragraph_nodes[*last],
                     ids[i],
+                    &mut self.revision_ids,
                 );
             }
         }
@@ -6272,7 +6312,14 @@ impl<'p> Transaction<'p> {
             let new = news[news.len() - 1];
             if commented {
                 let projection = project_paragraph(&self.opened.dom, new);
-                anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
+                anchor_comment(
+                    &mut self.opened.dom,
+                    new,
+                    0,
+                    projection.text.len(),
+                    ids[&i],
+                    &mut self.revision_ids,
+                );
             }
         }
         tables
@@ -7786,7 +7833,15 @@ fn write_text_new_in(dom: &mut Dom, t: NodeId, value: &str, new: std::ops::Range
 
 /// Split the run owning `seg` so that a run boundary falls at projection byte
 /// `at` (inside `seg`). Returns nothing when `at` is already a boundary.
-fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize) {
+/// The right half's copy of a formatting history (another author's
+/// `w:rPrChange`) takes a fresh id from `ids`; the left half, the
+/// original run, keeps the original id (#1656).
+fn split_run_at(
+    dom: &mut Dom,
+    seg: &crate::inspect::Segment,
+    at: usize,
+    ids: &mut RevisionCounter,
+) {
     if at <= seg.start || at >= seg.end {
         return;
     }
@@ -7819,12 +7874,80 @@ fn split_run_at(dom: &mut Dom, seg: &crate::inspect::Segment, at: usize) {
     set_text(dom, t, &left);
     let clone_t = clone_children[index];
     set_text(dom, clone_t, &right);
+    refresh_run_history(dom, clone, ids);
     dom.add_after_self(run, clone);
+}
+
+/// Fresh ids for the formatting history in `run`'s own `w:rPr`, for a run
+/// that is a copy of another. Content the copy took over (a text box in a
+/// drawing) moved rather than doubled, so its records keep their ids.
+fn refresh_run_history(dom: &mut Dom, run: NodeId, ids: &mut RevisionCounter) {
+    if let Some(rpr) = dom.element(run, &W::r_pr()) {
+        crate::revision_processor::refresh_property_ids(dom, rpr, |old| ids.copy(old));
+    }
+}
+
+/// One output's revision ids (#1656). The edit's own records and the
+/// copies a split makes of a source record come from one counter: above
+/// every id the source uses, and inside Word's signed 32-bit range once it
+/// runs out ([`crate::revision_processor::RevisionIds`]).
+pub(super) struct RevisionCounter {
+    ids: crate::revision_processor::RevisionIds,
+    /// The ids of the records the edit writes: its own changes. A copy of
+    /// a source record is not one.
+    own: BTreeSet<u64>,
+}
+
+impl Default for RevisionCounter {
+    fn default() -> Self {
+        Self::new(HashSet::new())
+    }
+}
+
+impl RevisionCounter {
+    /// A counter that never hands out one of `used`.
+    pub(super) fn new(used: HashSet<u64>) -> Self {
+        Self {
+            ids: crate::revision_processor::RevisionIds::from_used(used),
+            own: BTreeSet::new(),
+        }
+    }
+
+    /// An id for a record the edit writes.
+    pub(super) fn allocate(&mut self) -> u64 {
+        let id = self.ids.allocate();
+        self.own.insert(id);
+        id
+    }
+
+    /// An id for a copy of the record that had id `of`: the edit's own
+    /// change when it copies one of the edit's own records, a copy of a
+    /// source record otherwise.
+    fn copy(&mut self, of: Option<u64>) -> u64 {
+        if of.is_some_and(|id| self.own.contains(&id)) {
+            self.allocate()
+        } else {
+            self.ids.allocate()
+        }
+    }
+
+    /// The ids of the records the edit wrote, copies of source records
+    /// excluded.
+    pub(super) fn own(&self) -> &BTreeSet<u64> {
+        &self.own
+    }
 }
 
 /// Wrap the projection range `[start, end)` of `paragraph` in comment
 /// markers for comment `id`, splitting runs at the boundaries as needed.
-fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id: u32) {
+fn anchor_comment(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    id: u32,
+    ids: &mut RevisionCounter,
+) {
     let id_str = id.to_string();
     let range_start = dom.new_element(W::name("commentRangeStart"));
     dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
@@ -7834,7 +7957,7 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
     let reference = dom.new_element(W::name("commentReference"));
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
-    if wrap_range(dom, paragraph, start, end, range_start, range_end) {
+    if wrap_range(dom, paragraph, start, end, range_start, range_end, ids) {
         place_reference(dom, range_start, range_end, reference_run);
     } else {
         dom.add(paragraph, range_start);
@@ -7880,14 +8003,14 @@ fn comment_reference_run(dom: &mut Dom, id: &str) -> NodeId {
 /// Comment `id` from the start of paragraph `first` to the end of `last`:
 /// the start marker before `first`'s first run, the end marker and the
 /// reference run after `last`'s last run (appended to an empty paragraph).
-fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
+fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, ids: &mut RevisionCounter) {
     let id = id.to_string();
     let range_start = comment_marker(dom, "commentRangeStart", &id);
     let range_end = comment_marker(dom, "commentRangeEnd", &id);
     let reference_run = comment_reference_run(dom, &id);
     let len = project_paragraph(dom, first).text.len();
     let scratch = dom.new_element(W::name("commentRangeEnd"));
-    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch) {
+    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch, ids) {
         dom.remove(scratch);
     } else {
         match dom.element(first, &W::p_pr()) {
@@ -7897,7 +8020,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
     }
     let len = project_paragraph(dom, last).text.len();
     let scratch = dom.new_element(W::name("commentRangeStart"));
-    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
+    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end, ids) {
         dom.remove(scratch);
         place_reference(dom, range_start, range_end, reference_run);
     } else {
@@ -7982,6 +8105,7 @@ fn wrap_range(
     end: usize,
     open: NodeId,
     close: NodeId,
+    ids: &mut RevisionCounter,
 ) -> bool {
     let projection = project_paragraph(dom, paragraph);
     if let Some(seg) = projection
@@ -7990,7 +8114,7 @@ fn wrap_range(
         .find(|s| s.start < start && start < s.end)
         .cloned()
     {
-        split_run_at(dom, &seg, start);
+        split_run_at(dom, &seg, start, ids);
     }
     let projection = project_paragraph(dom, paragraph);
     if let Some(seg) = projection
@@ -7999,7 +8123,7 @@ fn wrap_range(
         .find(|s| s.start < end && end < s.end)
         .cloned()
     {
-        split_run_at(dom, &seg, end);
+        split_run_at(dom, &seg, end, ids);
     }
     let projection = project_paragraph(dom, paragraph);
     let first = projection
@@ -8031,8 +8155,15 @@ fn run_of(piece: &Piece) -> NodeId {
 
 /// Apply `format` to the runs holding projection range `[start, end)` of
 /// `paragraph`, splitting runs at the boundaries first.
-fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, format: &RunFormat) {
-    for run in runs_in_range(dom, paragraph, start, end) {
+fn format_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    format: &RunFormat,
+    ids: &mut RevisionCounter,
+) {
+    for run in runs_in_range(dom, paragraph, start, end, ids) {
         let rpr = match dom.element(run, &W::r_pr()) {
             Some(rpr) => rpr,
             None => {
@@ -8050,7 +8181,13 @@ fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, form
 
 /// The runs holding projection range `[start, end)` of `paragraph`, in
 /// order, split at the boundaries first; none for an empty range.
-fn runs_in_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
+fn runs_in_range(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    ids: &mut RevisionCounter,
+) -> Vec<NodeId> {
     if start >= end {
         return Vec::new();
     }
@@ -8062,7 +8199,7 @@ fn runs_in_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             .find(|s| s.start < at && at < s.end)
             .cloned()
         {
-            split_run_at(dom, &seg, at);
+            split_run_at(dom, &seg, at, ids);
         }
     }
     let projection = project_paragraph(dom, paragraph);
@@ -8569,6 +8706,25 @@ fn toggle(dom: &mut Dom, rpr: NodeId, local: &str, value: Option<bool>) {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_is_the_edits_own_only_when_it_copies_the_edits_own_record() {
+        let mut ids = RevisionCounter::new(HashSet::from([4, 9]));
+        let own = ids.allocate();
+        let of_own = ids.copy(Some(own));
+        let of_source = ids.copy(Some(4));
+        let of_nothing = ids.copy(None);
+        assert_eq!((own, of_own, of_source, of_nothing), (10, 11, 12, 13));
+        assert_eq!(ids.own(), &BTreeSet::from([10, 11]));
+    }
+
+    #[test]
+    fn the_counter_stays_in_words_range_and_skips_used_ids() {
+        let mut ids =
+            RevisionCounter::new(HashSet::from([0, 2, u64::from(i32::MAX.unsigned_abs())]));
+        assert_eq!(ids.allocate(), 1);
+        assert_eq!(ids.copy(Some(0)), 3);
+    }
 
     #[test]
     fn plan_json_roundtrips() {
@@ -9730,17 +9886,22 @@ mod deeper_boundary_tests {
         let seg = &projection.segments[1];
         let before = d.serialize_element(p);
         for at in [seg.start, seg.end, seg.end + 1] {
-            split_run_at(&mut d, seg, at);
+            split_run_at(&mut d, seg, at, &mut RevisionCounter::default());
             assert_eq!(d.serialize_element(p), before);
         }
         let (mut glyph_dom, glyph_root) = dom("<w:p><w:r><w:noBreakHyphen/></w:r></w:p>");
         let glyph_p = glyph_dom.element(glyph_root, &W::p()).unwrap();
         let glyph_projection = project_paragraph(&glyph_dom, glyph_p);
-        split_run_at(&mut glyph_dom, &glyph_projection.segments[0], 1);
+        split_run_at(
+            &mut glyph_dom,
+            &glyph_projection.segments[0],
+            1,
+            &mut RevisionCounter::default(),
+        );
         assert_eq!(project_paragraph(&glyph_dom, glyph_p).text, "\u{2011}");
         assert_eq!(glyph_dom.elements(glyph_p, Some(&W::r())).len(), 1);
         assert_eq!(d.serialize_element(p), before);
-        split_run_at(&mut d, seg, 3);
+        split_run_at(&mut d, seg, 3, &mut RevisionCounter::default());
         let runs = d.elements(p, Some(&W::r()));
         assert_eq!(runs.len(), 2);
         assert_eq!(names(&d, runs[0]), ["rPr", "tab", "t"]);
@@ -9759,7 +9920,7 @@ mod deeper_boundary_tests {
     fn empty_comment_anchors_and_reference_cleanup() {
         let (mut d, root) = dom("<w:p><w:pPr><w:jc w:val=\"left\"/></w:pPr></w:p><w:p/>");
         let ps = d.elements(root, Some(&W::p()));
-        anchor_span(&mut d, ps[0], ps[1], 7);
+        anchor_span(&mut d, ps[0], ps[1], 7, &mut RevisionCounter::default());
         assert_eq!(names(&d, ps[0]), ["pPr", "commentRangeStart"]);
         assert_eq!(names(&d, ps[1]), ["commentRangeEnd", "r"]);
         for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
@@ -9767,7 +9928,7 @@ mod deeper_boundary_tests {
             assert_eq!(markers.len(), 1);
             assert_eq!(d.attribute(markers[0], &W::id()), Some("7"));
         }
-        anchor_comment(&mut d, ps[1], 0, 0, 8);
+        anchor_comment(&mut d, ps[1], 0, 0, 8, &mut RevisionCounter::default());
         assert_eq!(
             names(&d, ps[1]),
             [
@@ -9792,14 +9953,30 @@ mod deeper_boundary_tests {
         assert_eq!(project_paragraph(&d, p).text, "\t");
         let open = comment_marker(&mut d, "commentRangeStart", "9");
         let close = comment_marker(&mut d, "commentRangeEnd", "9");
-        assert!(!wrap_range(&mut d, p, 0, 0, open, close));
+        assert!(!wrap_range(
+            &mut d,
+            p,
+            0,
+            0,
+            open,
+            close,
+            &mut RevisionCounter::default()
+        ));
         assert_eq!(d.parent(open), None);
         assert_eq!(d.parent(close), None);
         let (mut d, root) = dom("<w:p><w:r><w:t>a</w:t><w:t>b</w:t></w:r></w:p>");
         let p = d.element(root, &W::p()).unwrap();
         let open = comment_marker(&mut d, "commentRangeStart", "10");
         let close = comment_marker(&mut d, "commentRangeEnd", "10");
-        assert!(!wrap_range(&mut d, p, 1, 1, open, close));
+        assert!(!wrap_range(
+            &mut d,
+            p,
+            1,
+            1,
+            open,
+            close,
+            &mut RevisionCounter::default()
+        ));
         assert_eq!(project_paragraph(&d, p).text, "ab");
         assert_eq!(d.parent(open), None);
         assert_eq!(d.parent(close), None);
@@ -9818,10 +9995,17 @@ mod deeper_boundary_tests {
         };
         let original = d.serialize_element(p);
         for (start, end) in [(0, 0), (2, 1)] {
-            format_range(&mut d, p, start, end, &format);
+            format_range(
+                &mut d,
+                p,
+                start,
+                end,
+                &format,
+                &mut RevisionCounter::default(),
+            );
             assert_eq!(d.serialize_element(p), original);
         }
-        format_range(&mut d, p, 0, 2, &format);
+        format_range(&mut d, p, 0, 2, &format, &mut RevisionCounter::default());
         assert_eq!(d.descendants(p, Some(&W::r_pr())).len(), 0);
         assert_eq!(d.elements(p, Some(&W::r())).len(), 2);
         assert_eq!(project_paragraph(&d, p).text, "abc");
