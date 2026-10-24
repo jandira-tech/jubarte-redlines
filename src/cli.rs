@@ -977,8 +977,8 @@ pub enum Command {
         /// Emit one JSON object per line.
         #[arg(long)]
         json: bool,
-        /// Only the changes this author made (exact match); repeat for
-        /// several, as `accept --author` selects them.
+        /// Only listed changes by this author (exact match); repeat for several.
+        /// Comment-body revisions are not listed, even without this filter.
         #[arg(long, value_name = "NAME", action = clap::ArgAction::Append)]
         author: Vec<String>,
     },
