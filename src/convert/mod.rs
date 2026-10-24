@@ -2098,10 +2098,10 @@ struct TableGeom {
     /// rules, which a pct table's columns give up so its rim stays at the
     /// pct width (Word 16 probe pct3, 2026-10-02).
     pct_rules: f32,
-    /// An autofit table another tool wrote (a `gridCol` with a `w:type`,
-    /// which Word never writes, or cells without a width of their own in
-    /// every column of a table Word did not save): Word fits the columns
-    /// to their content on open (PHPWord's 00046848 label column).
+    /// An autofit table another tool wrote (a `gridCol` without a width,
+    /// or cells without a width of their own in every column of a table
+    /// Word did not save): Word fits the columns to their content on open
+    /// (PHPWord's 00046848 label column).
     content_autofit: bool,
     /// `w:tblCellSpacing` in points: Word leaves twice it between cells
     /// and around them.
@@ -13251,17 +13251,18 @@ fn table_block(
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
-            // A `w:type` on a gridCol, or a gridCol without a width, is
+            // A gridCol without a width, or with one that is no number, is
             // a grid Word never wrote: it fits the columns to their
             // content on open (0edc50c464's `<w:gridCol/>` tables). Cells
-            // without a width can say so too (`cells_foreign`, below).
-            let width = dom.attribute(col, &W::name("w"));
-            foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
-            let w = width
-                .and_then(|s| s.parse::<f32>().ok())
-                .map(twip)
-                .unwrap_or(80.0);
-            cols.push(w);
+            // without a width can say so too (`cells_foreign`, below). A
+            // gridCol's `w:type` says nothing: Word keeps the grid of a
+            // table whose every cell has a tcW, with or without it (#1720
+            // probes b1, b2).
+            let width = dom
+                .attribute(col, &W::name("w"))
+                .and_then(|s| s.parse::<f32>().ok());
+            foreign_grid |= width.is_none();
+            cols.push(width.map(twip).unwrap_or(80.0));
         }
     }
     // With no table style anywhere Word pads a cell 0.5pt, not 108 twips
@@ -50194,7 +50195,9 @@ mod coverage_round_three_tests {
 
     #[test]
     fn single_column_foreign_grids_expand_evenly_and_invalid_widths_keep_defaults() {
-        // A valid grid is foreign only when a cell has no width (#1716).
+        // A valid grid is foreign only when a cell has no width (#1716);
+        // a gridCol whose width is missing or no number always is, and its
+        // `w:type` plays no part (#1720).
         let width = r#"<w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>"#;
         for (grid, tcpr, expected, autofit) in [
             (r#"<w:gridCol w:w="2400"/>"#, width, vec![60.0, 60.0], false),
