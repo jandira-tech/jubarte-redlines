@@ -2608,13 +2608,14 @@ fn add_content_controls_with_owners(
                     && owners
                         .last()
                         .is_some_and(|last| !owned_paragraphs.contains(last))
-                    && dom.ancestors(**joined, None).contains(&new_document)
+                    && std::iter::successors(dom.parent(**joined), |&a| dom.parent(a))
+                        .any(|a| a == new_document)
             })
         {
-            let after: Vec<NodeId> = owners
+            let after: &[NodeId] = owners
                 .iter()
                 .rposition(|source| owned_paragraphs.contains(source))
-                .map(|last| owners[last + 1..].to_vec())
+                .map(|last| &owners[last + 1..])
                 .unwrap_or_default();
             // The first of the joined paragraph's children that came from a
             // paragraph after the control: a run, or content without one
