@@ -44028,6 +44028,41 @@ fn an_autofit_table_on_a_foreign_grid_fits_its_columns_to_the_content() {
 }
 
 #[test]
+fn an_autofit_table_with_gridcol_type_and_a_tcw_on_every_cell_keeps_its_grid() {
+    // #1720 probe b1 (Word 16, 2026-10-24): gridCol 2400/6000 with
+    // w:type="dxa", every cell a dxa tcW equal to its column, a long
+    // breakable second row. Word keeps the grid, VALUE 120pt after LABEL:,
+    // as it does without w:type (b2): w:type plays no part in whether Word
+    // fits a table, its cells' widths do (#1716).
+    let long = "AAAA ".repeat(25);
+    let cell = |text: &str, w: u32| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"autofit\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2400\" w:type=\"dxa\"/><w:gridCol w:w=\"6000\" w:type=\"dxa\"/></w:tblGrid>\
+         <w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        cell("LABEL:", 2400),
+        cell("VALUE", 6000),
+        cell("second row", 2400),
+        cell(long.trim_end(), 6000),
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autofit table");
+    let a = pdf_glyph_text_xy(&pdf, "LABEL:").expect("LABEL:").0;
+    let b = pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0;
+    assert!(
+        (b - a - 120.0).abs() < 1.0,
+        "Word keeps the grid; pitch={}",
+        b - a
+    );
+}
+
+#[test]
 fn a_spaced_autofit_tables_columns_share_the_text_width_plus_its_margins() {
     // fixtures_500 00046848, live Word: labels in Arial 10 bold beside an
     // 800pt paragraph, 2.5pt cell spacing, 4pt margins. The label column's
