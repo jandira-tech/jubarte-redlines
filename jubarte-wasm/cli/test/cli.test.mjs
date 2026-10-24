@@ -121,8 +121,8 @@ test("field refresh reads its input first and overwrites nothing without --force
     assert.equal(result.out, "");
   }
   const kept = run("convert", untracked, "-o", out, "--update-fields");
-  assert.equal(kept.code, 1, kept.err);
-  assert.match(kept.err, /already exists/);
+  assert.equal(kept.code, 2, kept.err);
+  assert.match(kept.err, /OUTPUT_EXISTS/);
   assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
   assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
   const written = run("convert", untracked, "-o", out, "--update-fields", "--report", report, "--force");
@@ -171,8 +171,8 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   const changes = records(run("changes", out, "--json").out);
   assert.ok(changes.length > 0 && changes.every((c) => c.author === "Legal"));
   const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
-  assert.equal(again.code, 1);
-  assert.match(again.err, /already exists \(use --force to overwrite\)/);
+  assert.equal(again.code, 2);
+  assert.match(again.err, /OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)/);
   assert.equal(run(
     "compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"),
     "-d", "1970-01-01T00:00:00Z", "-o", out, "--force",
@@ -507,7 +507,7 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
   for (const name of ["clean.docx", "redline.docx", "report.jsonl"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
   const rows = fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows.at(-1).ev, "summary");
-  assert.equal(run("edit", untracked, "--plan", plan, "--out-dir", dir).code, 1);
+  assert.equal(run("edit", untracked, "--plan", plan, "--out-dir", dir).code, 2);
   const refused = run("edit", tracked, "--plan", plan, "--out-dir", path.join(tmp, "refused"));
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.out.trim().split("\n").at(-1)).code, "EXISTING_REVISIONS");
@@ -1416,8 +1416,8 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   assert.equal(explicit.code, 0, explicit.err);
   assert.ok(explicit.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
   const written = run("compare", a, b, "-o", fallback);
-  assert.equal(written.code, 1);
-  assert.match(written.err, /already exists/);
+  assert.equal(written.code, 2);
+  assert.match(written.err, /OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)/);
   assert.deepEqual(fs.readFileSync(fallback), sentinel);
   // Two Markdown documents written to a .md are CriticMarkup, which view
   // options cannot shape; the host reads that from the bytes, as natively.
@@ -1713,4 +1713,31 @@ test("read --tables -o writes the grids it prints, as the binary (#1690)", { ski
   const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
   assert.equal(json.code, 2, json.err);
   assert.match(json.err, /--tables writes the grids as text/);
+});
+
+test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)", () => {
+  const out = path.join(tmp, "taken.md");
+  fs.writeFileSync(out, "keep me\n");
+  // The binary's wording and code: exit 2, `OUTPUT_EXISTS:`.
+  const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
+  assert.equal(again.code, 2, again.err);
+  assert.equal(again.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // Every task that writes says it the same way.
+  for (const args of [
+    ["accept", tracked, "-o", out],
+    ["reject", tracked, "-o", out],
+    ["convert", tracked, "-o", out],
+    ["diff", tracked, tracked, "-o", out],
+  ]) {
+    const refused = run(...args);
+    assert.equal(refused.code, 2, `${args.join(" ")}: ${refused.err}`);
+    assert.match(refused.err, /^error: OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)\n$/);
+  }
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // --force writes it.
+  const docx = path.join(tmp, "taken.docx");
+  const forced = run("accept", tracked, "-o", docx, "--force");
+  assert.equal(forced.code, 0, forced.err);
+  assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
 });
