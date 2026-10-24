@@ -652,23 +652,18 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
     if args.quiet:
         return EXIT_OK
     # A pure accept/reject prints the resolved lines on stdout, nothing
-    # else; the bundle's report.jsonl still holds the summary.
-    if _is_pure_resolution(parsed, result):
-        try:
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source_bytes,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
-            )
-            names = [name for name, _ in outputs] + ["report.jsonl"]
-            sys.stdout.flush()
-            print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
-            for note in _edit_notes(notes, result):
-                print(note, file=sys.stderr)
-            sys.stdout.write(text)
-            return EXIT_OK
-        except Exception:
-            pass
+    # else; the bundle's report.jsonl still holds the summary. The lines
+    # are built before anything prints: a refusal falls back to the summary
+    # and view below, anything else surfaces (#1702).
+    resolved_text = _resolution_text(source_bytes, result) if _is_pure_resolution(parsed, result) else None
+    if resolved_text is not None:
+        names = [name for name, _ in outputs] + ["report.jsonl"]
+        sys.stdout.flush()
+        print(f"wrote {out_dir} ({len(names)} files: {', '.join(names)})", file=sys.stderr)
+        for note in _edit_notes(notes, result):
+            print(note, file=sys.stderr)
+        sys.stdout.write(resolved_text)
+        return EXIT_OK
     print(summary)
     # The status lines on stderr (D6); the summary and the view are data.
     names = [name for name, _ in outputs] + ["report.jsonl"]
@@ -706,22 +701,33 @@ def _is_pure_resolution(parsed: object, result: EditResult) -> bool:
     return bool(resolved.accepted or resolved.rejected)
 
 
-def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
-    """The resolved lines for a pure accept/reject, or the changed view
-    otherwise. Failures fall back to the view, as the binary does."""
+def _resolution_text(source: bytes, result: EditResult) -> str | None:
+    """The resolved lines of a pure accept/reject, or ``None`` when the
+    engine refuses to build them from ``source`` — the one failure the
+    fallback view is for. Every other error (a defect in the call, a stdout
+    that breaks mid-write) surfaces instead of being swallowed: a swallowed
+    one printed a second view over the first (#1702)."""
     from . import _native
 
+    resolved = result.report.resolved_revisions
+    try:
+        return _native.resolution_text(
+            source,
+            json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
+        )
+    except _native.JubarteError:
+        return None
+
+
+def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult, editing: bool, shown: Path) -> None:
+    """The resolved lines for a pure accept/reject, or the changed view
+    otherwise. The engine's refusal falls back to the view; anything else
+    surfaces, so stdout holds one whole view or none (#1702)."""
     if _is_pure_resolution(parsed, result):
-        try:
-            resolved = result.report.resolved_revisions
-            text = _native.resolution_text(
-                source,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
-            )
+        text = _resolution_text(source, result)
+        if text is not None:
             sys.stdout.write(text)
             return
-        except Exception:
-            pass
     _print_changed_view(result, editing, shown)
 
 

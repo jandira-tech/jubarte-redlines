@@ -8,6 +8,7 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 from __future__ import annotations
 
 import importlib.metadata
+import io
 import json
 import os
 import shutil
@@ -945,6 +946,98 @@ def test_edit_resolution_bundle_prints_resolved_lines(tmp_path: Path, capsys: py
     assert captured.out == 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n'
     assert (bundle / "report.jsonl").is_file()
     assert (bundle / "clean.docx").is_file()
+
+
+def _received_copy(tmp_path: Path) -> Path:
+    received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
+    src = tmp_path / "received.docx"
+    shutil.copy(received, src)
+    return src
+
+
+@pytest.mark.parametrize("bundle", [False, True], ids=["one file", "--out-dir"])
+def test_edit_resolved_lines_refusal_falls_back_to_one_whole_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bundle: bool,
+) -> None:
+    """#1702: the engine refusing to build the resolved lines (JubarteError)
+    is the one failure the fallback is for: the summary and the changed view
+    print — whole, once — and exit stays 0."""
+    from jubarte_redlines import _native
+
+    def refusing(*_args: object, **_kwargs: object) -> str:
+        raise _native.JubarteError("cannot build the resolved lines")
+
+    monkeypatch.setattr(_native, "resolution_text", refusing)
+    src = _received_copy(tmp_path)
+    args = ["edit", str(src), "-p", "r0", "--accept", "--datetime", "2026-10-11T00:00:00Z"]
+    args += ["--out-dir", str(tmp_path / "bundle")] if bundle else ["-o", str(tmp_path / "out.docx")]
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert "accepted r0 in p3" not in captured.out
+    lines = captured.out.splitlines()
+    if bundle:
+        assert json.loads(lines[0])["ev"] == "summary"  # then the view, once
+        lines = lines[1:]
+    assert lines[0] == "---" and lines.count("---") == 2  # one view, whole
+    assert "wrote " in captured.err
+
+
+@pytest.mark.parametrize("bundle", [False, True], ids=["one file", "--out-dir"])
+def test_edit_resolved_lines_defect_surfaces_instead_of_a_silent_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bundle: bool,
+) -> None:
+    """#1702: an error that is not the engine's refusal (a defect in the
+    call) surfaces: `error:` on stderr, exit 1, and stdout holds no half
+    view and no silently swapped one."""
+    from jubarte_redlines import _native
+
+    def broken(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("engine defect")
+
+    monkeypatch.setattr(_native, "resolution_text", broken)
+    src = _received_copy(tmp_path)
+    args = ["edit", str(src), "-p", "r0", "--accept", "--datetime", "2026-10-11T00:00:00Z"]
+    args += ["--out-dir", str(tmp_path / "bundle")] if bundle else ["-o", str(tmp_path / "out.docx")]
+    assert main(args) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error: engine defect" in captured.err
+    if bundle:  # the files were written; only their reporting failed
+        assert (tmp_path / "bundle" / "report.jsonl").is_file()
+
+
+def test_edit_resolved_lines_broken_stdout_prints_no_second_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1702: a stdout that breaks mid-write (a reader closing the pipe)
+    ends the run as an error: the partial view is never followed by a
+    second, whole one."""
+
+    class HalfClosedPipe:
+        """Writes pass through, but the resolved line writes half and then
+        breaks, as a reader quitting mid-line does."""
+
+        def __init__(self, inner: io.StringIO) -> None:
+            self.inner, self.broke = inner, False
+
+        def write(self, text: str) -> int:
+            if not self.broke and "accepted r0 in p3" in text:
+                self.broke = True
+                self.inner.write(text[: len(text) // 2])
+                raise BrokenPipeError("stdout closed mid-write")
+            return self.inner.write(text)
+
+        def flush(self) -> None:
+            self.inner.flush()
+
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", HalfClosedPipe(buffer))
+    src = _received_copy(tmp_path)
+    assert main(["edit", str(src), "-p", "r0", "--accept", "-o", str(tmp_path / "out.docx"), "--datetime", "2026-10-11T00:00:00Z"]) == 1
+    written = buffer.getvalue()
+    assert written.startswith("accepted r0 in p3: \"{++qu")  # the partial first view
+    assert "---\n" not in written  # and no second view after it
+    assert "error: stdout closed mid-write" in capsys.readouterr().err
 
 
 def test_read_for_edit_prints_the_binary_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
