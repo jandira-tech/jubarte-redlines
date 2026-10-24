@@ -76,8 +76,8 @@ in this review; a CPE is optional, and none is invented.
 |---|---|
 | know_secure_design | Review: a primary developer must attest to the exact criterion; SECURITY's threat model is supporting material, not proof of personal knowledge. |
 | know_common_errors | Review: developer attestation needed; SECURITY documents document/parser risks and mitigations. |
-| crypto_published | Evidence: RustCrypto SHA-256, rustls TLS and zipsign Ed25519 via dependencies. SHA-1 comparison keys are non-security hashes; see SECURITY. |
-| crypto_call | Evidence: sha1/sha2/self_update dependencies provide cryptographic functions. |
+| crypto_published | Evidence: RustCrypto SHA-256, rustls TLS and zipsign-format Ed25519 (ed25519-dalek, checked in src/update/zipsign.rs) via dependencies. SHA-1 comparison keys are non-security hashes; see SECURITY. |
+| crypto_call | Evidence: sha1/sha2/ed25519-dalek/self_update dependencies provide cryptographic functions. |
 | crypto_floss | Evidence: cryptographic dependencies are FLOSS; Cargo license policy. |
 | crypto_keylength | Verified: default rustls/ring suites and certificate keys exceed the criterion's minimum; see OPENSSF_VERIFICATION.md. Signing support is not a claim that released artifacts are signed. |
 | crypto_working | Evidence: no broken algorithm used as a security mechanism; SHA-1 comparison risk explicitly documented. Review release trust configuration. |

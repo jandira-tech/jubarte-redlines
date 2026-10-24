@@ -124,7 +124,7 @@ first signed one. `X.Y.Z` below is that release.
    `src/update.rs`:
 
    ```rust
-   const RELEASE_KEYS: &[self_update::VerifyingKey] =
+   const RELEASE_KEYS: &[ReleaseKey] =
        &[*include_bytes!("../keys/release-signing.pub")];
    const FIRST_SIGNED_RELEASE: Option<&str> = Some("X.Y.Z");
    ```
@@ -182,7 +182,11 @@ Self-update is the `self-update` Cargo feature, on by default. Build with
 the command then reports that it was not built in.
 
 The implementation is the [`self_update`](https://crates.io/crates/self_update)
-crate (release lookup, checksum and signature verification, archive
-extraction, binary replacement) in `src/update.rs`.
-`tests/self_update_signature.rs` signs a throwaway archive the way
-`release.yml` does and checks it with the updater's verifier.
+crate (release lookup, checksum verification, archive extraction, binary
+replacement) in `src/update.rs`. The signature check is jubarte's own
+(`src/update/zipsign.rs`, adapted from zipsign-api): `self_update` runs it on
+the downloaded archive before extracting it. It does not use `self_update`'s
+`signatures` feature, whose zipsign-api 0.2 pins ed25519-dalek 2 and with it
+`block-buffer` 0.10.4 ([GHSA-qwgh-2vcv-g2f7](https://github.com/advisories/GHSA-qwgh-2vcv-g2f7), #1705).
+`tests/self_update_signature.rs` checks archives the zipsign CLI signed
+(`tests/data/self_update/`) with that verifier.
