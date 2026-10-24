@@ -697,6 +697,15 @@ fn a_part_that_is_no_story_is_copied_as_it_was() {
             customxml_rel.as_str(),
             data.as_str(),
         ),
+        // Under a header's name it is custom data still, known by the
+        // relationship that reaches it (codex on #1680).
+        (
+            "custom XML data under a header's name",
+            "word/headerData.xml",
+            "application/xml",
+            customxml_rel.as_str(),
+            data.as_str(),
+        ),
         (
             "glossary",
             "word/glossary/document.xml",

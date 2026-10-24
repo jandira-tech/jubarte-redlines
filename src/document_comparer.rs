@@ -7972,7 +7972,24 @@ fn compare_documents_impl(
     // Scope notes: `word/charts/` (DrawingML) and `word/theme/` are included
     // ON PURPOSE — the Strict percent→per-thousand rewrite covers drawingml
     // namespaces; `word/media/*.xml` is vacuous for binary payloads.
+    // Custom XML data holds the application's own XML whatever its name
+    // (`word/headerData.xml`), so no sweep below touches it (codex on #1680).
+    let custom_data = {
+        let parts = out.parts();
+        crate::opc::custom_xml_data(std::iter::once(("", out.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                out.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ))
+    };
     for part in out.parts() {
+        if custom_data
+            .iter()
+            .any(|data| data.eq_ignore_ascii_case(&part))
+        {
+            continue;
+        }
         let is_swept = part == main1
             || part == "word/styles.xml"
             || part == "word/numbering.xml"
