@@ -104,15 +104,15 @@ function ensureWritable(file, force) {
 
 /** Whether two paths name the same file: the same device and inode when
  * both exist (a link to the input is the input), else the same path once
- * resolved (`out.md` and `./out.md` are one file). */
+ * resolved (`out.md` and `./out.md` are one file). A file system that
+ * reports no inode (0) compares by path. */
 function sameFile(a, b) {
   try {
     const left = fs.statSync(a, { bigint: true });
     const right = fs.statSync(b, { bigint: true });
-    return (left.ino === 0n && right.ino === 0n) || (left.dev === right.dev && left.ino === right.ino);
-  } catch {
-    return path.resolve(a) === path.resolve(b);
-  }
+    if (left.ino !== 0n && right.ino !== 0n) return left.dev === right.dev && left.ino === right.ino;
+  } catch {}
+  return path.resolve(a) === path.resolve(b);
 }
 
 /** The refusal of an output that names its own input, as the binary words
