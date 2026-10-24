@@ -112,7 +112,8 @@ pub(crate) fn describe(frame: &[(String, String)]) -> String {
     format!("{{{}}}", items.join(", "))
 }
 
-/// `<w:framePr w:wrap="none" …/>`, attributes in the schema's order.
+/// `<w:framePr w:wrap="none" …/>`, attributes in the schema's order, each
+/// named as [`merged`] leaves it: the local name, no `w:` prefix.
 pub(crate) fn xml(frame: &[(String, String)]) -> String {
     let mut out = String::from("<w:framePr");
     for name in ATTRIBUTES {
@@ -180,6 +181,57 @@ mod tests {
         assert_eq!(
             merged([], Some(odd.as_slice())).map(|f| describe(&f)),
             Some("{y: 2}".to_string())
+        );
+    }
+
+    #[test]
+    fn the_frame_reads_and_writes_in_the_schemas_order() {
+        // Every CT_FramePr attribute, given out of order: the view's
+        // `frame:` map and the element both name them as the schema does
+        // (`dropCap`, `lines`, `w`, `h`, `vSpace`, `hSpace`, `wrap`,
+        // `hAnchor`, `vAnchor`, `x`, `xAlign`, `y`, `yAlign`, `hRule`,
+        // `anchorLock`), so a `w:framePr` reads as Word writes it (#526).
+        let own = pairs(&[
+            ("w:anchorLock", "true"),
+            ("w:dropCap", "drop"),
+            ("w:lines", "3"),
+            ("w:w", "2880"),
+            ("w:h", "12pt"),
+            ("w:vSpace", "60"),
+            ("w:hSpace", "120"),
+            ("w:wrap", "around"),
+            ("w:hAnchor", "page"),
+            ("w:vAnchor", "text"),
+            ("w:x", "-20"),
+            ("w:xAlign", "center"),
+            ("w:y", "5"),
+            ("w:yAlign", "bottom"),
+            ("w:hRule", "atLeast"),
+        ]);
+        let frame = merged([], Some(own.as_slice())).unwrap();
+        assert_eq!(
+            describe(&frame),
+            "{dropCap: drop, lines: 3, w: 2880, h: 12pt, vSpace: 60, \
+             hSpace: 120, wrap: around, hAnchor: page, vAnchor: text, x: -20, \
+             xAlign: center, y: 5, yAlign: bottom, hRule: atLeast, anchorLock: true}"
+        );
+        assert_eq!(
+            xml(&frame),
+            "<w:framePr w:dropCap=\"drop\" w:lines=\"3\" w:w=\"2880\" w:h=\"12pt\" \
+             w:vSpace=\"60\" w:hSpace=\"120\" w:wrap=\"around\" w:hAnchor=\"page\" \
+             w:vAnchor=\"text\" w:x=\"-20\" w:xAlign=\"center\" w:y=\"5\" \
+             w:yAlign=\"bottom\" w:hRule=\"atLeast\" w:anchorLock=\"true\"/>"
+        );
+    }
+
+    #[test]
+    fn the_element_orders_a_frame_named_as_the_view_will_not() {
+        // The writer takes the view's map as it reads it, so the element's
+        // order comes from the schema, not from the view's (#526).
+        let frame = pairs(&[("y", "1"), ("xAlign", "right"), ("wrap", "none")]);
+        assert_eq!(
+            xml(&frame),
+            "<w:framePr w:wrap=\"none\" w:xAlign=\"right\" w:y=\"1\"/>"
         );
     }
 

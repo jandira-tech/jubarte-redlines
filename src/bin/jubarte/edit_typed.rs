@@ -935,6 +935,7 @@ pub(super) fn run(typed: &TypedEdit, quiet: bool) -> ExitCode {
                         &data.removed_comments,
                         &data.kept_comments,
                         &bytes,
+                        source,
                         "settlement",
                     ) {
                         edit_status(format_args!("{line}"));

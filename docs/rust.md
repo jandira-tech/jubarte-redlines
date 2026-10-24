@@ -182,6 +182,12 @@ tree's `jubarte` binary — every command, every flag, every default. Hidden
 debug flags are not shown; `jubarte <command> --help` on the installed
 release is always authoritative.
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. Partial overlaps and
+flag-off output retain their existing behavior. The Python and WebAssembly
+bindings do not yet dispatch that option or return its kept-thread receipts;
+use the native binary when retention is needed.
+
 <!-- gen:cli-rust:start -->
 #### `jubarte`
 
@@ -565,6 +571,9 @@ Options:
       --force
           Overwrite the output file if it already exists
 
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
+
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
           `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
@@ -656,6 +665,9 @@ Options:
 
       --force
           Overwrite the output file if it already exists
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
@@ -771,6 +783,10 @@ Options:
           - reject: Reject every change
 
           [default: all]
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed; requires
+          --track-changes accept or reject
 
       --no-critic
           Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text

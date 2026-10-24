@@ -1300,7 +1300,7 @@ fn break_delimiters(text: &str, marks: &[(&str, &str)]) -> String {
 }
 
 /// An equation's changes (`$A={--π--}r^2$`), which the converter marks
-/// with [`math::INSERT_START`] and its kin so `defuse` leaves them whole.
+/// with [`crate::markdown::math::INSERT_START`] and its kin so `defuse` leaves them whole.
 fn math_changes(markdown: &str) -> String {
     use crate::markdown::math;
     if !markdown.contains([

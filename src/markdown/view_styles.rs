@@ -68,24 +68,34 @@ pub(super) fn with_style_changes(styles: &str, changes: &[(String, Vec<FormatMar
                 continue;
             };
             let mut block = out[at..end].to_string();
-            // `w:pPr` is the style's own first: the one before `w:rPr`,
-            // never the previous-properties one inside a change.
+            // The style's own `w:pPr` and `w:rPr`: the `w:rPr` a `w:pPr`
+            // holds is the paragraph mark's (`CT_ParaRPr`), and
+            // `CT_Style` puts the style's own after the `w:pPr`.
             if marks.len() != 2 || index == 0 {
-                let ppr_end = block.find("<w:rPr>").unwrap_or(block.len());
-                if let Some(close) = block[..ppr_end].rfind("</w:pPr>") {
-                    block.insert_str(close, &change("pPr", "pPr"));
-                } else {
-                    block.insert_str(ppr_end, &format!("<w:pPr>{}</w:pPr>", change("pPr", "pPr")));
+                let change = change("pPr", "pPr");
+                match own_ppr(&block) {
+                    Some(ppr) if ppr.empty() => {
+                        block
+                            .replace_range(ppr.start..ppr.end, &format!("<w:pPr>{change}</w:pPr>"));
+                    }
+                    Some(ppr) => block.insert_str(ppr.at(), &change),
+                    // The style had no `w:pPr`: one takes the change,
+                    // where `CT_Style` puts it, before its `w:rPr`.
+                    None => {
+                        let at = own_rpr(&block).map_or(block.len(), |rpr| rpr.start);
+                        block.insert_str(at, &format!("<w:pPr>{change}</w:pPr>"));
+                    }
                 }
             }
             if marks.len() != 2 || index == 1 {
-                let rpr_at = block.find("<w:rPr>");
-                if let Some(close) =
-                    rpr_at.and_then(|at| block[at..].find("</w:rPr>").map(|i| at + i))
-                {
-                    block.insert_str(close, &change("rPr", "rPr"));
-                } else {
-                    block.push_str(&format!("<w:rPr>{}</w:rPr>", change("rPr", "rPr")));
+                let change = change("rPr", "rPr");
+                match own_rpr(&block) {
+                    Some(rpr) if rpr.empty() => {
+                        block
+                            .replace_range(rpr.start..rpr.end, &format!("<w:rPr>{change}</w:rPr>"));
+                    }
+                    Some(rpr) => block.insert_str(rpr.at(), &change),
+                    None => block.push_str(&format!("<w:rPr>{change}</w:rPr>")),
                 }
             }
             out.replace_range(at..end, &block);
@@ -177,6 +187,82 @@ fn open_tag(xml: &str, name: &str, range: std::ops::Range<usize>) -> Option<Open
         from = after;
     }
     None
+}
+
+/// One element of a style the view writes a change into, and where that
+/// change goes: before the element's close tag, which is where each
+/// schema puts its change (`w:pPrChange` last in `CT_PPr`, `w:rPrChange`
+/// last in `CT_RPr`).
+struct Own {
+    start: usize,
+    end: usize,
+    /// The close tag's own start; `None` for `<w:name/>`, which a change
+    /// replaces whole.
+    close: Option<usize>,
+}
+
+impl Own {
+    /// Where a change of this element goes.
+    fn at(&self) -> usize {
+        self.close.unwrap_or(self.start)
+    }
+
+    /// Whether the change replaces the element rather than joining it.
+    fn empty(&self) -> bool {
+        self.close.is_none()
+    }
+}
+
+/// The first `<w:name>` element in `block` from `from`, with where its
+/// change goes. The element nests: a `w:pPrChange` holds the previous
+/// properties in a `w:pPr` of their own.
+fn own(block: &str, name: &str, from: usize) -> Option<Own> {
+    let open = open_tag(block, name, from..block.len())?;
+    if open.empty {
+        return Some(Own {
+            start: open.start,
+            end: open.end,
+            close: None,
+        });
+    }
+    let close = close_at(block, name, open.end)?;
+    let tag = format!("</w:{name}>");
+    Some(Own {
+        start: open.start,
+        end: close + tag.len(),
+        close: Some(close),
+    })
+}
+
+/// Where the `<w:name>` element that opens just before `open_end` closes:
+/// the closes nest, so every open before a close counts unless it is an
+/// empty element, which holds nothing.
+fn close_at(block: &str, name: &str, open_end: usize) -> Option<usize> {
+    let tag = format!("</w:{name}>");
+    let mut depth = 1usize;
+    let mut at = open_end;
+    while let Some(close) = block[at..].find(&tag).map(|i| i + at) {
+        depth += usize::from(open_tag(block, name, at..close).is_some_and(|open| !open.empty));
+        depth = depth.checked_sub(1)?;
+        if depth == 0 {
+            return Some(close);
+        }
+        at = close + tag.len();
+    }
+    None
+}
+
+/// The style's own `w:pPr`: the first one, never the previous properties a
+/// `w:pPrChange` holds.
+fn own_ppr(block: &str) -> Option<Own> {
+    own(block, "pPr", 0)
+}
+
+/// The style's own `w:rPr`: `CT_Style` puts it after the `w:pPr`, and the
+/// `w:rPr` a `w:pPr` holds is the paragraph mark's (`CT_ParaRPr`), not
+/// the style's (#1595 review).
+fn own_rpr(block: &str) -> Option<Own> {
+    own(block, "rPr", own_ppr(block).map_or(0, |ppr| ppr.end))
 }
 
 /// One style the legend describes.
@@ -1158,6 +1244,30 @@ mod tests {
                 "<w:styles><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/>{CARRIER}</w:rPr>\
                  </w:rPrDefault></w:docDefaults><w:style w:styleId=\"A\"><w:rPr><w:b/></w:rPr></w:style></w:styles>"
             )
+        );
+    }
+
+    /// A style's `w:pPr` may hold the paragraph mark's own run properties
+    /// (`CT_ParaRPr`), which CT_Style puts before the style's `w:rPr`: the
+    /// changes belong to the style's own elements, never to the mark's (#1595
+    /// review).
+    #[test]
+    fn a_style_change_lands_in_the_styles_own_ppr_and_rpr() {
+        let mark = FormatMark {
+            id: Some(9),
+            author: "Ana".to_string(),
+            date: String::new(),
+        };
+        let styles = "<w:styles><w:style w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/>\
+                      <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr></w:pPr>\
+                      <w:rPr><w:sz w:val=\"32\"/></w:rPr></w:style></w:styles>";
+        assert_eq!(
+            with_style_changes(styles, &[("Heading1".to_string(), vec![mark])]),
+            "<w:styles><w:style w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/>\
+             <w:pPr><w:keepNext/><w:rPr><w:i/></w:rPr>\
+             <w:pPrChange w:id=\"9\" w:author=\"Ana\"><w:pPr/></w:pPrChange></w:pPr>\
+             <w:rPr><w:sz w:val=\"32\"/><w:rPrChange w:id=\"9\" w:author=\"Ana\"><w:rPr/></w:rPrChange>\
+             </w:rPr></w:style></w:styles>"
         );
     }
 

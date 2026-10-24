@@ -27,6 +27,11 @@ Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
 
 ## Command line
 
+The native `jubarte` binary offers `--keep-nested-comment` on `accept`,
+`reject` and `convert --track-changes accept|reject`. These bindings do not
+yet dispatch that option or return its kept-thread receipts; use the native
+binary when retention is needed.
+
 The wheel installs a `jubarte-redlines` command; `uvx` runs it without
 installing anything:
 

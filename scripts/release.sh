@@ -32,7 +32,13 @@
 #                               commits/pushes/publishes nothing
 #                 --yes         skip the type-the-version confirmation (CI)
 #                 --skip-gates  reuse an earlier gate pass (retries)
-#                 --no-wait     PyPI gets sdist+local wheel instead of CI wheels
+#                 --local-publish
+#                               steps 9-11 publish from this machine with the
+#                               releaser's tokens (the old path) instead of
+#                               waiting for release.yml's OIDC publish jobs —
+#                               the fallback when a trusted publisher fails
+#                 --no-wait     with --local-publish: PyPI gets sdist+local
+#                               wheel instead of CI wheels
 #                 --checklist   print the whole release checklist — before the
 #                               script, each step, after the script — every
 #                               line [auto] or [you] with its proving command;
@@ -82,11 +88,15 @@
 #      one for the release commits and merges it at once); release.yml
 #      builds the five CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
-#   9. crates.io — `cargo publish`, after proving the summary is inside the
-#      .crate
-#  10. npm — `npm publish` on jubarte-wasm/npm, then the jubarte-redlines
-#      CLI on jubarte-wasm/cli
-#  11. PyPI — CI wheels + sdist via `uv publish`
+#   9. crates.io — release.yml's `publish crates.io` job publishes through
+#      OIDC trusted publishing (#1642), after proving the summary is inside
+#      the .crate; this step waits for the registry to list it
+#  10. npm — release.yml's `publish npm` job: jubarte-wasm, then the
+#      jubarte-redlines CLI; this step waits for both
+#  11. PyPI — release.yml's `publish PyPI` job uploads the CI wheels + the
+#      sdist; this step waits for the GitHub release and for PyPI
+#      With --local-publish, steps 9-11 publish from here instead:
+#      `cargo publish`, `npm publish` ×2, `uv publish` of the CI wheels
 #  12. verify — every registry answers with the new version AND its summary
 #  13. app — the app repository's scripts/release-engine.sh, from its
 #      checkout (jubarte-app/, untracked here, or JUBARTE_APP_DIR; step 0 has
@@ -102,11 +112,14 @@
 # that is already live, so a failed run can simply be re-run.
 #
 # Credentials (preflight checks each):
+#   GitHub     `gh auth login`                    (drives the release + wheels)
+#   The registries need none: release.yml publishes through OIDC trusted
+#   publishing (workflow release.yml, environment release). Only
+#   --local-publish asks for them:
 #   crates.io  `cargo login`                      (~/.cargo/credentials.toml)
 #   npm        `npm login`                        (npm whoami must answer)
 #              NPM_OTP=<code>                     (two-factor accounts, non-TTY)
 #   PyPI       UV_PUBLISH_TOKEN=pypi-…            (uv publish --token)
-#   GitHub     `gh auth login`                    (drives the release + wheels)
 set -euo pipefail
 # Under pipefail, `producer | grep -q` fails when grep exits on its first
 # match and the producer dies of SIGPIPE, so a found line reads as missing
@@ -133,13 +146,13 @@ before|you|Decide where the release runs: a clean worktree on main, release PR m
 before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
 before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run), or the assumption is stated in the release notes when skipped|python3 identity27.py <candidate> <release-commit binary> <out dir> (from the bench root; keeps only differences)
 before|you|parity: the CLI, PyO3 and WASM bindings agree on the samples, build identity proven (--expect-commit HEAD), stale artifacts refused|zsh agents/parity_v2/parity_build_v2.sh then parity_check.py --expect-commit <sha> --engine-dir <engine>
-before|you|release.yml reviewed before the tag: the wheel matrix (7 jobs) equals the README's supported-environments rows and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's failure list, third-party actions are SHA-pinned with Dependabot current, and the ZIPSIGN_PRIVATE_KEY secret is set whenever keys/ holds a public key — the signed era refuses unsigned archives|grep -n 'artifact:' .github/workflows/release.yml; ls keys/ 2>/dev/null; gh secret list -R jandira-tech/jubarte-redlines (docs/SELF_UPDATE.md, Signed releases)
+before|you|release.yml reviewed before the tag: the wheel matrix (7 jobs) equals the README's supported-environments rows and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's failure list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642), third-party actions are SHA-pinned with Dependabot current, and the ZIPSIGN_PRIVATE_KEY secret is set whenever keys/ holds a public key — the signed era refuses unsigned archives|grep -n -e 'artifact:' -e 'environment:' .github/workflows/release.yml; ls keys/ 2>/dev/null; gh secret list -R jandira-tech/jubarte-redlines (docs/SELF_UPDATE.md, Signed releases)
 before|you|CI of the release PR: read each red check's log — fix only genuine test or coverage failures; billing, quota, paused-bot and runner-offline reds are reported and left; pushes that start hosted runners are batched into ONE|gh run view <run-id> --log-failed (one batched push per review round)
 before|you|main's rules let the releaser land the release: a bypass for the owner, or a pull request that can merge — a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets|gh api repos/jandira-tech/jubarte-redlines/rulesets
 before|you|a run in flight owns its worktree: the version bump stays uncommitted from step 1 to step 8 by design — nobody commits, pushes, edits or tidies there until the script ends (0.11.2: the bump was committed mid-run with a .gitignore line that made step 8 unable to stage the vendored app)|git -C <release worktree> status --short (changes there during a run are the release, not dirt)
 before|you|queued CI is cancelled before the tag is pushed, so release.yml gets the runners first; the pushes to main start CI and Docs runs again — cancel those too|gh run list --repo jandira-tech/jubarte-redlines --json databaseId,status --jq 'map(select(.status != "completed").databaseId)[]' (no pipes: the checklist printer splits on them)
 before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows' default) on the release samples — every job exits zero|python3 scripts/stack1m.py <release binary> <bench root> <out dir> release_info/sample_*_<version>_*.csv
-before|you|Python 3.8: the script tests must run on the self-hosted runner's old Python — no parenthesised with, no str.removeprefix, no itertools.pairwise, no match statement|uv run -q --no-project --python 3.8 python scripts/test_release_sh.py
+before|you|Python 3.12: the script tests pass on the scripts' floor, Python 3.12 (ruff.toml targets py312 and reports newer syntax)|uv run -q --no-project --python 3.12 python scripts/test_release_sh.py
 before|you|unused: scan every manifest for dependencies nothing references — each workspace Cargo.toml, every package.json, pyproject (0.11.2 found js-sys in jubarte-wasm/Cargo.toml)|grep -rn <crate> src jubarte-wasm/src benches examples (empty output = removable)
 before|you|keywords: every channel's tags are current and inside its limits — crates.io at most 5 keywords and 5 categories, npm jubarte-wasm AND jubarte-redlines, PyPI keywords, GitHub topics|grep -n keywords Cargo.toml jubarte-python/pyproject.toml jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json; gh api repos/jandira-tech/jubarte-redlines/topics
 before|you|The bump kind is decided against docs/VERSIONING.md before the changelog is written: pre-1.0 table — public surface growth or shipped features take minor, Q0 fixes and docs stay patch; the API drift is read as semver (0.10.1 shipped four breaking fields as a patch)|docs/VERSIONING.md (the bump table and the drift-as-semver rule)
@@ -152,13 +165,13 @@ before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @
 before|you|the app builds against the engine at the tag (src-tauri takes it by path "../.."): build in a fresh engine-at-tag + app-at-main layout, never in a release worktree mid-run|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir> (clones, discards the vendored copy)
 before|you|the app's checkout is in place: a clone of arthrod/jubarte-app at jubarte-app/ (this repository does not track it) or named by JUBARTE_APP_DIR, on main, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|jubarte-app/scripts/release-engine.sh @V@ --engine-dir . --preflight
 before|you|the App Store path is ready for the after-builds: the asc credentials exist (~/.appstoreconnect), the app's provisioning profiles are present (gitignored, never committed), and App Store Connect holds no @V@ version record already used — Apple refuses a re-used number|ls jubarte-app/src-tauri/*.provisionprofile; (cd jubarte-app && ./scripts/asc-build-status.sh)
-before|you|UV_PUBLISH_TOKEN is exported before the run (name only, never print it) — step 0 checks the env var, you must load it|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"
-before|you|npm web authentication: each of the two publishes needs the owner's browser approval (2FA) — have the owner at the keyboard for step 10|npm whoami (preflight) and the owner present for both publishes
+before|you|Trusted publishers (#1642): crates.io jubarte-redlines, PyPI jubarte-redlines, npm jubarte-wasm and npm jubarte-redlines each trust owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release — release.yml publishes with no token; a new npm configuration expires unless its first publish lands within two days|the registries' trusted-publishing settings pages; gh api repos/jandira-tech/jubarte-redlines/environments --jq '.environments[].name' lists release
+before|you|Only with --local-publish: UV_PUBLISH_TOKEN is exported before the run (name only, never print it), crates.io and npm are logged in, and the owner is at the keyboard for npm's browser approval (2FA) — step 0 checks them only then|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"; npm whoami
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv; an output the validator cannot even open needs a Word probe before it ships|scripts/redline-sweep.sh <csvs> <src> <out> --validate (then the --probe sweep for refusals)
 before|you|Ring-3 Word open probe, the macOS release gate before any crates.io publish: every redline the release ships opens in real Word — probe_fail=0; paths never under /tmp, stage them under parity/_scratch|scripts/redline-sweep.sh release_info/sample_*_@V@_*.csv <src> parity/_scratch/sweep_<date> --probe
 before|you|lane validity: every sampled lane output's error kinds already exist in its sources (or are Word's own writing)|python3 lane_validity_vs_sources.py (bench results dir; logs to lane_validity.log)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|the queue-script pattern of the release work folder (queue.sh: one scorer at a time)
-0|auto|Preflight: main branch, clean tree, tools, crates.io + npm + gh credentials and UV_PUBLISH_TOKEN present|scripts/release.sh step 0 (its die lines)
+0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir . --preflight
 1|auto|Version sync: every manifest, the 5 Cargo.locks, the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer|grep -n "^## \[@V@\]" CHANGELOG.md
@@ -175,9 +188,9 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
-10|you|Each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s and the CLI publish follows the wasm one|NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates (the resume skips what is live)
+10|you|When a publish job of release.yml fails, read its log: a refused token is a trusted publisher that does not match; fix it and rerun the job, or publish from here with --local-publish (then each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s)|gh run view <run-id> --log-failed; gh run rerun <run-id> --failed; NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates --local-publish (the resume skips what is live)
 11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
-11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --no-wait
+11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --local-publish --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --local-publish --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
 12|you|Read the v@V@ GitHub release page once, human eyes: five CLI archives (each signed once keys/ holds a public key), seven wheels, the sdist and SHA256SUMS.txt attached; the notes lead with the github summary, carry the CHANGELOG section and the Full Changelog link — a binary that missed the workflow run cannot join this tag, the next patch ships it|gh release view v@V@ --web
 13|auto|The app's part, in its checkout: the download page and demo engine move to @V@, the app's version files go on release/v@V@ with a pull request; the App Store upload and the benchmark flow are printed, never run|jubarte-app/scripts/release-engine.sh @V@ --engine-dir .
@@ -247,7 +260,7 @@ check_now() {
 }
 
 VER=""
-DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0
+DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0; LOCAL_PUBLISH=0
 CHANGELOG_SUMMARY=""; CRATES_SUMMARY=""; NPM_SUMMARY=""
 PYPI_SUMMARY=""; GITHUB_SUMMARY=""; DOCS_UPDATED=""
 need() { [ -n "${2:-}" ] || { echo "missing value for $1" >&2; exit 2; }; }
@@ -257,6 +270,7 @@ while [ $# -gt 0 ]; do
     --yes)        YES=1 ;;
     --skip-gates) SKIP_GATES=1 ;;
     --no-wait)    NO_WAIT=1 ;;
+    --local-publish) LOCAL_PUBLISH=1 ;;
     --checklist)  CHECKLIST=1 ;;
     --changelog-summary|--changelog-comments) need "$@"; CHANGELOG_SUMMARY=$2; shift ;;
     --crates-summary|--crates-comments)       need "$@"; CRATES_SUMMARY=$2; shift ;;
@@ -266,8 +280,8 @@ while [ $# -gt 0 ]; do
     --how-readme-and-other-docs-were-updated) need "$@"; DOCS_UPDATED=$2; shift ;;
     -h|--help)    usage; exit 0 ;;
     -*)           echo "unknown flag: $1" >&2; usage; exit 2 ;;
-    *)            [ -z "$VER" ] && VER="$1" \
-                  || { echo "unexpected arg: $1" >&2; exit 2; } ;;
+    *)            if [ -z "$VER" ]; then VER="$1"
+                  else echo "unexpected arg: $1" >&2; exit 2; fi ;;
   esac
   shift
 done
@@ -303,6 +317,12 @@ done
 if [ -n "$missing" ] || [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   [ -n "$missing" ] && printf 'missing required summaries:%s\n' "$missing" >&2
   usage
+  exit 2
+fi
+# --no-wait changes what this machine uploads to PyPI; without
+# --local-publish nothing is uploaded from here.
+if [ "$NO_WAIT" = 1 ] && [ "$LOCAL_PUBLISH" = 0 ]; then
+  echo "--no-wait needs --local-publish: release.yml's publish PyPI job uploads the CI wheels" >&2
   exit 2
 fi
 TAG="v$VER"
@@ -359,6 +379,43 @@ download_ci_wheels() {
     && die "the $TAG release lists every wheel, but gh would not download them (above) — fix that (gh auth status, the network) and rerun; no local wheel stands in for them"
   return 1
 }
+# The release.yml run of $TAG: "<id> <status>", empty before it is listed.
+release_run() {
+  gh run list -w Release --branch "$TAG" -L 1 --json databaseId,status \
+    -q '.[0] | "\(.databaseId) \(.status)"' 2>/dev/null || true
+}
+# The conclusion of release.yml's job named $1 on $TAG: empty while it runs
+# or before the run is listed.
+ci_job_state() {
+  local run_id
+  read -r run_id _ <<<"$(release_run)"
+  [ -n "${run_id:-}" ] || return 0
+  gh run view "$run_id" --json jobs \
+    -q ".jobs[] | select(.name == \"$1\") | .conclusion" </dev/null 2>/dev/null || true
+}
+# Waits for release.yml's publish job $2 to put $VER on registry $1, which
+# the probe "${@:3}" proves (#1642). A job that ended without the registry
+# holding the version stops the run with the way out; an hour bounds it.
+ci_published() {
+  local what=$1 job=$2 state
+  shift 2
+  for _ in $(seq 1 120); do
+    if "$@"; then
+      step "$what $VER published by release.yml ($job)"
+      return 0
+    fi
+    state=$(ci_job_state "$job")
+    case "$state" in
+      success)
+        eventually "$@" && { step "$what $VER published by release.yml ($job)"; return 0; }
+        die "release.yml's \"$job\" job succeeded but $what does not list $VER after two minutes — check the registry by hand, then rerun this command (every registry that holds $VER is skipped)" ;;
+      failure|cancelled|skipped|timed_out|startup_failure)
+        die "release.yml's \"$job\" job ended $state and $what does not hold $VER. Read it: gh run view --log-failed (run $(release_run)). A refused token means the registry's trusted publisher does not match: owner jandira-tech, repository jubarte-redlines, workflow release.yml, environment release. Fix it and rerun the job (gh run rerun <id> --failed), or rerun this command with --local-publish to publish from here" ;;
+    esac
+    sleep 30
+  done
+  die "$what still lacks $VER after an hour of release.yml — rerun this command later (every registry that holds $VER is skipped)"
+}
 # A registry answers a fresh upload late: PyPI's project listing (0.11.2:
 # missing seconds after `uv publish`, listed a minute later), crates.io's
 # index, npm's view. Asks up to 12 times, 10 s apart.
@@ -390,13 +447,17 @@ for t in cargo cargo-deny gitleaks bun npm gh wasm-pack node uvx; do
   command -v "$t" >/dev/null || die "missing tool: $t"
 done
 
-[ -s "$HOME/.cargo/credentials.toml" ] || [ -s "$HOME/.cargo/credentials" ] \
-  || [ -n "${CARGO_REGISTRY_TOKEN:-}" ] \
-  || die "no crates.io credentials — run \`cargo login\`"
-npm whoami >/dev/null 2>&1 || die "not logged in to npm — run \`npm login\`"
 gh auth status >/dev/null 2>&1 || die "gh not authenticated — run \`gh auth login\`"
-[ -n "${UV_PUBLISH_TOKEN:-}" ] \
-  || die "UV_PUBLISH_TOKEN not set — a pypi-… API token for \`uv publish\`"
+# release.yml publishes the registries through OIDC; tokens are asked for
+# only when this machine publishes instead.
+if [ "$LOCAL_PUBLISH" = 1 ]; then
+  [ -s "$HOME/.cargo/credentials.toml" ] || [ -s "$HOME/.cargo/credentials" ] \
+    || [ -n "${CARGO_REGISTRY_TOKEN:-}" ] \
+    || die "no crates.io credentials — run \`cargo login\`"
+  npm whoami >/dev/null 2>&1 || die "not logged in to npm — run \`npm login\`"
+  [ -n "${UV_PUBLISH_TOKEN:-}" ] \
+    || die "UV_PUBLISH_TOKEN not set — a pypi-… API token for \`uv publish\`"
+fi
 step "tools + credentials OK"
 # Step 13 is the app's part, run from the app repository's checkout (this
 # repository does not track it): prove it can run before anything is
@@ -771,7 +832,7 @@ fi
 rm -rf target/release-check
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
-sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
+sdist=$(find target/release-check -maxdepth 1 -name '*.tar.gz' 2>/dev/null | head -1)
 [ -n "$sdist" ] || die "maturin produced no sdist"
 member=$(tar -tzf "$sdist" | grep '/pyproject.toml$' | head -1)
 [ -n "$member" ] || die "sdist has no pyproject.toml"
@@ -925,7 +986,7 @@ say "9. crates.io"
 
 if crates_has; then
   step "jubarte-redlines $VER already on crates.io — skipped"
-else
+elif [ "$LOCAL_PUBLISH" = 1 ]; then
   # Finder litter under an include glob is "uncommitted" to cargo and stops
   # the publish (gitignored, so the clean-tree preflight never sees it).
   find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
@@ -937,6 +998,8 @@ else
     || die "crates summary missing from the packaged manifest — not publishing"
   cargo publish --locked
   step "cargo publish done (index lags ~1 min)"
+else
+  ci_published "crates.io" "publish crates.io" crates_has
 fi
 
 # =============================================================================
@@ -944,38 +1007,44 @@ say "10. npm"
 # =============================================================================
 check_now 10
 
-# An account with two-factor auth answers a non-interactive publish with
-# EOTP (v0.10.1 stopped here). NPM_OTP=<code> passes a one-time password;
-# an interactive terminal lets npm prompt for it.
-if npm_has; then
-  step "jubarte-wasm $VER already on npm — skipped"
-else
-  if [ -n "${NPM_OTP:-}" ]; then
-    publish_ok() { (cd jubarte-wasm/npm && npm publish --otp "$NPM_OTP"); }
+if [ "$LOCAL_PUBLISH" = 1 ]; then
+  # An account with two-factor auth answers a non-interactive publish with
+  # EOTP (v0.10.1 stopped here). NPM_OTP=<code> passes a one-time password;
+  # an interactive terminal lets npm prompt for it.
+  if npm_has; then
+    step "jubarte-wasm $VER already on npm — skipped"
   else
-    publish_ok() { (cd jubarte-wasm/npm && npm publish); }
+    if [ -n "${NPM_OTP:-}" ]; then
+      publish_ok() { (cd jubarte-wasm/npm && npm publish --otp "$NPM_OTP"); }
+    else
+      publish_ok() { (cd jubarte-wasm/npm && npm publish); }
+    fi
+    publish_ok || die "npm publish failed. If npm asked for a one-time password (EOTP), run
+           (cd jubarte-wasm/npm && npm publish --otp <code>)
+         then rerun this same command with --skip-gates: every registry that
+         already holds $VER is skipped."
+    step "npm publish done"
   fi
-  publish_ok || die "npm publish failed. If npm asked for a one-time password (EOTP), run
-         (cd jubarte-wasm/npm && npm publish --otp <code>)
-       then rerun this same command with --skip-gates: every registry that
-       already holds $VER is skipped."
-  step "npm publish done"
-fi
-# The CLI depends on jubarte-wasm@^$VER, so it goes second. A one-time
-# password lasts about 30 s; a stale NPM_OTP fails here alone and the rerun
-# skips jubarte-wasm.
-if npm_cli_has; then
-  step "jubarte-redlines $VER already on npm — skipped"
-else
-  if [ -n "${NPM_OTP:-}" ]; then
-    publish_cli() { (cd jubarte-wasm/cli && npm publish --otp "$NPM_OTP"); }
+  # The CLI depends on jubarte-wasm@^$VER, so it goes second. A one-time
+  # password lasts about 30 s; a stale NPM_OTP fails here alone and the rerun
+  # skips jubarte-wasm.
+  if npm_cli_has; then
+    step "jubarte-redlines $VER already on npm — skipped"
   else
-    publish_cli() { (cd jubarte-wasm/cli && npm publish); }
+    if [ -n "${NPM_OTP:-}" ]; then
+      publish_cli() { (cd jubarte-wasm/cli && npm publish --otp "$NPM_OTP"); }
+    else
+      publish_cli() { (cd jubarte-wasm/cli && npm publish); }
+    fi
+    publish_cli || die "npm publish of jubarte-redlines failed. With two-factor auth, run
+           (cd jubarte-wasm/cli && npm publish --otp <code>)
+         or rerun this same command with --skip-gates and a fresh NPM_OTP."
+    step "npm publish (jubarte-redlines CLI) done"
   fi
-  publish_cli || die "npm publish of jubarte-redlines failed. With two-factor auth, run
-         (cd jubarte-wasm/cli && npm publish --otp <code>)
-       or rerun this same command with --skip-gates and a fresh NPM_OTP."
-  step "npm publish (jubarte-redlines CLI) done"
+else
+  # One job publishes both, jubarte-wasm first: the CLI depends on it.
+  ci_published "npm jubarte-wasm" "publish npm" npm_has
+  ci_published "npm jubarte-redlines" "publish npm" npm_cli_has
 fi
 
 # =============================================================================
@@ -988,27 +1057,21 @@ check_now 11
 # not check out long fixture paths), and the wheels exist only as workflow
 # artifacts: the release is then created here from that run's artifacts,
 # with a note naming the binaries it lacks.
-release_run() {
-  gh run list -w Release --branch "$TAG" -L 1 --json databaseId,status \
-    -q '.[0] | "\(.databaseId) \(.status)"' 2>/dev/null || true
-}
 release_from_artifacts() {
   local run_id=$1 a missing=""
-  rm -rf dist/release dist/release-art dist/release-src
-  mkdir -p dist/release dist/release-src
+  rm -rf dist/release dist/release-art
+  mkdir -p dist/release
+  # The run's sdist artifact is the one publish-pypi uploads: the release
+  # takes it as is, never a second maturin build with other bytes.
   gh run download "$run_id" -D dist/release-art
   find dist/release-art -type f -exec mv {} dist/release/ \;
   rm -rf dist/release-art
-  git archive "$TAG" | tar -x -C dist/release-src
-  (cd dist/release-src \
-    && uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out ../release)
-  rm -rf dist/release-src
-  # A run that lost a wheel job never becomes a public release: step 11's
-  # own wheel check would fire only after the release is out, and a rerun
-  # would then meet a release that already exists. A missing binary is
-  # named in the notes below; a missing wheel stops here.
-  python3 scripts/check_release_artifacts.py dist/release --version "$VER" \
-    || die "release.yml run $run_id lacks wheels — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
+  # A run that lost a wheel job (or the sdist) never becomes a public
+  # release: step 11's own wheel check would fire only after the release is
+  # out, and a rerun would then meet a release that already exists. A
+  # missing binary is named in the notes below; a missing wheel stops here.
+  python3 scripts/check_release_artifacts.py dist/release --version "$VER" --sdist \
+    || die "release.yml run $run_id lacks wheels or the sdist — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
   (cd dist/release && shasum -a 256 -- * > SHA256SUMS.txt)
   for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
     ls dist/release/jubarte-"$VER"-"$a".* >/dev/null 2>&1 || missing="$missing $a"
@@ -1057,7 +1120,7 @@ fi
 
 if pypi_has; then
   step "jubarte-redlines $VER already on PyPI — skipped"
-else
+elif [ "$LOCAL_PUBLISH" = 1 ]; then
   rm -rf dist/pypi; mkdir -p dist/pypi
   got_wheels=0
   if [ "$NO_WAIT" = 0 ]; then
@@ -1074,7 +1137,7 @@ else
     # download above); the app's facts check would otherwise die on the
     # missing wheels only after the release is out.
     [ "$NO_WAIT" = 1 ] \
-      || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --no-wait to consent to the partial set"
+      || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --local-publish --no-wait to consent to the partial set"
     # The wheel's panic locations would name this home and checkout (#1480);
     # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
     # As build-npm.sh does: the checkout by both its paths, and no whitespace,
@@ -1097,6 +1160,8 @@ else
   fi
   uv publish --token "$UV_PUBLISH_TOKEN" dist/pypi/*
   step "uv publish done"
+else
+  ci_published "PyPI" "publish PyPI" pypi_has
 fi
 
 # =============================================================================

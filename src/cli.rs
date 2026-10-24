@@ -276,6 +276,39 @@ pub struct ReadArgs {
     pub all: bool,
 }
 
+impl ReadArgs {
+    /// The `read --for-edit` request these flags describe (V2-10): the
+    /// working basis template and apply derive — `auto` (and the absence
+    /// of the flag) keeps the remaining revisions, `on` tracks new edits.
+    /// `read --for-edit` keeps the open-ended range spellings its help
+    /// documents; the bindings build the same request through this.
+    pub fn for_edit_request(&self) -> crate::edit::for_edit::ForEditRequest {
+        crate::edit::for_edit::ForEditRequest {
+            select: self.paragraphs.clone(),
+            head: self.head,
+            tail: self.tail,
+            find: self.find.clone(),
+            regex: self.regex.clone(),
+            ignore_case: self.ignore_case,
+            changed: self.changed,
+            by: self.by.clone(),
+            context: self.context.unwrap_or(0),
+            limit: self.limit,
+            max_chars: self.max_chars,
+            all: self.all,
+            cursor: self.cursor.clone(),
+            accept: self.accept_change.clone(),
+            reject: self.reject_change.clone(),
+            existing_revisions: self
+                .existing_revisions
+                .and_then(ExistingArg::plan_value)
+                .unwrap_or(crate::edit::ExistingRevisions::Keep),
+            track: self.track.unwrap_or_default() == TrackArg::On,
+            ..Default::default()
+        }
+    }
+}
+
 /// `--comments` of `read`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -296,6 +329,17 @@ pub enum TrackArg {
     On,
     /// The new edits land directly.
     Off,
+}
+
+impl TrackArg {
+    /// `--track`'s spelling (`on`, `off`); `None` for anything else.
+    pub fn from_choice(choice: &str) -> Option<Self> {
+        match choice {
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
 }
 
 /// Options `edit` and `add` share.
@@ -394,6 +438,19 @@ pub enum ExistingArg {
 }
 
 impl ExistingArg {
+    /// `--existing-revisions`'s spelling (`auto`, `keep`, `accept`,
+    /// `reject`, `refuse`); `None` for anything else.
+    pub fn from_choice(choice: &str) -> Option<Self> {
+        match choice {
+            "auto" => Some(Self::Auto),
+            "keep" => Some(Self::Keep),
+            "accept" => Some(Self::Accept),
+            "reject" => Some(Self::Reject),
+            "refuse" => Some(Self::Refuse),
+            _ => None,
+        }
+    }
+
     /// The plan's `existing_revisions`; `None` for `auto`.
     pub fn plan_value(self) -> Option<crate::edit::ExistingRevisions> {
         use crate::edit::ExistingRevisions as E;
@@ -548,7 +605,7 @@ fn fill_task_date(task: &mut Command) {
 ///
 /// Canonicalizing on Windows returns a verbatim path (`\\?\C:\…`), which
 /// this spelling would show as `//?/C:/…` — a string that is no path at
-/// all (#1222). [`unverbatimed`] drops that prefix from the components
+/// all (#1222). `unverbatimed` drops that prefix from the components
 /// first, so an agent-facing canonical path spells `C:/…`.
 pub fn slash_path(path: &Path) -> String {
     let path = unverbatimed(path).unwrap_or_else(|| path.to_path_buf());
@@ -928,6 +985,9 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Keep comments and replies whose whole anchor is removed, on an empty anchor.
+        #[arg(long)]
+        keep_nested_comment: bool,
         /// Revisions to accept or reject; empty selects all.
         #[command(flatten)]
         #[serde(flatten)]
@@ -955,6 +1015,9 @@ pub enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        /// Keep comments and replies whose whole anchor is removed, on an empty anchor.
+        #[arg(long)]
+        keep_nested_comment: bool,
         /// Revisions to accept or reject; empty selects all.
         #[command(flatten)]
         #[serde(flatten)]
@@ -2080,9 +2143,14 @@ pub fn success_block(before_name: &str, before: &str, after_name: &str, after: &
             )
             .to_string()
     };
+    // CommonMark closes a tilde fence with up to three leading spaces, and a
+    // context line puts one before the document's text.
     let longest = body
         .lines()
-        .map(|line| line.bytes().take_while(|b| *b == b'~').count())
+        .map(|line| {
+            let indent = line.bytes().take(3).take_while(|b| *b == b' ').count();
+            line.bytes().skip(indent).take_while(|b| *b == b'~').count()
+        })
         .max()
         .unwrap_or(0);
     let fence = "~".repeat(4.max(longest + 1));
@@ -2121,6 +2189,20 @@ mod success_tests {
         assert!(block.ends_with("~~~~~~\n"), "{block}");
         // Tildes after a diff marker do not begin the line.
         assert!(success_block("a", "~~~~~~\n", "b", "x\n").starts_with("SUCCESS:\n~~~~diff\n"));
+    }
+
+    /// A context line keeps the document's text after one space, and
+    /// CommonMark lets up to three spaces precede a closing fence, so ` ~~~~`
+    /// would close a four-tilde fence early (review gid=48).
+    #[test]
+    fn a_context_line_of_tildes_cannot_close_the_fence() {
+        let block = success_block("a", "~~~~\nkeep\n", "b", "~~~~\nchanged\n");
+        assert!(block.contains("\n ~~~~\n"), "{block}");
+        let fence = block["SUCCESS:\n".len()..]
+            .bytes()
+            .take_while(|b| *b == b'~')
+            .count();
+        assert!(fence > 4, "{block}");
     }
 
     #[test]
@@ -2610,6 +2692,9 @@ pub struct MarkdownArgs {
     /// revisions in a .docx. With --to md, the Markdown itself is resolved.
     #[arg(long, value_enum, value_name = "CHOICE", default_value_t = TrackChanges::All)]
     pub track_changes: TrackChanges,
+    /// Keep comments and replies whose whole anchor is removed; requires --track-changes accept or reject.
+    #[arg(long)]
+    pub keep_nested_comment: bool,
     /// Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as
     /// text.
     #[arg(long)]
@@ -3278,6 +3363,14 @@ fn validate_matches(
         }
     }
     if name == "convert" {
+        if args.get_flag("keep_nested_comment")
+            && args.get_one::<TrackChanges>("track_changes") == Some(&TrackChanges::All)
+        {
+            return Err(error(
+                &mut task,
+                "--keep-nested-comment requires --track-changes accept or reject",
+            ));
+        }
         // The retired --pdf and --png name a format, as --to does.
         let alias = match (args.get_flag("pdf"), args.get_flag("png")) {
             (true, true) => return Err(error(&mut task, "--pdf and --png name two formats")),

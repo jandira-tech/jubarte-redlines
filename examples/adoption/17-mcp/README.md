@@ -37,7 +37,7 @@ one JSON object per line with a `dir` of `send` or `recv`.
 
 `JUBARTE_MCP_FROM` picks the package: `jubarte-redlines[mcp]` (the PyPI
 release) by default, and `jubarte-redlines[mcp] @ <repo>/jubarte-python`
-to serve this checkout, as `.github/workflows/adoption.yml` does. The
+to serve this checkout, as `.github/workflows/docs.yml` does. The
 committed session was made from the checkout.
 
 ## Tool versions (measured in this folder)

@@ -260,7 +260,7 @@ pub enum ShortId {
     Block {
         /// Where the block lives.
         story: Story,
-        /// Its path from the story; [`valid_path`] holds.
+        /// Its path from the story; `valid_path` holds.
         path: Vec<Step>,
     },
     /// The blocks from `first` to its sibling number `last`, both included:

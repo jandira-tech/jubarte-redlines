@@ -716,6 +716,10 @@ pub struct ResolvedChanges {
     /// an author or kind filter resolves them, an id selection cannot name
     /// them, so a partial selection can leave some (#1223).
     pub comment_changes_left: usize,
+    /// Threads rescued onto empty anchors, in source comment ids; the CLI's
+    /// `--keep-nested-comment` opt-in (#1279). Empty when settlement
+    /// removed the threads (Word's behaviour, and the default).
+    pub kept_comments: Vec<crate::edit::KeptComment>,
 }
 
 /// `anchor removed by accepting r13`: the verb of `resolution`, and the
@@ -819,20 +823,61 @@ pub fn reject_changes_with_report(
     resolve_with_report(docx, filter, Resolution::Reject)
 }
 
+/// Accept selected changes, keeping wholly removed comment threads on
+/// empty anchors (#1279). The CLI's `--keep-nested-comment` opt-in; the
+/// default removes them, as Word does.
+///
+/// # Errors
+/// As [`accept_changes_with_report`].
+pub fn accept_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Accept)
+}
+
+/// Reject selected changes, keeping wholly removed comment threads on
+/// empty anchors (#1279). The CLI's `--keep-nested-comment` opt-in; the
+/// default removes them, as Word does.
+///
+/// # Errors
+/// As [`reject_changes_with_report`].
+pub fn reject_changes_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+) -> Result<ResolvedChanges, ChangeError> {
+    resolve_keeping_comments(docx, filter, Resolution::Reject)
+}
+
 fn resolve_with_report(
     docx: &[u8],
     filter: &ChangeFilter,
     resolution: Resolution,
 ) -> Result<ResolvedChanges, ChangeError> {
     let (document, removed, comment_changes_left) = resolve(docx, filter, resolution)?;
-    if removed.is_empty() {
-        return Ok(ResolvedChanges {
-            document,
-            removed_comments: Vec::new(),
-            removed_why: Vec::new(),
-            comment_changes_left,
-        });
-    }
+    let (removed_comments, removed_why) = if removed.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        removed_comment_report(docx, &removed, filter, resolution)?
+    };
+    Ok(ResolvedChanges {
+        document,
+        removed_comments,
+        removed_why,
+        comment_changes_left,
+        kept_comments: Vec::new(),
+    })
+}
+
+/// The `removed_comments` / `removed_why` pair for the comment ids
+/// `removed`: each record (replies included) beside the reason its thread
+/// went, naming the selected change that held it.
+fn removed_comment_report(
+    docx: &[u8],
+    removed: &[String],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<(Vec<crate::comments::CommentRecord>, Vec<String>), ChangeError> {
     let comments =
         crate::comments::list_comments(docx).map_err(|e| ChangeError::Package(e.to_string()))?;
     let listed = list_changes_tolerant(docx)?;
@@ -861,12 +906,7 @@ fn resolve_with_report(
             why_removed(&listed, &thread, resolution, Some(&settled), &wholes)
         })
         .collect();
-    Ok(ResolvedChanges {
-        document,
-        removed_comments,
-        removed_why,
-        comment_changes_left,
-    })
+    Ok((removed_comments, removed_why))
 }
 
 fn resolve(
@@ -876,6 +916,41 @@ fn resolve(
 ) -> Result<(Vec<u8>, Vec<String>, usize), ChangeError> {
     resolve_for_edit_or_cli(docx, filter, resolution, None, true)
         .map(|out| (out.document, out.removed, out.comment_left))
+}
+
+fn resolve_keeping_comments(
+    docx: &[u8],
+    filter: &ChangeFilter,
+    resolution: Resolution,
+) -> Result<ResolvedChanges, ChangeError> {
+    let out = resolve_for_edit_or_cli(docx, filter, resolution, Some(true), true)?;
+    let document = if out.kept.is_empty() {
+        out.document
+    } else {
+        // Publish the rescued threads on the lowest free comment ids; the
+        // receipt keeps the source ids (#1279).
+        let mut pkg = open(&out.document)?;
+        crate::revision_processor::renumber_rescued_comments(&mut pkg, &out.kept);
+        pkg.to_zip()
+            .map_err(|e| ChangeError::Package(e.to_string()))?
+    };
+    let (removed_comments, removed_why) = if out.removed.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        removed_comment_report(docx, &out.removed, filter, resolution)?
+    };
+    let mut anchors = crate::edit::comment_settlement::AnchorChanges::default();
+    anchors.extend(Vec::new(), out.kept, resolution, None);
+    let (_removed_records, kept_comments) = anchors
+        .records(docx)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    Ok(ResolvedChanges {
+        document,
+        removed_comments,
+        removed_why,
+        comment_changes_left: out.comment_left,
+        kept_comments,
+    })
 }
 
 /// Accept the elements `filter` selects, each `w:ins`, `w:del` or other
@@ -999,8 +1074,8 @@ fn resolve_for_edit_or_cli(
 }
 
 /// The listed changes of the comments part only (empty when the package
-/// has none): [`changes_in`] skips it because the view has no ids there.
-fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
+/// has none): `changes_in` skips it because the view has no ids there.
+pub fn comment_changes_in(pkg: &PartFs) -> Vec<Change> {
     let Some(part) = crate::revision_processor::comments_part(pkg) else {
         return Vec::new();
     };

@@ -354,6 +354,24 @@ export function editingModeConflict(plan: string, docx: Uint8Array): string | un
 export function flagPlan(verb: string, operations_json: string, docx: Uint8Array, options_json?: string | null): string;
 
 /**
+ * The working-document JSON `jubarte read --for-edit` prints
+ * (`jubarte-read-for-edit-v1`): source hash, paired target ids, exact
+ * working text with `before_sha256`, and per-operation readiness. Options
+ * (JSON, all optional): `paragraphs` (`"p3,p10-p20,t0"`), `head`, `tail`,
+ * `find`/`regex` (+ `ignoreCase`) on the original final text, `changed`
+ * with `by`, `context` (read-only original neighbours), `limit`,
+ * `maxChars`, `all`, `cursor`, `acceptChange`/`rejectChange` (revision
+ * ids), `existingRevisions` (`keep`, `accept`, `reject`, `refuse`,
+ * `auto`) and `track` (`on`, `off`); `validityFile`, the path as the
+ * command line spells it, adds `input_validity`. A `USAGE` failure throws
+ * `jubarte-wasm: USAGE: …`, as the CLI exits 2; the other refusals throw
+ * `jubarte-wasm: CODE: …`, as the CLI exits 3.
+ *
+ * Mirrors `jubarte::edit::for_edit::for_edit_json`.
+ */
+export function forEdit(docx: Uint8Array, options_json?: string | null): string;
+
+/**
  * List the tracked revisions in a DOCX as a JSON array string, grouped as
  * Docxodus's `GetRevisions` groups them; each object has
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).

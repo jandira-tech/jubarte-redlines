@@ -326,7 +326,7 @@ impl CorrespondenceEntry {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceToOutputCorrespondence {
     entries: Vec<CorrespondenceEntry>,
-    /// short id → position in `entries`, so [`lookup`] is one hash
+    /// short id → position in `entries`, so [`Self::lookup`] is one hash
     /// lookup instead of a linear scan per check.
     index: std::collections::HashMap<String, usize>,
 }

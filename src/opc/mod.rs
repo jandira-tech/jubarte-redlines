@@ -378,7 +378,7 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
             .map_err(|e| {
                 refused(crate::admission::AdmissionError {
                     kind: crate::admission::AdmissionErrorKind::InvalidPackage,
-                    message: format!("{name}: {e}"),
+                    message: format!("{}: {e}", crate::admission::shown(&name)),
                 })
             })?
         } else {

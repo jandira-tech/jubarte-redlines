@@ -276,7 +276,7 @@ def docx_to_pdf_speed() -> None:
         corpus, tool, version = row.get('corpus'), row.get('tool'), row.get('version')
         n, mean, median = row.get('n'), row.get('mean'), row.get('median')
         # An interrupted or hand-edited row lacks a field: skip it, not the report.
-        if not all(isinstance(v, str) for v in (corpus, tool, version)):
+        if not (isinstance(corpus, str) and isinstance(tool, str) and isinstance(version, str)):
             continue
         if not (isinstance(n, int) and all(isinstance(v, (int, float)) for v in (mean, median))):
             continue

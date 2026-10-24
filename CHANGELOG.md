@@ -15,6 +15,90 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/release.sh --checklist` is now the whole release, not only the
+  script's own steps. New lines cover what a release owes outside them:
+  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  the Ring-3 Word open probe on the release samples, the bump decision,
+  reading the engine CHANGELOG section that becomes the release notes,
+  drafting the six one-line notes, a release.yml review (wheel and binary
+  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`, and the
+  `release` environment the OIDC publish jobs run under), and the App
+  Store path's credentials and unused version number; during — the
+  NUMBERS sentence against the checker's aggregates, the security scan,
+  the GitHub release page's assets and notes, the site's own release
+  ladder, and reading every jubarte.pro page the deploy rebuilt
+  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
+  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
+  installing each library the way a user does, reading docs.rs and the
+  registries' pages, and the App Store item now carries the in-app
+  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
+  dangling empty "step 14" phase is gone, the one proof that carried jq
+  pipes (the checklist printer splits on `|`) is written pipe-free, and
+  the checklist test derives its phases from the script instead of
+  counting to 14.
+
+## [0.13.0] - 2026-10-22
+
+> **Summary.** Breaking: replace writes only the words that differ, so kept words keep their formatting; the marks Word writes for one edit are one logical change with a composite id (r7+8+9+10), and accept/reject take it whole; jubarte prints short ids; the timestamp flag is -d, --datetime everywhere (--date is removed); validate and audit are one command. New: edit --skip-failed applies what passes and writes a plan of the failures; visible rejects (--strike, --restore); Word math reads and writes as LaTeX; charts, fields, images and inline HTML round-trip through Markdown; check FILE --expect; typed v2 edit plans. PDFs lay out math fractions, radicals and delimiters, divide columns as Word does and update header PAGE fields; Strict OOXML packages read and compare as themselves. Dual-header and structurally inconsistent ZIP packages are refused (GHSA-m665-v7pm-7grj); rustls 0.23.46 fixes RUSTSEC-2026-0346 and -0347. Registries now publish from CI through OIDC trusted publishing. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
+>
+> **Docs.** README.md and the library READMEs follow the new flags and short ids; docs/rust.md, docs/python.md and docs/javascript.md carry the regenerated CLI and API references; docs/DIALECT.md, docs/MARKDOWN.md and docs/flags_datetime.md describe the settled Markdown dialect and the --datetime flag; docs/adoption/ covers MCP and the edit plans; docs/WORD_DIFFERENCES.md and docs/WORD_COMPARE_RULES.md record the Word behaviour this release copies; KNOWN_ISSUES.md is updated.
+
+### Release
+
+- **Registries publish from CI with OIDC trusted publishing** (#1642). `release.yml` publishes crates.io (`rust-lang/crates-io-auth-action`, self-hosted runners), PyPI (`uv publish --trusted-publishing always`, the seven CI wheels plus one shared sdist, self-hosted runners) and npm (`jubarte-wasm`, then `jubarte-redlines`, on a GitHub-hosted runner because npm refuses self-hosted ones). No registry token exists. `scripts/release.sh` steps 9–11 wait for those jobs, and `--local-publish` keeps the old token path as the fallback.
+
+- **Eight CI workflow files are five (#1649).** `ci.yml` takes the
+  Markdown round-trip job and hands cargo-deny and REUSE to
+  `security.yml`, which keeps its nightly schedule; `docs.yml` takes the
+  adoption checks; `jules.yml` joins the two Jules reviews; `release.yml`
+  is unchanged. A change to `tests/legacy_doc.rs` now triggers the docs
+  workflow, and `scripts/test_docs_workflow.py` keeps every test the
+  workflow runs inside its path filter.
+
+- **The Jules reviews are back, and quieter.** Restored after their
+  removal, they read only the files a pull request changes, so ruff and
+  shellcheck no longer report the same old findings on every PR (ruff is
+  pinned to 0.17.2), and the report comment is edited in place on each
+  push instead of posted again. The el conejo report runs four checks,
+  each with its own status — lint, syntax and format, security, workflows
+  — beside the LLM review as a fifth row, and reads its rules from
+  `.github/jules-review-rules.md`: correctness and Word fidelity,
+  security, performance and improvements, best practices and tests,
+  syntax and style. Both prompts state Word parity: never refuse an input
+  Word opens; ZIP part names are OPC URIs, never file-system paths.
+
+- **Python 3.12 is the floor for the repository's scripts.** CI runs
+  the script tests and the release publish step on 3.12, and `ruff.toml`
+  targets py312, so ruff reports syntax newer than the floor. The
+  `jubarte-redlines` Python package still supports Python 3.10
+  (`requires-python >= 3.10`; `jubarte-python/` is checked at py310).
+
+- **No build cache feeds a shipped artifact.** `release.yml` drops
+  rust-cache from the binaries job and turns maturin's sccache off, so a
+  release builds from a clean state and a cache entry an earlier run
+  wrote cannot reach a published binary or wheel (zizmor
+  cache-poisoning); `scripts/test_release_workflow.py` refuses a cache
+  step in the workflow.
+
+- **The public and private rustdoc builds run with `-D warnings` in
+  CI.** They are the two builds `scripts/release.sh` gates a release on
+  (the public docs and the private items), now part of the fmt + clippy
+  job, so a broken doc link or a module documented twice fails the
+  build.
+
+- **Published artifacts carry no builder's paths.** The WASM/npm
+  builds remap the builder's home directory and checkout out of the
+  binaries, the wheel's remap matches the npm one, and the CI path gate
+  reads every user name and the CLI package too, so no machine's paths
+  ship inside a release. (#1480, #1481)
+
+- **The npm build's stamp vouches only as the full commit hash**, and
+  a release refuses an npm build the tagged engine did not produce
+  (#1088); `wasm-cli` refuses a symlinked `--consume` plan on Windows and
+  reads files open-then-fd (#1059).
+
 ### Breaking
 
 - **`replace` keeps what it keeps** (plan 12, #1262). A `replace` with
@@ -80,15 +164,18 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **`edit::PrepareOptions` has a `syntax` field** (`PlanSyntax`: `V1`,
   `Flags`, `V2`), the request syntax a refusal quotes. A struct literal adds
   `..PrepareOptions::default()`.
+
 - **`--skip-failed` adds library fields (#1253).** `edit::PrepareOptions`
   has `skip_failed`, `edit::Operation` an optional `group`,
   `edit::EditReport` `skipped` and `output_sha256`, `edit::PreparedEdit`
   `skipped`, and `capabilities::Operations` `edit_skip_failed`. A struct
   literal adds the field (`skip_failed: false`, `group: None`) or
   `..Default::default()`.
+
 - **`inspect::Snapshot` has a `track_changes` field (#1255)**
   (`Option<Settle>`), the choice `inspect::settled_snapshot` read the text
   under. A struct literal adds `track_changes: None`.
+
 - **Comment and bookmark ids survive accept and reject (#1264, plan 14).**
   `jubarte accept`/`reject` (all or some), `convert --track-changes`,
   `accept_revisions`/`reject_revisions` in every host, and an edit plan that
@@ -102,6 +189,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `revision_processor::accept_revisions_package_keeping_ids` is gone
   (`accept_revisions_package` now keeps ids), and so is
   `KeptComment.written_id` (a kept thread's id is its source id).
+
 - **`edit_comment` on another author's comment is refused (#1264, plan
   14):** `COMMENT_NOT_YOURS: c0 is by "Bob"; reply instead
   (reply_comment), or pass "rewrite_others_comments": true to change their
@@ -115,7 +203,836 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   false`; a `PlanV2` one, `rewrite_others_comments: None`. The discovery
   matrix names the condition on `edit_comment`.
 
+- **`convert FILE.docx -t md` writes the agent view**, the
+  Markdown `jubarte read` prints (YAML header, id lines, ids on changes and
+  comments), which comes back whole through `convert FILE.md`. Pass
+  `--commonmark` for the plain Markdown it wrote before.
+
+- **`edit --accept/--reject` prints the resolved changes, not the view.**
+  `edit FILE -p r12 --accept` (or `--reject`, `-p` repeats) prints one line
+  per resolved change (`accepted r1+2 in p3: "{~~weekly~>monthly~~}" >
+  "monthly"`), nothing else; `-p r1` accepts only `r1`, not its `r1+2` pair.
+  A successful `edit` or `add` prints `SUCCESS` and a fenced before/after
+  diff of the full agent views, replacing the changed-paragraph listing;
+  `-q` hides the whole block, and a context line of tildes cannot close
+  the fence (#1140).
+
+- **jubarte prints short ids.** The agent view tags revisions
+  `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
+  (a reply names its root, `re c5`); table lines name rows and cells
+  `row1` and `row1.cell2`. `changes` and `comments` list the same ids,
+  and `validate`'s messages name paragraphs by them (`p108`, `header1.p1`).
+  JSON keeps the long `id` and adds `ref`; machine hints and refusals keep
+  the long id.
+
+- **One revision count.** `summary.revisions`, the view's
+  `revisions:`, the edit report and `changes` count each listed change once
+  across the six parts `accept` and `reject` process (body, headers,
+  footers, footnotes, endnotes, styles), formatting changes included. Word's
+  own pairs count once: a style's `w:pPrChange` and `w:rPrChange` sharing a
+  `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
+  `numbering.xml` no longer count.
+
+- **Only the settled short ids parse.** `12`, `#12`, `#c27`,
+  `#c27.text` and `t0.r1.c2` exit 2 wherever an id is taken (`--id`,
+  `edit -p`, `read -p`, plan JSON, Python and npm alike), naming the
+  settled spelling the option takes: `--id 12` → `r12`, `read -p 12` →
+  `p12`, `-p 6 --resolve` → `c6`, `t0.r1.c2` → `t0.row1.cell2`. A settled
+  id `-p` does not edit yet (`s0`, `p3-p7`, `toc0`) exits 2 as well. The
+  long `body:rev:12`, `body:p:12` and `header1:p:0` are refused the same
+  way, naming `r12`, `p12` and `header1`; nothing prints them any more.
+
+- **Content controls are `ccN` and `pN.ccK`.** `inspect`'s
+  controls and a plan's `fill_control` name a block control `cc0` (the
+  body's block controls in order) and one inside paragraph `p12` `p12.cc0`
+  (that paragraph's controls in order); a cell's first paragraph also
+  spells its controls `t0.row1.cell2.cc0`. The old `body:sdt:3` is refused
+  with `ANCHOR_NOT_FOUND`, naming the control's id. Under
+  `resolve_revisions` or `existing_revisions` a control id names the
+  control of the document the plan's author read, as paragraph ids do.
+  `capabilities` lists the spellings under `ids.control`.
+
+- **`read --tables` and `validate` print short ids.** A table
+  cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
+  `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id
+  the agent view prints for the same paragraph); the snapshot's tables keep
+  the long ids. A finding that read `word/document.xml#body:p:5` (or
+  `body:p:0` for the audit sets) now reads `word/document.xml#p5` (or
+  `p0`); JSON keeps the long `location` and adds `ref`.
+
+- **`compare` (and `jubarte OLD NEW`) dates its revisions now.**
+  Without `-d/--datetime` the shared parser fills the current UTC time, to the
+  second, so the binary, Python and npm hand the same value to the engine;
+  `-d 1970-01-01T00:00:00Z` pins it for reproducible output (the old
+  default). `diff`'s patch header already said now; Python and npm no longer
+  fill it themselves. MCP `docx_compare` without `date` follows the CLI. The
+  library default (`document_comparer::DEFAULT_DATE`, Python
+  `Document.compare`, WASM `redlineDocuments`) stays the epoch.
+  `cli::CompareArgs::datetime` is `Option<String>`.
+
+- **`convert X.md -o X.docx` signs and dates by the document's
+  own metadata.** A change or comment that names no author or date takes,
+  in order: its own tag or the `authors:` table; `-a/--author` and
+  `-d/--datetime`; the front matter's `author:` and `last_modified:` (else
+  `modified:`, `date:`, `created:`; a bare day is its midnight); the
+  `--reference-doc`'s `dc:creator` and `dcterms:created`; else `Jubarte`
+  and now. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output (the
+  old default). `compare`, `edit`, `add` and `diff` change a file, so they
+  keep `--author` (default `Jubarte`) and `-d/--datetime` (default now)
+  and never read the files' metadata. The library (`DocxOptions::default()`, Python
+  `markdown_to_docx`/`from_markdown`, WASM `markdownToDocx`) keeps
+  `Jubarte` and the epoch, so library calls stay deterministic, and reads
+  no reference document's metadata; a given `author` or `date` beats the
+  front matter (Python's `author` default is now `None`). No file owner or
+  modification time is read. `cli::MarkdownArgs::author` and `datetime`
+  are `Option<String>`.
+
+- **The timestamp flag is `-d, --datetime` everywhere** (`edit`,
+  `add`, `compare`, `diff`, `convert`'s Markdown-to-Word date); `--date`
+  is gone, and passing it exits 2 naming `--datetime`. `edit` and `add`
+  gain the `-d` short flag; `compare`, `diff` and `convert` move it from
+  `--date`. The clap
+  field is `datetime` on `cli::EditOptions`, `cli::CompareArgs`,
+  `cli::Command::Diff` and `cli::MarkdownArgs`, and the shared parser's
+  JSON carries `datetime`, so the Python CLI reads `args.datetime` and
+  the npm CLI `o.datetime`.
+
+- **The neutral default author is `Jubarte`** (#916), at every site
+  that owns one: `edit`, `add`, `compare`, the paragraph patch, the plan
+  recorder, the Markdown stamp fallback and `DocxOptions::default` (was
+  `Modified User` in 0.12, `Redline` in between), so the agent view's
+  handle is `@J`. A plan recorded from operation flags (`--plan X -p …`),
+  WASM `flagPlan` and the hosts' record options default to it too, and
+  Python's `jubarte.diff()` no longer reads `git config user.name`: its
+  owner is `Jubarte` unless `author=` says otherwise. Explicit `--author`
+  values and the Python and WASM API defaults are unchanged.
+
+- **`validate` and `audit` are one command.** `validate --rules`
+  takes rule sets (`word`, the default; `edits`, which needs `--original`
+  and `--author` and is added by them; `a11y`, `style`, `structure`) or
+  audit codes, comma-separated; `--strict` fails on warnings too. A word
+  or edits finding fails the run (exit 2), and so does any error; an
+  a11y/style/structure warning fails only under `--strict`, as `audit` did.
+  An unknown rule, or `edits` without `--original`, exits 2 (`audit` exited
+  1 on an unknown rule). Every finding has one shape, in the library
+  (`validate::Finding`), JSON Lines, Python and WASM: `code`, `set`,
+  `severity`, `part`, `location` (was `path`), `message`, `word_fatal`,
+  `repairable`; and one text line, `* CODE\tSEVERITY\tPART#LOCATION\tMESSAGE`
+  (`  CODE\tSEVERITY\tLOCATION\tMESSAGE` for the audit sets), closed by
+  `N finding(s): E error, W warning, I info`. `validate --repair` prints
+  `repaired N finding(s)` and then the repaired package's findings; its
+  `wrote` line is on stderr. `audit FILE` is now
+  `validate FILE --rules a11y,style,structure`. Python's CLI and MCP `docx_validate` take `rules` too, and
+  `capabilities` lists `validate_rules`. Library: `validate_with`,
+  `findings_text`, `fails`, `RULE_SETS`, `audit::word_layout`,
+  `audit::is_rule`, `From<AuditFinding> for Finding`; `ValidateError`
+  gains `Usage` and `Layout`.
+
+- **`comparer::finalize` and `comparer::tables` are hidden and outside the
+  version promise** (`docs/VERSIONING.md`). They stay public for the tests
+  that call single passes, but any release may change them.
+
+- **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
+  names every field needs it (or `..PdfOptions::default()`).
+
+- `RenderRequest::pages` counts document pages and narrows the PDF and the
+  report as well as the PNGs (an empty list writes no PDF).
+  `ConvertError::PageNotKept` names a page `changed_only` dropped;
+  `PageOutOfRange` reads "the document has N pages". `PageText` gains
+  `number`, and the report JSON's pages carry it. `RenderReport` gains
+  `document_pages` (also in the report JSON). `cli::PageOptions` is
+  `cli::RenderArgs`, which `convert` and `diff` flatten.
+
+- `cli::Cli` loses `read`: the view's options are `Cli::compare.read`.
+  `CompareArgs` gains `reference_doc`, `critic`, `resource_path`,
+  `render` and `read`. `cli::top_level_command()` is the model whose
+  `--help` lists the tasks only.
+
+- `cli::Command::Edit` and `Add` gain `plan_default`; `Recorded::summary`
+  takes `default_plan`.
+
+- `cli::EditOptions` gains `output`; `out_dir` is
+  `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
+  `EditOptions::target(file)` gives the `EditTarget` (`Single` or
+  `Bundle`) a host writes. `cli::EditOptions::datetime` gains the `-d`
+  short flag; `cli::CompareArgs::date`, `cli::MarkdownArgs::date` and
+  `cli::Command::Diff`'s `date` are renamed to `datetime` (`--date` is
+  gone).
+
+- `markdown::DocxOptions` gains `author_fixed` and `date_fixed`: `true`
+  makes `author` and `date` win over the front matter's; a struct literal
+  needs them or `..DocxOptions::default()`. New
+  `markdown::docx_stamp(docx)` returns a `.docx`'s first non-empty
+  `dc:creator` and its `dcterms:created`.
+
+- `validate::Finding` is `{code, set, severity, part, location, message,
+  word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
+  `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
+  gone (`Validate` gains `rules` and `strict`; `audit` and `inspect` parse
+  as their aliases).
+
+- `capabilities::Capabilities` gains `validate_rules`, `formats` and `ids`
+  (`capabilities::Ids`), so a struct literal needs them; deserializing an
+  older manifest still works (`serde(default)`).
+
+### Added
+
+- **Keep nested comment threads during settlement** (#1279). Native
+  `accept`, `reject` and `convert --track-changes accept|reject` offer
+  `--keep-nested-comment`, off by default. A wholly removed anchor becomes
+  an empty untracked anchor, keeping the comment and its replies, with the
+  same kept receipt as an edit plan's `"removed_anchor_comments": "keep"`.
+  Partial overlaps and flag-off output retain their existing behavior.
+
+- **A plan error teaches (#1258).** An `INVALID_PLAN` for an operation names it
+  (its `id`, else `op-N`), its kind, the field, the nearest field the kind takes
+  and the list of its fields; an unknown kind lists the kinds; a missing
+  `schema_version`, characters after the plan, a bare number for `paragraph` and
+  a string for `resolve_revisions.*.ids` each say what to write, as do an `id`
+  that is no string and an alias beside the field it is read as. A byte order
+  mark before the plan is ignored. Two slips apply as meant, each with a
+  `note:` line on stderr and in the `summary` event's new `notes`, present
+  when one applies (`EditReport.notes`, `EditPlan::from_json_with_notes`):
+  `anchor` for `find` on `replace`, `delete` and `comment`, and `comment` for
+  `text` on `comment` and `reply_comment`. `delete` and `rewrite` take a
+  `comment`: a deletion's sits on the struck words in the redline only, and a
+  rewrite's covers the paragraph. The version is read first: a plan whose
+  `schema_version` this build does not read is `UNSUPPORTED_SCHEMA` before
+  its fields are checked (a v2 plan given to `EditPlan::from_json` was
+  `INVALID_PLAN` for its v2 fields). `edit apply` says a plan that is an
+  array, a string or a number is one JSON object, instead of asking for its
+  `schema_version`. Under a plan that settles revisions, a deletion's
+  comment lands on the paragraph the deletion names as read. When the
+  comparer deletes the same words elsewhere, the refusal says so and gives
+  `"existing_revisions": "keep"` (`--existing-revisions keep`), which writes
+  the deletion as given.
+
+- **`validate OUT --baseline IN` names only the edit's findings (#1256).**
+  The findings IN already has print as `already in the input: N (not
+  yours)` after the new ones (`new: none`, or `new: N` and their lines),
+  then, when the edits fixed some, `resolved: N (in the input, not in this
+  file)` and those; only new findings fail the run, `--strict` included. A
+  finding is new by identity, never by count: its code, set and part, its
+  element chain without indices (`p#` for a paragraph id, in any story),
+  its message with element indices and paragraph ids normalised, and a
+  place it shares with the input's finding, tried strongest first:
+  nothing around it changed; the tracked change it sits in (`jubarte
+  edit` keeps the input's `w:id` values); its paragraph's `w14:paraId`;
+  its paragraph's text between the same neighbours; that text alone; and
+  last the neighbours alone, its paragraph rewritten. Outside a
+  paragraph the text is its table's, or its element's with the
+  attributes of what holds it (a style's id). So a paragraph added above
+  an inherited finding, even one of the same text, leaves it the
+  input's; the copy an edit adds beside an inherited finding is the one
+  printed as new; and a finding that replaced another, elsewhere, is new
+  at the same total. The
+  field, table and nesting checks now report the element chain they found
+  (`word/document.xml#w:body[0]/w:p[1]/w:r[1]/w:fldChar[0]`) instead of
+  an empty place. `--json` prints each finding with `"status": "new"` or
+  `"baseline"`, new ones first, then one `{"resolved":[…]}` line. With
+  `--author`, IN goes through the same rules, the edits rule included,
+  against the same original (IN, unless `--original` names another), so
+  the other party's changes IN already had are `already in the input`,
+  matched by their id, then by kind, author and text.
+  `--baseline` conflicts with `--repair`. Library:
+  `validate::{baseline, baseline_keyed, identities, validate_baselined,
+  baselined_text, baselined_json, input_notice}`, `Baselined`,
+  `FindingKey`, `Place` and `Finding::identity`; Python `validate_run(…,
+  baseline=)` and `input_notice`, WASM `inputNotice`.
+
+- **With `--json`, an error is a JSON object on stdout too (#1255).** A
+  usage error prints `{"error":{"code":"USAGE","message":"…","usage":"jubarte
+  read [OPTIONS] <FILE>"}}`, a runtime error `{"error":{"code":…,"message":…}}`
+  (its code the message's leading `CODE:`, else `ERROR`), on one line, beside
+  the same text on stderr and the same exit code; `jubarte read x.docx --json
+  --bogus | jq .error.code` prints `"USAGE"`. A message clap spreads over
+  lines is joined on one, and `usage` keeps each form clap prints, a line
+  per form; a removed spelling's line (`--date is removed; use
+  --datetime`) carries the usage too. The npm and Python CLIs print the
+  same: WASM `wantsJson` and `runtimeJsonError`, Python `wants_json` and
+  `runtime_json_error` (a `--json` that is an option's value, as in `edit
+  replace … --text --json`, asks for none), and `parseCli` results carry a
+  usage error's line as `json`. `--track-changes` also takes `accepted` and
+  `rejected`. WASM `tablesText` and `readJson`, and Python `tables_text`
+  and `read_json`, take the `trackChanges`/`track_changes` the CLI does;
+  WASM `tablesView` and Python `tables_view` print `read --tables` whole,
+  `-p` and the view's options included, as `{markdown, warnings}` and a
+  `(markdown, warnings)` pair; a pick that reaches no table raises
+  `USAGE: …`.
+
+- **`edit --skip-failed` applies what passes (#1253).** Every operation
+  that passes is applied and the failed ones are left out: the output is
+  the bytes the plan without them writes, exit 0. stderr says `skipped 2 of
+  14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
+  operations to fix and run on the output (its `source_sha256`, the run's
+  `date`, a `why` on each operation that the parser ignores). A
+  positional paragraph (`p3`, `{"index": 3}`, `t0.row1.cell2`), or a
+  control named through one (`p3.cc0`), that the applied operations moved
+  is renamed to its id in the output, and `why` says `p3 is p4 in the
+  output` in the plan's own spelling. One with no one-to-one counterpart in
+  the output (deleted, merged, split) becomes `source:p3`, which no
+  document resolves, so it runs only once given again; a skipped operation
+  `existing_revisions` keep refuses
+  (`insert_footnote`, `insert_image`, `page_setup`, `fill_control`) says,
+  on the skip line and in `why`, to fix it in the original plan. Operations
+  sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
+  `summary` says `"status":"partial"` with `ops.skipped`. `STALE_SOURCE`, a
+  failing `resolve_revisions`, a failing strike or restore that
+  `--reject --visible` added, and a plan whose every operation fails are
+  never skipped; those strikes and restores keep the names the whole plan
+  gives them. `--consume` keeps a plan that did not land whole, and says
+  so. The manifest's `operations.edit_skip_failed` says whether a runtime
+  has it (the CLI and Rust; not yet the Python and WASM bindings), whichever
+  runtime asks.
+
+- **Every edit write prints `sha256: <hex>`** of the primary output, also
+  the `summary` event's `output_sha256`, and a `--dry-run` that passes
+  whole ends with `next:`, the command that writes it: the same arguments
+  without the `--dry-run` flag (a FILE named `--dry-run` after `--` stays),
+  and `--force` before any `--` when the output, or an `--out-dir` empty
+  or not, is already there (#1253). `cli::next_command` builds it.
+
+- **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
+  --strike` deletes another author's insertion with your tracked deletion
+  inside it; `-p r12 --restore` leaves their deletion and inserts a copy of
+  its words, formatting kept, right after it. Rejecting either way shows
+  the decision, where `--reject` leaves no trace. `--content` comments on
+  the struck or restored words, and `--reject --visible`
+  (`resolve_revisions.reject.visible` in a plan) picks strike or restore by
+  each revision's kind. Plans take `{"kind":"strike"|"restore","revision":…,
+  "comment":…}` under `existing_revisions: keep`; discovery offers both
+  only there. Own revisions, empty ones, paragraph marks, formatting
+  changes, a move's source to restore or destination to strike, and a
+  split or non-plain deletion to restore are refused with the route that
+  takes them.
+
+- **`debug --full-lines`** prints the listing checks' lines (`text`, `xml`,
+  `runs`, `changes`, `styledefs`, `numbering`, `render`) whole instead of
+  clipping them at 200 characters; `debug::Options` gains `full_lines`. The
+  Markdown round-trip gate reads the render check this way: a clipped table
+  line kept a window that still held the cell shading the gate drops, so
+  `ids-fonts.md` reported a table difference the two packages do not have.
+
+- **`convert --commonmark`** writes Word as plain CommonMark with
+  CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
+  wrote before.
+
+- **A change's note names its number in plain Markdown:**
+  `{++new++}{>>r5 Ana Lima (2026-09-29T14:05:00Z)<<}`. The writer reads a
+  numbered note as the change's attribution, so an undated author
+  (`{>>r75 Di Eng<<}`) and an empty one (`{>>r5 (2026-…)<<}`) come back as
+  they were instead of turning into a comment or `Jubarte`. A note with no
+  number keeps its old meaning.
+
+- **Plain Markdown keeps Word's cross-reference targets:** every `_Ref…`
+  bookmark prints its `<a id>`, since the REF fields that name it print as
+  their text.
+
+- **`PdfOptions::comment_notes`** (hidden CLI flag `--comment-notes`)
+  attaches each comment as a PDF note at its anchor, for the exceptional
+  case that wants one.
+
+- **`convert --scholar`** sets Markdown as LaTeX's article class sets a
+  manuscript (Latin Modern Roman 10pt, justified, bold headings, unstretched
+  line-break lines) and numbers the pages from page 2, filling in only what
+  the front matter leaves out. Python `from_markdown(scholar=…)`, wasm
+  `markdownToDocx` `scholar`, and the npm CLI take it too.
+
+- **The Python CLI prints what the binary prints.** `changes`, `comments`,
+  `read --tables` and a selected `read --json` come from the engine
+  (`_native.changes_text`, `comments_text`, `tables_text`, `read_json`), and
+  every `wrote` line from `wrote_line`/`wrote_png_line`, on stderr. Edit's
+  report lines are compact with sorted keys, so a bundle is byte-identical
+  to the binary's. Python's `Change` gains `ref` and `paragraph`, `Comment`
+  gains `ref`, and `Snapshot` gains `changes` and `comments`.
+
+- **The npm CLI prints what the binary prints**, for the commands it has.
+  `changes`, `read --tables`, a selected `read --json` and every `wrote`
+  line come from the engine (jubarte-wasm adds `changesText`,
+  `commentsText`, `tablesText`, `readJson`, `wroteLine` and
+  `changeFilter`); the wrote lines move to stderr. A bad change id exits 2
+  before anything is read, a failed resolution reads `accept failed: …`,
+  I/O errors read as Rust words them, and edit's report lines are compact
+  with sorted keys. `applyEditPlan` takes the file's name for its patch,
+  which under `existing_revisions: keep` shows only the plan's changes, so
+  an edit bundle is byte-identical to the binary's. npm still has no
+  `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output or
+  `--pages`.
+
+- **MCP `docx_text` returns `read`'s agent view** (the header, `<!-- pN -->`
+  id lines, revisions and comments with their ids) instead of the body with
+  `[body:p:N]` ids; plans take `p12` as written.
+
+- **One id grammar** (`jubarte::ids`), the same in every place an id goes:
+  revisions `r12`, `r1+2` (both marks of one change), `header1.r1`,
+  `footnotes.r3`, and the long `body:rev:12` the JSON prints; comments
+  `c27` (a plan's `comment_id` also takes the number `27`); paragraphs
+  `p12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` for a cell's
+  second paragraph), and the long `body:p:12`. `accept`/`reject --id`,
+  `edit`/`add -p`, a plan's `paragraph`, `resolve_revisions` ids and
+  `comment_id` take them all; bare numbers and 0.12's `#12`, `#1+2`,
+  `#c27` and `t0.r1.c2` exit 2 (see Changed). Every printed id is safe
+  unquoted in bash, zsh and csh, and each number has one spelling (`p012`
+  is refused).
+
+- `edit FILE -p r12 --accept` (or `--reject`) resolves one tracked change,
+  before the command's other operations; `-p` repeats. `--reply TEXT` on
+  `edit` and `add` with `-p c5` answers a comment.
+
+- `changes --json` and `comments --json` lines, and the snapshot's
+  `changes` and `comments`, carry `ref`, the short id (`r12`, `c5`), beside
+  the long `id`; a change also names its `paragraph`, and the `changes`
+  text listing gains a paragraph column. `validate --json` lines carry
+  `ref`, the short id (`p5`) beside the long `location` (`body:p:5`);
+  Python's `Finding` gains `ref`, and MCP `docx_validate` returns it
+  (as `docx_changes`/`docx_comments` already return `Change`/`Comment`
+  `ref`).
+
+- `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
+  `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
+  tracked substitution inside the comment (a range over two paragraphs
+  that follow each other also deletes the mark between them);
+  `--anchor` looks only inside it (`… is not in the text c5 covers`,
+  exit 3); `--delete` deletes it. `-p c5` still edits the comment's own
+  text. `capabilities` lists the spelling under `ids.comment_text`.
+
+- `read` prints the paragraph id of each footnote and endnote on the
+  line before its definition (`<!-- footnotes.p0 -->`,
+  `<!-- endnotes.p0-p2 -->` for a note of three paragraphs): the id
+  `edit -p` takes to change the note.
+
+- `read --json` prints the snapshot (`inspect --json`'s, which now also
+  carries `changes` and `comments` as `changes --json` and
+  `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and
+  `--by` keep the paragraphs they select and those paragraphs' changes and
+  comments; the view-only flags exit 2 with it, and so does `--json` with
+  two documents. `read --tables` prints the table grids. The Python and
+  npm CLIs do the same. The library adds `inspect::snapshot`,
+  `Snapshot::retain`, `inspect::tables_text` and
+  `markdown::read_snapshot`; `ReadView` and `ReadDocx` gain `selected`.
+
+- One writer for `-o`. `accept`, `reject`, `append` and `scrub` write
+  what the output's extension names: `.docx` (and any other extension),
+  `.md` (the agent view of the result), `.pdf`, `.png` (one file per page)
+  or `.json` (the snapshot), and take `--revisions`, `--revision-palette`,
+  `--dpi`, `--move-comments`, `--changed-pages` and `--pages` for a PDF or
+  PNG. `read` (and `jubarte FILE`) takes `-o FILE.md` for the view or
+  `-o FILE.json` for the snapshot, and `--force`. `convert` writes `.json`.
+  The Python CLI writes them too (it has no `append` or `scrub`); the npm
+  CLI writes all but `.png` (it has no PNG pages, `--pages`, `append` or
+  `scrub`).
+
+- `compare` takes the view's options (`--track-changes`, `--comments`,
+  `--dates`, `--no-page-markers`, `-p`, `--head`, `--tail`, `--changed`,
+  `--by`), `--reference-doc`, `--critic` and `--resource-path` for
+  Markdown inputs, and the Rendering group. `-o` writes `.docx` (and any
+  other extension), `.md` (the redline's agent view; CriticMarkup when
+  both documents are Markdown), `.pdf`, `.png` or `.json` (the snapshot).
+  The view's options go with the printed view or a `.md` view, the
+  Rendering group with a `.pdf` or `.png`, the Markdown-input options
+  with a Markdown document; anything else exits 2. Whether a `.md` is
+  CriticMarkup is read from the documents' bytes when their names do not
+  say, in the binary and in both hosts.
+
+- **`xmllinq::Dom::attributes_iter`** walks an element's attributes as
+  borrowed `(&XName, &str)` pairs, in declaration order, without the `Vec`
+  of cloned pairs `Dom::attributes` builds. The crate's own read-only
+  callers use it, and the emptiness checks use `Dom::has_attributes`.
+
+- **Word math reads and writes as LaTeX.** `$…$` and `$$…$$` in a
+  Markdown file write Word equations, and Office Math in a document reads
+  back as the LaTeX that writes it, so an equation survives `convert -t
+  md` and back. The symbol table grows 267 more LaTeX names and 10 more
+  n-ary operators, primes, `\not`, sized brackets, `array`, `\bmod` and
+  `\pmod` read and write, an equation in a table cell keeps its
+  backslashes, currency beside math stays prose, and math nesting past
+  the limit reads as text instead of overflowing the stack. (#466, #510,
+  #513, #537)
+
+- **PDF math: fractions, radicals and delimiters are laid out.**
+  `convert` paints bar fractions, radicals and stretchy delimiters using
+  the font's OpenType MATH constants and glyph variants (STIX Two Math is
+  vendored for the tests), so a fraction no longer collapses into its
+  characters on a line, a justified line keeps its box, and math letters
+  no font covers stay searchable. (#498)
+
+- **Charts print as Mermaid and write back.** A chart part prints as a
+  Mermaid code block in the view, and converting the view back writes the
+  chart again, so a diagram survives the round trip as text a reviewer
+  can read. (#535)
+
+- **Images and drawings print as readable forms.** Raster images and
+  svgBlip drawings print with their payloads riding as reference
+  definitions, a text box's words print as paragraphs with its payload as
+  a frame, and a drawn text box's content prints as comments in the agent
+  view. A Google Docs export's image syntax round-trips exactly, and a
+  Markdown-to-Markdown `diff` lists a document's image destinations.
+  (#535, #557, #579)
+
+- **Fields print as `{CODE}result{/}` and write back.** A body field
+  prints its code and cached result between braces — `{PAGE}1{/}` — and a
+  field in the Markdown writes the field, result included; a header or
+  footer field keeps its code and its result, and a bare one writes
+  without a result. (#466, #502)
+
+- **Code and monospace faces round-trip.** A run in a monospace face
+  reads as code (faces matched by whole words, so text merely containing
+  "mono" does not), and code spans and fences read back as code, so
+  `Courier New` text stays a code span through the round trip. (#466)
+
+- **Inline HTML reads as formatting.** `<b>`, `<i>`, `<s>`, `<code>`
+  and `<mark>` read as bold, italic, strike, code and highlight; any
+  other inline tag warns and stays text. An HTML block keeps its text,
+  `<a href>` reads as a link, and link titles become tooltips. (#466)
+
+- **Links to headings and bookmarks are Markdown links.** A link to a
+  heading or a bookmark prints as a Markdown link whose target is the
+  heading's `<a id>` anchor, a link to a heading that is not there warns,
+  a link's own underline no longer prints as `<u>`, and code spans and
+  link destinations open no highlight, field or change. (#466)
+
+- **`jubarte check FILE --expect`** checks a document against a
+  source-bound expectations file: typed paragraph-text predicates (exact
+  equality, containment, absence) evaluated on the file's own final
+  projection, `--json` for one result envelope. The expectations'
+  `source.sha256` must name FILE's own bytes — an expectation file bound
+  to the pre-edit source refuses as stale on the edited output — and the
+  output-bound copy an `edit apply --expect` receipt carries re-checks a
+  published output. (#845)
+
+- **`edit template` drafts a guarded plan.** `jubarte edit template
+  FILE --select p12,p20-p25 -o edits.json` writes an edit template for
+  the selected paragraphs; applying it publishes through the
+  commit-boundary recheck, so a template whose source changed refuses
+  instead of editing the wrong text. (#843)
+
+- **Typed edit actions and v2 plans.** `jubarte edit
+  replace|rewrite|insert|delete|apply FILE` take typed actions over an
+  immutable PlanV2 apply — mixed transactions, overlapping literal
+  anchors counted, comment anchors and threads composed, actionable
+  anchor refusals with bounded context, one `PreparedEdit` path for dry
+  run and apply. Valid legacy calls keep v1 semantics; `./replace` names
+  a legacy input whose name equals an action. Publication is atomic, an
+  output aliasing the source is refused, and the v2 routes report through
+  one machine result envelope with exit codes by meaning. (#821, #823,
+  #825, #829, #831, #833, #835, #837)
+
+- **`read --for-edit` prints the view an edit needs** — exact source
+  hashes and each paragraph's operation readiness, as JSON — and the
+  Python and npm CLIs take it too (WASM `forEdit`). (#839)
+
+- **Focused runtime discovery: `capabilityQuery`.** WASM and npm gain
+  `capabilityQuery`/`capabilityQueryText`, which answer what one runtime
+  can do, and v1 capability profiles publish the dispatcher's bounds and
+  closed schemas. (#847)
+
+- **A paragraph's own spacing and size, and a table's geometry, ride
+  on the view's lines.** A paragraph's own spacing (Word's `auto` and
+  values past 1584pt included, the clause said last winning) and its text
+  size (shown runs only, one size) print on its id line, and a table's
+  geometry prints on its line, with a cell past the grid keeping its even
+  width and geometry the reader refuses left unprinted; the styles legend
+  keeps a style's right indent and the default style's omitted indent
+  reads as zero. (#1472, #1473, #1474, #1489)
+
+- **Markdown sets Word's Track Changes switch.** A `track_changes:`
+  key in the front matter turns Track Changes on in the written document,
+  and `convert --tracking on|off` overrides it per run (the Python and
+  npm CLIs follow). (#466)
+
+- **The view counts pages by layout when Word cached no breaks.** A
+  document whose cached page breaks are missing or stale gets its
+  `pages:` count from jubarte's own layout, so the header no longer
+  undercounts. (#466)
+
+- **Look-alike quotes read as the straight one.** A curled or
+  look-alike quotation mark in `--anchor`, `find` or `--content` reads as
+  the straight quote it resembles, so an anchor copied from text with
+  `″` or `＂` still finds its words.
+
+- **An edit plan can keep the comments an empty anchor would drop.**
+  `removed_anchor_comments: "keep"` preserves a wholly removed anchor as
+  an empty untracked anchor, and the comment-settlement receipts report
+  every thread a plan removed, with the reason and the kept copy.
+
+### Changed
+
+- **What a settle removes is said before and after (#1159, plan 10).**
+  `changes` ends a change's line with a tab and `holds comment c4's mark`
+  (`holds comment marks c4, c5`) when it holds a comment's reference mark,
+  a field after any `inside r1`, and
+  `--json` lists them in `holds_comments` (Python `Change.holds_comments`):
+  accepting that deletion, or rejecting that insertion, removes the
+  threads. The agent view says it too: a note printed outside the change
+  that holds its mark names it last, `{>>c4 @AC in r13: …<<}`, and
+  converting the view back puts the mark inside r13 again (before, it came
+  back outside, so accepting r13 no longer removed the thread). Every
+  `removed_comments` record says `why`, `anchor removed by accepting r13`,
+  naming the change the pass settled (the side of a move the plan named,
+  the innermost of nested changes), and the receipt line and `jubarte
+  accept`/`reject`'s warnings say the same (`ResolvedChanges::removed_why`).
+  A reply to a comment whose paragraph the same plan
+  deletes is no longer refused as `OVERLAPPING_EDITS`: it goes on the
+  deleted text beside its parent, where Word shows the thread; a v2 plan
+  with `"track": "off"` removes the anchor and is refused with
+  `COMMENT_ANCHOR_REMOVED`, as any untracked deletion of an anchor is, and
+  `--editing-mode` refuses the reply (exit 2): its clean copy keeps no
+  thread for the reply to join.
+
+- **`read`, `changes` and `comments` name the input's validity findings
+  once (#1256).** An input `validate` would flag earns one stderr line,
+  `input has 2 validity warnings; jubarte validate FILE lists them` (`1
+  validity error`, or `1 validity error and 2 warnings`; `info` findings do
+  not count), so an agent does not take them for its own; `-q` drops it
+  and skips the check. A JSON read prints no such line (#1309): `read
+  --json` carries the counts in its snapshot's `summary.input_validity`,
+  `{"errors":0,"warnings":2,"next":"jubarte validate FILE"}` (a clean input
+  `{"errors":0,"warnings":0}`), and `changes --json` and `comments --json`
+  end with one `{"input_validity":{…}}` line, always, `-q` or not, so
+  `--json 2>&1 | jq` stays JSON. `read --for-edit` prints JSON too, so its
+  result carries the same `input_validity` (#1340). `read -o FILE.json`
+  writes what `read --json` prints and keeps the stderr line, and `read
+  --for-edit -o FILE.json` likewise. Library:
+  `validate::{InputValidity, input_validity, input_validity_of,
+  input_validity_line, input_notice_of}`, `Summary::input_validity`;
+  Python `read_json(validity_file=)` and `input_validity_line`, WASM
+  `readJson`'s `validityFile` and `inputValidityLine`. The npm CLI's `read`
+  and `changes` and the Python CLI print the same. `--rules edits` without
+  `--author` now says `--rules edits needs --author, and --original or
+  --baseline`.
+
+- **Edits inside another author's insertion land (#1136).** Under
+  `existing_revisions: keep`, a replace, deletion or insertion in text
+  another author inserted nests in their insertion: Accept All keeps the
+  edit, Reject All removes their insertion with it. An edit inside your own
+  insertion rewrites it in place. `delete_paragraph` of a paragraph holding
+  revisions nests the deletion in other authors' insertions, leaves
+  deletions as they are and removes your own pending insertion outright; a
+  paragraph holding a move is still refused. The report's `summary` names
+  the pieces of each split insertion under its source id
+  (`split_revisions`, `EditReport::split_revisions`). An `edit apply` plan
+  or a typed `edit delete --whole-block` of a paragraph holding another
+  author's deletion no longer fails `REVISION_PRESERVATION_FAILED`: the
+  clean copy drops the paragraph with its revisions, the redline keeps
+  them.
+
+- **A refusal names the revision in the way and every route around it
+  (#1108).** Text another author deleted or moved, and a paragraph or run
+  whose mark or formatting change is tracked, are refused with the
+  revision's id, author and text, then accept, reject and a comment, each
+  with what it costs, quoted in the syntax the caller wrote (operation
+  flags, including flags recorded into a plan; a v1 plan; an `edit apply`
+  plan; or a typed command, whose routes are its own `--accept-change ID`
+  and `--reject-change ID` (#1310)). The structured `next_actions` (#1147)
+  come with every such refusal, a v2 insertion-side one included, and with
+  no other error: an anchor that merely quotes a refusal's words gets none.
+  The `revision_refusals` data records the syntax its message quotes,
+  `typed_action` for a typed command. Each JSON route pastes into
+  its plan as written: ids are JSON-escaped, an `edit apply` route names
+  both `accept` and `reject` lists, and its comment carries the refused
+  operation's own `target`. An anchor that reaches into another author's
+  deletion gets this refusal instead of `ANCHOR_NOT_FOUND`, copied with or
+  without the deletion's marks, with a tab or a lookalike character. No
+  refusal says to resolve the change first. A deletion restore takes is
+  offered `restore` first ("put it back visibly"), in operation flags and
+  v1 plans.
+
+- **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
+  `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`
+  select a comment, not a paragraph, and used to ignore a stray `paragraph`
+  silently; they now refuse it as an unknown field (`INVALID_PLAN`), as
+  `list`, `watermark`, `settings`, `fill_control` and `page_setup` already
+  did. Discovery publishes every v1 operation as closed
+  (`additionalProperties: false`), with the bounds the dispatcher enforces.
+
+- **Tables keep the borders Word passes; a Markdown table takes Word's thin
+  grid.** The agent view prints a table's own borders (`borders single 0.5pt
+  000000`), its rows' own (`row-borders … in t0.row1`, `w:tblPrEx`) and its
+  cells' (`cell-borders … in all`, a row, or a cell), theme colours included
+  (`theme accent1 tint 99 shade BF`), and the writer writes them back as they
+  were. A Table Grid the source defines with its own uniform border keeps it. A table without a style is
+  `TableNormal` (written with no `tblStyle`); a table that names nothing, as a
+  plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
+  Word's Insert Table makes it) instead of the borderless Normal Table.
+  `debug --check render` reports both kinds of border.
+
+- **No PDF comment note by default.** `--revisions conventional` and
+  `custom` no longer write a `/Text` annotation per comment: viewers
+  painted it as a note icon over the commented words. The balloon still
+  shows every comment; `PdfOptions::comment_notes` brings the note back.
+
+- **The view nests list items by indentation.** An item past its list's
+  first level is indented to the content column of the item it nests
+  under, and its id line with it, so the Markdown reads as a nested list
+  at any depth. `level N` stays on the id line only when indentation
+  cannot say it (a list that starts deep, or a skipped level, which adds
+  no indentation). Reading back, an HTML block indented inside a list item
+  no longer leaves a stray empty paragraph.
+
+- Python: `Document.accept`/`reject` raise `ValueError` for an id that is no
+  change id or names two changes (it was `JubarteError`), and the CLI exits
+  2 for it, as the binary does; a resolution that fails otherwise says
+  `accept failed: …`.
+
+- **`capabilities` prints a text summary**: one line per operation, then
+  limits, rule sets, formats and id spellings; `--json` prints the manifest.
+  The manifest gains `formats` (the extensions each task writes) and `ids`
+  (the id spellings of revisions, comments, paragraphs and tables, by kind;
+  a table's `tN` is `read -p`'s, a cell is `tN.rowR.cellC`). Python and npm
+  print the same text.
+
+- **`diff` writes text only.** It prints the paragraph patch, a text
+  view (`--format github|word|normal|context|side-by-side`) or, for two
+  Markdown documents, `--format critic`'s CriticMarkup, on stdout or in
+  `-o FILE` (`.md`, `.markdown`, `.txt`, `.patch`, `.diff`; any other
+  extension writes the same text), with `wrote FILE (md, N bytes)` on
+  stderr and nothing on stdout. Without `-o` it writes no file: the
+  `OLD_v_NEW.docx` it used to write beside a Word side is gone. `-o
+  FILE.docx`, `.pdf` or `.png` exits 2 naming `compare OLD NEW -o FILE`;
+  `--mode`, `--detail-threshold`, `--reference-doc`, `--critic`,
+  `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
+  `--pages`, `--move-comments` and `--changed-pages` are compare's and
+  convert's, and diff no longer takes them. `--format critic` with a Word
+  side exits 1, naming compare; with `--author`, `--datetime` or `--columns`
+  (the patch's) it exits 2. The patch's owner is `Jubarte` unless
+  `--author` says otherwise (git's `user.name` is no longer read). An
+  existing `-o` file exits 1 before anything is read. The Python and npm
+  CLIs do the same, and their patch headers now name the paths as typed,
+  as the binary's always did. `compare` (and `jubarte A B`), `accept`,
+  `reject`, `append` and `scrub` note the retired `--changed-only` as
+  convert does.
+
+- **`edit` and `add` write one file, `FILE_modified.docx`**, beside FILE:
+  the redline, or in `--editing-mode` the result. `-o FILE.docx` names
+  it (another extension exits 2, naming `read`/`convert`); `--pdf` and
+  `--png` write `FILE_modified.pdf` and `FILE_modified-page-NN.png`
+  beside it. `--out-dir [DIR]` writes the bundle as before (clean,
+  redline, `patch.diff`, `report.jsonl`), DIR defaulting to
+  `<stem>.edit`; it excludes `-o`. The view names the file it read
+  (`source: FILE_modified.docx`) and the `wrote` line and notes go to
+  stderr, the bundle's too. A FILE already named `X_modified.docx` keeps
+  its name, so editing it again needs `--force`. An existing output exits
+  2 without `--force`; the plan runs first, so a refused plan still
+  prints its report. `parse_cli_json`/`parseCli` hand the hosts the
+  resolved `output` or `out_dir` (both null while recording into a plan),
+  and the Python and npm CLIs write there.
+
+- `edit` and `add` take `--plan` without a value: `<FILE's dir>/<stem>_plan.json`,
+  for recording, appending and applying (`--consume` too); the summary's
+  apply line spells it bare (`jubarte edit a.docx --plan`). A Word
+  document's name as `--plan`'s or `--out-dir`'s value exits 2, saying
+  FILE was read as the value.
+
+- **`compare A B` prints the redline's agent view**, as `jubarte A B`
+  does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
+  moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
+  in the Python and npm CLIs too.
+  The Python and npm CLIs print the view too, and write the `.md` view,
+  `.pdf` and `.json` (Python `.png` too); both refuse the Markdown-input
+  options for now. A host without `read`
+  refuses a compare that prints the view.
+
+- `jubarte --help` lists the tasks; the shorthands' options are in
+  `jubarte compare --help` and `jubarte read --help`.
+  `--powertools-faithful` is hidden (`--mode powertools` stays).
+  `jubarte FILE` refuses compare's own options (`--author`, `--mode`,
+  `--critic`, the Rendering group, …) with exit 2: they took no effect.
+
+- `accept`, `reject`, `append`, `scrub`, `convert` and `read -o` say
+  `wrote PATH (KIND, N bytes[, P pages])` on stderr, or
+  `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q` silences it
+  (and `diff`'s line too). `convert` and `append` said it on stdout;
+  `accept`, `reject` and `scrub` said nothing before.
+
+- `convert --changed-only` (and the library's `PdfOptions::changed_only`)
+  also keeps the pages a comment is anchored on and the first page of each
+  section on which a revised header or footer paints. The comment listing's
+  pages number on after the document's last page.
+
+- `-q`/`--quiet` is one global option, after the task
+  (`jubarte compare a.docx b.docx -q`) or before it (`jubarte -q read
+  a.docx`); every other option goes after the task. Saying it twice
+  (`-q -q`, `-qq`) is still quiet, and `jubarte -q help` prints the help.
+
+- `validate` prints findings in one order every run (part, location, code,
+  message); two findings at one location used to swap between runs.
+
+- `diff-render` is `visual-diff`.
+
+- `convert` and `diff` share one Rendering group (`--revisions`,
+  `--revision-palette`, `--dpi`, `--move-comments`, `--changed-pages`,
+  `--pages`), refused with any output that is not a PDF or PNG. `-o`'s
+  extension (or `--to`) picks the one format convert writes: `-o X.png`
+  writes PNG pages only, and convert no longer writes a PDF and PNGs in
+  one run. `--pages` narrows a PDF too, and each PNG is named by its
+  document page (`X-page-03.png`), also under `--changed-pages`.
+
+- **Recording a plan checks it without applying it**, and a recording
+  pins an unpinned plan and never narrows its filters (a recorded
+  selection cannot join ids into an accept or reject that selected by
+  author, kind or all).
+
+### Deprecated
+
+- `diff-render`, `text` and `inspect` (now `read`; `inspect FILE` prints
+  the agent view, `inspect --json` the snapshot, `inspect --tables` the
+  grid), `audit` (now `validate --rules a11y,style,structure`, which it
+  still checks when no `--rules` is given), `--changed-only` (now
+  `--changed-pages`), convert's `--pdf` and `--png` (now `--to pdf`/`--to
+  png`; together they exit 2) keep working and print
+  `note: X is now Y; X is removed in 0.14` on stderr. The shared parser's
+  JSON carries those notes as `notes`, and `args.quiet` on every task.
+  `jubarte --help` no longer lists them, nor `debug` (still documented in
+  AGENTS.md); `self-update` is listed last.
+
+### Removed
+
+- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
+  `util::sha1_fingerprint`, deprecated in 0.10.2 and promised to go after
+  one release (#1456): call `fnv1a_64` and `fnv1a_128`. They never
+  computed SHA-1.
+
+- `comparer::finalize::promote_mid_pure_del_spacing_from_pprchange`,
+  `strip_default_left_jc` and `strip_redundant_equal_spacing_pprchange`.
+  Each ran all of `cleanup_spacing_and_default_jc` (M226, M228 and M231
+  together), so its name promised one pass and it ran three: call
+  `cleanup_spacing_and_default_jc`.
+
 ### Fixed
+
+- **Cell borders that two groups name keep both.** The Markdown writer
+  gave a cell only the first `cell-borders` group that named it. Every
+  group that holds the cell now gives its sides, and a later group's
+  side replaces an earlier one's. Found by the old-branch test harvest
+  (#1558, #1617).
+
+- **Border shadow and frame survive the Markdown round trip.** A border's
+  `w:shadow` and `w:frame` print after its colour (`single 1pt 2F5496
+  shadow frame`) and are written back. Before, the view dropped them
+  (#1558).
+
+- **Resolved Markdown verifies against the md→docx reader** (#1240).
+  Resolving CriticMarkup splices the kept side of every mark back into
+  the source and lets Markdown re-read it, and the splice is not
+  compositional under CommonMark's delimiter rules: a kept `_b_`
+  inside `*a…c*` read as literal underscores, `*a{++*b*++}c*` read as
+  a bare `b`, `***a*b*c***` read as italic plus a stray `**`, so the
+  md→md route and the docx route (`convert --to md --track-changes
+  accept|reject`) disagreed for a seam inside a formatted span.
+  Resolve now verifies every inline block holding a mark against the
+  md→docx reader's own run model. A candidate that already reads like
+  the model stays byte-identical; one that does not has the smallest
+  inline span holding the mark re-emitted from the model as a
+  common-format interval tree (`**a*b*c**`), the user's delimiter
+  flavour first and the writer's second, every try verified before the
+  next, and the block's whole inline content is the last resort with
+  its block syntax kept. Where the reader's model is not a truth —
+  a comment or a highlight inside a change, a mark holding a line
+  break, a change named as nested inside another
+  (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`), an anchor the model cannot
+  tie to its change, or a malformed delimiter — the splice is kept, as
+  before. A partial overlap between two seam joins no longer splices
+  both, which used to panic on a byte index past the text.
 
 - **Text goes into an empty paragraph (#1263).** `edit FILE -p p9
   --content "text"`, an `insert` at `position` `start` or `end`, and a
@@ -131,6 +1048,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   plan order (#1303). Checked in Word: the redline opens; Accept All
   leaves one plain paragraph with the text, Reject All the empty
   paragraph.
+
 - **A whole-paragraph edit follows a paragraph the settle merged alone
   (#1269).** Under a plan that settles revisions, `delete_paragraph`,
   `rewrite` and the other whole-paragraph operations were refused
@@ -145,6 +1063,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   source as the plan does. A neighbour whose own text the settle changes
   still counts as a source of the merge, so an operation on one paragraph
   never removes another's words.
+
 - **An insertion stays beside the bookmark, comment and permission markers
   it meets (#1156).** Before, an `insert` before a bookmarked word put the
   bookmark's start inside the new `w:ins`, and the edit was refused
@@ -166,6 +1085,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   replaced whole, whose TOC entry would read "Error! Bookmark not
   defined."), the plan is refused with `CANDIDATE_INVALID` and the route
   (drop `update_fields`, then `jubarte convert FILE --update-fields`).
+
 - **`read --json` and `--tables` take the view's options (#1158, #1255).**
   `--comments` and `--dates` were refused with `--json`, `--tables`,
   `--for-edit` and `-o FILE.json`, and `--no-page-markers` was dropped
@@ -193,28 +1113,36 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   names and the main part does not reach, and drops any other binding
   so Word keeps the control's text. `jubarte validate` reports a
   binding with no store as `DATA_BINDING_WITHOUT_STORE` (a warning).
+
 - **A text box's paragraph style survives Markdown** (#1423). The
   `styles:` legend listed only the styles of the body's own paragraphs,
   so a style used only inside a text box (a cover page's `No Spacing`)
   was left undefined in the docx written back, and the box's paragraph
   fell back to Normal. The legend now describes it too.
+
 - **A header's or footer's paragraph indent survives Markdown** (#1422).
   A story paragraph's own `w:ind` was dropped, so the footer text next to
   a framed page number ran under the number. It now prints in the
   paragraph's entry (`p1: {text: …, indent: {first-line: 0.25in}}`) and
   converting back writes it.
+
 - **A header's or footer's frame survives Markdown** (#526). Word's
   page-number frame (`w:framePr`, the number at the margin's edge) was
   dropped, so the number came back as an ordinary line of the header.
   A framed paragraph now prints paragraph by paragraph with its frame
   (`p0: {text: "{PAGE}1{/}", frame: {wrap: none, hAnchor: margin,
   vAnchor: text, xAlign: right, y: 1}}`), and converting back writes it.
+  A frame naming the same attribute twice does not read, and the story
+  entry with it: an element cannot carry both values, so the view names
+  neither.
+
 - **A style's zero spacing or single line survives the Markdown legend**
   (#1421). The `styles:` legend left out a `before`/`after` of 0 and a
   single line even when the default style has some, so a heading with no
   space after came back with the body's 10pt after it. The legend now
   says `after 0pt` and `line 1` whenever they set the style apart from
   its base.
+
 - **The document's default spacing stays its default through Markdown**
   (#1420). The writer put the default paragraph style's spacing on
   `Normal` itself. A table style's own spacing (every built-in one sets
@@ -223,6 +1151,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   grew: an 11-page document came back with 13 pages, in Word as in
   jubarte. That spacing is now written as `w:pPrDefault`, where Word
   keeps it.
+
 - **A table style whose borders vary keeps them through Markdown** (#1419).
   The view named such a style `Ledger, borders vary`, which the writer
   could not rebuild, so the style came back without borders. A style of
@@ -234,7 +1163,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   its sides (`TableGrid, borders top double 3pt bottom double 3pt`).
 
 - **A story's deleted or inserted last paragraph is a patch hunk of its own again.** The view writes that paragraph and the mark before it as separate changes, and since the settled dialect (#1135) the patch had joined them to the paragraph above (`@@ [p1] @@ Kept.[-\n\n-][-Last.-]`). `diff` and `patch_redline` now give `@@ -[p2] @@ [-Last.-]` (or `@@ [p2] @@ {+Last.+}`), also when Word split the paragraph into several marks or a line break sits in it. When another author changed the mark, accepting that change alone joins the paragraphs, so the mark stays a change named after its author.
+
 - **Paths the CLI records for files it has not written yet are canonical** (#1244). The `wrote` summary, the receipts and the error envelopes name such a file by its deepest existing ancestor's real path plus the missing tail. Windows CI printed the runner's 8.3 short name (`RUNNER~1`) instead, and a missing file in a missing directory now stays absolute.
+
 - **Duplicate ZIP and OPC part identities are refused on every route**
   (#600). OPC part names compare ASCII-case-insensitively (ECMA-376
   Part 2 §6.2.2.3 M1.12), so two entries naming one part — a byte-equal
@@ -245,7 +1176,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   resolves under the one identity, `set_part` replaces while keeping the
   stored spelling, and `to_zip` writes one entry per identity (reserved
   parts under their canonical spelling).
+
 - Enforce XML tag policy at package admission and checked XML APIs with active limits: defaults of 1,024 attributes, 1,024-byte attribute names, 64 MiB values and 128 MiB start tags, plus duplicate expanded-name refusal. Preserve permissive comparison tree construction and linear bulk attribute insertion. Markdown conversion enforces explicit `MarkdownOptions::input_limits`, including on best-effort auxiliary parts; comparison-to-Markdown carries active limits. Ring-1 reports Word-fatal `DUPLICATE_EXPANDED_ATTRIBUTE` with part and element (#650).
+
 - **Package writes plan against ZIP32 and never write ZIP64** (#604).
   Every writer — `PartFs::to_zip`, the Strict→Transitional repack, the
   Markdown default template — runs `zip32_plan` on the names and
@@ -261,6 +1194,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   bytes; its zero-churn pass-through is unchanged. Written entries stay
   Deflated with version-needed 20 and no ZIP64 fields, asserted per
   entry in both headers.
+
 - **`convert --to md --track-changes accept|reject` keeps the spans at a
   seam** (#1220). Resolving CriticMarkup in Markdown could leave two
   same-kind inline spans touching, which CommonMark then read as one
@@ -326,6 +1260,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   carry no listed id), so a selection that leaves any prints a note with
   the count. A comment whose revisions empty its paragraphs keeps one
   `w:p`, the shape Word writes.
+
 - **Fractional plain values on table and frame geometry are rounded in
   redline output — a validity repair.** A gdocs-style fractional dxa
   (`w:tblpX="100.5"`, `w:framePr w:x="33.5"`) is schema-invalid on the
@@ -334,578 +1269,13 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   them (101, 34) as it already did for indents, spacing and cell margins.
   `jubarte debug` still reports the literal value: a diagnostic describes,
   it does not repair.
+
 - **Writing an output works on Linux again (#1351).** cap-std opens
   directories `O_PATH` there, and `fsync` on an `O_PATH` descriptor fails
   with EBADF. Every write reported `Bad file descriptor (os error 9)` and
   "durability uncertain" after the file was already in place. The
   directory sync now opens `.` through the handle it holds, which walks no
   path, so root confinement still holds.
-
-### Added
-
-- **A plan error teaches (#1258).** An `INVALID_PLAN` for an operation names it
-  (its `id`, else `op-N`), its kind, the field, the nearest field the kind takes
-  and the list of its fields; an unknown kind lists the kinds; a missing
-  `schema_version`, characters after the plan, a bare number for `paragraph` and
-  a string for `resolve_revisions.*.ids` each say what to write, as do an `id`
-  that is no string and an alias beside the field it is read as. A byte order
-  mark before the plan is ignored. Two slips apply as meant, each with a
-  `note:` line on stderr and in the `summary` event's new `notes`, present
-  when one applies (`EditReport.notes`, `EditPlan::from_json_with_notes`):
-  `anchor` for `find` on `replace`, `delete` and `comment`, and `comment` for
-  `text` on `comment` and `reply_comment`. `delete` and `rewrite` take a
-  `comment`: a deletion's sits on the struck words in the redline only, and a
-  rewrite's covers the paragraph. The version is read first: a plan whose
-  `schema_version` this build does not read is `UNSUPPORTED_SCHEMA` before
-  its fields are checked (a v2 plan given to `EditPlan::from_json` was
-  `INVALID_PLAN` for its v2 fields). `edit apply` says a plan that is an
-  array, a string or a number is one JSON object, instead of asking for its
-  `schema_version`. Under a plan that settles revisions, a deletion's
-  comment lands on the paragraph the deletion names as read. When the
-  comparer deletes the same words elsewhere, the refusal says so and gives
-  `"existing_revisions": "keep"` (`--existing-revisions keep`), which writes
-  the deletion as given.
-- **`validate OUT --baseline IN` names only the edit's findings (#1256).**
-  The findings IN already has print as `already in the input: N (not
-  yours)` after the new ones (`new: none`, or `new: N` and their lines),
-  then, when the edits fixed some, `resolved: N (in the input, not in this
-  file)` and those; only new findings fail the run, `--strict` included. A
-  finding is new by identity, never by count: its code, set and part, its
-  element chain without indices (`p#` for a paragraph id, in any story),
-  its message with element indices and paragraph ids normalised, and a
-  place it shares with the input's finding, tried strongest first:
-  nothing around it changed; the tracked change it sits in (`jubarte
-  edit` keeps the input's `w:id` values); its paragraph's `w14:paraId`;
-  its paragraph's text between the same neighbours; that text alone; and
-  last the neighbours alone, its paragraph rewritten. Outside a
-  paragraph the text is its table's, or its element's with the
-  attributes of what holds it (a style's id). So a paragraph added above
-  an inherited finding, even one of the same text, leaves it the
-  input's; the copy an edit adds beside an inherited finding is the one
-  printed as new; and a finding that replaced another, elsewhere, is new
-  at the same total. The
-  field, table and nesting checks now report the element chain they found
-  (`word/document.xml#w:body[0]/w:p[1]/w:r[1]/w:fldChar[0]`) instead of
-  an empty place. `--json` prints each finding with `"status": "new"` or
-  `"baseline"`, new ones first, then one `{"resolved":[…]}` line. With
-  `--author`, IN goes through the same rules, the edits rule included,
-  against the same original (IN, unless `--original` names another), so
-  the other party's changes IN already had are `already in the input`,
-  matched by their id, then by kind, author and text.
-  `--baseline` conflicts with `--repair`. Library:
-  `validate::{baseline, baseline_keyed, identities, validate_baselined,
-  baselined_text, baselined_json, input_notice}`, `Baselined`,
-  `FindingKey`, `Place` and `Finding::identity`; Python `validate_run(…,
-  baseline=)` and `input_notice`, WASM `inputNotice`.
-- **With `--json`, an error is a JSON object on stdout too (#1255).** A
-  usage error prints `{"error":{"code":"USAGE","message":"…","usage":"jubarte
-  read [OPTIONS] <FILE>"}}`, a runtime error `{"error":{"code":…,"message":…}}`
-  (its code the message's leading `CODE:`, else `ERROR`), on one line, beside
-  the same text on stderr and the same exit code; `jubarte read x.docx --json
-  --bogus | jq .error.code` prints `"USAGE"`. A message clap spreads over
-  lines is joined on one, and `usage` keeps each form clap prints, a line
-  per form; a removed spelling's line (`--date is removed; use
-  --datetime`) carries the usage too. The npm and Python CLIs print the
-  same: WASM `wantsJson` and `runtimeJsonError`, Python `wants_json` and
-  `runtime_json_error` (a `--json` that is an option's value, as in `edit
-  replace … --text --json`, asks for none), and `parseCli` results carry a
-  usage error's line as `json`. `--track-changes` also takes `accepted` and
-  `rejected`. WASM `tablesText` and `readJson`, and Python `tables_text`
-  and `read_json`, take the `trackChanges`/`track_changes` the CLI does;
-  WASM `tablesView` and Python `tables_view` print `read --tables` whole,
-  `-p` and the view's options included, as `{markdown, warnings}` and a
-  `(markdown, warnings)` pair; a pick that reaches no table raises
-  `USAGE: …`.
-- **`edit --skip-failed` applies what passes (#1253).** Every operation
-  that passes is applied and the failed ones are left out: the output is
-  the bytes the plan without them writes, exit 0. stderr says `skipped 2 of
-  14 operations; the fixes are in PLAN.failed.json`, a plan of the failed
-  operations to fix and run on the output (its `source_sha256`, the run's
-  `date`, a `why` on each operation that the parser ignores). A
-  positional paragraph (`p3`, `{"index": 3}`, `t0.row1.cell2`), or a
-  control named through one (`p3.cc0`), that the applied operations moved
-  is renamed to its id in the output, and `why` says `p3 is p4 in the
-  output` in the plan's own spelling. One with no one-to-one counterpart in
-  the output (deleted, merged, split) becomes `source:p3`, which no
-  document resolves, so it runs only once given again; a skipped operation
-  `existing_revisions` keep refuses
-  (`insert_footnote`, `insert_image`, `page_setup`, `fill_control`) says,
-  on the skip line and in `why`, to fix it in the original plan. Operations
-  sharing a `"group"` stand or fall together (`GROUP_FAILED`). The report's
-  `summary` says `"status":"partial"` with `ops.skipped`. `STALE_SOURCE`, a
-  failing `resolve_revisions`, a failing strike or restore that
-  `--reject --visible` added, and a plan whose every operation fails are
-  never skipped; those strikes and restores keep the names the whole plan
-  gives them. `--consume` keeps a plan that did not land whole, and says
-  so. The manifest's `operations.edit_skip_failed` says whether a runtime
-  has it (the CLI and Rust; not yet the Python and WASM bindings), whichever
-  runtime asks.
-- **Every edit write prints `sha256: <hex>`** of the primary output, also
-  the `summary` event's `output_sha256`, and a `--dry-run` that passes
-  whole ends with `next:`, the command that writes it: the same arguments
-  without the `--dry-run` flag (a FILE named `--dry-run` after `--` stays),
-  and `--force` before any `--` when the output, or an `--out-dir` empty
-  or not, is already there (#1253). `cli::next_command` builds it.
-- **Visible rejects: `strike` and `restore` (#1252).** `edit FILE -p r12
-  --strike` deletes another author's insertion with your tracked deletion
-  inside it; `-p r12 --restore` leaves their deletion and inserts a copy of
-  its words, formatting kept, right after it. Rejecting either way shows
-  the decision, where `--reject` leaves no trace. `--content` comments on
-  the struck or restored words, and `--reject --visible`
-  (`resolve_revisions.reject.visible` in a plan) picks strike or restore by
-  each revision's kind. Plans take `{"kind":"strike"|"restore","revision":…,
-  "comment":…}` under `existing_revisions: keep`; discovery offers both
-  only there. Own revisions, empty ones, paragraph marks, formatting
-  changes, a move's source to restore or destination to strike, and a
-  split or non-plain deletion to restore are refused with the route that
-  takes them.
-- **`debug --full-lines`** prints the listing checks' lines (`text`, `xml`,
-  `runs`, `changes`, `styledefs`, `numbering`, `render`) whole instead of
-  clipping them at 200 characters; `debug::Options` gains `full_lines`. The
-  Markdown round-trip gate reads the render check this way: a clipped table
-  line kept a window that still held the cell shading the gate drops, so
-  `ids-fonts.md` reported a table difference the two packages do not have.
-- **`convert --commonmark`** writes Word as plain CommonMark with
-  CriticMarkup, for readers outside jubarte's dialect: what `convert … -t md`
-  wrote before.
-- **A change's note names its number in plain Markdown:**
-  `{++new++}{>>r5 Ana Lima (2026-09-29T14:05:00Z)<<}`. The writer reads a
-  numbered note as the change's attribution, so an undated author
-  (`{>>r75 Di Eng<<}`) and an empty one (`{>>r5 (2026-…)<<}`) come back as
-  they were instead of turning into a comment or `Redline`. A note with no
-  number keeps its old meaning.
-- **Plain Markdown keeps Word's cross-reference targets:** every `_Ref…`
-  bookmark prints its `<a id>`, since the REF fields that name it print as
-  their text.
-- **`PdfOptions::comment_notes`** (hidden CLI flag `--comment-notes`)
-  attaches each comment as a PDF note at its anchor, for the exceptional
-  case that wants one.
-
-- **`convert --scholar`** sets Markdown as LaTeX's article class sets a
-  manuscript (Latin Modern Roman 10pt, justified, bold headings, unstretched
-  line-break lines) and numbers the pages from page 2, filling in only what
-  the front matter leaves out. Python `from_markdown(scholar=…)`, wasm
-  `markdownToDocx` `scholar`, and the npm CLI take it too.
-
-- **The Python CLI prints what the binary prints.** `changes`, `comments`,
-  `read --tables` and a selected `read --json` come from the engine
-  (`_native.changes_text`, `comments_text`, `tables_text`, `read_json`), and
-  every `wrote` line from `wrote_line`/`wrote_png_line`, on stderr. Edit's
-  report lines are compact with sorted keys, so a bundle is byte-identical
-  to the binary's. Python's `Change` gains `ref` and `paragraph`, `Comment`
-  gains `ref`, and `Snapshot` gains `changes` and `comments`.
-- **The npm CLI prints what the binary prints**, for the commands it has.
-  `changes`, `read --tables`, a selected `read --json` and every `wrote`
-  line come from the engine (jubarte-wasm adds `changesText`,
-  `commentsText`, `tablesText`, `readJson`, `wroteLine` and
-  `changeFilter`); the wrote lines move to stderr. A bad change id exits 2
-  before anything is read, a failed resolution reads `accept failed: …`,
-  I/O errors read as Rust words them, and edit's report lines are compact
-  with sorted keys. `applyEditPlan` takes the file's name for its patch,
-  which under `existing_revisions: keep` shows only the plan's changes, so
-  an edit bundle is byte-identical to the binary's. npm still has no
-  `comments`, `validate`, `append`, `scrub`, `visual-diff`, PNG output or
-  `--pages`.
-- **MCP `docx_text` returns `read`'s agent view** (the header, `<!-- pN -->`
-  id lines, revisions and comments with their ids) instead of the body with
-  `[body:p:N]` ids; plans take `p12` as written.
-
-- **One id grammar** (`jubarte::ids`), the same in every place an id goes:
-  revisions `r12`, `r1+2` (both marks of one change), `header1.r1`,
-  `footnotes.r3`, and the long `body:rev:12` the JSON prints; comments
-  `c27` (a plan's `comment_id` also takes the number `27`); paragraphs
-  `p12`, `header1.p2`, `footnotes.p3`, `t0.row1.cell2` (`.p1` for a cell's
-  second paragraph), and the long `body:p:12`. `accept`/`reject --id`,
-  `edit`/`add -p`, a plan's `paragraph`, `resolve_revisions` ids and
-  `comment_id` take them all; bare numbers and 0.12's `#12`, `#1+2`,
-  `#c27` and `t0.r1.c2` exit 2 (see Changed). Every printed id is safe
-  unquoted in bash, zsh and csh, and each number has one spelling (`p012`
-  is refused).
-- `edit FILE -p r12 --accept` (or `--reject`) resolves one tracked change,
-  before the command's other operations; `-p` repeats. `--reply TEXT` on
-  `edit` and `add` with `-p c5` answers a comment.
-- `changes --json` and `comments --json` lines, and the snapshot's
-  `changes` and `comments`, carry `ref`, the short id (`r12`, `c5`), beside
-  the long `id`; a change also names its `paragraph`, and the `changes`
-  text listing gains a paragraph column. `validate --json` lines carry
-  `ref`, the short id (`p5`) beside the long `location` (`body:p:5`);
-  Python's `Finding` gains `ref`, and MCP `docx_validate` returns it
-  (as `docx_changes`/`docx_comments` already return `Change`/`Comment`
-  `ref`).
-- `c5.text` names the text comment c5 covers, for `edit -p` and a plan's
-  `paragraph`. `edit X -p c5.text --content "new"` replaces it as one
-  tracked substitution inside the comment (a range over two paragraphs
-  that follow each other also deletes the mark between them);
-  `--anchor` looks only inside it (`… is not in the text c5 covers`,
-  exit 3); `--delete` deletes it. `-p c5` still edits the comment's own
-  text. `capabilities` lists the spelling under `ids.comment_text`.
-- `read` prints the paragraph id of each footnote and endnote on the
-  line before its definition (`<!-- footnotes.p0 -->`,
-  `<!-- endnotes.p0-p2 -->` for a note of three paragraphs): the id
-  `edit -p` takes to change the note.
-- `read --json` prints the snapshot (`inspect --json`'s, which now also
-  carries `changes` and `comments` as `changes --json` and
-  `comments --json` list them). `-p`, `--head`, `--tail`, `--changed` and
-  `--by` keep the paragraphs they select and those paragraphs' changes and
-  comments; the view-only flags exit 2 with it, and so does `--json` with
-  two documents. `read --tables` prints the table grids. The Python and
-  npm CLIs do the same. The library adds `inspect::snapshot`,
-  `Snapshot::retain`, `inspect::tables_text` and
-  `markdown::read_snapshot`; `ReadView` and `ReadDocx` gain `selected`.
-
-- One writer for `-o`. `accept`, `reject`, `append` and `scrub` write
-  what the output's extension names: `.docx` (and any other extension),
-  `.md` (the agent view of the result), `.pdf`, `.png` (one file per page)
-  or `.json` (the snapshot), and take `--revisions`, `--revision-palette`,
-  `--dpi`, `--move-comments`, `--changed-pages` and `--pages` for a PDF or
-  PNG. `read` (and `jubarte FILE`) takes `-o FILE.md` for the view or
-  `-o FILE.json` for the snapshot, and `--force`. `convert` writes `.json`.
-  The Python CLI writes them too (it has no `append` or `scrub`); the npm
-  CLI writes all but `.png` (it has no PNG pages, `--pages`, `append` or
-  `scrub`).
-- `compare` takes the view's options (`--track-changes`, `--comments`,
-  `--dates`, `--no-page-markers`, `-p`, `--head`, `--tail`, `--changed`,
-  `--by`), `--reference-doc`, `--critic` and `--resource-path` for
-  Markdown inputs, and the Rendering group. `-o` writes `.docx` (and any
-  other extension), `.md` (the redline's agent view; CriticMarkup when
-  both documents are Markdown), `.pdf`, `.png` or `.json` (the snapshot).
-  The view's options go with the printed view or a `.md` view, the
-  Rendering group with a `.pdf` or `.png`, the Markdown-input options
-  with a Markdown document; anything else exits 2. Whether a `.md` is
-  CriticMarkup is read from the documents' bytes when their names do not
-  say, in the binary and in both hosts.
-- **`xmllinq::Dom::attributes_iter`** walks an element's attributes as
-  borrowed `(&XName, &str)` pairs, in declaration order, without the `Vec`
-  of cloned pairs `Dom::attributes` builds. The crate's own read-only
-  callers use it, and the emptiness checks use `Dom::has_attributes`.
-
-### Changed
-
-- **What a settle removes is said before and after (#1159, plan 10).**
-  `changes` ends a change's line with a tab and `holds comment c4's mark`
-  (`holds comment marks c4, c5`) when it holds a comment's reference mark,
-  a field after any `inside r1`, and
-  `--json` lists them in `holds_comments` (Python `Change.holds_comments`):
-  accepting that deletion, or rejecting that insertion, removes the
-  threads. The agent view says it too: a note printed outside the change
-  that holds its mark names it last, `{>>c4 @AC in r13: …<<}`, and
-  converting the view back puts the mark inside r13 again (before, it came
-  back outside, so accepting r13 no longer removed the thread). Every
-  `removed_comments` record says `why`, `anchor removed by accepting r13`,
-  naming the change the pass settled (the side of a move the plan named,
-  the innermost of nested changes), and the receipt line and `jubarte
-  accept`/`reject`'s warnings say the same (`ResolvedChanges::removed_why`).
-  A reply to a comment whose paragraph the same plan
-  deletes is no longer refused as `OVERLAPPING_EDITS`: it goes on the
-  deleted text beside its parent, where Word shows the thread; a v2 plan
-  with `"track": "off"` removes the anchor and is refused with
-  `COMMENT_ANCHOR_REMOVED`, as any untracked deletion of an anchor is, and
-  `--editing-mode` refuses the reply (exit 2): its clean copy keeps no
-  thread for the reply to join.
-
-- **`read`, `changes` and `comments` name the input's validity findings
-  once (#1256).** An input `validate` would flag earns one stderr line,
-  `input has 2 validity warnings; jubarte validate FILE lists them` (`1
-  validity error`, or `1 validity error and 2 warnings`; `info` findings do
-  not count), so an agent does not take them for its own; `-q` drops it
-  and skips the check. A JSON read prints no such line (#1309): `read
-  --json` carries the counts in its snapshot's `summary.input_validity`,
-  `{"errors":0,"warnings":2,"next":"jubarte validate FILE"}` (a clean input
-  `{"errors":0,"warnings":0}`), and `changes --json` and `comments --json`
-  end with one `{"input_validity":{…}}` line, always, `-q` or not, so
-  `--json 2>&1 | jq` stays JSON. `read --for-edit` prints JSON too, so its
-  result carries the same `input_validity` (#1340). `read -o FILE.json`
-  writes what `read --json` prints and keeps the stderr line, and `read
-  --for-edit -o FILE.json` likewise. Library:
-  `validate::{InputValidity, input_validity, input_validity_of,
-  input_validity_line, input_notice_of}`, `Summary::input_validity`;
-  Python `read_json(validity_file=)` and `input_validity_line`, WASM
-  `readJson`'s `validityFile` and `inputValidityLine`. The npm CLI's `read`
-  and `changes` and the Python CLI print the same. `--rules edits` without
-  `--author` now says `--rules edits needs --author, and --original or
-  --baseline`.
-- **Edits inside another author's insertion land (#1136).** Under
-  `existing_revisions: keep`, a replace, deletion or insertion in text
-  another author inserted nests in their insertion: Accept All keeps the
-  edit, Reject All removes their insertion with it. An edit inside your own
-  insertion rewrites it in place. `delete_paragraph` of a paragraph holding
-  revisions nests the deletion in other authors' insertions, leaves
-  deletions as they are and removes your own pending insertion outright; a
-  paragraph holding a move is still refused. The report's `summary` names
-  the pieces of each split insertion under its source id
-  (`split_revisions`, `EditReport::split_revisions`). An `edit apply` plan
-  or a typed `edit delete --whole-block` of a paragraph holding another
-  author's deletion no longer fails `REVISION_PRESERVATION_FAILED`: the
-  clean copy drops the paragraph with its revisions, the redline keeps
-  them.
-
-- **A refusal names the revision in the way and every route around it
-  (#1108).** Text another author deleted or moved, and a paragraph or run
-  whose mark or formatting change is tracked, are refused with the
-  revision's id, author and text, then accept, reject and a comment, each
-  with what it costs, quoted in the syntax the caller wrote (operation
-  flags, including flags recorded into a plan; a v1 plan; an `edit apply`
-  plan; or a typed command, whose routes are its own `--accept-change ID`
-  and `--reject-change ID` (#1310)). The structured `next_actions` (#1147)
-  come with every such refusal, a v2 insertion-side one included, and with
-  no other error: an anchor that merely quotes a refusal's words gets none.
-  The `revision_refusals` data records the syntax its message quotes,
-  `typed_action` for a typed command. Each JSON route pastes into
-  its plan as written: ids are JSON-escaped, an `edit apply` route names
-  both `accept` and `reject` lists, and its comment carries the refused
-  operation's own `target`. An anchor that reaches into another author's
-  deletion gets this refusal instead of `ANCHOR_NOT_FOUND`, copied with or
-  without the deletion's marks, with a tab or a lookalike character. No
-  refusal says to resolve the change first. A deletion restore takes is
-  offered `restore` first ("put it back visibly"), in operation flags and
-  v1 plans.
-
-- **Edit plans: a `paragraph` key on a comment-thread operation is refused.**
-  `reply_comment`, `resolve_comment`, `edit_comment` and `delete_comment`
-  select a comment, not a paragraph, and used to ignore a stray `paragraph`
-  silently; they now refuse it as an unknown field (`INVALID_PLAN`), as
-  `list`, `watermark`, `settings`, `fill_control` and `page_setup` already
-  did. Discovery publishes every v1 operation as closed
-  (`additionalProperties: false`), with the bounds the dispatcher enforces.
-
-- **Breaking (CLI): `convert FILE.docx -t md` writes the agent view**, the
-  Markdown `jubarte read` prints (YAML header, id lines, ids on changes and
-  comments), which comes back whole through `convert FILE.md`. Pass
-  `--commonmark` for the plain Markdown it wrote before.
-
-- **Tables keep the borders Word passes; a Markdown table takes Word's thin
-  grid.** The agent view prints a table's own borders (`borders single 0.5pt
-  000000`), its rows' own (`row-borders … in t0.row1`, `w:tblPrEx`) and its
-  cells' (`cell-borders … in all`, a row, or a cell), theme colours included
-  (`theme accent1 tint 99 shade BF`), and the writer writes them back as they
-  were. A Table Grid the source defines with its own uniform border keeps it. A table without a style is
-  `TableNormal` (written with no `tblStyle`); a table that names nothing, as a
-  plain Markdown table, takes Table Grid (single 0.5pt borders all round, as
-  Word's Insert Table makes it) instead of the borderless Normal Table.
-  `debug --check render` reports both kinds of border.
-
-- **No PDF comment note by default.** `--revisions conventional` and
-  `custom` no longer write a `/Text` annotation per comment: viewers
-  painted it as a note icon over the commented words. The balloon still
-  shows every comment; `PdfOptions::comment_notes` brings the note back.
-
-- **The view nests list items by indentation.** An item past its list's
-  first level is indented to the content column of the item it nests
-  under, and its id line with it, so the Markdown reads as a nested list
-  at any depth. `level N` stays on the id line only when indentation
-  cannot say it (a list that starts deep, or a skipped level, which adds
-  no indentation). Reading back, an HTML block indented inside a list item
-  no longer leaves a stray empty paragraph.
-
-- **Breaking: `edit --accept/--reject` prints the resolved changes, not the view.**
-  `edit FILE -p r12 --accept` (or `--reject`, `-p` repeats) prints one line
-  per resolved change (`accepted r1+2 in p3: "{~~weekly~>monthly~~}" >
-  "monthly"`), nothing else; ordinary content edits still print the changed
-  paragraphs. `-p r1` accepts only `r1`, not its `r1+2` pair.
-- **Breaking: jubarte prints short ids.** The agent view tags revisions
-  `r12` (`header1.r1`, `footnotes.r3` in other stories) and comments `c5`
-  (a reply names its root, `re c5`); table lines name rows and cells
-  `row1` and `row1.cell2`. `changes` and `comments` list the same ids,
-  and `validate`'s messages name paragraphs by them (`p108`, `header1.p1`).
-  JSON keeps the long `id` and adds `ref`; machine hints and refusals keep
-  the long id.
-- **Breaking: one revision count.** `summary.revisions`, the view's
-  `revisions:`, the edit report and `changes` count each listed change once
-  across the six parts `accept` and `reject` process (body, headers,
-  footers, footnotes, endnotes, styles), formatting changes included. Word's
-  own pairs count once: a style's `w:pPrChange` and `w:rPrChange` sharing a
-  `w:id`, and a text box's `mc:Fallback` copy. Marks in `comments.xml` and
-  `numbering.xml` no longer count.
-- **Breaking: only the settled short ids parse.** `12`, `#12`, `#c27`,
-  `#c27.text` and `t0.r1.c2` exit 2 wherever an id is taken (`--id`,
-  `edit -p`, `read -p`, plan JSON, Python and npm alike), naming the
-  settled spelling the option takes: `--id 12` → `r12`, `read -p 12` →
-  `p12`, `-p 6 --resolve` → `c6`, `t0.r1.c2` → `t0.row1.cell2`. A settled
-  id `-p` does not edit yet (`s0`, `p3-p7`, `toc0`) exits 2 as well. The
-  long `body:rev:12`, `body:p:12` and `header1:p:0` are refused the same
-  way, naming `r12`, `p12` and `header1`; nothing prints them any more.
-- **Breaking: content controls are `ccN` and `pN.ccK`.** `inspect`'s
-  controls and a plan's `fill_control` name a block control `cc0` (the
-  body's block controls in order) and one inside paragraph `p12` `p12.cc0`
-  (that paragraph's controls in order); a cell's first paragraph also
-  spells its controls `t0.row1.cell2.cc0`. The old `body:sdt:3` is refused
-  with `ANCHOR_NOT_FOUND`, naming the control's id. Under
-  `resolve_revisions` or `existing_revisions` a control id names the
-  control of the document the plan's author read, as paragraph ids do.
-  `capabilities` lists the spellings under `ids.control`.
-- **Breaking: `read --tables` and `validate` print short ids.** A table
-  cell that read `body:p:1=Item\tbody:p:2=Qty` now reads
-  `p1=Item\tp2=Qty` (a cell's `p3,p4`, via `ids::short_paragraph`, the id
-  the agent view prints for the same paragraph); the snapshot's tables keep
-  the long ids. A finding that read `word/document.xml#body:p:5` (or
-  `body:p:0` for the audit sets) now reads `word/document.xml#p5` (or
-  `p0`); JSON keeps the long `location` and adds `ref`.
-- Python: `Document.accept`/`reject` raise `ValueError` for an id that is no
-  change id or names two changes (it was `JubarteError`), and the CLI exits
-  2 for it, as the binary does; a resolution that fails otherwise says
-  `accept failed: …`.
-- **Breaking: `compare` (and `jubarte OLD NEW`) dates its revisions now.**
-  Without `-d/--datetime` the shared parser fills the current UTC time, to the
-  second, so the binary, Python and npm hand the same value to the engine;
-  `-d 1970-01-01T00:00:00Z` pins it for reproducible output (the old
-  default). `diff`'s patch header already said now; Python and npm no longer
-  fill it themselves. MCP `docx_compare` without `date` follows the CLI. The
-  library default (`document_comparer::DEFAULT_DATE`, Python
-  `Document.compare`, WASM `redlineDocuments`) stays the epoch.
-  `cli::CompareArgs::datetime` is `Option<String>`.
-- **Breaking: `convert X.md -o X.docx` signs and dates by the document's
-  own metadata.** A change or comment that names no author or date takes,
-  in order: its own tag or the `authors:` table; `-a/--author` and
-  `-d/--datetime`; the front matter's `author:` and `last_modified:` (else
-  `modified:`, `date:`, `created:`; a bare day is its midnight); the
-  `--reference-doc`'s `dc:creator` and `dcterms:created`; else `Redline`
-  and now. Pin `-d 1970-01-01T00:00:00Z` for byte-identical output (the
-  old default). `compare`, `edit`, `add` and `diff` change a file, so they
-  keep `--author` (default `Redline`) and `-d/--datetime` (default now)
-  and never read the files' metadata. The library (`DocxOptions::default()`, Python
-  `markdown_to_docx`/`from_markdown`, WASM `markdownToDocx`) keeps
-  `Redline` and the epoch, so library calls stay deterministic, and reads
-  no reference document's metadata; a given `author` or `date` beats the
-  front matter (Python's `author` default is now `None`). No file owner or
-  modification time is read. `cli::MarkdownArgs::author` and `datetime`
-  are `Option<String>`.
-- **Breaking: the timestamp flag is `-d, --datetime` everywhere** (`edit`,
-  `add`, `compare`, `diff`, `convert`'s Markdown-to-Word date); `--date`
-  is gone, and passing it exits 2 naming `--datetime`. `edit` and `add`
-  gain the `-d` short flag; `compare`, `diff` and `convert` move it from
-  `--date`. The clap
-  field is `datetime` on `cli::EditOptions`, `cli::CompareArgs`,
-  `cli::Command::Diff` and `cli::MarkdownArgs`, and the shared parser's
-  JSON carries `datetime`, so the Python CLI reads `args.datetime` and
-  the npm CLI `o.datetime`.
-- **Breaking: the default author of `edit` and `add` is `Redline`** (was
-  `Modified User`), so the agent view's handle is `@R`. A plan recorded
-  from operation flags (`--plan X -p …`), WASM `flagPlan` and the hosts'
-  record options default to it too, and Python's `jubarte.diff()` no
-  longer reads `git config user.name`: its owner is `Redline` unless
-  `author=` says otherwise.
-- **`capabilities` prints a text summary**: one line per operation, then
-  limits, rule sets, formats and id spellings; `--json` prints the manifest.
-  The manifest gains `formats` (the extensions each task writes) and `ids`
-  (the id spellings of revisions, comments, paragraphs and tables, by kind;
-  a table's `tN` is `read -p`'s, a cell is `tN.rowR.cellC`). Python and npm
-  print the same text.
-- **Breaking: `validate` and `audit` are one command.** `validate --rules`
-  takes rule sets (`word`, the default; `edits`, which needs `--original`
-  and `--author` and is added by them; `a11y`, `style`, `structure`) or
-  audit codes, comma-separated; `--strict` fails on warnings too. A word
-  or edits finding fails the run (exit 2), and so does any error; an
-  a11y/style/structure warning fails only under `--strict`, as `audit` did.
-  An unknown rule, or `edits` without `--original`, exits 2 (`audit` exited
-  1 on an unknown rule). Every finding has one shape, in the library
-  (`validate::Finding`), JSON Lines, Python and WASM: `code`, `set`,
-  `severity`, `part`, `location` (was `path`), `message`, `word_fatal`,
-  `repairable`; and one text line, `* CODE\tSEVERITY\tPART#LOCATION\tMESSAGE`
-  (`  CODE\tSEVERITY\tLOCATION\tMESSAGE` for the audit sets), closed by
-  `N finding(s): E error, W warning, I info`. `validate --repair` prints
-  `repaired N finding(s)` and then the repaired package's findings; its
-  `wrote` line is on stderr. `audit FILE` is now
-  `validate FILE --rules a11y,style,structure`. Python's CLI and MCP `docx_validate` take `rules` too, and
-  `capabilities` lists `validate_rules`. Library: `validate_with`,
-  `findings_text`, `fails`, `RULE_SETS`, `audit::word_layout`,
-  `audit::is_rule`, `From<AuditFinding> for Finding`; `ValidateError`
-  gains `Usage` and `Layout`.
-- **`diff` writes text only.** It prints the paragraph patch, a text
-  view (`--format github|word|normal|context|side-by-side`) or, for two
-  Markdown documents, `--format critic`'s CriticMarkup, on stdout or in
-  `-o FILE` (`.md`, `.markdown`, `.txt`, `.patch`, `.diff`; any other
-  extension writes the same text), with `wrote FILE (md, N bytes)` on
-  stderr and nothing on stdout. Without `-o` it writes no file: the
-  `OLD_v_NEW.docx` it used to write beside a Word side is gone. `-o
-  FILE.docx`, `.pdf` or `.png` exits 2 naming `compare OLD NEW -o FILE`;
-  `--mode`, `--detail-threshold`, `--reference-doc`, `--critic`,
-  `--resource-path`, `--revisions`, `--revision-palette`, `--dpi`,
-  `--pages`, `--move-comments` and `--changed-pages` are compare's and
-  convert's, and diff no longer takes them. `--format critic` with a Word
-  side exits 1, naming compare; with `--author`, `--datetime` or `--columns`
-  (the patch's) it exits 2. The patch's owner is `Redline` unless
-  `--author` says otherwise (git's `user.name` is no longer read). An
-  existing `-o` file exits 1 before anything is read. The Python and npm
-  CLIs do the same, and their patch headers now name the paths as typed,
-  as the binary's always did. `compare` (and `jubarte A B`), `accept`,
-  `reject`, `append` and `scrub` note the retired `--changed-only` as
-  convert does.
-- **`edit` and `add` write one file, `FILE_modified.docx`**, beside FILE:
-  the redline, or in `--editing-mode` the result. `-o FILE.docx` names
-  it (another extension exits 2, naming `read`/`convert`); `--pdf` and
-  `--png` write `FILE_modified.pdf` and `FILE_modified-page-NN.png`
-  beside it. `--out-dir [DIR]` writes the bundle as before (clean,
-  redline, `patch.diff`, `report.jsonl`), DIR defaulting to
-  `<stem>.edit`; it excludes `-o`. The view names the file it read
-  (`source: FILE_modified.docx`) and the `wrote` line and notes go to
-  stderr, the bundle's too. A FILE already named `X_modified.docx` keeps
-  its name, so editing it again needs `--force`. An existing output exits
-  2 without `--force`; the plan runs first, so a refused plan still
-  prints its report. `parse_cli_json`/`parseCli` hand the hosts the
-  resolved `output` or `out_dir` (both null while recording into a plan),
-  and the Python and npm CLIs write there.
-- `edit` and `add` take `--plan` without a value: `<FILE's dir>/<stem>_plan.json`,
-  for recording, appending and applying (`--consume` too); the summary's
-  apply line spells it bare (`jubarte edit a.docx --plan`). A Word
-  document's name as `--plan`'s or `--out-dir`'s value exits 2, saying
-  FILE was read as the value.
-- **`compare A B` prints the redline's agent view**, as `jubarte A B`
-  does; it writes `A_v_B.docx` only when `-o` names it. Its `wrote` line
-  moves to stderr and names the format (`wrote r.docx (docx, N bytes)`),
-  in the Python and npm CLIs too.
-  The Python and npm CLIs print the view too, and write the `.md` view,
-  `.pdf` and `.json` (Python `.png` too); both refuse the Markdown-input
-  options for now. A host without `read`
-  refuses a compare that prints the view.
-- `jubarte --help` lists the tasks; the shorthands' options are in
-  `jubarte compare --help` and `jubarte read --help`.
-  `--powertools-faithful` is hidden (`--mode powertools` stays).
-  `jubarte FILE` refuses compare's own options (`--author`, `--mode`,
-  `--critic`, the Rendering group, …) with exit 2: they took no effect.
-
-- `accept`, `reject`, `append`, `scrub`, `convert` and `read -o` say
-  `wrote PATH (KIND, N bytes[, P pages])` on stderr, or
-  `wrote DIR/STEM-page-NN.png (png, K pages, D dpi)`; `-q` silences it
-  (and `diff`'s line too). `convert` and `append` said it on stdout;
-  `accept`, `reject` and `scrub` said nothing before.
-- `convert --changed-only` (and the library's `PdfOptions::changed_only`)
-  also keeps the pages a comment is anchored on and the first page of each
-  section on which a revised header or footer paints. The comment listing's
-  pages number on after the document's last page.
-- `-q`/`--quiet` is one global option, after the task
-  (`jubarte compare a.docx b.docx -q`) or before it (`jubarte -q read
-  a.docx`); every other option goes after the task. Saying it twice
-  (`-q -q`, `-qq`) is still quiet, and `jubarte -q help` prints the help.
-- `validate` prints findings in one order every run (part, location, code,
-  message); two findings at one location used to swap between runs.
-- `diff-render` is `visual-diff`.
-- `convert` and `diff` share one Rendering group (`--revisions`,
-  `--revision-palette`, `--dpi`, `--move-comments`, `--changed-pages`,
-  `--pages`), refused with any output that is not a PDF or PNG. `-o`'s
-  extension (or `--to`) picks the one format convert writes: `-o X.png`
-  writes PNG pages only, and convert no longer writes a PDF and PNGs in
-  one run. `--pages` narrows a PDF too, and each PNG is named by its
-  document page (`X-page-03.png`), also under `--changed-pages`.
-- `scripts/release.sh --checklist` is now the whole release, not only the
-  script's own steps. New lines cover what a release owes outside them:
-  before — the full Miri suite and the docs/VERSIONING.md quality gate,
-  the Ring-3 Word open probe on the release samples, the bump decision,
-  reading the engine CHANGELOG section that becomes the release notes,
-  drafting the six one-line notes, a release.yml review (wheel and binary
-  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`), and the
-  App Store path's credentials and unused version number; during — the
-  NUMBERS sentence against the checker's aggregates, the security scan,
-  the GitHub release page's assets and notes, the site's own release
-  ladder, and reading every jubarte.pro page the deploy rebuilt
-  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
-  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
-  installing each library the way a user does, reading docs.rs and the
-  registries' pages, and the App Store item now carries the in-app
-  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
-  dangling empty "step 14" phase is gone, and the checklist test derives
-  its phases from the script instead of counting to 14.
-
-### Fixed
 
 - **The view keeps a Word highlight's colour.** A highlight that is not
   yellow prints as `<mark class="hl-green">…</mark>` (the 16 names Word
@@ -999,8 +1369,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   `capabilities` answers no for what the CLI refuses (append, scrub,
   validate, repair, audit, comments, visual diffs, page ranges, PNG) and
   lists formats only for its own tasks.
-- **`-q` says what it hides**: status lines (`wrote`, an edit's summary and
-  view), not what a reading task prints.
+
+- **`-q` says what it hides**: status lines (`wrote`, the `SUCCESS`
+  block and an edit's summary), not what a reading task prints.
+
 - **The Python and npm CLIs honour `convert --tracking`.** Both accepted the
   flag and dropped it; Python `from_markdown(tracking=…)` and wasm
   `markdownToDocx` `tracking` now set Word's Track Changes switch, and one
@@ -1013,142 +1385,267 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   said `ok`. A `format_run` is a tracked format change (`w:rPrChange`)
   now; under `keep` the operations it cannot track are refused, naming
   them, and a `c0.text` plan holding one goes through the comparer.
+
 - Replacing exactly the text a comment covers kept the deletion inside the
   comment only in a plan of text edits: with paragraph formatting beside it,
   or `whole: true`, Reject All left the comment on nothing. `update_fields`
   beside such an edit is refused, as under `keep`, and both refusals name
   `jubarte convert FILE --update-fields`, not the removed `fields update`.
+
 - A retired spelling's note was printed only when the run parsed: `compare
   … --changed-only` with a usage error, or `audit FILE --rules edits`
   without `--original`, printed the error alone. The note now leads the
   error on every host (npm's `audit`, which has no `validate`, included).
+
 - `audit FILE --rules …` was told to use `validate --rules
   a11y,style,structure`, which drops the rules it asked for. With
   `--rules` given, the note says `validate` alone.
+
 - A `.docx` that is not a ZIP read seven ways across the tasks (`read`
   said "Could not find EOCD", `diff` said "compare failed: cannot write
   the document"). Every Word input now reads `INVALID_PACKAGE: FILE is
   not a ZIP file: no end-of-central-directory record`, as `LEGACY_DOC`
   already did.
+
 - `\newpage` (and `\pagebreak`, `\clearpage`, `\cleardoublepage`) on a
   line of its own printed as text in the Word output; it is now a page
   break, which the view writes in its own words (`page-break` on the id
   line) and plain `convert --to md` as a `<!-- page-break -->` line, which
   reads back as the break. Plain Markdown dropped page breaks before.
+
 - A task the host lacks (npm's `visual-diff`, `validate`, `scrub`, …) said
   "not a task", "not supported by this adapter" or a clap conflict by
   argument count; it is now one usage error naming the task.
+
 - `jubarte revisions x.docx` said only "reading revisions: No such file":
   the removed task's name reads as the first file to compare. A note now
   names `changes` first, on every host.
+
 - A plan's `"comment_id": "c5"` was refused. (`#c5`, which an unquoted
   shell reads as a comment, is now refused too; write `c5`.)
+
 - `changes` listed a text box's change twice, once per
   `mc:AlternateContent` branch.
+
 - `convert --changed-only` named PNG pages by their index among the kept
   pages (document page 3, kept alone, was `-page-01.png`).
+
 - `convert -o x.json` wrote a PDF, `diff -o x.json` wrote Word, `diff`
   wrote `OLD_v_NEW.docx` beside a Word input without `-o`, and `convert
   --pdf -o x.png` wrote a PDF named `x.png`.
+
 - `edit`: replacing exactly the text a comment covers keeps both the
   deletion and the insertion inside the comment's range, so Accept All
   leaves the comment on the new text and Reject All on the old. The
   redline used to put the insertion before the range and the deletion
   after it.
+
 - Markdown to Word, notes: when a footnote and an endnote (or two notes)
   share a label such as `[^1]`, the first reference names the first
   definition and each later reference the next one, each a note of its
   own, with a warning. A label defined once and referenced twice stays one
   note.
+
 - Markdown to Word: a change by `@??` (or `??: ""` in `authors:`) is
   written back with an empty `w:author`, which Word opens.
+
 - Heading bookmarks: the reader and the writer share one github-slugger,
   and only the exact name the writer gives a heading reads as its own
   bookmark; any other (`title-01`, a lone `title-1`) stays an `<a id>`
   anchor.
+
 - The agent view hides a run whose character style has `w:vanish`
   (directly or through `basedOn`), as it hides directly hidden text.
+
 - A table row whose cells and gaps overflow the grid and that holds an
   empty cell gets per-row paragraph counts on the table line
   (`<!-- tN … cells tN.row0 p1-p3 tN.row1 p4 … -->`), so the empty cell
   comes back.
+
 - An empty or null `document_owner:` is ignored with a warning ("names no
   one"); the reader takes the first non-empty `dc:creator`, keeping its
   spaces but not the XML's indentation.
+
 - An author dated with a range `first..last` keeps it across the round
   trip (the last day lands on a formatting mark, an inserted row or a
   header mark); a bare day reads as its midnight, and a reversed range
   warns ("its days run backwards") and writes the marks undated.
+
 - A comment inside one side of a substitution
   (`{~~old~>{==new==}~~}{>>c0 …<<}`) stays one substitution.
 
-### Deprecated
+- **PDF columns divide the body only, and `w:sep` draws the rule.** A
+  header and footer span the page in a columned section, the column
+  separator Word draws (`w:cols w:sep`) is painted, and a face taller
+  than the line grid snaps to its own grid lines or the multiple's,
+  whichever is more. (#1644)
 
-- `diff-render`, `text` and `inspect` (now `read`; `inspect FILE` prints
-  the agent view, `inspect --json` the snapshot, `inspect --tables` the
-  grid), `audit` (now `validate --rules a11y,style,structure`, which it
-  still checks when no `--rules` is given), `--changed-only` (now
-  `--changed-pages`), convert's `--pdf` and `--png` (now `--to pdf`/`--to
-  png`; together they exit 2) keep working and print
-  `note: X is now Y; X is removed in 0.14` on stderr. The shared parser's
-  JSON carries those notes as `notes`, and `args.quiet` on every task.
-  `jubarte --help` no longer lists them, nor `debug` (still documented in
-  AGENTS.md); `self-update` is listed last.
+- **A simple PAGE or NUMPAGES field in a header or footer is
+  computed.** A `w:fldSimple` field showed its cached result ("Page 1 of
+  1" on every page of a two-page document); only the complex form was
+  computed, and the Markdown writer emits the simple form for `{PAGE}`.
+  (#466)
 
-### Removed
+- **Strict OOXML packages read and compare as themselves.** A
+  package's dialect is read from the root tag wherever it lies, only
+  namespace declarations are translated and only in Strict packages,
+  attribute values that wholly are Strict URIs translate, and Strict
+  universal measures are normalized on both inputs — columns and float
+  geometry included — before the diff, so a Strict document compares
+  equal to its Transitional twin. (#536, #576)
 
-- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
-  `util::sha1_fingerprint`, deprecated in 0.10.2 and promised to go after
-  one release (#1456): call `fnv1a_64` and `fnv1a_128`. They never
-  computed SHA-1.
-- `comparer::finalize::promote_mid_pure_del_spacing_from_pprchange`,
-  `strip_default_left_jc` and `strip_redundant_equal_spacing_pprchange`.
-  Each ran all of `cleanup_spacing_and_default_jc` (M226, M228 and M231
-  together), so its name promised one pass and it ran three: call
-  `cleanup_spacing_and_default_jc`.
+- **Tables pair by shared words when no row is identical.** The
+  comparer pairs single rows across partitions when they share a word,
+  separates row words at cell and paragraph boundaries, and keeps wrapped
+  rows, re-spanned cells and row content order when merging tables, so a
+  table whose every row changed still aligns as Word aligns it. (#497)
 
-### Breaking (library)
+- **A table property change records the grid; an unchanged table
+  records nothing.** A `w:tblPr` change now records its `w:tblGrid` too,
+  as Word does, and an unchanged table no longer carries an empty
+  `w:tblPrChange` or `w:tblGridChange` into the redline. (#434)
 
-- **`comparer::finalize` and `comparer::tables` are hidden and outside the
-  version promise** (`docs/VERSIONING.md`). They stay public for the tests
-  that call single passes, but any release may change them.
+- **`validate` flags five more shapes.** Nested text boxes are
+  flagged Word-fatal (the CLI warns when a document holds one, and the
+  Markdown route edits their stories), nested deletion text is detected
+  with measured nesting severity and written through nested insertions,
+  duplicate revision ids across markup kinds are rejected (ids scoped to
+  SDK record types, fresh ids for copied property histories), unequal
+  move range counts warn, and `STYLE_NAME_COMMA` flags a comma in a
+  style's `w:name` the writer cannot rebuild. (#491, #1132, #1134,
+  #1137, #1153, #1214)
 
-- **`PdfOptions` gains `comment_notes`.** A `PdfOptions { … }` literal that
-  names every field needs it (or `..PdfOptions::default()`).
+- **Permission ranges and move ranges survive a compare.** Ranges
+  belonging to the same move join, permission ranges keep apart across
+  structure (empty body pairs placed inside the next paragraph), and
+  deleted permission ranges settle as Word settles them — endpoints at
+  their source offsets, restoration indexed by source occurrence —
+  through edits and settlement alike. (#1214, #1215)
 
-- `RenderRequest::pages` counts document pages and narrows the PDF and the
-  report as well as the PNGs (an empty list writes no PDF).
-  `ConvertError::PageNotKept` names a page `changed_only` dropped;
-  `PageOutOfRange` reads "the document has N pages". `PageText` gains
-  `number`, and the report JSON's pages carry it. `RenderReport` gains
-  `document_pages` (also in the report JSON). `cli::PageOptions` is
-  `cli::RenderArgs`, which `convert` and `diff` flatten.
-- `cli::Cli` loses `read`: the view's options are `Cli::compare.read`.
-  `CompareArgs` gains `reference_doc`, `critic`, `resource_path`,
-  `render` and `read`. `cli::top_level_command()` is the model whose
-  `--help` lists the tasks only.
-- `cli::Command::Edit` and `Add` gain `plan_default`; `Recorded::summary`
-  takes `default_plan`.
-- `cli::EditOptions` gains `output`; `out_dir` is
-  `Option<Option<PathBuf>>` (`--out-dir` with or without DIR), and
-  `EditOptions::target(file)` gives the `EditTarget` (`Single` or
-  `Bundle`) a host writes. `cli::EditOptions::datetime` gains the `-d`
-  short flag; `cli::CompareArgs::date`, `cli::MarkdownArgs::date` and
-  `cli::Command::Diff`'s `date` are renamed to `datetime` (`--date` is
-  gone).
-- `markdown::DocxOptions` gains `author_fixed` and `date_fixed`: `true`
-  makes `author` and `date` win over the front matter's; a struct literal
-  needs them or `..DocxOptions::default()`. New
-  `markdown::docx_stamp(docx)` returns a `.docx`'s first non-empty
-  `dc:creator` and its `dcterms:created`.
-- `validate::Finding` is `{code, set, severity, part, location, message,
-  word_fatal, repairable}` (`path` is `location`); `ValidateError` gains
-  `Usage` and `Layout`. `cli::Command::Audit` and `Command::Inspect` are
-  gone (`Validate` gains `rules` and `strict`; `audit` and `inspect` parse
-  as their aliases).
-- `capabilities::Capabilities` gains `validate_rules`, `formats` and `ids`
-  (`capabilities::Ids`), so a struct literal needs them; deserializing an
-  older manifest still works (`serde(default)`).
+- **A comments part with no revision is left as it is.** The
+  comparer's comment tidy no longer rewrites a `word/comments.xml` that
+  holds no revision — the untouched part skips the tidy too — so comments
+  no plan touched come back byte-identical. (#1467)
+
+- **Redacted text stays out of reports and confirmations.** A
+  `redact` operation's report and confirmation are rebuilt from safe
+  fields, with the original document's view omitted, so the words a plan
+  removed cannot come back through the report channel. (#1196)
+
+- **PNG pages draw no box at a comment's anchor.** A page image
+  painted a box where a comment anchors, marking text the page does not;
+  the anchor's box is gone. (#482)
+
+- **rustls 0.23.46** fixes RUSTSEC-2026-0346 and RUSTSEC-2026-0347
+  (rustls-webpki 0.103.16 and webpki-roots 1.0.10 with it). (#475)
+
+- **A `notes: rev:` clause warns that it is not written**, so a view
+  that carries one says what was dropped instead of staying silent.
+
+- **`&#32;` reads as a space to edit anchors, and a paragraph's own
+  leading spaces print as `&#32;`.** A find, an anchor or `--content`
+  copied from the view reads the reference as the space it stands for,
+  and a `&#32;` is a space to the anchor's emphasis rules too.
+
+- **A tracked page break names its change on the id line.** (#503)
+
+- **The separators' formatting changes round-trip through `notes:
+  {fmt: …}`.** A footnote or endnote separator's formatting changes read
+  back from the `notes:` clause and are written again, with the
+  separator's metadata preserved and revision ids reserved.
+
+- **A header keeps the empty paragraphs after its text.** (#506)
+
+- **Section references print in Word's order.** (#489)
+
+- **Story character style kinds survive the round trip.** (#869)
+
+- **A code fence's closing line stays clear of a span opener**
+  (#991), an indented code block is verbatim (no fence or CriticMarkup),
+  and a note anchored in a code block keeps its text.
+
+- **Table-style names that hold a comma are quoted and never written
+  into `w:name`; outline levels 7–9 and an empty paragraph's stated
+  outline level survive the round trip; a named clause renames a built-in
+  table style.** (#593)
+
+- **Style fidelity: Word's older table styles, `LineNumber` and
+  renamed note styles are written as Word defines them; a stated default
+  style, a section's stated start type, a switched-off `titlePg`,
+  keep-lines and indents, and a theme font in the defaults come back as
+  stated.** (#485)
+
+- **Revision timestamps report in the recorded local offset** (UTC
+  linked for comments); the view writes the UTC instant beside Word's
+  wall clock for offset dates, and UTC is preferred when reading tracked
+  changes. (#1118)
+
+- **A retried insertion point leaves no stale revision refusal.**
+  (#1308)
+
+- **`--force` refuses a bundle directory it cannot read.** (#1431)
+
+- **Publication reports cleanup warnings and failed restores, rejects
+  bidi file names, and export confinement is hardened.**
+
+- **Review-gem refinements:** control characters are escaped in
+  printed ZIP entry names, entry type is judged on the Unicode
+  Path-decoded name, and failed entry reads still charge the inflate
+  budget; docDefaults leads the style legend's order; a styled paragraph
+  keeps the outline level it states; a style change lands in the style's
+  own `pPr` and `rPr`; settle hints shell-quote a colon id; and compare
+  keeps the caller's limits when inputs are equal after accepting.
+
+- **Anchor parsing: block marks lead raw lines, a list item's
+  continuation indent is not anchor text, whitespace is reported near
+  matches, and an escaped `&` stays literal in a find.**
+
+- **Formatting history inside a kept change stays frozen** — also a
+  cell mark in a kept formatting change's history.
+
+- **Agent-facing paths print with `/` on every OS**, and Windows
+  verbatim prefixes are stripped (a verbatim disk or UNC prefix keeps the
+  root).
+
+- **Admission tolerates unquoted attributes** (`validate_xml` stays
+  strict). (#1055)
+
+- **Absurd universal measures are refused, and page twips are rounded
+  before matching a named size.**
+
+- **Hosts: editing-mode conflicts come from the engine;
+  `--update-fields` needs `-o`; PNG side files follow the writer.**
+
+- **A PDF keeps a revised footnote on its page**, with chrome tables,
+  header pictures and listing numbers pinned.
+
+- **A side file over a PNG output names the PNG output; a table of
+  backslashes round-trips (#538), and an even backslash run before a
+  table-cell pipe splits the cell.**
+
+- **Compare: a reused header keeps its own relationships, a renamed
+  header copy never hides another header, and boundary bookmarks stay
+  outside inline revisions.** (#827)
+
+- **Marks without `w:id` print `noid`, and a `w:id` holding a tag
+  separator stays one change.**
+
+- **A comment anchored in a header or footer reads back unanchored,
+  and header and footer changes pair as the body's do.**
+
+- **Empty table rows are kept in the agent view to preserve row
+  numbering, and a reference definition's destination is read
+  literally.**
+
+- **`read -p`, `--head`, `--tail` and `--changed` see a nested list
+  item, and `edit` rejects `--accept`/`--reject` combined with
+  `--reply`.**
+
+### Security
+
+- **opentelemetry-api 1.45.1** in `jubarte-python/uv.lock` fixes
+  GHSA-xcq7-p3pf-p88h. It arrives through the `mcp` extra; only that
+  package moves.
 
 ## [0.12.0] - 2026-10-11
 
@@ -4128,6 +4625,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
 [0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
 [0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
 [0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2

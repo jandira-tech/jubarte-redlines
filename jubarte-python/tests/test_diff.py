@@ -105,7 +105,7 @@ def test_critic_format_is_the_whole_document_as_criticmarkup() -> None:
     assert d.hunks == ()
     word = letter().diff(letter("an"), format="critic", **OWNER)
     # A compared pair is insertion-first, so it prints as two marks.
-    assert re.search(r"\{\+\+an\+\+\}\{r1 [^}]*\}\{--his or her--\}\{r2 ", word.text), word.text
+    assert re.search(r"\{\+\+an\+\+\}\{r1\+2 [^}]*\}\{--his or her--\}\{r1\+2 ", word.text), word.text
 
 
 def test_identical_documents_give_an_empty_patch() -> None:

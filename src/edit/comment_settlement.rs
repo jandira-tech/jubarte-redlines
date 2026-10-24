@@ -46,7 +46,7 @@ struct Pass {
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct AnchorChanges {
+pub(crate) struct AnchorChanges {
     pub removed: Vec<String>,
     pub kept: Vec<String>,
     passes: std::collections::HashMap<String, Pass>,

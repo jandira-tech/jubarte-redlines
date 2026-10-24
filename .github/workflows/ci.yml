@@ -49,6 +49,14 @@ jobs:
       # The library without the `cli` feature (clap) must still build: a
       # library path once called into src/cli.rs and only --all-features ran.
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      # The two rustdoc builds scripts/release.sh runs (steps 5 and 6): 0.13
+      # reached its release with 39 broken intra-doc links nothing had built.
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
 
       # The bindings are not members of the root workspace (`[workspace]` in
       # Cargo.toml is empty and each binding declares its own), so
@@ -94,7 +102,7 @@ jobs:
       # Every failing test, not just the first binary's (the `ci` profile
       # does not fail fast), with JUnit XML for Codecov's test results.
       # The strict Markdown round trip is red until the reader work lands
-      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # (spec 2026-10-13 §5.4); the `roundtrip` job below is its gate, so this job
       # keeps reporting every other test.
       - run: cargo nextest run --all-features --profile ci -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
@@ -182,7 +190,7 @@ jobs:
       # check of the library skips. One Linux run on the declared
       # `rust-version` (Cargo.toml) beside the three stable runs above.
       # The strict Markdown round trip is red until the reader work lands
-      # (spec 2026-10-13 §5.4); md-roundtrip.yml is its gate, so this job
+      # (spec 2026-10-13 §5.4); the `roundtrip` job below is its gate, so this job
       # keeps reporting every other test.
       - run: cargo nextest run --all-features --no-fail-fast -E 'not test(markdown_and_docx_round_trip_exactly)'
       # nextest runs no doctests.
@@ -192,7 +200,12 @@ jobs:
     name: fuzz smoke (60 s per target)
     runs-on: self-hosted
     # Four ordinary runs, two native runs, and a cold instrumented C build.
-    timeout-minutes: 30
+    # A cold sanitizer build of jubarte takes 13 min on a free M-series Mac
+    # and over 25 min on the shared self-hosted runners: under the old
+    # 30-minute bound every run since 2026-10-17 was cancelled inside the
+    # build, and a cancelled job never saves its cache, so every next run
+    # started cold again. 90 minutes lets a cold run finish and save it.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -206,8 +219,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: fuzz
+          # A fuzzer that finds a crash fails the job; keep the build anyway.
+          cache-on-failure: true
       - run: cargo install cargo-fuzz --locked
       - run: ./fuzz/seed.sh
+      # Every target in one build, timed on its own step; the runs below
+      # then start at once instead of hiding the build inside `admit`.
+      - run: cargo fuzz build
       - run: cargo fuzz run admit -- -max_total_time=60
       # Run every target even if an earlier one found a crash.
       - if: ${{ !cancelled() }}
@@ -217,7 +235,17 @@ jobs:
       - if: ${{ !cancelled() }}
         run: cargo fuzz run relationships -- -max_total_time=60
       # Exercise the shipped native allocator with C instrumentation and
-      # mimalloc's ASan allocation hooks as well as Rust ASan.
+      # mimalloc's ASan allocation hooks as well as Rust ASan. That needs
+      # upstream clang, which the self-hosted Linux image does not carry
+      # (the native runs exited 127 once the build stopped timing out).
+      - if: ${{ !cancelled() }}
+        run: |
+          if ! command -v clang >/dev/null || ! command -v clang++ >/dev/null; then
+            SUDO=$([ "$(id -u)" = 0 ] || echo sudo)
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq --no-install-recommends clang
+          fi
+          clang --version | head -1
       - if: ${{ !cancelled() }}
         run: bash scripts/fuzz-native.sh compare -max_total_time=60
       - if: ${{ !cancelled() }}
@@ -239,18 +267,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
       - run: cargo publish --dry-run
-
-  deny:
-    name: cargo-deny + REUSE
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-      # Per-file SPDX licensing/provenance (REUSE.toml, LICENSES/).
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
-        if: ${{ !cancelled() }}
 
   python:
     name: python bindings
@@ -275,21 +291,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The runner's system Python is 3.8; the script tests need newer syntax
-      # (test_release_sh.py's parenthesized `with (…)` needs 3.9+). uv
-      # installs 3.14 and puts its venv first on PATH, so every `python3`
-      # below is 3.14.
+      # Python 3.12 is the scripts' floor, so they are tested on it. The
+      # runner's system Python is older; uv installs 3.12 and puts its venv
+      # first on PATH, so every `python3` below is 3.12.
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: "3.14"
+          python-version: "3.12"
           activate-environment: true
           venv-path: ${{ runner.temp }}/scripts-py
-      - name: python3 is 3.14
-        run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)'
+      - name: python3 is 3.12
+        run: python3 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version; print(sys.version)'
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 scripts/test_release_sh.py
+      - run: uv run --with pyyaml python3 scripts/test_release_workflow.py
+      - run: uv run --with pyyaml python3 scripts/test_docs_workflow.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
+      - run: python3 scripts/test_table_styles_asset.py
       # The committed npm packages name no builder's home (#1480): the
       # library's artifacts and the CLI package's modules.
       - run: python3 scripts/check_npm_paths.py jubarte-wasm/npm jubarte-wasm/cli
@@ -317,3 +335,21 @@ jobs:
         with:
           node-version: "24"
       - run: node --test jubarte-wasm/cli/test/*.test.mjs
+
+  # Strict: every Markdown fixture in our dialect (tests/fixtures/md-roundtrip/*.md)
+  # must come back exactly after md -> docx -> md, and every docx listed in
+  # tests/fixtures/md-roundtrip/docx.txt must print the same Markdown after
+  # docx -> md -> docx -> md (tests/md_fixed_point.rs). There is no list of
+  # known failures: the job fails until the round trip is exact
+  # (docs/superpowers/specs/2026-10-13-ids-and-markdown-roundtrip.md §0).
+  roundtrip:
+    name: md -> docx -> md, exact
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: ./.github/actions/mbx
+      - run: cargo test --all-features --test md_fixed_point

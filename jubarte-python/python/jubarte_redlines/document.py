@@ -699,7 +699,12 @@ def from_markdown(
     """
     if isinstance(reference, Document):
         reference = reference.to_bytes()
-    options = {"page": page, "critic": critic, "track_changes": track_changes, "scholar": scholar}
+    options: dict[str, object] = {
+        "page": page,
+        "critic": critic,
+        "track_changes": track_changes,
+        "scholar": scholar,
+    }
     if author is not None:
         options["author"] = author
     if date is not None:

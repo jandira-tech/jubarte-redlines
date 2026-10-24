@@ -6,7 +6,7 @@
 Usage: find_duplicates.py <repo-root> [candidates.json]. Writes docs/analysis/DUPLICATE_CANDIDATES.md (needs docs/symbols/symbols.json
 from gen_symbol_manifest.py); the curated findings in DUPLICATED_LOGIC.md are written by hand from this output.
 """
-import json, re, sys, hashlib
+import json, sys, hashlib
 from collections import defaultdict
 from pathlib import Path
 import tree_sitter_rust as tsr
@@ -72,18 +72,18 @@ cand = defaultdict(int)
 for h, ids in inv.items():
     if 1 < len(ids) <= 12:
         for i in range(len(ids)):
-            for j in range(i + 1, len(ids)): cand[(ids[i], ids[j])] += 1
+            for j in range(i + 1, len(ids)): cand[ids[i], ids[j]] += 1
 exact_pairs = set()
 for g in exact:
     for a in g:
         for b in g: exact_pairs.add((a["id"], b["id"]))
 near = []
-for (a, b), c in cand.items():
+for (a, b) in cand.keys():
     if (a, b) in exact_pairs: continue
     A, B = sh[a], sh[b]
     if min(len(A), len(B)) < 25: continue
     j = len(A & B) / len(A | B)
-    if j >= 0.80 and byid[a]["file"] + str(byid[a]["line"]) != byid[b]["file"] + str(byid[b]["line"]):
+    if j >= 0.80 and f'{byid[a]["file"]}{byid[a]["line"]}' != f'{byid[b]["file"]}{byid[b]["line"]}':
         near.append((j, a, b))
 near.sort(reverse=True)
 
@@ -119,9 +119,9 @@ L = ["# Duplicate-logic candidates (tool output)\n",
 cross = [g for g in res["exact"] if len({f["file"] for f in g}) > 1]
 same = [g for g in res["exact"] if len({f["file"] for f in g}) == 1]
 L.append(f"### Across files ({len(cross)} groups)\n")
-for g in cross: L.append("- " + "; ".join(loc(f) for f in g) + f" ({g[0]['nodes']} nodes)")
+L.extend("- " + "; ".join(loc(f) for f in g) + f" ({g[0]['nodes']} nodes)" for g in cross)
 L.append(f"\n### Within one file ({len(same)} groups)\n")
-for g in same: L.append("- " + "; ".join(loc(f) for f in g) + f" ({g[0]['nodes']} nodes)")
+L.extend("- " + "; ".join(loc(f) for f in g) + f" ({g[0]['nodes']} nodes)" for g in same)
 L += ["", "## 2. Near-identical bodies in different files (4-gram Jaccard of node types >= 0.80)\n"]
 for p in res["near"]:
     if p["a"]["file"] != p["b"]["file"]:

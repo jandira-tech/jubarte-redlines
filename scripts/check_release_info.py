@@ -331,9 +331,7 @@ def check_jsonl(path: Path, required: tuple[str, ...] = ()) -> list[str]:
             keys.add(key)  # a "pending": true record counts as present
     if not text.strip():
         problems.append(f"{path.name} holds no records")
-    for key in required:
-        if key not in keys:
-            problems.append(f"{path.name}: no record keyed {key} — the app's scripts/check_release_facts.py reads it")
+    problems.extend(f"{path.name}: no record keyed {key} — the app's scripts/check_release_facts.py reads it" for key in required if key not in keys)
     return problems
 
 

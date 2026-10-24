@@ -17,7 +17,7 @@ from pathlib import Path
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import id_census  # noqa: E402
+import id_census
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 

@@ -5,7 +5,10 @@
 # Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
 # `jubarte` CLI for the five desktop targets and attaches the archives to a
 # GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
-# section as the release notes.
+# section as the release notes. The publish-* jobs put the same release on
+# crates.io, PyPI and npm through OIDC trusted publishing (#1642): no
+# registry token exists anywhere, and scripts/release.sh steps 9-11 wait for
+# them.
 #
 # Third-party actions are pinned to commit SHAs with the resolved release tag
 # as a trailing comment (Dependabot bumps both); see ci.yml for the
@@ -85,7 +88,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # No build cache: a shipped binary is built from a clean state, so a
+      # poisoned cache entry cannot reach a release (zizmor cache-poisoning).
       - run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
 
       - name: Stage archive (unix)
@@ -144,10 +148,9 @@ jobs:
           if-no-files-found: error
 
   # PyPI abi3 wheels, one per row of README "Supported environments": the
-  # release job attaches them to the GitHub release; scripts/release.sh
-  # re-uploads the same files to PyPI after scripts/check_release_artifacts.py
-  # confirms all seven are there, so wheels are built once, on clean CI
-  # machines. Linux builds run in the pypa manylinux_2_28 containers (glibc
+  # release job attaches them to the GitHub release and publish-pypi uploads
+  # the same files to PyPI after scripts/check_release_artifacts.py confirms
+  # all seven are there, so wheels are built once, on clean CI machines. Linux builds run in the pypa manylinux_2_28 containers (glibc
   # 2.28: RHEL 8, Debian 10, Ubuntu 20.04) and the rust-cross musl
   # containers; macOS and Windows build on the host.
   wheels:
@@ -202,7 +205,8 @@ jobs:
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --locked --out dist --compatibility pypi
           working-directory: jubarte-python
-          sccache: "true"
+          # No sccache, for the reason the binaries job has no rust-cache.
+          sccache: "false"
       # Install the wheel that was just built and run the engine once: the
       # artifact that ships is the one that imports, not a rebuilt one. The
       # glibc wheels are tried on the host; the musl wheels in Alpine.
@@ -227,9 +231,28 @@ jobs:
           path: jubarte-python/dist/
           if-no-files-found: error
 
+  # The one sdist: the GitHub release attaches it and publish-pypi uploads
+  # it, so both carry the same bytes (two maturin runs would not).
+  sdist:
+    name: PyPI sdist
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdist-${{ needs.version.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
   release:
     name: GitHub release
-    needs: [version, binaries, wheels]
+    needs: [version, binaries, wheels, sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -248,11 +271,17 @@ jobs:
           pattern: wheel-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sdist-*
+          path: dist
+          merge-multiple: true
 
       # Signed archives (docs/SELF_UPDATE.md, "Signed releases"). Signing
-      # rewrites each archive, so it runs before Checksums; it also runs
-      # before the sdist step, so no third-party code of this job runs ahead
-      # of it, and the key reaches this step only. zipsign signs with the
+      # rewrites each archive, so it runs before Checksums. Only GitHub's own
+      # checkout and artifact actions run ahead of it (the sdist is built in
+      # its own job), so no third-party code of this job runs before it, and
+      # the key reaches this step only. zipsign signs with the
       # file name as its context, which is the asset name the updater checks.
       # The secret holds one base64 private key per line (two while keys
       # rotate). Without it the archives stay unsigned (checksum only) until
@@ -309,11 +338,6 @@ jobs:
             echo "signed ${a#dist/}"
           done
 
-      - name: PyPI sdist
-        run: |
-          set -euo pipefail
-          pipx run maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist
-
       - name: Checksums
         run: |
           set -euo pipefail
@@ -367,3 +391,174 @@ jobs:
             --notes-file notes.md \
             $pre \
             dist/*
+
+  # --- registries: OIDC trusted publishing (#1642) -----------------------------
+  # No registry token exists. Each publish job asks GitHub for an ID token
+  # (`id-token: write`, granted to these three jobs only) and the registry
+  # trades it for a short-lived upload token. crates.io, PyPI and npm each
+  # trust exactly this pair: workflow `release.yml` in environment `release`
+  # of jandira-tech/jubarte-redlines. Renaming either breaks the trust;
+  # change the registry settings with it. Each job first asks its registry
+  # for the version and skips one it already holds, so a rerun, or a
+  # `scripts/release.sh --local-publish` that got there first, is not a
+  # failure. scripts/release.sh steps 9-11 wait for these jobs by name.
+  publish-crates:
+    name: publish crates.io
+    needs: version
+    runs-on: self-hosted
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: live
+        run: |
+          set -euo pipefail
+          # crates.io answers 403 to a request without a User-Agent.
+          if curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
+              "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; then
+            echo "jubarte-redlines $VER is already on crates.io: skipped"
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.live.outputs.live != 'true'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - if: steps.live.outputs.live != 'true'
+        uses: ./.github/actions/mbx
+      # scripts/release.sh step 4 wrote the crates summary into
+      # [package.metadata.release-notes]; prove it survived cargo's manifest
+      # normalization before the crate ships.
+      - if: steps.live.outputs.live != 'true'
+        name: the packaged crate carries its release note
+        run: |
+          set -euo pipefail
+          cargo package --locked --no-verify >/dev/null
+          tar -xzOf "target/package/jubarte-redlines-$VER.crate" "jubarte-redlines-$VER/Cargo.toml" \
+            | sed -n '/^\[package.metadata.release-notes\]/,/^\[/p' \
+            | grep -F "\"$VER\" = " >/dev/null \
+            || { echo "::error::no [package.metadata.release-notes] entry for $VER in the packaged Cargo.toml"; exit 1; }
+      - if: steps.live.outputs.live != 'true'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      - if: steps.live.outputs.live != 'true'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-pypi:
+    name: publish PyPI
+    needs: [version, wheels, sdist]
+    runs-on: self-hosted
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Python 3.12, the scripts' floor (see ci.yml's convert-sweep-unit).
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/publish-py
+      # The project listing, not /pypi/<name>/<version>/json: PyPI's CDN
+      # keeps a 404 for that URL once anything asked before the upload.
+      - id: live
+        run: |
+          set -euo pipefail
+          if curl -sf "https://pypi.org/pypi/jubarte-redlines/json" \
+              | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; then
+            echo "jubarte-redlines $VER is already on PyPI: skipped"
+            echo "live=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.live.outputs.live != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist/pypi
+          merge-multiple: true
+      - if: steps.live.outputs.live != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sdist-*
+          path: dist/pypi
+          merge-multiple: true
+      # A run that lost a wheel never reaches PyPI under a final version.
+      - if: steps.live.outputs.live != 'true'
+        run: |
+          set -euo pipefail
+          ls -l dist/pypi
+          python3 scripts/check_release_artifacts.py dist/pypi --version "$VER" --sdist
+          uv publish --trusted-publishing always dist/pypi/*
+
+  # npm trusted publishing accepts GitHub-hosted runners only ("Self-hosted
+  # runners are not currently supported"; it answers ENEEDAUTH), so this job
+  # alone leaves the self-hosted runners. The repository is public, so npm
+  # adds provenance attestations by itself.
+  publish-npm:
+    name: publish npm
+    needs: version
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - name: npm speaks OIDC
+        run: |
+          set -euo pipefail
+          v="$(npm --version)"
+          if [ "$(printf '%s\n' 11.5.1 "$v" | sort -V | head -n1)" != 11.5.1 ]; then
+            echo "::error::npm $v cannot publish through trusted publishing; it needs 11.5.1 or later"
+            exit 1
+          fi
+          for dir in jubarte-wasm/npm jubarte-wasm/cli; do
+            got="$(node -p "require('./$dir/package.json').version")"
+            [ "$got" = "$VER" ] || { echo "::error::$dir/package.json is $got, the tag is $VER"; exit 1; }
+          done
+      - id: live
+        run: |
+          set -euo pipefail
+          for pkg in jubarte-wasm:wasm jubarte-redlines:cli; do
+            if [ "$(npm view "${pkg%%:*}@$VER" version 2>/dev/null)" = "$VER" ]; then
+              echo "${pkg%%:*} $VER is already on npm: skipped"
+              echo "${pkg##*:}=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+      # A prerelease must not move the `latest` tag (npm refuses one without
+      # --tag). The CLI depends on jubarte-wasm@^VER, so it goes second.
+      - if: steps.live.outputs.wasm != 'true'
+        working-directory: jubarte-wasm/npm
+        run: |
+          set -euo pipefail
+          tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
+          npm publish "${tag[@]}"
+      - if: steps.live.outputs.cli != 'true'
+        working-directory: jubarte-wasm/cli
+        run: |
+          set -euo pipefail
+          # npm's view lags a fresh upload; the CLI's install needs it.
+          for _ in $(seq 1 12); do
+            [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ] && break
+            sleep 10
+          done
+          tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
+          npm publish "${tag[@]}"

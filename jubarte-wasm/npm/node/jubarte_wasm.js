@@ -1398,6 +1398,55 @@ function flagPlan(verb, operations_json, docx, options_json) {
 exports.flagPlan = flagPlan;
 
 /**
+ * The working-document JSON `jubarte read --for-edit` prints
+ * (`jubarte-read-for-edit-v1`): source hash, paired target ids, exact
+ * working text with `before_sha256`, and per-operation readiness. Options
+ * (JSON, all optional): `paragraphs` (`"p3,p10-p20,t0"`), `head`, `tail`,
+ * `find`/`regex` (+ `ignoreCase`) on the original final text, `changed`
+ * with `by`, `context` (read-only original neighbours), `limit`,
+ * `maxChars`, `all`, `cursor`, `acceptChange`/`rejectChange` (revision
+ * ids), `existingRevisions` (`keep`, `accept`, `reject`, `refuse`,
+ * `auto`) and `track` (`on`, `off`); `validityFile`, the path as the
+ * command line spells it, adds `input_validity`. A `USAGE` failure throws
+ * `jubarte-wasm: USAGE: …`, as the CLI exits 2; the other refusals throw
+ * `jubarte-wasm: CODE: …`, as the CLI exits 3.
+ *
+ * Mirrors `jubarte::edit::for_edit::for_edit_json`.
+ * @param {Uint8Array} docx
+ * @param {string | null} [options_json]
+ * @returns {string}
+ */
+function forEdit(docx, options_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(options_json) ? 0 : passStringToWasm0(options_json, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.forEdit(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr3 = r0;
+        var len3 = r1;
+        if (r3) {
+            ptr3 = 0; len3 = 0;
+            throw takeObject(r2);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export3(deferred4_0, deferred4_1, 1);
+    }
+}
+exports.forEdit = forEdit;
+
+/**
  * List the tracked revisions in a DOCX as a JSON array string, grouped as
  * Docxodus's `GetRevisions` groups them; each object has
  * (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).

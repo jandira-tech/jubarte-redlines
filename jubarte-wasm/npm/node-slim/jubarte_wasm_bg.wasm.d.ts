@@ -35,6 +35,7 @@ export const editoutput_ok: (a: number) => number;
 export const editoutput_patch: (a: number, b: number) => void;
 export const editoutput_redline: (a: number, b: number) => void;
 export const flagPlan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
+export const forEdit: (a: number, b: number, c: number, d: number, e: number) => void;
 export const getRevisions: (a: number, b: number, c: number, d: number, e: number) => void;
 export const initPanicHook: () => void;
 export const inputNotice: (a: number, b: number, c: number, d: number, e: number) => void;

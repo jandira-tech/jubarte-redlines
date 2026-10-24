@@ -22,9 +22,11 @@ mod mermaid;
 pub(crate) mod ooxml;
 mod revise;
 
+pub(crate) use agent::{escape_line_starts, escape_markdown};
+pub(crate) use critic::escape as escape_critic;
 use critic::{Change, Critic, Mark};
 use ooxml::{Blocks, ListIndent, Marks, Media, Package, Rels};
-pub(crate) use ooxml::{Element, element_from, parse_xml};
+pub(crate) use ooxml::{Element, code_fence, element_from, parse_xml};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -2531,6 +2533,20 @@ struct Writer<'a> {
     pendings: Vec<drawing::Pending>,
 }
 
+/// The text boxes the view shows under `element`, resolving every
+/// `mc:AlternateContent` on the way: a drawing may hold the choice and its
+/// fallback deeper than its own children (`a:graphicData`), and the
+/// fallback's copy of the words is not shown.
+fn shown_text_boxes<'e>(element: &'e Element, out: &mut Vec<&'e Element>) {
+    for child in agent::shown_children(element) {
+        if child.is("txbxContent") {
+            out.push(child);
+        } else {
+            shown_text_boxes(child, out);
+        }
+    }
+}
+
 impl Writer<'_> {
     /// The notes waiting for the next paragraph, as CriticMarkup comments:
     /// their block is prose, whatever their anchor was.
@@ -2811,17 +2827,24 @@ impl Writer<'_> {
             // which without a `w:pStyle` is the only place it can come
             // from: `outline 2`, and past the heading styles (`outline 7`
             // to `outline 9`) the only place at all, for no `#` count
-            // reaches them.
-            let own_outline = style
-                .is_none()
-                .then(|| {
-                    ppr.and_then(|pr| pr.child("outlineLvl"))
-                        .and_then(|o| o.attr("val"))
-                        .and_then(|v| v.parse::<usize>().ok())
-                        .filter(|l| *l < 9)
-                        .map(|l| l + 1)
-                })
-                .flatten();
+            // reaches them. A style the id line names does not carry a
+            // level the paragraph states past it, so a style that gives
+            // none (`Body`) names it too (#1524 review).
+            let stated = || {
+                ppr.and_then(|pr| pr.child("outlineLvl"))
+                    .and_then(|o| o.attr("val"))
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|l| *l < 9)
+                    .map(|l| l + 1)
+            };
+            // A style the `#` count implies is not printed on the line,
+            // and the writer reads the clause there as "no style", so the
+            // count keeps the level and the style with it.
+            let implied = style
+                .as_deref()
+                .is_some_and(|s| heading.is_some_and(|level| s == format!("Heading{level}")));
+            let own_outline =
+                stated().filter(|level| style.is_none() || (!implied && heading != Some(*level)));
             // An empty paragraph's own spacing is a line of the page
             // (#1473): it keeps an id line of its own to say it.
             let spaced = ppr
@@ -3635,11 +3658,7 @@ impl Writer<'_> {
     /// enqueue their own flat regions, preserving their position as tokens.
     fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        let root = element
-            .child("Choice")
-            .or_else(|| element.child("Fallback"))
-            .unwrap_or(element);
-        root.find_all("txbxContent", &mut boxes);
+        shown_text_boxes(element, &mut boxes);
         let editable = (!self.in_box || self.nested_editable) && drawing::nested_editable(element);
         for content in boxes {
             let open_comments = std::mem::take(&mut self.open_comments);
@@ -5634,6 +5653,34 @@ mod tests {
         format!(
             r#"<w:r><w:drawing><wp:anchor xmlns:wp="wp"><wp:docPr id="7" name="Text Box 7"/><a:graphic xmlns:a="a"><a:graphicData><wps:wsp xmlns:wps="wps"><wps:txbx><w:txbxContent>{inner}</w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#
         )
+    }
+
+    /// A text box the drawing itself carries: `w:drawing` >
+    /// `a:graphicData` > `mc:AlternateContent`, whose `mc:Choice` holds the
+    /// shape and whose `mc:Fallback` the VML copy of the same words. Word
+    /// nests the two like this inside a group of shapes.
+    fn alternate_text_box(inner: &str) -> String {
+        format!(
+            r#"<w:r><w:drawing><wp:anchor xmlns:wp="wp"><wp:docPr id="7" name="Text Box 7"/><a:graphic xmlns:a="a"><a:graphicData><mc:AlternateContent xmlns:mc="mc"><mc:Choice Requires="wps"><wps:wsp xmlns:wps="wps"><wps:txbx><w:txbxContent>{inner}</w:txbxContent></wps:txbx></wps:wsp></mc:Choice><mc:Fallback><w:pict><v:shape xmlns:v="v" id="_x0000_s1026"><v:textbox><w:txbxContent>{inner}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#
+        )
+    }
+
+    /// `mc:AlternateContent` inside the drawing is resolved as it is at run
+    /// level: the shown branch's text box prints once, never the `mc:Fallback`
+    /// copy beside it (#1523 review).
+    #[test]
+    fn a_fallback_text_box_inside_the_drawing_prints_once() {
+        let body = p("", &alternate_text_box(&p("", &r("inside"))));
+        let view = payloads_elided(&md(&docx(&body, &[])));
+        assert_eq!(
+            view.matches("<!-- text-box ").count(),
+            1,
+            "the fallback copy is a second box: {view}"
+        );
+        assert_eq!(
+            view,
+            "![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\ninside\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n"
+        );
     }
 
     #[test]

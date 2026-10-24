@@ -5,10 +5,10 @@
 //! Markdown events to Word items, CriticMarkup to tracked changes.
 //!
 //! The internal pipeline that
-//! [`markdown_to_docx`](super::markdown_to_docx) and the redline task
+//! [`markdown_to_docx`] and the redline task
 //! use to convert one Markdown document to a Word document package.
 //! Backs `jubarte convert FILE.md`, the Markdown side of
-//! [`crate::markdown::redline`], and the Python / WASM
+//! [`crate::markdown::redline()`], and the Python / WASM
 //! `markdown_to_docx` binding.
 
 use std::borrow::Cow;
@@ -863,8 +863,9 @@ struct TablePlan {
     columns: Option<usize>,
     align: Option<&'static str>,
     rows: Vec<RowPlan>,
-    /// The cell paragraphs' mark changes, by paragraph number.
-    marks: HashMap<usize, (bool, view_notes::Tag)>,
+    /// The cell paragraphs' mark changes, by paragraph number, each
+    /// paragraph's in clause order.
+    marks: HashMap<usize, Vec<(bool, view_notes::Tag)>>,
     /// Cell paragraphs aligned against their column, by paragraph number.
     aligns: HashMap<usize, &'static str>,
     /// The style the table's line names (`style Ledger`).
@@ -1513,17 +1514,20 @@ fn html_tag(html: &str) -> Option<HtmlTag> {
     })
 }
 
-/// The start token an end token closes, if it is one.
-fn closes(token: Token) -> Option<Token> {
+/// The start tokens an end token closes, if it is one. The `}` of an
+/// attribution is also the closer of a paragraph mark's `¶{`: both are
+/// written as one span ending in that `}`, so the pair is taken with
+/// whichever of the two openers opened last.
+fn closes(token: Token) -> &'static [Token] {
     match token {
-        Token::InsertEnd => Some(Token::InsertStart),
-        Token::DeleteEnd => Some(Token::DeleteStart),
-        Token::SubstituteEnd => Some(Token::SubstituteStart),
-        Token::HighlightEnd => Some(Token::HighlightStart),
-        Token::CommentEnd => Some(Token::CommentStart),
-        Token::AttributionEnd => Some(Token::AttributionStart),
-        Token::MarkEnd => Some(Token::MarkStart),
-        _ => None,
+        Token::InsertEnd => &[Token::InsertStart],
+        Token::DeleteEnd => &[Token::DeleteStart],
+        Token::SubstituteEnd => &[Token::SubstituteStart],
+        Token::HighlightEnd => &[Token::HighlightStart],
+        Token::CommentEnd => &[Token::CommentStart],
+        Token::AttributionEnd => &[Token::AttributionStart, Token::ParagraphInsertion],
+        Token::MarkEnd => &[Token::MarkStart],
+        _ => &[],
     }
 }
 
@@ -1541,8 +1545,9 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
     let mut closed = vec![false; tokens.len()];
     let mut open: Vec<(Token, usize)> = Vec::new();
     for (at, token) in tokens.iter().enumerate() {
-        if let Some(opener) = closes(*token) {
-            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+        let closers = closes(*token);
+        if !closers.is_empty() {
+            if let Some(index) = open.iter().rposition(|(start, _)| closers.contains(start)) {
                 let (_, start) = open.remove(index);
                 closed[start] = true;
             }
@@ -1563,8 +1568,9 @@ fn loose_tokens(tokens: Vec<Token>) -> Vec<Token> {
     let mut loose = Vec::new();
     let mut open: Vec<(Token, usize)> = Vec::new();
     for (at, token) in tokens.into_iter().enumerate() {
-        if let Some(opener) = closes(token) {
-            if let Some(index) = open.iter().rposition(|(start, _)| *start == opener) {
+        let closers = closes(token);
+        if !closers.is_empty() {
+            if let Some(index) = open.iter().rposition(|(start, _)| closers.contains(start)) {
                 open.remove(index);
             } else {
                 // Its opener is outside: the closer crosses the edge.
@@ -2828,8 +2834,14 @@ impl<'o, 'a> Writer<'o, 'a> {
             let styled = line.style.is_some();
             if let Some(style) = line.style {
                 paragraph.style = Some(style.into());
-                // `# Text` under its own style: the level goes with it.
-                paragraph.outline = self.heading.map(|level| level - 1);
+                // `# Text` under its own style: the level goes with it,
+                // unless the line states one of its own, which the style
+                // does not carry.
+                paragraph.outline = line
+                    .outline
+                    .and_then(|level| level.checked_sub(1))
+                    .map(|level| level as usize)
+                    .or_else(|| self.heading.map(|level| level - 1));
             } else if let Some(outline) = line.outline {
                 // `# Text` that states its own level, with no style: the
                 // writer's `HeadingN` must not step in where the document
@@ -2883,10 +2895,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             paragraph.formats = line.fmt.iter().map(|tag| self.format_mark(tag)).collect();
             if !self.resolved {
                 let mut unshown = Vec::new();
-                for tag in &line.rev {
-                    let inserted = !line.rev_del.contains(tag);
+                for (inserted, tag) in &line.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 paragraph.unshown = unshown;
             }
@@ -2951,12 +2962,8 @@ impl<'o, 'a> Writer<'o, 'a> {
                 }
             }
             let mark = self.table_plan.as_ref().and_then(|plan| {
-                let (inserted, tag) = plan.marks.get(&at)?;
-                let kind = if *inserted {
-                    Kind::Insert
-                } else {
-                    Kind::Delete
-                };
+                let (inserted, tag) = view_notes::paragraph_mark(plan.marks.get(&at)?)?;
+                let kind = if inserted { Kind::Insert } else { Kind::Delete };
                 Some((kind, tag.clone()))
             });
             self.fix_mark(&mut paragraph, mark);
@@ -4568,6 +4575,12 @@ impl<'o, 'a> Writer<'o, 'a> {
                             "notes: {why}, so the notes parts it names are not made"
                         )),
                     }
+                    if let Some(tags) = view_notes::note_revisions(text) {
+                        self.document.warnings.push(format!(
+                            "notes: rev: {tags}: insertions and deletions in the \
+                             separators are not written"
+                        ));
+                    }
                     let formats = view_notes::note_formats(text);
                     for kind in ["footnote", "endnote"] {
                         let count = formats.iter().filter(|(k, _)| *k == kind).count();
@@ -5361,12 +5374,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             // in reading order (`rev footnotes.r32+31`: text, then mark,
             // #1261); Word's shape names them apart, the mark first.
             let own: Vec<view_notes::Tag> = if clauses.rev.len() == paragraphs(&items)
-                && clauses.rev.iter().all(|tag| tag.ids.len() > 1)
+                && clauses.rev.iter().all(|(_, tag)| tag.ids.len() > 1)
             {
                 clauses
                     .rev
                     .iter()
-                    .flat_map(|tag| {
+                    .flat_map(|(_, tag)| {
                         let (text, mark) = tag.ids.split_at(tag.ids.len() - 1);
                         [mark, text].map(|ids| view_notes::Tag {
                             ids: ids.to_vec(),
@@ -5375,7 +5388,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     })
                     .collect()
             } else {
-                clauses.rev.clone()
+                clauses.rev.iter().map(|(_, tag)| tag.clone()).collect()
             };
             if let Some((kind, _)) = change
                 && !self.resolved
@@ -5426,10 +5439,9 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .find(|item| matches!(item, Item::Paragraph(_)))
             {
                 let mut unshown = Vec::new();
-                for tag in &clauses.rev {
-                    let inserted = !clauses.rev_del.contains(tag);
+                for (inserted, tag) in &clauses.rev {
                     let marks = self.unshown_marks(tag);
-                    unshown.extend(marks.into_iter().map(|mark| (inserted, mark)));
+                    unshown.extend(marks.into_iter().map(|mark| (*inserted, mark)));
                 }
                 last.unshown = unshown;
             }
@@ -6777,6 +6789,44 @@ mod tests {
                 Token::SubstituteEnd,
             ]),
             vec![Token::InsertEnd]
+        );
+    }
+    /// A `¶{…}` paragraph mark is one span: `¶{` opens it and the same
+    /// `}` an attribution closes. The table of closers knew only
+    /// `AttributionStart`, so the pair never closed and both tokens
+    /// crossed a drop: a paragraph mark whole inside an image's alt
+    /// text or an HTML comment was replayed onto the paragraph around
+    /// it.
+    #[test]
+    fn a_paragraph_mark_whole_inside_dropped_text_drops_with_it() {
+        assert_eq!(
+            loose_tokens(vec![Token::ParagraphInsertion, Token::AttributionEnd]),
+            vec![]
+        );
+        // A paragraph mark half inside drops the half that crossed the
+        // edge, as any other split span does.
+        assert_eq!(
+            loose_tokens(vec![Token::ParagraphInsertion]),
+            vec![Token::ParagraphInsertion]
+        );
+        // An attribution still closes its own `}`, and a paragraph mark
+        // inside one closes first: the `}` pairs with the nearest
+        // opener that takes one.
+        assert_eq!(
+            loose_tokens(vec![
+                Token::AttributionStart,
+                Token::ParagraphInsertion,
+                Token::AttributionEnd
+            ]),
+            vec![Token::AttributionStart]
+        );
+        assert_eq!(
+            loose_tokens(vec![
+                Token::ParagraphInsertion,
+                Token::AttributionStart,
+                Token::AttributionEnd
+            ]),
+            vec![Token::ParagraphInsertion]
         );
     }
 }

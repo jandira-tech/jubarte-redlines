@@ -14,7 +14,6 @@ non-main branch, so a run that gets past argument validation stops at the
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
 import shutil
@@ -1076,7 +1075,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_4_windows_stack_and_old_python(self) -> None:
         self.kw("1 MiB")
-        self.kw("Python 3.8")
+        self.kw("Python 3.12")
 
     def test_stack_proof_names_the_runnable_script_and_all_required_inputs(self) -> None:
         lines = self.out.stdout.splitlines()
@@ -1194,6 +1193,114 @@ class ChecklistPerStep(unittest.TestCase):
         block = checklist_block()
         self.assertIn("before|you|", block)
         self.assertIn("after|you|", block)
+
+
+# stub gh for the CI-publish wait: the release.yml run and its publish job's
+# conclusion ("" while the job runs), driven by the environment.
+GH_PUBLISH_STUB = r"""#!/bin/bash
+case "$*" in
+  "run list"*)
+    echo "42 in_progress" ;;
+  "run view 42 --json jobs"*)
+    echo "${JOB_STATE:-}" ;;
+  *)
+    echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class CiPublishing(unittest.TestCase):
+    """#1642: release.yml publishes crates.io, PyPI and npm with OIDC
+    trusted publishing; steps 9-11 wait for it instead of publishing with
+    the releaser's tokens, and --local-publish keeps the token path."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="cipub-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "gh").write_text(GH_PUBLISH_STUB)
+        (self.tmp / "gh").chmod(0o755)
+
+    def wait(self, **env: str) -> subprocess.CompletedProcess[str]:
+        functions = shell_functions("release_run", "eventually", "ci_job_state", "ci_published")
+        script = (
+            "set -euo pipefail\nTAG=v9.9.9; VER=9.9.9; n=0\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            "sleep() { :; }\n"
+            'probe() { n=$((n + 1)); [ "$n" -ge "${LIVE_AT:-999999}" ]; }\n'
+            f"{functions}\n"
+            'ci_published "crates.io" "publish crates.io" probe\n'
+            'echo "probes $n"\n'
+        )
+        full = dict(os.environ, PATH=f"{self.tmp}:{os.environ['PATH']}", **env)
+        return subprocess.run(["bash", "-c", script], cwd=HERE.parent, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_a_registry_that_holds_the_version_ends_the_wait(self) -> None:
+        r = self.wait(LIVE_AT="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("published by release.yml", r.stdout)
+        self.assertIn("probes 1\n", r.stdout)
+
+    def test_a_running_job_is_waited_for(self) -> None:
+        r = self.wait(LIVE_AT="4")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("probes 4\n", r.stdout)
+
+    def test_a_failed_job_stops_the_script_and_names_the_fallback(self) -> None:
+        r = self.wait(JOB_STATE="failure")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('"publish crates.io"', r.stderr)
+        self.assertIn("--local-publish", r.stderr)
+        self.assertIn("environment release", r.stderr)
+
+    def test_a_successful_job_waits_out_the_registry_lag(self) -> None:
+        r = self.wait(JOB_STATE="success", LIVE_AT="3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_successful_job_the_registry_never_lists_stops_the_script(self) -> None:
+        r = self.wait(JOB_STATE="success")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("does not list 9.9.9", r.stderr)
+
+    def test_steps_9_to_11_wait_for_the_jobs_release_yml_names(self) -> None:
+        workflow = (HERE.parent / ".github" / "workflows" / "release.yml").read_text()
+        calls = {9: [], 10: [], 11: []}
+        for n in calls:
+            calls[n] = re.findall(r'ci_published "[^"]+" "([^"]+)"', step(n))
+            self.assertTrue(calls[n], f"step {n} does not wait for release.yml")
+            for job in calls[n]:
+                self.assertIn(f"name: {job}\n", workflow, job)
+
+    def test_the_token_publishes_run_only_with_local_publish(self) -> None:
+        for n, cmd in ((9, "cargo publish --locked"), (10, "npm publish"),
+                       (11, "uv publish --token")):
+            s = step(n)
+            self.assertLess(s.index('"$LOCAL_PUBLISH" = 1'), s.index(cmd), n)
+
+    def test_the_preflight_asks_for_tokens_only_with_local_publish(self) -> None:
+        s = step(0)
+        gate = s.index('"$LOCAL_PUBLISH" = 1')
+        for cred in ("credentials.toml", "npm whoami", "UV_PUBLISH_TOKEN"):
+            self.assertLess(gate, s.index(cred), cred)
+
+    def test_no_wait_without_local_publish_is_refused(self) -> None:
+        r = subprocess.run(
+            ["bash", str(RELEASE_SH), "0.10.0", *SUMMARIES, DOCS_FLAG, "docs", "--no-wait"],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("--no-wait needs --local-publish", r.stderr)
+
+    def test_a_fallback_release_ships_the_sdist_pypi_got(self) -> None:
+        # The run's sdist artifact is the one publish-pypi uploads; a second
+        # maturin build would give the GitHub release different bytes.
+        body = shell_functions("release_from_artifacts")
+        self.assertIn("gh run download", body)
+        self.assertNotIn("maturin sdist", body)
+        self.assertRegex(body, r'check_release_artifacts.py dist/release --version "\$VER" --sdist')
+
+    def test_local_publish_is_a_documented_flag(self) -> None:
+        self.assertIn("--local-publish", RELEASE_SH.read_text().split("set -euo pipefail")[0])
 
 
 if __name__ == "__main__":

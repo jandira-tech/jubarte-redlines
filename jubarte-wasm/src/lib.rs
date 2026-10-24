@@ -589,6 +589,99 @@ pub fn read_json(docx: &[u8], options_json: Option<String>) -> Result<String, Js
     read_json_of(docx, options_json.as_deref()).map_err(js_err)
 }
 
+/// `forEdit` options: `read --for-edit`'s flags.
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+struct ForEditOptions {
+    paragraphs: Option<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    find: Option<String>,
+    regex: Option<String>,
+    ignore_case: bool,
+    changed: bool,
+    by: Option<String>,
+    context: Option<usize>,
+    limit: Option<usize>,
+    max_chars: Option<usize>,
+    all: bool,
+    cursor: Option<String>,
+    accept_change: Option<Vec<String>>,
+    reject_change: Option<Vec<String>>,
+    existing_revisions: Option<String>,
+    track: Option<String>,
+    /// The path as the command line spells it: the result carries the
+    /// input's validity findings (#1340).
+    validity_file: Option<String>,
+}
+
+fn for_edit_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ForEditOptions = match options_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("forEdit options: {e}"))?,
+        None => ForEditOptions::default(),
+    };
+    let existing_revisions = options
+        .existing_revisions
+        .map(|mode| {
+            jubarte::cli::ExistingArg::from_choice(&mode).ok_or_else(|| {
+                format!("USAGE: invalid value '{mode}' for '--existing-revisions <MODE>'")
+            })
+        })
+        .transpose()?;
+    let track = options
+        .track
+        .map(|choice| {
+            jubarte::cli::TrackArg::from_choice(&choice)
+                .ok_or_else(|| format!("USAGE: invalid value '{choice}' for '--track <CHOICE>'"))
+        })
+        .transpose()?;
+    let args = jubarte::cli::ReadArgs {
+        paragraphs: options.paragraphs,
+        head: options.head,
+        tail: options.tail,
+        find: options.find,
+        regex: options.regex,
+        ignore_case: options.ignore_case,
+        changed: options.changed,
+        by: options.by,
+        context: options.context,
+        limit: options.limit,
+        max_chars: options.max_chars,
+        all: options.all,
+        cursor: options.cursor,
+        accept_change: options.accept_change.unwrap_or_default(),
+        reject_change: options.reject_change.unwrap_or_default(),
+        existing_revisions,
+        track,
+        ..jubarte::cli::ReadArgs::default()
+    };
+    let validity = options
+        .validity_file
+        .as_deref()
+        .map(|file| jubarte::validate::input_validity_of(docx, file));
+    jubarte::edit::for_edit::for_edit_json(docx, &args.for_edit_request(), validity)
+        .map_err(|e| e.to_string())
+}
+
+/// The working-document JSON `jubarte read --for-edit` prints
+/// (`jubarte-read-for-edit-v1`): source hash, paired target ids, exact
+/// working text with `before_sha256`, and per-operation readiness. Options
+/// (JSON, all optional): `paragraphs` (`"p3,p10-p20,t0"`), `head`, `tail`,
+/// `find`/`regex` (+ `ignoreCase`) on the original final text, `changed`
+/// with `by`, `context` (read-only original neighbours), `limit`,
+/// `maxChars`, `all`, `cursor`, `acceptChange`/`rejectChange` (revision
+/// ids), `existingRevisions` (`keep`, `accept`, `reject`, `refuse`,
+/// `auto`) and `track` (`on`, `off`); `validityFile`, the path as the
+/// command line spells it, adds `input_validity`. A `USAGE` failure throws
+/// `jubarte-wasm: USAGE: …`, as the CLI exits 2; the other refusals throw
+/// `jubarte-wasm: CODE: …`, as the CLI exits 3.
+///
+/// Mirrors `jubarte::edit::for_edit::for_edit_json`.
+#[wasm_bindgen(js_name = forEdit)]
+pub fn for_edit(docx: &[u8], options_json: Option<String>) -> Result<String, JsValue> {
+    for_edit_of(docx, options_json.as_deref()).map_err(js_err)
+}
+
 /// Options of [`flagPlan`](flag_plan).
 #[derive(serde::Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
@@ -658,7 +751,7 @@ fn record_plan_json(
     options_json: &str,
     held: Option<&str>,
 ) -> String {
-    use jubarte::edit::record::{RecordError, record_json};
+    use jubarte::edit::record::{record_json, RecordError};
     match record_json(verb, operations_json, docx, held, options_json) {
         Ok(recorded) => format!(r#"{{"ok":true,"recorded":{recorded}}}"#),
         Err(e) => {
@@ -1690,11 +1783,9 @@ mod tests {
             let text = document_view(old, new, Some(&options)).unwrap();
             assert!(text.contains("30") && text.contains("60"), "{text}");
         }
-        assert!(
-            document_view(old, new, None)
-                .unwrap()
-                .contains("diff --git")
-        );
+        assert!(document_view(old, new, None)
+            .unwrap()
+            .contains("diff --git"));
         for value in ["true", "false", "-1", "1.5", "4294967296", "null", "\"3\""] {
             assert!(
                 document_view(old, new, Some(&format!("{{\"context\":{value}}}")))
@@ -1746,11 +1837,9 @@ mod tests {
             assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
         }
         for options in [r#"{"oldFormat":"docx"}"#, r#"{"newFormat":"docx"}"#] {
-            assert!(
-                document_view(b"plain", b"text", Some(options))
-                    .unwrap_err()
-                    .contains("DOCX")
-            );
+            assert!(document_view(b"plain", b"text", Some(options))
+                .unwrap_err()
+                .contains("DOCX"));
         }
         assert!(
             document_view(&[255], b"text", Some(r#"{"oldFormat":"md"}"#))
@@ -1820,11 +1909,9 @@ mod tests {
         assert_eq!(comments[0].text, "keep");
         let dropped = append_documents(&a, &b, None).unwrap();
         assert!(dropped.warnings().contains("COMMENTS_DROPPED"));
-        assert!(
-            jubarte::comments::list_comments(&dropped.docx())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(jubarte::comments::list_comments(&dropped.docx())
+            .unwrap()
+            .is_empty());
     }
 
     #[cfg(feature = "pdf")]
@@ -1949,11 +2036,9 @@ mod tests {
             Some(r#"{"max_entries": 100}"#.into()),
         )
         .unwrap();
-        assert!(
-            get_revisions(&redline, None)
-                .unwrap()
-                .contains("\"Inserted\"")
-        );
+        assert!(get_revisions(&redline, None)
+            .unwrap()
+            .contains("\"Inserted\""));
     }
 
     #[test]
@@ -2060,12 +2145,10 @@ mod tests {
         );
         // The bundle's patch names the edited file, as the binary's does.
         let named = apply_edit_plan(&source, plan, Some("terms.docx".into())).unwrap();
-        assert!(
-            named
-                .patch()
-                .unwrap()
-                .starts_with("--- a/terms.docx\n+++ b/terms.docx\t")
-        );
+        assert!(named
+            .patch()
+            .unwrap()
+            .starts_with("--- a/terms.docx\n+++ b/terms.docx\t"));
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
     }
 
@@ -2304,10 +2387,11 @@ mod tests {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
         let changes = changes_text(&docx).unwrap();
         // Word typing order writes the deletion, then the insertion; the
-        // listing is the binary's: one logical change of both marks.
+        // listing is the binary's: one logical change of both marks, by the
+        // neutral default author (#916).
         assert_eq!(
             changes,
-            "r1+2\treplacement\ttext\tRedline\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
+            "r1+2\treplacement\ttext\tJubarte\tp0\t\"30 \u{2192} 45\"\t(2 elements)\n1 change(s)\n"
         );
         let tables = tables_text(&docx, None).unwrap();
         assert!(tables.starts_with("table 0: 2x2"), "{tables}");
@@ -2465,11 +2549,9 @@ mod tests {
         .unwrap();
         assert_eq!(one["paragraphs"].as_array().unwrap().len(), 1);
         assert_eq!(one["changes"].as_array().unwrap().len(), 0);
-        assert!(
-            read_json_of(&docx, Some(r#"{"paragraphs":"c5"}"#))
-                .unwrap_err()
-                .contains("expected pN")
-        );
+        assert!(read_json_of(&docx, Some(r#"{"paragraphs":"c5"}"#))
+            .unwrap_err()
+            .contains("expected pN"));
         assert!(read_json_of(&docx, Some(r#"{"typo":1}"#)).is_err());
     }
 
@@ -2490,10 +2572,8 @@ mod tests {
         );
         let bad = change_filter_of(r#"{"ids":["c5"]}"#).unwrap_err();
         assert!(bad.starts_with("c5: expected a change id"), "{bad}");
-        assert!(
-            change_filter_of(r#"{"typo":[]}"#)
-                .unwrap_err()
-                .contains("invalid change filter")
-        );
+        assert!(change_filter_of(r#"{"typo":[]}"#)
+            .unwrap_err()
+            .contains("invalid change filter"));
     }
 }

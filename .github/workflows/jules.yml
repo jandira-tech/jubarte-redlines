@@ -2,17 +2,23 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# 🐇🥕 Jules, el conejo: multi-stage PR review. It runs the static analysis this
-# repository already trusts (cargo clippy, cargo deny, ruff, shellcheck), posts
-# one report comment on the PR, and asks Jules to open a companion PR that fixes
-# what it found. Adapted from arthrod/jules-el-conejo examples/pr-reviewer.yml;
-# the review skills live in skills/jules-el-conejo/.
-name: Jules, el conejo PR review
+# Jules on every pull request, two jobs:
+#
+# - `review` — the line-by-line LLM review (audited fork of
+#   thalesraymond/jules-pr-reviewer, pinned by commit; audit and rollout:
+#   https://github.com/arthrod/jules-pr-reviewer/issues/1). It reads
+#   .github/jules-review-rules.md: correctness and Word fidelity, security,
+#   performance and improvements, best practices and tests, syntax and style.
+# - `conejo` — 🐇🥕 Jules, el conejo: lint, syntax, security and workflow
+#   checks over the changed files, one report comment kept current, and a
+#   companion fix PR from Jules. Adapted from arthrod/jules-el-conejo
+#   examples/pr-reviewer.yml; its skills live in skills/jules-el-conejo/.
+name: Jules review
 
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled]
-  # 🥕 Force a review of any open PR: gh workflow run jules-el-conejo-review.yml -f pr_number=123
+  # 🥕 Force el conejo on any open PR: gh workflow run jules.yml -f pr_number=123
   workflow_dispatch:
     inputs:
       pr_number:
@@ -20,16 +26,69 @@ on:
         required: true
         type: string
 
-# No default token permissions; the job asks only for what it uses.
+# No default token permissions; each job asks only for what it uses.
 permissions: {}
-
-concurrency:
-  group: jules-el-conejo-review-${{ github.event.pull_request.number || inputs.pr_number }}
-  # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
-  cancel-in-progress: false
 
 jobs:
   review:
+    # Fork and Dependabot PRs get no repository secrets, so there is no key to run with.
+    # A label is not new code: the line review runs on code events only.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    # GitHub-hosted by default. To use a self-hosted runner (e.g. Coolify), set a repo
+    # variable: gh variable set JULES_RUNNER -R <owner/repo> -b self-hosted
+    # The runner must be recent enough to run node24 actions.
+    runs-on: ${{ vars.JULES_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    concurrency:
+      group: jules-review-${{ github.event.pull_request.number }}
+      # Queue instead of cancel: a cancelled run still spends the Jules session it started.
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      # No checkout: the action reads the diff and rules through the GitHub API,
+      # so no token is persisted to disk in the workspace.
+      - name: Jules review
+        uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Jules checks out the PR branch itself and reviews the full base...head diff with repo context.
+          diff_mode: agentic
+          strictness: assertive
+          min_severity_to_report: info
+          enable_suggestions: "true"
+          dedupe: "true"
+          skip_drafts: "false"
+          timeout_minutes: "45"
+          fail_on: never
+          # An LLM verdict must never count as a human approval.
+          enable_approve: "false"
+          # Correctness, security, performance, best practices and syntax,
+          # with this repository's own rules (Word parity first).
+          rules_file: .github/jules-review-rules.md
+          extra_instructions: |
+            Be exhaustive. Check every changed hunk for: correctness and edge cases; security
+            (secrets in code or logs, injection, authz, unsafe deserialization, SSRF, path traversal);
+            error handling and resource cleanup; concurrency and async misuse; performance regressions;
+            missing or weakened tests for changed behaviour; breaking API or schema changes; docs that
+            no longer match the code. Prefer concrete file:line findings with a fix over general advice.
+            This is a DOCX engine whose first target is Microsoft Word parity (AGENTS.md): never ask
+            jubarte to refuse, strip or rewrite an input that Word opens. ZIP part names are OPC URIs
+            read in memory and never written to disk, so file-system rules (Windows reserved names,
+            path length) do not apply to them. Do not report findings in code the PR does not change.
+          ignored_paths: >-
+            ["**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/bun.lock",
+            "**/bun.lockb", "**/uv.lock", "**/poetry.lock", "**/Cargo.lock", "**/*.min.js",
+            "**/*.map", "dist/**", "build/**", ".next/**", "node_modules/**"]
+
+  conejo:
     name: Static analysis, review report & companion fix PR
     # 🥕 Fork and Dependabot PRs get no secrets; drafts and WIP titles wait. 🐇
     if: >-
@@ -43,6 +102,10 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency:
+      group: jules-el-conejo-${{ github.event.pull_request.number || inputs.pr_number }}
+      # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -153,26 +216,38 @@ jobs:
         uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-deny
-      - name: 🐇 Install ruff
-        run: pipx install ruff
+      - name: 🐇 Install the linters
+        # 🥕 Pinned. ruff.toml sets preview = true and each ruff release adds
+        # preview rules (0.17 added RUF105/RUF201): bump it with ruff.toml.
+        run: |
+          pipx install ruff==0.17.2
+          pipx install zizmor==1.31.1
+          pipx install actionlint-py==1.7.12.25
 
-      # 🥕 Stage 2: the repository's own gates, with the same flags as ci.yml.
-      - name: 🥕 Run static analysis
+      # 🥕 Stage 2: five checks over what the PR changes, each with its own
+      # status. ruff, shellcheck, the parsers and the workflow tools read only
+      # the changed files: a repository-wide run reported the same old
+      # findings on every PR. clippy, cargo fmt and cargo deny stay crate-wide
+      # (a crate is their unit). Flags match ci.yml.
+      - name: 🥕 Run static analysis, syntax, security and workflow checks
         id: static_analysis
         env:
           RUST_CHANGED: ${{ steps.skills.outputs.rust_changed }}
+          CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
         run: |
           REPORT_FILE="$(mktemp)"
-          STATUS="passed"
+          declare -A STATUS=([lint]=skipped [syntax]=skipped [security]=skipped [workflows]=skipped)
 
+          # run_tool AREA LABEL CMD...: one report section; a failure marks AREA.
           run_tool() {
-            local label="$1" out
-            shift
-            echo "### 🛠️ ${label}" >> "$REPORT_FILE"
+            local area="$1" label="$2" out
+            shift 2
+            [ "${STATUS[$area]}" = skipped ] && STATUS[$area]=passed
+            echo "#### 🛠️ ${label}" >> "$REPORT_FILE"
             if out="$("$@" 2>&1)"; then
               echo "- **Status:** ✅ Passed" >> "$REPORT_FILE"
             else
-              STATUS="failed"
+              STATUS[$area]=failed
               {
                 echo "- **Status:** ❌ Findings detected"
                 echo '```text'
@@ -182,29 +257,83 @@ jobs:
             fi
             echo "" >> "$REPORT_FILE"
           }
+          changed() { printf '%s\n' "$CHANGED_FILES" | grep -E "$1" || true; }
 
+          mapfile -t PY_FILES < <(changed '\.pyi?$')
+          mapfile -t SHELL_FILES < <(changed '\.(sh|bash)$')
+          mapfile -t WORKFLOWS < <(changed '^\.github/workflows/.*\.ya?ml$')
+          mapfile -t TOML_FILES < <(changed '\.toml$')
+          mapfile -t JSON_FILES < <(changed '\.json$')
+          mapfile -t YAML_FILES < <(changed '\.ya?ml$')
+
+          echo "### 🧹 Lint" >> "$REPORT_FILE"
           if [ "$RUST_CHANGED" = true ]; then
-            run_tool "cargo clippy (all targets, all features)" cargo clippy --all-targets --all-features -- -D warnings
-            run_tool "cargo deny (advisories, bans, licenses, sources)" cargo deny check
-          else
-            {
-              echo "### 🛠️ Rust gates"
-              echo "- ⏭️ Skipped: no .rs or Cargo files changed."
-              echo ""
-            } >> "$REPORT_FILE"
+            run_tool lint "cargo clippy (all targets, all features)" cargo clippy --all-targets --all-features -- -D warnings
           fi
-
-          if git ls-files '*.py' | grep -q .; then
-            run_tool "ruff (Python, repository config)" ruff check --output-format=concise .
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            run_tool lint "ruff (${#PY_FILES[@]} changed Python files, repository config)" \
+              ruff check --force-exclude --output-format=concise -- "${PY_FILES[@]}"
           fi
-
-          mapfile -t SHELL_FILES < <(git ls-files '*.sh')
           if [ "${#SHELL_FILES[@]}" -gt 0 ]; then
-            run_tool "shellcheck (shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
+            run_tool lint "shellcheck (${#SHELL_FILES[@]} changed shell scripts)" shellcheck --format=gcc "${SHELL_FILES[@]}"
           fi
 
+          echo "### 🔤 Syntax and format" >> "$REPORT_FILE"
+          if [ "$RUST_CHANGED" = true ]; then
+            run_tool syntax "cargo fmt --check" cargo fmt --check
+          fi
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            # The repository's Python floor is 3.12 (ubuntu-latest's python3).
+            run_tool syntax "Python 3.12 compiles (${#PY_FILES[@]} files)" python3 -m py_compile "${PY_FILES[@]}"
+          fi
+          if [ "${#SHELL_FILES[@]}" -gt 0 ]; then
+            # shellcheck disable=SC2016 # "$f" expands in the inner bash, not here
+            run_tool syntax "bash -n (${#SHELL_FILES[@]} files)" bash -c 'for f; do bash -n "$f" || exit 1; done' _ "${SHELL_FILES[@]}"
+          fi
+          if [ "${#TOML_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "TOML parses (${#TOML_FILES[@]} files)" \
+              python3 -c 'import sys, tomllib; [tomllib.load(open(f, "rb")) for f in sys.argv[1:]]' "${TOML_FILES[@]}"
+          fi
+          if [ "${#JSON_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "JSON parses (${#JSON_FILES[@]} files)" \
+              python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' "${JSON_FILES[@]}"
+          fi
+          if [ "${#YAML_FILES[@]}" -gt 0 ]; then
+            run_tool syntax "YAML parses (${#YAML_FILES[@]} files)" \
+              ruby -ryaml -e 'ARGV.each { |f| YAML.safe_load(File.read(f), aliases: true) }' "${YAML_FILES[@]}"
+          fi
+
+          echo "### 🔒 Security" >> "$REPORT_FILE"
+          if [ "$RUST_CHANGED" = true ]; then
+            run_tool security "cargo deny (advisories, bans, licenses, sources)" cargo deny check
+          fi
+          if [ "${#PY_FILES[@]}" -gt 0 ]; then
+            # flake8-bandit's rules, on top of the repository's selection.
+            run_tool security "ruff bandit rules (S) on ${#PY_FILES[@]} changed Python files" \
+              ruff check --force-exclude --output-format=concise --select S --ignore S101,S404,S603,S607 -- "${PY_FILES[@]}"
+          fi
+          if [ "${#WORKFLOWS[@]}" -gt 0 ]; then
+            run_tool security "zizmor (${#WORKFLOWS[@]} changed workflows, medium and up)" \
+              zizmor --offline --format plain --min-severity medium "${WORKFLOWS[@]}"
+          fi
+
+          echo "### ⚙️ Workflows" >> "$REPORT_FILE"
+          if [ "${#WORKFLOWS[@]}" -gt 0 ]; then
+            run_tool workflows "actionlint (${#WORKFLOWS[@]} changed workflows)" actionlint "${WORKFLOWS[@]}"
+          fi
+
+          for area in lint syntax security workflows; do
+            if [ "${STATUS[$area]}" = skipped ]; then
+              echo "- ⏭️ ${area}: nothing in this PR for it to read." >> "$REPORT_FILE"
+            fi
+          done
+          OVERALL=passed
+          for area in lint syntax security workflows; do
+            [ "${STATUS[$area]}" = failed ] && OVERALL=failed
+          done
           {
-            echo "status=${STATUS}"
+            echo "status=${OVERALL}"
+            for area in lint syntax security workflows; do echo "${area}=${STATUS[$area]}"; done
             echo "report<<__JULES_STATIC_EOF__"
             cat "$REPORT_FILE"
             echo "__JULES_STATIC_EOF__"
@@ -216,42 +345,75 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PR_BODY: ${{ steps.pr.outputs.body }}
-          STATIC_STATUS: ${{ steps.static_analysis.outputs.status }}
+          LINT_STATUS: ${{ steps.static_analysis.outputs.lint }}
+          SYNTAX_STATUS: ${{ steps.static_analysis.outputs.syntax }}
+          SECURITY_STATUS: ${{ steps.static_analysis.outputs.security }}
+          WORKFLOWS_STATUS: ${{ steps.static_analysis.outputs.workflows }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           STATIC_REPORT: ${{ steps.static_analysis.outputs.report }}
           CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
         with:
           script: |
             const body = process.env.PR_BODY || '';
             const has = (heading) => new RegExp(`^## ${heading}`, 'm').test(body);
-            const staticStatus = process.env.STATIC_STATUS === 'passed' ? '✅ Passed' : '❌ Action Required';
+            const mark = (s) => ({ passed: '✅ Passed', failed: '❌ Action required', skipped: '⏭️ Nothing to check' })[s] || '❔ Unknown';
             const files = (process.env.CHANGED_FILES || '').split('\n').filter(Boolean);
             const listed = files.slice(0, 25).map((f) => `- \`${f}\``).join('\n') || '- *(no changed files)*';
             const more = files.length > 25 ? `\n- …and ${files.length - 25} more` : '';
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: Number(process.env.PR_NUMBER),
-              body: [
+            // 🐇 One report per PR, edited in place on each push, not a new comment per push.
+            const MARKER = '<!-- jules-el-conejo-report -->';
+            const issue_number = Number(process.env.PR_NUMBER);
+            const report = [
+                MARKER,
                 '## 🐇🥕 Jules, el conejo — PR review report',
+                `_Head: \`${process.env.HEAD_SHA.slice(0, 8)}\`_`,
                 '',
                 `| Stage | Status |`,
                 '| :--- | :--- |',
-                `| **Static analysis** (clippy, cargo deny, ruff, shellcheck) | ${staticStatus} |`,
+                `| 🧹 **Lint** (clippy, ruff, shellcheck) | ${mark(process.env.LINT_STATUS)} |`,
+                `| 🔤 **Syntax and format** (cargo fmt, Python 3.12, bash -n, TOML/JSON/YAML) | ${mark(process.env.SYNTAX_STATUS)} |`,
+                `| 🔒 **Security** (cargo deny, ruff bandit rules, zizmor) | ${mark(process.env.SECURITY_STATUS)} |`,
+                `| ⚙️ **Workflows** (actionlint) | ${mark(process.env.WORKFLOWS_STATUS)} |`,
+                '| 🧠 **Review**: correctness, security, performance, improvements, best practices | The **Jules PR Review** check: inline comments on this PR, rules in `.github/jules-review-rules.md` |',
                 `| **PR body** (\`skills/jules-el-conejo/pr-body-visualizer.md\`) | ${has('Summary') && has('Evidence') && has('Merge Danger') ? '✅ Compliant' : '⚠️ Missing sections'} |`,
                 '',
                 `### 📂 Reviewed files (${files.length})`,
                 listed + more,
                 '',
-                '### 🛠️ Static analysis',
                 process.env.STATIC_REPORT || 'No findings.',
+                `_[Run log](${process.env.RUN_URL})_`,
                 '',
                 '### 🖼️ PR description contract',
                 `- ${has('Summary') ? '✅' : '⚠️'} \`## Summary\``,
                 `- ${has('Evidence') ? '✅' : '⚠️'} \`## Evidence\` (Before/After)`,
                 `- ${has('Merge Danger') ? '✅' : '⚠️'} \`## Merge Danger\` (Door & Blast Radius)`,
-              ].join('\n'),
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
             });
+            const mine = comments.find(
+              (c) => c.user?.type === 'Bot' && (c.body || '').startsWith(MARKER),
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: mine.id,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body: report,
+              });
+            }
 
       # 🥕 Stage 4: Jules opens a companion fix PR. Only for a trusted author or
       # dispatcher, and only when a PR opens, reopens, leaves draft, gets the
@@ -278,6 +440,12 @@ jobs:
             ("${{ steps.pr.outputs.title }}", branch ${{ steps.pr.outputs.head_ref }}).
 
             Follow AGENTS.md and CONTRIBUTING.md in the repository; they override generic advice below.
+
+            Word parity comes first. Never make jubarte refuse, strip or rewrite an input that
+            Microsoft Word opens: that is a regression, not hardening. A ZIP part name is an OPC
+            URI that jubarte reads in memory and never writes to the file system, so file-system
+            rules (Windows reserved names such as CON or AUX, path length) do not apply to it.
+            A finding that claims Word behaviour must say how it was established.
 
             ## Changed files
             ${{ steps.skills.outputs.changed_files }}

@@ -5,7 +5,7 @@
 //! CriticMarkup delimiters in Markdown source.
 //!
 //! CriticMarkup (<https://criticmarkup.com>) is read before the Markdown, as
-//! its specification asks: [`encode`] swaps the delimiters of every complete
+//! its specification asks: `encode` swaps the delimiters of every complete
 //! span for single stand-in characters, the Markdown parser runs on the
 //! result, and [`Pieces`] splits the parser's text back into text and
 //! delimiters. A change can therefore cross emphasis, links and paragraph
@@ -338,7 +338,7 @@ pub(super) fn legacy_attribution_error(source: &str) -> Option<String> {
     None
 }
 
-/// [`encode`], plus a warning for every malformed delimiter that comes
+/// `encode`, plus a warning for every malformed delimiter that comes
 /// out text: an opener without its closer or separator, a closer that
 /// closed nothing.
 pub(crate) fn encode_checked(source: &str) -> (String, Vec<String>) {
@@ -485,6 +485,25 @@ fn count_closer_steps(steps: usize) {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[inline]
 fn count_closer_steps(_steps: usize) {}
+
+#[cfg(test)]
+thread_local! {
+    static EDGE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count the bytes [`resolved_edge`] resolves. Test-only; an empty inline
+/// function in production builds, so the runtime cost is zero.
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_edge_bytes(bytes: usize) {
+    EDGE_BYTES.with(|count| count.set(count.get() + bytes));
+}
+
+#[cfg(not(test))]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[inline]
+fn count_edge_bytes(_bytes: usize) {}
 
 /// Where every unescaped closer and separator sits in the source, found once
 /// so that an opener without its closer does not scan the rest of the text,
@@ -1086,7 +1105,7 @@ struct Check {
     consumed: Vec<usize>,
 }
 
-/// [`encode`], opening only the spans `allowed` names, moving footnote
+/// `encode`, opening only the spans `allowed` names, moving footnote
 /// labels out of spans only when `labels`, and noting malformed
 /// delimiters in `check`.
 fn encode_spans_checked(source: &str, allowed: Allowed, labels: bool, check: &mut Check) -> String {
@@ -1103,7 +1122,7 @@ fn encode_spans_checked(source: &str, allowed: Allowed, labels: bool, check: &mu
     out
 }
 
-/// [`encode`], opening only the spans `allowed` names, and moving footnote
+/// `encode`, opening only the spans `allowed` names, and moving footnote
 /// labels out of spans only when `labels`.
 fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
     encode_spans_checked(source, allowed, labels, &mut Check::default())
@@ -1803,7 +1822,7 @@ fn footnote_label(text: &str) -> Option<&str> {
     Some(&text[..2 + close + 2 + spaces])
 }
 
-/// [`encode`] without moving footnote labels: the spans as written, for
+/// `encode` without moving footnote labels: the spans as written, for
 /// reading the markup rather than the Markdown.
 pub(crate) fn encode_spans_only(source: &str) -> String {
     encode_spans(source, ALL, false)
@@ -1964,14 +1983,88 @@ pub(super) fn math_crosses_boundary(latex: &str) -> bool {
 /// deletions dropped (`accept`), or the other way round; highlights keep
 /// their text and comments go.
 ///
+/// The splice is not compositional under CommonMark's delimiter rules,
+/// so the spliced bytes are verified against the md→docx reader's own
+/// run model ([`super::repair`]): a candidate that already reads like
+/// the model stays byte-identical, a seam that does not is re-emitted
+/// from it, and a document the reader cannot model keeps the splice.
+///
 /// Where a removed (or kept-as-a-span) mark lies between two same-kind
 /// inline spans (code, emphasis, strong, strikethrough), the spans are
 /// folded into one before resolving, so the bytes the docx path reads
 /// back are the joined form's. CommonMark would otherwise read the
 /// touching delimiters as one run holding the inner ones as text.
 pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
-    let merged = merge_across_marks(markdown, accept);
+    let candidate = resolved_slice(markdown, accept);
+    super::repair::repair(markdown, &candidate, accept)
+}
+
+/// [`resolve`] on a part of a document, without the seam repair: the
+/// spliced bytes a candidate check re-reads.
+pub(super) fn resolved_slice(markdown: &str, accept: bool) -> String {
+    let merged = merge_seam_levels(markdown, accept);
     resolve_with_policy(&merged, accept, false)
+}
+
+/// Every inline span `source` parses to (nested ones too), as byte
+/// ranges: the seams [`super::repair`] can re-emit around.
+pub(super) fn member_span_ranges(source: &str) -> Vec<Range<usize>> {
+    member_spans(source)
+        .iter()
+        .map(|span| span.range.clone())
+        .collect()
+}
+
+/// The ranges a resolution touches: every change region (its `¶{…}` or
+/// `{…}` attribution included), complete comment and complete
+/// highlight. Everything else resolves to itself, so only blocks
+/// holding one of these need verifying.
+pub(super) fn resolved_regions(source: &str) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = change_regions(source)
+        .iter()
+        .map(|region| {
+            let mut end = region.close;
+            if source[end..].starts_with('¶') {
+                end += '¶'.len_utf8();
+            }
+            if let Some((_, width)) = attribution_tag(&source[end..]) {
+                end += width;
+            }
+            region.open..end
+        })
+        .collect();
+    let closers = Closers::new(source);
+    for &(start, end) in closers.comments.iter().chain(&closers.highlights) {
+        ranges.push(start..end);
+    }
+    ranges.sort_by_key(|range| range.start);
+    ranges
+}
+
+/// How many times [`merge_seam_levels`] re-reads its own output. Every
+/// pass that changes the text folds at least one pair of spans into one
+/// or drops at least one mark, so a document's inline nesting settles
+/// far below this; the bound only stops a hand-made input from spinning.
+const SEAM_PASSES: usize = 32;
+
+/// [`merge_across_marks`] until the text stops changing.
+///
+/// One pass joins the spans at a level, but a group's replacement is
+/// written from its members' raw source: where the group spans a
+/// container, the joins that container's own level made fall inside it
+/// and go unused, so the inner spans come out still touching and
+/// CommonMark fuses them. Re-reading the text the pass left picks those
+/// joins up, because the pass before it wrote them out.
+fn merge_seam_levels(markdown: &str, accept: bool) -> String {
+    let mut merged = merge_across_marks(markdown, accept);
+    for _ in 0..SEAM_PASSES {
+        let next = merge_across_marks(&merged, accept);
+        if next == merged {
+            break;
+        }
+        merged = next;
+    }
+    merged
 }
 
 /// Whether `note` names, after ` re `, a change the one it follows sits
@@ -1981,6 +2074,23 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
 fn names_outer(note: &str) -> bool {
     super::view_notes::nested_revision_tags(note).is_some_and(|tags| tags.len() > 1)
         || super::view_notes::nested_plain_revisions(note).is_some_and(|parts| parts.len() > 1)
+}
+
+/// The changes a resolution drops on either decision because they name
+/// the change they sit inside (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`).
+/// The md→docx reader's run model holds no such rule — it keeps the
+/// inner old side — so [`super::repair`] must keep the splice for the
+/// blocks that carry one.
+pub(super) fn nested_change_regions(source: &str) -> Vec<Range<usize>> {
+    change_regions(source)
+        .iter()
+        .filter(|region| {
+            !escaped(source, region.close)
+                && attribution_tag(&source[region.close..])
+                    .is_some_and(|(note, _)| names_outer(note))
+        })
+        .map(|region| region.open..region.close)
+        .collect()
 }
 
 /// Accepted document clauses omit a wholly deleted paragraph's line break.
@@ -2235,19 +2345,63 @@ fn contribution_span(source: &str, region: &ChangeRegion, accept: bool) -> Optio
     if span.range != (0..kept.len()) {
         return None;
     }
+    // A complete tag right after the closer names this change, and
+    // resolve drops it with the change. Covering it keeps the splice
+    // from leaving it standing in front of the joined run, where it
+    // would read as text; an escaped brace is literal text, not a tag.
+    let tagged = attribution_tag(&source[region.close..])
+        .filter(|_| !escaped(source, region.close))
+        .map_or(region.close, |(_, width)| region.close + width);
     Some(SeamSpan {
         kind: span.kind,
-        cover: region.open..region.close,
+        cover: region.open..tagged,
         content: span_content(&kept, span),
         marker: span_marker(&kept, span),
         flipped: false,
     })
 }
 
+/// The blank lines of `source` an `_` seam's edge window may stop at
+/// (the byte where each `\n\n` starts), sorted: none inside a change, a
+/// fenced or indented code block, or a code span. Resolving never
+/// carries anything across one, so the text between two of them
+/// resolves the same alone as inside the whole source.
+fn seam_breaks(source: &str, regions: &[ChangeRegion]) -> Vec<usize> {
+    let literal = Literal::new(source);
+    let mut regions = regions.iter().peekable();
+    let mut breaks = Vec::new();
+    for (at, _) in source.match_indices("\n\n") {
+        while regions.next_if(|r| r.close <= at).is_some() {}
+        let in_change = regions.peek().is_some_and(|r| r.open < at);
+        if !in_change && !literal.in_fence(at) && literal.verbatim_end(at).is_none() {
+            breaks.push(at);
+        }
+    }
+    breaks
+}
+
+/// The text an `_` seam's edges are read from: the source between the
+/// blank line before `start` and the one after `end` (either end of the
+/// source when there is none). Outside that window the edge is a line
+/// break, which is no letter either way.
+fn edge_windows<'a>(
+    source: &'a str,
+    breaks: &[usize],
+    start: usize,
+    end: usize,
+) -> (&'a str, &'a str) {
+    let before = breaks.partition_point(|&b| b + 2 <= start);
+    let from = before.checked_sub(1).map_or(0, |i| breaks[i] + 2);
+    let after = breaks.partition_point(|&b| b < end);
+    let to = breaks.get(after).copied().unwrap_or(source.len());
+    (&source[from..start], &source[end..to])
+}
+
 /// The last (or first) character of `text` resolved under `accept`:
 /// what lands next to a member's edge once the marks inside `text`
 /// resolve. An unclosed delimiter stays text, which is conservative.
 fn resolved_edge(text: &str, accept: bool, last: bool) -> Option<char> {
+    count_edge_bytes(text.len());
     let resolved = resolve_with_policy(text, accept, false);
     if last {
         resolved.chars().last()
@@ -2278,6 +2432,7 @@ fn other_flavour(delimiter: char) -> Option<char> {
 /// alike: underscores cannot open or close emphasis inside a word.
 fn flush_seam_spans(
     source: &str,
+    breaks: &[usize],
     accept: bool,
     members: &mut [SeamSpan],
     pending: &mut Vec<usize>,
@@ -2292,8 +2447,9 @@ fn flush_seam_spans(
     let mut marker = members[group[0]].marker.clone();
     let mut flipped = group.iter().any(|&i| members[i].flipped);
     if marker.starts_with('_') {
-        let left = resolved_edge(&source[..start], accept, true);
-        let right = resolved_edge(&source[end..], accept, false);
+        let (before, after) = edge_windows(source, breaks, start, end);
+        let left = resolved_edge(before, accept, true);
+        let right = resolved_edge(after, accept, false);
         if left.is_some_and(|c| c.is_alphanumeric()) || right.is_some_and(|c| c.is_alphanumeric()) {
             marker = "*".repeat(marker.chars().count());
             flipped = true;
@@ -2350,6 +2506,7 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     if regions.is_empty() {
         return source.to_string();
     }
+    let breaks = seam_breaks(source, &regions);
     let mut members: Vec<SeamSpan> = Vec::new();
     for span in member_spans(source) {
         // A span inside a change belongs to the change: resolving keeps
@@ -2410,6 +2567,7 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     // kind, so chains join transitively.
     fn seam_level(
         source: &str,
+        breaks: &[usize],
         accept: bool,
         members: &mut [SeamSpan],
         level: &[usize],
@@ -2433,7 +2591,14 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
             });
             if touching {
                 let &last = pending.last().unwrap_or(&0);
-                if members[last].kind == members[i].kind {
+                // A code span rejoins under one fence whatever its
+                // members' fences were; any other kind joins only under
+                // the first member's own run, or the shorter member's
+                // text would come back carrying emphasis it never had.
+                if members[last].kind == members[i].kind
+                    && (members[i].kind == InlineKind::Code
+                        || members[last].marker == members[i].marker)
+                {
                     pending.push(i);
                     continue;
                 }
@@ -2448,31 +2613,35 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
                     members[i].flipped = true;
                 }
             }
-            flush_seam_spans(source, accept, members, &mut pending, splices);
+            flush_seam_spans(source, breaks, accept, members, &mut pending, splices);
             pending.push(i);
         }
-        flush_seam_spans(source, accept, members, &mut pending, splices);
+        flush_seam_spans(source, breaks, accept, members, &mut pending, splices);
     }
 
     let mut splices: Vec<(usize, usize, String)> = Vec::new();
     for level in &children {
         if level.len() > 1 {
-            seam_level(source, accept, &mut members, level, &mut splices);
+            seam_level(source, &breaks, accept, &mut members, level, &mut splices);
         }
     }
-    seam_level(source, accept, &mut members, &top, &mut splices);
+    seam_level(source, &breaks, accept, &mut members, &top, &mut splices);
 
     if splices.is_empty() {
         return source.to_string();
     }
     // A joined group's splice already accounts for every mark and span
     // inside it: inner splices found there are covered, so drop them.
+    // Splices can also partially overlap (a span opens inside a mark's
+    // range and closes outside it): the earlier splice wins and the
+    // later region resolves untouched, or applying both would move the
+    // later one's end off the byte the first one wrote.
     splices.sort_by_key(|s| (s.0, std::cmp::Reverse(s.1)));
     let mut kept: Vec<(usize, usize, String)> = Vec::new();
     for splice in splices {
         if kept
             .iter()
-            .any(|&(start, end, _)| start <= splice.0 && splice.1 <= end)
+            .any(|&(start, end, _)| splice.0 < end && start < splice.1)
         {
             continue;
         }
@@ -2486,7 +2655,11 @@ fn merge_across_marks(source: &str, accept: bool) -> String {
     result
 }
 
-fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool) -> String {
+pub(super) fn resolve_with_policy(
+    markdown: &str,
+    accept: bool,
+    remove_deleted_lines: bool,
+) -> String {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum In {
         Text,
@@ -2741,6 +2914,33 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
 mod tests {
     use super::*;
 
+    /// An `_` seam's edges are read from its own paragraph, not the whole
+    /// document: N paragraphs each holding one cost N paragraphs of
+    /// resolving, not N documents (CodeRabbit on #1564).
+    #[test]
+    fn underscore_seam_edges_resolve_only_their_own_paragraph() {
+        let para = "word _a_{++_b_++} tail\n\n";
+        let source = para.repeat(300);
+        EDGE_BYTES.with(|count| count.set(0));
+        let resolved = resolve(&source, true);
+        assert_eq!(resolved, "word _ab_ tail\n\n".repeat(300));
+        let bytes = EDGE_BYTES.with(std::cell::Cell::get);
+        assert!(
+            bytes < 4 * source.len(),
+            "{bytes} bytes resolved for a {}-byte source",
+            source.len()
+        );
+    }
+
+    /// The window stops at a blank line, never inside a change that holds
+    /// one: the edge after a change spanning paragraphs is still read
+    /// whole, and an intraword `_` still turns into `*`.
+    #[test]
+    fn an_underscore_seam_edge_is_read_across_a_change_holding_a_blank_line() {
+        let source = "{++x\n\ny++}_a_{++_b_++}z\n\nnext";
+        assert_eq!(resolve(source, true), "x\n\ny*ab*z\n\nnext");
+    }
+
     fn pieces(encoded: &str) -> Vec<String> {
         let mut out = Vec::new();
         Pieces::default().feed(encoded, |piece| {
@@ -2971,7 +3171,7 @@ mod tests {
         );
     }
 
-    /// [`encode`] with the closer-search steps it took: the builders in
+    /// `encode` with the closer-search steps it took: the builders in
     /// [`Closers::new`] walk the source once each and every lookup is a
     /// step, so a linear encode stays within a small constant times the
     /// input, while a search that rescans the rest of the text per
@@ -3422,10 +3622,13 @@ mod tests {
         );
         // A kept body that is not one inline span — a bare backtick
         // run reads as a code fence, not a span — keeps its literal
-        // text next to the span it cannot join.
+        // text next to the span it cannot join. Raw, `` `alpha``` ``
+        // would re-read as one literal run (a one-backtick opener never
+        // closes a four-backtick run), so the seam is re-emitted with
+        // the backticks escaped (#1240).
         assert_eq!(
             resolve("Use `alpha`{++```++} here.", true),
-            "Use `alpha```` here.",
+            "Use `alpha`\\`\\`\\` here.",
         );
         // Marks between plain text stay plain text; their body joins
         // with neither span because neither span touches the mark.
@@ -3473,6 +3676,76 @@ mod tests {
         assert_eq!(resolve("Say *a*{--x--}b* now.", false), "Say *a*xb* now.");
     }
 
+    /// Two spans of the same kind whose delimiter runs differ must not
+    /// fold into one: joined under the first member's run, the shorter
+    /// span's text comes back from the docx path strong, which neither
+    /// document said. `***a***` and `*b*` are an italic `a` that is also
+    /// bold and a plain italic `b`, so `***ab***` is not the joined form
+    /// — it reads as one bold italic run. The later member's run is
+    /// rewritten to the other flavour (`_`), which keeps the two spans
+    /// apart with no run left to fuse.
+    #[test]
+    fn resolve_keeps_a_shorter_emphasis_run_out_of_a_triple_star_join() {
+        let joined = resolve("***a***{--x--}*b*", true);
+        assert_eq!(joined, "***a***_b_", "{joined:?}");
+        // `b` must come back plain italic: no strong span reaches it.
+        let bolded = collect_inline_spans(&joined)
+            .into_iter()
+            .any(|span| span.kind == InlineKind::Strong && span.range.end > 7);
+        assert!(!bolded, "the second span came back bold: {joined:?}");
+        // The same holds the other way round, and for the runs that do
+        // fuse: `**a**` next to `*b*` shares one delimiter character, so
+        // the short one takes the other flavour and stays its own span.
+        let joined = resolve("**a**{--x--}*b*", true);
+        assert_eq!(joined, "**a**_b_", "{joined:?}");
+    }
+
+    /// A join that spans a container must not lose the joins the
+    /// container's own spans made: a group's replacement is written
+    /// from its members' raw source, so the splices those members'
+    /// inner level produced fall inside it and are dropped as covered —
+    /// the inner spans come out still touching and CommonMark fuses
+    /// them. Both levels must therefore be walked: the inner join
+    /// first, the outer one on the text it left.
+    #[test]
+    fn resolve_keeps_an_inner_join_inside_a_joined_container() {
+        // The two code spans inside the strong join into `bc`, and the
+        // two strong spans around the deleted `y` into one.
+        let joined = resolve("**A `b`{--x--}`c` D**{--y--}**E**", true);
+        assert_eq!(joined, "**A `bc` DE**", "{joined:?}");
+        // The same for emphasis, whose touching runs fuse as readily.
+        let joined = resolve("**A *b*{--x--}*c* D**{--y--}**E**", true);
+        assert_eq!(joined, "**A *bc* DE**", "{joined:?}");
+        // A container that joins with nothing keeps its inner join:
+        // it was already the only splice on the pass.
+        let joined = resolve("*`a`{--x--}`b`*", true);
+        assert_eq!(joined, "*`ab`*", "{joined:?}");
+    }
+
+    /// The attribution tag after a change is that change's metadata: it
+    /// resolves away with the change it names. A joined span's splice
+    /// ends at the closer, so a tag left outside the cover stands in
+    /// front of the joined run, where resolve reads it as text — the
+    /// reader then carries a literal `{r5 @AC}` into the document.
+    #[test]
+    fn resolve_does_not_leave_an_attribution_tag_in_front_of_a_joined_span() {
+        // The tag goes with the insertion it names: the two spans join
+        // and nothing of the tag survives.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}", true);
+        assert_eq!(joined, "*ab*", "{joined:?}");
+        // The tag between two joined spans does the same, so the third
+        // span joins as well.
+        let joined = resolve("*a*{++*b*++}{r5 @AC}*c*", true);
+        assert_eq!(joined, "*abc*", "{joined:?}");
+        // Rejecting keeps the two original spans and drops the tag with
+        // the insertion it named.
+        let kept = resolve("*a*{++*b*++}{r5 @AC}", false);
+        assert_eq!(kept, "*a*", "{kept:?}");
+        // An escaped brace is text, not a tag: it stays.
+        let literal = resolve("*a*{++*b*++}\\{r5 @AC}", true);
+        assert_eq!(literal, "*ab*\\{r5 @AC}", "{literal:?}");
+    }
+
     /// Marks next to a link do not merge it with another link: the byte
     /// before the mark is a `)` (the destination's closer) and the byte
     /// after is a `[` (the next link's opener), but CommonMark already
@@ -3486,6 +3759,22 @@ mod tests {
         // Accept: body dropped; the two adjacent links stay two.
         let dropped = resolve("[a](u){--x--}[b](u)", true);
         assert_eq!(dropped, "[a](u)[b](u)");
+    }
+
+    /// Two splices can partially overlap: a span opens inside a mark's
+    /// range and closes outside it. Applying both would move the later
+    /// one's end off the byte the first one wrote, so the earlier splice
+    /// wins and the later region resolves untouched (#1240). The case
+    /// is the property test's 772nd tree; it used to panic on a byte
+    /// index past the end of the spliced text.
+    #[test]
+    fn resolve_tolerates_a_partially_overlapping_seam() {
+        let source = "Say ___yd[ch](u)_____**u**[dsa](u)__t~~unv~~__{~~[`q`~~pkf~~g](u)*k*``sjg``~>__`k`**l**__~~} now.\n";
+        for accept in [true, false] {
+            let resolved = resolve(source, accept);
+            assert!(!resolved.is_empty(), "accept={accept}");
+            assert!(resolved.contains('S'), "{resolved:?}");
+        }
     }
 
     #[test]

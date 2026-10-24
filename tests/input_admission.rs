@@ -959,6 +959,53 @@ fn special_entry_probe() -> Vec<u8> {
     bytes
 }
 
+/// The Info-ZIP Unicode Path (0x7075) payload overriding `name` with
+/// `content` (version byte, CRC-32 of the header name, UTF-8 content).
+fn unicode_path_field(name: &[u8], content: &[u8]) -> Vec<u8> {
+    let mut field = vec![1];
+    field.extend_from_slice(&crc32(name).to_le_bytes());
+    field.extend_from_slice(content);
+    field
+}
+
+/// A package whose `word/media/` raw name carries a 0x7075 override to
+/// the slash-less `word/media`, while the central record still marks the
+/// entry a directory (`version_made_by`, `external_attributes`). Readers
+/// surface the override name, so the entry-type check must see it too.
+fn directory_override_probe(version_made_by: u16, external: u32) -> Vec<u8> {
+    let mut bytes = package(|writer, _| {
+        let mut options: zip::write::FullFileOptions<'_, '_> =
+            zip::write::FileOptions::default().compression_method(CompressionMethod::Stored);
+        options
+            .add_extra_field(
+                0x7075,
+                unicode_path_field(b"word/media/", b"word/media"),
+                true,
+            )
+            .unwrap();
+        writer.start_file("word/media/", options).unwrap();
+    });
+    set_central_attributes(&mut bytes, "word/media", version_made_by, external);
+    bytes
+}
+
+/// A valid package whose `evil` entry's raw name carries a terminal
+/// control byte and whose central record marks it a Unix symlink, so the
+/// defect's detail quotes the name.
+fn control_name_probe() -> Vec<u8> {
+    let mut bytes = package(|writer, options| {
+        writer
+            .start_file(
+                "w\u{1b}[2Jevil.bin",
+                options.compression_method(CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"x").unwrap();
+    });
+    set_central_attributes(&mut bytes, "w\u{1b}[2Jevil.bin", 0x0314, 0o120777 << 16);
+    bytes
+}
+
 /// ZIP-17 (#644): every public route applies the structural refusals the
 /// bounded constructor owns — direct admission, the package
 /// constructor, scrub/leaks, the Markdown reader — while `debug`
@@ -1226,6 +1273,59 @@ fn zip17_public_boundaries() {
     jubarte::markdown::docx_to_markdown(&forced, &jubarte::markdown::MarkdownOptions::default())
         .expect("markdown opens it");
     jubarte::debug::findings(&forced).expect("debug opens it");
+}
+
+/// ZIP-16 (#639): the entry type is judged on the name the readers
+/// surface — the 0x7075 Unicode Path override — not only the raw header
+/// name. A slash-terminated raw name whose override drops the slash is
+/// still a directory on a file name, refused on every route.
+#[test]
+fn a_unicode_path_override_cannot_hide_a_directory_type() {
+    for (what, version_made_by, external) in [
+        ("Unix mode", 0x0314, 0o040755 << 16),
+        ("DOS directory attribute", 0x0014, 0x10),
+    ] {
+        let bytes = directory_override_probe(version_made_by, external);
+        let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+            .expect_err("{what}: a directory on a file name must be refused");
+        assert_eq!(err.code(), "UNSUPPORTED_PACKAGE", "{what}: {err}");
+        assert!(err.to_string().contains("trailing '/'"), "{what}: {err}");
+        let route = jubarte::opc::PartFs::open(&bytes)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+            .expect_err("{what}: PartFs must refuse");
+        assert!(route.contains("UNSUPPORTED_PACKAGE"), "{what}: {route}");
+        let findings =
+            jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
+        assert!(
+            findings.iter().any(|f| f.code == "ZIP_SPECIAL_ENTRY"),
+            "{what}: {findings:?}"
+        );
+    }
+}
+
+/// A defect detail quotes an entry name verbatim only after escaping:
+/// terminal control bytes in a name must never reach a refusal or a
+/// `debug` finding raw.
+#[test]
+fn entry_names_reach_refusals_and_findings_escaped() {
+    let bytes = control_name_probe();
+    let err = jubarte::admission::admit(&bytes, jubarte::admission::InputLimits::compare())
+        .expect_err("a symlink entry must be refused");
+    let text = err.to_string();
+    assert!(!text.contains('\u{1b}'), "{text}");
+    assert!(text.contains("\\u{1b}"), "{text}");
+    let findings =
+        jubarte::debug::findings(&bytes).expect("debug opens a package every route refuses");
+    for finding in &findings {
+        assert!(!finding.message.contains('\u{1b}'), "{finding:?}");
+    }
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == "ZIP_SPECIAL_ENTRY" && f.message.contains("\\u{1b}")),
+        "{findings:?}"
+    );
 }
 
 /// ZIP-15 (#600): a rooted or dot-segment spelling resolves to the same
@@ -1723,4 +1823,50 @@ fn issue650_markdown_honors_explicit_tighter_budgets() {
         );
         assert!(result.unwrap_err().to_string().contains("INVALID_XML"));
     }
+}
+
+/// Inputs that differ only by tracked changes become one package after the
+/// comparer accepts them; that path must still read under the caller's
+/// limits, not the compare defaults (review gid=53).
+#[test]
+fn inputs_equal_after_accepting_keep_the_callers_limits() {
+    let crowd = |extra: usize| {
+        move |writer: &mut ZipWriter<Cursor<Vec<u8>>>, options: SimpleFileOptions| {
+            for i in 0..extra {
+                writer
+                    .start_file(format!("word/media/x{i}.bin"), options)
+                    .unwrap();
+            }
+        }
+    };
+    let entries = InputLimits::compare().max_entries + 50;
+    let tracked = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body><w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>hello</w:t></w:r></w:ins></w:p><w:sectPr/></w:body></w:document>";
+    let with_document = |document: &str| {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, body) in [
+            ("[Content_Types].xml", CONTENT_TYPES),
+            ("_rels/.rels", PACKAGE_RELS),
+            ("word/document.xml", document),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(body.as_bytes()).unwrap();
+        }
+        crowd(entries)(&mut writer, options);
+        writer.finish().unwrap().into_inner()
+    };
+    let original = with_document(tracked);
+    let modified = with_document(DOCUMENT);
+    let settings = WmlComparerSettings {
+        input_limits: InputLimits {
+            max_entries: 2 * entries,
+            ..InputLimits::compare()
+        },
+        ..WmlComparerSettings::default()
+    };
+    assert!(settings.merge_replaced_paragraphs);
+    compare_documents_with_settings(&original, &modified, &settings)
+        .expect("the caller's entry budget admits both inputs, through every path");
 }

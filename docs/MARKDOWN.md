@@ -109,7 +109,7 @@ CLI reads them.
 | `` `code` `` and fenced code | `VerbatimChar` and `SourceCode` (pandoc's names) |
 | `- item`, `1. item` | numbered paragraphs (`ListParagraph`); an ordered list starts at its first number |
 | `> quote` | `Quote` |
-| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`; one whose borders vary names each side (`table: TableGrid, borders top double 3pt bottom double 3pt`). Header row repeated, column alignment kept |
+| table | Word's thin grid (`TableGrid`, single 0.5pt borders all round, as Insert Table makes it) unless the view names another style: the legend's `table:` for every table, a table line's `style X` for its own. `TableNormal` is Word's Normal Table, written with no `tblStyle`; the view names it for a table without a style. The borders a table carries itself come back as they were: `borders single 0.5pt 000000` (`w:tblBorders`; sides that share a border group as `top,bottom single 1.5pt`, groups joined by ` + `, a side turned off is `none`, a group naming no sides covers all six) `row-borders top double 0.5pt FF0000 in t0.row1 t0.row3` (a row's own `w:tblPrEx/w:tblBorders`; groups joined by `; `) and `cell-borders top,left,bottom,right single 1pt CCCCCC in all` (`w:tcBorders`, for `all` cells, a row `t0.row1` or a cell `t0.row1.cell2`; groups joined by `; `). A border in a theme colour adds it after its fallback colour: `single 1pt 2F5496 theme accent1 tint 99 shade BF` (`w:themeColor`, `w:themeTint`, `w:themeShade`). Word's border effects follow it: `single 1pt 2F5496 shadow frame` (`w:shadow`, `w:frame`). A source that defines `TableGrid` with one single border other than 0.5pt keeps it: the legend says `table: TableGrid, all borders 1.5pt`; one whose borders vary names each side (`table: TableGrid, borders top double 3pt bottom double 3pt`). Header row repeated, column alignment kept |
 | `[text](url)`, `[text](#anchor)` | hyperlink; `#the-intro` lands on the heading whose GitHub slug it is, through a bookmark (`_` before a digit, cut to 40 characters); a wholly deleted heading, an empty one or one in a footnote has none, and a link to a heading that is not there is written with a warning. Reading Word back, reader and writer share github-slugger's names (a repeat `-1`, `-2`): only the exact name the writer gives a heading is its own bookmark and prints no anchor; any other (`title-01`, a lone `title-1`) stays an `<a id>` anchor, and a heading in a table cell claims no slug. A title (`[t](u "Title")`) is the hyperlink's tooltip, and `<a href="u">t</a>` is a link too |
 | `[^note]` | footnote; a label defined twice (a footnote and an endnote both `[^1]`) is two notes: its first reference names the first definition and its next the second, which takes the next free number, with a warning |
 | `![alt](file.png)` | picture (PNG, JPEG, GIF, BMP, TIFF), at most the text width; else its alt text |
@@ -272,8 +272,30 @@ accepted or rejected, through the same engine as `jubarte accept` and
 `jubarte reject`. With `-t md` the Markdown itself is resolved instead. The
 flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
 accept` renders the accepted document to PDF.
+`--keep-nested-comment` preserves comments and replies whose whole range
+settlement removes, on an empty untracked anchor at the removed text.
+`accept` and `reject` offer the same opt-in. Partial overlaps keep their
+existing behavior. Without `--track-changes accept` or `reject`, convert
+refuses the keep flag with exit 2.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too, and says so in a warning.
+
+Resolving the Markdown splices the kept side of every mark back into the
+source and lets Markdown re-read it, which CommonMark's delimiter rules
+do not always give back the same document: a kept `_b_` inside `*a…c*`
+reads as literal underscores and `*a{++*b*++}c*` reads as a bare `b`,
+while the same input written to Word and accepted there reads as one
+italic `abc`. Every block holding a mark is therefore verified against
+the md→docx reader's own runs. A block that already reads like them is
+left byte-for-byte as it is; one that does not has the smallest inline
+span holding the mark re-emitted from those runs — bold+italic `a`/`b`/`c`
+as `**a*b*c**`, in the flavour the document already used — with the
+block's own syntax (a heading marker, a list bullet, a table cell) and
+its neighbours kept. The text a Markdown reader cannot model is never
+re-emitted: a comment or a highlight inside a change, a change named as
+nested inside another (`{~~old~>new~~}{r4+5 Bob re r3 Alice}`), an
+anchor, a malformed delimiter and a mark holding a line break all keep
+the resolved splice.
 
 A comment or highlight whole inside a change is text to the change's
 own delimiters: `{~~a{>>x ~> y<<} b~>c~~}` substitutes `a b` for `c` and
@@ -666,7 +688,8 @@ converting back puts a part's `fmt` changes on its separator, then its
 continuation separator (the view does not say which a lone one was on;
 its tag, author and date come back). The clause also updates a reference
 file's separators; removing it removes their old formatting-change marks.
-A `fmt` clause alone creates the notes part it names. A
+A `fmt` clause alone creates the notes part it names. A `rev:` there
+(an insertion or deletion in a separator) is not written, and says so. A
 note's own changes its text cannot show close its definition line:
 `[^1]: Source <!-- fmt footnotes.r7 @AC -->`. A first-page header or footer
 prints as `first: {…, inactive}` when different-first-page is off.
@@ -1338,8 +1361,8 @@ ends with `--force`.
   lengths in twips, in the schema's order. It is the frame the paragraph
   lays out in, its style's under its own, and the writer puts it on the
   paragraph; `frame: {}` is an empty `w:framePr`. A frame naming another
-  attribute, or a value the schema does not allow, does not read, and the
-  story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
+  attribute, a value the schema does not allow, or the same attribute
+  twice, does not read, and the story entry with it. A paragraph's own indent (`w:ind`) adds `indent:
   {first-line: 0.25in, right: 0.25in}` right after the alignment
   (`p1: {text: …, left, indent: {right: 0.25in}, color: …}`), its sides as
   the id lines name them (`first-line`, `hanging`, `left`, `right`; Strict's

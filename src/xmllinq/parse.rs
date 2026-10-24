@@ -89,7 +89,7 @@ fn bump_ns_scope_declared_bytes(by: usize) {
 ///
 /// This parser does not enforce input policy or panic on policy violations.
 /// It recurses once per nesting level: a caller that admitted nothing first
-/// bounds the depth with [`nests_deeper`] and [`PERMISSIVE_MAX_DEPTH`].
+/// bounds the depth with `nests_deeper` and `PERMISSIVE_MAX_DEPTH`.
 /// Run [`validate_xml_with_limits`] (or package admission) with the active
 /// limits first, or call [`try_parse_xdocument_with_limits`] to receive errors.
 /// Attributes retain their order; repeated expanded names keep the first

@@ -59,6 +59,15 @@ fn revisions_line(view: &str) -> &str {
         .unwrap()
 }
 
+/// A right shown-change count with a wrong raw mark count in front of
+/// `shown as` must fail the shared gate (#1521 review).
+#[test]
+#[should_panic(expected = "left: 9")]
+fn a_wrong_raw_mark_count_fails_the_summary_gate() {
+    let view = "---\nview: tracked\nrevisions: 2   # 9 marks shown as 2 changes: 1 insertion, 1 deletion\n---\n\n{++a++}{r0 @A} {--b--}{r1 @A}\n";
+    assert_summary(view);
+}
+
 /// The revision list is the source of truth once the body has been resolved.
 fn raw_summary(docx: &[u8]) -> String {
     use jubarte::changes::{ChangeKind, list_changes};
@@ -99,11 +108,36 @@ fn raw_summary(docx: &[u8]) -> String {
     format!("{total} mark{}: {kinds}", if total == 1 { "" } else { "s" })
 }
 
+/// Every change `jubarte changes` lists: what the `revisions:` line counts,
+/// which is the raw summary plus the formatting changes and the other
+/// stories' own.
+fn listed_total(docx: &[u8]) -> usize {
+    jubarte::changes::list_changes(docx).unwrap().len()
+}
+
+/// The line's own number as well as its comment: a right comment excuses no
+/// wrong total (#1521 review).
 #[track_caller]
-fn assert_raw_summary(view: &str, expected: &str) {
+fn assert_raw_summary(view: &str, listed: usize, expected: &str) {
     let line = revisions_line(view);
-    let comment = line.split_once("# ").unwrap().1;
-    assert_eq!(comment.split(';').next().unwrap(), expected, "{line}");
+    let (raw, comment) = line.split_once('#').unwrap_or((line, ""));
+    let total: usize = raw.split_whitespace().nth(1).unwrap().parse().unwrap();
+    assert_eq!(total, listed, "{line}");
+    assert_eq!(
+        comment.trim().split(';').next().unwrap(),
+        expected,
+        "{line}"
+    );
+}
+
+/// The gate reads the number on the `revisions:` line too, not only the
+/// comment after it: a right comment with a wrong total is a wrong header
+/// (#1521 review).
+#[test]
+#[should_panic(expected = "left: 7")]
+fn a_wrong_revisions_total_fails_the_raw_summary_gate() {
+    let view = "---\nview: accept-all\nrevisions: 7   # 9 marks: 5 insertions, 4 deletions\n---\n\nText.\n";
+    assert_raw_summary(view, 9, "9 marks: 5 insertions, 4 deletions");
 }
 
 #[test]
@@ -112,6 +146,7 @@ fn resolved_received_headers_keep_the_raw_kinds() {
     let docx = std::fs::read(dir.join("received.docx")).unwrap();
     let expected = raw_summary(&docx);
     assert_eq!(expected, "9 marks: 5 insertions, 4 deletions");
+    let listed = listed_total(&docx);
     for (mode, name) in [
         (TrackChanges::Accept, "received.accept.md"),
         (TrackChanges::Reject, "received.reject.md"),
@@ -126,14 +161,14 @@ fn resolved_received_headers_keep_the_raw_kinds() {
         )
         .unwrap()
         .markdown;
-        assert_raw_summary(&view, &expected);
+        assert_raw_summary(&view, listed, &expected);
         let path = dir.join(name);
         let saved = std::fs::read_to_string(&path).unwrap();
         if std::env::var_os("JUBARTE_BLESS").is_some() {
             let blessed = saved.replacen(revisions_line(&saved), revisions_line(&view), 1);
             std::fs::write(&path, blessed).unwrap();
         }
-        assert_raw_summary(&std::fs::read_to_string(path).unwrap(), &expected);
+        assert_raw_summary(&std::fs::read_to_string(path).unwrap(), listed, &expected);
     }
 }
 
@@ -174,7 +209,7 @@ fn resolved_headers_count_raw_paragraph_marks_and_unmerged_insertions() {
         )
         .unwrap()
         .markdown;
-        assert_raw_summary(&view, &expected);
+        assert_raw_summary(&view, listed_total(&docx), &expected);
         assert!(
             revisions_line(&view).ends_with("; 1 formatting; 1 in header1"),
             "{view}"
@@ -191,6 +226,7 @@ fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
     ));
     let expected = raw_summary(&docx);
     assert_eq!(expected, "4 marks: 1 table row, 1 table cell, 2 moves");
+    let listed = listed_total(&docx);
     for mode in [TrackChanges::Accept, TrackChanges::Reject] {
         let view = docx_to_markdown(
             &docx,
@@ -202,7 +238,7 @@ fn resolved_headers_name_table_marks_and_moves_from_the_revision_list() {
         )
         .unwrap()
         .markdown;
-        assert_raw_summary(&view, &expected);
+        assert_raw_summary(&view, listed, &expected);
     }
 }
 

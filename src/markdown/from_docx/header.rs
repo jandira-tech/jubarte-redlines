@@ -1614,30 +1614,33 @@ fn part_two(out: &mut String, f: &Facts) {
         ),
     }
     if !changes.is_empty() {
-        // Legend order: the default style first, then the styles the body
-        // uses, then the ones only a change names; `docDefaults` leads.
-        let order = |id: &str| {
+        // Legend order: `docDefaults` leads, then the default style, then the
+        // styles the body uses, then the ones only a change names. The key
+        // is a pair of tiers, because `usize::MIN` is zero: one number
+        // cannot put `docDefaults` ahead of the default style, which is
+        // keyed 0 (#1521 review).
+        let order = |id: &str| -> (u8, usize) {
             if id == "docDefaults" {
-                return usize::MIN;
+                return (0, 0);
             }
             if id == default {
-                return 0;
+                return (1, 0);
             }
             f.heading_styles
                 .iter()
                 .position(|(_, h)| h == id)
-                .map(|i| i + 1)
+                .map(|i| (1, i + 1))
                 .or_else(|| {
                     f.other_styles
                         .iter()
                         .position(|o| o == id)
-                        .map(|i| i + 1 + f.heading_styles.len())
+                        .map(|i| (1, i + 1 + f.heading_styles.len()))
                 })
                 .unwrap_or_else(|| {
                     changes
                         .iter()
                         .position(|(holder, _)| holder == id)
-                        .map_or(usize::MAX, |i| i + usize::MAX / 2)
+                        .map_or((2, 0), |i| (2, i))
                 })
         };
         let mut ordered = changes.clone();
@@ -1718,7 +1721,7 @@ pub(crate) fn story_paragraphs(root: &Element) -> Vec<&Element> {
     super::agent::paragraphs(root)
 }
 
-/// How [`story_text`] reads a header or footer's tracked changes.
+/// How `story_text` reads a header or footer's tracked changes.
 #[derive(Clone, Copy)]
 pub(crate) enum StoryView<'a> {
     /// The agent's tracked view, with the handles and the part's stem:
@@ -1746,7 +1749,7 @@ fn story_text(p: &Element, view: StoryView) -> String {
     story_text_with(p, view, &mut |_, _| None)
 }
 
-/// [`story_text`], calling `draw` for each `w:drawing`, `w:pict`, `w:object`
+/// `story_text`, calling `draw` for each `w:drawing`, `w:pict`, `w:object`
 /// and drawing-holding `mc:AlternateContent` element: its Markdown (`None`
 /// prints nothing). The `bool` says the element is run content, spliced
 /// inside a `w:r` (`true`) or where a `w:r` may sit (`false`, a

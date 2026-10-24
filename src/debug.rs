@@ -225,10 +225,10 @@ impl Package {
             // structural findings collected above still reach the
             // report (#644). `by_index` borrows `zip` mutably while its
             // result lives, so the central name is resolved first.
-            let shown = zip
-                .name_for_index(i)
-                .and_then(Result::ok)
-                .map_or_else(|| "unnamed".to_string(), |name| format!("'{name}'"));
+            let shown = zip.name_for_index(i).and_then(Result::ok).map_or_else(
+                || "unnamed".to_string(),
+                |name| format!("'{}'", crate::admission::shown(&name)),
+            );
             let mut f = match zip.by_index(i) {
                 Ok(f) => f,
                 Err(error) => {
@@ -239,8 +239,11 @@ impl Package {
                     continue;
                 }
             };
+            // Names reach every finding and the report: decode escapes
+            // control characters so a crafted name cannot write terminal
+            // sequences when the report is displayed.
             let name = match f.name() {
-                Ok(name) => name.into_owned(),
+                Ok(name) => crate::admission::shown(&name).into_owned(),
                 Err(error) => {
                     defects.push(crate::opc::ZipDefect {
                         kind: crate::opc::ZipDefectKind::EntryRead,
@@ -269,6 +272,17 @@ impl Package {
                             "directory entry '{name}' has an unreadable payload: {error}"
                         ),
                     });
+                    // A read that fails after producing bytes still owes
+                    // the budget what `data` holds: uncharged failures
+                    // would hand the next entry a fresh allowance.
+                    crate::admission::tally_inflated(
+                        &mut total,
+                        data.len() as u64,
+                        &name,
+                        cap,
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
                     continue;
                 }
                 Err(error) => {
@@ -276,6 +290,14 @@ impl Package {
                         kind: crate::opc::ZipDefectKind::EntryRead,
                         detail: format!("entry '{name}' has an unreadable payload: {error}"),
                     });
+                    crate::admission::tally_inflated(
+                        &mut total,
+                        data.len() as u64,
+                        &name,
+                        cap,
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
                     continue;
                 }
             };
@@ -3077,6 +3099,37 @@ mod tests {
             found.iter().any(|f| f.code == "ZIP_DIRECTORY_PAYLOAD"),
             "{found:?}"
         );
+    }
+
+    /// A failed read still owes the budget the bytes it inflated: an
+    /// entry whose payload errors after producing bytes must charge them,
+    /// or every unreadable entry hands the next one a fresh allowance and
+    /// `debug` inflates past `max_uncompressed_bytes` (#645).
+    #[test]
+    fn failed_entry_reads_still_consume_the_inflate_budget() {
+        let payload = vec![b'x'; 2048];
+        let mut pkg = zip_names::docx_package(
+            "",
+            &[
+                zip_names::RawEntry::raw(b"word/a/", &payload),
+                zip_names::RawEntry::raw(b"word/b.bin", &payload),
+            ],
+        );
+        // Corrupt both payloads so each entry's read fails at its CRC
+        // after inflating its full stored size.
+        for name in ["word/a/", "word/b.bin"] {
+            let at = local_header_at(&pkg, name) + 30 + name.len();
+            pkg[at] = b'y';
+        }
+        let limits = crate::admission::InputLimits {
+            max_part_bytes: 8192,
+            max_uncompressed_bytes: 4096,
+            ..crate::admission::InputLimits::compare()
+        };
+        let err = Package::open_within(&pkg, limits)
+            .err()
+            .expect("two failed 2048-byte reads must exhaust the 4096-byte budget");
+        assert!(err.contains("INPUT_LIMIT"), "{err}");
     }
 
     /// The report or its refusal message, so a package `debug` cannot

@@ -145,8 +145,7 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
 #[pyfunction]
 fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
-        let changes =
-            jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
+        let changes = jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -333,6 +332,116 @@ fn read_json(
         serde_json::to_string(&snapshot).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
+}
+
+/// The working-document JSON `jubarte read --for-edit` prints: the
+/// selection (`paragraphs`, `head`, `tail`, `find`/`regex`, `changed`/`by`)
+/// frozen on the original source, exact working text and per-operation
+/// readiness of the basis `accept_change`/`reject_change`,
+/// `existing_revisions` and `track` settle it to. `limit`, `max_chars`,
+/// `all` and `cursor` page the rows as the flags do; `context` adds
+/// read-only original neighbours. `validity_file`, the path as the command
+/// line spells it, adds `input_validity`. A `USAGE` error raises
+/// `JubarteError` with `USAGE: ` before its message, as the CLI exits 2;
+/// the other refusals (an unknown `--accept-change` id, an unsettleable
+/// basis) read `CODE: `, as the CLI exits 3.
+#[pyfunction]
+#[pyo3(signature = (
+    docx,
+    *,
+    paragraphs = None,
+    head = None,
+    tail = None,
+    find = None,
+    regex = None,
+    ignore_case = false,
+    changed = false,
+    by = None,
+    context = None,
+    limit = None,
+    max_chars = None,
+    all = false,
+    cursor = None,
+    accept_change = None,
+    reject_change = None,
+    existing_revisions = None,
+    track = None,
+    validity_file = None,
+))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
+)]
+fn for_edit_json(
+    py: Python<'_>,
+    docx: &[u8],
+    paragraphs: Option<String>,
+    head: Option<usize>,
+    tail: Option<usize>,
+    find: Option<String>,
+    regex: Option<String>,
+    ignore_case: bool,
+    changed: bool,
+    by: Option<String>,
+    context: Option<usize>,
+    limit: Option<usize>,
+    max_chars: Option<usize>,
+    all: bool,
+    cursor: Option<String>,
+    accept_change: Option<Vec<String>>,
+    reject_change: Option<Vec<String>>,
+    existing_revisions: Option<&str>,
+    track: Option<&str>,
+    validity_file: Option<String>,
+) -> PyResult<String> {
+    let existing_revisions = existing_revisions
+        .map(|mode| {
+            jubarte::cli::ExistingArg::from_choice(mode).ok_or_else(|| {
+                JubarteError::new_err(format!(
+                    "USAGE: invalid value '{mode}' for '--existing-revisions <MODE>'"
+                ))
+            })
+        })
+        .transpose()?;
+    let track = track
+        .map(|choice| {
+            jubarte::cli::TrackArg::from_choice(choice).ok_or_else(|| {
+                JubarteError::new_err(format!(
+                    "USAGE: invalid value '{choice}' for '--track <CHOICE>'"
+                ))
+            })
+        })
+        .transpose()?;
+    let args = jubarte::cli::ReadArgs {
+        paragraphs,
+        head,
+        tail,
+        find,
+        regex,
+        ignore_case,
+        changed,
+        by,
+        context,
+        limit,
+        max_chars,
+        all,
+        cursor,
+        accept_change: accept_change.unwrap_or_default(),
+        reject_change: reject_change.unwrap_or_default(),
+        existing_revisions,
+        track,
+        ..Default::default()
+    };
+    py.detach(|| {
+        jubarte::edit::for_edit::for_edit_json(
+            docx,
+            &args.for_edit_request(),
+            validity_file
+                .as_deref()
+                .map(|file| jubarte::validate::input_validity_of(docx, file)),
+        )
+    })
+    .map_err(err)
 }
 
 /// The line a writing task prints on stderr for a file it wrote:
@@ -1038,7 +1147,7 @@ fn record_plan(
     options: &str,
     held: Option<&str>,
 ) -> PyResult<String> {
-    use jubarte::edit::record::{RecordError, record_json};
+    use jubarte::edit::record::{record_json, RecordError};
     py.detach(|| record_json(verb, operations, docx, held, options))
         .map_err(|e| match e {
             RecordError::Usage(m) => pyo3::exceptions::PyValueError::new_err(m),
@@ -1508,6 +1617,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tables_text, m)?)?;
     m.add_function(wrap_pyfunction!(tables_view, m)?)?;
     m.add_function(wrap_pyfunction!(read_json, m)?)?;
+    m.add_function(wrap_pyfunction!(for_edit_json, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
     m.add_function(wrap_pyfunction!(refused_input, m)?)?;
@@ -1564,12 +1674,10 @@ mod publication_tests {
                 .enumerate()
             {
                 let warning = caught.get_item(index).unwrap();
-                assert!(
-                    warning
-                        .getattr("category")
-                        .unwrap()
-                        .is(py.get_type::<PyRuntimeWarning>())
-                );
+                assert!(warning
+                    .getattr("category")
+                    .unwrap()
+                    .is(py.get_type::<PyRuntimeWarning>()));
                 assert_eq!(
                     warning
                         .getattr("message")
@@ -1611,14 +1719,12 @@ mod publication_tests {
             let raised = publish_result(py, Err(error)).unwrap_err();
             assert_eq!(caught.len().unwrap(), 2);
             for index in 0..2 {
-                assert!(
-                    caught
-                        .get_item(index)
-                        .unwrap()
-                        .getattr("category")
-                        .unwrap()
-                        .is(py.get_type::<PyRuntimeWarning>())
-                );
+                assert!(caught
+                    .get_item(index)
+                    .unwrap()
+                    .getattr("category")
+                    .unwrap()
+                    .is(py.get_type::<PyRuntimeWarning>()));
             }
             context
                 .call_method1("__exit__", (py.None(), py.None(), py.None()))

@@ -600,8 +600,11 @@ pub(super) struct TableLine {
     pub one_per_cell: Option<usize>,
     pub header_repeats: bool,
     /// The cell paragraphs' mark changes, by paragraph (`break-ins r3 @SW
-    /// in p1`): true for an insertion.
-    pub marks: HashMap<usize, (bool, Tag)>,
+    /// in p1`): true for an insertion. Word lets one paragraph mark name
+    /// an insertion and a deletion (`w:pPr/w:rPr` holds both `w:ins` and
+    /// `w:del`), so a paragraph numbers to a list of its marks, in clause
+    /// order.
+    pub marks: HashMap<usize, Vec<(bool, Tag)>>,
     /// The grid's columns (`4x7`).
     pub columns: Option<usize>,
     /// The table's alignment (`t0 center 4x7`), as Word's `jc` value.
@@ -659,6 +662,19 @@ pub(super) struct TableLine {
     /// The grid columns each row leaves out before and after its cells
     /// (`gaps t0.row1 before 1; t0.row2 after 1`), by row.
     pub gaps: HashMap<usize, (usize, usize)>,
+}
+
+/// The mark a cell paragraph's own changes give it, when they name one:
+/// a paragraph mark naming both an insertion and a deletion is the
+/// paragraph's deletion, since the paragraph still leaves when both are
+/// accepted.
+pub(super) fn paragraph_mark(marks: &[(bool, Tag)]) -> Option<(bool, &Tag)> {
+    marks
+        .iter()
+        .rev()
+        .find(|(inserted, _)| !*inserted)
+        .or_else(|| marks.first())
+        .map(|(inserted, tag)| (*inserted, tag))
 }
 
 /// A cell's own change: `w:cellIns`, `w:cellDel` or `w:cellMerge`.
@@ -751,6 +767,13 @@ pub(super) fn empty_notes(value: &str) -> Result<Vec<&'static str>, String> {
         }
     }
     Ok(kinds)
+}
+
+/// The header's `notes: {rev: footnotes.r4 @AS, …}`: the insertions and
+/// deletions tracked on a separator, which the writer does not write (a
+/// warning names them); none without the clause.
+pub(super) fn note_revisions(value: &str) -> Option<String> {
+    super::view_stories::flow_text(value, "rev").filter(|tags| !tags.is_empty())
 }
 
 /// The header's `notes: {fmt: footnotes.r0 @AS; endnotes.r2 @AS, …}`:
@@ -1030,7 +1053,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
                     && let Some(at) = crate::ids::short_number(at, 'p')
                     && let Some(tag) = first_tag(tag)
                 {
-                    parsed.marks.insert(at, (inserted, tag));
+                    parsed.marks.entry(at).or_default().push((inserted, tag));
                 }
             }
         }
@@ -1369,10 +1392,12 @@ pub(super) struct IdLine {
     /// Its formatting changes (`fmt r10 @AL; r11 @AL`).
     pub fmt: Vec<Tag>,
     /// The marks its text shows nothing of (`rev r9 @AL`, `rev-del r10
-    /// @AL`); a `rev-del` tag is in `rev_del` too.
-    pub rev: Vec<Tag>,
-    /// The `rev` tags a `rev-del` clause named: deletions, while `rev`
-    /// alone names insertions.
+    /// @AL`), in clause order, each with whether its own clause named an
+    /// insertion. The kind rides with the tag because two tags can be
+    /// equal: `noid` names no id, so one author's inserted and deleted
+    /// marks are one tag (`rev noid @AL, rev-del noid @AL`).
+    pub rev: Vec<(bool, Tag)>,
+    /// The `rev` tags a `rev-del` clause named, as deletions.
     pub rev_del: Vec<Tag>,
     /// The comments whose ranges run into it (`in c5 c6`).
     pub in_comments: Vec<u32>,
@@ -1466,10 +1491,16 @@ impl IdLine {
                 self.page_break_change = first_tag(v).map(|tag| (kind == "page-break-ins", tag));
             }
             Some(("fmt", v)) => self.fmt.extend(revision_tags(v).into_iter().flatten()),
-            Some(("rev", v)) => self.rev.extend(revision_tags(v).into_iter().flatten()),
+            Some(("rev", v)) => self.rev.extend(
+                revision_tags(v)
+                    .into_iter()
+                    .flatten()
+                    .map(|tag| (true, tag)),
+            ),
             Some(("rev-del", v)) => {
                 let tags: Vec<Tag> = revision_tags(v).into_iter().flatten().collect();
-                self.rev.extend(tags.iter().cloned());
+                self.rev
+                    .extend(tags.iter().cloned().map(|tag| (false, tag)));
                 self.rev_del.extend(tags);
             }
             Some(_) => {}

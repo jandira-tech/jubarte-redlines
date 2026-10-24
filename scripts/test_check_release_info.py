@@ -83,7 +83,7 @@ class SixFiles(unittest.TestCase):
                     "jubarte": {"n": rows, "failures": 1, "mean": 80.0, "median": 84.0,
                                 "exact_100": 1, "at_least_90": 2, "version": f"jubarte {VER}",
                                 "commit": C40, "binary_sha256": D64,
-                                "candidate_reports": f"jubarte 0.11.1"},
+                                "candidate_reports": "jubarte 0.11.1"},
                     tool2: {"n": rows, "failures": 2, "mean": 60.0, "median": 62.0,
                             "exact_100": 0, "at_least_90": 1, "version": tool2},
                 },

@@ -17,12 +17,13 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import inspect
+from typing import Any
 
 START = "<!-- gen:{marker}:start -->"
 END = "<!-- gen:{marker}:end -->"
 
 
-def signature_of(obj: object) -> str:
+def signature_of(obj: Any) -> str:
     try:
         return str(inspect.signature(obj))
     except (TypeError, ValueError):
@@ -104,12 +105,11 @@ def build_block(module: object) -> str:
         if obj is None:
             parts += ["", f"### `{name}`", "", "_not importable in this build_"]
         elif inspect.isclass(obj):
-            renderer = render_class
+            parts += ["", *render_class(name, obj)]
         elif callable(obj):
-            renderer = render_function
+            parts += ["", *render_function(name, obj)]
         else:
-            renderer = render_constant
-        parts += ["", *renderer(name, obj)]
+            parts += ["", *render_constant(name, obj)]
     return "\n".join(parts).strip("\n")
 
 

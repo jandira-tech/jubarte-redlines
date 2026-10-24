@@ -455,13 +455,13 @@ pub fn settled_snapshot(docx: &[u8], settle: Settle) -> Result<Snapshot, Inspect
     Ok(snapshot)
 }
 
-/// [`tables`], with every change rejected when `settle` says so, each
+/// [`tables()`], with every change rejected when `settle` says so, each
 /// beside the number of its table in `read`'s view: the `tN` of the table
 /// outside every cell that is it or holds it, as `read -p tN` picks it.
 ///
 /// # Errors
 ///
-/// As [`tables`].
+/// As [`tables()`].
 pub fn view_tables(
     docx: &[u8],
     settle: Option<Settle>,
