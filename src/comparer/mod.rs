@@ -1801,7 +1801,15 @@ mod body_section_source_ownership_tests {
             let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
             let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
             dom.set_attribute_value(revised_size, &W::name("w"), Some("14400"));
-            let expected_original = source_view(&mut dom, original, false);
+            let mut expected_original = source_view(&mut dom, original, false);
+            if genuine {
+                // The closing carrier `a` takes the break as a pPr change,
+                // whose saved pPr cannot hold it, so Reject keeps it on `a`
+                // too, as Word's Reject All does (#1708): three sections where
+                // the original has two. Word's Compare leaves `a` no break
+                // (#1718).
+                expected_original[1].1 = expected_original[0].1.clone();
+            }
             let expected_revised = source_view(&mut dom, revised, true);
             let settings = WmlComparerSettings {
                 author_for_revisions: "Section editor".into(),
@@ -1872,7 +1880,8 @@ mod body_section_source_ownership_tests {
                 .collect::<Vec<_>>();
             // The original ONE paragraph's deleted boundary and revised
             // closing carrier both retain their authored break in tracked XML.
-            // Each clean projection must have exactly its source-owned break.
+            // Accept keeps exactly the source-owned break; Reject keeps both
+            // (#1718).
             assert_eq!(embedded.len(), 2 * usize::from(genuine));
             for section in embedded {
                 let size = dom.element(section, &W::name("pgSz")).unwrap();
@@ -1887,8 +1896,8 @@ mod body_section_source_ownership_tests {
             );
             for change in paragraph_histories {
                 // CT_PPrBase cannot own sectPr. The original closing paragraph
-                // had only spacing; replacement of this valid old snapshot on
-                // reject removes the added break from the revised carrier.
+                // had only spacing; Reject restores it and keeps the live
+                // break, as Word's Reject All does (#1708, #1718).
                 let old_properties = dom.element(change, &W::p_pr()).unwrap();
                 assert!(
                     dom.descendants(old_properties, Some(&W::sect_pr()))
