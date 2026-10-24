@@ -30,6 +30,10 @@ const STYLES_REL: &str =
 const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
 const HEADER_REL: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+const COMMENTS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+const COMMENTS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 
 /// A one-cell table: `tbl_pr` and `grid` as given, the cell's `tc_pr`, and
 /// one paragraph of `text` with `p_pr`/`r_pr`.
@@ -349,6 +353,70 @@ fn cell_and_table_borders_keep_the_schema_order() {
                     "{name} {container}: {order:?}"
                 );
             }
+        }
+    }
+}
+
+/// A comment's body is a story the comparison writes, and it can hold a
+/// table: the three shapes leave it as they leave the body. The glossary
+/// is no story, and stays as it came (`m_cell_final_marks::
+/// a_part_that_is_no_story_is_copied_as_it_was`).
+#[test]
+fn a_comment_body_s_table_loses_the_three_shapes_too() {
+    let m = |side: &str, w: u32| format!(r#"<w:{side} w:w="{w}" w:type="dxa"/>"#);
+    let margins = format!(
+        "<w:tblCellMar>{}{}{}</w:tblCellMar>",
+        m("right", 82),
+        m("top", 81),
+        m("left", 80)
+    );
+    let noted = table(
+        &margins,
+        r#"<w:gridCol w:w="2400" w:type="dxa"/>"#,
+        r#"<w:shd w:val="clear" w:color="auto" w:fill=""/>"#,
+        "",
+        "",
+        "Noted.",
+    );
+    let comments = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{W_NS}"><w:comment w:id="0" w:author="Ann" w:date="2026-01-01T00:00:00Z" w:initials="A">{noted}</w:comment></w:comments>"#
+    );
+    let part = Part {
+        name: "word/comments.xml",
+        content_type: COMMENTS_CT,
+        rel_type: COMMENTS_REL,
+        xml: &comments,
+    };
+    let body = |words: &str| {
+        format!(
+            r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>{words}</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#
+        )
+    };
+    let a = docx_with(&body("Old words."), std::slice::from_ref(&part));
+    let b = docx_with(&body("New words."), std::slice::from_ref(&part));
+    for (name, out) in resolutions(&a, &b) {
+        let xml = part_string(&out, "word/comments.xml").expect("comments");
+        assert!(xml.contains("Noted."), "{name}: {xml}");
+        let shading = tags(&xml, "w:shd");
+        assert_eq!(shading.len(), 1, "{name}: {xml}");
+        assert!(
+            !shading[0].contains("w:fill") && shading[0].contains(r#"w:val="clear""#),
+            "{name}: {xml}"
+        );
+        let grid = tags(&xml, "w:gridCol");
+        assert_eq!(grid.len(), 1, "{name}: {xml}");
+        assert!(
+            !grid[0].contains("w:type") && grid[0].contains(r#"w:w="2400""#),
+            "{name}: {xml}"
+        );
+        assert_eq!(
+            margin_orders(&xml, "tblCellMar"),
+            vec![vec!["top", "left", "right"]],
+            "{name}: {xml}"
+        );
+        for (side, w) in [("left", 80), ("top", 81), ("right", 82)] {
+            let width = format!(r#"<w:{side} w:w="{w}" w:type="dxa""#);
+            assert!(xml.contains(&width), "{name} {side}: {xml}");
         }
     }
 }
