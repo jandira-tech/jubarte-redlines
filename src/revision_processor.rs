@@ -675,13 +675,13 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // left either in the saved copy gets the live state back, once:
         // never a doubled rPr, nor a section break the paragraph lacks.
         if name == W::p_pr() {
-            let mut stale = dom.elements(new_prop, None);
-            stale.retain(|&e| {
-                dom.name(e)
+            for e in dom.elements(new_prop, None) {
+                if dom
+                    .name(e)
                     .is_some_and(|n| n == W::r_pr() || n == W::sect_pr())
-            });
-            for e in stale {
-                dom.remove(e);
+                {
+                    dom.remove(e);
+                }
             }
             for kept in [W::r_pr(), W::sect_pr()] {
                 if let Some(live) = dom.element(node, &kept) {
@@ -695,16 +695,19 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // finds the row's own revision and Reject All removes an inserted
         // row whose properties also changed.
         if name == W::tr_pr() {
-            let mut stale = dom.elements(new_prop, None);
-            stale.retain(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()));
-            for e in stale {
-                dom.remove(e);
+            for e in dom.elements(new_prop, None) {
+                if dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()) {
+                    dom.remove(e);
+                }
             }
-            let mut marks = dom.elements(node, None);
-            marks.retain(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()));
-            for mark in marks {
-                let mark_clone = dom.clone_subtree(mark);
-                dom.add(new_prop, mark_clone);
+            for mark in dom.elements(node, None) {
+                if dom
+                    .name(mark)
+                    .is_some_and(|n| n == W::ins() || n == W::del())
+                {
+                    let mark_clone = dom.clone_subtree(mark);
+                    dom.add(new_prop, mark_clone);
+                }
             }
         }
         // R9: a sectPrChange records the section's properties, never its
