@@ -230,6 +230,7 @@ impl W {
     // NAME-01c: accept / RP pipeline locals (hit every has_rev document).
     cached_xname!(W::URI, move_from_range_end, "moveFromRangeEnd");
     cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
+    cached_xname!(W::URI, custom_xml, "customXml");
     cached_xname!(W::URI, sdt, "sdt");
     cached_xname!(W::URI, sdt_content, "sdtContent");
     // NAME-01d: hottest remaining finalize/lcs locals (sectPr/pPrChange/

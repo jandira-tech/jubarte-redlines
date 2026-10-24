@@ -21,8 +21,18 @@
 //! original (or revised) one. Paragraphs carrying the same revision, and
 //! tables every row of which carries it, lie between. With no such mark the
 //! final mark loses its revision, as Word writes a cell a row gains.
+//!
+//! A move joins, once resolved, the paragraphs after that mark to its own.
+//! When one of them keeps words that resolution keeps (inserted or
+//! unchanged ones under Accept All, deleted or unchanged ones under Reject
+//! All), it is a paragraph of its own in that version: the final mark loses
+//! its revision instead, as Word writes a paragraph inserted over a
+//! deleted nested table (Word 16 oracle on #1680, 2026-10-23). The
+//! comparer leaves such a revision where it drops an empty paragraph
+//! (#1686); moving it joined two of the revised cell's paragraphs.
 
 use crate::namespaces::W;
+use crate::revision_processor::RevisionIds;
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
@@ -49,10 +59,10 @@ fn settle(
     cell: NodeId,
     last: NodeId,
     kind: &str,
-    ids: &mut Option<u32>,
+    ids: &mut Option<RevisionIds>,
 ) {
     let other = if kind == "ins" { "del" } else { "ins" };
-    let blocks = blocks(dom, cell);
+    let blocks = crate::validate::container_blocks(dom, cell);
     let Some(at) = blocks.iter().position(|&b| b == last) else {
         return;
     };
@@ -67,6 +77,16 @@ fn settle(
         mark_revision(dom, block, kind)
             .is_none()
             .then_some(Some(block))
+    });
+    // Paragraphs the move would join to the partner's, which keep words of
+    // their own once resolved.
+    let partner = partner.filter(|partner| {
+        let from = partner.map_or(0, |p| {
+            blocks.iter().position(|&b| b == p).map_or(0, |i| i + 1)
+        });
+        !blocks[from..=at]
+            .iter()
+            .any(|&block| dom.name_is(block, &W::p()) && keeps_words(dom, block, kind))
     });
     let revision = mark_revision(dom, last, kind).expect("an uncovered final mark");
     let mut stamp = Stamp {
@@ -113,22 +133,27 @@ fn settle(
     }
 }
 
-/// The paragraphs and tables of `container` in order, through block
-/// content controls and custom XML elements, not into nested tables.
-fn blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
-    let mut out = Vec::new();
-    for child in dom.elements(container, None) {
-        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
-            out.push(child);
-        } else if dom.name_is(child, &W::sdt()) {
-            if let Some(content) = dom.element(child, &W::sdt_content()) {
-                out.extend(blocks(dom, content));
-            }
-        } else if dom.name_is(child, &W::name("customXml")) {
-            out.extend(blocks(dom, child));
-        }
-    }
-    out
+/// Whether `paragraph` keeps words once its `kind` revisions resolve:
+/// Accept All (`"del"`) keeps what is not deleted or moved away, Reject All
+/// (`"ins"`) what is not inserted or moved in.
+fn keeps_words(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
+    let gone = if kind == "del" {
+        [W::del(), W::move_from()]
+    } else {
+        [W::ins(), W::move_to()]
+    };
+    dom.descendants(paragraph, Some(&W::r()))
+        .into_iter()
+        .any(|run| {
+            dom.elements(run, None)
+                .into_iter()
+                .any(|child| !dom.name_is(child, &W::r_pr()))
+                && !dom
+                    .ancestors(run, None)
+                    .into_iter()
+                    .take_while(|&a| a != paragraph)
+                    .any(|a| gone.iter().any(|name| dom.name_is(a, name)))
+        })
 }
 
 /// Whether every row of `table` is inserted or deleted as `kind` says.
@@ -408,7 +433,7 @@ fn mark_properties(dom: &mut Dom, paragraph: NodeId) -> NodeId {
 /// author and date, and the part's next free revision id.
 struct Stamp<'a> {
     root: NodeId,
-    ids: &'a mut Option<u32>,
+    ids: &'a mut Option<RevisionIds>,
     author: Option<String>,
     date: Option<String>,
 }
@@ -423,14 +448,19 @@ impl Stamp<'_> {
         holder: XName,
         children: &[NodeId],
     ) -> NodeId {
-        let next = *self.ids.get_or_insert_with(|| {
-            dom.descendants(self.root, None)
-                .into_iter()
-                .filter_map(|e| dom.attribute(e, &W::id())?.parse::<u32>().ok())
-                .max()
-                .map_or(1, |max| max.saturating_add(1))
-        });
-        *self.ids = Some(next.saturating_add(1));
+        // Clear of every id in the part, annotations' too, and within the
+        // schema's signed 32-bit range (codex on #1680, round 10).
+        let next = self
+            .ids
+            .get_or_insert_with(|| {
+                RevisionIds::from_used(
+                    dom.descendants(self.root, None)
+                        .into_iter()
+                        .filter_map(|e| dom.attribute(e, &W::id())?.parse::<u64>().ok())
+                        .collect(),
+                )
+            })
+            .allocate();
         let node = dom.new_element(record);
         dom.set_attribute_value(node, &W::id(), Some(&next.to_string()));
         if let Some(author) = &self.author {
