@@ -676,6 +676,41 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             let rpr_clone = dom.clone_subtree(rpr);
             dom.add(new_prop, rpr_clone);
         }
+        // #1708: the saved pPr (CT_PPrBase) has no section break, so the
+        // live sectPr stays, last as the schema orders it. A saved one a
+        // source carried is replaced, never doubled.
+        if name == W::p_pr()
+            && let Some(sect) = dom.element(node, &W::sect_pr())
+        {
+            for stale in dom.elements(new_prop, Some(&W::sect_pr())) {
+                dom.remove(stale);
+            }
+            let sect_clone = dom.clone_subtree(sect);
+            dom.add(new_prop, sect_clone);
+        }
+        // #1713: the saved trPr (CT_TrPrBase) has no row insertion or
+        // deletion. The live w:ins/w:del stay, so the reversal below still
+        // finds the row's own revision and Reject All removes an inserted
+        // row whose properties also changed.
+        if name == W::tr_pr() {
+            for stale in dom
+                .elements(new_prop, None)
+                .into_iter()
+                .filter(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()))
+                .collect::<Vec<_>>()
+            {
+                dom.remove(stale);
+            }
+            let marks: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()))
+                .collect();
+            for mark in marks {
+                let mark_clone = dom.clone_subtree(mark);
+                dom.add(new_prop, mark_clone);
+            }
+        }
         // R9: a sectPrChange records the section's properties, never its
         // header and footer references (CT_SectPrBase has none): the live
         // ones stay, first as the schema orders them (205503ead9).
