@@ -43607,6 +43607,172 @@ fn a_nested_table_beside_text_fits_its_column_and_the_text_the_next() {
     );
 }
 
+/// A bordered autofit table without tcW on a `grid`/`grid` grid, its two
+/// cells' paragraphs `left` and `right`, for nesting (#1732 probes p1, t1).
+fn widthless_nested_pair(grid: u32, left: &str, right: &str) -> String {
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>{borders}</w:tblBorders>\
+         </w:tblPr><w:tblGrid><w:gridCol w:w=\"{grid}\"/><w:gridCol w:w=\"{grid}\"/></w:tblGrid>\
+         <w:tr><w:tc>{left}</w:tc><w:tc>{right}</w:tc></w:tr></w:tbl>"
+    )
+}
+
+/// A cell's paragraph holding `text`.
+fn text_para(text: &str) -> String {
+    format!("<w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>")
+}
+
+#[test]
+fn a_column_reached_only_through_a_widthless_spanning_cell_fits_its_content() {
+    // #1732 probe s2 (Word 16, 2026-10-24): a 2400/6000 grid whose one row
+    // is a single cell spanning both columns, no tcW, "Title words". No
+    // other cell gives either column a width: Word fits the table to the
+    // two words, its right border at 128.6, where the grid ends at 491.8.
+    // jubarte's fit ends 6pt short of Word's, as on probe o3: Word sets
+    // a document without a styles part in Aptos 12, jubarte in Calibri 11
+    // (#1725).
+    let rows = format!(
+        "<w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>{}</w:tc></w:tr>",
+        text_para("Title words")
+    );
+    let (_, rules) = bordered_autofit_table(&[2400, 6000], &rows);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (right - 128.6).abs() < 10.0,
+        "Word fits the span's words; rules={rules:?}"
+    );
+}
+
+#[test]
+fn a_sized_row_beside_a_widthless_span_is_not_split_evenly() {
+    // #1732 probe s1 (Word 16, 2026-10-24): row 0 sizes the 2400/6000 grid
+    // with tcW, row 1 is one widthless cell spanning both with ~900pt of
+    // text. Word widens the table to the margin in about the tcW's
+    // proportion: the middle rule at 212.9 (#1733). jubarte keeps the grid
+    // (191.8) until #1733. A fit that split the span evenly would put the
+    // rule near 306, further from Word than the grid.
+    let cell = |w: u32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>{}</w:tc>",
+            text_para(text)
+        )
+    };
+    let rows = format!(
+        "<w:tr>{}{}</w:tr><w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>{}</w:tc></w:tr>",
+        cell(2400, "LABEL:"),
+        cell(6000, "VALUE"),
+        text_para("AAAA ".repeat(25).trim_end())
+    );
+    let (_, rules) = bordered_autofit_table(&[2400, 6000], &rows);
+    assert!(
+        rules.iter().any(|x| (185.0..220.0).contains(x)),
+        "the middle rule stays between the grid and Word's; rules={rules:?}"
+    );
+}
+
+#[test]
+fn an_unsaved_table_holding_a_word_saved_nested_table_still_fits() {
+    // #1732 probe p1 (Word 16, 2026-10-24): an unmarked 2400/6000 table
+    // without tcW; row 1's first cell holds a 1200/1200 nested table whose
+    // paragraphs carry w14:paraId. The nested marks say nothing of the
+    // outer table: Word fits it, its right border at the margin (540.2;
+    // the grid ends at 491.8). Word fits the nested table to its words
+    // too (VALUE 50.6pt after LABEL:); jubarte reads a marked table's grid
+    // as Word's own fit, so the nested table keeps its 120pt there.
+    let marked = |text: &str| {
+        format!(
+            "<w:p xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" \
+             w14:paraId=\"1000000{}\" w14:textId=\"77777777\"><w:r><w:t>{text}</w:t></w:r></w:p>",
+            text.len()
+        )
+    };
+    let nested = widthless_nested_pair(1200, &marked("in1"), &marked("in22"));
+    let rows = format!(
+        "<w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr>\
+         <w:tr><w:tc>{}{nested}<w:p/></w:tc><w:tc>{}</w:tc></w:tr>",
+        text_para("LABEL:"),
+        text_para("VALUE"),
+        text_para("second row"),
+        text_para("AAAA ".repeat(25).trim_end())
+    );
+    let (_, rules) = bordered_autofit_table(&[2400, 6000], &rows);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (right - 540.2).abs() < 2.0,
+        "Word fits the outer table; rules={rules:?}"
+    );
+}
+
+#[test]
+fn a_fitted_column_holding_a_fitted_nested_table_takes_the_nested_fit() {
+    // #1732 probe t1 (Word 16, 2026-10-24): an unmarked 2400/6000 table
+    // without tcW whose first cell holds a nested 3000/3000 table without
+    // tcW, "a" and "b". Word fits the nested table to its letters and the
+    // outer column to the nested table: VALUE at 89.0. Measured at its
+    // 300pt grid, the nested table pushed VALUE to 372.5.
+    let nested = widthless_nested_pair(3000, &text_para("a"), &text_para("b"));
+    let rows = format!(
+        "<w:tr><w:tc>{nested}<w:p/></w:tc><w:tc>{}</w:tc></w:tr>\
+         <w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr>",
+        text_para("VALUE"),
+        text_para("x"),
+        text_para("AAAA ".repeat(25).trim_end())
+    );
+    let (pdf, _) = bordered_autofit_table(&[2400, 6000], &rows);
+    let value = pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0;
+    assert!(
+        (value - 89.0).abs() < 6.0,
+        "the outer column takes the nested fit; VALUE at {value}"
+    );
+}
+
+#[test]
+fn a_paragraphs_text_and_inline_picture_share_its_line_in_a_fitted_column() {
+    // #1732 probe i1 (Word 16, 2026-10-24): an unmarked 2400/6000 table
+    // without tcW; one paragraph of column 1 holds "Caption text " and a
+    // 60pt inline picture, column 2 a long row. The paragraph's widest
+    // line is the text and the picture together: Word's fit gives column 1
+    // a share of that (VALUE 91.7pt after Caption) and sets the picture
+    // under the text. Taking the wider of the two alone left 60.9pt.
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
+    let graphic = CELL_PICTURE_GRAPHIC.replace(
+        "cx=\"1524000\" cy=\"762000\"",
+        "cx=\"762000\" cy=\"381000\"",
+    );
+    let picture = format!(
+        "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+          <wp:extent cx=\"762000\" cy=\"381000\"/><wp:docPr id=\"1\" name=\"Bild1\"/>\
+          {graphic}</wp:inline></w:drawing></w:r>"
+    );
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>{borders}</w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p><w:r><w:t xml:space=\"preserve\">Caption text </w:t></w:r>{picture}</w:p></w:tc>\
+           <w:tc>{}</w:tc></w:tr>\
+         <w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        text_para("VALUE"),
+        text_para("x"),
+        text_para("AAAA ".repeat(25).trim_end())
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("caption and picture");
+    let a = pdf_glyph_text_xy(&pdf, "Caption").expect("Caption").0;
+    let b = pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0;
+    assert!(
+        (b - a - 91.7).abs() < 10.0,
+        "the column fits the text and picture's line; pitch={}",
+        b - a
+    );
+}
+
 #[test]
 fn a_word_saved_table_with_auto_cell_widths_keeps_its_grid() {
     // A grid Word saved is its own autofit, and a Word-saved table carries
