@@ -1447,6 +1447,57 @@ fn the_kept_final_mark_takes_the_replacements_mark_formatting() {
     }
 }
 
+/// A kept final mark's `w:rPr` stays in `CT_ParaRPr` order when its
+/// formatting changes: the mark's own revision first, the formatting, the
+/// `w:rPrChange` last (Jules on #1670 asked for the record before the
+/// revision, which the schema refuses).
+#[test]
+fn the_kept_final_marks_properties_stay_in_schema_order() {
+    let source = docx(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Them" w:date="2026-01-01T00:00:00Z"/><w:b/></w:rPr></w:pPr><w:ins w:id="8" w:author="Them" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Old.</w:t></w:r></w:ins></w:p>"#,
+    );
+    let rank = |local: &str| match local {
+        "ins" | "del" | "moveFrom" | "moveTo" => 0,
+        "rPrChange" => 2,
+        _ => 1,
+    };
+    let tag = regex::Regex::new(r"<(/?)w:([A-Za-z]+)[^>]*?(/?)>").unwrap();
+    let mut changed = false;
+    // A mark that is a revision already is kept only under keep.
+    for mode in [MODES[1]] {
+        let result = apply_plan(
+            &source,
+            &plan_of(mode, &[delete("p0"), insert("p0", "after", "New.")]),
+        )
+        .unwrap_or_else(|e| panic!("{mode}: {e:?}"));
+        let ppr = ppr(&paragraph_xml(&result.redline, 0));
+        let Some(start) = ppr.find("<w:rPr>") else {
+            continue;
+        };
+        let end = ppr.rfind("</w:rPr>").unwrap();
+        // The mark's own children only: the record's inner w:rPr is one
+        // level down.
+        let inner = &ppr[start + 7..end];
+        let mut depth = 0usize;
+        let mut ranks = Vec::new();
+        for token in tag.captures_iter(inner) {
+            if !token[1].is_empty() {
+                depth -= 1;
+                continue;
+            }
+            if depth == 0 {
+                ranks.push(rank(&token[2]));
+            }
+            if token[3].is_empty() {
+                depth += 1;
+            }
+        }
+        changed |= ranks.contains(&2);
+        assert!(ranks.is_sorted(), "{mode}: {ppr}");
+    }
+    assert!(changed, "no mode tracked the mark's formatting");
+}
+
 /// Under keep, a paragraph whose content the replay cannot delete as a
 /// tracked change (an equation) is refused, not left in the redline while
 /// the clean copy drops it (codex on #1670, round 7).
