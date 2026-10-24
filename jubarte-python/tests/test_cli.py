@@ -568,13 +568,130 @@ def test_read_tables_writes_its_grids_to_a_file(tmp_path: Path, capsys: pytest.C
     written = capsys.readouterr()
     assert written.out == "" and out.read_text(encoding="utf-8") == grids
     assert written.err == f"wrote {out} (tables, {out.stat().st_size} bytes)\n"
-    # Refused; the exit status differs from the binary's 2 (#1692).
-    assert main(["read", str(source), "--tables", "-o", str(out)]) != 0
-    assert "already exists" in capsys.readouterr().err
+    # Refused as the binary refuses it: exit 2, OUTPUT_EXISTS (#1698).
+    with pytest.raises(SystemExit) as usage:
+        main(["read", str(source), "--tables", "-o", str(out)])
+    assert usage.value.code == 2
+    assert f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)" in capsys.readouterr().err
     with pytest.raises(SystemExit) as usage:
         main(["read", str(source), "--tables", "-o", str(tmp_path / "grid.json")])
     assert usage.value.code == 2
     assert "--tables writes the grids as text" in capsys.readouterr().err
+
+
+def _grid_document(body_text: str = "Before.") -> tuple[bytes, str]:
+    """A one-table package and the row text its grid view prints."""
+    cell = "<w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc>"
+    table = "<w:tbl><w:tr>" + cell.format("a") + cell.format("b") + "</w:tr></w:tbl>"
+    return docx(para(body_text) + table), "a\tb"
+
+
+def test_read_tables_refuses_an_existing_output_as_the_binary_does(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`read --tables -o` over an existing file is the binary's usage
+    refusal: exit 2 with the OUTPUT_EXISTS code (#1698; the twin exited 1
+    with no code), whatever the file's name and under --quiet."""
+    package, _ = _grid_document()
+    source = tmp_path / "grid.docx"
+    source.write_bytes(package)
+    for name in ("existing.md", "existing.MD", "existing"):
+        out = tmp_path / name
+        out.write_text("keep me\n")
+        for argv in (
+            ["read", str(source), "--tables", "-o", str(out)],
+            ["read", str(source), "--tables", "-o", str(out), "--quiet"],
+        ):
+            with pytest.raises(SystemExit) as refusal:
+                main([*argv])
+            assert refusal.value.code == 2, argv
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)"
+            ], argv
+        assert out.read_text() == "keep me\n", name
+
+
+def test_read_tables_never_writes_over_its_input(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`read --tables -o` refuses an output naming its input before any
+    work — the same path, or the same file through a hard or symbolic
+    link — --force included (#1698); an extensionless or .md input is as
+    protected as a .docx one, which the output format already refused."""
+    package, _ = _grid_document()
+    for name in ("tables-input", "tables-input.md"):
+        source = tmp_path / name
+        source.write_bytes(package)
+        for argv in (
+            ["read", str(source), "--tables", "-o", str(source)],
+            ["read", str(source), "--tables", "-o", str(source), "--force"],
+        ):
+            with pytest.raises(SystemExit) as refusal:
+                main([*argv])
+            assert refusal.value.code == 2, argv
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_ALIAS: the output '{source}' is the same file as the input '{source}'"
+            ], argv
+        assert source.read_bytes() == package, name
+    # A hard link or a symlink to the input is the same file: refused even
+    # with --force, which authorizes replacing an output, never an input.
+    docx_input = tmp_path / "grid.docx"
+    docx_input.write_bytes(package)
+    for link, make in (("hard.md", os.link), ("symbolic.md", os.symlink)):
+        out = tmp_path / link
+        make(docx_input, out)
+        for force in ([], ["--force"]):
+            with pytest.raises(SystemExit) as refusal:
+                main(["read", str(docx_input), "--tables", "-o", str(out), *force])
+            assert refusal.value.code == 2, (link, force)
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_ALIAS: the output '{out}' is the same file as the input '{docx_input}'"
+            ], (link, force)
+        assert docx_input.read_bytes() == package, link
+
+
+def test_read_tables_force_replaces_a_linked_output_without_writing_through_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--force over an output that is a link to another file replaces the
+    link's own directory entry (staged beside it, renamed over), never
+    writing through the link into its target (#1698)."""
+    package, _ = _grid_document()
+    source = tmp_path / "grid.docx"
+    source.write_bytes(package)
+    assert main(["read", str(source), "--tables"]) == 0
+    grids = capsys.readouterr().out
+    target = tmp_path / "target.md"
+    target.write_text("unrelated\n")
+    out = tmp_path / "linked.md"
+    out.symlink_to(target)
+    assert main(["read", str(source), "--tables", "-o", str(out), "--force"]) == 0
+    assert capsys.readouterr().err == f"wrote {out} (tables, {len(grids.encode())} bytes)\n"
+    assert not out.is_symlink() and out.read_text(encoding="utf-8") == grids
+    assert target.read_text() == "unrelated\n"
+    assert source.read_bytes() == package
+
+
+def test_read_repeated_empty_paragraph_flags_exit_usage_as_the_binary(
+    letter: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`-p '' -p ''` (a single `-p ''` alike) selects nothing: the binary's
+    usage refusal, exit 2 with USAGE under --json, in the view, snapshot
+    and tables paths (#1698; the twin exited 1 with ERROR)."""
+    for argv in (
+        ["read", str(letter), "-p", "", "-p", ""],
+        ["read", str(letter), "-p", ""],
+        ["read", str(letter), "--tables", "-p", "", "-p", ""],
+    ):
+        with pytest.raises(SystemExit) as refusal:
+            main([*argv])
+        assert refusal.value.code == 2, argv
+        assert capsys.readouterr().err == "error: no paragraphs selected\n", argv
+    with pytest.raises(SystemExit) as refusal:
+        main(["read", str(letter), "-p", "", "-p", "", "--json"])
+    assert refusal.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.err == "error: no paragraphs selected\n"
+    assert json.loads(captured.out) == {"error": {"code": "USAGE", "message": "no paragraphs selected"}}
+
 
 
 def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(
