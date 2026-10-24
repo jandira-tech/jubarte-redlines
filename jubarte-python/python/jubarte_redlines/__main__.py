@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 from dataclasses import asdict
 from collections.abc import Sequence
@@ -140,11 +141,29 @@ def _check_side_file(side: Path, flag: str, others: tuple[tuple[Path, str], ...]
 
 
 def _write(path: Path, data: bytes | str) -> int:
-    """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written."""
+    """Writes ``data`` (text as UTF-8, newlines as given); returns the bytes written.
+
+    Published as the binary publishes it (``publish_file``): the bytes go to a
+    sibling partial file, then ``os.replace`` installs them over the path. The
+    replace breaks a hard link and replaces a symbolic link, so an output that
+    names another file through a link never writes through it, and a write
+    that fails leaves the destination as it was.
+    """
     raw = data.encode("utf-8") if isinstance(data, str) else data
+    partial = path.parent / f".{path.name}.{os.getpid()}.partial"
     try:
-        path.write_bytes(raw)
+        partial.write_bytes(raw)
+        # The destination's own mode, as the binary's staged file takes it; a
+        # link's own mode, never its referent's.
+        try:
+            mode = path.lstat().st_mode
+        except OSError:
+            mode = 0
+        if stat.S_ISREG(mode):
+            os.chmod(partial, stat.S_IMODE(mode))
+        os.replace(partial, path)
     except OSError as exc:
+        partial.unlink(missing_ok=True)
         raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
 
