@@ -1459,3 +1459,30 @@ fn a_nested_row_revised_on_its_own_stays_when_its_outer_row_resolves() {
         );
     }
 }
+
+/// #1713: rejecting Ann's changes drops the row Ann inserted, though Ann
+/// also changed its properties.
+#[test]
+fn rejecting_an_authors_row_insertion_drops_it_with_its_property_change() {
+    let row = |pr: &str, text: &str| {
+        format!(
+            r#"<w:tr><w:trPr>{pr}</w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let ann =
+        format!(r#"<w:ins w:id="1" {A}/><w:trPrChange w:id="2" {A}><w:trPr/></w:trPrChange>"#);
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{}{}</w:tbl><w:p/>"#,
+        row("", "Kept row."),
+        row(&ann, "Ann's row.")
+    );
+    let filter = ChangeFilter {
+        authors: Some(vec!["Ann".into()]),
+        ..Default::default()
+    };
+    let out = reject_changes(&docx(&body), &filter).unwrap();
+    assert_word_valid_package(&out);
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(!xml.contains("Ann's row."), "{xml}");
+    assert!(xml.contains("Kept row."), "{xml}");
+}
