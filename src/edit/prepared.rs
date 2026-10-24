@@ -554,10 +554,12 @@ fn culprits(
         ops.sort_unstable();
         ops
     };
+    // The candidates: the operations before the last one found. With all of
+    // them `needed` reproduces it (the whole prefix through `first` at the
+    // start, the prefix the last search ended on after it); with none,
+    // `needed` alone does not.
+    let mut pool: Vec<usize> = (0..first).collect();
     while !reproduces(&with(&[], &needed)) {
-        // With every earlier operation the prefix through `first` is whole,
-        // and reproduces it; with none, `needed` alone does not.
-        let pool: Vec<usize> = (0..first).filter(|i| !needed.contains(i)).collect();
         let (mut lo, mut hi) = (0, pool.len());
         while hi - lo > 1 {
             let mid = lo + (hi - lo) / 2;
@@ -571,6 +573,7 @@ fn culprits(
             break;
         };
         needed.push(next);
+        pool.truncate(hi - 1);
     }
     needed[1..].sort_unstable();
     Some(needed)
@@ -1913,6 +1916,18 @@ pub(crate) mod tests {
         assert_eq!(culprits_of(10, true, &[&[6], &[3]]).0, Some(vec![3]));
         // Without `together` (v2), only the operation that brings it in.
         assert_eq!(culprits_of(10, false, &[&[2, 7]]).0, Some(vec![7]));
+    }
+
+    #[test]
+    fn culprits_seeks_each_further_operation_before_the_last_found() {
+        // The operations before the last one found, with those found,
+        // reproduce the refusal: the next search covers only them.
+        let (found, reruns) = culprits_of(64, true, &[&[0, 1, 2, 3, 63]]);
+        assert_eq!(found, Some(vec![63, 0, 1, 2, 3]));
+        assert!(reruns <= 21, "{reruns}");
+        let (found, reruns) = culprits_of(64, true, &[&[1, 3, 63]]);
+        assert_eq!(found, Some(vec![63, 1, 3]));
+        assert!(reruns <= 18, "{reruns}");
     }
 
     #[test]
