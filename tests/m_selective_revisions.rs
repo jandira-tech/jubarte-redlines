@@ -1308,3 +1308,50 @@ fn resolving_a_row_alone_takes_its_cells_final_marks_along() {
         assert_eq!(left, ["r3", "r5"], "{name}: the words stay tracked");
     }
 }
+
+/// The same with a nested table in the row's cell whose own row carries
+/// no revision, as Open-Xml-PowerTools writes it: the outer row's revision
+/// covers the nested cell's final mark, so resolving the row alone takes
+/// that mark along too (#1684, G2 of #1680's round 9).
+#[test]
+fn resolving_a_row_alone_takes_its_nested_cells_final_marks_along() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let (kind, text) = if inserted {
+            ("ins", "t")
+        } else {
+            ("del", "delText")
+        };
+        let marked = |mark: u32, words: u32, value: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p>"#
+            )
+        };
+        let nested = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
+            marked(6, 7, "Inner.")
+        );
+        let source = docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kept.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{nested}{}</w:tc></w:tr></w:tbl><w:p/>"#,
+            marked(2, 3, "Outer.")
+        ));
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(
+            report.ok(),
+            "{name}: {:?}\n{}",
+            report.errors,
+            part_string(&partial, "word/document.xml").unwrap()
+        );
+        let mut left = ids(&partial);
+        left.sort();
+        assert_eq!(left, ["r3", "r7"], "{name}: the words stay tracked");
+    }
+}

@@ -2738,3 +2738,71 @@ fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
         assert_eq!(cell_final_marks(&bare).len(), 2, "{kind}");
     }
 }
+
+/// A cell's tags may carry whitespace before their `>` (`<w:tc >`,
+/// `</w:tc\n>`): the check still reads the part (codex on #1680: the
+/// byte prefilter wanted a literal `tc>`).
+#[test]
+fn probe_a_revised_final_mark_in_cells_with_spaced_tags_fails() {
+    let w = common::docx::W_NS;
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{w}"><w:body><w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc ><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc
+></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+        marked("New.", Some("ins"))
+    );
+    let bytes = common::docx::replace_entry(
+        &common::docx::docx("<w:p/>"),
+        "word/document.xml",
+        document.as_bytes(),
+    );
+    let found = cell_final_marks(&bytes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+    );
+}
+
+/// A custom XML data part is application data, not a Word story: a cell
+/// shape in it is no cell of the document (codex on #1680).
+#[test]
+fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
+    let w = common::docx::W_NS;
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{w}"><w:body><w:p><w:r><w:t>Body.</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let item = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:tbl xmlns:w="{w}"><w:tr><w:tc><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc></w:tr></w:tbl>"#,
+        marked("New.", Some("ins"))
+    );
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/>
+</Relationships>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &doc),
+        ("word/_rels/document.xml.rels", rels),
+        ("customXml/item1.xml", &item),
+    ]);
+    assert_eq!(cell_final_marks(&bytes), []);
+    // The same shape in the main part is flagged.
+    let main = doc.replace(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &format!(
+            "{}<w:p/>",
+            item.split_once("?>\n")
+                .unwrap()
+                .1
+                .replace(&format!(r#" xmlns:w="{w}""#), "")
+        ),
+    );
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &main),
+        ("word/_rels/document.xml.rels", rels),
+        ("customXml/item1.xml", &item),
+    ]);
+    assert_eq!(cell_final_marks(&bytes).len(), 1);
+}

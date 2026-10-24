@@ -34,6 +34,7 @@ pub mod comments;
 pub mod cross_para;
 // Word-parity passes, public for the tests that run one at a time; outside
 // the version promise (docs/VERSIONING.md).
+pub(crate) mod final_marks;
 #[doc(hidden)]
 pub mod finalize;
 pub mod fixups;
@@ -743,9 +744,6 @@ pub fn try_compare_bodies_faithful_with_notes(
     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, &mut id);
 
     let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
-    // A table cell's final marks pair, as Word pairs them, in either mode:
-    // a revision on one hangs Word (#1669).
-    produce::pair_cell_final_marks(dom, &mut flat);
 
     // moves before format-changes (WmlComparer.ts:2322 then :2326).
     moves::detect_moves_in_atom_list(dom, &mut flat, settings);

@@ -7511,13 +7511,13 @@ fn compare_documents_impl(
                     let dd = pd.parse_xdocument(&doc_xml);
                     if let Some(droot) = pd.root(dd) {
                         let mut doc_changed = false;
-                        for p in pd.descendants(droot, Some(&W::name("p"))) {
+                        for p in pd.descendants(droot, Some(&W::p())) {
                             let Some(ppr) = pd.element(p, &W::p_pr()) else {
                                 continue;
                             };
                             let mark_inserted = pd
                                 .element(ppr, &W::r_pr())
-                                .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
+                                .is_some_and(|r| pd.element(r, &W::ins()).is_some());
                             // A container's last paragraph keeps its mark when
                             // a paragraph is added after it, so the new words
                             // end on the old mark, under a record of its old
@@ -7527,7 +7527,7 @@ fn compare_documents_impl(
                             let words_inserted = || {
                                 let words = pd.descendants(p, Some(&W::t()));
                                 !words.is_empty()
-                                    && pd.element(ppr, &W::name("pPrChange")).is_some()
+                                    && pd.element(ppr, &W::p_pr_change()).is_some()
                                     && words.iter().all(|&t| {
                                         pd.ancestors(t, Some(&W::ins())).first().is_some_and(
                                             |&ins| {
@@ -8062,6 +8062,18 @@ fn compare_documents_impl(
                             },
                         );
                     }
+                }
+                // A cell's final mark carries no revision its row does not
+                // (#1669, #1684), in every story: the body (its text boxes
+                // too), the notes, the headers and footers. After every pass
+                // that writes marks.
+                if part == main1
+                    || part == "word/footnotes.xml"
+                    || part == "word/endnotes.xml"
+                    || part.starts_with("word/header")
+                    || part.starts_with("word/footer")
+                {
+                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
                 }
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
