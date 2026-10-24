@@ -261,6 +261,21 @@ fn hand_tables_agree_with_schema_particles() {
         flatten_particle(found, &mut g);
         let order = ordered_names_from_groups(&g);
         assert_eq!(order.len(), hand.len(), "{label}: {order:?}");
+        // The order check below compares only the names both lists hold, so
+        // a misspelled or doubled hand entry would slip past it, and the
+        // name it stands for would sort last in finalization.
+        let hand_names = hand_order_names(hand);
+        let hand_set: HashSet<_> = hand_names.iter().cloned().collect();
+        let schema_set: HashSet<_> = order.iter().cloned().collect();
+        assert_eq!(
+            hand_names.len(),
+            hand_set.len(),
+            "{label}: a hand-table name appears twice: {hand_names:?}"
+        );
+        assert_eq!(
+            hand_set, schema_set,
+            "{label}: hand and schema names differ (hand={hand_names:?} schema={order:?})"
+        );
         assert_hand_agrees_with_schema(label, hand, &order, &allow);
     }
 
