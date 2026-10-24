@@ -1180,3 +1180,152 @@ fn read_help_no_page_markers_structured_outputs() {
         "ignored by --json, --for-edit and the --tables grids",
     );
 }
+
+/// Repeated `-p` selectors read as one comma list (#1690): the view and
+/// the snapshot alike.
+#[test]
+fn repeated_paragraph_selectors_read_as_one_list() {
+    for extra in [&[][..], &["--json"]] {
+        let joined: Vec<&str> = [&["read", RECEIVED, "-p", "p3,p8"][..], extra].concat();
+        let repeated: Vec<&str> = [&["read", RECEIVED, "-p", "p3", "-p", "p8"][..], extra].concat();
+        let (code, want, stderr) = run(&joined);
+        assert_eq!(code, 0, "{stderr}");
+        let (code, got, stderr) = run(&repeated);
+        assert_eq!(code, 0, "{repeated:?}: {stderr}");
+        assert_eq!(got, want, "{repeated:?}");
+    }
+    // `--select`, the alias, repeats the same way.
+    assert_eq!(
+        run(&["read", RECEIVED, "--select", "p3", "-p", "p8"]).1,
+        run(&["read", RECEIVED, "-p", "p3,p8"]).1
+    );
+}
+
+/// `read --tables -o FILE` writes the grids stdout gets (#1690); a .json
+/// name and an existing file without --force are refused, and the input
+/// is never overwritten.
+#[test]
+fn read_tables_writes_its_grids_to_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, grids, stderr) = run(&["read", RECEIVED, "--tables"]);
+    assert_eq!(code, 0, "{stderr}");
+    for name in ["tables.txt", "tables.md"] {
+        let path = dir.path().join(name);
+        let path = path.to_str().unwrap();
+        let (code, stdout, stderr) = run(&["read", RECEIVED, "--tables", "-o", path]);
+        assert_eq!(code, 0, "{name}: {stderr}");
+        assert_eq!(stdout, "", "{name}: the grids go to the file");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), grids, "{name}");
+        // The file exists now: refused as a usage error, and --force
+        // overwrites it.
+        let (code, _, stderr) = run(&["read", RECEIVED, "--tables", "-o", path]);
+        assert_eq!(code, 2, "{name}: {stderr}");
+        assert!(stderr.contains("OUTPUT_EXISTS"), "{name}: {stderr}");
+        let (code, _, stderr) = run(&["read", RECEIVED, "--tables", "-o", path, "--force"]);
+        assert_eq!(code, 0, "{name}: {stderr}");
+    }
+    let json = dir.path().join("tables.json");
+    let (code, _, stderr) = run(&["read", RECEIVED, "--tables", "-o", json.to_str().unwrap()]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("--tables"), "{stderr}");
+    // The input is never overwritten: its own .docx name is no text
+    // output, and a hard link to it is replaced, not written through.
+    let copy = dir.path().join("received.docx");
+    std::fs::copy(RECEIVED, &copy).unwrap();
+    let alias = dir.path().join("alias.md");
+    std::fs::hard_link(&copy, &alias).unwrap();
+    let (copy, alias) = (copy.to_str().unwrap(), alias.to_str().unwrap());
+    let (code, _, stderr) = run(&["read", copy, "--tables", "-o", copy, "--force"]);
+    assert_eq!(code, 2, "{stderr}");
+    let (code, _, stderr) = run(&["read", copy, "--tables", "-o", alias, "--force"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        std::fs::read(copy).unwrap(),
+        std::fs::read(RECEIVED).unwrap()
+    );
+    assert_eq!(std::fs::read_to_string(alias).unwrap(), grids);
+}
+
+/// `changes --author NAME` lists only that author's changes, as
+/// `accept --author` selects them: exact names, repeatable (#1690).
+#[test]
+fn changes_filter_by_author() {
+    let dir = tempfile::tempdir().unwrap();
+    let mark = |kind: &str, id: u32, author: &str, text: &str| {
+        let t = if kind == "ins" { "t" } else { "delText" };
+        format!(
+            r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="2026-10-24T00:00:00Z"><w:r><w:{t}>{text}</w:{t}></w:r></w:{kind}>"#
+        )
+    };
+    let body = format!(
+        "<w:p><w:r><w:t>Kept </w:t></w:r>{}</w:p><w:p><w:r><w:t>Also </w:t></w:r>{}</w:p><w:p>{}</w:p>",
+        mark("ins", 1, "Ana", "new"),
+        mark("del", 2, "Bo", "old"),
+        mark("ins", 3, "Ana Maria", "more")
+    );
+    let path = dir.path().join("two.docx");
+    std::fs::write(&path, docx(&body)).unwrap();
+    let path = path.to_str().unwrap();
+    let lines = |args: &[&str]| -> Vec<String> {
+        let (code, stdout, stderr) = run(args);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+        stdout.lines().map(str::to_string).collect()
+    };
+    let all = lines(&["changes", path]);
+    let ana = lines(&["changes", path, "--author", "Ana"]);
+    assert_eq!(ana.len(), 2, "one change and the count: {ana:?}");
+    assert!(
+        ana[0].contains("\tAna\t") && ana[0].contains("new"),
+        "{ana:?}"
+    );
+    assert_eq!(ana[1], "1 change(s)");
+    let both = lines(&["changes", path, "--author", "Ana", "--author", "Bo"]);
+    assert_eq!(both.len(), 3, "{both:?}");
+    assert_eq!(all.len(), 4, "{all:?}");
+    let none = lines(&["changes", path, "--author", "Nobody"]);
+    assert_eq!(none, ["0 change(s)"]);
+    // JSONL: the same selection, one object per line.
+    let json: Vec<serde_json::Value> = lines(&["changes", path, "--json", "--author", "Bo"])
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .filter(|v: &serde_json::Value| v.get("author").is_some())
+        .collect();
+    assert_eq!(json.len(), 1, "{json:?}");
+    assert_eq!(json[0]["author"], "Bo");
+}
+
+/// `edit --help` names a plan's contents as operations, shows one
+/// complete plan that applies as printed (once its hash is filled in),
+/// and the separate template/apply workflow (#1690).
+#[test]
+fn edit_help_shows_a_complete_plan_and_the_template_workflow() {
+    let (code, help, stderr) = run(&["edit", "--help"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!help.contains("batches"), "{help}");
+    assert!(help.contains("operations"), "{help}");
+    assert!(
+        help.contains("jubarte edit template FILE") && help.contains("jubarte edit apply FILE"),
+        "{help}"
+    );
+    let start = help
+        .find("{\"schema_version\"")
+        .expect("a plan in the help");
+    let end = start + help[start..].find("]}").expect("the plan's end") + 2;
+    let dir = tempfile::tempdir().unwrap();
+    let doc = write_fixture(dir.path());
+    let sha = source_sha256(&std::fs::read(&doc).unwrap());
+    let plan = help[start..end].replace("<sha256 from jubarte read>", &sha);
+    let plan_path = dir.path().join("plan.json");
+    std::fs::write(&plan_path, &plan).unwrap();
+    let out = dir.path().join("out.docx");
+    let (code, stdout, stderr) = run(&[
+        "edit",
+        doc.to_str().unwrap(),
+        "--plan",
+        plan_path.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{plan}\n{stdout}\n{stderr}");
+    assert!(out.exists());
+}

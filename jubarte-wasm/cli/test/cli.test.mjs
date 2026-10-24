@@ -29,6 +29,11 @@ const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
 const jsonErrors = typeof binding.runtimeJsonError === "function";
 const inputNotices = typeof binding.inputNotice === "function";
 const inputValidity = typeof binding.inputValidityLine === "function";
+// #1690's flags (`changes --author`, `read --tables -o`) parse once the
+// binding is rebuilt from a source that has them; until then their tests skip.
+const parses = (argv) => JSON.parse(binding.parseCli(JSON.stringify(argv))).exit_code === 0;
+const authorFilter = parses(["changes", "a.docx", "--author", "Ann"]);
+const tablesOutput = parses(["read", "a.docx", "--tables", "-o", "t.md"]);
 
 /** The records `changes --json` prints: its last line is the input's
  * validity (#1309) once the binding has it, never a record. */
@@ -1677,4 +1682,35 @@ test("read --for-edit usage errors as the binary", () => {
     assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
     assert.match(r.err, /error:/);
   }
+});
+
+test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the checked-in binding predates #1690" }, () => {
+  const bo = run("changes", tracked, "--author", "Bo Chen");
+  assert.equal(bo.code, 0, bo.err);
+  const lines = bo.out.trimEnd().split("\n");
+  assert.equal(lines.at(-1), "3 change(s)", bo.out);
+  assert.ok(lines.slice(0, -1).every((line) => line.split("\t")[3] === "Bo Chen"), bo.out);
+  const both = run("changes", tracked, "--author", "Bo Chen", "--author", "Ana Lima");
+  assert.equal(both.out, run("changes", tracked).out);
+  assert.equal(run("changes", tracked, "--author", "Bo").out, "0 change(s)\n");
+  const rows = records(run("changes", tracked, "--json", "--author", "Ana Lima").out);
+  assert.ok(rows.length === 2 && rows.every((c) => c.author === "Ana Lima"), JSON.stringify(rows));
+});
+
+test("read --tables -o writes the grids it prints, as the binary (#1690)", { skip: !tablesOutput && "the checked-in binding predates #1690" }, () => {
+  const grids = run("read", untracked, "--tables");
+  assert.equal(grids.code, 0, grids.err);
+  const out = path.join(tmp, "grids.md");
+  const wrote = run("read", untracked, "--tables", "-o", out);
+  assert.equal(wrote.code, 0, wrote.err);
+  assert.equal(wrote.out, "");
+  assert.equal(fs.readFileSync(out, "utf8"), grids.out);
+  assert.match(wrote.err, new RegExp(`wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tables, ${fs.statSync(out).size} bytes\\)\n$`));
+  // Refused; the exit status differs from the binary's 2 (#1692).
+  const again = run("read", untracked, "--tables", "-o", out);
+  assert.notEqual(again.code, 0, again.err);
+  assert.match(again.err, /already exists/);
+  const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
+  assert.equal(json.code, 2, json.err);
+  assert.match(json.err, /--tables writes the grids as text/);
 });

@@ -1679,8 +1679,8 @@ fn every_writing_task_takes_the_formats_its_output_names() {
             "--json writes the snapshot",
         ),
         (
-            vec!["read", "a.docx", "-o", "v.md", "--tables"],
-            "--tables prints the grids",
+            vec!["read", "a.docx", "-o", "v.json", "--tables"],
+            "--tables writes the grids as text",
         ),
         (
             vec!["accept", "a.docx", "-o", "r.docx", "--changed-pages"],
@@ -2268,8 +2268,11 @@ fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
             assert_eq!(result["args"]["output_format"], "json", "{args:?}");
         }
         for (output, flags, message) in [
-            ("v.json", vec!["--tables"], "--tables prints the grids"),
-            ("v.md", vec!["--tables"], "--tables prints the grids"),
+            (
+                "v.json",
+                vec!["--tables"],
+                "--tables writes the grids as text",
+            ),
             ("v.unknown", vec!["--json"], "--json writes the snapshot"),
             ("v.png", vec![], "read writes .md or .json"),
         ] {
@@ -2282,6 +2285,12 @@ fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
                 "{args:?}: {result}"
             );
         }
+        // --tables -o FILE writes the grids it prints (#1690).
+        let args = [prefix, &["-o", "v.md", "--tables"]].concat();
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
+        assert_eq!(result["args"]["output_format"], "md", "{args:?}");
+        assert_eq!(result["args"]["tables"], true, "{args:?}");
         // Implicit view defaults must not reject JSON; explicit --json is redundant but valid.
         let args = [
             prefix,
