@@ -2862,10 +2862,10 @@ fn add_content_controls_with_owners(
 
 /// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
 /// once its marks go: no run with content outside a deletion or a move away,
-/// nothing else but its properties, bookmarks and proofing marks? Anything
-/// not known to be
-/// empty brings something (#1694: only these shapes were checked against
-/// Word).
+/// nothing else but its properties and markers? The markers are bookmarks,
+/// proofing marks, a comment's range and its reference run, and permission
+/// ranges. Anything not known to be empty brings something (#1694: only
+/// these shapes were checked against Word, rounds 1 to 9).
 fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
     dom.elements(paragraph, None).into_iter().all(|child| {
         let Some(name) = dom.name(child) else {
@@ -2877,11 +2877,14 @@ fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
             || name == W::bookmark_start()
             || name == W::bookmark_end()
             || name == W::name("proofErr")
+            || name == W::name("commentRangeStart")
+            || name == W::name("commentRangeEnd")
+            || name == W::name("permStart")
+            || name == W::name("permEnd")
             || (name == W::r()
-                && dom
-                    .elements(child, None)
-                    .into_iter()
-                    .all(|e| dom.name_is(e, &W::r_pr())))
+                && dom.elements(child, None).into_iter().all(|e| {
+                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::name("commentReference"))
+                }))
     })
 }
 
@@ -2893,6 +2896,10 @@ fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
 /// inline, and Word does not take a paragraph out of it to join one outside
 /// (the #1694 A/B: hn13, hn20, hn32–hn35, hn39, hn40). An outside paragraph
 /// that keeps nothing goes, as at any join (hn23, hn24, hn31).
+///
+/// A control ending at `a` still holds more than one paragraph only while
+/// one of its marks stays: once they all go, its paragraphs join the one
+/// after it, and it can become inline there (round 9: k01, k06, k08).
 fn holds_mark(dom: &Dom, a: NodeId, b: NodeId, a_keeps: bool) -> bool {
     let sdt = W::sdt();
     let around_a = dom.ancestors(a, Some(&sdt));
@@ -2900,19 +2907,27 @@ fn holds_mark(dom: &Dom, a: NodeId, b: NodeId, a_keeps: bool) -> bool {
     let own = |around: &[NodeId], other: &[NodeId]| around.iter().any(|s| !other.contains(s));
     let a_keeps = a_keeps || own(&around_a, &around_b);
     let b_keeps = !brings_nothing(dom, b) || own(&around_b, &around_a);
-    let multi = |s: NodeId| dom.descendants(s, Some(&W::p())).len() > 1;
+    let paragraphs = |s: NodeId| dom.descendants(s, Some(&W::p()));
+    let multi = |s: NodeId| paragraphs(s).len() > 1;
+    let keeps_a_mark = |s: NodeId| {
+        paragraphs(s)
+            .into_iter()
+            .any(|p| !paragraph_mark_is_deleted_or_moved_from(dom, p))
+    };
     (a_keeps && around_b.iter().any(|&s| !around_a.contains(&s) && multi(s)))
-        || (b_keeps && around_a.iter().any(|&s| !around_b.contains(&s) && multi(s)))
+        || (b_keeps
+            && around_a
+                .iter()
+                .any(|&s| !around_b.contains(&s) && multi(s) && keeps_a_mark(s)))
 }
 
 /// The properties of a paragraph whose deleted mark Word kept: those of the
-/// paragraph after it, as if the two had joined (the #1694 A/B, hn41). The
-/// section break, if any, stays the kept paragraph's own, and no mark of the
-/// next paragraph's goes with them.
+/// paragraph after it, as if the two had joined (the #1694 A/B, hn41; style
+/// and numbering included, round 9: c02). No mark of the next paragraph's
+/// goes with them, nor its section break (c03); the kept paragraph's own
+/// section break goes with the deleted mark that carried it (c04, e05).
 fn held_mark_properties(dom: &mut Dom, held: NodeId, next: NodeId) -> Option<NodeId> {
-    let own_section = dom
-        .element(held, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::sect_pr()));
+    debug_assert!(dom.name_is(held, &W::p()));
     let ppr = dom.new_element(W::p_pr());
     if let Some(source) = dom.element(next, &W::p_pr()) {
         for child in dom.elements(source, None) {
@@ -2928,17 +2943,6 @@ fn held_mark_properties(dom: &mut Dom, held: NodeId, next: NodeId) -> Option<Nod
                 }
             }
             dom.add(ppr, copy);
-        }
-    }
-    if let Some(section) = own_section {
-        let copy = dom.clone_subtree(section);
-        let before = dom
-            .elements(ppr, None)
-            .into_iter()
-            .find(|&e| dom.name_is(e, &W::p_pr_change()));
-        match before {
-            Some(change) => dom.add_before_self(change, copy),
-            None => dom.add(ppr, copy),
         }
     }
     (!dom.elements(ppr, None).is_empty()).then_some(ppr)
