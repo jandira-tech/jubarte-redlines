@@ -13792,10 +13792,7 @@ fn table_block(
     // a table; Word itself does not lay out by them (probe m3, q1 with
     // the marks, still fits). A nested table's marks are its own: Word
     // fits #1732 probe p1's unmarked table around a marked one.
-    let rsid_r = W::name("rsidR");
-    let rsid_tr = W::name("rsidTr");
-    let para_id = W14::name("paraId");
-    let tbl = W::name("tbl");
+    let (rsid_r, rsid_tr, para_id, tbl) = (W::rsid_r(), W::rsid_tr(), W14::para_id(), W::tbl());
     let word_saved = wrapped_children(dom, table, "tr")
         .into_iter()
         .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())
@@ -13808,7 +13805,10 @@ fn table_block(
     // A column only a spanning cell without a width reaches is a column
     // without a width too: Word fits #1732 probe s2's one spanning title
     // to its words. A column a cell of its own sizes is not (probe s1,
-    // #1733).
+    // #1733). Rows with more cells than the grid has columns are judged
+    // by the grid's columns: Word fits a one-column grid under two-cell
+    // rows whether or not the second column has a tcW (#1732 probes
+    // g1-g3, CodeRabbit's review).
     let cells_foreign = !word_saved
         && !widthless_cols.is_empty()
         && (0..widthless_cols.len())
