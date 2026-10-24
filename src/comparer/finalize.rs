@@ -29466,8 +29466,9 @@ mod closing_authored_section_boundary_tests {
             canonical(&dom, dom.element(ap, &W::p_pr()).unwrap()),
             canonical(&dom, revised)
         );
-        // Reject restores the saved spacing and keeps the live section
-        // break, as Word's Reject All does (#1708, #1718).
+        // Reject keeps the live section break, as Word's Reject All does
+        // (#1708, #1718). The saved and revised spacing are the same here,
+        // so the reverted pPr is the revised one.
         assert_eq!(
             canonical(&dom, dom.element(rp, &W::p_pr()).unwrap()),
             canonical(&dom, revised)
