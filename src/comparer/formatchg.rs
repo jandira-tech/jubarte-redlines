@@ -253,6 +253,9 @@ pub fn get_changed_property_names(
 type PendingRunFormatChange = (usize, Option<NodeId>, Option<NodeId>, Vec<String>);
 /// A pending para format change: (atom index, projected old pPr node).
 type PendingParaFormatChange = (usize, NodeId);
+/// A pending mark format change on an otherwise equal paragraph mark:
+/// (atom index, old mark `w:rPr`, new mark `w:rPr`).
+type PendingMarkFormatChange = (usize, Option<NodeId>, Option<NodeId>);
 
 /// Children of `w:pPr` that do not participate in paragraph-format comparison
 /// (docxodus `IsParaComparisonNoiseChild`).
@@ -414,6 +417,7 @@ fn detect_format_changes_impl(
     }
     let mut run_changes: Vec<PendingRunFormatChange> = Vec::new();
     let mut para_changes: Vec<PendingParaFormatChange> = Vec::new();
+    let mut mark_changes: Vec<PendingMarkFormatChange> = Vec::new();
     // Cache each distinct rPr's normalized serialization: runs share one rPr, so
     // this collapses O(Equal atoms) normalizations to O(distinct rPr). See
     // `normalized_rpr_serialized`.
@@ -474,6 +478,20 @@ fn detect_format_changes_impl(
                     // file_111_112).
                     para_changes.push((i, projected_old));
                 }
+            } else if dom.name_is(old_ppr, &W::p_pr()) {
+                // The mark's own `w:rPr` is paragraph-comparison noise
+                // (`is_para_comparison_noise`), so a paragraph whose layout
+                // stayed equal can still carry a changed mark — a deleted
+                // paragraph's final mark paired with the revision's closing
+                // mark (`pair_final_marks_past_deleted_tail`) reaches here
+                // with the deleted mark's formatting (#1695, o16). Word
+                // records it in `w:rPrChange`; unrecorded, Reject All lost
+                // the deleted paragraph's mark properties.
+                let old_mark = dom.element(old_ppr, &W::r_pr());
+                let new_mark = dom.element(new_ppr, &W::r_pr());
+                if !are_run_properties_equal(dom, old_mark, new_mark) {
+                    mark_changes.push((i, old_mark, new_mark));
+                }
             }
             continue;
         }
@@ -530,6 +548,15 @@ fn detect_format_changes_impl(
             new_run_properties: new_mark_rpr,
             old_para_properties: Some(old_ppr),
             changed_properties: vec!["paragraphFormatting".into()],
+        });
+    }
+    for (i, old_mark, new_mark) in mark_changes {
+        atoms[i].correlation_status = CorrelationStatus::FormatChanged;
+        atoms[i].format_change = Some(FormatChangeInfo {
+            old_run_properties: old_mark,
+            new_run_properties: new_mark,
+            old_para_properties: None,
+            changed_properties: get_changed_property_names(dom, old_mark, new_mark),
         });
     }
 }
