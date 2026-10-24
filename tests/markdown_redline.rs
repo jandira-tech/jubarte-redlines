@@ -251,11 +251,8 @@ fn table_rows_removed_empty_their_cells_and_added_ones_are_reported() {
     );
 }
 
-#[test]
-fn an_edit_no_plan_can_take_is_left_out_and_reported() {
-    // A link that is a cell's only paragraph: the rewrite is refused, and
-    // replacing the paragraph would leave the cell empty.
-    let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#;
+/// `body`, whose `rId9` names an external link to example.com.
+fn with_link(body: &str) -> Vec<u8> {
     let mut package = PartFs::open(&docx(body)).unwrap();
     let id = package.add_document_relationship_external(
         "word/document.xml",
@@ -267,10 +264,19 @@ fn an_edit_no_plan_can_take_is_left_out_and_reported() {
         .unwrap()
         .replace("rId9", &id);
     package.set_part("word/document.xml", xml.into_bytes());
-    let source = package.to_zip().unwrap();
+    package.to_zip().unwrap()
+}
+
+#[test]
+fn an_edit_no_plan_can_take_is_left_out_and_reported() {
+    // A link in a paragraph that carries a section break: the rewrite is
+    // refused, and the paragraph cannot be deleted to replace it whole.
+    let source = with_link(
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+    );
     let patched = apply_markdown(
         &source,
-        "| [new link](https://example.com) |\n|---|\n\nAfter, changed.\n",
+        "[new link](https://example.com)\n\nAfter, changed.\n",
     )
     .unwrap();
     assert_eq!(patched.warnings.len(), 1, "{:?}", patched.warnings);
@@ -280,4 +286,69 @@ fn an_edit_no_plan_can_take_is_left_out_and_reported() {
         patched.warnings
     );
     assert_eq!(texts(&patched.docx), ["old link", "After, changed."]);
+}
+
+#[test]
+fn a_cells_only_link_is_replaced_in_its_cell() {
+    // The rewrite inside the link is refused, so the paragraph is replaced
+    // whole: the new one takes its place in the cell, as Word replaces a
+    // cell's only paragraph (#1668), never beside the table.
+    let source = with_link(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+    );
+    let patched = apply_markdown(
+        &source,
+        "| [new link](https://example.com) |\n|---|\n\nAfter, changed.\n",
+    )
+    .unwrap();
+    assert!(patched.warnings.is_empty(), "{:?}", patched.warnings);
+    assert_eq!(texts(&patched.docx), ["new link", "After, changed."]);
+    let xml = PartFs::open(&patched.docx)
+        .unwrap()
+        .part_string("word/document.xml")
+        .unwrap();
+    let cell = &xml[xml.find("<w:tc>").unwrap()..xml.find("</w:tc>").unwrap()];
+    assert!(cell.contains("new link"), "{xml}");
+}
+
+#[test]
+fn a_paragraph_after_a_whole_replacement_follows_it() {
+    // The link's rewrite is refused, so its paragraph is replaced whole;
+    // the paragraph the Markdown adds after it stays after it (codex on
+    // #1670, round 8).
+    let source = with_link(
+        r#"<w:p><w:r><w:t>Start.</w:t></w:r></w:p><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p><w:p><w:r><w:t>End.</w:t></w:r></w:p>"#,
+    );
+    let patched = apply_markdown(
+        &source,
+        "Start.\n\n[new link](https://example.com)\n\nExtra.\n\nEnd.\n",
+    )
+    .unwrap();
+    assert!(patched.warnings.is_empty(), "{:?}", patched.warnings);
+    assert_eq!(
+        texts(&patched.docx),
+        ["Start.", "new link", "Extra.", "End."]
+    );
+}
+
+#[test]
+fn a_whole_replacement_does_not_take_the_links_character_style() {
+    // The new paragraph's runs start from the paragraph's own runs, never
+    // from the link's: the replacement is no link and must not look like
+    // one (glm-5.3 on #1670, round 8).
+    let source = with_link(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:hyperlink r:id="rId9"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>old link</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+    );
+    let patched = apply_markdown(
+        &source,
+        "| [new link](https://example.com) |\n|---|\n\nAfter.\n",
+    )
+    .unwrap();
+    let xml = PartFs::open(&patched.docx)
+        .unwrap()
+        .part_string("word/document.xml")
+        .unwrap();
+    let at = xml.find("new link").unwrap();
+    let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
+    assert!(!run.contains("Hyperlink"), "{run}");
 }
