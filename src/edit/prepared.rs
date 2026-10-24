@@ -500,16 +500,20 @@ fn naming(mut error: EditError, ops: &[usize], outcomes: &[EditOutcome]) -> Edit
     });
     error.message = format!("{}; {} introduces it", error.message, name(cause));
     if let [_, others @ ..] = ops
-        && !others.is_empty()
+        && let Some((&last, rest)) = others.split_last()
     {
-        let others: Vec<String> = others.iter().map(|&i| name(i)).collect();
-        let (last, rest) = others.split_last().expect("not empty");
-        let others = if rest.is_empty() {
-            last.clone()
-        } else {
-            format!("{} and {last}", rest.join(", "))
-        };
-        error.message = format!("{}, together with {others}", error.message);
+        let mut message = format!("{}, together with ", error.message);
+        for (n, &i) in rest.iter().enumerate() {
+            if n > 0 {
+                message.push_str(", ");
+            }
+            message.push_str(&name(i));
+        }
+        if !rest.is_empty() {
+            message.push_str(" and ");
+        }
+        message.push_str(&name(last));
+        error.message = message;
     }
     error
 }
@@ -534,11 +538,13 @@ fn culprits(
     if count == 0 || reproduces(&[]) {
         return None;
     }
+    // Every prefix is a slice of this one list, built once.
+    let all: Vec<usize> = (0..count).collect();
     // `lo` operations do not reproduce it; `hi` do: the whole plan does.
     let (mut lo, mut hi) = (0, count);
     while hi - lo > 1 {
         let mid = lo + (hi - lo) / 2;
-        if reproduces(&(0..mid).collect::<Vec<_>>()) {
+        if reproduces(&all[..mid]) {
             hi = mid;
         } else {
             lo = mid;
@@ -558,7 +564,7 @@ fn culprits(
     // them `needed` reproduces it (the whole prefix through `first` at the
     // start, the prefix the last search ended on after it); with none,
     // `needed` alone does not.
-    let mut pool: Vec<usize> = (0..first).collect();
+    let mut pool = all[..first].to_vec();
     while !reproduces(&with(&[], &needed)) {
         let (mut lo, mut hi) = (0, pool.len());
         while hi - lo > 1 {
