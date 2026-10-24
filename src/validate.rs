@@ -520,6 +520,56 @@ impl Finding {
             place: Place::default(),
         }
     }
+
+    /// What tells this finding from another of its code in its part when
+    /// other edits renumber the document around it: its location's element
+    /// chain without the indices (`p#` for a paragraph id), and its message
+    /// [`normalised`] and without the numbers that stand alone. Names stay
+    /// (a bookmark's `Clause1`, a style's); revision ids, counts and
+    /// indices, which a rerun of fewer operations shifts, do not.
+    pub(crate) fn unnumbered(&self) -> String {
+        let location = if self.location.contains('[') {
+            self.location
+                .split('/')
+                .map(|step| step.split_once('[').map_or(step, |(name, _)| name))
+                .collect::<Vec<_>>()
+                .join("/")
+        } else if is_paragraph_id(&self.location) {
+            "p#".to_string()
+        } else {
+            self.location.clone()
+        };
+        format!(
+            "{location}\u{1f}{}",
+            without_numbers(&normalised(&self.message))
+        )
+    }
+}
+
+/// `text` with every number that stands alone, not glued to a letter or a
+/// digit-led name, spelled `#`.
+fn without_numbers(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let digits = bytes[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits > 0 {
+            let glued = |at: Option<&u8>| at.is_some_and(u8::is_ascii_alphanumeric);
+            let before = i.checked_sub(1).and_then(|at| bytes.get(at));
+            if glued(before) || glued(bytes.get(i + digits)) {
+                out.push_str(&text[i..i + digits]);
+            } else {
+                out.push('#');
+            }
+            i += digits;
+            continue;
+        }
+        let ch = text[i..].chars().next().expect("a char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// Each of `findings`' [`FindingKey`], read in `docx`, the document they
@@ -5224,6 +5274,38 @@ mod baseline_tests {
         // Comments and revisions are entities, not positions.
         assert_eq!(normalised("c5 on r12 and c5.text"), "c5 on r12 and c5.text");
         assert_eq!(normalised("durableId '00251B63'"), "durableId '00251B63'");
+    }
+
+    /// A rerun of fewer operations renumbers paragraphs and mints other
+    /// ids: the unnumbered key ignores both, and keeps the names.
+    #[test]
+    fn unnumbered_keeps_names_and_drops_numbers() {
+        let here = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[3]",
+            "Clause1: w:ins w:id 12 in w:p[3], 2 times",
+        );
+        let there = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[9]",
+            "Clause1: w:ins w:id 40 in w:p[9], 3 times",
+        );
+        assert_eq!(here.unnumbered(), there.unnumbered());
+        assert_eq!(
+            here.unnumbered(),
+            "w:body/w:p\u{1f}Clause1: w:ins w:id # in w:p, # times"
+        );
+        let other = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[3]",
+            "Clause2: w:ins w:id 12 in w:p[3], 2 times",
+        );
+        assert_ne!(here.unnumbered(), other.unnumbered());
+        assert_eq!(finding("X", "p3", "m").unnumbered(), "p#\u{1f}m");
+        assert_eq!(
+            without_numbers("durableId '00251B63', 1st, x7y, #1669, 2.5"),
+            "durableId '00251B63', 1st, x7y, ##, #.#"
+        );
     }
 
     #[test]

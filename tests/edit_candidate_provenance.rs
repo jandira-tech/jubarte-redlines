@@ -191,3 +191,139 @@ fn a_v2_plan_names_the_operation_by_its_pointer() {
         "{error:?}"
     );
 }
+
+/// Two marked runs, `w:id` 9 in `p0` and 7 in `p1`, and a plain paragraph:
+/// splitting each run repeats its own id.
+fn two_marked_runs() -> Vec<u8> {
+    docx(
+        r#"<w:p><w:r><w:rPr><w:ins w:id="9" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr><w:t>abcd</w:t></w:r></w:p><w:p><w:r><w:rPr><w:ins w:id="7" w:author="Ann" w:date="2026-09-01T00:00:00Z"/></w:rPr><w:t>efgh</w:t></w:r></w:p><w:p><w:r><w:t>plain words</w:t></w:r></w:p>"#,
+    )
+}
+
+/// Splits `p1`'s run, the one marked with `w:id` 7.
+const SPLIT_SEVEN: &str = r#"{"kind":"replace","paragraph":"p1","find":"fg","replacement":"Y"}"#;
+
+/// The refusal quotes `w:id` 7; the operation named is the one that
+/// repeats 7, not the earlier one that repeats 9: an operation is blamed
+/// for the defect the message quotes, not for another of its code.
+#[test]
+fn the_operation_named_is_the_one_behind_the_quoted_id() {
+    let error = refused(&two_marked_runs(), &format!("{SPLIT},{SPLIT_SEVEN}"));
+    assert!(error.message.contains("w:id 7 "), "{error:?}");
+    assert_eq!(error.operation.as_deref(), Some("op-2"), "{error:?}");
+    assert!(
+        error.message.contains("op-2 (replace on p1) introduces it")
+            && !error.message.contains("op-1"),
+        "{error:?}"
+    );
+}
+
+/// The crossing quoted is `ClauseA`'s, in `p0`: the page setup brings it
+/// in together with the replacement in `p0`, not with the one in `p1`,
+/// which crosses `ClauseB` instead.
+#[test]
+fn the_operation_needed_is_the_one_behind_the_quoted_bookmark() {
+    let source = docx(
+        r#"<w:p><w:bookmarkStart w:id="7" w:name="ClauseA"/><w:r><w:t>alpha beta</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p><w:p><w:bookmarkStart w:id="8" w:name="ClauseB"/><w:r><w:t>gamma delta</w:t></w:r><w:bookmarkEnd w:id="8"/></w:p>"#,
+    );
+    let plan = EditPlan::from_json(
+        r#"{"schema_version":1,"author":"Bob","date":"2026-10-17T12:00:00Z","operations":[{"kind":"replace","paragraph":"p1","find":"delta","replacement":"DELTA"},{"kind":"replace","paragraph":"p0","find":"beta","replacement":"BETA"},{"kind":"page_setup","section":"all","orientation":"landscape"}]}"#,
+    )
+    .unwrap();
+    let error = prepare(&source, &plan, &DEFAULT).unwrap_err();
+    assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+    assert!(error.message.contains("ClauseA"), "{error:?}");
+    assert_eq!(error.operation.as_deref(), Some("op-3"), "{error:?}");
+    assert!(
+        error
+            .message
+            .contains("op-3 (page_setup) introduces it, together with op-2 (replace on p0)")
+            && !error.message.contains("op-1"),
+        "{error:?}"
+    );
+}
+
+/// `--skip-failed` leaves out both refused operations, each with the
+/// defect it causes: the split of `p0` repeats 9, the split of `p1` 7.
+#[test]
+fn skip_failed_gives_each_operation_its_own_reason() {
+    let options = PrepareOptions {
+        skip_failed: true,
+        ..DEFAULT
+    };
+    let harmless = r#"{"kind":"replace","paragraph":"p2","find":"plain","replacement":"fair"}"#;
+    let prepared = prepare(
+        &two_marked_runs(),
+        &plan(&format!("{SPLIT},{harmless},{SPLIT_SEVEN}")),
+        &options,
+    )
+    .expect("the harmless operation publishes");
+    let reasons: Vec<(usize, &str)> = prepared
+        .skipped
+        .iter()
+        .map(|s| (s.index, s.message.as_str()))
+        .collect();
+    assert_eq!(reasons.len(), 2, "{reasons:?}");
+    assert_eq!(reasons[0].0, 0, "{reasons:?}");
+    assert!(
+        reasons[0].1.contains("w:id 9 ") && reasons[0].1.contains("op-1 (replace on p0)"),
+        "{reasons:?}"
+    );
+    assert_eq!(reasons[1].0, 2, "{reasons:?}");
+    assert!(
+        reasons[1].1.contains("w:id 7 ") && reasons[1].1.contains("op-3 (replace on p1)"),
+        "{reasons:?}"
+    );
+    let texts: Vec<String> = jubarte::inspect::paragraphs(&prepared.primary)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(texts, ["abcd", "efgh", "fair words"]);
+}
+
+/// The PlanV2 twin of the quoted-id case: the pointer is the second
+/// operation's, the one that repeats 7.
+#[test]
+fn a_v2_pointer_names_the_operation_behind_the_quoted_id() {
+    use jubarte::edit::for_edit::{ForEditRequest, for_edit};
+    let source = two_marked_runs();
+    let view = for_edit(
+        &source,
+        &ForEditRequest {
+            all: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let target = |short: &str| {
+        let row = view
+            .paragraphs
+            .iter()
+            .find(|row| row.target.short_id == short)
+            .unwrap_or_else(|| panic!("no for-edit row {short}"));
+        serde_json::json!({"short_id": row.target.short_id, "long_id": row.target.long_id})
+    };
+    let plan = serde_json::json!({
+        "schema_version": 2,
+        "source": {"sha256": jubarte::inspect::source_sha256(&source)},
+        "policy": {"track": "on", "existing_revisions": "keep", "text_view": "final"},
+        "resolve_revisions": {"accept": [], "reject": []},
+        "author": "Bob",
+        "date": "2026-10-17T12:00:00Z",
+        "scope": {"kind": "all"},
+        "operations": [
+            {"kind": "replace", "target": target("p0"), "find": "bc", "text": "X"},
+            {"kind": "replace", "target": target("p1"), "find": "fg", "text": "Y"},
+        ],
+    });
+    let plan = jubarte::edit::v2::PlanV2::from_json(&plan.to_string()).unwrap();
+    let error = jubarte::edit::prepare_v2(&source, &plan, &DEFAULT).unwrap_err();
+    assert_eq!(error.code, "CANDIDATE_INVALID", "{error:?}");
+    assert!(error.message.contains("w:id 7 "), "{error:?}");
+    assert_eq!(
+        error.operation.as_deref(),
+        Some("/operations/1"),
+        "{error:?}"
+    );
+}
