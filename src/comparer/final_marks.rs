@@ -31,7 +31,7 @@
 //! comparer leaves such a revision where it drops an empty paragraph
 //! (#1686); moving it joined two of the revised cell's paragraphs.
 
-use crate::namespaces::W;
+use crate::namespaces::{M, W};
 use crate::revision_processor::RevisionIds;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -135,19 +135,22 @@ fn settle(
 
 /// Whether `paragraph` keeps words once its `kind` revisions resolve:
 /// Accept All (`"del"`) keeps what is not deleted or moved away, Reject All
-/// (`"ins"`) what is not inserted or moved in.
+/// (`"ins"`) what is not inserted or moved in. An equation's runs (`m:r`)
+/// are words too (codex on #1680).
 fn keeps_words(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
     let gone = if kind == "del" {
         [W::del(), W::move_from()]
     } else {
         [W::ins(), W::move_to()]
     };
-    dom.descendants(paragraph, Some(&W::r()))
+    let (math_run, math_r_pr) = (M::name("r"), M::name("rPr"));
+    dom.descendants(paragraph, None)
         .into_iter()
+        .filter(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &math_run))
         .any(|run| {
             dom.elements(run, None)
                 .into_iter()
-                .any(|child| !dom.name_is(child, &W::r_pr()))
+                .any(|child| !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &math_r_pr))
                 && !dom
                     .ancestors(run, None)
                     .into_iter()
@@ -476,5 +479,44 @@ impl Stamp<'_> {
         }
         dom.add(node, inner);
         node
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod tests {
+    use super::*;
+
+    /// A paragraph that holds only an equation keeps it once resolved, as
+    /// a paragraph of words does: the final mark loses its revision, and
+    /// no paragraph joins another (codex on #1680).
+    #[test]
+    fn an_equation_keeps_its_paragraph_as_words_do() {
+        let mark = |id: u32| {
+            format!(
+                r#"<w:pPr><w:rPr><w:del w:id="{id}" w:author="Ann" w:date="2026-10-01T00:00:00Z"/></w:rPr></w:pPr>"#
+            )
+        };
+        let (equation, last) = (mark(7), mark(8));
+        let xml = format!(
+            r#"<w:document xmlns:w="{}" xmlns:m="{}"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Alpha</w:t></w:r></w:p><w:p>{equation}<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></w:p><w:p>{last}</w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+            W::URI,
+            M::URI
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).unwrap();
+        settle_cell_final_marks(&mut dom, root);
+        let paragraphs = dom.descendants(root, Some(&W::p()));
+        let deleted: Vec<bool> = paragraphs
+            .iter()
+            .map(|&p| mark_revision(&dom, p, "del").is_some())
+            .collect();
+        assert_eq!(deleted, [false, true, false]);
+        assert_eq!(
+            dom.descendants(paragraphs[1], Some(&M::name("oMath")))
+                .len(),
+            1
+        );
     }
 }
