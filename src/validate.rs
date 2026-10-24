@@ -1831,6 +1831,8 @@ fn collect_ids(
     out: &mut Vec<Finding>,
     part: &str,
 ) {
+    // Repeated range starts not yet paired with a repeated end, by key.
+    let mut repeated_starts: HashMap<String, usize> = HashMap::new();
     for e in dom.descendants(root, None) {
         let Some(name) = dom.name(e) else {
             continue;
@@ -1840,14 +1842,30 @@ fn collect_ids(
         // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
             && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
         {
-            out.push(Finding::new(
+            let key = revision_id_key(dom, e, &name, id);
+            if rev_ids.insert(key.clone()) {
+                continue;
+            }
+            let mut finding = Finding::new(
                 "DUPLICATE_REVISION_ID",
                 part,
                 element_path(dom, e),
                 format!("duplicate w:id '{id}' on revision markup in '{part}' ({local}:{id})"),
-            ));
+            );
+            // Repair renames an end only with a repeated start before it
+            // ([`renumber_duplicate_revision_ids`]); an end with none stays
+            // as it was (CodeRabbit on #1666).
+            if local.ends_with("RangeStart") {
+                *repeated_starts.entry(key).or_default() += 1;
+            } else if let Some(kind) = local.strip_suffix("RangeEnd") {
+                let start = W::name(&format!("{kind}RangeStart"));
+                match repeated_starts.get_mut(&revision_id_key(dom, e, &start, id)) {
+                    Some(n) if *n > 0 => *n -= 1,
+                    _ => finding.repairable = false,
+                }
+            }
+            out.push(finding);
         }
         if local == "docPr" {
             let wp_id = XName::get(

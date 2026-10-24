@@ -2301,6 +2301,13 @@ fn custom_xml_range_starts_take_unique_ids() {
     assert_eq!(duplicates(&bytes), 2);
     let repaired = jubarte::validate::repair(&bytes).unwrap();
     assert_eq!(duplicates(&repaired.docx), 0);
+    // The end goes with the start that is renumbered: both are repaired.
+    let repaired_duplicates = repaired
+        .repaired
+        .iter()
+        .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+        .count();
+    assert_eq!(repaired_duplicates, 2, "{:?}", repaired.repaired);
     let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
     let ids = |tag: &str| -> Vec<String> {
         xml.match_indices(&format!("<w:{tag} w:id=\""))
@@ -2344,7 +2351,19 @@ fn range_ends_of_one_kind_take_unique_ids() {
     ] {
         let bytes = ends(&format!("{kind}RangeStart"), &format!("{kind}RangeEnd"));
         assert_eq!(duplicate_revision_ids(&bytes), 1, "{kind}");
+        // So the finding is not one repair fixes, and the package comes back
+        // as it was (CodeRabbit on #1666).
+        let findings = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap());
+        assert!(
+            findings
+                .iter()
+                .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+                .all(|f| !f.repairable),
+            "{kind}: {findings:?}"
+        );
         let repaired = jubarte::validate::repair(&bytes).unwrap();
+        assert_eq!(repaired.docx, bytes, "{kind}");
+        assert!(repaired.repaired.is_empty(), "{kind}");
         let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
         assert_eq!(
             xml.matches(&format!(r#"<w:{kind}RangeEnd w:id="9""#))
