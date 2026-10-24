@@ -886,6 +886,24 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   writes PNG pages only, and convert no longer writes a PDF and PNGs in
   one run. `--pages` narrows a PDF too, and each PNG is named by its
   document page (`X-page-03.png`), also under `--changed-pages`.
+- `scripts/release.sh --checklist` is now the whole release, not only the
+  script's own steps. New lines cover what a release owes outside them:
+  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  the Ring-3 Word open probe on the release samples, the bump decision,
+  reading the engine CHANGELOG section that becomes the release notes,
+  drafting the six one-line notes, a release.yml review (wheel and binary
+  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`), and the
+  App Store path's credentials and unused version number; during — the
+  NUMBERS sentence against the checker's aggregates, the security scan,
+  the GitHub release page's assets and notes, the site's own release
+  ladder, and reading every jubarte.pro page the deploy rebuilt
+  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
+  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
+  installing each library the way a user does, reading docs.rs and the
+  registries' pages, and the App Store item now carries the in-app
+  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
+  dangling empty "step 14" phase is gone, and the checklist test derives
+  its phases from the script instead of counting to 14.
 
 ### Fixed
 
