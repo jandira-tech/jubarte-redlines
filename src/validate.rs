@@ -1779,14 +1779,57 @@ fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
                 parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
             })
         });
-    if matches!(
-        local,
-        "customXmlDelRangeStart" | "customXmlDelRangeEnd" | "moveToRangeStart"
-    ) {
+    if id_case_blind(local) {
         format!("{local}:{property_mark}:{}", id.to_lowercase())
     } else {
         format!("{local}:{property_mark}:{id}")
     }
+}
+
+/// Whether the SDK compares a kind's ids case-blind (`ABC` repeats `abc`).
+fn id_case_blind(local: &str) -> bool {
+    matches!(
+        local,
+        "customXmlDelRangeStart" | "customXmlDelRangeEnd" | "moveToRangeStart"
+    )
+}
+
+/// Two ids compared as [`revision_id_key`] compares them, without building
+/// either key.
+fn same_revision_id(case_blind: bool, a: &str, b: &str) -> bool {
+    if !case_blind {
+        a == b
+    } else if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a.to_lowercase() == b.to_lowercase()
+    }
+}
+
+/// The end that closes a range start of this kind.
+fn range_end_of(start: &str) -> Option<&'static str> {
+    Some(match start {
+        "moveFromRangeStart" => "moveFromRangeEnd",
+        "moveToRangeStart" => "moveToRangeEnd",
+        "customXmlInsRangeStart" => "customXmlInsRangeEnd",
+        "customXmlDelRangeStart" => "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart" => "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart" => "customXmlMoveToRangeEnd",
+        _ => return None,
+    })
+}
+
+/// The range start a range end of this kind closes.
+fn range_start_of(end: &str) -> Option<&'static str> {
+    Some(match end {
+        "moveFromRangeEnd" => "moveFromRangeStart",
+        "moveToRangeEnd" => "moveToRangeStart",
+        "customXmlInsRangeEnd" => "customXmlInsRangeStart",
+        "customXmlDelRangeEnd" => "customXmlDelRangeStart",
+        "customXmlMoveFromRangeEnd" => "customXmlMoveFromRangeStart",
+        "customXmlMoveToRangeEnd" => "customXmlMoveToRangeStart",
+        _ => return None,
+    })
 }
 
 /// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
@@ -1804,10 +1847,11 @@ pub(crate) fn revision_id_occurrences(
             continue;
         };
         let mut counts: HashMap<String, usize> = HashMap::new();
+        let id_name = W::id();
         for e in dom.descendants(root, None) {
             if let Some(name) = dom.name(e)
                 && has_unique_revision_id(&name)
-                && let Some(id) = dom.attribute(e, &W::name("id"))
+                && let Some(id) = dom.attribute(e, &id_name)
             {
                 *counts
                     .entry(revision_id_key(&dom, e, &name, id))
@@ -1833,6 +1877,7 @@ fn collect_ids(
 ) {
     // Repeated range starts not yet paired with a repeated end, by key.
     let mut repeated_starts: HashMap<String, usize> = HashMap::new();
+    let id_name = W::id();
     for e in dom.descendants(root, None) {
         let Some(name) = dom.name(e) else {
             continue;
@@ -1841,7 +1886,7 @@ fn collect_ids(
         // Revision ids are scoped by record type, not by the union of
         // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
-            && let Some(id) = dom.attribute(e, &W::name("id"))
+            && let Some(id) = dom.attribute(e, &id_name)
         {
             let key = revision_id_key(dom, e, &name, id);
             if rev_ids.insert(key.clone()) {
@@ -1858,8 +1903,8 @@ fn collect_ids(
             // as it was (CodeRabbit on #1666).
             if local.ends_with("RangeStart") {
                 *repeated_starts.entry(key).or_default() += 1;
-            } else if let Some(kind) = local.strip_suffix("RangeEnd") {
-                let start = W::name(&format!("{kind}RangeStart"));
+            } else if let Some(start) = range_start_of(local) {
+                let start = W::name(start);
                 match repeated_starts.get_mut(&revision_id_key(dom, e, &start, id)) {
                     Some(n) if *n > 0 => *n -= 1,
                     _ => finding.repairable = false,
@@ -2965,7 +3010,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
     dom: &mut Dom,
     root: NodeId,
 ) -> Vec<(String, String)> {
-    let id_name = W::name("id");
+    let id_name = W::id();
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
         .iter()
@@ -2974,49 +3019,59 @@ pub(crate) fn renumber_duplicate_revision_ids(
         .max()
         .unwrap_or(0)
         + 1;
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut renames: Vec<(NodeId, String)> = Vec::new();
-    let mut revisions = Vec::new();
+    // The revision records with an id (range ends aside), and how often
+    // each key occurs.
+    let mut starts = Vec::new();
+    let mut count: HashMap<String, usize> = HashMap::new();
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
-        let local = name.local_name();
-        if !has_unique_revision_id(&name) || local.ends_with("RangeEnd") {
+        if !has_unique_revision_id(&name) || name.local_name().ends_with("RangeEnd") {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        if seen.insert(revision_id_key(dom, n, &name, &id)) {
+        let key = revision_id_key(dom, n, &name, &id);
+        *count.entry(key.clone()).or_default() += 1;
+        starts.push((i, n, name, id, key));
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    // Range ends a start before has taken.
+    let mut taken: HashSet<NodeId> = HashSet::new();
+    let mut renames: Vec<(NodeId, String)> = Vec::new();
+    let mut revisions = Vec::new();
+    for (i, n, name, id, key) in starts {
+        if count[&key] < 2 {
+            continue;
+        }
+        // A range start's end shares its id: the first that follows with
+        // it, by the rule the duplicate check reads (`ABC` closes `abc`
+        // where ids compare case-blind, MiniMax on #1666), and that no
+        // start before has taken, so three starts of one id before their
+        // three ends pair one to one (codex on #1666).
+        let end = range_end_of(name.local_name()).and_then(|end_local| {
+            let blind = id_case_blind(end_local);
+            all[i + 1..].iter().copied().find(|&e| {
+                !taken.contains(&e)
+                    && dom.name(e).is_some_and(|x| {
+                        x.namespace_name() == W::URI && x.local_name() == end_local
+                    })
+                    && dom
+                        .attribute(e, &id_name)
+                        .is_some_and(|own| same_revision_id(blind, own, &id))
+            })
+        });
+        if let Some(end) = end {
+            taken.insert(end);
+        }
+        if seen.insert(key) {
             continue;
         }
         let fresh = next.to_string();
         next += 1;
-        revisions.push((id.clone(), fresh.clone()));
+        revisions.push((id, fresh.clone()));
         renames.push((n, fresh.clone()));
-        // A range start's end shares its id.
-        let end_local = match local {
-            "moveFromRangeStart" => Some("moveFromRangeEnd"),
-            "moveToRangeStart" => Some("moveToRangeEnd"),
-            "customXmlInsRangeStart" => Some("customXmlInsRangeEnd"),
-            "customXmlDelRangeStart" => Some("customXmlDelRangeEnd"),
-            "customXmlMoveFromRangeStart" => Some("customXmlMoveFromRangeEnd"),
-            "customXmlMoveToRangeStart" => Some("customXmlMoveToRangeEnd"),
-            _ => None,
-        };
-        // Its end is the first that follows with the start's id, by the key
-        // the duplicate check reads: `ABC` closes `abc` where ids compare
-        // case-blind (MiniMax on #1666).
-        if let Some(end_local) = end_local
-            && let Some(&end) = all[i + 1..].iter().find(|&&e| {
-                dom.name(e).is_some_and(|x| {
-                    x.namespace_name() == W::URI
-                        && x.local_name() == end_local
-                        && dom.attribute(e, &id_name).is_some_and(|own| {
-                            revision_id_key(dom, e, &x, own) == revision_id_key(dom, e, &x, &id)
-                        })
-                })
-            })
-        {
+        if let Some(end) = end {
             renames.push((end, fresh));
         }
     }
@@ -4435,6 +4490,26 @@ mod literal_revision_repair_contract_tests {
         let (mut dom, doc) = tree(source);
         let root = dom.root(doc).unwrap();
         let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+
+    #[test]
+    fn three_starts_of_one_id_before_their_ends_pair_one_to_one() {
+        // Each start takes the first end of its id that no earlier start
+        // has taken; the first start keeps its id (codex on #1666).
+        let range = |tag: &str, id: u32| format!(r#"<w:customXmlIns{tag} w:id="{id}"/>"#);
+        let body = |ids: [u32; 3]| {
+            let starts: String = ids.iter().map(|&id| range("RangeStart", id)).collect();
+            let ends: String = ids.iter().map(|&id| range("RangeEnd", id)).collect();
+            format!("<w:p>{starts}<w:r><w:t>held</w:t></w:r>{ends}</w:p>")
+        };
+        let (mut dom, doc) = tree(&body([9, 9, 9]));
+        let root = dom.root(doc).unwrap();
+        let (expected_dom, expected_doc) = tree(&body([9, 10, 11]));
         renumber_duplicate_revision_ids(&mut dom, root);
         assert_eq!(
             dom.serialize_document(doc),
