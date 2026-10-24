@@ -33,8 +33,9 @@ then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
 ## Chain commands, deliver files, check exit status
 
 A chain passes files by path, not through stdout. Each command writes what
-`-o` or `--out-dir` names; without them, `edit` and `add` write
-`FILE_modified.docx`.
+`-o` or `--out-dir` names; without them, legacy `edit FILE` and `add FILE`
+write `FILE_modified.docx`. Typed edit actions require `-o` or `--out-dir` to write;
+use `--dry-run` to preview or inline `--save-plan FILE` to save without applying.
 
 ```bash
 cp contract.docx contract.orig.docx                  # keep the original as received
