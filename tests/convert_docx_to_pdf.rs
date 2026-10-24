@@ -41118,33 +41118,65 @@ fn a_pbdr_edge_of_val_none_paints_nothing() {
     );
 }
 
-/// A two-column table, `Label` beside a 120x60pt picture anchored
-/// layoutInCell and centred on its column (fixtures_500 017abe40), on a
-/// 3000/5000 grid; `tcpr` holds each cell's `tcPr` content. Returns the
-/// picture's position.
-fn column_centred_cell_picture(tcpr: [&str; 2]) -> (f32, f32) {
-    let pic = "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+/// A 120x60pt picture, `dot.png` in the run `w:drawing` holds.
+const CELL_PICTURE_GRAPHIC: &str = "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+    <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
+      <pic:spPr><a:xfrm><a:ext cx=\"1524000\" cy=\"762000\"/></a:xfrm>\
+      <a:prstGeom prst=\"rect\"/></pic:spPr></pic:pic>\
+  </a:graphicData></a:graphic>";
+
+/// The run of a picture anchored layoutInCell and centred on its column
+/// (fixtures_500 017abe40).
+fn column_centred_picture_run() -> String {
+    format!(
+        "<w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
           behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
           <wp:simplePos x=\"0\" y=\"0\"/>\
           <wp:positionH relativeFrom=\"column\"><wp:align>center</wp:align></wp:positionH>\
           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
           <wp:extent cx=\"1524000\" cy=\"762000\"/><wp:wrapSquare wrapText=\"largest\"/>\
-          <wp:docPr id=\"1\" name=\"Bild1\"/>\
-          <a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
-            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill>\
-              <pic:spPr><a:xfrm><a:ext cx=\"1524000\" cy=\"762000\"/></a:xfrm>\
-              <a:prstGeom prst=\"rect\"/></pic:spPr></pic:pic>\
-          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+          <wp:docPr id=\"1\" name=\"Bild1\"/>{CELL_PICTURE_GRAPHIC}</wp:anchor></w:drawing></w:r>"
+    )
+}
+
+/// The run of the same picture inline.
+fn inline_picture_run() -> String {
+    format!(
+        "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+          <wp:extent cx=\"1524000\" cy=\"762000\"/><wp:docPr id=\"1\" name=\"Bild1\"/>\
+          {CELL_PICTURE_GRAPHIC}</wp:inline></w:drawing></w:r>"
+    )
+}
+
+/// A bordered two-column table, `Label` beside the picture `pic` (a run),
+/// on a 3000/5000 grid; `tcpr` holds each cell's `tcPr` content. Returns
+/// the PDF and its vertical rules.
+fn cell_picture_table(tcpr: [&str; 2], pic: &str) -> (Vec<u8>, Vec<f32>) {
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
     let body = format!(
-        "<w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+        "<w:tbl><w:tblPr><w:tblBorders>{borders}</w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"5000\"/></w:tblGrid>\
          <w:tr><w:tc><w:tcPr>{}</w:tcPr><w:p><w:r><w:t>Label</w:t></w:r></w:p></w:tc>\
            <w:tc><w:tcPr>{}</w:tcPr><w:p>{pic}</w:p></w:tc></w:tr></w:tbl>\
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
         tcpr[0], tcpr[1]
     );
-    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert anchored cell picture");
-    image_cm_xy(&pdf, "120.00", "60.00")
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert cell picture");
+    let rules = pdf_vertical_rule_xs(&pdf);
+    (pdf, rules)
+}
+
+/// [`cell_picture_table`] with the column-centred anchored picture:
+/// the picture's position and the table's right border.
+fn column_centred_cell_picture(tcpr: [&str; 2]) -> (f32, f32, f32) {
+    let (pdf, rules) = cell_picture_table(tcpr, &column_centred_picture_run());
+    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    (x, y, right)
 }
 
 #[test]
@@ -41152,13 +41184,13 @@ fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
     // fixtures_500 017abe40: photos anchored layoutInCell, positionH
     // column/center, positionV paragraph. Word keeps them in the cell and
     // grows the row; cells dropped every anchored picture (0.110 -> 0.760).
-    let (x, y) = column_centred_cell_picture([
+    let (x, y, right) = column_centred_cell_picture([
         "<w:tcW w:w=\"3000\" w:type=\"dxa\"/>",
         "<w:tcW w:w=\"5000\" w:type=\"dxa\"/>",
     ]);
     // Second cell spans 222..472pt; a 120pt picture centred sits near 287.
-    // Every cell has a tcW, so Word 16 keeps the grid: 287.0 (#1716 probe
-    // pa_t).
+    // Every cell has a tcW, so Word 16 keeps the grid: the picture at
+    // 287.0, the right border at 471.8 (#1716 probes pa_t, pab_tv).
     assert!(
         x > 240.0 && x + 120.0 < 472.0,
         "picture centred in the cell; x={x}"
@@ -41167,26 +41199,47 @@ fn a_column_anchored_picture_in_a_cell_paints_inside_it() {
         (y - (720.0 - 60.0)).abs() < 3.0,
         "picture top at the row top; y={y}"
     );
+    assert!(
+        (right - 471.8).abs() < 1.5,
+        "the grid stands: the table ends at 471.8; right={right}"
+    );
 }
 
 #[test]
 fn an_autofit_cell_without_tcw_fits_its_column_to_its_picture() {
-    // The same table with no tcW (#1716 probe pa). Word 16 fits each
-    // column to its content and counts the picture: the label column ends
-    // just after "Label" (101.1) and the picture column is as wide as the
-    // picture, so the centred picture starts at its column's edge, 102.2.
-    // Word sets this styles-less body in Aptos 12 and jubarte in Calibri
-    // 11, so our "Label" is a few points narrower. Not counting the picture
-    // would centre it on a sliver left of "Label"'s end; the grid puts it
-    // at 287.
-    let (x, y) = column_centred_cell_picture(["", ""]);
+    // The same table with no tcW (#1716 probes pa and pabv). Word 16 fits
+    // each column to its content and counts the picture: the label column
+    // ends just after "Label" (101.5) and the picture column is as wide as
+    // the picture, so the table ends at 222.5 and the centred picture
+    // starts at its column's edge, 102.2. Word sets this styles-less body
+    // in Aptos 12 and jubarte in Calibri 11, so our "Label", and the table,
+    // are a few points narrower. Not counting the picture left its column
+    // a sliver: the table ended at 97.4 with the picture hanging out of it.
+    let (x, y, right) = column_centred_cell_picture(["", ""]);
     assert!(
         (90.0..=110.0).contains(&x),
-        "the picture column starts after Label and fits the picture; x={x}"
+        "the picture column starts after Label; x={x}"
     );
     assert!(
         (y - (720.0 - 60.0)).abs() < 3.0,
         "picture top at the row top; y={y}"
+    );
+    assert!(
+        (212.0..=224.0).contains(&right) && x + 120.0 <= right + 1.0,
+        "the picture column is as wide as the picture; x={x} right={right}"
+    );
+}
+
+#[test]
+fn an_autofit_cell_without_tcw_fits_its_column_to_its_inline_picture() {
+    // #1716 probe inlv: the same table with the picture inline. Word 16
+    // fits the picture column to it just the same: the table ends at 222.5.
+    let (pdf, rules) = cell_picture_table(["", ""], &inline_picture_run());
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let (x, _) = image_cm_xy(&pdf, "120.00", "60.00");
+    assert!(
+        (212.0..=224.0).contains(&right) && x + 120.0 <= right + 1.0,
+        "the picture column is as wide as the picture; x={x} right={right}"
     );
 }
 
@@ -43271,6 +43324,309 @@ fn a_deleted_or_hidden_row_without_tcw_fits_the_table_as_any_row_does() {
             "{text} row: Word fits the table; pitch={pitch}"
         );
     }
+}
+
+#[test]
+fn an_autofit_table_keeps_its_grid_when_a_column_has_a_width_in_every_row() {
+    // #1716 probe n4 (Word 16, 2026-10-24): gridCol 2400/6000, column 1 has
+    // a dxa tcW in every row and column 2 an auto one. Word keeps the
+    // grid: VALUE starts 120pt after LABEL:. It honours a column every
+    // row gives a width, which jubarte's fit does not model, so such a
+    // table keeps its grid (the corpus tables codex measured on #1716,
+    // 63ab7ab93d's first column auto beside four sized ones, are this
+    // shape).
+    let long = "AAAA ".repeat(25);
+    let rows = format!(
+        "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:r><w:t>LABEL:</w:t></w:r></w:p></w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+           <w:p><w:r><w:t>VALUE</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:r><w:t>second row</w:t></w:r></w:p></w:tc>\
+         <w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+           <w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p></w:tc></w:tr>",
+        long.trim_end()
+    );
+    let pitch = autofit_pitch([2400, 6000], &rows, "LABEL:", "VALUE");
+    assert!(
+        (pitch - 120.0).abs() < 1.0,
+        "a column sized in every row keeps the grid; pitch={pitch}"
+    );
+}
+
+/// [`autofit_pitch`] for the #1716 o-probes: gridCol 2400/6000, rows
+/// LABEL:/VALUE and a long breakable second row, `tcw_left` and
+/// `tcw_right` as the attributes of every left and right cell's `tcW`.
+fn tcw_form_pitch(tcw_left: &str, tcw_right: &str) -> f32 {
+    let long = "AAAA ".repeat(25);
+    let rows = [["LABEL:", "VALUE"], ["second row", long.trim_end()]]
+        .iter()
+        .map(|[left, right]| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW {tcw_left}/></w:tcPr>\
+                   <w:p><w:r><w:t xml:space=\"preserve\">{left}</w:t></w:r></w:p></w:tc>\
+                 <w:tc><w:tcPr><w:tcW {tcw_right}/></w:tcPr>\
+                   <w:p><w:r><w:t xml:space=\"preserve\">{right}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect::<String>();
+    autofit_pitch([2400, 6000], &rows, "LABEL:", "VALUE")
+}
+
+#[test]
+fn an_autofit_table_whose_tcw_has_no_type_or_a_nil_one_keeps_its_grid() {
+    // #1716 probes o1 and o2 (Word 16, 2026-10-24): every cell's tcW is the
+    // grid's width with no w:type (o1), or w:w="0" w:type="nil" (o2). Word
+    // keeps the grid for both: VALUE starts 120pt after LABEL:. A tcW
+    // without a type is a dxa one, and nil is not the auto width Word fits
+    // (b7, o3).
+    for (form, left, right) in [
+        ("no w:type", "w:w=\"2400\"", "w:w=\"6000\""),
+        (
+            "nil",
+            "w:w=\"0\" w:type=\"nil\"",
+            "w:w=\"0\" w:type=\"nil\"",
+        ),
+    ] {
+        let pitch = tcw_form_pitch(left, right);
+        assert!(
+            (pitch - 120.0).abs() < 1.0,
+            "{form}: Word keeps the grid; pitch={pitch}"
+        );
+    }
+}
+
+#[test]
+fn an_autofit_table_whose_tcw_is_auto_with_a_width_fits_its_columns() {
+    // #1716 probe o3 (Word 16, 2026-10-24): every cell's tcW is auto and
+    // carries the grid's width (2400, 6000). An auto width is no width,
+    // whatever its w:w: Word fits the table, VALUE 50.1pt after LABEL:.
+    let pitch = tcw_form_pitch(
+        "w:w=\"2400\" w:type=\"auto\"",
+        "w:w=\"6000\" w:type=\"auto\"",
+    );
+    assert!(
+        (pitch - 50.1).abs() < 10.0,
+        "Word fits the columns to their words; pitch={pitch}"
+    );
+}
+
+#[test]
+fn an_autofit_table_whose_tcw_is_a_zero_pct_is_not_fitted_to_its_words() {
+    // #1716 probe o4 (Word 16, 2026-10-24): every cell's tcW is
+    // w:w="0" w:type="pct". Word does not fit the table to its words, nor
+    // keep the grid: it splits it evenly over the text width, VALUE 228pt
+    // after LABEL: (#1731). jubarte keeps the grid until #1731.
+    let pitch = tcw_form_pitch("w:w=\"0\" w:type=\"pct\"", "w:w=\"0\" w:type=\"pct\"");
+    assert!(
+        pitch > 110.0,
+        "Word does not fit zero-pct cells to their words; pitch={pitch}"
+    );
+}
+
+/// A bordered autofit table (`tblW` auto, every edge single) on `grid`,
+/// with `rows` as written, on the #1716 Word probes' page. Returns the PDF
+/// and its vertical rules.
+fn bordered_autofit_table(grid: &[u32], rows: &str) -> (Vec<u8>, Vec<f32>) {
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
+    let grid = grid
+        .iter()
+        .map(|w| format!("<w:gridCol w:w=\"{w}\"/>"))
+        .collect::<String>();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>{borders}</w:tblBorders>\
+         </w:tblPr><w:tblGrid>{grid}</w:tblGrid>{rows}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bordered autofit table");
+    let mut rules = pdf_vertical_rule_xs(&pdf);
+    rules.sort_by(f32::total_cmp);
+    rules.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    (pdf, rules)
+}
+
+#[test]
+fn a_spanning_cell_over_columns_without_tcw_widens_them() {
+    // #1716 probe span (Word 16, 2026-10-24): gridCol 2400/2400, no tcW,
+    // row 1 "A" and "B", row 2 one cell spanning both with a long sentence.
+    // Word fits the table to the sentence and splits it over both columns:
+    // borders at 71.8, 303.6 and 540.2, one page. A fit that skipped the
+    // spanning cell shrank both columns to their letter and wrapped the
+    // sentence a few letters a line over two pages.
+    let sentence = "The spanning cell carries a fairly long sentence that Word \
+                    would spread over both columns. "
+        .repeat(2);
+    let rows = format!(
+        "<w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr>\
+           <w:p><w:r><w:t xml:space=\"preserve\">{sentence}</w:t></w:r></w:p></w:tc></w:tr>"
+    );
+    let (pdf, rules) = bordered_autofit_table(&[2400, 2400], &rows);
+    assert_eq!(pdf_page_count(&pdf), 1, "one page, as in Word");
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (right - 540.2).abs() < 3.0,
+        "the sentence widens the table to the measure; rules={rules:?}"
+    );
+    assert!(
+        rules.iter().any(|x| (x - 303.6).abs() < 15.0),
+        "the room splits about evenly between the columns; rules={rules:?}"
+    );
+}
+
+#[test]
+fn an_unbreakable_word_wider_than_the_page_keeps_the_fitted_table_on_it() {
+    // #1716 probe long (Word 16, 2026-10-24): gridCol 2000/2000/2000, no
+    // tcW, an unbroken 110-letter word between "aa" and "cc". Word keeps
+    // the table on the page and gives the word's column the room: borders
+    // at 71.8, 80.6, 531.6 and 540.2, the word broken. The fit gave each
+    // column its longest word and ran the table to 722.6, past the
+    // 612pt page, with "cc" off it.
+    let rows = format!(
+        "<w:tr><w:tc><w:p><w:r><w:t>aa</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc>\
+           <w:tc><w:p><w:r><w:t>cc</w:t></w:r></w:p></w:tc></w:tr>",
+        "X".repeat(110)
+    );
+    let (pdf, rules) = bordered_autofit_table(&[2000, 2000, 2000], &rows);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        right <= 541.0,
+        "the table stays inside the margins; rules={rules:?}"
+    );
+    let widths: Vec<f32> = rules.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(
+        widths.len() == 3 && widths[1] > 300.0 && widths[1] > widths[0] + widths[2],
+        "the word's column takes the room; widths={widths:?}"
+    );
+    let cc = pdf_glyph_text_xy(&pdf, "cc").expect("cc painted").0;
+    assert!(cc < 540.0, "cc stays on the page; x={cc}");
+}
+
+#[test]
+fn a_grid_before_column_without_wbefore_fits_as_the_column_it_skips() {
+    // #1716 probe gb (Word 16, 2026-10-24): gridCol 2400/2400, no tcW, row 1
+    // skips column 1 (gridBefore 1, no wBefore) before "X", row 2 holds
+    // "Left" and "Right". Word fits both columns, the skipped one too: X
+    // and Right start at 93.4, Left at 72.5 (the grid would put X at 192.5).
+    // Our Calibri 11 is a little narrower than Word's Aptos 12.
+    let rows = "<w:tr><w:trPr><w:gridBefore w:val=\"1\"/></w:trPr>\
+                  <w:tc><w:p><w:r><w:t>X</w:t></w:r></w:p></w:tc></w:tr>\
+                <w:tr><w:tc><w:p><w:r><w:t>Left</w:t></w:r></w:p></w:tc>\
+                  <w:tc><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc></w:tr>";
+    let (pdf, _) = bordered_autofit_table(&[2400, 2400], rows);
+    let x = pdf_glyph_text_xy(&pdf, "X").expect("X painted").0;
+    assert!(
+        (85.0..=100.0).contains(&x),
+        "the skipped column fits like its column; X at {x}"
+    );
+}
+
+/// A bordered 2x2 table on a 2000/2000 grid, every cell with its tcW,
+/// for nesting in a fitted cell (#1716 probes m1 and m2).
+fn nested_two_by_two() -> String {
+    let edge = |name: &str| format!("<w:{name} w:val=\"single\" w:sz=\"4\" w:color=\"000000\"/>");
+    let borders = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .map(edge)
+        .concat();
+    let cell = |text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>{borders}</w:tblBorders>\
+         </w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/></w:tblGrid>\
+         <w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl>",
+        cell("inner-left-one"),
+        cell("inner-right-two"),
+        cell("left2"),
+        cell("right2")
+    )
+}
+
+#[test]
+fn a_fitted_column_is_as_wide_as_the_nested_table_it_holds() {
+    // #1716 probe m2 (Word 16, 2026-10-24): one 8000-twip grid column, no
+    // tcW, its cell holding only a 200pt nested table. Word fits the
+    // column to the nested table: the outer border ends at 273.4, not the
+    // grid's 472. A fit that counted only text left the column its
+    // margins and crushed the nested table (corpus e855894947: 11 pages
+    // in Word, 17 in the fit).
+    let rows = format!(
+        "<w:tr><w:tc><w:p/>{}<w:p/></w:tc></w:tr>",
+        nested_two_by_two()
+    );
+    let (pdf, rules) = bordered_autofit_table(&[8000], &rows);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (right - 273.4).abs() < 4.0,
+        "the column fits the nested table; rules={rules:?}"
+    );
+    let left = pdf_glyph_text_xy(&pdf, "inner-left-one")
+        .expect("whole word")
+        .1;
+    let right_word = pdf_glyph_text_xy(&pdf, "inner-right-two")
+        .expect("whole word")
+        .1;
+    assert!(
+        (left - right_word).abs() < 0.5,
+        "the nested cells keep their words on one line"
+    );
+}
+
+#[test]
+fn a_nested_table_beside_text_fits_its_column_and_the_text_the_next() {
+    // #1716 probe m1 (Word 16, 2026-10-24): gridCol 4500/4500, no tcW;
+    // column 1 holds "Side" and the 200pt nested table, column 2 "Outer2".
+    // Word fits column 1 to the nested table and column 2 to its word:
+    // Outer2 starts at 274.1, the nested table's second column at 173.3.
+    let rows = format!(
+        "<w:tr><w:tc><w:p><w:r><w:t>Side</w:t></w:r></w:p>{}<w:p/></w:tc>\
+           <w:tc><w:p><w:r><w:t>Outer2</w:t></w:r></w:p></w:tc></w:tr>",
+        nested_two_by_two()
+    );
+    let (pdf, _) = bordered_autofit_table(&[4500, 4500], &rows);
+    let outer = pdf_glyph_text_xy(&pdf, "Outer2").expect("Outer2").0;
+    let inner = pdf_glyph_text_xy(&pdf, "inner-right-two")
+        .expect("whole word")
+        .0;
+    assert!(
+        (outer - 274.1).abs() < 5.0,
+        "column 2 starts after the nested table; Outer2 at {outer}"
+    );
+    assert!(
+        (inner - 173.3).abs() < 2.0,
+        "the nested table keeps its grid; inner-right-two at {inner}"
+    );
+}
+
+#[test]
+fn a_word_saved_table_with_auto_cell_widths_keeps_its_grid() {
+    // A grid Word saved is its own autofit, and a Word-saved table carries
+    // Word's marks (w:rsidR on its rows, w14:paraId on its paragraphs).
+    // 71c08fc63c's Reject All is b6dd0b6ae8, a Word document whose
+    // statistics tables give every cell `tcW w:w="0" w:type="auto"` over
+    // spans: Word draws b6dd0b6ae8 on 4 pages, on its grid. Re-fitting
+    // those tables as a foreign tool's (#1716) moved 229 words and added a
+    // page (codex's corpus review of #1716: 16 of the 31 Word documents
+    // the cue reached scored lower).
+    let path = "tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/71c08fc63c_rejected_tracking.docx";
+    if !std::path::Path::new(path).is_file() {
+        return;
+    }
+    let pdf = docx_to_pdf(&std::fs::read(path).unwrap()).expect("convert b6dd reject");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        4,
+        "Word draws the document on 4 pages"
+    );
 }
 
 #[test]

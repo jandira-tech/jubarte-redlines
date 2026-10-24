@@ -2098,8 +2098,9 @@ struct TableGeom {
     /// rules, which a pct table's columns give up so its rim stays at the
     /// pct width (Word 16 probe pct3, 2026-10-02).
     pct_rules: f32,
-    /// An autofit table whose tblGrid another tool wrote (`gridCol`
-    /// carries a `w:type`, which Word never writes): Word fits the columns
+    /// An autofit table another tool wrote (a `gridCol` with a `w:type`,
+    /// which Word never writes, or cells without a width of their own in
+    /// every column of a table Word did not save): Word fits the columns
     /// to their content on open (PHPWord's 00046848 label column).
     content_autofit: bool,
     /// `w:tblCellSpacing` in points: Word leaves twice it between cells
@@ -10123,6 +10124,45 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
     (min, max.max(min))
 }
 
+/// [`cell_content_extent`] with the rest a fitted column holds: a picture
+/// is one unit as wide as itself and a paragraph's pictures stand on one
+/// line (#1716 probes pabv and inlv: Word's picture column is the 120pt
+/// picture's, anchored to the column or inline); a nested table is as wide
+/// as its grid, less the cell margins it pulls into ours (probes m1 and
+/// m2: a column holding a 200pt nested table is 201.6pt in Word). A
+/// picture placed on the page and a pct table take no room of their own.
+fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
+    let (mut min, mut max) = cell_content_extent(fonts, cell);
+    for para in &cell.paras {
+        let held = || {
+            para.images.iter().filter(|image| {
+                !matches!(
+                    image.slot,
+                    ImageSlot::Float {
+                        page_x: Some(_),
+                        ..
+                    }
+                )
+            })
+        };
+        min = min.max(held().map(|image| image.w).fold(0.0, f32::max));
+        max = max.max(held().map(|image| image.w).sum());
+    }
+    for nested in &cell.nested {
+        if let Block::Table { cols, geom, .. } = nested.as_ref() {
+            let width = match geom.width {
+                TblWidth::Grid => cols.iter().sum(),
+                TblWidth::Dxa(w) => w,
+                TblWidth::Pct(_) => continue,
+            };
+            let width = (width + geom.tbl_ind - 2.0 * geom.mar_l).max(0.0);
+            min = min.max(width);
+            max = max.max(width);
+        }
+    }
+    (min, max.max(min))
+}
+
 /// Word's autofit: each column spans its longest word at least and its
 /// widest paragraph (or its preferred tcW, if wider) at most; the room
 /// past the minimums goes to each column by its max - min. Live Word on
@@ -10141,6 +10181,16 @@ fn content_autofit_widths(
 ) -> Vec<f32> {
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
+    // The pictures, nested tables, spanning cells and overrun below are
+    // what Word showed of a fitted table (#1716); a grid too wide for its
+    // room (`pref_caps`) keeps to its words.
+    let extent = |cell: &TableCell| {
+        if pref_caps {
+            cell_content_extent(fonts, cell)
+        } else {
+            cell_fit_extent(fonts, cell)
+        }
+    };
     for cell in rows.iter().flatten() {
         // A gridBefore/gridAfter placeholder is no cell: it has no
         // margins and sets no minimum, its grid column stays as drafted
@@ -10151,9 +10201,32 @@ fn content_autofit_widths(
         }
         // The spacing inset in pad_l is the column's gap, counted below.
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
-        let (lo, hi) = cell_content_extent(fonts, cell);
+        let (lo, hi) = extent(cell);
         mins[cell.col] = mins[cell.col].max(lo + pads);
         maxs[cell.col] = maxs[cell.col].max(hi + pads);
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    // A spanning cell needs its columns to hold its content between them,
+    // and they share what they lack evenly: Word spreads probe span's
+    // sentence over its two columns without a tcW, 231.8 and 236.6pt.
+    for cell in rows.iter().flatten() {
+        let end = cell.col + cell.colspan;
+        if pref_caps || cell.colspan < 2 || end > n || cell.grid_skip {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let inner = gap * (cell.colspan - 1) as f32;
+        let (lo, hi) = extent(cell);
+        for (need, have) in [
+            (lo + pads - inner, &mut mins),
+            (hi + pads - inner, &mut maxs),
+        ] {
+            let cover: f32 = have[cell.col..end].iter().sum();
+            if need > cover {
+                let each = (need - cover) / cell.colspan as f32;
+                have[cell.col..end].iter_mut().for_each(|w| *w += each);
+            }
+        }
     }
     for (j, max) in maxs.iter_mut().enumerate() {
         if let Some(PrefWidth::Dxa(w)) = geom.pref.get(j) {
@@ -10161,12 +10234,19 @@ fn content_autofit_widths(
         }
         *max = max.max(mins[j]);
     }
-    let gap = 2.0 * geom.cell_spacing;
     // A legacy document's autofit spans the text plus the table's cell
     // margins, as its pct tables do (00046848's lines reach 525pt in a
     // 523pt measure).
     let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
     let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
+    // Longest words that overrun the room still leave the table on the
+    // page: Word gives probe long's unbroken 110-letter word the room and
+    // breaks it, the table ending at the margin. The columns share the
+    // room by their longest words.
+    if !pref_caps && lo > room && lo > 0.0 {
+        let scale = room / lo;
+        return mins.iter().map(|lo| lo * scale + gap).collect();
+    }
     let k = if hi <= room {
         1.0
     } else if lo >= room || hi - lo < 0.01 {
@@ -13134,8 +13214,8 @@ fn table_block(
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
             // A `w:type` on a gridCol, or a gridCol without a width, is
             // a grid Word never wrote: it fits the columns to their
-            // content on open (0edc50c464's `<w:gridCol/>` tables). So is
-            // a cell without a width, below.
+            // content on open (0edc50c464's `<w:gridCol/>` tables). Cells
+            // without a width can say so too (`cells_foreign`, below).
             let width = dom.attribute(col, &W::name("w"));
             foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
             let w = width
@@ -13209,6 +13289,9 @@ fn table_block(
     let table_borders = table_pr(dom, table)
         .and_then(|pr| parse_tbl_borders(dom, pr))
         .or_else(|| tdef.as_ref().and_then(|t| t.borders));
+    // The grid columns where some cell of a single column has no width of
+    // its own (no tcW, or an auto or zero one), read by `cells_foreign`.
+    let mut widthless_cols = vec![false; cols.len()];
     for (ri, row) in all_rows.into_iter().enumerate() {
         let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
             row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
@@ -13240,13 +13323,7 @@ fn table_block(
         }
         for cell in wrapped_children(dom, row, "tc") {
             row_has_cell_del |= cell_is_deleted(dom, cell);
-            // Word writes a tcW on every cell it saves. A cell without one,
-            // or with an auto one, marks a table another tool wrote, and
-            // Word fits it to its content on open as it does a foreign
-            // grid (#1716: probes g2 and q1 fitted; q3, with a tcW on
-            // every cell, kept its grid).
             let pref = cell_pref_width(dom, cell);
-            foreign_grid |= matches!(pref, PrefWidth::Auto);
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
             let mut nested_at = Vec::new();
@@ -13494,6 +13571,12 @@ fn table_block(
                 &nested_at,
             );
             let (colspan, vmerge) = cell_span(dom, cell);
+            if colspan <= 1
+                && cell_without_width(dom, cell)
+                && let Some(seen) = widthless_cols.get_mut(grid_at)
+            {
+                *seen = true;
+            }
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
                 row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)
@@ -13645,6 +13728,26 @@ fn table_block(
         cols = vec![80.0; occupancy];
     }
     let fixed = table_layout_fixed(dom, table);
+    // Word writes a tcW on every cell it saves, and fits a table another
+    // tool wrote to its content on open when every column holds a cell
+    // without a width of its own (#1716 probes g2, q1, n1-n3, n7; #1720
+    // b6-b11). A column with a width in every row keeps it, which the fit
+    // does not model, so such a table keeps its grid (probe n4: Word
+    // keeps 120pt). A table Word saved keeps its grid too: that grid is
+    // Word's own fit, and re-fitting its auto cells only moved them
+    // (b6dd0b6ae8's statistics tables gained a page; codex's corpus
+    // review of #1716). Word's marks on its rows and paragraphs tell such
+    // a table; Word itself does not lay out by them (probe m3, q1 with
+    // the marks, still fits).
+    let word_saved = wrapped_children(dom, table, "tr").into_iter().any(|row| {
+        dom.attribute(row, &W::name("rsidR")).is_some()
+            || dom.attribute(row, &W::name("rsidTr")).is_some()
+    }) || dom
+        .descendants(table, Some(&W::p()))
+        .into_iter()
+        .any(|p| dom.attribute(p, &W14::name("paraId")).is_some());
+    let cells_foreign =
+        !word_saved && !widthless_cols.is_empty() && widthless_cols.iter().all(|&seen| seen);
     let pref = column_prefs(&raw_rows, &cols, fixed);
     let mut rows = resolve_table_merges(raw_rows);
     // A row sets all its cells at their largest top margin: 17c3e72c's
@@ -13819,7 +13922,7 @@ fn table_block(
                 },
                 content_autofit: !fixed
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
-                    && foreign_grid,
+                    && (foreign_grid || cells_foreign),
                 cell_spacing: tbl_spacing,
             })
         },
@@ -14254,7 +14357,10 @@ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
 }
 
 fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    // The cell's own tcPr: a cell without one is no wider for the first
+    // cell of the table nested in it (#1716 probe m2's tcW-less cell took
+    // its nested table's 2000-twip tcW).
+    let Some(pr) = direct_named(dom, cell, "tcPr") else {
         return PrefWidth::Auto;
     };
     let Some(tw) = direct_named(dom, pr, "tcW") else {
@@ -14280,6 +14386,26 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
             }
         }
         _ => PrefWidth::Auto,
+    }
+}
+
+/// Whether a cell gives itself no width, for the cue on which Word fits an
+/// unsaved autofit table (#1716): no `tcW`, an auto one whatever its `w:w`
+/// (probes n1, q1, o3, b7), or a zero dxa one (b6). Word keeps the grid
+/// where every cell's `tcW` has no `w:type` (probe o1: it is a dxa width)
+/// or a nil one (o2), and splits a table of zero pct ones evenly (o4,
+/// #1731); [`cell_pref_width`] reads all three as auto.
+fn cell_without_width(dom: &Dom, cell: NodeId) -> bool {
+    let Some(tw) = direct_named(dom, cell, "tcPr").and_then(|pr| direct_named(dom, pr, "tcW"))
+    else {
+        return true;
+    };
+    match attr_any(dom, tw, "type") {
+        Some("nil" | "pct") => false,
+        None => attr_any(dom, tw, "w")
+            .and_then(parse_len)
+            .is_none_or(|w| w <= 0.0),
+        Some(_) => matches!(cell_pref_width(dom, cell), PrefWidth::Auto),
     }
 }
 
@@ -62673,7 +62799,8 @@ mod complete_coordinate_layout_contract_tests {
     }
 
     #[test]
-    fn content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins() {
+    fn content_autofit_spreads_a_span_and_skips_grid_before_placeholders_without_inventing_margins()
+    {
         let fonts = fonts();
         let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
         let em = f32::from(
@@ -62683,8 +62810,11 @@ mod complete_coordinate_layout_contract_tests {
             / f32::from(raw.units_per_em());
         for (rows_xml, expected) in [
             (
+                // The spanning cell's 16-letter word is shared by the two
+                // columns it covers (#1716 probe span: Word spreads a
+                // spanning cell over its columns).
                 "<w:tr><w:tc><w:tcPr><w:gridSpan w:val='2'/></w:tcPr><w:p><w:r><w:t>AAAAAAAAAAAAAAAA</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
-                vec![0.0, 0.0, em],
+                vec![8.0 * em, 8.0 * em, em],
             ),
             (
                 "<w:tr><w:trPr><w:gridBefore w:val='1'/><w:gridAfter w:val='1'/></w:trPr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
@@ -62720,9 +62850,9 @@ mod complete_coordinate_layout_contract_tests {
                     }
                 }
             }
-            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 100.0, false);
+            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false);
             for (actual, wanted) in widths.iter().zip(expected) {
-                assert!((actual - wanted).abs() < 0.0001);
+                assert!((actual - wanted).abs() < 0.0001, "{widths:?}");
             }
             assert_eq!(
                 rows.iter()
