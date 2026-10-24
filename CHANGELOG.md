@@ -26,6 +26,28 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Rust API: `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>`**, one entry per `-p` (it was `Option<String>`). Build it with `vec![spec]` or `spec.into_iter().collect()`. `ReadArgs::paragraph_spec()` returns the joined comma list. The facade JSON still carries one string, or `null`.
 
+- `scripts/release.sh --checklist` is now the whole release, not only the
+  script's own steps. New lines cover what a release owes outside them:
+  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  the Ring-3 Word open probe on the release samples, the bump decision,
+  reading the engine CHANGELOG section that becomes the release notes,
+  drafting the six one-line notes, a release.yml review (wheel and binary
+  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`, and the
+  `release` environment the OIDC publish jobs run under), and the App
+  Store path's credentials and unused version number; during — the
+  NUMBERS sentence against the checker's aggregates, the security scan,
+  the GitHub release page's assets and notes, the site's own release
+  ladder, and reading every jubarte.pro page the deploy rebuilt
+  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
+  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
+  installing each library the way a user does, reading docs.rs and the
+  registries' pages, and the App Store item now carries the in-app
+  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
+  dangling empty "step 14" phase is gone, the one proof that carried jq
+  pipes (the checklist printer splits on `|`) is written pipe-free, and
+  the checklist test derives its phases from the script instead of
+  counting to 14.
+
 ### Security
 
 - **No `block-buffer` 0.10.4 in any build** (#1705, GHSA-qwgh-2vcv-g2f7). `jubarte self-update` checks zipsign signatures itself (`src/update/zipsign.rs`, on ed25519-dalek 3) instead of through `self_update`'s `signatures` feature, whose zipsign-api 0.2 pinned ed25519-dalek 2 and with it `block-buffer` 0.10.4. The archive format and the keys are unchanged; no release key is committed yet, so nothing is checked until one is. Cargo.lock still records the unbuilt chain, because `self_update`'s archive features name `zipsign-api?/…` (rust-lang/cargo#12937). Rust API: `jubarte::update::verify_signature` and `ReleaseKey`.

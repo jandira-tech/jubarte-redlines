@@ -1014,9 +1014,16 @@ class Checklist(unittest.TestCase):
     def test_prints_every_phase(self) -> None:
         out = self.out.stdout
         self.assertIn("BEFORE the script", out)
-        for n in range(15):
-            self.assertIn("step %d " % n, out)
         self.assertIn("AFTER the script", out)
+        # every step the script runs, and every phase an item sits in, prints
+        # (the first checklist carried a dangling empty "step 14" header)
+        text = RELEASE_SH.read_text()
+        for n in sorted({int(n) for n in re.findall(r'say "(\d+)\. ', text)}):
+            self.assertIn("step %d " % n, out)
+        phases = {line.split("|", 1)[0] for line in checklist_block().splitlines()
+                  if line.count("|") == 3}
+        for ph in phases - {"before", "after"}:
+            self.assertIn("step %s " % ph, out)
 
     def test_marks_and_proves_every_line(self) -> None:
         self.assertIn("[auto]", self.out.stdout)
@@ -1119,7 +1126,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_11_the_app_checkout_is_named_and_checked_first(self) -> None:
         self.kw("JUBARTE_APP_DIR")
-        self.kw("jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir . --preflight")
+        self.kw('jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir "$PWD" --preflight')
 
     def test_item_12_mac_app_store(self) -> None:
         self.kw("App Store")
@@ -1135,6 +1142,34 @@ class Checklist(unittest.TestCase):
     def test_item_15_licensing_and_stale_docs(self) -> None:
         self.kw("REUSE")
         self.kw("adoption")
+
+    # The gaps the 0.13.0 checklist close: the website's pages, release.yml,
+    # the full Miri suite, the Ring-3 probe, the self-update path and the
+    # App Store's in-app purchase must all be findable by a stable keyword.
+    def test_item_16_the_websites_pages_are_read(self) -> None:
+        self.kw("/download")
+        self.kw("/benchmark")
+        self.kw("/demo")
+        self.kw("/terms")
+
+    def test_item_17_release_yml_is_reviewed(self) -> None:
+        self.kw("SHA-pinned")
+        self.kw("ZIPSIGN_PRIVATE_KEY")
+
+    def test_item_18_the_full_miri_suite_runs_first(self) -> None:
+        self.kw("miri")
+
+    def test_item_19_ring3_word_probe(self) -> None:
+        self.kw("Ring-3")
+
+    def test_item_20_self_update_serves_the_release(self) -> None:
+        self.kw("self-update")
+
+    def test_item_21_the_app_store_item_lists_the_iap(self) -> None:
+        self.kw("in-app purchase")
+
+    def test_item_22_the_measured_sentence_is_cross_checked(self) -> None:
+        self.kw("NUMBERS sentence")
 
 
 class ChecklistPerStep(unittest.TestCase):
