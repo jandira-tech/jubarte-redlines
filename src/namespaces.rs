@@ -230,6 +230,7 @@ impl W {
     // NAME-01c: accept / RP pipeline locals (hit every has_rev document).
     cached_xname!(W::URI, move_from_range_end, "moveFromRangeEnd");
     cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
+    cached_xname!(W::URI, custom_xml, "customXml");
     cached_xname!(W::URI, sdt, "sdt");
     cached_xname!(W::URI, sdt_content, "sdtContent");
     // NAME-01d: hottest remaining finalize/lcs locals (sectPr/pPrChange/
@@ -273,4 +274,11 @@ impl PT {
     // Word-mode stamp on each source root: "1" when that document's styles
     // define a default table style (read by the table-margin synthesis).
     cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
+}
+
+// ── OMML names the comparer's final-mark pass reads per paragraph ─────────────
+impl M {
+    cached_xname!(M::URI, r, "r");
+    cached_xname!(M::URI, r_pr, "rPr");
+    cached_xname!(M::URI, o_math, "oMath");
 }

@@ -50,6 +50,7 @@
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
+//! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -102,7 +103,8 @@ pub struct Finding {
     /// The rule set it belongs to: one of `RULE_SETS`.
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
-    /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
+    /// Word-fatal, OOXML-invalid (`DUPLICATE_REVISION_ID`), or a revision
+    /// Word cannot resolve (`CELL_FINAL_MARK_REVISION`); otherwise a
     /// `warning` (a lead), or `info` for direct
     /// same-kind revision nesting that Word reads faithfully.
     pub severity: String,
@@ -128,8 +130,8 @@ pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "struc
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
-    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
-    /// are errors, though Word opens them.
+    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids and
+    /// a cell's final mark revision are errors, though Word opens them.
     pub fn new(
         code: &str,
         part: &str,
@@ -142,7 +144,7 @@ impl Finding {
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
-            severity: if word_fatal || code == "DUPLICATE_REVISION_ID" {
+            severity: if word_fatal || ERROR_LEADS.contains(&code) {
                 "error"
             } else {
                 "warning"
@@ -157,6 +159,11 @@ impl Finding {
         }
     }
 }
+
+/// Codes that are errors though Word opens the file: OOXML-invalid
+/// duplicate revision ids, and a cell's final mark revision Word's Accept
+/// All or Reject All never returns from (#1669).
+const ERROR_LEADS: [&str; 2] = ["DUPLICATE_REVISION_ID", "CELL_FINAL_MARK_REVISION"];
 
 /// `(word_fatal, repairable)` for a code; an unknown code is a lead with
 /// no repair.
@@ -199,7 +206,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 29] = [
+const RING1_CODES: [&str; 30] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
@@ -229,6 +236,7 @@ const RING1_CODES: [&str; 29] = [
     "COMMENT_ID_REPEATED",
     "COMMENT_METADATA_MISMATCH",
     "STYLE_NAME_COMMA",
+    "CELL_FINAL_MARK_REVISION",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1181,6 +1189,131 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_nested_ppr(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
     check_data_bindings_have_stores(pkg, &mut out);
+    check_cell_final_marks(pkg, &mut out);
+    out
+}
+
+/// A table cell's final paragraph mark inserted or deleted while its row
+/// is not: Word opens the file, but Accept All or Reject All never returns
+/// (#1669, Word 16, 2026-10-23). Word's Compare puts such a revision on the
+/// mark before, and revises every mark of a row it inserts or deletes with
+/// the row (`w:trPr/w:ins`, `w:trPr/w:del`). A nested table's cells in a
+/// revised outer row pass whether or not their own rows repeat the
+/// revision, as Open-Xml-PowerTools writes them: Word resolves those
+/// (2026-10-23). The body's final mark is not flagged: Word resolves it.
+/// Only the stories Accept and Reject All walk are read, the parts the
+/// comparer's settle pass sweeps: a glossary's building blocks or a
+/// custom XML data item is no story (codex on #1680).
+fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for (part, styles) in crate::revision_processor::revision_bearing_parts(pkg) {
+        if styles {
+            continue;
+        }
+        // A cell's start tag, whatever its prefix (none included) and
+        // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
+        if !pkg.part_bytes(&part).is_some_and(|bytes| {
+            bytes.windows(4).any(|w| {
+                matches!(w[0], b'<' | b':')
+                    && &w[1..3] == b"tc"
+                    && matches!(w[3], b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n')
+            })
+        }) {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for cell in dom.descendants(root, Some(&W::tc())) {
+            for (last, kind) in uncovered_final_marks(&dom, cell) {
+                out.push(Finding::new(
+                    "CELL_FINAL_MARK_REVISION",
+                    &part,
+                    element_path(&dom, last),
+                    format!("a table cell's final paragraph mark carries w:{kind} while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before"),
+                ));
+            }
+        }
+    }
+}
+
+/// The revisions (`"ins"`, `"del"`) on `cell`'s final paragraph mark that
+/// no row covers, with that paragraph: `CELL_FINAL_MARK_REVISION`'s rule,
+/// which the comparer's settle pass applies too. The cell and every cell
+/// around it count, through nested tables (an outer row's revision covers
+/// a nested table's cells), each with the row that holds it, through any
+/// content control between them.
+pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
+    let Some(last) = last_block_paragraph(dom, cell) else {
+        return Vec::new();
+    };
+    let Some(rpr) = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return Vec::new();
+    };
+    let cells: Vec<NodeId> = std::iter::once(cell)
+        .chain(dom.ancestors(cell, Some(&W::tc())))
+        .collect();
+    ["ins", "del"]
+        .into_iter()
+        .filter(|kind| {
+            dom.element(rpr, &revision_name(kind)).is_some()
+                && !cells.iter().any(|&c| {
+                    dom.ancestors(c, Some(&W::tr()))
+                        .first()
+                        .is_some_and(|&row| row_revised(dom, row, c, kind))
+                })
+        })
+        .map(|kind| (last, kind))
+        .collect()
+}
+
+/// Whether `row` (or the cell itself) is inserted or deleted as `kind`
+/// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
+/// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
+pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
+    let cell_kind = if kind == "ins" {
+        W::cell_ins()
+    } else {
+        W::cell_del()
+    };
+    dom.element(row, &W::tr_pr())
+        .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
+        || dom
+            .element(cell, &W::tc_pr())
+            .is_some_and(|pr| dom.element(pr, &cell_kind).is_some())
+}
+
+/// `w:ins` for `"ins"`, `w:del` for `"del"`.
+pub(crate) fn revision_name(kind: &str) -> XName {
+    if kind == "ins" { W::ins() } else { W::del() }
+}
+
+/// The last paragraph among a container's blocks, through block content
+/// controls and custom XML elements, not into nested tables.
+pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
+    container_blocks(dom, container)
+        .into_iter()
+        .rev()
+        .find(|&block| dom.name_is(block, &W::p()))
+}
+
+/// The paragraphs and tables of `container` in order, through block
+/// content controls and custom XML elements, not into nested tables.
+pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for child in dom.elements(container, None) {
+        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
+            out.push(child);
+        } else if dom.name_is(child, &W::sdt()) {
+            if let Some(content) = dom.element(child, &W::sdt_content()) {
+                out.extend(container_blocks(dom, content));
+            }
+        } else if dom.name_is(child, &W::custom_xml()) {
+            out.extend(container_blocks(dom, child));
+        }
+    }
     out
 }
 

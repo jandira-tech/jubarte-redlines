@@ -1369,9 +1369,14 @@ fn resolve_for_edit_or_cli(
             .filter(|c| c.change.as_ref().is_some_and(|ch| filter.matches(ch)))
             .map(|c| &c.group)
             .collect();
+        let with_rows: HashSet<NodeId> = found
+            .iter()
+            .filter(|c| selected.contains(&c.group))
+            .flat_map(|c| final_marks_of_row(dom, c.node))
+            .collect();
         let keep: Vec<NodeId> = found
             .iter()
-            .filter(|c| !selected.contains(&c.group))
+            .filter(|c| !selected.contains(&c.group) && !with_rows.contains(&c.node))
             .flat_map(|c| {
                 std::iter::once(c.node)
                     .chain(deleted_text(dom, c.node))
@@ -1408,6 +1413,77 @@ fn resolve_for_edit_or_cli(
         kept,
         comment_left,
     })
+}
+
+/// The same revision on the final marks of the cells `carrier` inserts or
+/// deletes, when it is a row's (`w:trPr/w:ins`, `w:trPr/w:del`) or a cell's
+/// (`w:cellIns`, `w:cellDel`), nested tables' cells included. Word writes a
+/// cell's final mark inserted or deleted only with its row, and a row
+/// resolved without it leaves the revision on the mark, where Accept All or
+/// Reject All never returns (#1669): the two resolve together.
+fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
+    let Some(name) = dom.name(carrier) else {
+        return Vec::new();
+    };
+    let Some(parent) = dom.parent(carrier) else {
+        return Vec::new();
+    };
+    let (kind, top) = match name.local_name() {
+        kind @ ("ins" | "del") if dom.name_is(parent, &W::tr_pr()) => (kind, dom.parent(parent)),
+        "cellIns" | "cellDel" if dom.name_is(parent, &W::tc_pr()) => (
+            if name.local_name() == "cellIns" {
+                "ins"
+            } else {
+                "del"
+            },
+            dom.parent(parent),
+        ),
+        _ => return Vec::new(),
+    };
+    let Some(top) = top else {
+        return Vec::new();
+    };
+    // The cells under `top`, nested tables' too, that no row or cell
+    // between them and `top` covers by itself (#1684): `top`'s revision is
+    // the one that covers them. A cell of `top` itself that carries the
+    // revision (`w:cellIns`, `w:cellDel`) covers its own mark (CodeRabbit
+    // on #1680, round 11).
+    let cell_kind = if kind == "ins" {
+        W::cell_ins()
+    } else {
+        W::cell_del()
+    };
+    let covered_below = |cell: NodeId| {
+        let mut cell = cell;
+        loop {
+            if cell == top {
+                return false;
+            }
+            let Some(&row) = dom.ancestors(cell, Some(&W::tr())).first() else {
+                return false;
+            };
+            if row == top {
+                return dom
+                    .element(cell, &W::tc_pr())
+                    .is_some_and(|pr| dom.element(pr, &cell_kind).is_some());
+            }
+            if crate::validate::row_revised(dom, row, cell, kind) {
+                return true;
+            }
+            let Some(&outer) = dom.ancestors(row, Some(&W::tc())).first() else {
+                return false;
+            };
+            cell = outer;
+        }
+    };
+    dom.descendants_and_self(top, Some(&W::tc()))
+        .into_iter()
+        .filter(|&cell| !covered_below(cell))
+        .filter_map(|cell| crate::validate::last_block_paragraph(dom, cell))
+        .filter_map(|p| dom.element(p, &W::p_pr()))
+        .filter_map(|ppr| dom.element(ppr, &W::r_pr()))
+        .filter_map(|rpr| dom.element(rpr, &crate::validate::revision_name(kind)))
+        .collect()
 }
 
 /// The listed changes of the comments part only (empty when the package

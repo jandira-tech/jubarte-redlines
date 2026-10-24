@@ -550,8 +550,11 @@ fn a_deleted_paragraphs_comment_is_checked_like_any_comment() {
     );
 }
 
+/// A paragraph that carries a section break is refused. A cell's only
+/// paragraph is emptied, not removed: Word never deletes a container's final
+/// paragraph mark (#1668).
 #[test]
-fn delete_paragraph_refuses_section_and_table_cell_last_paragraphs() {
+fn delete_paragraph_refuses_a_section_paragraph_and_empties_a_cells_only_one() {
     let with_section = format!(
         "{}<w:p><w:pPr><w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr></w:pPr><w:r><w:t>sect</w:t></w:r></w:p>{}",
         para("a"),
@@ -567,21 +570,37 @@ fn delete_paragraph_refuses_section_and_table_cell_last_paragraphs() {
     )
     .unwrap_err();
     assert_eq!(err.code, "UNSUPPORTED_STRUCTURE");
+    // A second cell keeps its words, so the row stays.
     let table = format!(
-        "{}<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>",
+        "{}<w:tbl><w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl>",
         para("a"),
-        para("only cell paragraph")
+        para("only cell paragraph"),
+        para("beside")
     );
     let source = docx(&table);
-    let err = apply_plan(
+    let result = apply_plan(
         &source,
         &plan(
             &source,
             r#"[{"kind":"delete_paragraph","paragraph":{"index":1}}]"#,
         ),
     )
-    .unwrap_err();
-    assert_eq!(err.code, "UNSUPPORTED_STRUCTURE");
+    .unwrap();
+    let accepted = accept_revisions(&result.redline).unwrap();
+    for (what, output) in [("clean", &result.clean), ("accepted", &accepted)] {
+        assert_eq!(texts(output), ["a", "", "beside"], "{what}");
+        assert_eq!(
+            cell_endings(output),
+            [Some(String::new()), Some("beside".to_string())],
+            "{what}"
+        );
+    }
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        ["a", "only cell paragraph", "beside"]
+    );
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
 }
 
 /// New runs start from the anchor's body run, not its bold lead-in: only the
@@ -1107,19 +1126,35 @@ fn commented_text(xml: &str, id: u32) -> String {
 }
 
 #[test]
-fn deletions_are_checked_together_so_a_cell_keeps_a_closing_paragraph() {
-    // Two paragraphs in one cell: each deletion alone is fine, both empty it.
+fn deletions_are_checked_together_so_a_cell_keeps_its_closing_paragraph() {
+    // Two paragraphs in one cell: deleting both empties the last one, whose
+    // mark Word never deletes (#1668). A second cell keeps the row.
     let table = format!(
-        "<w:tbl><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl>{}",
+        "<w:tbl><w:tr><w:tc>{}{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl>{}",
         para("cell one"),
         para("cell two"),
+        para("beside"),
         para("after")
     );
     let source = docx(&table);
     let both = r#"[{"kind":"delete_paragraph","paragraph":{"index":0}},
                    {"kind":"delete_paragraph","paragraph":{"index":1}}]"#;
-    let err = apply_plan(&source, &plan(&source, both)).unwrap_err();
-    assert_eq!(err.code, "OVERLAPPING_EDITS");
+    let result = apply_plan(&source, &plan(&source, both)).unwrap();
+    let accepted = accept_revisions(&result.redline).unwrap();
+    for (what, output) in [("clean", &result.clean), ("accepted", &accepted)] {
+        assert_eq!(texts(output), ["", "beside", "after"], "{what}");
+        assert_eq!(
+            cell_endings(output),
+            [Some(String::new()), Some("beside".to_string())],
+            "{what}"
+        );
+    }
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        ["cell one", "cell two", "beside", "after"]
+    );
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
     let one = r#"[{"kind":"delete_paragraph","paragraph":{"index":1}}]"#;
     assert!(apply_plan(&source, &plan(&source, one)).is_ok());
 
@@ -1134,8 +1169,8 @@ fn deletions_are_checked_together_so_a_cell_keeps_a_closing_paragraph() {
         "OVERLAPPING_EDITS"
     );
 
-    // A cell ending in a nested table after its last paragraph goes: Word
-    // requires the cell to close with a paragraph.
+    // A cell's last paragraph after a nested table is emptied, not removed:
+    // Word requires the cell to close with a paragraph.
     let nested = format!(
         "<w:tbl><w:tr><w:tc>{}<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}</w:tc></w:tr></w:tbl>{}",
         para("outer first"),
@@ -1145,12 +1180,18 @@ fn deletions_are_checked_together_so_a_cell_keeps_a_closing_paragraph() {
     );
     let source3 = docx(&nested);
     let last = r#"[{"kind":"delete_paragraph","paragraph":{"index":2}}]"#;
+    let emptied = apply_plan(&source3, &plan(&source3, last)).unwrap();
+    assert_eq!(texts(&emptied.clean), ["outer first", "inner", "", "after"]);
     assert_eq!(
-        apply_plan(&source3, &plan(&source3, last))
-            .unwrap_err()
-            .code,
-        "OVERLAPPING_EDITS"
+        cell_endings(&emptied.clean),
+        [Some(String::new()), Some("inner".to_string())]
     );
+    assert_eq!(
+        texts(&reject_revisions(&emptied.redline).unwrap()),
+        ["outer first", "inner", "outer last", "after"]
+    );
+    assert_word_valid_package(&emptied.clean);
+    assert_word_valid_package(&emptied.redline);
     let first = r#"[{"kind":"delete_paragraph","paragraph":{"index":0}}]"#;
     let kept = apply_plan(&source3, &plan(&source3, first)).unwrap();
     assert_word_valid_package(&kept.clean);
@@ -1655,6 +1696,27 @@ fn format_paragraph_sets_spacing_in_points_and_multiples() {
     let json = r#"{"schema_version":1,"author":"a","operations":[{"kind":"format_paragraph","paragraph":{"index":0},"line_spacing":1.15,"space_after":7.5}]}"#;
     let parsed = EditPlan::from_json(json).unwrap();
     assert_eq!(EditPlan::from_json(&parsed.to_json()).unwrap(), parsed);
+}
+
+/// Each table cell's closing block, in document order: the text of its last
+/// paragraph, or `None` when the cell does not end in a paragraph.
+fn cell_endings(docx: &[u8]) -> Vec<Option<String>> {
+    let xml = part_string(docx, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::tc()))
+        .into_iter()
+        .map(|cell| {
+            let last = *dom.elements(cell, None).last()?;
+            dom.name_is(last, &W::p()).then(|| {
+                dom.descendants(last, Some(&W::t()))
+                    .into_iter()
+                    .map(|t| dom.value(t))
+                    .collect()
+            })
+        })
+        .collect()
 }
 
 /// Body paragraphs of a redline as `kept[-deleted-]{+inserted+}`.

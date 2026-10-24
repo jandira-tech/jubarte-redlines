@@ -1510,6 +1510,8 @@ fn delete_paragraph_holding_a_move_names_it_in_v2_syntax() {
 
 #[test]
 fn delete_paragraph_leaves_valid_containers() {
+    // As Word does: deleting every paragraph of the body or of a cell
+    // empties the last one, whose mark stays.
     let s = docx(&(para("First") + &para("Last")));
     let q = plan(
         &s,
@@ -1518,9 +1520,15 @@ fn delete_paragraph_leaves_valid_containers() {
             {"kind":"delete_paragraph","target":p(1)}
         ]),
     );
-    let e = run(&s, &q).unwrap_err();
-    assert_eq!(e.code, "CONFLICT");
-    assert!(e.message.contains("without a paragraph"));
+    let out = run(&s, &q).unwrap();
+    assert_eq!(texts(&out.clean), [""]);
+    assert_eq!(texts(&accept_changes(&out.redline, &mine()).unwrap()), [""]);
+    assert_eq!(
+        texts(&reject_changes(&out.redline, &mine()).unwrap()),
+        ["First", "Last"]
+    );
+    assert_word_valid_package(&out.clean);
+    assert_word_valid_package(&out.redline);
 
     let s = docx(&format!(
         r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr/>{}</w:tc></w:tr></w:tbl>{}"#,
@@ -1534,9 +1542,18 @@ fn delete_paragraph_leaves_valid_containers() {
             {"kind":"delete_paragraph","target":p(1)}
         ]),
     );
-    let e = run(&s, &q).unwrap_err();
-    assert_eq!(e.code, "CONFLICT");
-    assert!(e.message.contains("table cell without a closing paragraph"));
+    let out = run(&s, &q).unwrap();
+    assert_eq!(texts(&out.clean), ["", "Outside"]);
+    assert_eq!(
+        texts(&accept_changes(&out.redline, &mine()).unwrap()),
+        ["", "Outside"]
+    );
+    assert_eq!(
+        texts(&reject_changes(&out.redline, &mine()).unwrap()),
+        ["Cell first", "Cell last", "Outside"]
+    );
+    assert_word_valid_package(&out.clean);
+    assert_word_valid_package(&out.redline);
 }
 
 #[test]

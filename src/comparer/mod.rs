@@ -34,6 +34,7 @@ pub mod comments;
 pub mod cross_para;
 // Word-parity passes, public for the tests that run one at a time; outside
 // the version promise (docs/VERSIONING.md).
+pub(crate) mod final_marks;
 #[doc(hidden)]
 pub mod finalize;
 pub mod fixups;
