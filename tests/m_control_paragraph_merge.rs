@@ -15,11 +15,15 @@
 //! - A control holding more than one paragraph cannot become inline, and
 //!   Word takes no paragraph out of it: where the join would cross its edge
 //!   and the paragraph outside it brings something, the mark stays, and the
-//!   paragraph that kept it takes the next paragraph's properties.
+//!   paragraph that kept it takes the next paragraph's properties. Once
+//!   every mark in the control goes, nothing is left to hold apart, and the
+//!   join is an ordinary one.
+//! - A paragraph holding only markers (a bookmark, a comment's range or
+//!   reference, a permission range, a proofing mark) brings nothing.
 
 mod common;
 
-use common::docx::{docx, para};
+use common::docx::{Part, W_NS, docx_with, para};
 use common::validity::check_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 
@@ -90,7 +94,15 @@ fn shape(bytes: &[u8]) -> String {
 }
 
 fn resolve(body: &str, mode: &str) -> Vec<u8> {
-    let redline = docx(&format!("{}{body}{}", para("Before."), para("After.")));
+    resolve_with(body, mode, &[])
+}
+
+/// [`resolve`] in a package that also holds `extras`.
+fn resolve_with(body: &str, mode: &str, extras: &[Part<'_>]) -> Vec<u8> {
+    let redline = docx_with(
+        &format!("{}{body}{}", para("Before."), para("After.")),
+        extras,
+    );
     let out = match mode {
         "accept" => accept_revisions(&redline),
         _ => reject_revisions(&redline),
@@ -461,4 +473,124 @@ fn a_join_that_would_split_a_multi_paragraph_control_keeps_the_mark() {
     for (word, body, mode, expected) in cases {
         assert_eq!(shape(&resolve(&body, mode)), expected, "{word} {mode}");
     }
+}
+
+/// A comments part holding comment 7, so a paragraph can anchor it.
+const COMMENTS: &str = concat!(
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+    r#"<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+    r#"<w:comment w:id="7" w:author="Ann" w:date="2026-10-01T00:00:00Z" w:initials="A">"#,
+    r#"<w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment></w:comments>"#
+);
+
+#[test]
+fn a_paragraph_of_comment_or_permission_markers_brings_nothing() {
+    assert!(COMMENTS.contains(W_NS));
+    let comments = Part {
+        name: "word/comments.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        xml: COMMENTS,
+    };
+    let range = r#"<w:commentRangeStart w:id="7"/><w:commentRangeEnd w:id="7"/>"#;
+    let reference = format!(r#"{range}<w:r><w:commentReference w:id="7"/></w:r>"#);
+    let proofed =
+        format!(r#"<w:proofErr w:type="spellStart"/>{range}<w:proofErr w:type="spellEnd"/>"#);
+    let permission = r#"<w:permStart w:id="1" w:edGrp="everyone"/><w:permEnd w:id="1"/>"#;
+    let two = sdt(&(p("", &run("X.")) + &p(&mark("del", 1), &run("Y."))));
+    let one = sdt(&p(&mark("del", 1), &run("Y.")));
+    // The Word A/B, round 9: each marker paragraph goes as an empty one
+    // does, and the control stays a block.
+    let cases = [
+        ("d02", two.clone() + &p("", range), "[sdt[pX.][pY.]]"),
+        ("d03", two.clone() + &p("", &reference), "[sdt[pX.][pY.]]"),
+        ("d04", two.clone() + &p("", permission), "[sdt[pX.][pY.]]"),
+        ("d06", two.clone() + &p("", &proofed), "[sdt[pX.][pY.]]"),
+        ("d08", one.clone() + &p("", range), "[sdt[pY.]]"),
+        ("d09", one.clone() + &p("", &reference), "[sdt[pY.]]"),
+        ("d10", one.clone() + &p("", permission), "[sdt[pY.]]"),
+    ];
+    for (word, body, expected) in cases {
+        let out = resolve_with(&body, "accept", std::slice::from_ref(&comments));
+        assert_eq!(shape(&out), expected, "{word}");
+    }
+}
+
+#[test]
+fn a_control_whose_marks_all_go_joins_the_paragraph_after_it() {
+    let emptied = || {
+        sdt(&(p(&mark("del", 1), &tracked("del", "One.", 2))
+            + &p(&mark("del", 3), &tracked("del", "Two.", 4))))
+    };
+    // The Word A/B, round 9: with no mark left in the control, nothing is
+    // left to hold apart; the emptied control stays inline where the words
+    // after it join (k01, k06, k04), and a block where nothing does (k07).
+    // A mark left in the control still holds the join (k08).
+    let cases = [
+        ("k01", emptied() + &p("", &run("Three.")), "[p[sdt]Three.]"),
+        (
+            "k06",
+            emptied() + &p("", &tracked("ins", "Three.", 5)),
+            "[p[sdt]Three.]",
+        ),
+        (
+            "k04",
+            cell(&(emptied() + &p("", &run("Three.")))),
+            "[tbl[tr[tc[p[sdt]Three.]]]]",
+        ),
+        (
+            "k07",
+            emptied() + &p("", &tracked("del", "Three.", 5)),
+            "[sdt[p]]",
+        ),
+        (
+            "k08",
+            sdt(&(p("", &run("One.")) + &p(&mark("del", 1), &run("Two."))))
+                + &p("", &run("Three.")),
+            "[sdt[pOne.][pTwo.]][pThree.]",
+        ),
+    ];
+    for (word, body, expected) in cases {
+        assert_eq!(shape(&resolve(&body, "accept")), expected, "{word}");
+    }
+}
+
+#[test]
+fn a_kept_mark_loses_its_section_break_on_accept() {
+    let break_ = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>"#;
+    let held =
+        |sect: &str| format!(r#"<w:pPr><w:rPr><w:del w:id="1" {REV}/></w:rPr>{sect}</w:pPr>"#);
+    let next = |sect: &str| format!(r#"<w:pPr><w:jc w:val="right"/>{sect}</w:pPr>"#);
+    let body = |own: &str, after: &str| {
+        sdt(&(p("", &run("X.")) + &p(&held(own), &run("Y.")))) + &p(&next(after), &run("Z."))
+    };
+    // The Word A/B, round 9: Accept All takes the section break of a mark
+    // Word kept away with the mark (c04, e05), and the kept paragraph does
+    // not take the next one's (c03). Reject All keeps it (c04).
+    let breaks = |bytes: &[u8]| {
+        common::docx::part_string(bytes, "word/document.xml")
+            .unwrap()
+            .matches("<w:sectPr")
+            .count()
+    };
+    let cases = [
+        ("c04", body(break_, ""), "accept", 1),
+        ("e05", body(break_, break_), "accept", 2),
+        ("c03", body("", break_), "accept", 2),
+        ("c04", body(break_, ""), "reject", 2),
+    ];
+    for (word, body, mode, expected) in cases {
+        let out = resolve(&body, mode);
+        assert_eq!(
+            breaks(&out),
+            expected,
+            "{word} {mode}: section breaks, the body's included"
+        );
+    }
+    let out = resolve(&body(break_, ""), "accept");
+    assert_eq!(
+        shape(&out),
+        "[sdt[pX.][p{jc=right}Y.]][p{jc=right}Z.]",
+        "c04 accept"
+    );
 }
