@@ -1571,7 +1571,9 @@ fn a5b_three_identical_run_controls_in_one_paragraph_are_all_restored() {
 /// Two nested block controls (Word's "Page Numbers" gallery parts) whose
 /// every paragraph is inserted, before a paragraph that stays, as
 /// 3bfcb371e2 against aa5340125d's footer2. Rejecting removes the inserted
-/// paragraphs and must not panic with "No parent for AddBeforeSelf".
+/// paragraphs and must not panic with "No parent for AddBeforeSelf". The
+/// paragraph their marks merged into brings nothing, so both controls stay
+/// blocks around it, emptied (Word 16, the #1694 A/B, hn30).
 #[test]
 fn a5b_nested_controls_of_inserted_paragraphs_reject_without_panic() {
     let mut d = Dom::new();
@@ -1602,9 +1604,26 @@ fn a5b_nested_controls_of_inserted_paragraphs_reject_without_panic() {
         .map(|&t| d.value(t))
         .collect();
     assert!(texts.is_empty(), "{texts:?}");
-    // Both inserted paragraphs and their controls go; the paragraph their
-    // marks merged into stays, with its old properties.
-    assert!(d.descendants(out, Some(&W::name("sdt"))).is_empty());
+    // Both inserted paragraphs go; the paragraph their marks merged into
+    // stays, with its old properties, inside both controls.
+    let blocks = d.elements(out, None);
+    assert_eq!(blocks.len(), 1, "{}", d.serialize_element(out));
+    let outer = blocks[0];
+    assert!(
+        d.name_is(outer, &W::name("sdt")),
+        "{}",
+        d.serialize_element(out)
+    );
+    let inner = d.elements(d.element(outer, &W::sdt_content()).unwrap(), None);
+    assert_eq!(inner.len(), 1, "{}", d.serialize_element(out));
+    assert!(
+        d.name_is(inner[0], &W::name("sdt")),
+        "{}",
+        d.serialize_element(out)
+    );
+    let kept = d.elements(d.element(inner[0], &W::sdt_content()).unwrap(), None);
+    assert_eq!(kept.len(), 1, "{}", d.serialize_element(out));
+    assert!(d.name_is(kept[0], &W::p()));
     let paragraphs = d.descendants(out, Some(&W::p()));
     assert_eq!(paragraphs.len(), 1);
     let xml = d.serialize_element(paragraphs[0]);
@@ -1785,6 +1804,9 @@ fn a5b_mixed_surviving_and_fully_deleted_content_controls() {
 
 /// A removed control pilcrow joins independently owned runs, but does not
 /// extend the control's authored range to the successor's text or formatting.
+/// An empty successor brings nothing to the join: it goes, and the control
+/// stays a block around the kept paragraph, which carries the successor's
+/// properties (Word 16, the #1694 A/B: hn16, j21).
 #[test]
 fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
     for mark in ["del", "moveFrom"] {
@@ -1814,6 +1836,46 @@ fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
                 .map(|&run| d.serialize_element(d.element(run, &W::r_pr()).unwrap()))
                 .collect::<Vec<_>>();
             let out = accept_deleted_and_move_from_paragraph_marks(&mut d, body);
+            if successor == "empty" {
+                let blocks = d.elements(out, None);
+                assert_eq!(blocks.len(), 1, "{mark}: {}", d.serialize_element(out));
+                let control = blocks[0];
+                assert!(
+                    d.name_is(control, &W::sdt()),
+                    "{}",
+                    d.serialize_element(out)
+                );
+                assert_eq!(
+                    d.serialize_element(d.element(control, &W::sdt_pr()).unwrap()),
+                    props
+                );
+                assert_eq!(
+                    d.serialize_element(d.element(control, &W::name("sdtEndPr")).unwrap()),
+                    end_props
+                );
+                let content = d.element(control, &W::sdt_content()).unwrap();
+                let kept = d.elements(content, None);
+                assert_eq!(kept.len(), 1, "{}", d.serialize_element(out));
+                assert!(d.name_is(kept[0], &W::p()));
+                let ppr = d.element(kept[0], &W::p_pr()).unwrap();
+                assert_eq!(
+                    d.attribute(d.element(ppr, &W::spacing_el()).unwrap(), &W::name("after")),
+                    Some("240")
+                );
+                assert!(d.descendants(ppr, Some(&W::name(mark))).is_empty());
+                let own = d.elements(kept[0], Some(&W::r()));
+                assert_eq!(own.len(), 1);
+                assert_eq!(d.value(own[0]), "one");
+                assert_eq!(
+                    d.serialize_element(d.element(own[0], &W::r_pr()).unwrap()),
+                    run_props[0]
+                );
+                assert!(
+                    d.attribute(kept[0], &PT::name("MergedParagraphOwners"))
+                        .is_none()
+                );
+                continue;
+            }
             let paragraphs = d.elements(out, Some(&W::p()));
             assert_eq!(
                 paragraphs.len(),
@@ -1858,7 +1920,7 @@ fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
             assert!(d.descendants(ppr, Some(&W::name(mark))).is_empty());
             let children = d.elements(p, None);
             assert_eq!(children[..2], [ppr, control]);
-            assert_eq!(children.len(), if successor == "empty" { 2 } else { 3 });
+            assert_eq!(children.len(), 3);
             assert!(d.attribute(p, &PT::name("MergedParagraphOwners")).is_none());
             if successor == "math" {
                 let math = children[2];
@@ -1877,7 +1939,7 @@ fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
                     d.attribute(sty, &jubarte::namespaces::M::name("val")),
                     Some("p")
                 );
-            } else if successor != "empty" {
+            } else {
                 assert_eq!(children[2], outside[0]);
                 assert_eq!(
                     d.serialize_element(d.element(outside[0], &W::r_pr()).unwrap()),
@@ -1891,8 +1953,6 @@ fn merged_control_range_keeps_successor_runs_and_marks_outside_its_owner() {
                     assert_eq!(d.elements(outside[0], Some(&W::name("tab"))).len(), 1);
                     assert!(d.descendants(control, Some(&W::name("tab"))).is_empty());
                 }
-            } else {
-                assert_eq!(d.value(p), "one");
             }
         }
     }
