@@ -3023,8 +3023,8 @@ fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
     for child in dom.elements(parent, None) {
         if dom.name_is(child, name) {
             children.push(child);
-        } else if dom.name(child) == Some(W::name("sdt"))
-            || dom.name(child) == Some(W::name("sdtContent"))
+        } else if dom.name(child) == Some(W::sdt())
+            || dom.name(child) == Some(W::sdt_content())
             || dom.name(child) == Some(W::custom_xml())
         {
             children.extend(wrapped_children(dom, child, name));

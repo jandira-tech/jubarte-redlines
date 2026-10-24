@@ -143,7 +143,7 @@ fn keeps_words(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
     } else {
         [W::ins(), W::move_to()]
     };
-    let (math_run, math_r_pr) = (M::name("r"), M::name("rPr"));
+    let (math_run, math_r_pr) = (M::r(), M::r_pr());
     dom.descendants(paragraph, None)
         .into_iter()
         .filter(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &math_run))
@@ -514,7 +514,7 @@ mod tests {
             .collect();
         assert_eq!(deleted, [false, true, false]);
         assert_eq!(
-            dom.descendants(paragraphs[1], Some(&M::name("oMath")))
+            dom.descendants(paragraphs[1], Some(&M::o_math()))
                 .len(),
             1
         );

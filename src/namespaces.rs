@@ -275,3 +275,10 @@ impl PT {
     // define a default table style (read by the table-margin synthesis).
     cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
 }
+
+// ── OMML names the comparer's final-mark pass reads per paragraph ─────────────
+impl M {
+    cached_xname!(M::URI, r, "r");
+    cached_xname!(M::URI, r_pr, "rPr");
+    cached_xname!(M::URI, o_math, "oMath");
+}
