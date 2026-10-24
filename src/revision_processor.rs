@@ -695,19 +695,13 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         // finds the row's own revision and Reject All removes an inserted
         // row whose properties also changed.
         if name == W::tr_pr() {
-            for stale in dom
-                .elements(new_prop, None)
-                .into_iter()
-                .filter(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()))
-                .collect::<Vec<_>>()
-            {
-                dom.remove(stale);
+            let mut stale = dom.elements(new_prop, None);
+            stale.retain(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()));
+            for e in stale {
+                dom.remove(e);
             }
-            let marks: Vec<NodeId> = dom
-                .elements(node, None)
-                .into_iter()
-                .filter(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()))
-                .collect();
+            let mut marks = dom.elements(node, None);
+            marks.retain(|&e| dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()));
             for mark in marks {
                 let mark_clone = dom.clone_subtree(mark);
                 dom.add(new_prop, mark_clone);

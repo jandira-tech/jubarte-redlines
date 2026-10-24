@@ -1985,12 +1985,12 @@ fn rows_table(rows: &[&str]) -> String {
             r#"<w:tr><w:trPr>{pr}</w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"#
         )
     };
-    let mut body: String = rows
-        .iter()
-        .enumerate()
-        .map(|(i, pr)| row(pr, &format!("Row {i}.")))
-        .collect();
-    body.insert_str(0, &row("", "Kept row."));
+    let mut body = row("", "Kept row.");
+    body.extend(
+        rows.iter()
+            .enumerate()
+            .map(|(i, pr)| row(pr, &format!("Row {i}."))),
+    );
     format!(
         r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{body}</w:tbl><w:p/>"#
     )
