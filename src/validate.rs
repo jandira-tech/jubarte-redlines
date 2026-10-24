@@ -1771,8 +1771,7 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
 /// paragraph marks share their own scope; the immediate parent alone is
 /// therefore not the scope. Keep detection and repair on the same key.
 /// The SDK compares some kinds' ids case-blind (`ABC` repeats `abc`).
-fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
-    let local = name.local_name();
+fn revision_id_key(dom: &Dom, node: NodeId, local: &str, id: &str) -> String {
     let property_mark = matches!(local, "ins" | "del" | "moveFrom" | "moveTo")
         && dom.parent(node).is_some_and(|parent| {
             dom.name(parent).is_some_and(|parent| {
@@ -1854,7 +1853,7 @@ pub(crate) fn revision_id_occurrences(
                 && let Some(id) = dom.attribute(e, &id_name)
             {
                 *counts
-                    .entry(revision_id_key(&dom, e, &name, id))
+                    .entry(revision_id_key(&dom, e, name.local_name(), id))
                     .or_default() += 1;
             }
         }
@@ -1888,7 +1887,7 @@ fn collect_ids(
         if has_unique_revision_id(&name)
             && let Some(id) = dom.attribute(e, &id_name)
         {
-            let key = revision_id_key(dom, e, &name, id);
+            let key = revision_id_key(dom, e, name.local_name(), id);
             if rev_ids.insert(key.clone()) {
                 continue;
             }
@@ -1904,8 +1903,7 @@ fn collect_ids(
             if local.ends_with("RangeStart") {
                 *repeated_starts.entry(key).or_default() += 1;
             } else if let Some(start) = range_start_of(local) {
-                let start = W::name(start);
-                match repeated_starts.get_mut(&revision_id_key(dom, e, &start, id)) {
+                match repeated_starts.get_mut(&revision_id_key(dom, e, start, id)) {
                     Some(n) if *n > 0 => *n -= 1,
                     _ => finding.repairable = false,
                 }
@@ -3031,7 +3029,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        let key = revision_id_key(dom, n, &name, &id);
+        let key = revision_id_key(dom, n, name.local_name(), &id);
         *count.entry(key.clone()).or_default() += 1;
         starts.push((i, n, name, id, key));
     }
