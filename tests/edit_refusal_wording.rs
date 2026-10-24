@@ -1255,11 +1255,18 @@ fn legacy_edit_and_add_have_no_json_flag() {
             .unwrap();
         assert!(output.status.success());
         let help = String::from_utf8(output.stdout).unwrap();
+        // Option headings have six spaces; wrapped descriptions have ten.
+        // `jubarte capabilities --json` can wrap onto a continuation line.
         assert!(
-            !help
-                .lines()
-                .any(|line| line.trim_start().starts_with("--json")),
+            !help.lines().any(|line| line.starts_with("      --json")),
             "{verb} must use --dry-run or --out-dir for JSONL: {help}"
         );
+        let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args([verb, "source.docx", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("unexpected argument '--json'"), "{stderr}");
     }
 }
