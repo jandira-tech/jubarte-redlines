@@ -10041,98 +10041,107 @@ fn autofit_to_words(
 
 /// A cell's (longest word, widest unbroken paragraph) in points.
 fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
+    let (min, max) = cell
+        .paras
+        .iter()
+        .map(|para| para_content_extent(fonts, para))
+        .fold((0.0_f32, 0.0_f32), |(min, max), (lo, hi)| {
+            (min.max(lo), max.max(hi))
+        });
+    (min, max.max(min))
+}
+
+/// A cell paragraph's (longest word, widest unbroken line) in points.
+fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
     let mut min = 0.0_f32;
     let mut max = 0.0_f32;
-    for para in &cell.paras {
-        let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
-        let mut line = 0.0_f32;
-        // The blanks a line ends with hang past it: Word's autofit of
-        // 0edc50c464's "npm" + 15 blanks + a 24-letter link + 17 blanks
-        // spans the content without the trailing blanks (201.3pt with
-        // the cell margins; the blanks would make it 300).
-        let mut trailing = 0.0_f32;
-        // The unit a run leaves open at its end: a word cut by a run
-        // boundary is one unit, as `wrap_runs_segment` glues it
-        // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
-        // inserted run against a deleted one stays apart: Word breaks
-        // 25897f5751's inserted "GDP" + deleted "Block" in its column
-        // rather than widen it.
-        let mut carry = 0.0_f32;
-        let mut marks: Option<(bool, bool)> = None;
-        for run in &para.runs {
-            let mark = (run.style.strike, run.style.underline);
-            if marks.replace(mark).is_some_and(|prev| prev != mark) {
+    let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
+    let mut line = 0.0_f32;
+    // The blanks a line ends with hang past it: Word's autofit of
+    // 0edc50c464's "npm" + 15 blanks + a 24-letter link + 17 blanks
+    // spans the content without the trailing blanks (201.3pt with
+    // the cell margins; the blanks would make it 300).
+    let mut trailing = 0.0_f32;
+    // The unit a run leaves open at its end: a word cut by a run
+    // boundary is one unit, as `wrap_runs_segment` glues it
+    // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
+    // inserted run against a deleted one stays apart: Word breaks
+    // 25897f5751's inserted "GDP" + deleted "Block" in its column
+    // rather than widen it.
+    let mut carry = 0.0_f32;
+    let mut marks: Option<(bool, bool)> = None;
+    for run in &para.runs {
+        let mark = (run.style.strike, run.style.underline);
+        if marks.replace(mark).is_some_and(|prev| prev != mark) {
+            carry = 0.0;
+        }
+        let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+        let size = run.style.layout_size();
+        let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
+        for (i, piece) in run.text.split('\n').enumerate() {
+            if i > 0 {
+                max = max.max(line - trailing + indent);
+                line = 0.0;
+                trailing = 0.0;
                 carry = 0.0;
             }
-            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
-            let size = run.style.layout_size();
-            let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
-            for (i, piece) in run.text.split('\n').enumerate() {
-                if i > 0 {
-                    max = max.max(line - trailing + indent);
-                    line = 0.0;
-                    trailing = 0.0;
-                    carry = 0.0;
-                }
-                if piece.is_empty() {
-                    continue;
-                }
-                line += width(piece);
-                let kept = piece.trim_end_matches(is_wrap_space);
-                trailing = if kept.is_empty() {
-                    trailing + width(piece)
-                } else {
-                    width(&piece[kept.len()..])
-                };
-                let opens =
-                    |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
-                let mut glue = opens(piece.chars().next());
-                let mut last = 0.0_f32;
-                // The longest unit the line may not break inside: a URL
-                // wraps after its hyphens (6ac97492's calor.co.uk link),
-                // a word after a hyphen, as `wrap_runs_segment` does.
-                for word in piece.split(is_wrap_space).filter(|w| !w.is_empty()) {
-                    let url = url_wrap_pieces(word);
-                    let units = if url.len() > 1 {
-                        url
-                    } else {
-                        hyphen_wrap_pieces(
-                            word,
-                            !run.style.ideograph_words,
-                            !run.style.punct_compress,
-                        )
-                    };
-                    for unit in units {
-                        last = width(unit)
-                            + if std::mem::take(&mut glue) {
-                                carry
-                            } else {
-                                0.0
-                            };
-                        min = min.max(last + indent);
-                    }
-                }
-                carry = if opens(piece.chars().last()) && !breaks_after(run, piece) {
-                    last
-                } else {
-                    0.0
-                };
+            if piece.is_empty() {
+                continue;
             }
+            line += width(piece);
+            let kept = piece.trim_end_matches(is_wrap_space);
+            trailing = if kept.is_empty() {
+                trailing + width(piece)
+            } else {
+                width(&piece[kept.len()..])
+            };
+            let opens =
+                |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
+            let mut glue = opens(piece.chars().next());
+            let mut last = 0.0_f32;
+            // The longest unit the line may not break inside: a URL
+            // wraps after its hyphens (6ac97492's calor.co.uk link),
+            // a word after a hyphen, as `wrap_runs_segment` does.
+            for word in piece.split(is_wrap_space).filter(|w| !w.is_empty()) {
+                let url = url_wrap_pieces(word);
+                let units = if url.len() > 1 {
+                    url
+                } else {
+                    hyphen_wrap_pieces(word, !run.style.ideograph_words, !run.style.punct_compress)
+                };
+                for unit in units {
+                    last = width(unit)
+                        + if std::mem::take(&mut glue) {
+                            carry
+                        } else {
+                            0.0
+                        };
+                    min = min.max(last + indent);
+                }
+            }
+            carry = if opens(piece.chars().last()) && !breaks_after(run, piece) {
+                last
+            } else {
+                0.0
+            };
         }
-        max = max.max(line - trailing + indent);
     }
+    max = max.max(line - trailing + indent);
     (min, max.max(min))
 }
 
 /// [`cell_content_extent`] with the rest a fitted column holds: a picture
-/// is one unit as wide as itself and a paragraph's pictures stand on one
-/// line (#1716 probes pabv and inlv: Word's picture column is the 120pt
-/// picture's, anchored to the column or inline); a nested table is as wide
-/// as its grid, less the cell margins it pulls into ours (probes m1 and
-/// m2: a column holding a 200pt nested table is 201.6pt in Word). A
-/// picture placed on the page and a pct table take no room of their own.
+/// is one unit as wide as itself and a paragraph's pictures stand on its
+/// line beside its text (#1716 probes pabv and inlv: Word's picture column
+/// is the 120pt picture's, anchored to the column or inline; #1732 probe
+/// i1: a caption and its 60pt picture fit a column wider than either). A
+/// nested table is as wide as its grid, less the cell margins it pulls
+/// into ours (probes m1 and m2: a column holding a 200pt nested table is
+/// 201.6pt in Word); a nested table fitted to its own content spans that
+/// fit (#1732 probe t1). A picture placed on the page and a pct table take
+/// no room of their own.
 fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
-    let (mut min, mut max) = cell_content_extent(fonts, cell);
+    let (mut min, mut max) = (0.0_f32, 0.0_f32);
     for para in &cell.paras {
         let held = || {
             para.images.iter().filter(|image| {
@@ -10145,19 +10154,35 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                 )
             })
         };
-        min = min.max(held().map(|image| image.w).fold(0.0, f32::max));
-        max = max.max(held().map(|image| image.w).sum());
+        let (lo, hi) = para_content_extent(fonts, para);
+        min = min
+            .max(lo)
+            .max(held().map(|image| image.w).fold(0.0, f32::max));
+        max = max.max(hi + held().map(|image| image.w).sum::<f32>());
     }
     for nested in &cell.nested {
-        if let Block::Table { cols, geom, .. } = nested.as_ref() {
-            let width = match geom.width {
-                TblWidth::Grid => cols.iter().sum(),
-                TblWidth::Dxa(w) => w,
-                TblWidth::Pct(_) => continue,
+        if let Block::Table {
+            cols, rows, geom, ..
+        } = nested.as_ref()
+        {
+            let (lo, hi) = if geom.content_autofit {
+                let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
+                let (mins, maxs) = content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                (
+                    mins.iter().sum::<f32>() + gaps,
+                    maxs.iter().sum::<f32>() + gaps,
+                )
+            } else {
+                let width = match geom.width {
+                    TblWidth::Grid => cols.iter().sum(),
+                    TblWidth::Dxa(w) => w,
+                    TblWidth::Pct(_) => continue,
+                };
+                (width, width)
             };
-            let width = (width + geom.tbl_ind - 2.0 * geom.mar_l).max(0.0);
-            min = min.max(width);
-            max = max.max(width);
+            let pulled = geom.tbl_ind - 2.0 * geom.mar_l;
+            min = min.max((lo + pulled).max(0.0));
+            max = max.max((hi + pulled).max(0.0));
         }
     }
     (min, max.max(min))
@@ -10179,6 +10204,43 @@ fn content_autofit_widths(
     avail: f32,
     pref_caps: bool,
 ) -> Vec<f32> {
+    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps);
+    let gap = 2.0 * geom.cell_spacing;
+    // A legacy document's autofit spans the text plus the table's cell
+    // margins, as its pct tables do (00046848's lines reach 525pt in a
+    // 523pt measure).
+    let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
+    let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
+    // Longest words that overrun the room still leave the table on the
+    // page: Word gives probe long's unbroken 110-letter word the room and
+    // breaks it, the table ending at the margin. The columns share the
+    // room by their longest words.
+    if !pref_caps && lo > room && lo > 0.0 {
+        let scale = room / lo;
+        return mins.iter().map(|lo| lo * scale + gap).collect();
+    }
+    let k = if hi <= room {
+        1.0
+    } else if lo >= room || hi - lo < 0.01 {
+        0.0
+    } else {
+        (room - lo) / (hi - lo)
+    };
+    mins.iter()
+        .zip(&maxs)
+        .map(|(lo, hi)| lo + (hi - lo) * k + gap)
+        .collect()
+}
+
+/// Each column's (minimum, maximum) for [`content_autofit_widths`], its
+/// cell margins included and its gaps not.
+fn content_autofit_extents(
+    fonts: &Fonts,
+    n: usize,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    pref_caps: bool,
+) -> (Vec<f32>, Vec<f32>) {
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
     // The pictures, nested tables, spanning cells and overrun below are
@@ -10234,30 +10296,7 @@ fn content_autofit_widths(
         }
         *max = max.max(mins[j]);
     }
-    // A legacy document's autofit spans the text plus the table's cell
-    // margins, as its pct tables do (00046848's lines reach 525pt in a
-    // 523pt measure).
-    let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
-    let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
-    // Longest words that overrun the room still leave the table on the
-    // page: Word gives probe long's unbroken 110-letter word the room and
-    // breaks it, the table ending at the margin. The columns share the
-    // room by their longest words.
-    if !pref_caps && lo > room && lo > 0.0 {
-        let scale = room / lo;
-        return mins.iter().map(|lo| lo * scale + gap).collect();
-    }
-    let k = if hi <= room {
-        1.0
-    } else if lo >= room || hi - lo < 0.01 {
-        0.0
-    } else {
-        (room - lo) / (hi - lo)
-    };
-    mins.iter()
-        .zip(&maxs)
-        .map(|(lo, hi)| lo + (hi - lo) * k + gap)
-        .collect()
+    (mins, maxs)
 }
 
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
@@ -13290,8 +13329,12 @@ fn table_block(
         .and_then(|pr| parse_tbl_borders(dom, pr))
         .or_else(|| tdef.as_ref().and_then(|t| t.borders));
     // The grid columns where some cell of a single column has no width of
-    // its own (no tcW, or an auto or zero one), read by `cells_foreign`.
+    // its own (no tcW, or an auto or zero one), read by `cells_foreign`;
+    // the columns a cell of a single column starts in; and the columns a
+    // spanning cell without a width covers.
     let mut widthless_cols = vec![false; cols.len()];
+    let mut single_cols = vec![false; cols.len()];
+    let mut span_widthless = vec![false; cols.len()];
     for (ri, row) in all_rows.into_iter().enumerate() {
         let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
             row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
@@ -13571,11 +13614,20 @@ fn table_block(
                 &nested_at,
             );
             let (colspan, vmerge) = cell_span(dom, cell);
-            if colspan <= 1
-                && cell_without_width(dom, cell)
-                && let Some(seen) = widthless_cols.get_mut(grid_at)
-            {
-                *seen = true;
+            let widthless = cell_without_width(dom, cell);
+            if colspan <= 1 {
+                if let Some(seen) = single_cols.get_mut(grid_at) {
+                    *seen = true;
+                }
+                if widthless && let Some(seen) = widthless_cols.get_mut(grid_at) {
+                    *seen = true;
+                }
+            } else if widthless {
+                span_widthless
+                    .iter_mut()
+                    .skip(grid_at)
+                    .take(colspan)
+                    .for_each(|seen| *seen = true);
             }
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -13738,16 +13790,29 @@ fn table_block(
     // (b6dd0b6ae8's statistics tables gained a page; codex's corpus
     // review of #1716). Word's marks on its rows and paragraphs tell such
     // a table; Word itself does not lay out by them (probe m3, q1 with
-    // the marks, still fits).
-    let word_saved = wrapped_children(dom, table, "tr").into_iter().any(|row| {
-        dom.attribute(row, &W::name("rsidR")).is_some()
-            || dom.attribute(row, &W::name("rsidTr")).is_some()
-    }) || dom
-        .descendants(table, Some(&W::p()))
+    // the marks, still fits). A nested table's marks are its own: Word
+    // fits #1732 probe p1's unmarked table around a marked one.
+    let rsid_r = W::name("rsidR");
+    let rsid_tr = W::name("rsidTr");
+    let para_id = W14::name("paraId");
+    let tbl = W::name("tbl");
+    let word_saved = wrapped_children(dom, table, "tr")
         .into_iter()
-        .any(|p| dom.attribute(p, &W14::name("paraId")).is_some());
-    let cells_foreign =
-        !word_saved && !widthless_cols.is_empty() && widthless_cols.iter().all(|&seen| seen);
+        .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())
+        || dom.descendants(table, Some(&W::p())).into_iter().any(|p| {
+            dom.attribute(p, &para_id).is_some()
+                && std::iter::successors(dom.parent(p), |&n| dom.parent(n))
+                    .find(|&n| dom.name_is(n, &tbl))
+                    == Some(table)
+        });
+    // A column only a spanning cell without a width reaches is a column
+    // without a width too: Word fits #1732 probe s2's one spanning title
+    // to its words. A column a cell of its own sizes is not (probe s1,
+    // #1733).
+    let cells_foreign = !word_saved
+        && !widthless_cols.is_empty()
+        && (0..widthless_cols.len())
+            .all(|j| widthless_cols[j] || (!single_cols[j] && span_widthless[j]));
     let pref = column_prefs(&raw_rows, &cols, fixed);
     let mut rows = resolve_table_merges(raw_rows);
     // A row sets all its cells at their largest top margin: 17c3e72c's
