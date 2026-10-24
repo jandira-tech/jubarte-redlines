@@ -1202,7 +1202,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
 /// revision, as Open-Xml-PowerTools writes them: Word resolves those
 /// (2026-10-23). The body's final mark is not flagged: Word resolves it.
 fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for part in revision_parts(pkg) {
+    for part in wordml_parts(pkg) {
         // A cell's start tag, whatever its prefix (none included) and
         // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
         if !pkg.part_bytes(&part).is_some_and(|bytes| {
