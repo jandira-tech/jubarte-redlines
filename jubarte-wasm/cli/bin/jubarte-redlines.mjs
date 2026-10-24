@@ -102,6 +102,28 @@ function ensureWritable(file, force) {
   }
 }
 
+/** Whether two paths name the same file: the same device and inode when
+ * both exist (a link to the input is the input), else the same path once
+ * resolved (`out.md` and `./out.md` are one file). */
+function sameFile(a, b) {
+  try {
+    const left = fs.statSync(a, { bigint: true });
+    const right = fs.statSync(b, { bigint: true });
+    return (left.ino === 0n && right.ino === 0n) || (left.dev === right.dev && left.ino === right.ino);
+  } catch {
+    return path.resolve(a) === path.resolve(b);
+  }
+}
+
+/** The refusal of an output that names its own input, as the binary words
+ * and codes it: a usage refusal (exit 2) with the OUTPUT_ALIAS code.
+ * --force authorizes replacing an output, never an input. */
+function refuseOutputAlias(output, input) {
+  if (sameFile(output, input)) {
+    throw new UsageError(`OUTPUT_ALIAS: the output '${output}' is the same file as the input '${input}'`);
+  }
+}
+
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
 /** The format a file's name declares, or null when only its bytes tell. */
@@ -126,10 +148,18 @@ function markdownText(file, bytes) {
   }
 }
 
+/** Writes `data` to `file` through a staged file beside it, renamed over
+ * it: a link is replaced, never written through, and an input that shares
+ * the output's file keeps its bytes. */
 function write(file, data) {
+  const partial = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.partial`);
   try {
-    fs.writeFileSync(file, data);
+    fs.writeFileSync(partial, data);
+    fs.renameSync(partial, file);
   } catch (e) {
+    try {
+      fs.rmSync(partial, { force: true });
+    } catch {}
     throw new CliError(`writing ${file}: ${osError(e)}`);
   }
 }
@@ -289,7 +319,12 @@ const COMMANDS = {
       // The output is refused before the input is read, as the binary does:
       // an existing output is a usage refusal, not an error the input's
       // reading would have found first (#1690).
-      if (o.output != null && !o.for_edit) ensureWritable(o.output, o.force);
+      if (o.output != null && !o.for_edit) {
+        // An output that names the input would destroy it: the tables view
+        // of a document written over itself.
+        if (o.tables) refuseOutputAlias(o.output, file);
+        ensureWritable(o.output, o.force);
+      }
       const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
       if (o.for_edit) {
         if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
