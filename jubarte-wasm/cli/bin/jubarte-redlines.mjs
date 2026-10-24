@@ -286,6 +286,10 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
+      // The output is refused before the input is read, as the binary does:
+      // an existing output is a usage refusal, not an error the input's
+      // reading would have found first (#1690).
+      if (o.output != null && !o.for_edit) ensureWritable(o.output, o.force);
       const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
       if (o.for_edit) {
         if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
@@ -293,7 +297,6 @@ const COMMANDS = {
       }
       if (o.tables) {
         // -o FILE writes the grids it would print (#1690).
-        if (o.output != null) ensureWritable(o.output, o.force);
         const emit = (text) => {
           if (o.output == null) return void process.stdout.write(text);
           write(o.output, text);

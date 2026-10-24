@@ -59,6 +59,45 @@ function run(...args) {
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
+// The checked-in binding's parser predates #1690 and refuses `--tables -o`
+// ("--tables prints the grids; drop -o"). Until the binding is rebuilt from
+// a source that has the flag, the host's own behaviour is exercised through
+// a copy of the bin whose binding parses it: the parser's own result for
+// `--tables`, with the output the flag names. Once the binding has the
+// flag, the bin itself is the one under test.
+function tablesBin() {
+  const host = path.join(tmp, "tables-host");
+  const modules = path.join(host, "node_modules", "jubarte-wasm");
+  fs.mkdirSync(modules, { recursive: true });
+  fs.writeFileSync(path.join(host, "jubarte-redlines.mjs"), fs.readFileSync(bin));
+  fs.writeFileSync(path.join(modules, "package.json"), JSON.stringify({ name: "jubarte-wasm", main: "index.js" }));
+  fs.writeFileSync(path.join(modules, "index.js"), [
+    `const real = require(${JSON.stringify(path.join(cliDir, "..", "npm"))});`,
+    "const parse = real.parseCli;",
+    "module.exports = {",
+    "  ...real,",
+    "  parseCli(argv, ...rest) {",
+    "    const args = JSON.parse(argv);",
+    "    const out = args.indexOf('-o');",
+    "    if (!args.includes('--tables') || out === -1) return parse(argv, ...rest);",
+    "    const stripped = args.filter((_, i) => i !== out && i !== out + 1);",
+    "    const parsed = JSON.parse(parse(JSON.stringify(stripped), ...rest));",
+    "    parsed.args.output = args[out + 1];",
+    "    parsed.args.output_format = 'md';",
+    "    return JSON.stringify(parsed);",
+    "  },",
+    "};",
+  ].join("\n"));
+  return path.join(host, "jubarte-redlines.mjs");
+}
+
+/** `read --tables` with the flag the checked-in parser may not know yet. */
+function runTables(...args) {
+  const target = tablesOutput ? bin : tablesBin();
+  const r = spawnSync(process.execPath, [target, ...args], { encoding: "utf8", cwd: tmp });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
 // Integration-only syscall hooks: Node's own mock utility delegates to the
 // real filesystem, but lets us stop at an exact boundary without timing races.
 function runWithPlanHook(plan, hook, args, context) {
@@ -1740,4 +1779,20 @@ test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)"
   const forced = run("accept", tracked, "-o", docx, "--force");
   assert.equal(forced.code, 0, forced.err);
   assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
+});
+
+test("read refuses an existing output before it reads the input (#1698)", () => {
+  const out = path.join(tmp, "taken-view.md");
+  fs.writeFileSync(out, "keep me\n");
+  // The output is refused first: a missing input does not turn the refusal
+  // into a reading error.
+  const missing = run("read", "missing.docx", "-o", out);
+  assert.equal(missing.code, 2, missing.err);
+  assert.equal(missing.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // The tables view refuses it the same way, before it reads the input.
+  const tables = runTables("read", "missing.docx", "--tables", "-o", out);
+  assert.equal(tables.code, 2, tables.err);
+  assert.equal(tables.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
 });
