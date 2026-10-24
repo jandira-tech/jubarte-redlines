@@ -787,14 +787,24 @@ fn emit(
     // 2b. The last new paragraph after a container's last paragraph takes
     // the final mark, unrevised, and the inserted mark is the one before
     // it, as Word's Compare writes an append: a revision on a table cell's
-    // final mark hangs Word's Accept All and Reject All (#1669).
+    // final mark hangs Word's Accept All and Reject All (#1669). In the
+    // body, whose final mark Word resolves, a mark that closes a section
+    // stays: the record cannot hold the break (`CT_PPrBase` has no
+    // `w:sectPr`), so Reject All would drop it (codex on #1680).
     for para in appended {
         let Some(&last) = last_after.get(&para) else {
             continue;
         };
         let dom = &mut t.opened.dom;
-        if dom.name_is(last, &W::p()) {
-            rotate_final_mark(dom, t.paragraph_nodes[para], last, stamp);
+        let old = t.paragraph_nodes[para];
+        let closes_section = dom
+            .parent(old)
+            .is_some_and(|up| dom.name_is(up, &W::body()))
+            && dom
+                .element(old, &W::p_pr())
+                .is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some());
+        if dom.name_is(last, &W::p()) && !closes_section {
+            rotate_final_mark(dom, old, last, stamp);
         }
     }
     // 3. Paragraph formatting, with the old properties in `w:pPrChange`.

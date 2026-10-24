@@ -1869,6 +1869,38 @@ fn an_append_after_a_containers_last_paragraph_inserts_the_mark_before_it() {
     }
 }
 
+/// An append after a paragraph that closes a section leaves its mark
+/// where it is: the record a rotated mark leaves cannot hold the break
+/// (`CT_PPrBase` has no `w:sectPr`), so Reject All would drop it (codex on
+/// #1680). The body's final mark is not a cell's, so the inserted mark may
+/// stay on the new paragraph. Both resolutions keep both sections.
+#[test]
+fn an_append_after_a_section_break_keeps_the_break_both_ways() {
+    let closing = r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/></w:sectPr></w:pPr><w:r><w:t>Beta.</w:t></w:r></w:p>"#;
+    let source = docx(&format!("{}{closing}", para("Alpha.")));
+    let sections = |bytes: &[u8]| {
+        part_string(bytes, "word/document.xml")
+            .unwrap()
+            .matches("<w:sectPr>")
+            .count()
+    };
+    assert_eq!(sections(&source), 2);
+    for mode in MODES {
+        let result = check_outputs(
+            &source,
+            &plan_of(mode, &[insert("p1", "after", "New.")]),
+            &["Alpha.", "Beta.", "New."],
+            &format!("{mode} after a section break"),
+        );
+        for (output, bytes) in [
+            ("Accept All", accept_revisions(&result.redline).unwrap()),
+            ("Reject All", reject_revisions(&result.redline).unwrap()),
+        ] {
+            assert_eq!(sections(&bytes), 2, "{mode} {output}");
+        }
+    }
+}
+
 /// The paragraph properties of each paragraph of `bytes`' body and cells,
 /// with their change records' ids, authors and dates left out.
 fn properties(bytes: &[u8]) -> Vec<(String, String)> {
