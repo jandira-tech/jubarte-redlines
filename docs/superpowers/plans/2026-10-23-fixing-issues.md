@@ -70,7 +70,7 @@ Update shared candidate checks in `src/edit/prepared.rs`.
 - [x] Compare revision occurrences by part, record type and ID. A candidate must not introduce an additional same-kind duplicate occurrence.
 - [x] Keep inherited duplicates separate from newly introduced duplicates; healing one ID must not conceal a collision under another.
 - [x] Retain valid cross-kind ID sharing.
-- [ ] Refuse with `CANDIDATE_INVALID` before writing outputs; attach the responsible operation when provenance identifies it. The refusal is done (#1665) and names the part, record type and id; the operation needs task 6's provenance.
+- [x] Refuse with `CANDIDATE_INVALID` before writing outputs; attach the responsible operation when provenance identifies it. The refusal is done (#1665) and names the part, record type and id; task 6 (#1681) names the operation.
 - [x] Keep `DUPLICATE_REVISION_ID` classified as non-Word-fatal. Publication policy and Word-opening behavior are separate concerns.
 
 Repair must retain its existing nonzero result when validation against the original still fails. Its help and completion text must distinguish structural repair from history verification.
@@ -96,13 +96,15 @@ Test insertion before/after the old paragraph, both operation orders, multiple i
 
 ### Task 6: improve actionable diagnostics
 
-- [ ] Retain operation provenance through run splitting and structural scheduling.
-- [ ] Populate the existing primary `operation` field when a candidate finding maps to one operation.
-- [ ] Name additional conflicting operation IDs and targets in the message.
-- [ ] Keep document-level failures document-level when attribution is genuinely unavailable.
-- [ ] Preserve existing error codes and exit-status contracts.
+- [x] Retain operation provenance through run splitting and structural scheduling. Done by cause, not by tags: a refused plan is prepared again on prefixes of its operations, bisected, until the operation that brings the refusal in is found (#1681). A tag on written nodes cannot follow a redline the comparer writes, nor the tracked replay's own DOM; a rerun finds the cause on every path, at about 2·log2(N)+2 extra preparations, only when a plan is refused.
+- [x] Populate the existing primary `operation` field when a candidate finding maps to one operation.
+- [x] Name additional conflicting operation IDs and targets in the message: `op-2 (page_setup) introduces it, together with op-1 (replace on p0)`. A PlanV2 applies its operations in order, so only the one that brings the refusal in is named, by its pointer.
+- [x] Keep document-level failures document-level when attribution is genuinely unavailable: a refusal the plan without operations meets too, and every failure the candidate checks did not raise.
+- [x] Preserve existing error codes and exit-status contracts. `--skip-failed` now leaves the named operation out.
 
 Keep the historical panic as an unreproduced lead. Record its event and missing-plan limitation; do not claim an off-by-one fix without recovering a failing case.
+
+Done in #1681: `tests/edit_candidate_provenance.rs` and the `culprits` and `attributed` unit tests in `src/edit/prepared.rs`. The historical panic stays an unreproduced lead: no plan was recovered for it.
 
 ### Task 7: make supported CLI combinations discoverable
 
