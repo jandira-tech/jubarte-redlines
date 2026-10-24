@@ -1201,8 +1201,14 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
 /// revised outer row pass whether or not their own rows repeat the
 /// revision, as Open-Xml-PowerTools writes them: Word resolves those
 /// (2026-10-23). The body's final mark is not flagged: Word resolves it.
+/// Only the stories Accept and Reject All walk are read, the parts the
+/// comparer's settle pass sweeps: a glossary's building blocks or a
+/// custom XML data item is no story (codex on #1680).
 fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for part in wordml_parts(pkg) {
+    for (part, styles) in crate::revision_processor::revision_bearing_parts(pkg) {
+        if styles {
+            continue;
+        }
         // A cell's start tag, whatever its prefix (none included) and
         // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
         if !pkg.part_bytes(&part).is_some_and(|bytes| {

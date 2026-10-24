@@ -2629,6 +2629,42 @@ fn probe_a_revision_on_a_cells_final_mark_fails() {
     assert_eq!(cell_final_marks(&wrapped).len(), 1);
 }
 
+/// Only the stories Accept or Reject All walks count: the same cell in
+/// the glossary's building blocks is no story, and the comparer copies it
+/// as it was (`a_part_that_is_no_story_is_copied_as_it_was`); in a header
+/// it is one (codex on #1680).
+#[test]
+fn a_cells_final_mark_counts_only_in_a_story() {
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let table = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl><w:p/>"#,
+        marked("Old.", None),
+        marked("New.", Some("ins"))
+    );
+    let document = format!(
+        r#"<w:document xmlns:w="{W}" xmlns:r="{R}"><w:body><w:p><w:r><w:t>Body.</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr></w:body></w:document>"#
+    );
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}/glossaryDocument" Target="glossary/document.xml"/><Relationship Id="rId2" Type="{R}/header" Target="header1.xml"/></Relationships>"#
+    );
+    let glossary = format!(
+        r#"<w:glossaryDocument xmlns:w="{W}"><w:docParts><w:docPart><w:docPartPr><w:name w:val="Block"/></w:docPartPr><w:docPartBody>{table}</w:docPartBody></w:docPart></w:docParts></w:glossaryDocument>"#
+    );
+    let header = format!(r#"<w:hdr xmlns:w="{W}">{table}</w:hdr>"#);
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &document),
+        ("word/_rels/document.xml.rels", &rels),
+        ("word/glossary/document.xml", &glossary),
+        ("word/header1.xml", &header),
+    ]);
+    let parts: Vec<String> = cell_final_marks(&bytes)
+        .into_iter()
+        .map(|f| f.part)
+        .collect();
+    assert_eq!(parts, ["word/header1.xml"]);
+}
+
 /// Word's own shapes pass: the revision on the mark before the cell's
 /// last (an append, as Word's Compare writes it), and every mark of an
 /// inserted or deleted row revised with the row (`w:trPr/w:ins`,
