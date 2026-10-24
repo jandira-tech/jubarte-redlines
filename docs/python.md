@@ -1290,13 +1290,6 @@ A plan (--plan plan.json) is a list of operations, applied all or none;
     "their"},
     {"kind": "delete_paragraph", "paragraph": "p2"}]}
 
-Desired-text plans (PlanV2), a separate workflow:
-  jubarte edit template FILE --select p12,p20-p25 -o edits.json   the paragraphs as they
-  read
-  (edit the desired text in edits.json)
-  jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for
-  the difference
-
 Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]
   Inline --save-plan FILE saves without applying; writes require -o or --out-dir.
   Run jubarte edit ACTION --help for its grammar.

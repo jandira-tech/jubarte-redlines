@@ -327,7 +327,7 @@ List tracked changes with IDs for accept, reject and edit plans
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
 | `--json` |  |  | false |  |  | Emit one JSON object per line |
-| `--author` |  | <NAME> |  |  | append | Only the changes this author made (exact match); repeat for several, as `accept --author` selects them |
+| `--author` |  | <NAME> |  |  | append | Only listed changes by this author (exact match); repeat for several. Comment-body revisions are not listed, even without this filter |
 | `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
 
 ## jubarte accept
