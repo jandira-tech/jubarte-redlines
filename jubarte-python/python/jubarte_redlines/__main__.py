@@ -32,10 +32,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 import sys
 from dataclasses import asdict
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NoReturn
 
 from . import __version__, capabilities
 from .document import Document, EditPlanError, EditResult, diff_render
@@ -80,6 +82,7 @@ def _read(path: Path) -> Document:
     except OSError as exc:
         raise CliError(f"reading {path}: {_os(exc)}") from exc
     from . import _native
+
     refused = _native.refused_input(path, doc.to_bytes(), True)
     if refused is not None:
         raise CliError(refused)
@@ -93,6 +96,7 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
     except OSError as exc:
         raise CliError(f"reading {path}: {_os(exc)}") from exc
     from . import _native
+
     kind = force_kind or ("docx" if data.startswith(b"PK\x03\x04") else "md")
     refused = _native.refused_input(path, data, kind == "docx")
     if refused is not None:
@@ -110,7 +114,9 @@ def _named_kind(path: Path) -> str | None:
     when only its bytes can tell."""
     from . import _native
 
-    parsed = json.loads(_native.parse_cli_json(["diff", "--", str(path), str(path)], program="jubarte-redlines", supported=["diff"]))
+    parsed = json.loads(
+        _native.parse_cli_json(["diff", "--", str(path), str(path)], program="jubarte-redlines", supported=["diff"])
+    )
     return parsed["args"]["old_format"]
 
 
@@ -147,6 +153,54 @@ def _write(path: Path, data: bytes | str) -> int:
     except OSError as exc:
         raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
+
+
+def _replace(path: Path, data: bytes | str) -> int:
+    """Writes ``data`` beside ``path`` and renames it over, as the binary
+    publishes: an existing output — a hard or symbolic link among them —
+    has its own directory entry replaced, never its target written
+    through; a replaced regular file keeps its mode. Returns the bytes
+    written."""
+    raw = data.encode("utf-8") if isinstance(data, str) else data
+    staged = path.with_name(f".{path.name}.jubarte-{os.getpid()}.tmp")
+    try:
+        with open(staged, "wb") as handle:
+            handle.write(raw)
+        try:
+            replaced = os.stat(path, follow_symlinks=False).st_mode
+        except OSError:
+            replaced = 0
+        if stat.S_ISREG(replaced):
+            os.chmod(staged, replaced & 0o777)
+        os.replace(staged, path)
+    except OSError as exc:
+        try:
+            os.unlink(staged)
+        except OSError:
+            pass
+        raise CliError(f"writing {path}: {_os(exc)}") from exc
+    return len(raw)
+
+
+def _refuse_alias_output(args: argparse.Namespace) -> None:
+    """Refuses a ``read --tables -o`` that names its input — the same
+    path, or the same file through a hard or symbolic link — before any
+    work: ``--force`` authorizes replacing an output, never an input
+    alias (#1698). Any other existing output is the binary's
+    ``OUTPUT_EXISTS`` usage refusal."""
+    output, file = args.output, args.file
+    if _same_file(output, file):
+        _error(
+            f"OUTPUT_ALIAS: the output '{_spelled(args, 'output')}' is the same file as the input '{_spelled(args, 'file')}'",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
+    if output.exists() and not args.force:
+        _error(
+            f"OUTPUT_EXISTS: output '{_spelled(args, 'output')}' already exists (use --force to overwrite)",
+            EXIT_USAGE,
+        )
+        raise SystemExit(EXIT_USAGE)
 
 
 def _pdf_options(args: argparse.Namespace) -> PdfOptions:
@@ -318,7 +372,30 @@ def _for_edit_json(args: argparse.Namespace, docx: bytes) -> str | None:
         return None
 
 
+def _usage_exit(exc: Exception) -> NoReturn:
+    """Exit 2 with the binary's usage wording for an engine refusal raised
+    with its ``USAGE`` category (a selection the flags do not spell); any
+    other error is raised unchanged, keeping the ordinary exit 1."""
+    message = str(exc)
+    stripped = message.removeprefix("USAGE: ")
+    if stripped != message:
+        _error(stripped, EXIT_USAGE)
+        raise SystemExit(EXIT_USAGE) from exc
+    raise exc
+
+
 def cmd_read(args: argparse.Namespace) -> int:
+    from . import _native
+
+    try:
+        return _read_task(args)
+    except _native.JubarteError as exc:
+        # A selection refusal carries its USAGE category; the binary exits
+        # 2 for it, in the view, snapshot and tables paths alike.
+        _usage_exit(exc)
+
+
+def _read_task(args: argparse.Namespace) -> int:
     from . import _native
 
     if args.for_edit:
@@ -335,29 +412,24 @@ def cmd_read(args: argparse.Namespace) -> int:
         return EXIT_OK
     if args.tables:
         # With -p, the grids of the tables it reaches, then its view; a
-        # pick that reaches no table is a usage error. -o FILE writes them.
+        # pick that reaches no table is a usage error. -o FILE writes them,
+        # never over the input itself, and only over an existing file with
+        # --force (#1698).
         if args.output is not None:
-            _ensure_writable(args.output, args.force)
-        try:
-            markdown, warnings = _native.tables_view(
-                _input(args),
-                track_changes=args.track_changes,
-                comments=args.comments == "inline",
-                dates=bool(args.dates),
-                page_markers=not args.no_page_markers,
-                paragraphs=args.paragraphs,
-                source=args.file.name,
-            )
-        except _native.JubarteError as exc:
-            usage = str(exc).removeprefix("USAGE: ")
-            if usage == str(exc):
-                raise
-            _error(usage, EXIT_USAGE)
-            raise SystemExit(EXIT_USAGE) from exc
+            _refuse_alias_output(args)
+        markdown, warnings = _native.tables_view(
+            _input(args),
+            track_changes=args.track_changes,
+            comments=args.comments == "inline",
+            dates=bool(args.dates),
+            page_markers=not args.no_page_markers,
+            paragraphs=args.paragraphs,
+            source=args.file.name,
+        )
         for warning in warnings:
             print(f"warning: {warning}", file=sys.stderr)
         if args.output is not None:
-            size = _write(args.output, markdown)
+            size = _replace(args.output, markdown)
             if not args.quiet:
                 # The binary's line for a text output with no format of its own.
                 sys.stdout.flush()
@@ -438,10 +510,27 @@ def cmd_add(args: argparse.Namespace) -> int:
 def _print_refusal(exc: EditPlanError) -> None:
     """A refused plan's per-operation report on stdout, the error on stderr."""
     for i, o in enumerate(exc.outcomes, start=1):
-        row: dict[str, object] = {"ev": "op", "i": i, "id": o.id, "op": o.kind, "status": o.status, "matches": o.matches}
-        row.update({key: value for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message)) if value is not None})
+        row: dict[str, object] = {
+            "ev": "op",
+            "i": i,
+            "id": o.id,
+            "op": o.kind,
+            "status": o.status,
+            "matches": o.matches,
+        }
+        row.update(
+            {
+                key: value
+                for key, value in (("at", o.paragraph), ("ctx", o.context), ("code", o.code), ("message", o.message))
+                if value is not None
+            }
+        )
         print(_jsonl(row))
-    print(_jsonl({"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}))
+    print(
+        _jsonl(
+            {"ev": "summary", "status": "failed", "code": exc.code, "operation": exc.operation, "message": exc.message}
+        )
+    )
     sys.stdout.flush()
     _error(f"plan refused: {exc}", EXIT_PLAN_REFUSED)
 
@@ -518,7 +607,9 @@ def _record(args: argparse.Namespace, verb: str, doc: Document) -> int:
     }
     try:
         recorded = json.loads(
-            _native.record_plan(verb, json.dumps(args.operations, ensure_ascii=False), doc.to_bytes(), json.dumps(options), held=held)
+            _native.record_plan(
+                verb, json.dumps(args.operations, ensure_ascii=False), doc.to_bytes(), json.dumps(options), held=held
+            )
         )
     except _native.JubarteError as exc:
         _error(f"{plan}: {exc}", EXIT_PLAN_REFUSED)
@@ -576,7 +667,9 @@ def _run_edit(args: argparse.Namespace, verb: str) -> int:
         except OSError:
             current = None
         if current != consumed:
-            raise CliError(f"the plan was applied, but {plan} was not deleted: it no longer holds the plan (an output was written over it?)")
+            raise CliError(
+                f"the plan was applied, but {plan} was not deleted: it no longer holds the plan (an output was written over it?)"
+            )
         try:
             os.remove(plan)
         except OSError as exc:
@@ -630,7 +723,9 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
         options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
         pages: dict[str, int] = {}
         starts: dict[str, list[str]] = {}
-        rendered_docs = (("clean", result.clean),) if editing else (("redline", result.redline), ("clean", result.clean))
+        rendered_docs = (
+            (("clean", result.clean),) if editing else (("redline", result.redline), ("clean", result.clean))
+        )
         for name, document in rendered_docs:
             rendered = document.render(pdf=pdf, png_dpi=args.dpi if png else None, options=options)
             pages[name] = rendered.report.page_count
@@ -639,7 +734,9 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
                 outputs.append((f"{name}.pdf", rendered.pdf))
             for i, image in enumerate(rendered.pngs):
                 outputs.append((_png_name(name, i, len(rendered.pngs)), image))
-        lines.append(_jsonl({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts}))
+        lines.append(
+            _jsonl({"ev": "render", "engine": f"jubarte {__version__}", "pages": pages, "page_starts": starts})
+        )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
@@ -658,7 +755,9 @@ def _apply_edit(args: argparse.Namespace, verb: str, doc: Document) -> int:
             resolved = result.report.resolved_revisions
             text = _native.resolution_text(
                 source_bytes,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
+                json.dumps(
+                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
+                ),
             )
             names = [name for name, _ in outputs] + ["report.jsonl"]
             sys.stdout.flush()
@@ -688,8 +787,13 @@ def _edit_notes(notes: list[str], result: EditResult) -> list[str]:
     lines = [f"note: {note}" for note in (*notes, *result.report.notes)]
     for outcome in result.report.operations:
         if outcome.anchor_given is not None and outcome.anchor_read_as is not None:
-            given, read_as = json.dumps(outcome.anchor_given, ensure_ascii=False), json.dumps(outcome.anchor_read_as, ensure_ascii=False)
-            lines.append(f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)")
+            given, read_as = (
+                json.dumps(outcome.anchor_given, ensure_ascii=False),
+                json.dumps(outcome.anchor_read_as, ensure_ascii=False),
+            )
+            lines.append(
+                f"note: {outcome.id}: anchor {given} read as {read_as} (Markdown marks are not document text)"
+            )
     return lines
 
 
@@ -716,7 +820,9 @@ def _print_resolution_or_view(source: bytes, parsed: object, result: EditResult,
             resolved = result.report.resolved_revisions
             text = _native.resolution_text(
                 source,
-                json.dumps({"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False),
+                json.dumps(
+                    {"accepted": list(resolved.accepted), "rejected": list(resolved.rejected)}, ensure_ascii=False
+                ),
             )
             sys.stdout.write(text)
             return
@@ -731,14 +837,23 @@ def _print_changed_view(result: EditResult, editing: bool, shown: Path) -> None:
     from . import _native
 
     try:
-        view = _native.changed_view(result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown))
+        view = _native.changed_view(
+            result.redline.to_bytes(), result.report.author, accepted=editing, source=str(shown)
+        )
     except _native.JubarteError as exc:
         print(f"warning: the changed blocks cannot be shown: {exc}", file=sys.stderr)
         return
     sys.stdout.write(view)
 
 
-def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, notes: list[str], source: bytes | None = None, parsed: object = None) -> int:
+def _write_edited(
+    args: argparse.Namespace,
+    path: Path,
+    result: EditResult,
+    notes: list[str],
+    source: bytes | None = None,
+    parsed: object = None,
+) -> int:
     """``edit`` and ``add`` without --out-dir, as the binary: the redline (in
     editing mode, the result) as one .docx at ``path``, its PDF and PNG pages
     beside it, the ``wrote`` lines and notes on stderr, the changed blocks'
@@ -778,10 +893,15 @@ def _write_edited(args: argparse.Namespace, path: Path, result: EditResult, note
     print(f"wrote {path} (docx, {len(document)} bytes)", file=sys.stderr)
     if pages is not None:
         pdf_path, pdf_bytes = outputs[1]
-        print(f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr)
+        print(
+            f"wrote {pdf_path} (pdf, {len(pdf_bytes)} bytes, {pages} page{'' if pages == 1 else 's'})", file=sys.stderr
+        )
     if png_count:
         pattern = path.with_name(f"{path.stem}-page-NN.png")
-        print(f"wrote {pattern} (png, {png_count} page{'' if png_count == 1 else 's'}, {args.dpi:g} dpi)", file=sys.stderr)
+        print(
+            f"wrote {pattern} (png, {png_count} page{'' if png_count == 1 else 's'}, {args.dpi:g} dpi)",
+            file=sys.stderr,
+        )
     for note in _edit_notes(notes, result):
         print(note, file=sys.stderr)
     if source is not None:
@@ -836,7 +956,11 @@ def cmd_convert(args: argparse.Namespace) -> int:
         doc = _from_markdown(args, source)
         # Markdown goes to Word unless a PDF, PNG or snapshot is asked for.
         if args.output_format not in ("pdf", "png", "json"):
-            for given, flag in ((args.move_comments, "--move-comments"), (args.changed_pages, "--changed-pages"), (args.pages is not None, "--pages")):
+            for given, flag in (
+                (args.move_comments, "--move-comments"),
+                (args.changed_pages, "--changed-pages"),
+                (args.pages is not None, "--pages"),
+            ):
                 if given:
                     raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
@@ -867,7 +991,10 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
     when ``-o`` names a .png; the render flags are the task's own."""
     png = args.output_format == "png"
     want_pdf = not png
-    for side, flag in ((getattr(args, "font_report", None), "--font-report"), (getattr(args, "report", None), "--report")):
+    for side, flag in (
+        (getattr(args, "font_report", None), "--font-report"),
+        (getattr(args, "report", None), "--report"),
+    ):
         if side is not None:
             named = "PNG output" if png else "PDF output"
             _check_side_file(side, flag, ((output, named), (args.file, "input")), args.force)
@@ -880,12 +1007,17 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
     # count. The pages are known only now; check every PNG path before the
     # first write so a refused page leaves no partial bundle.
     numbered = rendered.report.pages[: len(rendered.pngs)]
-    png_paths = [output.parent / _png_name(output.stem, p.number - 1, rendered.report.document_pages) for p in numbered]
+    png_paths = [
+        output.parent / _png_name(output.stem, p.number - 1, rendered.report.document_pages) for p in numbered
+    ]
     for path in png_paths:
         _ensure_writable(path, args.force)
         # `-o r.png --report r-page-01.png` would write the page, then the
         # report over it.
-        for side, flag in ((getattr(args, "font_report", None), "--font-report"), (getattr(args, "report", None), "--report")):
+        for side, flag in (
+            (getattr(args, "font_report", None), "--font-report"),
+            (getattr(args, "report", None), "--report"),
+        ):
             if side is not None and _same_file(side, path):
                 raise CliError(f"{flag} '{side}' is the same file as the PNG output")
     if rendered.pdf is not None:
@@ -902,7 +1034,12 @@ def _render_to(args: argparse.Namespace, doc: Document, output: Path) -> None:
     if getattr(args, "font_report", None) is not None:
         _write(args.font_report, json.dumps([asdict(f) for f in rendered.report.fonts]))
     if getattr(args, "report", None) is not None:
-        report = {"page_count": pages, "document_pages": rendered.report.document_pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
+        report = {
+            "page_count": pages,
+            "document_pages": rendered.report.document_pages,
+            "pages": [asdict(p) for p in rendered.report.pages],
+            "fonts": [asdict(f) for f in rendered.report.fonts],
+        }
         _write(args.report, json.dumps(report, ensure_ascii=False))
 
 
@@ -918,10 +1055,17 @@ def _write_updated_fields(args: argparse.Namespace, doc: Document) -> int:
     _ensure_writable(output, args.force)
     updated = doc.update_fields()
     for field in updated.fields:
-        print(f"{field.paragraph}\t{field.kind}\t{json.dumps(field.old, ensure_ascii=False)} -> {json.dumps(field.new, ensure_ascii=False)}")
+        print(
+            f"{field.paragraph}\t{field.kind}\t{json.dumps(field.old, ensure_ascii=False)} -> {json.dumps(field.new, ensure_ascii=False)}"
+        )
     print(f"{len(updated.fields)} field(s) written; {updated.page_count} page(s)", file=sys.stderr)
     if args.report is not None:
-        _write(args.report, json.dumps({"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False))
+        _write(
+            args.report,
+            json.dumps(
+                {"page_count": updated.page_count, "fields": [asdict(f) for f in updated.fields]}, ensure_ascii=False
+            ),
+        )
     data = updated.document.to_bytes()
     _write(output, data)
     _wrote(args, output, "docx", len(data))
@@ -971,7 +1115,9 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
             if page.only_in is not None:
                 print(f"page {page.index + 1}: only in {page.only_in}")
             else:
-                print(f"page {page.index + 1}: {page.changed_ratio * 100:.2f}% of pixels changed, box {list(page.bbox or (0, 0, 0, 0))}")
+                print(
+                    f"page {page.index + 1}: {page.changed_ratio * 100:.2f}% of pixels changed, box {list(page.bbox or (0, 0, 0, 0))}"
+                )
         total = len(diff.pages)
         wrote = f" (wrote {args.out_dir})" if args.out_dir is not None else ""
         print(f"{len(changed)} of {total} page{'' if total == 1 else 's'} differ{wrote}")
@@ -1022,16 +1168,36 @@ def cmd_diff(args: argparse.Namespace) -> int:
     old = _read_side(args.old, args.old_format)
     new = _read_side(args.new, args.new_format)
     if args.format in ("github", "word", "normal", "context", "side-by-side"):
-        text = _native.diff_view(old, new, format=args.format, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
-                                 context=args.context, accept_changes=args.accept_changes, full_lines=args.full_lines)
+        text = _native.diff_view(
+            old,
+            new,
+            format=args.format,
+            old_name=_spelled(args, "old"),
+            new_name=_spelled(args, "new"),
+            context=args.context,
+            accept_changes=args.accept_changes,
+            full_lines=args.full_lines,
+        )
     else:
         critic = args.format == "critic"
         if critic and not (isinstance(old, str) and isinstance(new, str)):
-            raise CliError("--format critic needs both documents in Markdown; "
-                           "`jubarte compare OLD NEW` prints their redline as the agent view")
+            raise CliError(
+                "--format critic needs both documents in Markdown; "
+                "`jubarte compare OLD NEW` prints their redline as the agent view"
+            )
         # The shared parser dated the run (D17).
-        text = _decode_diff(_native.diff_json(old, new, old_name=_spelled(args, "old"), new_name=_spelled(args, "new"),
-                                              author=args.author, date=args.datetime, columns=args.columns, critic=critic)).text
+        text = _decode_diff(
+            _native.diff_json(
+                old,
+                new,
+                old_name=_spelled(args, "old"),
+                new_name=_spelled(args, "new"),
+                author=args.author,
+                date=args.datetime,
+                columns=args.columns,
+                critic=critic,
+            )
+        ).text
     if output is None:
         sys.stdout.write(text)
         return EXIT_OK
@@ -1136,10 +1302,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_capabilities(args: argparse.Namespace) -> int:
     if args.json:
-        print(json.dumps(
-            capabilities(operation=args.operation, field=args.field, matrix=args.matrix),
-            indent=2,
-        ))
+        print(
+            json.dumps(
+                capabilities(operation=args.operation, field=args.field, matrix=args.matrix),
+                indent=2,
+            )
+        )
         return EXIT_OK
     from . import _native
 
@@ -1152,13 +1320,37 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
 
 # Handlers own host I/O. Rust clap owns the grammar, defaults and help.
 _HANDLERS = {
-    "read": cmd_read, "edit": cmd_edit, "add": cmd_add,
-    "convert": cmd_convert, "compare": cmd_compare, "diff": cmd_diff,
-    "changes": cmd_changes, "comments": cmd_comments,
-    "accept": cmd_accept, "reject": cmd_reject, "visual-diff": cmd_diff_render,
-    "validate": cmd_validate, "capabilities": cmd_capabilities,
+    "read": cmd_read,
+    "edit": cmd_edit,
+    "add": cmd_add,
+    "convert": cmd_convert,
+    "compare": cmd_compare,
+    "diff": cmd_diff,
+    "changes": cmd_changes,
+    "comments": cmd_comments,
+    "accept": cmd_accept,
+    "reject": cmd_reject,
+    "visual-diff": cmd_diff_render,
+    "validate": cmd_validate,
+    "capabilities": cmd_capabilities,
 }
-_PATH_ARGUMENTS = {"file", "original", "baseline", "modified", "old", "new", "output", "plan", "out_dir", "reference_doc", "report", "font_report", "repair", "a", "b"}
+_PATH_ARGUMENTS = {
+    "file",
+    "original",
+    "baseline",
+    "modified",
+    "old",
+    "new",
+    "output",
+    "plan",
+    "out_dir",
+    "reference_doc",
+    "report",
+    "font_report",
+    "repair",
+    "a",
+    "b",
+}
 
 
 class SharedParser:
@@ -1176,7 +1368,9 @@ class SharedParser:
         global _JSON_ERRORS
         arguments = list(sys.argv[1:] if argv is None else argv)
         _JSON_ERRORS = _native.wants_json(arguments)
-        parsed = json.loads(_native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(self.supported)))
+        parsed = json.loads(
+            _native.parse_cli_json(arguments, program="jubarte-redlines", supported=list(self.supported))
+        )
         if "text" in parsed:
             for note in parsed.get("notes", ()):
                 print(note, file=sys.stderr)
@@ -1192,7 +1386,11 @@ class SharedParser:
         self._validate_host(command, values)
         # FILE and --plan as typed: messages quote them, and Path() would
         # drop a "./" or a trailing "/" the other CLIs keep.
-        values["spelled"] = {key: values[key] for key in ("file", "plan", "old", "new", "output", "repair") if values.get(key) is not None}
+        values["spelled"] = {
+            key: values[key]
+            for key in ("file", "plan", "old", "new", "output", "repair")
+            if values.get(key) is not None
+        }
         for key in _PATH_ARGUMENTS:
             if values.get(key) is not None:
                 values[key] = Path(values[key])
@@ -1226,7 +1424,9 @@ class SharedParser:
             to = values.get("to")
             extension = Path(values.get("output") or "").suffix.lower()
             if to == "md" or (to is None and extension in (".md", ".markdown", ".txt", ".mdown", ".mkd", ".mkdn")):
-                self.error("--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view")
+                self.error(
+                    "--to md with page markers is not supported by the Python CLI; `read FILE` prints the agent text view"
+                )
             # A Word name fails before any read; a name that says nothing
             # is sniffed in cmd_convert.
             word_in = _named_kind(Path(values["file"])) == "docx"
