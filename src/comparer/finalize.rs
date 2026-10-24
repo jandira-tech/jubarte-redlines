@@ -29376,9 +29376,13 @@ mod closing_authored_section_boundary_tests {
                         .len(),
                     1
                 );
-                assert!(
+                // The saved pPr cannot hold a section break, so Reject keeps
+                // the live one, as Word's Reject All does (#1708). An added
+                // break should be an inserted paragraph mark instead (#1718).
+                assert_eq!(
                     dom.descendants(rejected_paragraph, Some(&W::sect_pr()))
-                        .is_empty()
+                        .len(),
+                    1
                 );
                 assert_eq!(dom.value(accepted_paragraph), "ONE");
                 assert_eq!(dom.value(rejected_paragraph), "ONE");
@@ -29462,9 +29466,12 @@ mod closing_authored_section_boundary_tests {
             canonical(&dom, dom.element(ap, &W::p_pr()).unwrap()),
             canonical(&dom, revised)
         );
+        // Reject keeps the live section break, as Word's Reject All does
+        // (#1708, #1718). The saved and revised spacing are the same here,
+        // so the reverted pPr is the revised one.
         assert_eq!(
             canonical(&dom, dom.element(rp, &W::p_pr()).unwrap()),
-            canonical(&dom, original)
+            canonical(&dom, revised)
         );
     }
 
@@ -29479,7 +29486,12 @@ mod closing_authored_section_boundary_tests {
         ] {
             let mut dom = Dom::new();
             let roots=[original_section,revised_section].map(|has_section|parse(&mut dom,&format!("<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",W::URI,props(has_section.then_some(12240)),section(12240))));
-            let expected_original = projection(&mut dom, roots[0], false);
+            // An added break is tracked as a pPr change, whose saved pPr
+            // cannot hold it, so Reject keeps it, as Word's Reject All does:
+            // the revised body with the original spacing, which here is the
+            // same (#1708). Word's Compare inserts the paragraph mark (#1718).
+            let added = !original_section && revised_section;
+            let expected_original = projection(&mut dom, roots[usize::from(added)], false);
             let expected_revised = projection(&mut dom, roots[1], true);
             let bodies = roots.map(|root| dom.element(root, &W::body()).unwrap());
             let settings = if word {
