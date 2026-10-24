@@ -2412,6 +2412,36 @@ fn custom_xml_data_holds_no_revision_ids() {
     }
 }
 
+/// Nor paragraph ids: `PARA_ID_OUT_OF_RANGE` reads no custom XML data
+/// part, and the renumbering a document's own paraId sets off leaves the
+/// data's bytes alone (codex on #1666).
+#[test]
+fn custom_xml_data_holds_no_paragraph_ids() {
+    const CUSTOM_XML: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+    const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let data = format!(r#"<root xmlns:w14="{W14}" w14:paraId="FFFFFFFF"/>"#);
+    for name in ["customXml/item1.xml", "customXml/item1.dat"] {
+        let body = format!(
+            r#"<w:p xmlns:w14="{W14}" w14:paraId="80000001"><w:r><w:t>x</w:t></w:r></w:p>"#
+        );
+        let mut pkg = PartFs::open(&common::docx::docx(&body)).unwrap();
+        pkg.set_part(name, data.as_bytes().to_vec());
+        pkg.add_content_type_override(&format!("/{name}"), "application/xml");
+        pkg.add_document_relationship("word/document.xml", CUSTOM_XML, &format!("../{name}"));
+        let bytes = pkg.to_zip().unwrap();
+        let flagged: Vec<String> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+            .into_iter()
+            .filter(|f| f.code == "PARA_ID_OUT_OF_RANGE")
+            .map(|f| f.part)
+            .collect();
+        assert_eq!(flagged, ["word/document.xml"], "{name}");
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        let held = PartFs::open(&repaired.docx).unwrap();
+        assert_eq!(held.part_bytes(name), Some(data.as_bytes()), "{name}");
+    }
+}
+
 /// Repair renames the end that closes a renumbered start, not an element
 /// of another namespace that shares its local name and id (Codex on
 /// #1666).

@@ -1488,12 +1488,12 @@ fn xml_parts(pkg: &PartFs) -> Vec<String> {
         .collect()
 }
 
-/// The XML parts that hold WordprocessingML revisions: every XML part but
-/// custom XML data, which holds the application's own XML whatever its name
+/// The XML parts that hold WordprocessingML: every XML part but custom XML
+/// data, which holds the application's own XML whatever its name
 /// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
 /// reach, the package's own included). OpenXmlValidator checks no revision
-/// id there.
-fn revision_parts(pkg: &PartFs) -> Vec<String> {
+/// id there, and no paragraph id (codex on #1666).
+fn wordml_parts(pkg: &PartFs) -> Vec<String> {
     let parts = pkg.parts();
     let data =
         crate::opc::custom_xml_data(std::iter::once(("", pkg.package_relationships())).chain(
@@ -1721,7 +1721,7 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in revision_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
@@ -1842,7 +1842,7 @@ pub(crate) fn revision_id_occurrences(
         .map_err(|e| ValidateError::Package(e.to_string()))?;
     let pkg = PartFs::open(&transitional)?;
     let mut out = HashMap::new();
-    for part in revision_parts(&pkg) {
+    for part in wordml_parts(&pkg) {
         let Some((dom, root)) = parse_part(&pkg, &part) else {
             continue;
         };
@@ -1976,7 +1976,7 @@ fn out_of_range_para_ids(xml: &str) -> Vec<(&'static str, String)> {
 }
 
 fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some(xml) = pkg.part_string(&name) else {
             continue;
         };
@@ -3085,7 +3085,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
 /// into Word's range, and every reference to it (`paraIdParent`, the
 /// comment parts) follows.
 fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
-    let parts = xml_parts(pkg);
+    let parts = wordml_parts(pkg);
     let mut used: HashSet<u32> = HashSet::new();
     for name in &parts {
         let Some(xml) = pkg.part_string(name) else {
