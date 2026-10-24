@@ -8085,16 +8085,31 @@ fn compare_documents_impl(
     }
     // A story part under a name of its own (a header at `word/chrome.xml`)
     // is not swept above, but its cells' final marks settle too (codex on
-    // #1680, round 10): every other WordprocessingML part holding a cell
-    // whose final mark carries a revision no row covers, as the validator
-    // checks every part.
-    for part in out.parts() {
-        let settled = part == main1
-            || part == "word/footnotes.xml"
+    // #1680, round 10). Stories are known by the main document's
+    // relationships to them: a custom XML data item or the glossary holds
+    // cells too, but the comparison wrote neither and they stay as they
+    // were (minimax on #1680, round 11).
+    let stories: Vec<String> = out
+        .read_rels_for(&main1)
+        .map(|rels| {
+            rels.items
+                .iter()
+                .filter(|r| {
+                    r.target_mode.as_deref() != Some("External")
+                        && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+                            .iter()
+                            .any(|kind| r.rel_type.ends_with(kind))
+                })
+                .map(|r| out.resolve_rel_target(&main1, &r.target))
+                .collect()
+        })
+        .unwrap_or_default();
+    for part in stories {
+        let settled = part == "word/footnotes.xml"
             || part == "word/endnotes.xml"
             || part.starts_with("word/header")
             || part.starts_with("word/footer");
-        if settled || !part.ends_with(".xml") {
+        if settled {
             continue;
         }
         let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
