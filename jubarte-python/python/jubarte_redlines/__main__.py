@@ -1353,6 +1353,19 @@ _PATH_ARGUMENTS = {
 }
 
 
+def _host_help(text: str) -> str:
+    """The shared clap help this host can stand behind: the PlanV2
+    `edit template` / `edit apply` workflow the Python CLI has no handler
+    for (its `__edit-template` route is not even in the facade it parses
+    with) is dropped from `edit`'s advice, so the help never advertises a
+    route that would fail here (#1698)."""
+    start = text.find("Desired-text plans (PlanV2), a separate workflow:")
+    if start < 0:
+        return text
+    end = text.find("Typed actions:", start)
+    return text if end < 0 else text[:start] + text[end:]
+
+
 class SharedParser:
     """Compatibility facade: argparse.Namespace and SystemExit over Rust clap."""
 
@@ -1378,7 +1391,7 @@ class SharedParser:
                 sys.stdout.write(parsed["json"])
                 sys.stdout.flush()
             stream = sys.stderr if parsed["stream"] == "stderr" else sys.stdout
-            stream.write(parsed["text"])
+            stream.write(_host_help(parsed["text"]))
             raise SystemExit(parsed["exit_code"])
         for note in parsed.get("notes", ()):
             print(note, file=sys.stderr)
