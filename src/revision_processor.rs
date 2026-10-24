@@ -2680,27 +2680,66 @@ fn add_content_controls_with_owners(
                     .iter()
                     .any(|source| !owned_paragraphs.contains(source))
             });
+        // The paragraph-mark merge joined a paragraph of this control with a
+        // paragraph outside it: the merged paragraph's owners are not all the
+        // control's. Word keeps the control a block — the merged paragraph is
+        // its last — so wrap THAT paragraph (the C#'s discarded
+        // `newContentControl`: `sdtContent` holding commonAncestor), not a
+        // clone of the original control (which would resurrect the merged-away
+        // paragraph and its resolved mark), and never an inline control around
+        // its runs.
+        let merged_with_control = foreign_pilcrow_owner
+            && paragraph_owners
+                .and_then(|owners| owners.get(&common_ancestor))
+                .is_some_and(|owners| {
+                    owners.iter().any(|source| owned_paragraphs.contains(source))
+                });
         if dom.name(common_ancestor) == Some(W::p())
-            && !foreign_pilcrow_owner
             && significant.first() == Some(&first_run_child)
             && significant.last() == Some(&last_run_child)
+            && (!foreign_pilcrow_owner || merged_with_control)
         {
-            // Whole-paragraph wrap. FAITHFUL-BUG: the replacement is built
-            // from the ORIGINAL content control's elements (clone-on-attach),
-            // ordered by Order_sdt — not from a control holding the merged
-            // paragraph.
-            let new_cc = dom.new_element(dom.name(cc).unwrap());
-            for (an, av) in dom.attributes(cc) {
-                dom.set_attribute_value(new_cc, &an, Some(&av));
+            if merged_with_control {
+                // Block wrap of the live merged paragraph.
+                let sdt_content = dom.new_element(W::sdt_content());
+                let new_cc = dom.new_element(dom.name(cc).unwrap());
+                for (an, av) in dom.attributes(cc) {
+                    dom.set_attribute_value(new_cc, &an, Some(&av));
+                }
+                let cc_props: Vec<NodeId> = dom
+                    .elements(cc, None)
+                    .into_iter()
+                    .filter(|&e| dom.name(e) != Some(W::sdt_content()))
+                    .collect();
+                let mut cc_kids: Vec<NodeId> =
+                    cc_props.into_iter().map(|e| dom.clone_subtree(e)).collect();
+                cc_kids.push(sdt_content);
+                cc_kids.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
+                for e in cc_kids {
+                    dom.add(new_cc, e);
+                }
+                dom.add_before_self(common_ancestor, new_cc);
+                dom.remove(common_ancestor);
+                let sc = dom.element(new_cc, &W::sdt_content()).unwrap();
+                dom.add(sc, common_ancestor);
+            } else {
+                // Whole-paragraph wrap. FAITHFUL-BUG: the replacement is built
+                // from the ORIGINAL content control's elements (clone-on-attach),
+                // ordered by Order_sdt — not from a control holding the merged
+                // paragraph.
+                let new_cc = dom.new_element(dom.name(cc).unwrap());
+                for (an, av) in dom.attributes(cc) {
+                    dom.set_attribute_value(new_cc, &an, Some(&av));
+                }
+                let mut cc_children = dom.elements(cc, None);
+                cc_children.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
+                for e in cc_children {
+                    let clone = dom.clone_subtree(e);
+                    dom.add(new_cc, clone);
+                }
+                dom.add_before_self(common_ancestor, new_cc);
+                dom.remove(common_ancestor);
             }
-            let mut cc_children = dom.elements(cc, None);
-            cc_children.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
-            for e in cc_children {
-                let clone = dom.clone_subtree(e);
-                dom.add(new_cc, clone);
-            }
-            dom.add_before_self(common_ancestor, new_cc);
-            dom.remove(common_ancestor);
             continue;
         }
 
