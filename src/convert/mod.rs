@@ -2353,6 +2353,8 @@ struct RawCell {
 
 #[derive(Clone)]
 struct LaidImage {
+    /// A wrapping group's box already counts this member's width (codex on #1732).
+    group_reserved: bool,
     w: f32,
     h: f32,
     kind: ImageKind,
@@ -3096,6 +3098,7 @@ fn vml_rect_foot(pad: f32, width: f32) -> f32 {
 /// An inline text box as a flow picture its size, which paints the box.
 fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
     LaidImage {
+        group_reserved: false,
         w: b.w + effect[0] + effect[2],
         h: b.h + effect[1] + effect[3],
         kind: ImageKind::TextBox(std::rc::Rc::new(b)),
@@ -10138,20 +10141,25 @@ fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
 /// nested table is as wide as its grid, less the cell margins it pulls
 /// into ours (probes m1 and m2: a column holding a 200pt nested table is
 /// 201.6pt in Word); a nested table fitted to its own content spans that
-/// fit (#1732 probe t1). A picture placed on the page and a pct table take
-/// no room of their own.
+/// fit (#1732 probe t1). A picture placed on the page takes no room; a pct
+/// table contributes only its intrinsic minimum (codex on #1732).
 fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
     let (mut min, mut max) = (0.0_f32, 0.0_f32);
     for para in &cell.paras {
         let held = || {
             para.images.iter().filter(|image| {
-                !matches!(
-                    image.slot,
-                    ImageSlot::Float {
-                        page_x: Some(_),
-                        ..
-                    }
-                )
+                // Page alignment need not have an offset (codex on #1732).
+                !image.group_reserved
+                    && !matches!(
+                        image.slot,
+                        ImageSlot::Float {
+                            page_x: Some(_),
+                            ..
+                        } | ImageSlot::Float {
+                            h_rel: RelFrame::Page,
+                            ..
+                        }
+                    )
             })
         };
         let (lo, hi) = para_content_extent(fonts, para);
@@ -10176,7 +10184,12 @@ fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                 let width = match geom.width {
                     TblWidth::Grid => cols.iter().sum(),
                     TblWidth::Dxa(w) => w,
-                    TblWidth::Pct(_) => continue,
+                    TblWidth::Pct(_) => {
+                        let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
+                        let (mins, _) =
+                            content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                        mins.iter().sum::<f32>() + gaps
+                    }
                 };
                 (width, width)
             };
@@ -11811,6 +11824,7 @@ fn paragraph_block(
         images.insert(
             0,
             LaidImage {
+                group_reserved: false,
                 w,
                 h,
                 kind,
@@ -13798,6 +13812,8 @@ fn table_block(
         .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())
         || dom.descendants(table, Some(&W::p())).into_iter().any(|p| {
             dom.attribute(p, &para_id).is_some()
+                // A copied text box's marks belong to it (codex on #1732).
+                && !inside_text_box(dom, p, table)
                 && std::iter::successors(dom.parent(p), |&n| dom.parent(n))
                     .find(|&n| dom.name_is(n, &tbl))
                     == Some(table)
@@ -18519,6 +18535,7 @@ fn collect_images(
             );
             if wraps {
                 out.push(LaidImage {
+                    group_reserved: false,
                     w,
                     h,
                     kind: ImageKind::Reserve,
@@ -18576,6 +18593,7 @@ fn collect_images(
                     continue;
                 };
                 out.push(LaidImage {
+                    group_reserved: wraps,
                     w: w * frac[2],
                     h: h * frac[3],
                     kind: decode_image(bytes).unwrap_or(ImageKind::Reserve),
@@ -18644,6 +18662,7 @@ fn collect_images(
                         None => (w, h, inset),
                     };
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: w + inset[0] + inset[2],
                         h: h + inset[1] + inset[3],
                         kind,
@@ -18681,6 +18700,7 @@ fn collect_images(
                     });
                 } else {
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: 72.0,
                         h: 72.0,
                         kind: ImageKind::Broken,
@@ -18759,6 +18779,7 @@ fn collect_images(
                     // Missing OLE/VML preview Target: Word's 1in box
                     // (plan.md Step 10 E), not drawing_extent_pt 200×120.
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: 72.0,
                         h: 72.0,
                         kind: ImageKind::Broken,
@@ -18804,6 +18825,7 @@ fn collect_images(
                     (w, h)
                 };
                 out.push(LaidImage {
+                    group_reserved: false,
                     w,
                     h,
                     kind,
@@ -18978,6 +19000,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         (slot, w, h, a, b)
     };
     Some(LaidImage {
+        group_reserved: false,
         w,
         h,
         kind: ImageKind::VmlLine {
@@ -19063,6 +19086,7 @@ fn vml_rect_image(
     };
     let pad = if width >= 2.0 { width / 2.0 } else { 0.0 };
     Some(LaidImage {
+        group_reserved: false,
         w: w + 2.0 * pad,
         h: h + pad + vml_rect_foot(pad, width),
         kind: ImageKind::VmlRect {

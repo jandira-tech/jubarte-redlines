@@ -41244,6 +41244,77 @@ fn an_autofit_cell_without_tcw_fits_its_column_to_its_inline_picture() {
 }
 
 #[test]
+fn a_page_aligned_picture_does_not_widen_a_fitted_column() {
+    // Page alignment has no page_x offset, but its picture still belongs
+    // to the page rather than the fitted cell (codex on #1732).
+    let text = "<w:r><w:t>Value</w:t></w:r>";
+    let picture = column_centred_picture_run()
+        .replace("relativeFrom=\"column\"", "relativeFrom=\"page\"")
+        .replace("layoutInCell=\"1\"", "layoutInCell=\"0\"")
+        .replace("<wp:wrapSquare wrapText=\"largest\"/>", "<wp:wrapNone/>");
+    let (_, plain_rules) = cell_picture_table(["", ""], text);
+    let (_, rules) = cell_picture_table(["", ""], &format!("{text}{picture}"));
+    let plain_right = plain_rules
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        plain_right < 160.0,
+        "the text fits below the grid's width; right={plain_right}"
+    );
+    assert!(
+        (right - plain_right).abs() < 0.5,
+        "the page picture takes no column width; right={right} plain={plain_right}"
+    );
+}
+
+#[test]
+fn a_wrapped_picture_group_takes_its_box_only_once_in_a_fitted_column() {
+    // The wrapping reservation already holds the group's members; fitting
+    // them too doubles this full-box picture's width (codex on #1732).
+    let group = CELL_PICTURE_GRAPHIC
+        .replace(
+            "http://schemas.openxmlformats.org/drawingml/2006/picture",
+            "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+        )
+        .replace(
+            "<pic:pic>",
+            "<wpg:wgp \
+             xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\">\
+             <wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x=\"0\" y=\"0\"/>\
+             <a:ext cx=\"1524000\" cy=\"762000\"/><a:chOff x=\"0\" y=\"0\"/>\
+             <a:chExt cx=\"1524000\" cy=\"762000\"/></a:xfrm></wpg:grpSpPr><pic:pic>",
+        )
+        .replace("</pic:pic>", "</pic:pic></wpg:wgp>");
+    let picture = column_centred_picture_run();
+    let (_, plain_rules) = cell_picture_table(["", ""], &picture);
+    let plain_right = plain_rules
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (212.0..=224.0).contains(&plain_right),
+        "the control fits the 120pt picture; right={plain_right}"
+    );
+    for wrap in [
+        "<wp:wrapSquare wrapText=\"largest\"/>",
+        "<wp:wrapTopAndBottom/>",
+        "<wp:wrapNone/>",
+    ] {
+        let grouped = picture
+            .replace(CELL_PICTURE_GRAPHIC, &group)
+            .replace("<wp:wrapSquare wrapText=\"largest\"/>", wrap);
+        let (_, rules) = cell_picture_table(["", ""], &grouped);
+        let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (right - plain_right).abs() < 0.5,
+            "{wrap}: the group contributes 120pt once; right={right} plain={plain_right}"
+        );
+    }
+}
+
+#[test]
 fn a_too_tall_unbreakable_row_on_an_empty_page_does_not_leave_it_blank() {
     // fixtures_500 00f45b1b: the landscape brochure is one table row whose
     // cells hold nested tables (so it cannot split). ensure() broke the
@@ -43708,6 +43779,34 @@ fn an_unsaved_table_holding_a_word_saved_nested_table_still_fits() {
 }
 
 #[test]
+fn an_unsaved_table_holding_a_word_saved_text_box_still_fits() {
+    // A copied text box's save mark says nothing of its host table
+    // (codex on #1732). Only the mark changes; the column must not.
+    let pitch = |mark: &str| {
+        let rows = format!(
+            "<w:tr><w:tc><w:tcPr/><w:p><w:r><w:t>Label</w:t></w:r>\
+             <w:r><w:pict><v:shape xmlns:v=\"urn:schemas-microsoft-com:vml\" id=\"box1\" \
+             style=\"position:absolute;width:60pt;height:20pt\"><v:textbox><w:txbxContent>\
+             <w:p xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" {mark}>\
+             <w:r><w:t>Box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape>\
+             </w:pict></w:r></w:p></w:tc><w:tc>{}</w:tc></w:tr>",
+            text_para("Value")
+        );
+        autofit_pitch([2400, 6000], &rows, "Label", "Value")
+    };
+    let unmarked = pitch("");
+    let marked = pitch("w14:paraId=\"12345678\"");
+    assert!(
+        unmarked < 100.0,
+        "the unmarked table fits below its 120pt grid; pitch={unmarked}"
+    );
+    assert!(
+        (marked - unmarked).abs() < 0.5,
+        "the text box's mark does not keep the grid; marked={marked} unmarked={unmarked}"
+    );
+}
+
+#[test]
 fn a_fitted_column_holding_a_fitted_nested_table_takes_the_nested_fit() {
     // #1732 probe t1 (Word 16, 2026-10-24): an unmarked 2400/6000 table
     // without tcW whose first cell holds a nested 3000/3000 table without
@@ -43727,6 +43826,42 @@ fn a_fitted_column_holding_a_fitted_nested_table_takes_the_nested_fit() {
     assert!(
         (value - 89.0).abs() < 6.0,
         "the outer column takes the nested fit; VALUE at {value}"
+    );
+}
+
+#[test]
+fn a_percentage_nested_table_keeps_its_intrinsic_word_width_in_a_fitted_column() {
+    // A percentage is no absolute preference, but its longest word still
+    // needs room in the outer column (codex on #1732).
+    let word = "MMMMMMMMMMMM";
+    let expected = valid_grid_autofit_pitch(
+        [2400, 6000],
+        "",
+        &[[word, "Value"], ["Left", "Tail"]],
+        word,
+        "Value",
+    );
+    let nested = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr></w:tbl>",
+        text_para(&format!("{word} {}", "a ".repeat(40)))
+    );
+    let rows = format!(
+        "<w:tr><w:tc><w:tcPr/>{nested}<w:p/></w:tc><w:tc>{}</w:tc></w:tr>\
+         <w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr>",
+        text_para("Value"),
+        text_para("Left"),
+        text_para("Tail")
+    );
+    let pitch = autofit_pitch([2400, 6000], &rows, "Left", "Value");
+    assert!(
+        expected > 80.0,
+        "the unbroken word needs more room than Left; pitch={expected}"
+    );
+    assert!(
+        (pitch - expected).abs() < 2.0,
+        "the nested word sets the width, not its grid or line; pitch={pitch} word={expected}"
     );
 }
 
