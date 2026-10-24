@@ -1286,8 +1286,7 @@ fn read_tables_writes_its_grids_to_a_file() {
     let (code, _, stderr) = run(&["read", RECEIVED, "--tables", "-o", json.to_str().unwrap()]);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("--tables"), "{stderr}");
-    // The input is never overwritten: its own .docx name is no text
-    // output, and a hard link to it is replaced, not written through.
+    // The input is never overwritten, including through a hard link.
     let copy = dir.path().join("received.docx");
     std::fs::copy(RECEIVED, &copy).unwrap();
     let alias = dir.path().join("alias.md");
@@ -1296,12 +1295,135 @@ fn read_tables_writes_its_grids_to_a_file() {
     let (code, _, stderr) = run(&["read", copy, "--tables", "-o", copy, "--force"]);
     assert_eq!(code, 2, "{stderr}");
     let (code, _, stderr) = run(&["read", copy, "--tables", "-o", alias, "--force"]);
-    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("OUTPUT_ALIAS"), "{stderr}");
     assert_eq!(
         std::fs::read(copy).unwrap(),
         std::fs::read(RECEIVED).unwrap()
     );
-    assert_eq!(std::fs::read_to_string(alias).unwrap(), grids);
+    assert_eq!(std::fs::read(alias).unwrap(), std::fs::read(copy).unwrap());
+}
+
+#[test]
+fn read_tables_refuses_input_aliases_before_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = std::fs::read(RECEIVED).unwrap();
+    for name in ["source", "source.md"] {
+        let source = dir.path().join(name);
+        let hardlink = dir.path().join(format!("{name}-alias.md"));
+        std::fs::write(&source, &original).unwrap();
+        std::fs::hard_link(&source, &hardlink).unwrap();
+        for output in [source.clone(), dir.path().join(".").join(name), hardlink] {
+            for force in [false, true] {
+                let mut args = vec![
+                    "read",
+                    source.to_str().unwrap(),
+                    "--tables",
+                    "-o",
+                    output.to_str().unwrap(),
+                ];
+                if force {
+                    args.push("--force");
+                }
+                let (code, stdout, stderr) = run(&args);
+                assert_eq!(code, 2, "{args:?}: {stderr}");
+                assert!(stdout.is_empty(), "{stdout}");
+                assert_eq!(
+                    stderr,
+                    format!(
+                        "error: OUTPUT_ALIAS: the output '{}' is the same file as the input '{}'\n",
+                        output.display(),
+                        source.display()
+                    )
+                );
+                assert_eq!(std::fs::read(&source).unwrap(), original);
+                assert_eq!(std::fs::read(&output).unwrap(), original);
+            }
+        }
+    }
+    // Prove the refusal precedes parsing the input, even with --force.
+    let invalid = dir.path().join("not-a-package.md");
+    std::fs::write(&invalid, "preserve me").unwrap();
+    let (code, _, stderr) = run(&[
+        "read",
+        invalid.to_str().unwrap(),
+        "--tables",
+        "-o",
+        invalid.to_str().unwrap(),
+        "--force",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("OUTPUT_ALIAS"), "{stderr}");
+    assert_eq!(std::fs::read_to_string(invalid).unwrap(), "preserve me");
+}
+
+#[cfg(unix)]
+#[test]
+fn read_tables_refuses_symlink_to_input() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.md");
+    let alias = dir.path().join("alias.md");
+    let original = std::fs::read(RECEIVED).unwrap();
+    std::fs::write(&source, &original).unwrap();
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let (code, _, stderr) = run(&[
+        "read",
+        source.to_str().unwrap(),
+        "--tables",
+        "-o",
+        alias.to_str().unwrap(),
+        "--force",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("OUTPUT_ALIAS"), "{stderr}");
+    assert!(std::fs::symlink_metadata(alias).unwrap().is_symlink());
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+/// --force replaces a separate output's directory entry, preserving both
+/// the input and any other file linked to that old output inode.
+#[test]
+fn read_tables_force_replaces_output_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = std::fs::read(RECEIVED).unwrap();
+    let (code, grids, stderr) = run(&["read", RECEIVED, "--tables"]);
+    assert_eq!(code, 0, "{stderr}");
+    for symlink in [false, true] {
+        if symlink && !cfg!(unix) {
+            continue;
+        }
+        let target = dir.path().join(if symlink {
+            "symbol-target.md"
+        } else {
+            "hard-target.md"
+        });
+        let output = target.with_extension("txt");
+        std::fs::write(&target, "keep this output inode").unwrap();
+        if symlink {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &output).unwrap();
+        } else {
+            std::fs::hard_link(&target, &output).unwrap();
+        }
+        let (code, stdout, stderr) = run(&[
+            "read",
+            RECEIVED,
+            "--tables",
+            "-o",
+            output.to_str().unwrap(),
+            "--force",
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.is_empty(), "{stdout}");
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), grids);
+        assert!(!std::fs::symlink_metadata(&output).unwrap().is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "keep this output inode"
+        );
+        assert!(!same_file::is_same_file(&target, &output).unwrap());
+        assert_eq!(std::fs::read(RECEIVED).unwrap(), original);
+    }
 }
 
 /// `changes --author NAME` lists only that author's changes, as
