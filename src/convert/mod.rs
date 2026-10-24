@@ -13792,10 +13792,10 @@ fn table_block(
     // a table; Word itself does not lay out by them (probe m3, q1 with
     // the marks, still fits). A nested table's marks are its own: Word
     // fits #1732 probe p1's unmarked table around a marked one.
-    let rsid_r = W::name("rsidR");
-    let rsid_tr = W::name("rsidTr");
-    let para_id = W14::name("paraId");
-    let tbl = W::name("tbl");
+    let rsid_r = W::rsid_r();
+    let rsid_tr = W::rsid_tr();
+    let para_id = W14::para_id();
+    let tbl = W::tbl();
     let word_saved = wrapped_children(dom, table, "tr")
         .into_iter()
         .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())

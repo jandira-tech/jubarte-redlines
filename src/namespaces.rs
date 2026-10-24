@@ -249,6 +249,8 @@ impl W {
     cached_xname!(W::URI, cell_merge, "cellMerge");
     cached_xname!(W::URI, hyperlink, "hyperlink");
     cached_xname!(W::URI, smart_tag, "smartTag");
+    cached_xname!(W::URI, rsid_r, "rsidR");
+    cached_xname!(W::URI, rsid_tr, "rsidTr");
     cached_xname!(W::URI, r_pr_change, "rPrChange");
     cached_xname!(W::URI, p_pr_change, "pPrChange");
     cached_xname!(W::URI, numbering_change, "numberingChange");
@@ -256,6 +258,11 @@ impl W {
     cached_xname!(W::URI, hdr, "hdr");
     cached_xname!(W::URI, ftr, "ftr");
     cached_xname!(W::URI, fld_simple, "fldSimple");
+}
+
+// ── Microsoft Word 2010 wordml attribute names ──────────────────────────────
+impl W14 {
+    cached_xname!(W14::URI, para_id, "paraId");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────
