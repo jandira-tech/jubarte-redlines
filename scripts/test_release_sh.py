@@ -1433,7 +1433,10 @@ class ChangelogCompleteness(unittest.TestCase):
                         "feat(cli): another (#13)",
                         "docs: a page (#14)",
                         "Merge pull request #15 from o/perf/faster",
-                        "Merge pull request #16 from o/pre-release-0-1-1"):
+                        "Merge pull request #16 from o/pre-release-0-1-1",
+                        # a PR's own commit, naming the issue it fixes; gh pr
+                        # view refuses 31, which is no pull request
+                        "fix(edit): an inner commit (#31)"):
             subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", subject], check=True)
         self.repo = repo
 
@@ -1451,23 +1454,31 @@ class ChangelogCompleteness(unittest.TestCase):
         functions = shell_functions("user_facing_prs")
         r = subprocess.run(["bash", "-c", f"{functions}\nuser_facing_prs v0.1.0"],
                            cwd=self.repo, capture_output=True, text=True, timeout=30)
-        self.assertEqual(r.stdout.split(), ["11", "13", "15"], r.stderr)
+        self.assertEqual(r.stdout.split(), ["11", "13", "15", "31"], r.stderr)
 
     def test_a_pr_cited_by_its_closing_issue_or_its_number_is_listed(self) -> None:
         r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "")
+        self.assertEqual(r.stdout.split(), ["31"])
+
+    def test_an_issue_a_fix_commit_names_stays_owed(self) -> None:
+        # 0.14.0: #1670 landed inside #1680's atomic stack merge, with no
+        # merge commit of its own; its commits' "(#1668)" is all that shows it.
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n")
+        self.assertEqual(r.stdout.split(), ["31"], r.stderr)
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n- inner (#31)\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
 
     def test_a_pr_cited_by_an_issue_its_title_names_is_listed(self) -> None:
-        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#23)\n- faster (#25)\n")
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#23)\n- faster (#25)\n<!-- changelog-skip: #31 -->\n")
         self.assertEqual(r.stdout.strip(), "", r.stderr)
 
     def test_a_missing_pr_is_named(self) -> None:
-        r = self.unlisted("### Fixed\n\n- a thing (#21)\n")
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #31 -->\n")
         self.assertEqual(r.stdout.split(), ["13", "15"], r.stderr)
 
     def test_a_pr_can_be_skipped_on_purpose(self) -> None:
-        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #13 #15 -->\n")
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #13 #15 #31 -->\n")
         self.assertEqual(r.stdout.strip(), "", r.stderr)
 
     def test_an_older_section_does_not_count(self) -> None:

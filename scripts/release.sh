@@ -508,6 +508,10 @@ unlisted_prs() {
   cited=" $(changelog_section | grep -oE '#[0-9]+' | tr -d '#' | tr '\n' ' ') "
   for n in $(user_facing_prs "$1"); do
     case "$cited" in *" $n "*) continue ;; esac
+    # A number that is no pull request (gh pr view fails) is the issue a
+    # PR's own commit names ("fix(x): … (#1668)"), and it stays owed: a PR
+    # merged inside another's atomic stack merge (#1670 in 0.14.0) has no
+    # merge commit, so the issue its commits fix is all that shows it.
     refs=$(gh pr view "$n" --json closingIssuesReferences,title \
              -q '(.closingIssuesReferences[].number), .title' </dev/null 2>/dev/null || true)
     hit=0
@@ -717,7 +721,7 @@ if changelog_placeholders >&2; then
 fi
 missing_prs=$(unlisted_prs "$PREV_RELEASE")
 [ -z "$missing_prs" ] \
-  || die "CHANGELOG.md's $VER section cites none of these user-facing PRs merged since $PREV_RELEASE: $(echo $missing_prs) — cite each by its number or an issue it closes, or skip it with a \`<!-- changelog-skip: #N -->\` line"
+  || die "CHANGELOG.md's $VER section cites none of these user-facing PRs merged since $PREV_RELEASE, or issues their fix/feat commits name: $(echo $missing_prs) — cite each by its number or an issue it closes, or skip it with a \`<!-- changelog-skip: #N -->\` line"
 step "every user-facing PR merged since $PREV_RELEASE is cited"
 check_now 2
 
