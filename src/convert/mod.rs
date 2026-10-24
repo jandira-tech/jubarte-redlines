@@ -13264,7 +13264,8 @@ fn table_block(
     // capability matrix wraps into a hairline column.
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
-        for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+        let w = W::w();
+        for col in dom.elements(grid, Some(&W::grid_col())) {
             // A gridCol without a width, or with one that is no finite
             // number (`NaN` and `inf` parse as f32), is a grid Word never
             // wrote: it fits the columns to their
@@ -13274,9 +13275,9 @@ fn table_block(
             // table whose every cell has a tcW, with or without it (#1720
             // probes b1, b2).
             let width = dom
-                .attribute(col, &W::name("w"))
+                .attribute(col, &w)
                 .and_then(|s| s.parse::<f32>().ok())
-                .filter(|w| w.is_finite());
+                .filter(|v| v.is_finite());
             foreign_grid |= width.is_none();
             cols.push(width.map(twip).unwrap_or(80.0));
         }

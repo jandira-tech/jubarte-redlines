@@ -272,6 +272,8 @@ impl W {
     // The marks Word saves a table with, read per table by the convert fit.
     cached_xname!(W::URI, rsid_r, "rsidR");
     cached_xname!(W::URI, rsid_tr, "rsidTr");
+    // A table grid column's width, read per column (`grid_col` is above).
+    cached_xname!(W::URI, w, "w");
 }
 
 impl W14 {
