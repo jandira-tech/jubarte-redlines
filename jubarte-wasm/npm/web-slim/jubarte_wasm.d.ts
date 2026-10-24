@@ -186,10 +186,11 @@ export function changedView(docx: Uint8Array, author: string, accepted: boolean,
  * The listing `jubarte changes` prints: a line per change with its short
  * id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
  * for a change Word wrote as several marks), then `N change(s)`.
+ * `authors` filters as in [`listChanges`](list_changes).
  *
  * Mirrors `jubarte::changes::changes_text`.
  */
-export function changesText(docx: Uint8Array): string;
+export function changesText(docx: Uint8Array, authors?: string[] | null): string;
 
 /**
  * The listing `jubarte comments` prints: a line per comment with its short
@@ -363,10 +364,12 @@ export function inspectDocument(docx: Uint8Array): string;
  * `move_name`, `move_side`, `inside`, `holds_comments` when the change
  * holds comment marks, and `members` (each mark's `id`, `kind`,
  * `target`, `date` and `text`) for a change of several marks.
+ * `authors` keeps those authors' changes (exact names), as `jubarte
+ * changes --author`; omitted or empty, every change.
  *
- * Mirrors `jubarte::changes::list_logical_changes`.
+ * Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
  */
-export function listChanges(docx: Uint8Array): string;
+export function listChanges(docx: Uint8Array, authors?: string[] | null): string;
 
 /**
  * List every comment as a JSON array string (the objects `jubarte comments
@@ -621,7 +624,7 @@ export interface InitOutput {
     readonly capabilityQueryText: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly changeFilter: (a: number, b: number, c: number) => void;
     readonly changedView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
-    readonly changesText: (a: number, b: number, c: number) => void;
+    readonly changesText: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly commentsText: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
@@ -644,7 +647,7 @@ export interface InitOutput {
     readonly inputNotice: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly inputValidityLine: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly inspectDocument: (a: number, b: number, c: number) => void;
-    readonly listChanges: (a: number, b: number, c: number) => void;
+    readonly listChanges: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly listComments: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly markdownStamp: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly markdownToDocx: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;

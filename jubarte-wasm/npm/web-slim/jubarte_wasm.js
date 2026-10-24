@@ -661,35 +661,39 @@ export function changedView(docx, author, accepted, source) {
  * The listing `jubarte changes` prints: a line per change with its short
  * id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
  * for a change Word wrote as several marks), then `N change(s)`.
+ * `authors` filters as in [`listChanges`](list_changes).
  *
  * Mirrors `jubarte::changes::changes_text`.
  * @param {Uint8Array} docx
+ * @param {string[] | null} [authors]
  * @returns {string}
  */
-export function changesText(docx) {
-    let deferred3_0;
-    let deferred3_1;
+export function changesText(docx, authors) {
+    let deferred4_0;
+    let deferred4_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
-        wasm.changesText(retptr, ptr0, len0);
+        var ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.changesText(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr2 = r0;
-        var len2 = r1;
+        var ptr3 = r0;
+        var len3 = r1;
         if (r3) {
-            ptr2 = 0; len2 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeObject(r2);
         }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_export3(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -1364,35 +1368,40 @@ export function inspectDocument(docx) {
  * `move_name`, `move_side`, `inside`, `holds_comments` when the change
  * holds comment marks, and `members` (each mark's `id`, `kind`,
  * `target`, `date` and `text`) for a change of several marks.
+ * `authors` keeps those authors' changes (exact names), as `jubarte
+ * changes --author`; omitted or empty, every change.
  *
- * Mirrors `jubarte::changes::list_logical_changes`.
+ * Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
  * @param {Uint8Array} docx
+ * @param {string[] | null} [authors]
  * @returns {string}
  */
-export function listChanges(docx) {
-    let deferred3_0;
-    let deferred3_1;
+export function listChanges(docx, authors) {
+    let deferred4_0;
+    let deferred4_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
-        wasm.listChanges(retptr, ptr0, len0);
+        var ptr1 = isLikeNone(authors) ? 0 : passArrayJsValueToWasm0(authors, wasm.__wbindgen_export);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.listChanges(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
         var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
-        var ptr2 = r0;
-        var len2 = r1;
+        var ptr3 = r0;
+        var len3 = r1;
         if (r3) {
-            ptr2 = 0; len2 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeObject(r2);
         }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export3(deferred3_0, deferred3_1, 1);
+        wasm.__wbindgen_export3(deferred4_0, deferred4_1, 1);
     }
 }
 
