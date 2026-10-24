@@ -2681,3 +2681,60 @@ fn word_shapes_of_a_cells_final_mark_pass() {
         assert_word_valid_package(&outer);
     }
 }
+
+/// A part that writes WordprocessingML in the default namespace (`<tc>`,
+/// no prefix) is checked like any other (codex on #1680, round 9: the
+/// check's byte prefilter looked for `:tc>` only).
+#[test]
+fn probe_a_revised_final_mark_in_an_unprefixed_part_fails() {
+    let w = common::docx::W_NS;
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<document xmlns="{w}" xmlns:w="{w}"><body><tbl><tblPr><tblW w:w="2000" w:type="dxa"/></tblPr><tblGrid><gridCol w:w="2000"/></tblGrid><tr><tc><tcPr><tcW w:w="2000" w:type="dxa"/></tcPr><p><r><t>Old.</t></r></p><p><pPr><rPr><ins w:id="1" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></rPr></pPr><r><t>New.</t></r></p></tc></tr></tbl><p><r><t>After.</t></r></p><sectPr><pgSz w:w="12240" w:h="15840"/></sectPr></body></document>"#
+    );
+    let bytes = common::docx::replace_entry(
+        &common::docx::docx("<w:p/>"),
+        "word/document.xml",
+        document.as_bytes(),
+    );
+    let found = cell_final_marks(&bytes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+    );
+}
+
+/// A cell that a row-level content control wraps (`w:tr/w:sdt/…/w:tc`)
+/// takes its row's revision like any other (codex on #1680, round 9: the
+/// check read the cell's parent as its row, a false positive).
+#[test]
+fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
+    for kind in ["ins", "del"] {
+        let cell = |text: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc>"#,
+                marked(text, Some(kind))
+            )
+        };
+        let bytes = common::docx::docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>{}<w:sdt><w:sdtPr><w:id w:val="7"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+            cell("C."),
+            cell("D.")
+        ));
+        assert_eq!(cell_final_marks(&bytes), [], "{kind}");
+        // Without the row's revision the wrapped cell is flagged.
+        let bare = String::from_utf8(
+            common::docx::part_string(&bytes, "word/document.xml")
+                .unwrap()
+                .into_bytes(),
+        )
+        .unwrap()
+        .replace(
+            &format!(r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#),
+            "",
+        );
+        let bare = common::docx::replace_entry(&bytes, "word/document.xml", bare.as_bytes());
+        assert_eq!(cell_final_marks(&bare).len(), 2, "{kind}");
+    }
+}

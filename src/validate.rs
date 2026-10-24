@@ -1203,9 +1203,10 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
 /// (2026-10-23). The body's final mark is not flagged: Word resolves it.
 fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
     for part in xml_parts(pkg) {
+        // `tc>` closes a cell whatever its prefix, none included.
         if !pkg
             .part_bytes(&part)
-            .is_some_and(|bytes| bytes.windows(4).any(|w| w == b":tc>"))
+            .is_some_and(|bytes| bytes.windows(3).any(|w| w == b"tc>"))
         {
             continue;
         }
@@ -1213,29 +1214,7 @@ fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
             continue;
         };
         for cell in dom.descendants(root, Some(&W::name("tc"))) {
-            let Some(last) = last_block_paragraph(&dom, cell) else {
-                continue;
-            };
-            let Some(rpr) = dom
-                .element(last, &W::name("pPr"))
-                .and_then(|ppr| dom.element(ppr, &W::name("rPr")))
-            else {
-                continue;
-            };
-            // The cell and every cell around it, through nested tables:
-            // an outer row's revision covers a nested table's cells.
-            let cells: Vec<NodeId> = std::iter::once(cell)
-                .chain(dom.ancestors(cell, Some(&W::name("tc"))))
-                .collect();
-            for kind in ["ins", "del"] {
-                if dom.element(rpr, &W::name(kind)).is_none()
-                    || cells.iter().any(|&c| {
-                        dom.parent(c)
-                            .is_some_and(|row| row_revised(&dom, row, c, kind))
-                    })
-                {
-                    continue;
-                }
+            for (last, kind) in uncovered_final_marks(&dom, cell) {
                 out.push(Finding::new(
                     "CELL_FINAL_MARK_REVISION",
                     &part,
@@ -1247,10 +1226,43 @@ fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
     }
 }
 
+/// The revisions (`"ins"`, `"del"`) on `cell`'s final paragraph mark that
+/// no row covers, with that paragraph: `CELL_FINAL_MARK_REVISION`'s rule,
+/// which the comparer's settle pass applies too. The cell and every cell
+/// around it count, through nested tables (an outer row's revision covers
+/// a nested table's cells), each with the row that holds it, through any
+/// content control between them.
+pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
+    let Some(last) = last_block_paragraph(dom, cell) else {
+        return Vec::new();
+    };
+    let Some(rpr) = dom
+        .element(last, &W::name("pPr"))
+        .and_then(|ppr| dom.element(ppr, &W::name("rPr")))
+    else {
+        return Vec::new();
+    };
+    let cells: Vec<NodeId> = std::iter::once(cell)
+        .chain(dom.ancestors(cell, Some(&W::name("tc"))))
+        .collect();
+    ["ins", "del"]
+        .into_iter()
+        .filter(|kind| {
+            dom.element(rpr, &W::name(kind)).is_some()
+                && !cells.iter().any(|&c| {
+                    dom.ancestors(c, Some(&W::name("tr")))
+                        .first()
+                        .is_some_and(|&row| row_revised(dom, row, c, kind))
+                })
+        })
+        .map(|kind| (last, kind))
+        .collect()
+}
+
 /// Whether `row` (or the cell itself) is inserted or deleted as `kind`
 /// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
 /// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
-fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
+pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
     let cell_kind = if kind == "ins" { "cellIns" } else { "cellDel" };
     dom.element(row, &W::name("trPr"))
         .is_some_and(|pr| dom.element(pr, &W::name(kind)).is_some())
