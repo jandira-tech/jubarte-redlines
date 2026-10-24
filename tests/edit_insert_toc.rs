@@ -253,9 +253,11 @@ fn editing_a_listed_heading_with_update_fields_refreshes_the_toc() {
     );
     let e = apply_plan(&with_toc, &plan(&with_toc, true, &rename)).unwrap_err();
     assert_eq!(e.code, "CANDIDATE_INVALID");
+    // The rename is named (#1681), before the advice that closes the message.
+    assert_eq!(e.operation.as_deref(), Some("op-1"), "{e:?}");
     assert!(
         e.message.starts_with("Reject All of the redline drops bookmark _Toc")
-            && e.message.ends_with(" the source holds; update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards"),
+            && e.message.ends_with(&format!(" the source holds; op-1 (replace on p{}) introduces it; update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards", at("Scope"))),
         "{}",
         e.message
     );

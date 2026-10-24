@@ -15,9 +15,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{
-    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, StoryPart,
-    Transaction, check_update_fields, comment_holds_kept_text, comment_text_of, controls,
-    lift_deletion_comments, revision_counts, sections, tracked, whole,
+    EditError, EditOutcome, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved,
+    StoryPart, Transaction, check_update_fields, comment_holds_kept_text, comment_text_of,
+    controls, lift_deletion_comments, revision_counts, sections, tracked, whole,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::inspect::{body_paragraph_nodes, project_paragraph, source_sha256};
@@ -220,6 +220,199 @@ pub fn prepare(
         // plan, refused at its first failure.
         return super::skip::prepare_skipping(source, plan, options);
     }
+    prepare_once(source, plan, options).map_err(|failure| {
+        // A v1 plan's operations are independent (`check_conflicts`):
+        // any of them make a plan of their own.
+        attributed(failure, plan.operations.len(), true, |ops| {
+            let part = EditPlan {
+                operations: ops.iter().map(|&i| plan.operations[i].clone()).collect(),
+                ..plan.clone()
+            };
+            prepare_once(source, &part, options)
+                .err()
+                .and_then(|f| f.refusal)
+                .map(|(refusal, _)| refusal)
+        })
+    })
+}
+
+/// A candidate refusal as the attribution reruns compare it: the artifact
+/// refused, the finding's code (or the gate's own) and its part. A rerun's
+/// location and revision ids shift with the operations it leaves out, so
+/// they are not compared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Refusal {
+    artifact: &'static str,
+    code: String,
+    part: String,
+}
+
+impl Refusal {
+    fn new(artifact: &'static str, code: &str, part: &str) -> Self {
+        Self {
+            artifact,
+            code: code.to_string(),
+            part: part.to_string(),
+        }
+    }
+}
+
+/// A candidate gate's refusal: its error and its [`Refusal`].
+type Refused = Box<(EditError, Refusal)>;
+
+/// `error`, refused as `refusal`.
+fn refused(error: EditError, refusal: Refusal) -> Refused {
+    Box::new((error, refusal))
+}
+
+/// A failed preparation, and the candidate refusal behind it with every
+/// operation's outcome, when the candidate checks refused it. `advice`
+/// closes the message, after the operations [`attributed`] names.
+struct Failure {
+    error: EditError,
+    refusal: Option<(Refusal, Vec<EditOutcome>)>,
+    advice: Option<&'static str>,
+}
+
+impl From<EditError> for Box<Failure> {
+    fn from(error: EditError) -> Self {
+        Box::new(Failure {
+            error,
+            refusal: None,
+            advice: None,
+        })
+    }
+}
+
+/// `failure`'s error, naming the operations that cause its candidate
+/// refusal. `rerun(ops)` prepares only the plan's operations `ops` and
+/// returns the refusal it meets; [`culprits`] finds the operations from
+/// it. The first becomes the error's `operation`; the message names it
+/// and the others with their targets. A failure the candidate checks did
+/// not raise, or one the plan without operations meets too, stays the
+/// plan's own (`operation` unset).
+fn attributed(
+    failure: Box<Failure>,
+    count: usize,
+    together: bool,
+    mut rerun: impl FnMut(&[usize]) -> Option<Refusal>,
+) -> EditError {
+    let Failure {
+        mut error,
+        refusal,
+        advice,
+    } = *failure;
+    let advised = |mut error: EditError| {
+        if let Some(advice) = advice {
+            error.message = format!("{}; {advice}", error.message);
+        }
+        error
+    };
+    let Some((refusal, outcomes)) = refusal else {
+        return advised(error);
+    };
+    let Some(ops) = culprits(count, together, |ops| rerun(ops).as_ref() == Some(&refusal)) else {
+        return advised(error);
+    };
+    let name = |i: usize| match outcomes.get(i) {
+        Some(EditOutcome {
+            id,
+            kind,
+            paragraph: Some(paragraph),
+            ..
+        }) => format!("{id} ({kind} on {paragraph})"),
+        Some(EditOutcome { id, kind, .. }) => format!("{id} ({kind})"),
+        None => format!("/operations/{i}"),
+    };
+    error.operation = Some(match outcomes.get(ops[0]) {
+        Some(outcome) => outcome.id.clone(),
+        None => format!("/operations/{}", ops[0]),
+    });
+    error.message = format!("{}; {} introduces it", error.message, name(ops[0]));
+    if let [_, others @ ..] = ops.as_slice()
+        && !others.is_empty()
+    {
+        let others: Vec<String> = others.iter().map(|&i| name(i)).collect();
+        let (last, rest) = others.split_last().expect("not empty");
+        let others = if rest.is_empty() {
+            last.clone()
+        } else {
+            format!("{} and {last}", rest.join(", "))
+        };
+        error.message = format!("{}, together with {others}", error.message);
+    }
+    advised(error)
+}
+
+/// The operations (plan indices) that cause a refusal the whole plan of
+/// `count` operations meets: `reproduces(ops)` tells whether the plan's
+/// operations `ops` alone, in plan order, meet it again. The first is the
+/// operation that brings it in: the first prefix of the plan that
+/// reproduces it ends there, the prefix before it does not. Under
+/// `together` (operations independent of each other), the others are the
+/// earlier operations that one needs, when it does not reproduce the
+/// refusal alone, in plan order, each found the same way. `None` when the
+/// plan without operations reproduces it: no operation causes it.
+///
+/// Prefixes are bisected, so the reruns are logarithmic in `count`, once
+/// for the first operation and once for each other one.
+fn culprits(
+    count: usize,
+    together: bool,
+    mut reproduces: impl FnMut(&[usize]) -> bool,
+) -> Option<Vec<usize>> {
+    if count == 0 || reproduces(&[]) {
+        return None;
+    }
+    // `lo` operations do not reproduce it; `hi` do: the whole plan does.
+    let (mut lo, mut hi) = (0, count);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if reproduces(&(0..mid).collect::<Vec<_>>()) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let first = hi - 1;
+    let mut needed = vec![first];
+    if !together {
+        return Some(needed);
+    }
+    let with = |pool: &[usize], needed: &[usize]| {
+        let mut ops: Vec<usize> = pool.iter().chain(needed).copied().collect();
+        ops.sort_unstable();
+        ops
+    };
+    while !reproduces(&with(&[], &needed)) {
+        // With every earlier operation the prefix through `first` is whole,
+        // and reproduces it; with none, `needed` alone does not.
+        let pool: Vec<usize> = (0..first).filter(|i| !needed.contains(i)).collect();
+        let (mut lo, mut hi) = (0, pool.len());
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if reproduces(&with(&pool[..mid], &needed)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        let Some(&next) = pool.get(hi.wrapping_sub(1)) else {
+            break;
+        };
+        needed.push(next);
+    }
+    needed[1..].sort_unstable();
+    Some(needed)
+}
+
+/// [`prepare`] without `skip_failed` and without attribution: the failure
+/// keeps the candidate refusal, if one was met, for [`attributed`].
+fn prepare_once(
+    source: &[u8],
+    plan: &EditPlan,
+    options: &PrepareOptions,
+) -> Result<PreparedEdit, Box<Failure>> {
     check_update_fields(plan)?;
     let lowered = super::visible::lower(source, plan)?;
     let plan = lowered.as_ref().unwrap_or(plan);
@@ -242,21 +435,22 @@ pub fn prepare(
             PrimaryRole::Redline => (result.redline.clone(), PrimaryBytes::Candidate),
         },
     };
-    let mut checks = check_candidates(source, &result)
+    let mut checks = screen_candidates(source, &result)
         .and_then(|checks| {
             if compared_beside {
                 check_rejected_ranges(source, &result.redline)?;
             }
             Ok(checks)
         })
-        .map_err(|mut e| {
-            if compared_beside && e.code == "CANDIDATE_INVALID" {
-                e.message = format!(
-                    "{}; update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
-                    e.message
-                );
-            }
-            e
+        .map_err(|refused| {
+            let (error, refusal) = *refused;
+            Box::new(Failure {
+                error,
+                refusal: Some((refusal, tx.outcomes.clone())),
+                advice: compared_beside.then_some(
+                    "update_fields compares an edit beside a bookmark, comment or permission range, so drop update_fields and refresh the fields with `jubarte convert FILE --update-fields -o OUT.docx` afterwards",
+                ),
+            })
         })?;
     checks.operation_postconditions = true;
     if options.require_change && effect == Effect::Unchanged {
@@ -264,7 +458,8 @@ pub fn prepare(
             codes::NO_CHANGES_REQUESTED,
             None,
             "the primary transaction has no document effect; --require-change was given",
-        ));
+        )
+        .into());
     }
     Ok(PreparedEdit {
         result,
@@ -329,12 +524,15 @@ fn primary_effect(tx: &Transaction<'_>, result: &EditResult) -> Effect {
 /// can carry one into an insertion, which Reject All then removes: the
 /// TOC entry linking to a heading's `_Toc` bookmark reads "Error! Bookmark
 /// not defined." (#1156).
-fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), EditError> {
+fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), Refused> {
     let rejected = crate::document_comparer::reject_revisions(redline).map_err(|e| {
-        err(
-            "CANDIDATE_INVALID",
-            None,
-            format!("the redline cannot be rejected: {e}"),
+        refused(
+            err(
+                "CANDIDATE_INVALID",
+                None,
+                format!("the redline cannot be rejected: {e}"),
+            ),
+            Refusal::new("redline", "REJECT_FAILED", ""),
         )
     })?;
     let (before, after) = (range_markers(source), range_markers(&rejected));
@@ -348,13 +546,16 @@ fn check_rejected_ranges(source: &[u8], redline: &[u8]) -> Result<(), EditError>
     if lost.is_empty() {
         return Ok(());
     }
-    Err(err(
-        "CANDIDATE_INVALID",
-        None,
-        format!(
-            "Reject All of the redline drops {} the source holds",
-            lost.join(", ")
+    Err(refused(
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!(
+                "Reject All of the redline drops {} the source holds",
+                lost.join(", ")
+            ),
         ),
+        Refusal::new("redline", "RANGE_LOST", ""),
     ))
 }
 
@@ -396,7 +597,13 @@ fn range_markers(docx: &[u8]) -> RangeMarkers {
 /// Findings on the input and what each serialized artifact adds. The
 /// baseline discloses without blocking; an introduced blocking finding
 /// fails preparation.
+#[cfg(test)]
 fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateChecks, EditError> {
+    screen_candidates(source, result).map_err(|refused| refused.0)
+}
+
+/// [`check_candidates`], the refusal's [`Refusal`] beside its error.
+fn screen_candidates(source: &[u8], result: &EditResult) -> Result<CandidateChecks, Refused> {
     // A source the validator cannot read gives no trustworthy baseline:
     // an empty one would call every candidate finding introduced, so with
     // no baseline nothing is claimed introduced (the candidate's own
@@ -409,10 +616,13 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
     let mut unresolved = Vec::new();
     for (artifact, bytes) in [("clean copy", &result.clean), ("redline", &result.redline)] {
         let findings = validate::validate(bytes).map_err(|e| {
-            err(
-                "CANDIDATE_INVALID",
-                None,
-                format!("the serialized candidate cannot be validated: {e}"),
+            refused(
+                err(
+                    "CANDIDATE_INVALID",
+                    None,
+                    format!("the serialized candidate cannot be validated: {e}"),
+                ),
+                Refusal::new(artifact, "UNREADABLE", ""),
             )
         })?;
         if findings.iter().any(|f| f.code == "DUPLICATE_REVISION_ID")
@@ -434,13 +644,16 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
         };
         for finding in introduced_findings(baseline, &findings) {
             if blocking(&finding) {
-                return Err(err(
-                    "CANDIDATE_INVALID",
-                    None,
-                    format!(
-                        "the edit introduces {} in {}#{}: {}",
-                        finding.code, finding.part, finding.location, finding.message
+                return Err(refused(
+                    err(
+                        "CANDIDATE_INVALID",
+                        None,
+                        format!(
+                            "the edit introduces {} in {}#{}: {}",
+                            finding.code, finding.part, finding.location, finding.message
+                        ),
                     ),
+                    Refusal::new(artifact, &finding.code, &finding.part),
                 ));
             }
             if !introduced
@@ -468,14 +681,17 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
 /// opens it; publication refuses it. `artifact` names the candidate.
 fn check_revision_ids(
     source: &HashMap<(String, String), usize>,
-    artifact: &str,
+    artifact: &'static str,
     candidate: &[u8],
-) -> Result<(), EditError> {
+) -> Result<(), Refused> {
     let occurrences = validate::revision_id_occurrences(candidate).map_err(|e| {
-        err(
-            "CANDIDATE_INVALID",
-            None,
-            format!("the serialized candidate cannot be read: {e}"),
+        refused(
+            err(
+                "CANDIDATE_INVALID",
+                None,
+                format!("the serialized candidate cannot be read: {e}"),
+            ),
+            Refusal::new(artifact, "UNREADABLE", ""),
         )
     })?;
     let mut introduced: Vec<_> = occurrences
@@ -495,12 +711,15 @@ fn check_revision_ids(
     );
     let mark = if mark { " on a mark" } else { "" };
     let had = source.get(entry).copied().unwrap_or(0);
-    Err(err(
-        "CANDIDATE_INVALID",
-        None,
-        format!(
-            "the edit introduces a duplicate revision id in the {artifact}: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
+    Err(refused(
+        err(
+            "CANDIDATE_INVALID",
+            None,
+            format!(
+                "the edit introduces a duplicate revision id in the {artifact}: w:{kind}{mark} w:id {id} occurs {count} times in {part} (the source has {had})"
+            ),
         ),
+        Refusal::new(artifact, "DUPLICATE_REVISION_ID", part),
     ))
 }
 
@@ -1115,6 +1334,30 @@ pub fn prepare_v2(
     plan: &super::v2::PlanV2,
     options: &PrepareOptions,
 ) -> Result<PreparedEdit, EditError> {
+    prepare_v2_once(source, plan, options).map_err(|failure| {
+        // A v2 plan's operations apply in order, each on what the ones
+        // before it left: only prefixes are plans of their own, so only
+        // the operation that brings the refusal in is named.
+        attributed(failure, plan.operations.len(), false, |ops| {
+            let part = super::v2::PlanV2 {
+                operations: ops.iter().map(|&i| plan.operations[i].clone()).collect(),
+                ..plan.clone()
+            };
+            prepare_v2_once(source, &part, options)
+                .err()
+                .and_then(|f| f.refusal)
+                .map(|(refusal, _)| refusal)
+        })
+    })
+}
+
+/// [`prepare_v2`] without attribution, as [`prepare_once`] is to
+/// [`prepare`].
+fn prepare_v2_once(
+    source: &[u8],
+    plan: &super::v2::PlanV2,
+    options: &PrepareOptions,
+) -> Result<PreparedEdit, Box<Failure>> {
     // A v2 plan's refusals quote its JSON, unless a typed command built it.
     let syntax = if options.syntax == super::PlanSyntax::Typed {
         super::PlanSyntax::Typed
@@ -1134,14 +1377,23 @@ pub fn prepare_v2(
     } else {
         Effect::Changed
     };
-    let mut checks = check_candidates(source, &result)?;
+    let mut checks = screen_candidates(source, &result).map_err(|refused| {
+        let (error, refusal) = *refused;
+        Box::new(Failure {
+            error,
+            // A v2 operation is named by its pointer, `/operations/N`.
+            refusal: Some((refusal, Vec::new())),
+            advice: None,
+        })
+    })?;
     checks.operation_postconditions = true;
     if options.require_change && unchanged {
         return Err(err(
             codes::NO_CHANGES_REQUESTED,
             None,
             "the primary transaction has no document effect; --require-change was given",
-        ));
+        )
+        .into());
     }
     Ok(PreparedEdit {
         source_sha256: source_sha256(source),
@@ -1408,6 +1660,117 @@ pub(crate) mod tests {
             let result = prepared(&source, operation);
             assert!(result.is_ok(), "{operation}: {:?}", result.err());
         }
+    }
+
+    /// `culprits` against a refusal that comes back whenever the
+    /// operations it is given include every set of one of `causes`,
+    /// counting the reruns.
+    fn culprits_of(
+        count: usize,
+        together: bool,
+        causes: &[&[usize]],
+    ) -> (Option<Vec<usize>>, usize) {
+        let mut reruns = 0;
+        let found = culprits(count, together, |ops| {
+            reruns += 1;
+            causes
+                .iter()
+                .any(|cause| cause.iter().all(|i| ops.contains(i)))
+        });
+        (found, reruns)
+    }
+
+    #[test]
+    fn culprits_finds_one_operation_in_logarithmic_reruns() {
+        for at in 0..64 {
+            let (found, reruns) = culprits_of(64, true, &[&[at]]);
+            assert_eq!(found, Some(vec![at]));
+            // The empty plan, six halvings, and the operation alone.
+            assert!(reruns <= 8, "{at}: {reruns}");
+        }
+        assert_eq!(culprits_of(1, true, &[&[0]]).0, Some(vec![0]));
+    }
+
+    #[test]
+    fn culprits_names_the_operations_a_refusal_needs() {
+        // The later one brings it in; the earlier ones it needs follow in
+        // plan order.
+        assert_eq!(culprits_of(10, true, &[&[2, 7]]).0, Some(vec![7, 2]));
+        assert_eq!(culprits_of(10, true, &[&[5, 1, 8]]).0, Some(vec![8, 1, 5]));
+        assert_eq!(culprits_of(2, true, &[&[0, 1]]).0, Some(vec![1, 0]));
+        // Independent causes: the first one complete in plan order is
+        // named, alone.
+        assert_eq!(culprits_of(10, true, &[&[6], &[3]]).0, Some(vec![3]));
+        // Without `together` (v2), only the operation that brings it in.
+        assert_eq!(culprits_of(10, false, &[&[2, 7]]).0, Some(vec![7]));
+    }
+
+    #[test]
+    fn a_refusal_without_operations_names_none() {
+        // The plan without operations meets it: settling, not an
+        // operation, causes it.
+        assert_eq!(culprits_of(5, true, &[&[]]).0, None);
+        assert_eq!(culprits_of(0, true, &[]).0, None);
+    }
+
+    /// A failure the candidate checks did not raise keeps its error as it
+    /// is, without a rerun; a refusal no operation causes stays the plan's.
+    #[test]
+    fn attribution_leaves_other_failures_alone() {
+        let error = err("OVERLAPPING_EDITS", Some("op-2"), "two edits");
+        let kept = attributed(Box::<Failure>::from(error.clone()), 3, true, |_| {
+            panic!("no rerun for a failure the candidate checks did not raise")
+        });
+        assert_eq!(kept, error);
+        let refusal = Refusal::new("redline", "BOOKMARK_CROSSES_REVISION", "word/document.xml");
+        let failure = Box::new(Failure {
+            error: err("CANDIDATE_INVALID", None, "the edit introduces it"),
+            refusal: Some((refusal.clone(), Vec::new())),
+            advice: Some("drop update_fields"),
+        });
+        let kept = attributed(failure, 3, true, |_| Some(refusal.clone()));
+        assert_eq!(kept.operation, None);
+        assert_eq!(kept.message, "the edit introduces it; drop update_fields");
+    }
+
+    /// The operations are named before the advice that closes the message.
+    #[test]
+    fn named_operations_come_before_the_advice() {
+        let refusal = Refusal::new("redline", "RANGE_LOST", "");
+        let outcome = |id: &str, kind: &str, paragraph: Option<&str>| EditOutcome {
+            id: id.into(),
+            kind: kind.into(),
+            status: String::new(),
+            paragraph: paragraph.map(str::to_string),
+            matches: 0,
+            context: None,
+            comment_id: None,
+            anchor_given: None,
+            anchor_read_as: None,
+            near: None,
+            code: None,
+            message: None,
+        };
+        let failure = Box::new(Failure {
+            error: err("CANDIDATE_INVALID", None, "Reject All drops bookmark B"),
+            refusal: Some((
+                refusal.clone(),
+                vec![
+                    outcome("op-1", "replace", Some("p0")),
+                    outcome("op-2", "insert", Some("p4")),
+                    outcome("op-3", "page_setup", None),
+                ],
+            )),
+            advice: Some("drop update_fields"),
+        });
+        let named = attributed(failure, 3, true, |ops| {
+            (ops.contains(&0) && ops.contains(&2)).then(|| refusal.clone())
+        });
+        assert_eq!(named.operation.as_deref(), Some("op-3"));
+        assert_eq!(
+            named.message,
+            "Reject All drops bookmark B; op-3 (page_setup) introduces it, together with op-1 (replace on p0); drop update_fields"
+        );
     }
 
     #[test]
