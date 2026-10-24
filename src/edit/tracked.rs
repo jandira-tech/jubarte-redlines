@@ -172,7 +172,10 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     None
                 }
             }
-            Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+            // A table placed last leaves the final mark where it is: the
+            // paragraph after it takes the inserted mark (CodeRabbit on
+            // #1680).
+            Resolved::InsertParagraph { .. }
                 if appended_final(tx, resolved).is_some_and(|para| {
                     last_appended(tx, para) == Some(*op)
                         && !tx.resolved.iter().any(|(_, r)| {
@@ -187,15 +190,13 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                         "under keep, a paragraph cannot be added after a container's last paragraph whose mark is already tracked, since the inserted mark goes there: that mark is",
                         mark,
                     ))
-                } else if matches!(resolved, Resolved::InsertParagraph { .. }) {
+                } else {
                     record_replaced(tx, node, *op).map(|change| {
                         named(
                             "under keep, a paragraph formatted otherwise cannot be added after a container's last paragraph whose formatting change is still tracked: that change is",
                             change,
                         )
                     })
-                } else {
-                    None
                 }
             }
             Resolved::MergeParagraphs { para, .. } => {

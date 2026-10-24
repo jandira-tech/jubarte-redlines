@@ -12,7 +12,9 @@
 //!
 //! Every redline must be Word-valid. The pairs in [`KNOWN`] still miss B
 //! or A in Word mode, as their issues say; one that starts to pass must
-//! leave the list.
+//! leave the list. Where only a content control differs, the outcome is
+//! listed in `tests/data/cell_final_marks_pairs_controls.txt` (its header
+//! says why): any outcome that appears or goes must change that list.
 
 mod common;
 
@@ -75,12 +77,14 @@ fn document(cell: &str) -> Vec<u8> {
     ))
 }
 
-/// The body's blocks as `[tbl [tr [tc [p text]]]]`: tables, rows, cells and
-/// paragraphs with their visible text, through content controls.
+/// The body's blocks as `[tbl [tr [tc [p text]]]]`: tables, rows, cells,
+/// paragraphs with their visible text, and content controls (`[sdt …]`),
+/// so a block control that ends up inside a paragraph shows (crush on
+/// #1680, round 10).
 fn shape(bytes: &[u8]) -> String {
     let xml = part_string(bytes, "word/document.xml").unwrap();
     let token = regex::Regex::new(
-        r"<w:(tbl|tr|tc|p)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
+        r"<w:(tbl|tr|tc|p|sdt)\b[^>]*?(/?)>|</w:(tbl|tr|tc|p|sdt)>|<w:t(?: [^>]*)?>([^<]*)</w:t>",
     )
     .unwrap();
     let mut out = String::new();
@@ -99,6 +103,51 @@ fn shape(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// `shape` without its content controls.
+fn without_controls(shape: &str) -> String {
+    let mut out = String::new();
+    let mut open = Vec::new();
+    let mut rest = shape;
+    while let Some(c) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("[sdt") {
+            open.push(true);
+            rest = after;
+            continue;
+        }
+        match c {
+            '[' => {
+                open.push(false);
+                out.push(c);
+            }
+            ']' => {
+                if open.pop() == Some(false) {
+                    out.push(c);
+                }
+            }
+            _ => out.push(c),
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// How a result whose blocks match differs from the wanted one in its
+/// content controls: one inside a paragraph (`inline-husk`), fewer
+/// (`control-dropped`), or more (`control-kept`).
+fn control_outcome(got: &str, wanted: &str) -> &'static str {
+    let inline = regex::Regex::new(r"\[p[^\[\]]*\[sdt").unwrap();
+    if inline.is_match(got) && !inline.is_match(wanted) {
+        "inline-husk"
+    } else if got.matches("[sdt").count() < wanted.matches("[sdt").count() {
+        "control-dropped"
+    } else {
+        "control-kept"
+    }
+}
+
+/// The content-control outcomes, `from to mode which outcome` a line.
+const CONTROLS: &str = include_str!("data/cell_final_marks_pairs_controls.txt");
 
 /// The Word-mode pairs whose Accept All (or Reject All) still misses B (or
 /// A), each with its issue: `(from, to, which)`.
@@ -172,6 +221,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
 fn check_from(from: &str) {
     let a = document(from);
     let mut failures = Vec::new();
+    let mut controls = Vec::new();
     for to in cells().iter().filter(|to| to.as_str() != from) {
         let b = document(to);
         for mode in [CompareMode::Word, CompareMode::PowerTools] {
@@ -195,7 +245,8 @@ fn check_from(from: &str) {
                 ("Accept", shape(&accept_revisions(&out).unwrap()), shape(&b)),
                 ("Reject", shape(&reject_revisions(&out).unwrap()), shape(&a)),
             ] {
-                match (got == wanted, known(which)) {
+                let blocks = without_controls(&got) == without_controls(&wanted);
+                match (blocks, known(which)) {
                     (false, false) => {
                         failures.push(format!("{what}: {which} All gives {got}"));
                     }
@@ -206,7 +257,27 @@ fn check_from(from: &str) {
                     }
                     _ => {}
                 }
+                if blocks && got != wanted {
+                    controls.push(format!(
+                        "{from} {to} {mode:?} {which} {}",
+                        control_outcome(&got, &wanted)
+                    ));
+                }
             }
+        }
+    }
+    let listed: Vec<&str> = CONTROLS
+        .lines()
+        .filter(|line| line.split(' ').next() == Some(from))
+        .collect();
+    for line in &controls {
+        if !listed.contains(&line.as_str()) {
+            failures.push(format!("a content-control outcome to list: {line}"));
+        }
+    }
+    for line in listed {
+        if !controls.iter().any(|c| c == line) {
+            failures.push(format!("a content-control outcome gone; drop it: {line}"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -226,7 +297,18 @@ fn the_cell_codes_cover_every_shape_once() {
     );
     assert_eq!(
         shape(&document("es")),
+        "[pBefore.][tbl[tr[tc[pFull.]][tc[p][sdt[pSdt.]]]]][pAfter.]"
+    );
+    assert_eq!(
+        without_controls(&shape(&document("es"))),
         "[pBefore.][tbl[tr[tc[pFull.]][tc[p][pSdt.]]]][pAfter.]"
+    );
+    let wanted = "[tc[p][sdt[pSdt.]]]";
+    assert_eq!(control_outcome("[tc[p[sdt]]]", wanted), "inline-husk");
+    assert_eq!(control_outcome("[tc[p][pSdt.]]", wanted), "control-dropped");
+    assert_eq!(
+        control_outcome("[tc[sdt[p]][sdt[pSdt.]]]", wanted),
+        "control-kept"
     );
 }
 
