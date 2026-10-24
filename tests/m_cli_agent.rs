@@ -1509,3 +1509,46 @@ fn edit_help_shows_a_complete_plan_and_the_template_workflow() {
     assert_eq!(code, 0, "{plan}\n{stdout}\n{stderr}");
     assert!(out.exists());
 }
+
+#[test]
+fn skill_distinguishes_legacy_and_typed_edit_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = write_fixture(dir.path());
+    let (code, stdout, stderr) = run(&[
+        "edit",
+        "replace",
+        source.to_str().unwrap(),
+        "--find",
+        "his or her",
+        "--text",
+        "their",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("writes require -o FILE or --out-dir NEW_DIR"),
+        "{stderr}"
+    );
+    assert!(!dir.path().join("letter_modified.docx").exists());
+    let (code, _, stderr) = run(&[
+        "edit",
+        source.to_str().unwrap(),
+        "-p",
+        "p1",
+        "--anchor",
+        "his or her",
+        "--content",
+        "their",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(dir.path().join("letter_modified.docx").exists());
+    let skill = include_str!("../skills/jubarte-documents/SKILL.md");
+    assert!(
+        skill.contains("legacy `edit FILE` and `add FILE`"),
+        "qualify the implicit output claim"
+    );
+    assert!(
+        skill.contains("Typed edit actions require `-o` or `--out-dir` to write"),
+        "document typed edit outputs"
+    );
+}
