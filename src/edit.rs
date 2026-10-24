@@ -23,7 +23,7 @@
 //! documents, for dry-run checks. Recording an edit from operation flags is
 //! in [`flags`] / [`record`].
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -4574,33 +4574,12 @@ impl<'p> Transaction<'p> {
             return vec![resolved];
         };
         let (para, start, end) = (*para, *start, *end);
-        let projection = &self.projections[para];
-        let text = &projection.text;
-        let mut pieces = Vec::new();
-        for (s, e, piece) in rewrite::replace_ranges(&text[start..end], replacement) {
-            let (s, e) = (start + s, start + e);
-            let mut attach_before = text[..s]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c != '\u{FFFC}');
-            let checked = if s == e {
-                self.check_insert_either(projection, s, &mut attach_before)
-            } else {
-                self.check_range(projection, s, e)
-            };
-            if checked.is_err() {
-                return vec![resolved];
-            }
-            pieces.push(Resolved::Text {
-                para,
-                start: s,
-                end: e,
-                replacement: piece,
-                comment: None,
-                attach_before,
-                format: None,
-            });
-        }
+        let ranges = rewrite::replace_ranges(&self.projections[para].text[start..end], replacement)
+            .into_iter()
+            .map(|(s, e, piece)| (start + s, start + e, piece));
+        let Some(mut pieces) = self.checked_pieces(para, ranges) else {
+            return vec![resolved];
+        };
         if pieces.is_empty() {
             outcome.message = Some(
                 "nothing changed: the text already reads as the replacement (a look-alike such as a curly quote stays; whole: true writes the replacement as typed)"
@@ -4616,6 +4595,47 @@ impl<'p> Transaction<'p> {
             });
         }
         pieces
+    }
+
+    /// The word-level `pieces` of one replacement (paragraph offsets) as
+    /// the edits that write them, each checked where it lands: a new word
+    /// takes the side of the text before it, or the other side when that one
+    /// is refused (a hyperlink, a move, a symbol), and a changed range must be
+    /// editable. `None` when a piece has no place to go: the caller keeps the
+    /// whole edit, already checked, so the pieces' refusals are dropped.
+    fn checked_pieces(
+        &self,
+        para: usize,
+        pieces: impl IntoIterator<Item = (usize, usize, String)>,
+    ) -> Option<Vec<Resolved>> {
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let refusal = self.revision_refusal.take();
+        let checked = pieces
+            .into_iter()
+            .map(|(start, end, replacement)| {
+                let mut attach_before = text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c != '\u{FFFC}');
+                let checked = if start == end {
+                    self.check_insert_either(projection, start, &mut attach_before)
+                } else {
+                    self.check_range(projection, start, end)
+                };
+                checked.ok().map(|()| Resolved::Text {
+                    para,
+                    start,
+                    end,
+                    replacement,
+                    comment: None,
+                    attach_before,
+                    format: None,
+                })
+            })
+            .collect();
+        self.revision_refusal.replace(refusal);
+        checked
     }
 
     /// `rewrite`: the smallest word-level edits that make the paragraph read
@@ -6073,6 +6093,13 @@ impl<'p> Transaction<'p> {
                         write_mark_run_text(&mut self.opened.dom, run, &edit.replacement);
                     }
                 } else {
+                    // The runs the edit takes words from.
+                    let reached: Vec<NodeId> = projection
+                        .segments
+                        .iter()
+                        .filter(|s| s.start < edit.end && edit.start < s.end)
+                        .map(|s| run_of(&s.piece))
+                        .collect();
                     apply_text_edit(
                         &mut self.opened.dom,
                         &projection,
@@ -6081,6 +6108,16 @@ impl<'p> Transaction<'p> {
                         &edit.replacement,
                         edit.attach_before,
                     );
+                    // Nothing before the edit has moved yet: its new words
+                    // stand at its own start.
+                    clean_new_words(
+                        &mut self.opened.dom,
+                        node,
+                        edit.start,
+                        edit.start + edit.replacement.len(),
+                        &mut self.revision_ids,
+                    );
+                    drop_emptied_records(&mut self.opened.dom, node, &reached, &self.revision_ids);
                 }
                 for ins in carriers {
                     tracked::remove_empty_insertion(&mut self.opened.dom, ins);
@@ -6169,15 +6206,7 @@ impl<'p> Transaction<'p> {
                 }
             }
             for (start, end, i, text) in comment_ranges.remove(&para).unwrap_or_default() {
-                // The operation's own insertions at either end of its
-                // range are its new text: its comment holds them.
-                let own_at_end: usize = edits
-                    .iter()
-                    .filter(|x| x.op == i && x.start == end && x.end == end)
-                    .map(|x| x.replacement.len())
-                    .sum();
-                let s = new_position(&edits, start, true, Some(i));
-                let e = new_position(&edits, end, false, None) + own_at_end;
+                let (s, e) = comment_bounds(&edits, start, end, i);
                 pending.push((s, e, i, text));
             }
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
@@ -7212,6 +7241,21 @@ fn excerpt(text: &str, max: usize) -> String {
     s
 }
 
+/// Operation `op`'s comment range `start..end` after `edits` were applied.
+/// The operation's own insertions at either end of its range are its new
+/// text, so its comment holds them, in the clean copy and in the redline.
+fn comment_bounds(edits: &[ScheduledEdit], start: usize, end: usize, op: usize) -> (usize, usize) {
+    let own_at_end: usize = edits
+        .iter()
+        .filter(|x| x.op == op && x.start == end && x.end == end)
+        .map(|x| x.replacement.len())
+        .sum();
+    (
+        new_position(edits, start, true, Some(op)),
+        new_position(edits, end, false, None) + own_at_end,
+    )
+}
+
 /// Position `pos` of the source projection after `edits` were applied.
 /// `inclusive` shifts past insertions sitting exactly at `pos`; `own` is the
 /// operation whose own insertion must not shift its comment start. Insertions
@@ -7878,6 +7922,186 @@ fn split_run_at(
     dom.add_after_self(run, clone);
 }
 
+/// Split `run` so that a run boundary falls before `child` (one of its
+/// descendants): the original keeps the children before it, a copy takes
+/// the child holding it and every child after. The copy's formatting
+/// history takes fresh ids, as [`split_run_at`]'s does.
+fn split_run_before(dom: &mut Dom, run: NodeId, child: NodeId, ids: &mut RevisionCounter) {
+    let Some(holder) = std::iter::once(child)
+        .chain(dom.ancestors(child, None))
+        .find(|&n| dom.parent(n) == Some(run))
+    else {
+        return;
+    };
+    let run_children = dom.elements(run, None);
+    let Some(index) = run_children.iter().position(|&c| c == holder) else {
+        return;
+    };
+    if run_children[..index]
+        .iter()
+        .all(|&c| dom.name_is(c, &W::r_pr()))
+    {
+        return;
+    }
+    let clone = dom.clone_subtree(run);
+    for (i, child) in dom.elements(clone, None).into_iter().enumerate() {
+        if i < index && !dom.name_is(child, &W::r_pr()) {
+            dom.remove(child);
+        }
+    }
+    for &child in &run_children[index..] {
+        dom.remove(child);
+    }
+    refresh_run_history(dom, clone, ids);
+    dom.add_after_self(run, clone);
+}
+
+/// Take the new words at projection offsets `[start, end)` of `paragraph`
+/// out of the formatting records of the runs they were written into: they
+/// go in runs of their own without a record, and the fragments around them
+/// keep theirs. New words are no one's earlier formatting (#1658). Runs
+/// without a record are left as they are. A record keeps its id on the
+/// words it covered: where the new words open a run, the copy split off
+/// after them takes the run's own properties.
+fn clean_new_words(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    start: usize,
+    end: usize,
+    ids: &mut RevisionCounter,
+) {
+    let recorded = |dom: &Dom, run: NodeId| {
+        dom.element(run, &W::r_pr())
+            .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+            .is_some()
+    };
+    if start >= end
+        || !project_paragraph(dom, paragraph)
+            .segments
+            .iter()
+            .any(|s| s.start < end && start < s.end && recorded(dom, run_of(&s.piece)))
+    {
+        return;
+    }
+    // Every run before the splits, those without projected text included:
+    // a run after the new words that is not one of them is a copy.
+    let originals: HashSet<NodeId> = dom
+        .descendants(paragraph, Some(&W::r()))
+        .into_iter()
+        .collect();
+    let mut stripped = Vec::new();
+    for run in runs_in_range(dom, paragraph, start, end, ids) {
+        let Some(mut rpr) = dom.element(run, &W::r_pr()) else {
+            continue;
+        };
+        if originals.contains(&run)
+            && let Some(rest) = dom
+                .next_element(run)
+                .filter(|&n| dom.name_is(n, &W::r()) && !originals.contains(&n))
+            && let Some(copied) = dom.element(rest, &W::r_pr())
+        {
+            dom.remove(rpr);
+            dom.remove(copied);
+            dom.add_first(rest, rpr);
+            dom.add_first(run, copied);
+            rpr = copied;
+        }
+        stripped.extend(strip_run_records(dom, rpr));
+    }
+    hand_on_ids(dom, paragraph, &stripped, ids);
+}
+
+/// Strip the records in a run's properties `rpr`, and the properties when
+/// nothing else is left in them: each formatting record's id, as a number
+/// and as spelled.
+fn strip_run_records(dom: &mut Dom, rpr: NodeId) -> Vec<(u64, String)> {
+    let ids = dom
+        .elements(rpr, Some(&W::r_pr_change()))
+        .into_iter()
+        .filter_map(|record| {
+            let spelled = dom.attribute(record, &W::id())?;
+            Some((record_id(dom, record)?, spelled.to_string()))
+        })
+        .collect();
+    tracked::strip_records(dom, rpr);
+    if dom.elements(rpr, None).is_empty() {
+        dom.remove(rpr);
+    }
+    ids
+}
+
+/// A formatting record's `w:id`, as a number.
+fn record_id(dom: &Dom, record: NodeId) -> Option<u64> {
+    dom.attribute(record, &W::id())?.parse().ok()
+}
+
+/// A record that lost all its words leaves its id to the first copy an
+/// earlier split of the transaction made of it: the id stays, as spelled,
+/// on what the record still covers (words, or an atom such as a tab, as
+/// `changes::run_characters` counts them), as one edit over the
+/// same words leaves it (Codex and MiniMax on #1664).
+fn hand_on_ids(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    stripped: &[(u64, String)],
+    ids: &RevisionCounter,
+) {
+    for (id, spelled) in stripped {
+        let original = ids.original(*id);
+        // Run records only: a paragraph mark's record is no copy of a run's,
+        // whatever its id.
+        let records: Vec<NodeId> = dom
+            .descendants(paragraph, Some(&W::r_pr_change()))
+            .into_iter()
+            .filter(|&record| {
+                dom.parent(record)
+                    .and_then(|rpr| dom.parent(rpr))
+                    .is_some_and(|run| dom.name_is(run, &W::r()))
+            })
+            .collect();
+        if records
+            .iter()
+            .any(|&record| record_id(dom, record) == Some(original))
+        {
+            continue;
+        }
+        if let Some(heir) = records.into_iter().find(|&record| {
+            record_id(dom, record).is_some_and(|other| ids.original(other) == original)
+        }) {
+            let spelled = if *id == original {
+                spelled.clone()
+            } else {
+                original.to_string()
+            };
+            dom.set_attribute_value(heir, &W::id(), Some(&spelled));
+        }
+    }
+}
+
+/// Take the formatting records off the `reached` runs an edit left
+/// without a character the history guard counts
+/// ([`crate::changes::run_has_characters`]): a record goes with the last
+/// of its words, and its id with it to a copy that still covers some
+/// (Codex on #1664).
+fn drop_emptied_records(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    reached: &[NodeId],
+    ids: &RevisionCounter,
+) {
+    let mut stripped = Vec::new();
+    for &run in reached {
+        if crate::changes::run_has_characters(dom, run) {
+            continue;
+        }
+        let Some(rpr) = dom.element(run, &W::r_pr()) else {
+            continue;
+        };
+        stripped.extend(strip_run_records(dom, rpr));
+    }
+    hand_on_ids(dom, paragraph, &stripped, ids);
+}
+
 /// Fresh ids for the formatting history in `run`'s own `w:rPr`, for a run
 /// that is a copy of another. Content the copy took over (a text box in a
 /// drawing) moved rather than doubled, so its records keep their ids.
@@ -7893,6 +8117,8 @@ fn refresh_run_history(dom: &mut Dom, run: NodeId, ids: &mut RevisionCounter) {
 /// runs out ([`crate::revision_processor::RevisionIds`]).
 pub(super) struct RevisionCounter {
     ids: crate::revision_processor::RevisionIds,
+    /// The id of the record each copy was made from, by the copy's id.
+    copied_from: HashMap<u64, u64>,
     /// The ids of the records the edit writes: its own changes. A copy of
     /// a source record is not one.
     own: BTreeSet<u64>,
@@ -7909,6 +8135,7 @@ impl RevisionCounter {
     pub(super) fn new(used: HashSet<u64>) -> Self {
         Self {
             ids: crate::revision_processor::RevisionIds::from_used(used),
+            copied_from: HashMap::new(),
             own: BTreeSet::new(),
         }
     }
@@ -7924,11 +8151,25 @@ impl RevisionCounter {
     /// change when it copies one of the edit's own records, a copy of a
     /// source record otherwise.
     fn copy(&mut self, of: Option<u64>) -> u64 {
-        if of.is_some_and(|id| self.own.contains(&id)) {
+        let id = if of.is_some_and(|id| self.own.contains(&id)) {
             self.allocate()
         } else {
             self.ids.allocate()
+        };
+        if let Some(of) = of {
+            self.copied_from.insert(id, of);
         }
+        id
+    }
+
+    /// The record `id` is a copy of, through copies of copies; `id` itself
+    /// when it is no copy. A copy takes an id no record had, so the chain
+    /// ends.
+    fn original(&self, mut id: u64) -> u64 {
+        while let Some(&of) = self.copied_from.get(&id) {
+            id = of;
+        }
+        id
     }
 
     /// The ids of the records the edit wrote, copies of source records
@@ -8193,13 +8434,20 @@ fn runs_in_range(
     }
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
-        if let Some(seg) = projection
-            .segments
-            .iter()
-            .find(|s| s.start < at && at < s.end)
-            .cloned()
+        let segments = &projection.segments;
+        if let Some(seg) = segments.iter().find(|s| s.start < at && at < s.end) {
+            split_run_at(dom, &seg.clone(), at, ids);
+        } else if let Some(next) = segments.iter().find(|s| s.start == at && at < s.end)
+            && segments
+                .iter()
+                .any(|s| s.start < at && s.end == at && run_of(&s.piece) == run_of(&next.piece))
         {
-            split_run_at(dom, &seg, at, ids);
+            // `at` falls between two children of one run.
+            let (run, child) = match next.piece {
+                Piece::Text { t, run } => (run, t),
+                Piece::Glyph { element, run } => (run, element),
+            };
+            split_run_before(dom, run, child, ids);
         }
     }
     let projection = project_paragraph(dom, paragraph);

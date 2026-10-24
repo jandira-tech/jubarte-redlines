@@ -41,7 +41,7 @@ Change the private run-splitting helpers in `src/edit.rs` and their tracked-emis
 - [x] Seed it above existing annotation IDs, using the repository’s existing allocation helpers.
 - [x] Keep the original formatting record’s ID on the original fragment; allocate fresh IDs to formatting records copied onto retained fragments.
 - [x] Preserve author, date and recorded property payload on those fragments.
-- [ ] Continue using cleaned run properties for newly authored text, so it cannot acquire another author’s formatting history. Not done by the split's fresh ids: owned by #1658.
+- [x] Continue using cleaned run properties for newly authored text, so it cannot acquire another author’s formatting history (#1658). New words go in a run without a record, in the clean copy and in the editor's own insertions; the record keeps its id on the words it covered.
 - [x] Update all callers, including comment-range splitting and typed editing, rather than fixing only the reported replace path.
 
 Do not settle foreign revisions, discard their history, or attribute their retained history to the reviewing author.
