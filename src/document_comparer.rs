@@ -7983,6 +7983,8 @@ fn compare_documents_impl(
             }),
         ))
     };
+    // Comment bodies are a story the comparison writes, and can hold a table
+    // (#1712). The glossary is no story and stays as it came (#1680).
     for part in out.parts() {
         if custom_data
             .iter()
@@ -7995,6 +7997,7 @@ fn compare_documents_impl(
             || part == "word/numbering.xml"
             || part == "word/footnotes.xml"
             || part == "word/endnotes.xml"
+            || part == "word/comments.xml"
             || part == "word/settings.xml"
             || (part.starts_with("word/header") && part.ends_with(".xml"))
             || (part.starts_with("word/footer") && part.ends_with(".xml"))
@@ -8009,6 +8012,9 @@ fn compare_documents_impl(
             let mut vd = Dom::new();
             let doc = vd.parse_xdocument(&x);
             if let Some(vr) = vd.root(doc) {
+                // A comments part the sweep leaves as it was keeps its bytes:
+                // Word carries B's comments part byte for byte (m35_comments).
+                let carried = (part == "word/comments.xml").then(|| vd.serialize_element(vr));
                 crate::comparer::finalize::normalize_universal_measures(&mut vd, vr);
                 crate::comparer::finalize::fix_strict_validity_artifacts(&mut vd, vr);
                 // Invalidity we inherit rather than create: a source whose own
@@ -8091,7 +8097,11 @@ fn compare_documents_impl(
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
                 crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
-                out.set_part(&part, vd.serialize_element(vr).into_bytes());
+                let swept = vd.serialize_element(vr);
+                if carried.as_deref() == Some(swept.as_str()) {
+                    continue;
+                }
+                out.set_part(&part, swept.into_bytes());
             }
         }
     }
