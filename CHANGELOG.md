@@ -15,6 +15,30 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/release.sh --checklist` is now the whole release, not only the
+  script's own steps. New lines cover what a release owes outside them:
+  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  the Ring-3 Word open probe on the release samples, the bump decision,
+  reading the engine CHANGELOG section that becomes the release notes,
+  drafting the six one-line notes, a release.yml review (wheel and binary
+  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`, and the
+  `release` environment the OIDC publish jobs run under), and the App
+  Store path's credentials and unused version number; during — the
+  NUMBERS sentence against the checker's aggregates, the security scan,
+  the GitHub release page's assets and notes, the site's own release
+  ladder, and reading every jubarte.pro page the deploy rebuilt
+  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
+  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
+  installing each library the way a user does, reading docs.rs and the
+  registries' pages, and the App Store item now carries the in-app
+  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
+  dangling empty "step 14" phase is gone, the one proof that carried jq
+  pipes (the checklist printer splits on `|`) is written pipe-free, and
+  the checklist test derives its phases from the script instead of
+  counting to 14.
+
 ## [0.13.0] - 2026-10-22
 
 > **Summary.** Breaking: replace writes only the words that differ, so kept words keep their formatting; the marks Word writes for one edit are one logical change with a composite id (r7+8+9+10), and accept/reject take it whole; jubarte prints short ids; the timestamp flag is -d, --datetime everywhere (--date is removed); validate and audit are one command. New: edit --skip-failed applies what passes and writes a plan of the failures; visible rejects (--strike, --restore); Word math reads and writes as LaTeX; charts, fields, images and inline HTML round-trip through Markdown; check FILE --expect; typed v2 edit plans. PDFs lay out math fractions, radicals and delimiters, divide columns as Word does and update header PAGE fields; Strict OOXML packages read and compare as themselves. Dual-header and structurally inconsistent ZIP packages are refused (GHSA-m665-v7pm-7grj); rustls 0.23.46 fixes RUSTSEC-2026-0346 and -0347. Registries now publish from CI through OIDC trusted publishing. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
