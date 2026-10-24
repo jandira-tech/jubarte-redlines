@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use jubarte::update::{ReleaseKey, verify_signature};
+use jubarte::update::{verify_signature, ReleaseKey};
 use self_update::Extract;
 
 /// Named as release.yml stages a Linux archive.
@@ -215,6 +215,113 @@ fn a_malformed_or_out_of_range_signature_offset_is_refused() {
         let path = download(dir.path(), ASSET, &bytes);
         assert!(verify_signature(&path, &[KEY_A]).is_err());
     }
+}
+
+// ---- Adversarial review additions for 9ea0da3e (#1705); do not commit ----
+//
+// Fixture archives live outside the checkout under ~/temp/T/fix013w/rev1705/w,
+// all produced by the zipsign 0.2.2 CLI (rel.tar.gz / rel.tgz / rel.zip
+// signed under their own names with keys/a.key) or derived from them.
+
+const CLI_TGZ: &[u8] = include_bytes!("../../../fix013w/rev1705/w/rel.tgz");
+const CLI_TAR_GZ: &[u8] = include_bytes!("../../../fix013w/rev1705/w/rel.tar.gz");
+const CLI_ZIP: &[u8] = include_bytes!("../../../fix013w/rev1705/w/rel.zip");
+const UPPER_HEX: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-upperhex.tar.gz");
+const PLUS_HEX: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-offplus.tar.gz");
+const TRAILING: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-trailing.tar.gz");
+const TWO_MEMBERS: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-twomem.tar.gz");
+const OFF_ZERO: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-off0.tar.gz");
+const OFF_MAX: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-offmax.tar.gz");
+const B64_SPACE: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-b64space.tar.gz");
+const NO_PAD: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-nopad.tar.gz");
+const EMPTY_MESSAGE: &[u8] =
+    include_bytes!("../../../fix013w/rev1705/w/attack-emptymessage.tar.gz");
+const OFF_IN_DATA: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-offindata.tar.gz");
+const SIGS_767: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-767sigs.tar.gz");
+const SIGS_768: &[u8] = include_bytes!("../../../fix013w/rev1705/w/attack-768sigs.tar.gz");
+const ZDUP: &[u8] = include_bytes!("../../../fix013w/rev1705/w/dup/rel.zip");
+const ZCOUNT2: &[u8] = include_bytes!("../../../fix013w/rev1705/w/c2/rel.zip");
+const ZCOUNT1024: &[u8] = include_bytes!("../../../fix013w/rev1705/w/c1k/rel.zip");
+const ZCOUNT1025: &[u8] = include_bytes!("../../../fix013w/rev1705/w/c1k5/rel.zip");
+const ZCOUNT0: &[u8] = include_bytes!("../../../fix013w/rev1705/w/c0/rel.zip");
+
+/// The zipsign CLI signs and verifies `.tgz` (verified:
+/// `zipsign verify tar rel.tgz a.pub` -> OK). self_update's old `signatures`
+/// path also verified it: detect_archive() maps `.tgz` to
+/// `ArchiveKind::Tar(Some(Gz))`. The port's `name.ends_with(".tar.gz")`
+/// refuses it.
+#[test]
+fn a_cli_signed_tgz_is_refused_by_the_port() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), "rel.tgz", CLI_TGZ);
+    let error = verify_signature(&path, &[KEY_A]).expect_err("port refuses .tgz");
+    assert!(error.contains(".tar.gz"), "{error}");
+    // Control: the archive signed under rel.tar.gz passes under that name.
+    let path = download(dir.path(), "rel.tar.gz", CLI_TAR_GZ);
+    verify_signature(&path, &[KEY_A]).expect("the bytes themselves verify");
+}
+
+/// The CLI accepts an upper-case hex offset and a leading '+'
+/// (`u64::from_str_radix` semantics); confirm the port matches.
+#[test]
+fn hex_offset_case_and_sign_match_the_cli() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Both were signed under the name rel.tar.gz, so keep the context.
+    let path = download(dir.path(), "rel.tar.gz", UPPER_HEX);
+    verify_signature(&path, &[KEY_A]).expect("upper-case hex offset, CLI says OK");
+    let path = download(dir.path(), "rel.tar.gz", PLUS_HEX);
+    verify_signature(&path, &[KEY_A]).expect("leading + hex offset, CLI says OK");
+}
+
+/// Everything the CLI refused, the port must refuse too.
+#[test]
+fn cli_refusals_are_also_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for bytes in [
+        TRAILING,
+        TWO_MEMBERS,
+        OFF_ZERO,
+        OFF_MAX,
+        B64_SPACE,
+        NO_PAD,
+        EMPTY_MESSAGE,
+        OFF_IN_DATA,
+        SIGS_767,
+        SIGS_768,
+    ] {
+        let path = download(dir.path(), "rel.tar.gz", bytes);
+        assert!(verify_signature(&path, &[KEY_A]).is_err());
+    }
+    for bytes in [ZCOUNT2, ZCOUNT1024, ZCOUNT1025, ZCOUNT0] {
+        let path = download(dir.path(), "rel.zip", bytes);
+        assert!(verify_signature(&path, &[KEY_A]).is_err());
+    }
+}
+
+/// Two copies of one signature, count = 2: the CLI accepts (any-of).
+#[test]
+fn a_zip_with_a_duplicated_signature_member_is_accepted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), "rel.zip", ZDUP);
+    verify_signature(&path, &[KEY_A]).expect("CLI accepts a duplicated signature");
+}
+
+/// A pathological but honest key: all-zero is a valid compressed point
+/// (VerifyingKey::from_bytes succeeds) and strict verification must refuse it.
+#[test]
+fn an_all_zero_key_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), "rel.tar.gz", CLI_TAR_GZ);
+    assert!(verify_signature(&path, &[[0; 32]]).is_err());
+    let path = download(dir.path(), "rel.zip", CLI_ZIP);
+    assert!(verify_signature(&path, &[[0; 32]]).is_err());
+}
+
+#[test]
+fn a_key_listed_twice_still_verifies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), "rel.tar.gz", CLI_TAR_GZ);
+    verify_signature(&path, &[KEY_A, KEY_A]).expect("duplicate key");
 }
 
 #[cfg(unix)]
