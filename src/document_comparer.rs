@@ -8063,6 +8063,18 @@ fn compare_documents_impl(
                         );
                     }
                 }
+                // A cell's final mark carries no revision its row does not
+                // (#1669, #1684), in every story: the body (its text boxes
+                // too), the notes, the headers and footers. After every pass
+                // that writes marks.
+                if part == main1
+                    || part == "word/footnotes.xml"
+                    || part == "word/endnotes.xml"
+                    || part.starts_with("word/header")
+                    || part.starts_with("word/footer")
+                {
+                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+                }
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
