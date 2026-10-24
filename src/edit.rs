@@ -7412,7 +7412,7 @@ fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
             if let Some(content) = dom.element(child, &W::sdt_content()) {
                 out.extend(container_blocks(dom, content));
             }
-        } else if dom.name_is(child, &W::name("customXml")) {
+        } else if dom.name_is(child, &W::custom_xml()) {
             out.extend(container_blocks(dom, child));
         }
     }

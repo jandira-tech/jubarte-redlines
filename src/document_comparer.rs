@@ -7511,14 +7511,32 @@ fn compare_documents_impl(
                     let dd = pd.parse_xdocument(&doc_xml);
                     if let Some(droot) = pd.root(dd) {
                         let mut doc_changed = false;
-                        for p in pd.descendants(droot, Some(&W::name("p"))) {
+                        for p in pd.descendants(droot, Some(&W::p())) {
                             let Some(ppr) = pd.element(p, &W::p_pr()) else {
                                 continue;
                             };
                             let mark_inserted = pd
                                 .element(ppr, &W::r_pr())
-                                .is_some_and(|r| pd.element(r, &W::name("ins")).is_some());
-                            if !mark_inserted {
+                                .is_some_and(|r| pd.element(r, &W::ins()).is_some());
+                            // A container's last paragraph keeps its mark when
+                            // a paragraph is added after it, so the new words
+                            // end on the old mark, under a record of its old
+                            // properties (#1669): every word inserted, that
+                            // paragraph is B's as much as an inserted one, and
+                            // Reject All restores the record whatever is baked.
+                            let words_inserted = || {
+                                let words = pd.descendants(p, Some(&W::t()));
+                                !words.is_empty()
+                                    && pd.element(ppr, &W::p_pr_change()).is_some()
+                                    && words.iter().all(|&t| {
+                                        pd.ancestors(t, Some(&W::ins())).first().is_some_and(
+                                            |&ins| {
+                                                pd.ancestors(ins, Some(&W::p())).first() == Some(&p)
+                                            },
+                                        )
+                                    })
+                            };
+                            if !mark_inserted && !words_inserted() {
                                 continue;
                             }
                             // EMPTY inserted paragraphs keep their bare pPr —
@@ -8045,12 +8063,66 @@ fn compare_documents_impl(
                         );
                     }
                 }
+                // A cell's final mark carries no revision its row does not
+                // (#1669, #1684), in every story: the body (its text boxes
+                // too), the notes, the headers and footers. After every pass
+                // that writes marks.
+                if sweeps_final_marks(&part, &main1) {
+                    crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+                }
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
                 crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }
+        }
+    }
+    // A story part under a name of its own (a header at `word/chrome.xml`)
+    // is not swept above, but its cells' final marks settle too (codex on
+    // #1680, round 10). Stories are known by the main document's
+    // relationships to them: a custom XML data item or the glossary holds
+    // cells too, but the comparison wrote neither and they stay as they
+    // were (minimax on #1680, round 11).
+    let stories: Vec<String> = out
+        .read_rels_for(&main1)
+        .map(|rels| {
+            rels.items
+                .iter()
+                .filter(|r| {
+                    r.target_mode.as_deref() != Some("External")
+                        && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+                            .iter()
+                            .any(|kind| r.rel_type.ends_with(kind))
+                })
+                .map(|r| out.resolve_rel_target(&main1, &r.target))
+                .collect()
+        })
+        .unwrap_or_default();
+    for part in stories {
+        // Settled above already. One predicate for both sweeps, so a story
+        // part cannot fall between them (`word/headerA.dat`, CodeRabbit on
+        // #1680, round 12).
+        if sweeps_final_marks(&part, &main1) {
+            continue;
+        }
+        let Some(x) = out.part_string(&part).filter(|x| x.contains("tc")) else {
+            continue;
+        };
+        let mut vd = Dom::new();
+        let doc = vd.parse_xdocument(&x);
+        let Some(vr) = vd.root(doc) else {
+            continue;
+        };
+        let unsettled = vd.name(vr).is_some_and(|n| n.namespace_name() == W::URI)
+            && vd
+                .descendants(vr, Some(&W::tc()))
+                .into_iter()
+                .any(|cell| !crate::validate::uncovered_final_marks(&vd, cell).is_empty());
+        if unsettled {
+            crate::comparer::final_marks::settle_cell_final_marks(&mut vd, vr);
+            crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
+            out.set_part(&part, vd.serialize_element(vr).into_bytes());
         }
     }
     // Final package-level notes↔settings coherence (after the validity sweep
@@ -8096,6 +8168,17 @@ fn compare_documents_impl(
     // own redlines carry none, and its half-matched fields read as broken.
     crate::revision_processor::drop_unreferenced_headers_footers(&mut out);
     out.to_zip()
+}
+
+/// The parts the validity sweep settles cells' final marks in, by name: the
+/// main part, the notes, and `word/header*.xml` / `word/footer*.xml`. The
+/// story sweep after it settles every other story part.
+fn sweeps_final_marks(part: &str, main: &str) -> bool {
+    part == main
+        || part == "word/footnotes.xml"
+        || part == "word/endnotes.xml"
+        || ((part.starts_with("word/header") || part.starts_with("word/footer"))
+            && part.ends_with(".xml"))
 }
 
 #[cfg(test)]
