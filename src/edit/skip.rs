@@ -12,7 +12,7 @@
 //! `resolve_revisions` error, a plan-level refusal) is never skipped.
 
 use super::origin::{Paragraphs, SOURCE_ONLY, written_places};
-use super::prepared::{PrepareOptions, PreparedEdit, prepare};
+use super::prepared::{Blame, PrepareOptions, PreparedEdit, prepare, prepare_blaming};
 use super::{
     ControlSelector, EditError, EditOutcome, EditPlan, ExistingRevisions, Operation, OperationKind,
     Selector, kind_name,
@@ -70,12 +70,28 @@ pub(super) fn prepare_skipping(
                 .collect(),
             ..named.clone()
         };
-        let mut e = match prepare(source, &attempt, &once) {
+        // A candidate refusal blames every operation behind one of its
+        // defects at once, each with its own error; any other failure, the
+        // operations it reports failed or names.
+        let blame = match prepare_blaming(source, &attempt, live.len(), &once) {
             Ok(prepared) => return Ok(merged(prepared, skipped)),
-            Err(e) => e,
+            Err(blame) => *blame,
         };
-        let Some(failed) = blamed(&e, &named, &live, mine) else {
-            return Err(e);
+        let (mut e, failed, reasons) = match blame {
+            Blame::Plain(e) => {
+                let Some(failed) = blamed(&e, &named, &live, mine) else {
+                    return Err(e);
+                };
+                (e, failed, Vec::new())
+            }
+            Blame::Candidate(e, blamed) => {
+                if blamed.is_empty() {
+                    return Err(e);
+                }
+                let reasons: Vec<(usize, EditError)> =
+                    blamed.into_iter().map(|(i, why)| (live[i], why)).collect();
+                (e, reasons.iter().map(|(i, _)| *i).collect(), reasons)
+            }
         };
         let groups: BTreeSet<&str> = failed
             .iter()
@@ -95,10 +111,13 @@ pub(super) fn prepare_skipping(
         for &i in &failed {
             let id = op_id(&named, i);
             let outcome = outcome_of(&e, &named, i);
-            let (code, message) = (
-                outcome.code.clone().unwrap_or_else(|| e.code.clone()),
-                outcome.message.clone().unwrap_or_else(|| e.message.clone()),
-            );
+            let (code, message) = match reasons.iter().find(|(r, _)| *r == i) {
+                Some((_, why)) => (why.code.clone(), why.message.clone()),
+                None => (
+                    outcome.code.clone().unwrap_or_else(|| e.code.clone()),
+                    outcome.message.clone().unwrap_or_else(|| e.message.clone()),
+                ),
+            };
             skipped.push((
                 SkippedOperation {
                     index: i,
