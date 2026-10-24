@@ -35,6 +35,7 @@ import json
 import os
 import stat
 import sys
+import uuid
 from dataclasses import asdict
 from collections.abc import Sequence
 from pathlib import Path
@@ -175,9 +176,14 @@ def _replace(path: Path, data: bytes | str) -> int:
     through; a replaced regular file keeps its mode. Returns the bytes
     written."""
     raw = data.encode("utf-8") if isinstance(data, str) else data
-    staged = path.with_name(f".{path.name}.jubarte-{os.getpid()}.tmp")
+    # A name nobody can guess, created only if it is not there: a link
+    # planted beside the output is never followed (CodeRabbit on #1698).
+    staged = path.with_name(f".{path.name}.jubarte-{uuid.uuid4().hex}.tmp")
+    created = False
     try:
-        with open(staged, "wb") as handle:
+        fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        created = True
+        with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
         try:
             replaced = os.stat(path, follow_symlinks=False).st_mode
@@ -187,10 +193,11 @@ def _replace(path: Path, data: bytes | str) -> int:
             os.chmod(staged, replaced & 0o777)
         os.replace(staged, path)
     except OSError as exc:
-        try:
-            os.unlink(staged)
-        except OSError:
-            pass
+        if created:
+            # The staged file may be gone already (renamed, or never
+            # written); the write's own error is the one to report.
+            with contextlib.suppress(OSError):
+                os.unlink(staged)
         raise CliError(f"writing {path}: {_os(exc)}") from exc
     return len(raw)
 

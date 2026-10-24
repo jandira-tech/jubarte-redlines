@@ -1487,3 +1487,19 @@ def test_read_for_edit_usage_errors_as_the_binary(tmp_path: Path, capsys: pytest
             main(argv)
         assert error.value.code == 2, argv
         assert "error:" in capsys.readouterr().err
+
+
+def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path) -> None:
+    # The staged file is created fresh, under a name nobody can guess: a
+    # link planted where the old pid-based name pointed is left alone, and
+    # what it names keeps its bytes (CodeRabbit on #1698).
+    from jubarte_redlines.__main__ import _replace
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    out = tmp_path / "out.md"
+    (tmp_path / f".{out.name}.jubarte-{os.getpid()}.tmp").symlink_to(victim)
+    assert _replace(out, "new") == 3
+    assert victim.read_text() == "keep"
+    assert out.read_text() == "new" and not out.is_symlink()
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp") and not p.is_symlink()] == []

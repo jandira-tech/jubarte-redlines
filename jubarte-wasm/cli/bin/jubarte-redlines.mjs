@@ -13,6 +13,7 @@
 // combination, an existing output), 3 edit plan refused (its per-operation
 // report is on stdout; nothing was written).
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -150,16 +151,34 @@ function markdownText(file, bytes) {
 
 /** Writes `data` to `file` through a staged file beside it, renamed over
  * it: a link is replaced, never written through, and an input that shares
- * the output's file keeps its bytes. */
+ * the output's file keeps its bytes. A replaced regular file keeps its
+ * mode, as the binary's does. The staged name is random and created only
+ * if absent, so a link planted beside the output is never followed
+ * (#1698). */
 function write(file, data) {
-  const partial = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.partial`);
+  const partial = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.partial`);
+  let created = false;
   try {
-    fs.writeFileSync(partial, data);
+    let mode;
+    try {
+      const old = fs.lstatSync(file);
+      if (old.isFile()) mode = old.mode & 0o777;
+    } catch {}
+    const fd = fs.openSync(partial, "wx");
+    created = true;
+    try {
+      fs.writeFileSync(fd, data);
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (mode !== undefined) fs.chmodSync(partial, mode);
     fs.renameSync(partial, file);
   } catch (e) {
-    try {
-      fs.rmSync(partial, { force: true });
-    } catch {}
+    if (created) {
+      try {
+        fs.rmSync(partial, { force: true });
+      } catch {}
+    }
     throw new CliError(`writing ${file}: ${osError(e)}`);
   }
 }

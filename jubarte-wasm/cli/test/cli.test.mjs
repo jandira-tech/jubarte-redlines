@@ -517,6 +517,18 @@ test("convert --scholar and --tracking, as the binary has them", () => {
   assert.doesNotMatch(part(out, "word/settings.xml"), /<w:trackRevisions/);
 });
 
+test("a replaced output keeps its mode, as the binary's does (#1698)", () => {
+  const source = path.join(tmp, "mode.md");
+  fs.writeFileSync(source, "Body.\n");
+  const out = path.join(tmp, "mode.docx");
+  fs.writeFileSync(out, "old");
+  fs.chmodSync(out, 0o640);
+  const replaced = run("convert", source, "-o", out, "--force");
+  assert.equal(replaced.code, 0, replaced.err);
+  assert.equal(fs.statSync(out).mode & 0o777, 0o640);
+  assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);
