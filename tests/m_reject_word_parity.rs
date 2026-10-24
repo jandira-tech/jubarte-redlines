@@ -10,7 +10,7 @@ mod common;
 
 use common::docx::{Part, docx, docx_with, docx_with_sect, part_string};
 use common::validity::assert_word_valid_package;
-use jubarte::document_comparer::{accept_revisions, reject_revisions};
+use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
 use jubarte::namespaces::W;
 use jubarte::xmllinq::{Dom, NodeId};
 
@@ -1892,4 +1892,136 @@ fn reject_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
         "word/document.xml",
         &["normal", "arrived", "second"],
     );
+}
+
+/// The first section's page setup: half-inch margins.
+const SECTION_ONE: &str = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr>"#;
+
+/// #1708: a pPrChange records the paragraph's base properties
+/// (CT_PPrBase, which has no sectPr), so rejecting it must not take the
+/// section break. Word's Reject All keeps the break and the mark's run
+/// properties, and drops only the changed property (f01, f02).
+#[test]
+fn reject_of_a_paragraph_change_keeps_its_section_break() {
+    for mark in ["", "<w:rPr><w:b/></w:rPr>"] {
+        let body = format!(
+            r#"<w:p><w:pPr><w:jc w:val="center"/>{mark}{SECTION_ONE}<w:pPrChange w:id="9" {REV}><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Y.</w:t></w:r></w:p><w:p><w:r><w:t>Z.</w:t></w:r></w:p>"#
+        );
+        let rejected = reject_revisions(&docx(&body)).unwrap();
+        assert_word_valid_package(&rejected);
+        let xml = part_string(&rejected, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:sectPr").count(), 2, "{mark}: {xml}");
+        assert!(xml.contains(r#"w:top="720""#), "{mark}: {xml}");
+        assert!(
+            !xml.contains("<w:jc") && !xml.contains("pPrChange"),
+            "{mark}: {xml}"
+        );
+        let bold = xml.contains("<w:b/>") || xml.contains("<w:b />");
+        assert_eq!(bold, !mark.is_empty(), "{mark}: {xml}");
+    }
+}
+
+/// #1708: Reject All of jubarte's own redline gives the original back. A
+/// section-final paragraph whose alignment changed keeps its section break
+/// (Word's Reject All of the same redline keeps two sections).
+#[test]
+fn reject_of_a_redline_keeps_the_section_break_of_a_changed_paragraph() {
+    let doc = |ppr: &str| {
+        docx(&format!(
+            r#"<w:p><w:pPr>{ppr}{SECTION_ONE}</w:pPr><w:r><w:t>Section one ends here.</w:t></w:r></w:p><w:p><w:r><w:t>Second section.</w:t></w:r></w:p>"#
+        ))
+    };
+    let redline = compare_documents(&doc(""), &doc(r#"<w:jc w:val="center"/>"#), "R").unwrap();
+    let rejected = reject_revisions(&redline).unwrap();
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&rejected);
+    for (name, out, jc) in [("reject", &rejected, false), ("accept", &accepted, true)] {
+        let xml = part_string(out, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:sectPr").count(), 2, "{name}: {xml}");
+        assert_eq!(xml.contains("<w:jc"), jc, "{name}: {xml}");
+    }
+}
+
+/// A one-column table: a kept row, then `rows` (each `w:trPr` content).
+fn rows_table(rows: &[&str]) -> String {
+    let row = |pr: &str, text: &str| {
+        format!(
+            r#"<w:tr><w:trPr>{pr}</w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let mut body: String = rows
+        .iter()
+        .enumerate()
+        .map(|(i, pr)| row(pr, &format!("Row {i}.")))
+        .collect();
+    body.insert_str(0, &row("", "Kept row."));
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{body}</w:tbl><w:p/>"#
+    )
+}
+
+fn row_texts(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    xml.split("</w:tr>")
+        .filter_map(|chunk| {
+            let row = chunk.rfind("<w:tr>").or_else(|| chunk.rfind("<w:tr "))?;
+            let row = &chunk[row..];
+            let t = row.find("<w:t>").or_else(|| row.find("<w:t "))?;
+            let at = t + row[t..].find('>')? + 1;
+            Some(row[at..].split('<').next().unwrap_or("").to_string())
+        })
+        .collect()
+}
+
+/// #1713: a trPrChange records the row's base properties (CT_TrPrBase,
+/// which has no w:ins or w:del), so rejecting it must not take the row's
+/// own insertion mark. Word's Reject All drops an inserted row whose
+/// properties also changed (row_ins_trprchange), as it drops one that has
+/// no property change.
+#[test]
+fn reject_of_a_row_property_change_still_drops_the_inserted_row() {
+    let ins = format!(r#"<w:ins w:id="1" {REV}/>"#);
+    let change = format!(
+        r#"<w:trPrChange w:id="2" {REV}><w:trPr><w:trHeight w:val="300"/></w:trPr></w:trPrChange>"#
+    );
+    let rows = format!("<w:cantSplit/>{ins}{change}");
+    let rejected = reject_revisions(&docx(&rows_table(&[&rows]))).unwrap();
+    assert_word_valid_package(&rejected);
+    assert_eq!(row_texts(&rejected), ["Kept row."]);
+}
+
+/// #1713, the deleted twin: the row stays, with the properties the change
+/// recorded and no revision.
+#[test]
+fn reject_of_a_row_property_change_restores_the_deleted_row() {
+    let rows = format!(
+        r#"<w:cantSplit/><w:del w:id="1" {REV}/><w:trPrChange w:id="2" {REV}><w:trPr><w:trHeight w:val="300"/></w:trPr></w:trPrChange>"#
+    );
+    let rejected = reject_revisions(&docx(&rows_table(&[&rows]))).unwrap();
+    assert_word_valid_package(&rejected);
+    assert_eq!(row_texts(&rejected), ["Kept row.", "Row 0."]);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(xml.contains(r#"<w:trHeight w:val="300""#), "{xml}");
+    assert!(
+        !xml.contains("<w:del ") && !xml.contains("<w:ins ") && !xml.contains("trPrChange"),
+        "{xml}"
+    );
+}
+
+/// #1713: a wholly inserted table whose rows all changed properties goes
+/// whole, shell included, as it does without the property changes.
+#[test]
+fn reject_of_an_inserted_table_with_row_property_changes_drops_it() {
+    let rows =
+        format!(r#"<w:ins w:id="1" {REV}/><w:trPrChange w:id="2" {REV}><w:trPr/></w:trPrChange>"#);
+    let table = rows_table(&[&rows]).replacen(
+        "<w:tr><w:trPr></w:trPr>",
+        &format!(r#"<w:tr><w:trPr><w:ins w:id="3" {REV}/><w:trPrChange w:id="4" {REV}><w:trPr/></w:trPrChange></w:trPr>"#),
+        1,
+    );
+    let body = format!("{table}<w:p><w:r><w:t>After.</w:t></w:r></w:p>");
+    let rejected = reject_revisions(&docx(&body)).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:tbl"), "{xml}");
 }
