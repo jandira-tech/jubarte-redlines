@@ -15,6 +15,17 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Added
+
+- **`read -p` repeats** (#1690). `read FILE -p p3 -p p8` reads as `-p p3,p8`, in the view, `--json`, `--tables` and `--for-edit`; `--select` repeats the same way.
+- **`read --tables -o FILE`** (#1690) writes the grids it prints to FILE, in the binary and the Python CLI. A `.json` name is refused (exit 2). An existing file needs `--force`.
+- **`changes --author NAME`** (#1690) lists only that author's changes. The match is exact and the flag repeats. Like `changes` itself it does not list revisions inside comment bodies, which `accept --author` does resolve (#1706). It filters the text listing and `--json` alike, and the Python CLI and `list_changes_json` / `changes_text(docx, authors=...)` take it too.
+- **`edit --help` shows a complete plan** (#1690): a plan is a list of operations, applied all or none. The binary's help also shows the separate PlanV2 workflow (`edit template`, then `edit apply`); the Python CLI, which cannot run those routes, leaves that section out.
+
+### Changed
+
+- **Rust API: `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>`**, one entry per `-p` (it was `Option<String>`). Build it with `vec![spec]` or `spec.into_iter().collect()`. `ReadArgs::paragraph_spec()` returns the joined comma list. The facade JSON still carries one string, or `null`.
+
 ## [0.13.0] - 2026-10-22
 
 > **Summary.** Breaking: replace writes only the words that differ, so kept words keep their formatting; the marks Word writes for one edit are one logical change with a composite id (r7+8+9+10), and accept/reject take it whole; jubarte prints short ids; the timestamp flag is -d, --datetime everywhere (--date is removed); validate and audit are one command. New: edit --skip-failed applies what passes and writes a plan of the failures; visible rejects (--strike, --restore); Word math reads and writes as LaTeX; charts, fields, images and inline HTML round-trip through Markdown; check FILE --expect; typed v2 edit plans. PDFs lay out math fractions, radicals and delimiters, divide columns as Word does and update header PAGE fields; Strict OOXML packages read and compare as themselves. Dual-header and structurally inconsistent ZIP packages are refused (GHSA-m665-v7pm-7grj); rustls 0.23.46 fixes RUSTSEC-2026-0346 and -0347. Registries now publish from CI through OIDC trusted publishing. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.

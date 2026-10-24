@@ -29,6 +29,11 @@ const binding = createRequire(import.meta.url)(path.join(cliDir, "..", "npm"));
 const jsonErrors = typeof binding.runtimeJsonError === "function";
 const inputNotices = typeof binding.inputNotice === "function";
 const inputValidity = typeof binding.inputValidityLine === "function";
+// #1690's flags (`changes --author`, `read --tables -o`) parse once the
+// binding is rebuilt from a source that has them; until then their tests skip.
+const parses = (argv) => JSON.parse(binding.parseCli(JSON.stringify(argv))).exit_code === 0;
+const authorFilter = parses(["changes", "a.docx", "--author", "Ann"]);
+const tablesOutput = parses(["read", "a.docx", "--tables", "-o", "t.md"]);
 
 /** The records `changes --json` prints: its last line is the input's
  * validity (#1309) once the binding has it, never a record. */
@@ -51,6 +56,45 @@ before(() => {
 
 function run(...args) {
   const r = spawnSync(process.execPath, [bin, ...args], { encoding: "utf8", cwd: tmp });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+// The checked-in binding's parser predates #1690 and refuses `--tables -o`
+// ("--tables prints the grids; drop -o"). Until the binding is rebuilt from
+// a source that has the flag, the host's own behaviour is exercised through
+// a copy of the bin whose binding parses it: the parser's own result for
+// `--tables`, with the output the flag names. Once the binding has the
+// flag, the bin itself is the one under test.
+function tablesBin() {
+  const host = path.join(tmp, "tables-host");
+  const modules = path.join(host, "node_modules", "jubarte-wasm");
+  fs.mkdirSync(modules, { recursive: true });
+  fs.writeFileSync(path.join(host, "jubarte-redlines.mjs"), fs.readFileSync(bin));
+  fs.writeFileSync(path.join(modules, "package.json"), JSON.stringify({ name: "jubarte-wasm", main: "index.js" }));
+  fs.writeFileSync(path.join(modules, "index.js"), [
+    `const real = require(${JSON.stringify(path.join(cliDir, "..", "npm"))});`,
+    "const parse = real.parseCli;",
+    "module.exports = {",
+    "  ...real,",
+    "  parseCli(argv, ...rest) {",
+    "    const args = JSON.parse(argv);",
+    "    const out = args.indexOf('-o');",
+    "    if (!args.includes('--tables') || out === -1) return parse(argv, ...rest);",
+    "    const stripped = args.filter((_, i) => i !== out && i !== out + 1);",
+    "    const parsed = JSON.parse(parse(JSON.stringify(stripped), ...rest));",
+    "    parsed.args.output = args[out + 1];",
+    "    parsed.args.output_format = 'md';",
+    "    return JSON.stringify(parsed);",
+    "  },",
+    "};",
+  ].join("\n"));
+  return path.join(host, "jubarte-redlines.mjs");
+}
+
+/** `read --tables` with the flag the checked-in parser may not know yet. */
+function runTables(...args) {
+  const target = tablesOutput ? bin : tablesBin();
+  const r = spawnSync(process.execPath, [target, ...args], { encoding: "utf8", cwd: tmp });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -116,8 +160,8 @@ test("field refresh reads its input first and overwrites nothing without --force
     assert.equal(result.out, "");
   }
   const kept = run("convert", untracked, "-o", out, "--update-fields");
-  assert.equal(kept.code, 1, kept.err);
-  assert.match(kept.err, /already exists/);
+  assert.equal(kept.code, 2, kept.err);
+  assert.match(kept.err, /OUTPUT_EXISTS/);
   assert.equal(fs.readFileSync(out, "utf8"), "preserve document");
   assert.equal(fs.readFileSync(report, "utf8"), "preserve report");
   const written = run("convert", untracked, "-o", out, "--update-fields", "--report", report, "--force");
@@ -166,8 +210,8 @@ test("redline writes a Word redline and refuses to overwrite it", () => {
   const changes = records(run("changes", out, "--json").out);
   assert.ok(changes.length > 0 && changes.every((c) => c.author === "Legal"));
   const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
-  assert.equal(again.code, 1);
-  assert.match(again.err, /already exists \(use --force to overwrite\)/);
+  assert.equal(again.code, 2);
+  assert.match(again.err, /OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)/);
   assert.equal(run(
     "compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"),
     "-d", "1970-01-01T00:00:00Z", "-o", out, "--force",
@@ -473,6 +517,18 @@ test("convert --scholar and --tracking, as the binary has them", () => {
   assert.doesNotMatch(part(out, "word/settings.xml"), /<w:trackRevisions/);
 });
 
+test("a replaced output keeps its mode, as the binary's does (#1698)", () => {
+  const source = path.join(tmp, "mode.md");
+  fs.writeFileSync(source, "Body.\n");
+  const out = path.join(tmp, "mode.docx");
+  fs.writeFileSync(out, "old");
+  fs.chmodSync(out, 0o640);
+  const replaced = run("convert", source, "-o", out, "--force");
+  assert.equal(replaced.code, 0, replaced.err);
+  assert.equal(fs.statSync(out).mode & 0o777, 0o640);
+  assert.deepEqual(fs.readdirSync(tmp).filter((n) => n.endsWith(".partial")), []);
+});
+
 test("convert --move-comments and --changed-only", () => {
   const pages = (r) => {
     assert.equal(r.code, 0, r.err);
@@ -502,7 +558,7 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
   for (const name of ["clean.docx", "redline.docx", "report.jsonl"]) assert.ok(fs.existsSync(path.join(dir, name)), name);
   const rows = fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows.at(-1).ev, "summary");
-  assert.equal(run("edit", untracked, "--plan", plan, "--out-dir", dir).code, 1);
+  assert.equal(run("edit", untracked, "--plan", plan, "--out-dir", dir).code, 2);
   const refused = run("edit", tracked, "--plan", plan, "--out-dir", path.join(tmp, "refused"));
   assert.equal(refused.code, 3);
   assert.equal(JSON.parse(refused.out.trim().split("\n").at(-1)).code, "EXISTING_REVISIONS");
@@ -787,10 +843,12 @@ for (const change of ["rename", "overwrite", "append"]) {
     const out = path.join(tmp, `consume-${change}.docx`);
     assert.equal(run("edit", untracked, "--plan", plan, "-p", "p1", "--content", "Changed.").code, 0);
     const held = fs.readFileSync(plan);
-    // The CLI writes synchronously. Interpose only at that write to reproduce
-    // another actor replacing the plan, including an identical-bytes rename.
+    // The CLI writes synchronously, through a staged file renamed over the
+    // output. Interpose only at that rename to reproduce another actor
+    // replacing the plan, including an identical-bytes rename.
     const hook = (fs, mock, assert, plan, change) => {
       const write = fs.writeFileSync;
+      const rename = fs.renameSync;
       let changed = false, planFd;
       const open = fs.openSync;
       mock.method(fs, "openSync", (name, ...args) => {
@@ -798,9 +856,9 @@ for (const change of ["rename", "overwrite", "append"]) {
         if (name === plan && planFd === undefined) planFd = fd;
         return fd;
       });
-      mock.method(fs, "writeFileSync", (name, ...args) => {
-        const result = write(name, ...args);
-        if (!changed && String(name).endsWith(".docx")) {
+      mock.method(fs, "renameSync", (from, to, ...rest) => {
+        const result = rename(from, to, ...rest);
+        if (!changed && String(to).endsWith(".docx")) {
           changed = true;
           assert.doesNotThrow(() => fs.fstatSync(planFd), "keep the descriptor open until deletion");
           const original = fs.readFileSync(plan);
@@ -1411,8 +1469,8 @@ test("agent shorthand reads an in-memory redline without touching an existing de
   assert.equal(explicit.code, 0, explicit.err);
   assert.ok(explicit.out.startsWith(`---\nsource: ${fallback} (not written; -o keeps it)\n`));
   const written = run("compare", a, b, "-o", fallback);
-  assert.equal(written.code, 1);
-  assert.match(written.err, /already exists/);
+  assert.equal(written.code, 2);
+  assert.match(written.err, /OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)/);
   assert.deepEqual(fs.readFileSync(fallback), sentinel);
   // Two Markdown documents written to a .md are CriticMarkup, which view
   // options cannot shape; the host reads that from the bytes, as natively.
@@ -1677,4 +1735,125 @@ test("read --for-edit usage errors as the binary", () => {
     assert.equal(r.code, 2, `${args}: ${r.out} ${r.err}`);
     assert.match(r.err, /error:/);
   }
+});
+
+test("changes --author keeps those authors' changes, as the binary (#1690)", { skip: !authorFilter && "the checked-in binding predates #1690" }, () => {
+  const bo = run("changes", tracked, "--author", "Bo Chen");
+  assert.equal(bo.code, 0, bo.err);
+  const lines = bo.out.trimEnd().split("\n");
+  assert.equal(lines.at(-1), "3 change(s)", bo.out);
+  assert.ok(lines.slice(0, -1).every((line) => line.split("\t")[3] === "Bo Chen"), bo.out);
+  const both = run("changes", tracked, "--author", "Bo Chen", "--author", "Ana Lima");
+  assert.equal(both.out, run("changes", tracked).out);
+  assert.equal(run("changes", tracked, "--author", "Bo").out, "0 change(s)\n");
+  const rows = records(run("changes", tracked, "--json", "--author", "Ana Lima").out);
+  assert.ok(rows.length === 2 && rows.every((c) => c.author === "Ana Lima"), JSON.stringify(rows));
+});
+
+test("read --tables -o writes the grids it prints, as the binary (#1690)", { skip: !tablesOutput && "the checked-in binding predates #1690" }, () => {
+  const grids = run("read", untracked, "--tables");
+  assert.equal(grids.code, 0, grids.err);
+  const out = path.join(tmp, "grids.md");
+  const wrote = run("read", untracked, "--tables", "-o", out);
+  assert.equal(wrote.code, 0, wrote.err);
+  assert.equal(wrote.out, "");
+  assert.equal(fs.readFileSync(out, "utf8"), grids.out);
+  assert.match(wrote.err, new RegExp(`wrote ${out.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tables, ${fs.statSync(out).size} bytes\\)\n$`));
+  // Refused; the exit status differs from the binary's 2 (#1692).
+  const again = run("read", untracked, "--tables", "-o", out);
+  assert.notEqual(again.code, 0, again.err);
+  assert.match(again.err, /already exists/);
+  const json = run("read", untracked, "--tables", "-o", path.join(tmp, "grids.json"));
+  assert.equal(json.code, 2, json.err);
+  assert.match(json.err, /--tables writes the grids as text/);
+});
+
+test("an existing output is a usage refusal with the OUTPUT_EXISTS code (#1698)", () => {
+  const out = path.join(tmp, "taken.md");
+  fs.writeFileSync(out, "keep me\n");
+  // The binary's wording and code: exit 2, `OUTPUT_EXISTS:`.
+  const again = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
+  assert.equal(again.code, 2, again.err);
+  assert.equal(again.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // Every task that writes says it the same way.
+  for (const args of [
+    ["accept", tracked, "-o", out],
+    ["reject", tracked, "-o", out],
+    ["convert", tracked, "-o", out],
+    ["diff", tracked, tracked, "-o", out],
+  ]) {
+    const refused = run(...args);
+    assert.equal(refused.code, 2, `${args.join(" ")}: ${refused.err}`);
+    assert.match(refused.err, /^error: OUTPUT_EXISTS: output '.*' already exists \(use --force to overwrite\)\n$/);
+  }
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // --force writes it.
+  const docx = path.join(tmp, "taken.docx");
+  const forced = run("accept", tracked, "-o", docx, "--force");
+  assert.equal(forced.code, 0, forced.err);
+  assert.deepEqual(fs.readFileSync(docx).subarray(0, 2), Buffer.from("PK"));
+});
+
+test("read refuses an existing output before it reads the input (#1698)", () => {
+  const out = path.join(tmp, "taken-view.md");
+  fs.writeFileSync(out, "keep me\n");
+  // The output is refused first: a missing input does not turn the refusal
+  // into a reading error.
+  const missing = run("read", "missing.docx", "-o", out);
+  assert.equal(missing.code, 2, missing.err);
+  assert.equal(missing.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+  // The tables view refuses it the same way, before it reads the input.
+  const tables = runTables("read", "missing.docx", "--tables", "-o", out);
+  assert.equal(tables.code, 2, tables.err);
+  assert.equal(tables.err, `error: OUTPUT_EXISTS: output '${out}' already exists (use --force to overwrite)\n`);
+  assert.equal(fs.readFileSync(out, "utf8"), "keep me\n");
+});
+
+test("read --tables -o refuses an output that names the input (#1698)", () => {
+  // An extensionless input: the tables view would destroy the document.
+  const input = path.join(tmp, "extensionless-input");
+  fs.copyFileSync(untracked, input);
+  const before = fs.readFileSync(input);
+  const refused = runTables("read", input, "--tables", "-o", input, "--force");
+  assert.equal(refused.code, 2, refused.err);
+  assert.equal(refused.err, `error: OUTPUT_ALIAS: the output '${input}' is the same file as the input '${input}'\n`);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+  // A link to the input is the input.
+  const link = path.join(tmp, "link-to-input.md");
+  fs.symlinkSync(input, link);
+  const throughLink = runTables("read", input, "--tables", "-o", link, "--force");
+  assert.equal(throughLink.code, 2, throughLink.err);
+  assert.match(throughLink.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'\n$/);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+  // Another spelling of the same path is the same file.
+  const spelled = runTables("read", input, "--tables", "-o", `${tmp}/./extensionless-input`, "--force");
+  assert.equal(spelled.code, 2, spelled.err);
+  assert.match(spelled.err, /OUTPUT_ALIAS/);
+  assert.deepEqual(fs.readFileSync(input), before, "the input keeps its bytes");
+});
+
+test("read --tables -o replaces a link, never writing through it (#1698)", () => {
+  const referent = path.join(tmp, "referent.md");
+  fs.writeFileSync(referent, "keep me\n");
+  const link = path.join(tmp, "link.md");
+  fs.symlinkSync(referent, link);
+  const written = runTables("read", untracked, "--tables", "-o", link, "--force");
+  assert.equal(written.code, 0, written.err);
+  assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n", "the link's referent keeps its bytes");
+  assert.ok(!fs.lstatSync(link).isSymbolicLink(), "the link itself is replaced");
+  assert.match(fs.readFileSync(link, "utf8"), /^table 0: /);
+  // A hard link to the input is the input: it is refused, not written
+  // through, and the document keeps its bytes.
+  const source = path.join(tmp, "hard-link-source.docx");
+  fs.copyFileSync(untracked, source);
+  const before = fs.readFileSync(source);
+  const hard = path.join(tmp, "hard-link.md");
+  fs.linkSync(source, hard);
+  const refused = runTables("read", source, "--tables", "-o", hard, "--force");
+  assert.equal(refused.code, 2, refused.err);
+  assert.match(refused.err, /^error: OUTPUT_ALIAS: the output '.*' is the same file as the input '.*'\n$/);
+  assert.deepEqual(fs.readFileSync(source), before, "the input keeps its bytes");
+  assert.deepEqual(fs.readFileSync(hard), before, "the hard link keeps the input's bytes");
 });

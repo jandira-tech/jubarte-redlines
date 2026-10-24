@@ -96,16 +96,19 @@ pub struct ReadArgs {
     /// select top-level tables (including their nested tables) by the same
     /// tN as the view, or by a pN inside them; a pick that reaches no table
     /// is refused. Print their grid, then a blank line and the same view as
-    /// read -p SPEC.
+    /// read -p SPEC. Repeat it to add blocks: `-p p3 -p p8` reads as
+    /// `-p p3,p8`.
     #[arg(
         short = 'p',
         long = "paragraphs",
         visible_alias = "select",
         value_name = "SPEC",
         conflicts_with_all = ["head", "tail"],
+        action = clap::ArgAction::Append,
         help_heading = "Read options"
     )]
-    pub paragraphs: Option<String>,
+    #[serde(serialize_with = "serialize_paragraph_spec")]
+    pub paragraphs: Vec<String>,
     /// Only the first N blocks (a table is one block).
     #[arg(
         long,
@@ -277,6 +280,14 @@ pub struct ReadArgs {
 }
 
 impl ReadArgs {
+    /// The `-p` selectors as one comma list: `-p p3 -p p8` reads as
+    /// `-p p3,p8` (#1690). `None` without `-p`. [`ReadArgs::paragraphs`]
+    /// holds one entry per `-p` as typed; the facade JSON carries this
+    /// joined list as one string (`null` without `-p`).
+    pub fn paragraph_spec(&self) -> Option<String> {
+        (!self.paragraphs.is_empty()).then(|| self.paragraphs.join(","))
+    }
+
     /// The `read --for-edit` request these flags describe (V2-10): the
     /// working basis template and apply derive — `auto` (and the absence
     /// of the flag) keeps the remaining revisions, `on` tracks new edits.
@@ -284,7 +295,7 @@ impl ReadArgs {
     /// documents; the bindings build the same request through this.
     pub fn for_edit_request(&self) -> crate::edit::for_edit::ForEditRequest {
         crate::edit::for_edit::ForEditRequest {
-            select: self.paragraphs.clone(),
+            select: self.paragraph_spec(),
             head: self.head,
             tail: self.tail,
             find: self.find.clone(),
@@ -966,6 +977,10 @@ pub enum Command {
         /// Emit one JSON object per line.
         #[arg(long)]
         json: bool,
+        /// Only listed changes by this author (exact match); repeat for several.
+        /// Comment-body revisions are not listed, even without this filter.
+        #[arg(long, value_name = "NAME", action = clap::ArgAction::Append)]
+        author: Vec<String>,
     },
     /// Accept all tracked changes, or select by ID, author or kind.
     ///
@@ -1225,12 +1240,23 @@ pub enum Command {
         jubarte edit a.docx --plan plan.json --consume   apply plan.json, then delete it\n\n\
         WHERE is an id from `jubarte read`: p12, header1, footer2.p1,\n\
         t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12\n\
-        (a revision).\n\nTyped actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  jubarte edit template FILE --select p12,p20-p25 -o edits.json\n  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
+        (a revision).\n\n\
+        A plan (--plan plan.json) is a list of operations, applied all or none;\n\
+        `jubarte capabilities --json` lists every operation kind:\n  \
+        {\"schema_version\": 1, \"source_sha256\": \"<sha256 from jubarte read>\", \"author\": \"Claude\",\n   \
+        \"operations\": [\n    \
+        {\"kind\": \"replace\", \"paragraph\": \"p1\", \"find\": \"his or her\", \"replacement\": \"their\"},\n    \
+        {\"kind\": \"delete_paragraph\", \"paragraph\": \"p2\"}]}\n\n\
+        Desired-text plans (PlanV2), a separate workflow:\n  \
+        jubarte edit template FILE --select p12,p20-p25 -o edits.json   the paragraphs as they read\n  \
+        (edit the desired text in edits.json)\n  \
+        jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for the difference\n\n\
+        Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]\n  Inline --save-plan FILE saves without applying; writes require -o or --out-dir.\n  Run jubarte edit ACTION --help for its grammar.\nRouting: valid legacy calls, including `edit replace -p p0 --content TEXT`,\n  retain v1 semantics. Use ./replace (or ./rewrite, ./insert, ./delete, ./apply)\n  to explicitly name a legacy input whose name equals an action.")]
     Edit {
         /// The source document (.docx). Never modified.
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Edit plan JSON: batches and the other operation kinds (see
+        /// Edit plan JSON: a list of operations of any kind (see
         /// `jubarte capabilities --json`). Alone, it is applied to FILE; with
         /// operation flags, they are recorded into it (created on first use)
         /// and FILE is left as it is. Without a value: FILE_plan.json beside
@@ -2998,6 +3024,18 @@ fn serialize_timeout<S: serde::Serializer>(
 
 /// Cross-option constraints whose meaning depends on an enum value or output
 /// extension. These are usage errors, checked before any runtime I/O.
+/// [`ReadArgs::paragraphs`] in the facade JSON: one comma list, as a
+/// single `-p` spells it, or `null` without `-p`.
+fn serialize_paragraph_spec<S: serde::Serializer>(
+    paragraphs: &[String],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match paragraphs {
+        [] => serializer.serialize_none(),
+        _ => serializer.serialize_str(&paragraphs.join(",")),
+    }
+}
+
 /// The ids of [`ReadArgs`], as the top-level shorthand declares them.
 const READ_OPTION_IDS: [&str; 11] = [
     "track_changes",
@@ -3086,8 +3124,8 @@ fn read_usage_error(command: &clap::Command, message: String) -> clap::Error {
 /// command line spells out.
 fn read_output(output: &Path, given: &dyn Fn(&str) -> bool) -> Result<Format, String> {
     let kind = output_format(Task::Read, Some(output), None)?.unwrap_or(Format::Md);
-    if given("tables") {
-        return Err("--tables prints the grids; drop -o".to_string());
+    if given("tables") && kind == Format::Json {
+        return Err("--tables writes the grids as text: name the file FILE.md".to_string());
     }
     if given("for_edit") && kind != Format::Json {
         return Err("--for-edit prints JSON: name the file FILE.json or drop -o".to_string());

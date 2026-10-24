@@ -34,7 +34,11 @@ def _listed(out: str) -> list[dict]:
 
 @pytest.fixture
 def letter(tmp_path: Path) -> Path:
-    body = para("Heading") + para("The individual signs in his or her individual capacity.") + para("Sections 1(g), 2(e), 3 survive.")
+    body = (
+        para("Heading")
+        + para("The individual signs in his or her individual capacity.")
+        + para("Sections 1(g), 2(e), 3 survive.")
+    )
     path = tmp_path / "letter.docx"
     path.write_bytes(docx(body))
     return path
@@ -56,6 +60,7 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     # The grid: a document without tables prints none.
     assert main(["read", str(letter), "--tables"]) == 0
     assert capsys.readouterr().out == "no tables\n"
+
     # -o writes what its extension names, as the binary's writer: a task's
     # view (.md), snapshot (.json) or drawing (.pdf, .png).
     def written(argv: list[str], name: str, kind: str) -> bytes:
@@ -76,7 +81,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     redline = f"{letter.with_name('letter_v_letter.docx')} (not written; -o keeps it)"
     assert written(["compare", str(letter), str(letter)], "r.pdf", "pdf").startswith(b"%PDF")
     assert json.loads(written(["compare", str(letter), str(letter)], "r.json", "json"))["summary"]["paragraphs"] == 3
-    assert written(["compare", str(letter), str(letter)], "r.md", "md").decode().startswith(f"---\nsource: {redline}\n")
+    assert (
+        written(["compare", str(letter), str(letter)], "r.md", "md").decode().startswith(f"---\nsource: {redline}\n")
+    )
     assert main(["accept", str(letter), "-o", str(letter.with_name("p.png")), "--dpi", "20"]) == 0
     assert capsys.readouterr().err == f"wrote {letter.with_name('p-page-NN.png')} (png, 1 page, 20 dpi)\n"
     assert letter.with_name("p-page-01.png").read_bytes().startswith(b"\x89PNG")
@@ -120,7 +127,9 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
 def test_the_module_runs_as_a_program(letter: Path) -> None:
     # The tests above call main() in-process; this runs the __main__ guard
     # itself, the way `python -m jubarte_redlines` is used (PR #253).
-    run = subprocess.run([sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True)
+    run = subprocess.run(
+        [sys.executable, "-m", "jubarte_redlines", "read", str(letter)], capture_output=True, text=True
+    )
     assert run.returncode == 0, run.stderr
     assert run.stdout.startswith("---\nsource: "), run.stdout
     assert "<!-- page 1 of 1 -->" in run.stdout, run.stdout
@@ -180,22 +189,41 @@ def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pyt
     assert not out.exists()
 
 
-def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_writes_bundle_and_refuses_existing_dir(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = {
         "schema_version": 1,
         "author": "Claude",
         "date": "2026-09-25T12:00:00Z",
         "operations": [
             {"id": "pronoun", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"},
-            {"id": "survival", "kind": "insert", "paragraph": {"starts_with": "Sections 1(g), "}, "after": "1(g), ", "text": "2(c), ", "comment": "duty"},
+            {
+                "id": "survival",
+                "kind": "insert",
+                "paragraph": {"starts_with": "Sections 1(g), "},
+                "after": "1(g), ",
+                "text": "2(c), ",
+                "comment": "duty",
+            },
         ],
     }
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan))
     out_dir = tmp_path / "review"
-    code = main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--pdf", "--png", "--dpi", "24"])
+    code = main(
+        ["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--pdf", "--png", "--dpi", "24"]
+    )
     assert code == 0, capsys.readouterr()
-    for name in ["clean.docx", "redline.docx", "report.jsonl", "redline.pdf", "clean.pdf", "redline-page-01.png", "clean-page-01.png"]:
+    for name in [
+        "clean.docx",
+        "redline.docx",
+        "report.jsonl",
+        "redline.pdf",
+        "clean.pdf",
+        "redline-page-01.png",
+        "clean-page-01.png",
+    ]:
         assert (out_dir / name).is_file(), name
     lines = [json.loads(l) for l in (out_dir / "report.jsonl").read_text().splitlines()]
     assert lines[0]["ev"] == "load"
@@ -214,7 +242,9 @@ def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Pat
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(out_dir), "--force"]) == 0
 
 
-def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_failure_exits_3_writes_nothing_and_reports(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = {
         "schema_version": 1,
         "author": "Claude",
@@ -234,7 +264,9 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     assert [(l["id"], l["status"]) for l in lines if l["ev"] == "op"] == [("ok", "ok"), ("bad", "failed")]
     assert lines[-1]["status"] == "failed"
     # The binary's lines: compact, keys sorted.
-    assert captured.out.splitlines()[-1].startswith('{"code":"ANCHOR_NOT_FOUND","ev":"summary","message":'), captured.out
+    assert captured.out.splitlines()[-1].startswith('{"code":"ANCHOR_NOT_FOUND","ev":"summary","message":'), (
+        captured.out
+    )
     # Dry run reports and writes nothing.
     plan["operations"] = plan["operations"][:1]
     plan_path.write_text(json.dumps(plan))
@@ -243,7 +275,9 @@ def test_edit_failure_exits_3_writes_nothing_and_reports(letter: Path, tmp_path:
     assert "{his or her→an}" in capsys.readouterr().out
 
 
-def test_editing_mode_reports_an_invalid_plan_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_editing_mode_reports_an_invalid_plan_as_the_binary_does(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Not JSON, or JSON that is not an object: INVALID_PLAN and exit 3, no traceback.
     for name, text in (("bad.json", "not json"), ("list.json", "[1]")):
         plan_path = tmp_path / name
@@ -254,9 +288,17 @@ def test_editing_mode_reports_an_invalid_plan_as_the_binary_does(letter: Path, t
         assert not out_dir.exists()
 
 
-def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_refusal_summary_message_is_the_engine_detail(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Same shape as the Rust CLI: code and operation have their own keys.
-    plan = {"schema_version": 1, "author": "Claude", "operations": [{"id": "bad", "kind": "replace", "paragraph": {"index": 2}, "find": "nowhere", "replacement": "x"}]}
+    plan = {
+        "schema_version": 1,
+        "author": "Claude",
+        "operations": [
+            {"id": "bad", "kind": "replace", "paragraph": {"index": 2}, "find": "nowhere", "replacement": "x"}
+        ],
+    }
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan))
     assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "review")]) == 3
@@ -265,10 +307,14 @@ def test_refusal_summary_message_is_the_engine_detail(letter: Path, tmp_path: Pa
     assert summary["message"] and "ANCHOR_NOT_FOUND" not in summary["message"], summary
 
 
-def test_convert_checks_every_png_path_before_writing_one(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_convert_checks_every_png_path_before_writing_one(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     (tmp_path / "letter-page-01.png").write_bytes(b"keep")
     report = tmp_path / "pages.json"
-    assert main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)]) == 1
+    assert (
+        main(["convert", str(letter), "-o", str(tmp_path / "letter.png"), "--dpi", "24", "--report", str(report)]) == 1
+    )
     assert "letter-page-01.png" in capsys.readouterr().err
     assert not report.exists(), "a refused PNG leaves no partial bundle"
     assert (tmp_path / "letter-page-01.png").read_bytes() == b"keep"
@@ -300,10 +346,22 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     a.write_bytes(docx(para("alpha beta")))
     b.write_bytes(docx(para("alpha gamma")))
     redline = tmp_path / "redline.docx"
-    assert main([
-        "compare", str(a), str(b), "-o", str(redline),
-        "-d", "1970-01-01T00:00:00Z", "--author", "Legal",
-    ]) == 0
+    assert (
+        main(
+            [
+                "compare",
+                str(a),
+                str(b),
+                "-o",
+                str(redline),
+                "-d",
+                "1970-01-01T00:00:00Z",
+                "--author",
+                "Legal",
+            ]
+        )
+        == 0
+    )
     assert redline.is_file()
     written = capsys.readouterr()
     assert written.out == "" and f"wrote {redline} (docx, " in written.err
@@ -312,6 +370,7 @@ def test_compare_revisions_accept_reject_round_trip(tmp_path: Path, capsys: pyte
     assert {r["kind"] for r in rows} == {"replacement"}
     assert all(r["author"] == "Legal" for r in rows)
     assert {r["date"] for r in rows} == {"1970-01-01T00:00:00Z"}
+
     # Without -d the revisions are dated now (D17), as the native CLI does.
     def stamp() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -431,7 +490,9 @@ def test_invalid_png_dpi_leaves_no_partial_outputs(letter, tmp_path, capsys):
     assert not (tmp_path / "result-page-01.png").exists()
 
 
-def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_changes_lists_ids_and_accept_reject_select_by_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     stamp = 'w:date="2020-01-01T00:00:00Z"'
     body = (
         '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
@@ -470,12 +531,194 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert capsys.readouterr().err == f"error: reading {missing}: No such file or directory (os error 2)\n"
 
 
-def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_changes_filters_by_author_as_the_binary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`changes --author` keeps one author's changes, exact names, and repeats (#1690)."""
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+        f'<w:ins w:id="1" w:author="Ana" {stamp}><w:r><w:t>new</w:t></w:r></w:ins></w:p>'
+        '<w:p><w:r><w:t xml:space="preserve">also </w:t></w:r>'
+        f'<w:del w:id="2" w:author="Bo" {stamp}><w:r><w:delText>old</w:delText></w:r></w:del></w:p>'
+        f'<w:p><w:ins w:id="3" w:author="Ana Maria" {stamp}><w:r><w:t>more</w:t></w:r></w:ins></w:p>'
+    )
+    source = tmp_path / "two.docx"
+    source.write_bytes(docx(body))
+    assert main(["changes", str(source), "--author", "Ana"]) == 0
+    assert capsys.readouterr().out.splitlines() == ['r1\tinsertion\ttext\tAna\tp0\t"new"', "1 change(s)"]
+    assert main(["changes", str(source), "--author", "Ana", "--author", "Bo"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == "2 change(s)"
+    assert main(["changes", str(source), "--author", "Nobody"]) == 0
+    assert capsys.readouterr().out == "0 change(s)\n"
+    assert main(["changes", str(source), "--json", "--author", "Bo"]) == 0
+    records = _listed(capsys.readouterr().out)
+    assert [r["author"] for r in records] == ["Bo"]
+
+
+def test_read_tables_writes_its_grids_to_a_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`read --tables -o FILE` writes the grids it prints (#1690); a .json name is refused."""
+    cell = "<w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc>"
+    table = "<w:tbl><w:tr>" + cell.format("a") + cell.format("b") + "</w:tr></w:tbl>"
+    source = tmp_path / "grid.docx"
+    source.write_bytes(docx(para("Before.") + table + para("After.")))
+    assert main(["read", str(source), "--tables"]) == 0
+    grids = capsys.readouterr().out
+    assert "a" in grids and "b" in grids
+    out = tmp_path / "grid.md"
+    assert main(["read", str(source), "--tables", "-o", str(out)]) == 0
+    written = capsys.readouterr()
+    assert written.out == "" and out.read_text(encoding="utf-8") == grids
+    assert written.err == f"wrote {out} (tables, {out.stat().st_size} bytes)\n"
+    # Refused as the binary refuses it: exit 2, OUTPUT_EXISTS (#1698).
+    with pytest.raises(SystemExit) as usage:
+        main(["read", str(source), "--tables", "-o", str(out)])
+    assert usage.value.code == 2
+    assert f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as usage:
+        main(["read", str(source), "--tables", "-o", str(tmp_path / "grid.json")])
+    assert usage.value.code == 2
+    assert "--tables writes the grids as text" in capsys.readouterr().err
+
+
+def _grid_document(body_text: str = "Before.") -> tuple[bytes, str]:
+    """A one-table package and the row text its grid view prints."""
+    cell = "<w:tc><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:tc>"
+    table = "<w:tbl><w:tr>" + cell.format("a") + cell.format("b") + "</w:tr></w:tbl>"
+    return docx(para(body_text) + table), "a\tb"
+
+
+def test_read_tables_refuses_an_existing_output_as_the_binary_does(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`read --tables -o` over an existing file is the binary's usage
+    refusal: exit 2 with the OUTPUT_EXISTS code (#1698; the twin exited 1
+    with no code), whatever the file's name and under --quiet."""
+    package, _ = _grid_document()
+    source = tmp_path / "grid.docx"
+    source.write_bytes(package)
+    for name in ("existing.md", "existing.MD", "existing"):
+        out = tmp_path / name
+        out.write_text("keep me\n")
+        for argv in (
+            ["read", str(source), "--tables", "-o", str(out)],
+            ["read", str(source), "--tables", "-o", str(out), "--quiet"],
+        ):
+            with pytest.raises(SystemExit) as refusal:
+                main([*argv])
+            assert refusal.value.code == 2, argv
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_EXISTS: output '{out}' already exists (use --force to overwrite)"
+            ], argv
+        assert out.read_text() == "keep me\n", name
+
+
+def test_read_tables_never_writes_over_its_input(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`read --tables -o` refuses an output naming its input before any
+    work — the same path, or the same file through a hard or symbolic
+    link — --force included (#1698); an extensionless or .md input is as
+    protected as a .docx one, which the output format already refused."""
+    package, _ = _grid_document()
+    for name in ("tables-input", "tables-input.md"):
+        source = tmp_path / name
+        source.write_bytes(package)
+        for argv in (
+            ["read", str(source), "--tables", "-o", str(source)],
+            ["read", str(source), "--tables", "-o", str(source), "--force"],
+        ):
+            with pytest.raises(SystemExit) as refusal:
+                main([*argv])
+            assert refusal.value.code == 2, argv
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_ALIAS: the output '{source}' is the same file as the input '{source}'"
+            ], argv
+        assert source.read_bytes() == package, name
+    # A hard link or a symlink to the input is the same file: refused even
+    # with --force, which authorizes replacing an output, never an input.
+    docx_input = tmp_path / "grid.docx"
+    docx_input.write_bytes(package)
+    for link, make in (("hard.md", os.link), ("symbolic.md", os.symlink)):
+        out = tmp_path / link
+        make(docx_input, out)
+        for force in ([], ["--force"]):
+            with pytest.raises(SystemExit) as refusal:
+                main(["read", str(docx_input), "--tables", "-o", str(out), *force])
+            assert refusal.value.code == 2, (link, force)
+            assert capsys.readouterr().err.splitlines() == [
+                f"error: OUTPUT_ALIAS: the output '{out}' is the same file as the input '{docx_input}'"
+            ], (link, force)
+        assert docx_input.read_bytes() == package, link
+
+
+def test_read_tables_force_replaces_a_linked_output_without_writing_through_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--force over an output that is a link to another file replaces the
+    link's own directory entry (staged beside it, renamed over), never
+    writing through the link into its target (#1698)."""
+    package, _ = _grid_document()
+    source = tmp_path / "grid.docx"
+    source.write_bytes(package)
+    assert main(["read", str(source), "--tables"]) == 0
+    grids = capsys.readouterr().out
+    target = tmp_path / "target.md"
+    target.write_text("unrelated\n")
+    out = tmp_path / "linked.md"
+    out.symlink_to(target)
+    assert main(["read", str(source), "--tables", "-o", str(out), "--force"]) == 0
+    assert capsys.readouterr().err == f"wrote {out} (tables, {len(grids.encode())} bytes)\n"
+    assert not out.is_symlink() and out.read_text(encoding="utf-8") == grids
+    assert target.read_text() == "unrelated\n"
+    assert source.read_bytes() == package
+
+
+def test_read_repeated_empty_paragraph_flags_exit_usage_as_the_binary(
+    letter: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`-p '' -p ''` (a single `-p ''` alike) selects nothing: the binary's
+    usage refusal, exit 2 with USAGE under --json, in the view, snapshot
+    and tables paths (#1698; the twin exited 1 with ERROR)."""
+    for argv in (
+        ["read", str(letter), "-p", "", "-p", ""],
+        ["read", str(letter), "-p", ""],
+        ["read", str(letter), "--tables", "-p", "", "-p", ""],
+    ):
+        with pytest.raises(SystemExit) as refusal:
+            main([*argv])
+        assert refusal.value.code == 2, argv
+        assert capsys.readouterr().err == "error: no paragraphs selected\n", argv
+    with pytest.raises(SystemExit) as refusal:
+        main(["read", str(letter), "-p", "", "-p", "", "--json"])
+    assert refusal.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.err == "error: no paragraphs selected\n"
+    assert json.loads(captured.out) == {"error": {"code": "USAGE", "message": "no paragraphs selected"}}
+
+
+def test_edit_help_does_not_advertise_the_plan_v2_routes_the_host_cannot_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The Python host has no `edit template` / `edit apply` handler, so
+    its `edit --help` must not advertise them; the advice it can stand
+    behind stays (#1698)."""
+    for argv in (["edit", "--help"], ["edit", "-h"]):
+        with pytest.raises(SystemExit) as shown:
+            main([*argv])
+        assert shown.value.code == 0
+        text = capsys.readouterr().out
+        assert "edit template" not in text and "edit apply" not in text, argv
+        assert "PlanV2" not in text, argv
+        assert "Typed actions:" in text and "Routing:" in text, argv
+
+
+def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = {
         "schema_version": 1,
         "author": "Claude",
         "date": "2026-09-25T12:00:00Z",
-        "operations": [{"id": "pronoun", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"}],
+        "operations": [
+            {"id": "pronoun", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"}
+        ],
     }
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan))
@@ -495,9 +738,28 @@ def test_edit_writes_the_patch_and_prints_the_changed_blocks_unless_quiet(letter
     assert (tmp_path / "quiet" / "patch.diff").read_text() == patch
 
 
-def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_and_add_by_flags_match_the_binary(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     # Operation flags grouped by -p; --out-dir alone puts the bundle beside the file.
-    code = main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an", "-p", "p0", "--delete", "--datetime", "2026-10-01T09:00:00Z", "--out-dir"])
+    code = main(
+        [
+            "edit",
+            str(letter),
+            "-p",
+            "p1",
+            "--anchor",
+            "his or her",
+            "--content",
+            "an",
+            "-p",
+            "p0",
+            "--delete",
+            "--datetime",
+            "2026-10-01T09:00:00Z",
+            "--out-dir",
+        ]
+    )
     assert code == 0, capsys.readouterr()
     out = capsys.readouterr().out
     bundle = tmp_path / "letter.edit"
@@ -507,45 +769,149 @@ def test_edit_and_add_by_flags_match_the_binary(letter: Path, tmp_path: Path, ca
     assert "\nrange: changed by @J (p0, p1) of p0-p2\n" in out, out
     assert "{~~his or her~>an~~}" in out and "{--Heading--}" in out, out
     # A recording takes no --out-dir; flags without an operation are usage errors.
-    for bad in (["--plan", "x.json", "-p", "p1", "--delete"], ["-p", "p1"], ["--anchor", "a", "-p", "p1", "--content", "b"]):
+    for bad in (
+        ["--plan", "x.json", "-p", "p1", "--delete"],
+        ["-p", "p1"],
+        ["--anchor", "a", "-p", "p1", "--content", "b"],
+    ):
         with pytest.raises(SystemExit) as exit_info:
             main(["edit", str(letter), *bad, "--out-dir", str(tmp_path / "bad")])
         assert exit_info.value.code == 2, bad
     capsys.readouterr()
     # Markdown marks in an anchor and in content leave notes.
-    assert main(["edit", str(letter), "-p", "p0", "--anchor", "# Heading", "--content", "**Title**", "--out-dir", str(tmp_path / "n")]) == 0
+    assert (
+        main(
+            [
+                "edit",
+                str(letter),
+                "-p",
+                "p0",
+                "--anchor",
+                "# Heading",
+                "--content",
+                "**Title**",
+                "--out-dir",
+                str(tmp_path / "n"),
+            ]
+        )
+        == 0
+    )
     # The bundle's wrote line and notes are status lines, on stderr (D6).
     out, err = capsys.readouterr()
     assert err.startswith(f"wrote {tmp_path / 'n'} (4 files: "), err
-    assert '\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n' in err, err
+    assert "\nnote: op-1: content keeps its Markdown marks as text; use --style for formatting\n" in err, err
     assert '\nnote: op-1: anchor "# Heading" read as "Heading" (Markdown marks are not document text)\n' in err, err
     assert "note:" not in out and "\nwrote " not in out, out
     # add: a comment, then a reply on the redline; editing mode writes no redline.
-    assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "--out-dir", str(tmp_path / "c")]) == 0
+    assert (
+        main(
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p2",
+                "--anchor",
+                "survive",
+                "--content",
+                "Which?",
+                "--author",
+                "Ann Counsel",
+                "--out-dir",
+                str(tmp_path / "c"),
+            ]
+        )
+        == 0
+    )
     assert "{==survive==}{>>c0 @AC: Which?<<}" in capsys.readouterr().out
-    assert main(["add", str(tmp_path / "c" / "redline.docx"), "-p", "c0", "--content", "All three.", "--author", "Bob Lee", "--out-dir", str(tmp_path / "r")]) == 0
+    assert (
+        main(
+            [
+                "add",
+                str(tmp_path / "c" / "redline.docx"),
+                "-p",
+                "c0",
+                "--content",
+                "All three.",
+                "--author",
+                "Bob Lee",
+                "--out-dir",
+                str(tmp_path / "r"),
+            ]
+        )
+        == 0
+    )
     assert "{>>c1 @BL re c0: All three.<<}" in capsys.readouterr().out
-    assert main(["add", str(letter), "-p", "p0", "--content", "Recitals", "--editing-mode", "--out-dir", str(tmp_path / "e")]) == 0
+    assert (
+        main(
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p0",
+                "--content",
+                "Recitals",
+                "--editing-mode",
+                "--out-dir",
+                str(tmp_path / "e"),
+            ]
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     assert (tmp_path / "e" / "clean.docx").is_file() and not (tmp_path / "e" / "redline.docx").exists()
     assert "\nRecitals\n" in out and "{++" not in out, out
 
 
-def test_edit_refuses_another_authors_comment_unless_rewrite_others_comments(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_refuses_another_authors_comment_unless_rewrite_others_comments(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     # #1264: a comment speaks for its author; another author replies, or asks to rewrite it.
-    assert main(["add", str(letter), "-p", "p2", "--anchor", "survive", "--content", "Which?", "--author", "Ann Counsel", "-o", str(tmp_path / "c.docx")]) == 0
+    assert (
+        main(
+            [
+                "add",
+                str(letter),
+                "-p",
+                "p2",
+                "--anchor",
+                "survive",
+                "--content",
+                "Which?",
+                "--author",
+                "Ann Counsel",
+                "-o",
+                str(tmp_path / "c.docx"),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
-    edit = ["edit", str(tmp_path / "c.docx"), "-p", "c0", "--content", "All three?", "--author", "Bob Lee", "-o", str(tmp_path / "e.docx")]
+    edit = [
+        "edit",
+        str(tmp_path / "c.docx"),
+        "-p",
+        "c0",
+        "--content",
+        "All three?",
+        "--author",
+        "Bob Lee",
+        "-o",
+        str(tmp_path / "e.docx"),
+    ]
     assert main(edit) == 3
     assert 'COMMENT_NOT_YOURS (op-1): c0 is by "Ann Counsel"; reply instead' in capsys.readouterr().err
     assert not (tmp_path / "e.docx").exists()
     assert main([*edit, "--rewrite-others-comments"]) == 0
     captured = capsys.readouterr()
-    assert 'note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name' in captured.err, captured.err
+    assert (
+        'note: op-1 (edit_comment): c0 is by "Ann Counsel"; their words were changed under their name' in captured.err
+    ), captured.err
     assert "{>>c0 @AC: All three?<<}" in captured.out, captured.out
 
 
-def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_and_add_write_one_document_as_the_binary(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     edit = ["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "an"]
     written = tmp_path / "letter_modified.docx"
     assert main(edit) == 0
@@ -569,7 +935,11 @@ def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: P
     with zipfile.ZipFile(tmp_path / "clean.docx") as package:
         assert b"<w:ins " not in package.read("word/document.xml")
     # -o names a .docx and does not go with --out-dir; FILE itself exists.
-    for bad in (["-o", str(tmp_path / "b.pdf")], ["-o", str(letter)], ["-o", str(tmp_path / "b.docx"), "--out-dir", str(tmp_path / "r")]):
+    for bad in (
+        ["-o", str(tmp_path / "b.pdf")],
+        ["-o", str(letter)],
+        ["-o", str(tmp_path / "b.docx"), "--out-dir", str(tmp_path / "r")],
+    ):
         with pytest.raises(SystemExit) as exit_info:
             main([*edit, *bad])
         assert exit_info.value.code == 2, bad
@@ -588,7 +958,9 @@ def test_edit_and_add_write_one_document_as_the_binary(letter: Path, tmp_path: P
     assert sorted(p.name for p in tmp_path.glob("letter_modified*")) == ["letter_modified.docx", "letter_modified.pdf"]
 
 
-def test_a_bare_plan_is_file_plan_json_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_bare_plan_is_file_plan_json_as_the_binary(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = tmp_path / f"{letter.stem}_plan.json"
     assert main(["edit", str(letter), "--plan", "-p", "p1", "--anchor", "his or her", "--content", "their"]) == 0
     out = capsys.readouterr().out
@@ -602,10 +974,15 @@ def test_a_bare_plan_is_file_plan_json_as_the_binary(letter: Path, tmp_path: Pat
     assert "names a Word document; put FILE before --plan" in capsys.readouterr().err
 
 
-def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_and_add_plan_record_and_consume_as_the_binary_does(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     plan = tmp_path / "plan.json"
     before = letter.read_bytes()
-    assert main(["edit", str(letter), "--plan", str(plan), "-p", "p1", "--anchor", "his or her", "--content", "their"]) == 0
+    assert (
+        main(["edit", str(letter), "--plan", str(plan), "-p", "p1", "--anchor", "his or her", "--content", "their"])
+        == 0
+    )
     assert capsys.readouterr().out.strip() == (
         f"recorded 1 operation in {plan}: 1 operation, 0 revisions to accept, 0 to reject; apply with: jubarte edit {letter} --plan {plan}"
     )
@@ -647,7 +1024,9 @@ def test_edit_and_add_plan_record_and_consume_as_the_binary_does(letter: Path, t
     assert "{~~his or her~>their~~}" in out and "Why 3?" in out, out
 
 
-def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_paths_as_typed_and_strict_utf8_as_the_binary(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     # pi review 06c parity F1-F3.
     monkeypatch.chdir(tmp_path)
     assert main(["edit", "./letter.docx", "--plan", "./plan.json", "-p", "p1", "--content", "X."]) == 0
@@ -682,7 +1061,9 @@ def test_convert_to_md_points_at_a_read_that_works(letter, capsys):
     assert "--track-changes" not in err
 
 
-def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(
+    letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """pi review r392b tests F6: the files are written and the report says
     so; a view that cannot be read back is a warning and exit 0."""
     from jubarte_redlines import _native
@@ -708,8 +1089,12 @@ def test_edit_keeps_its_files_when_the_view_cannot_be_read_back(letter: Path, tm
 
 @pytest.mark.parametrize("editing,quiet", [(False, False), (True, False), (True, True)])
 def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
-    letter: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str], editing: bool, quiet: bool,
+    letter: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    editing: bool,
+    quiet: bool,
 ) -> None:
     from jubarte_redlines import _native
 
@@ -721,15 +1106,31 @@ def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
 
     monkeypatch.setattr(_native, "changed_view", broken)
     out_dir = tmp_path / "bundle"
-    args = ["edit", str(letter), "-p", "p0", "--anchor", "Heading", "--content", "Title",
-            "--author", "Ann Counsel", "--datetime", "2026-10-01T09:00:00Z", "--out-dir", str(out_dir)]
+    args = [
+        "edit",
+        str(letter),
+        "-p",
+        "p0",
+        "--anchor",
+        "Heading",
+        "--content",
+        "Title",
+        "--author",
+        "Ann Counsel",
+        "--datetime",
+        "2026-10-01T09:00:00Z",
+        "--out-dir",
+        str(out_dir),
+    ]
     if editing:
         args.append("--editing-mode")
     if quiet:
         args.append("--quiet")
     assert main(args) == 0
     captured = capsys.readouterr()
-    expected = {"clean.docx", "report.jsonl"} if editing else {"clean.docx", "redline.docx", "patch.diff", "report.jsonl"}
+    expected = (
+        {"clean.docx", "report.jsonl"} if editing else {"clean.docx", "redline.docx", "patch.diff", "report.jsonl"}
+    )
     assert {file.name for file in out_dir.iterdir()} == expected
     assert (out_dir / "clean.docx").read_bytes().startswith(b"PK")
     rows = [json.loads(line) for line in (out_dir / "report.jsonl").read_text().splitlines()]
@@ -752,7 +1153,11 @@ def test_pr392_view_failure_preserves_bundle_and_quiet_skips_view(
 
 @pytest.mark.parametrize("mode,kept,removed", [("accept", "45", "30"), ("reject", "30", "45")])
 def test_shorthand_view_preserves_existing_output(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, kept: str, removed: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mode: str,
+    kept: str,
+    removed: str,
 ) -> None:
     old, new = tmp_path / "old.md", tmp_path / "new.md"
     old.write_text("Unchanged intro.\n\nDue in 30 days.\n", encoding="utf-8")
@@ -761,10 +1166,23 @@ def test_shorthand_view_preserves_existing_output(
     sentinel = b"existing output must survive"
     output.write_bytes(sentinel)
 
-    assert main([
-        str(old), str(new), "--track-changes", mode, "--changed", "--by", "Legal",
-        "--author", "Legal", "--no-page-markers",
-    ]) == 0
+    assert (
+        main(
+            [
+                str(old),
+                str(new),
+                "--track-changes",
+                mode,
+                "--changed",
+                "--by",
+                "Legal",
+                "--author",
+                "Legal",
+                "--no-page-markers",
+            ]
+        )
+        == 0
+    )
     shown = capsys.readouterr().out
     assert shown.startswith(f"---\nsource: {output} (not written; -o keeps it)\n")
     assert f"Due in {kept} days." in shown
@@ -785,10 +1203,20 @@ def test_shorthand_view_preserves_existing_output(
     plain_old.write_bytes(old.read_bytes())
     plain_new.write_bytes(new.read_bytes())
     critic = tmp_path / "critic.md"
-    assert main([
-        "compare", str(plain_old), str(plain_new),
-        "-d", "1970-01-01T00:00:00Z", "-o", str(critic),
-    ]) == 0
+    assert (
+        main(
+            [
+                "compare",
+                str(plain_old),
+                str(plain_new),
+                "-d",
+                "1970-01-01T00:00:00Z",
+                "-o",
+                str(critic),
+            ]
+        )
+        == 0
+    )
     assert "{~~30~>45~~}" in critic.read_text(encoding="utf-8")
     assert f"wrote {critic} (md, " in capsys.readouterr().err
     with pytest.raises(SystemExit) as refused:
@@ -801,19 +1229,34 @@ def test_shorthand_view_preserves_existing_output(
 def tracked(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
     """The letter with a tracked substitution in it."""
     path = tmp_path / "tracked.docx"
-    assert main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "their", "-o", str(path)]) == 0
+    assert (
+        main(["edit", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "their", "-o", str(path)]) == 0
+    )
     capsys.readouterr()
     return path
 
 
 @pytest.mark.parametrize("task,dry_run", [("edit", False), ("edit", True), ("add", False)])
 def test_editing_mode_keep_is_usage_error_before_output(
-    tracked: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], task: str, dry_run: bool,
+    tracked: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    task: str,
+    dry_run: bool,
 ) -> None:
     output = tmp_path / "never-created"
     args = [
-        task, str(tracked), "-p", "p0", "--content", "Replacement",
-        "--existing-revisions", "keep", "--editing-mode", "--out-dir", str(output),
+        task,
+        str(tracked),
+        "-p",
+        "p0",
+        "--content",
+        "Replacement",
+        "--existing-revisions",
+        "keep",
+        "--editing-mode",
+        "--out-dir",
+        str(output),
     ]
     if dry_run:
         args.append("--dry-run")
@@ -827,7 +1270,9 @@ def test_editing_mode_keep_is_usage_error_before_output(
 
 
 def test_editing_mode_takes_a_plan_that_settles_every_change(
-    tracked: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tracked: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Codex on #425: what -p rN --accept settles is not kept. The
     # tracked fixture's substitution is one grouped change (r1+2); a member
@@ -844,27 +1289,53 @@ def test_editing_mode_takes_a_plan_that_settles_every_change(
 
 
 def test_editing_mode_refuses_a_reply_on_a_paragraph_it_deletes(
-    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    letter: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The clean copy keeps neither p1 nor c0's thread: the reply would join nothing.
     commented = tmp_path / "commented.docx"
-    assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0
+    assert (
+        main(
+            ["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]
+        )
+        == 0
+    )
     capsys.readouterr()
     output = tmp_path / "never-created.docx"
     with pytest.raises(SystemExit) as error:
-        main([
-            "edit", str(commented), "-p", "p1", "--delete", "-p", "c0", "--reply", "Agreed.",
-            "--editing-mode", "-o", str(output),
-        ])
+        main(
+            [
+                "edit",
+                str(commented),
+                "-p",
+                "p1",
+                "--delete",
+                "-p",
+                "c0",
+                "--reply",
+                "Agreed.",
+                "--editing-mode",
+                "-o",
+                str(output),
+            ]
+        )
     assert error.value.code == 2
     captured = capsys.readouterr()
     assert "--editing-mode deletes p1 outright" in captured.err
     assert not output.exists()
 
 
-def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_edit_takes_the_text_a_comment_covers(
+    letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     commented = tmp_path / "commented.docx"
-    assert main(["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]) == 0
+    assert (
+        main(
+            ["add", str(letter), "-p", "p1", "--anchor", "his or her", "--content", "Gendered?", "-o", str(commented)]
+        )
+        == 0
+    )
     out = tmp_path / "their.docx"
     capsys.readouterr()
     assert main(["edit", str(commented), "-p", "c0.text", "--content", "their", "-o", str(out)]) == 0
@@ -874,8 +1345,25 @@ def test_edit_takes_the_text_a_comment_covers(letter: Path, tmp_path: Path, caps
     # selection does; the view pairs only an insertion before a deletion,
     # so these are two changes under the comment.
     assert "{=={~~his or her~>their~~}{r1+2 @J}==}" in capsys.readouterr().out
-    assert main(["edit", str(commented), "-p", "c0.text", "--anchor", "signs", "--content", "x", "-o", str(tmp_path / "no.docx")]) == 3
+    assert (
+        main(
+            [
+                "edit",
+                str(commented),
+                "-p",
+                "c0.text",
+                "--anchor",
+                "signs",
+                "--content",
+                "x",
+                "-o",
+                str(tmp_path / "no.docx"),
+            ]
+        )
+        == 3
+    )
     assert "not in the text c0 covers" in capsys.readouterr().err
+
 
 def test_edit_accept_reject_prints_the_resolved_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
@@ -886,7 +1374,22 @@ def test_edit_accept_reject_prints_the_resolved_changes(tmp_path: Path, capsys: 
     captured = capsys.readouterr()
     assert captured.out == 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n', captured.out
     assert captured.err.startswith(f"wrote {out} (docx, "), captured.err
-    assert main(["edit", str(src), "-p", "r1+2", "--accept", "-o", str(tmp_path / "pair.docx"), "--datetime", "2026-10-11T00:00:00Z"]) == 0
+    assert (
+        main(
+            [
+                "edit",
+                str(src),
+                "-p",
+                "r1+2",
+                "--accept",
+                "-o",
+                str(tmp_path / "pair.docx"),
+                "--datetime",
+                "2026-10-11T00:00:00Z",
+            ]
+        )
+        == 0
+    )
     captured = capsys.readouterr()
     assert captured.out == 'accepted r1+2 in p3: "{~~weekly~>monthly~~}" > "monthly"\n', captured.out
 
@@ -894,7 +1397,22 @@ def test_edit_accept_reject_prints_the_resolved_changes(tmp_path: Path, capsys: 
 def test_edit_resolution_bundle_prints_resolved_lines(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     received = Path(__file__).parents[2] / "tests" / "fixtures" / "agent-view" / "received.docx"
     bundle = tmp_path / "bundle"
-    assert main(["edit", str(received), "-p", "r0", "--accept", "--out-dir", str(bundle), "--datetime", "2026-10-11T00:00:00Z"]) == 0
+    assert (
+        main(
+            [
+                "edit",
+                str(received),
+                "-p",
+                "r0",
+                "--accept",
+                "--out-dir",
+                str(bundle),
+                "--datetime",
+                "2026-10-11T00:00:00Z",
+            ]
+        )
+        == 0
+    )
     captured = capsys.readouterr()
     assert captured.out == 'accepted r0 in p3: "{++quarterly++}" > "quarterly"\n'
     assert (bundle / "report.jsonl").is_file()
@@ -969,3 +1487,19 @@ def test_read_for_edit_usage_errors_as_the_binary(tmp_path: Path, capsys: pytest
             main(argv)
         assert error.value.code == 2, argv
         assert "error:" in capsys.readouterr().err
+
+
+def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path) -> None:
+    # The staged file is created fresh, under a name nobody can guess: a
+    # link planted where the old pid-based name pointed is left alone, and
+    # what it names keeps its bytes (CodeRabbit on #1698).
+    from jubarte_redlines.__main__ import _replace
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    out = tmp_path / "out.md"
+    (tmp_path / f".{out.name}.jubarte-{os.getpid()}.tmp").symlink_to(victim)
+    assert _replace(out, "new") == 3
+    assert victim.read_text() == "keep"
+    assert out.read_text() == "new" and not out.is_symlink()
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp") and not p.is_symlink()] == []
