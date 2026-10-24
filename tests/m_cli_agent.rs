@@ -445,6 +445,64 @@ fn edit_failure_writes_nothing_and_reports_every_operation() {
     assert_eq!(lines.last().unwrap()["status"], "failed");
 }
 
+/// Exit 3 does not always have an operation report: malformed plans fail
+/// before execution, while a stale source is a plan-level refusal.
+#[test]
+fn edit_plan_refusal_docs_distinguish_parse_and_plan_level_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    let plan = dir.path().join("plan.json");
+    let output = dir.path().join("output.docx");
+    for invalid in [
+        "{not JSON",
+        r#"{"schema_version":1,"author":"Claude","operations":[{"kind":"unknown"}]}"#,
+    ] {
+        std::fs::write(&plan, invalid).unwrap();
+        let (code, stdout, stderr) = run(&[
+            "edit",
+            file.to_str().unwrap(),
+            "--plan",
+            plan.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 3, "{stderr}");
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(stderr.contains("INVALID_PLAN"), "{stderr}");
+        assert!(!output.exists());
+    }
+    let stale = serde_json::json!({
+        "schema_version": 1, "author": "Claude", "source_sha256": "0".repeat(64),
+        "operations": [{"kind":"delete", "paragraph":"p0", "find":"Heading"}]
+    });
+    std::fs::write(&plan, stale.to_string()).unwrap();
+    let (code, stdout, stderr) = run(&[
+        "edit",
+        file.to_str().unwrap(),
+        "--plan",
+        plan.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains("STALE_SOURCE"), "{stderr}");
+    assert!(stdout.contains("\"operation\":null"), "{stdout}");
+    assert!(!output.exists());
+    for text in [
+        include_str!("../docs/rust.md"),
+        include_str!("../skills/jubarte-documents/SKILL.md"),
+    ] {
+        assert!(
+            text.contains("Parse/schema refusals may leave stdout empty"),
+            "document the observed empty-stdout refusal"
+        );
+        assert!(
+            text.contains("plan-level refusals may have no operation"),
+            "do not promise an operation for every refusal"
+        );
+    }
+}
+
 #[test]
 fn edit_dry_run_prints_the_report_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();

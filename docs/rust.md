@@ -184,8 +184,11 @@ Exit status, for scripts and agents that chain commands:
 | 0 | done |
 | 1 | an input, operational or I/O failure |
 | 2 | usage, refused before any work: a flag, a combination, an existing output |
-| 3 | an edit plan refused, nothing written; the report on stdout names the operation |
+| 3 | an edit plan refused, nothing written; see stderr and any report on stdout |
 | 4 | a substituted font under `--fail-on-substitution` |
+
+Parse/schema refusals may leave stdout empty; read stderr for the reason.
+Execution refusals report on stdout; plan-level refusals may have no operation.
 
 `validate` also exits 2 on any error, on any `word` or `edits` finding, and
 with `--strict` on any warning.
