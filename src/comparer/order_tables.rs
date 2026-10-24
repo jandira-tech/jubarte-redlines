@@ -5,11 +5,12 @@
 //! Schema-order ranks for property-container children.
 //!
 //! These constants back `super::finalize::wml_order_elements_per_standard`
-//! (which uses them to resort `w:pPr`, `w:numPr`, `w:rPr`, `w:tblPr`
-//! children) and are pinned by the schema-consistency test in
-//! `tests/schema_consistency.rs`. The test fails if they drift from the
-//! WML XSD particle order; the divergences in `RPR_ORDER` (the
-//! `moveFrom`/`moveTo`/`ins`/`del` allowlist) are also enforced there.
+//! (which uses them to resort `w:pPr`, `w:numPr`, `w:rPr`, `w:tblPr`,
+//! border and cell-margin children) and are pinned by the
+//! schema-consistency test in `tests/schema_consistency.rs`. The test
+//! fails if they drift from the WML XSD particle order; the divergences in
+//! `RPR_ORDER` (the `moveFrom`/`moveTo`/`ins`/`del` allowlist) are also
+//! enforced there.
 //!
 
 /// Schema ranks for `w:pPr` children (PtOpenXmlUtil `Order_pPr`). Used by
@@ -65,6 +66,56 @@ pub const NUMPR_ORDER: &[(&str, i32)] = &[
     ("numId", 20),
     ("numberingChange", 30),
     ("ins", 40),
+];
+
+/// Schema ranks for `w:tcBorders` children (`CT_TcBorders` sequence).
+/// PtOpenXmlUtil ranked `start` before `left`, which reordered a valid
+/// source into one the schema refuses (#1712).
+pub const TCBORDERS_ORDER: &[(&str, i32)] = &[
+    ("top", 10),
+    ("left", 20),
+    ("start", 30),
+    ("bottom", 40),
+    ("right", 50),
+    ("end", 60),
+    ("insideH", 70),
+    ("insideV", 80),
+    ("tl2br", 90),
+    ("tr2bl", 100),
+];
+
+/// Schema ranks for `w:tblBorders` children (`CT_TblBorders` sequence).
+pub const TBLBORDERS_ORDER: &[(&str, i32)] = &[
+    ("top", 10),
+    ("left", 20),
+    ("start", 30),
+    ("bottom", 40),
+    ("right", 50),
+    ("end", 60),
+    ("insideH", 70),
+    ("insideV", 80),
+];
+
+/// Schema ranks for `w:pBdr` children (`CT_PBdr` sequence).
+pub const PBDR_ORDER: &[(&str, i32)] = &[
+    ("top", 10),
+    ("left", 20),
+    ("bottom", 30),
+    ("right", 40),
+    ("between", 50),
+    ("bar", 60),
+];
+
+/// Schema ranks for `w:tblCellMar` and `w:tcMar` children (`CT_TblCellMar`
+/// and `CT_TcMar` share the sequence). PtOpenXmlUtil sorts neither, so a
+/// source's order was copied through (#1712).
+pub const CELL_MARGINS_ORDER: &[(&str, i32)] = &[
+    ("top", 10),
+    ("left", 20),
+    ("start", 30),
+    ("bottom", 40),
+    ("right", 50),
+    ("end", 60),
 ];
 
 /// Schema ranks for `w:rPr` children (PtOpenXmlUtil `Order_rPr`), with
