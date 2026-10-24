@@ -269,6 +269,13 @@ impl W {
     cached_xname!(W::URI, hdr, "hdr");
     cached_xname!(W::URI, ftr, "ftr");
     cached_xname!(W::URI, fld_simple, "fldSimple");
+    // The marks Word saves a table with, read per table by the convert fit.
+    cached_xname!(W::URI, rsid_r, "rsidR");
+    cached_xname!(W::URI, rsid_tr, "rsidTr");
+}
+
+impl W14 {
+    cached_xname!(W14::URI, para_id, "paraId");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────

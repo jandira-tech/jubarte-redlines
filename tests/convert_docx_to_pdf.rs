@@ -43731,6 +43731,49 @@ fn a_fitted_column_holding_a_fitted_nested_table_takes_the_nested_fit() {
 }
 
 #[test]
+fn an_autofit_table_whose_rows_outrun_its_grid_fits_as_word_does() {
+    // #1732 probes g1 and g2 (Word 16, 2026-10-24), from CodeRabbit's
+    // review: a one-column 2400 grid under two-cell rows. The cue reads
+    // only the grid's column. Word fits both tables, so a guard that kept
+    // such a table on the grid split evenly (VALUE 60pt after LABEL:)
+    // would move it away from Word. g2, no tcW anywhere: Word fits the
+    // second column to the margin (540.2). g1, the second column with a
+    // dxa tcW 6000 in every row: Word fits the first column to LABEL:
+    // (37.6pt in its Aptos 12, #1725) and gives the second its 300pt;
+    // jubarte widens the second to the margin until #1733.
+    let cell = |w: Option<u32>, text: &str| {
+        let tcw = w.map_or(String::new(), |w| {
+            format!("<w:tcW w:w=\"{w}\" w:type=\"dxa\"/>")
+        });
+        format!("<w:tc><w:tcPr>{tcw}</w:tcPr>{}</w:tc>", text_para(text))
+    };
+    for (name, sized) in [("g2", None), ("g1", Some(6000))] {
+        let rows = format!(
+            "<w:tr>{}{}</w:tr><w:tr>{}{}</w:tr>",
+            cell(None, "LABEL:"),
+            cell(sized, "VALUE"),
+            cell(None, "x"),
+            cell(sized, "AAAA ".repeat(25).trim_end())
+        );
+        let (pdf, rules) = bordered_autofit_table(&[2400], &rows);
+        let a = pdf_glyph_text_xy(&pdf, "LABEL:").expect("LABEL:").0;
+        let b = pdf_glyph_text_xy(&pdf, "VALUE").expect("VALUE").0;
+        assert!(
+            b - a < 45.0,
+            "{name}: Word fits the first column to LABEL:; pitch={} rules={rules:?}",
+            b - a
+        );
+        if sized.is_none() {
+            let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                (right - 540.2).abs() < 2.0,
+                "{name}: Word fits the second column to the margin; rules={rules:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_paragraphs_text_and_inline_picture_share_its_line_in_a_fitted_column() {
     // #1732 probe i1 (Word 16, 2026-10-24): an unmarked 2400/6000 table
     // without tcW; one paragraph of column 1 holds "Caption text " and a
