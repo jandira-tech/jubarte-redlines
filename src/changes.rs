@@ -1445,7 +1445,14 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
     };
     // The cells under `top`, nested tables' too, that no row or cell
     // between them and `top` covers by itself (#1684): `top`'s revision is
-    // the one that covers them.
+    // the one that covers them. A cell of `top` itself that carries the
+    // revision (`w:cellIns`, `w:cellDel`) covers its own mark (CodeRabbit
+    // on #1680, round 11).
+    let cell_kind = if kind == "ins" {
+        W::cell_ins()
+    } else {
+        W::cell_del()
+    };
     let covered_below = |cell: NodeId| {
         let mut cell = cell;
         loop {
@@ -1456,7 +1463,9 @@ fn final_marks_of_row(dom: &Dom, carrier: NodeId) -> Vec<NodeId> {
                 return false;
             };
             if row == top {
-                return false;
+                return dom
+                    .element(cell, &W::tc_pr())
+                    .is_some_and(|pr| dom.element(pr, &cell_kind).is_some());
             }
             if crate::validate::row_revised(dom, row, cell, kind) {
                 return true;

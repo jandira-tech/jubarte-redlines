@@ -1356,6 +1356,60 @@ fn resolving_a_row_alone_takes_its_nested_cells_final_marks_along() {
     }
 }
 
+/// A cell of the resolved row that carries the row's revision itself
+/// (`w:cellIns`, `w:cellDel`) covers its own final mark, as a nested row
+/// does: resolving the row alone leaves that cell's revision, its final
+/// mark and its words tracked (CodeRabbit on #1680, round 11).
+#[test]
+fn a_cell_revised_on_its_own_stays_when_its_row_resolves() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let (kind, text, cell_kind) = if inserted {
+            ("ins", "t", "cellIns")
+        } else {
+            ("del", "delText", "cellDel")
+        };
+        let cell = |own: &str, mark: u32, words: u32, value: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{own}</w:tcPr><w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p></w:tc>"#
+            )
+        };
+        let plain = |value: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:tc>"#
+            )
+        };
+        let source = docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr>{}{}</w:tr></w:tbl><w:p/>"#,
+            plain("Kept."),
+            plain("Also kept."),
+            cell("", 2, 3, "Left."),
+            cell(&format!(r#"<w:{cell_kind} w:id="8" {A}/>"#), 4, 5, "Right.")
+        ));
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let xml = part_string(&partial, "word/document.xml").unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(report.ok(), "{name}: {:?}\n{xml}", report.errors);
+        assert!(xml.contains(&format!("<w:{cell_kind} ")), "{name}: {xml}");
+        let mark = format!(r#"<w:rPr><w:{kind} w:id="4""#);
+        assert!(
+            xml.contains(&mark),
+            "{name}: the cell's own mark stays: {xml}"
+        );
+        assert!(
+            !xml.contains(&format!(r#"<w:rPr><w:{kind} w:id="2""#)),
+            "{name}: the other cell's mark goes with the row: {xml}"
+        );
+    }
+}
+
 /// A nested row that carries the outer row's revision itself covers its
 /// own cells: resolving the outer row alone leaves that row, its cell's
 /// final mark and its words tracked (CodeRabbit on #1680).
