@@ -141,11 +141,18 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
 /// List the tracked changes as a JSON array string, one object per
 /// logical change, each with the id `accept_changes` / `reject_changes`
 /// select by (the same objects as `jubarte changes --json`): a change Word wrote as several marks is one
-/// object with `members`.
+/// object with `members`. `authors` keeps those authors' changes (exact
+/// names), as `jubarte changes --author`.
 #[pyfunction]
-fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, authors = None))]
+fn list_changes_json(
+    py: Python<'_>,
+    docx: &[u8],
+    authors: Option<Vec<String>>,
+) -> PyResult<String> {
     py.detach(|| {
         let changes = jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
+        let changes = jubarte::changes::by_authors(changes, &authors.unwrap_or_default());
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -173,11 +180,13 @@ fn list_comments_json(
 
 /// The listing `jubarte changes` prints: a line per tracked change with its
 /// short id (`r12`), kind, target, author, paragraph (`p3`) and text, then
-/// `N change(s)`.
+/// `N change(s)`. `authors` filters as in [`list_changes_json`].
 #[pyfunction]
-fn changes_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, authors = None))]
+fn changes_text(py: Python<'_>, docx: &[u8], authors: Option<Vec<String>>) -> PyResult<String> {
     py.detach(|| {
         jubarte::changes::list_logical_changes(docx)
+            .map(|changes| jubarte::changes::by_authors(changes, &authors.unwrap_or_default()))
             .map(|changes| jubarte::changes::changes_text(&changes))
             .map_err(|e| e.to_string())
     })
@@ -413,7 +422,7 @@ fn for_edit_json(
         })
         .transpose()?;
     let args = jubarte::cli::ReadArgs {
-        paragraphs,
+        paragraphs: paragraphs.into_iter().collect(),
         head,
         tail,
         find,

@@ -271,8 +271,10 @@ const COMMANDS = {
   changes: {
     run(_, [file], o) {
       const docx = readInput(file, o, o.json);
-      if (!o.json) return void process.stdout.write(wasm.changesText(docx));
-      for (const change of JSON.parse(wasm.listChanges(docx))) {
+      // --author: only those authors' changes, exact names (#1690).
+      const authors = o.author?.length ? o.author : undefined;
+      if (!o.json) return void process.stdout.write(wasm.changesText(docx, authors));
+      for (const change of JSON.parse(wasm.listChanges(docx, authors))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
       if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
@@ -288,9 +290,16 @@ const COMMANDS = {
         return void process.stdout.write(forEditJson(docx, o, file));
       }
       if (o.tables) {
+        // -o FILE writes the grids it would print (#1690).
+        if (o.output != null) ensureWritable(o.output, o.force);
+        const emit = (text) => {
+          if (o.output == null) return void process.stdout.write(text);
+          write(o.output, text);
+          if (!o.quiet) console.error(`wrote ${o.output} (tables, ${Buffer.byteLength(text, "utf8")} bytes)`);
+        };
         // (A binding older than #1255 has no tablesView; its parser
         // refuses -p and --track-changes here.)
-        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
+        if (!wasm.tablesView) return void emit(wasm.tablesText(docx));
         // With -p, the grids of the tables it reaches, then its view; a
         // pick that reaches no table is a usage error.
         let view;
@@ -305,7 +314,7 @@ const COMMANDS = {
           throw e;
         }
         for (const warning of view.warnings) console.error(`warning: ${warning}`);
-        return void process.stdout.write(view.markdown);
+        return void emit(view.markdown);
       }
       if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
       if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));

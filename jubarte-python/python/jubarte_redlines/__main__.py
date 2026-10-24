@@ -348,7 +348,9 @@ def cmd_read(args: argparse.Namespace) -> int:
         return EXIT_OK
     if args.tables:
         # With -p, the grids of the tables it reaches, then its view; a
-        # pick that reaches no table is a usage error.
+        # pick that reaches no table is a usage error. -o FILE writes them.
+        if args.output is not None:
+            _ensure_writable(args.output, args.force)
         try:
             markdown, warnings = _native.tables_view(
                 _input(args),
@@ -367,6 +369,13 @@ def cmd_read(args: argparse.Namespace) -> int:
             raise SystemExit(EXIT_USAGE) from exc
         for warning in warnings:
             print(f"warning: {warning}", file=sys.stderr)
+        if args.output is not None:
+            size = _write(args.output, markdown)
+            if not args.quiet:
+                # The binary's line for a text output with no format of its own.
+                sys.stdout.flush()
+                print(f"wrote {_spelled(args, 'output')} (tables, {size} bytes)", file=sys.stderr)
+            return EXIT_OK
         sys.stdout.write(markdown)
         return EXIT_OK
     if args.output is not None:
@@ -1053,11 +1062,12 @@ def cmd_changes(args: argparse.Namespace) -> int:
     from . import _native
 
     docx = _input(args, notice=not args.json)
+    authors = args.author or None
     if args.json:
-        _json_lines(_native.list_changes_json(docx))
+        _json_lines(_native.list_changes_json(docx, authors=authors))
         print(_native.input_validity_line(docx, _spelled(args, "file")))
     else:
-        sys.stdout.write(_native.changes_text(docx))
+        sys.stdout.write(_native.changes_text(docx, authors=authors))
     return EXIT_OK
 
 

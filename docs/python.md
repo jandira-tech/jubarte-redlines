@@ -262,7 +262,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -389,6 +390,10 @@ Arguments:
 Options:
       --json
           Emit one JSON object per line
+
+      --author <NAME>
+          Only the changes this author made (exact match); repeat for several, as
+          `accept --author` selects them
 
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
@@ -981,7 +986,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -1100,10 +1106,10 @@ Arguments:
 
 Options:
       --plan [<PLAN.json>]
-          Edit plan JSON: batches and the other operation kinds (see `jubarte
-          capabilities --json`). Alone, it is applied to FILE; with operation flags,
-          they are recorded into it (created on first use) and FILE is left as it is.
-          Without a value: FILE_plan.json beside FILE
+          Edit plan JSON: a list of operations of any kind (see `jubarte capabilities
+          --json`). Alone, it is applied to FILE; with operation flags, they are
+          recorded into it (created on first use) and FILE is left as it is. Without a
+          value: FILE_plan.json beside FILE
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with
@@ -1275,9 +1281,23 @@ WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
 t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
 (a revision).
 
+A plan (--plan plan.json) is a list of operations, applied all or none;
+`jubarte capabilities --json` lists every operation kind:
+  {"schema_version": 1, "source_sha256": "<sha256 from jubarte read>", "author":
+  "Claude",
+   "operations": [
+    {"kind": "replace", "paragraph": "p1", "find": "his or her", "replacement":
+    "their"},
+    {"kind": "delete_paragraph", "paragraph": "p2"}]}
+
+Desired-text plans (PlanV2), a separate workflow:
+  jubarte edit template FILE --select p12,p20-p25 -o edits.json   the paragraphs as they
+  read
+  (edit the desired text in edits.json)
+  jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for
+  the difference
+
 Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]
-  jubarte edit template FILE --select p12,p20-p25 -o edits.json
-  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx
   Inline --save-plan FILE saves without applying; writes require -o or --out-dir.
   Run jubarte edit ACTION --help for its grammar.
 Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
@@ -1698,7 +1718,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.12.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.13.0`).
 
 ### `JubarteError`
 
@@ -1707,7 +1727,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.12.0'`
+`'0.13.0'`
 
 ### `accept_revisions`
 

@@ -917,6 +917,21 @@ pub fn list_logical_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(logical_changes_in(&open(docx)?))
 }
 
+/// The changes `authors` wrote, matched as [`ChangeFilter::authors`]
+/// matches them (exact names); every change when `authors` is empty. A
+/// logical change has one author, so it is kept or left whole: the filter
+/// `jubarte changes --author` applies (#1690).
+pub fn by_authors(changes: Vec<Change>, authors: &[String]) -> Vec<Change> {
+    if authors.is_empty() {
+        return changes;
+    }
+    let filter = ChangeFilter {
+        authors: Some(authors.to_vec()),
+        ..ChangeFilter::default()
+    };
+    changes.into_iter().filter(|c| filter.matches(c)).collect()
+}
+
 /// The logical changes of an opened package ([`list_logical_changes`]).
 pub(crate) fn logical_changes_in(pkg: &PartFs) -> Vec<Change> {
     let mut out = Vec::new();
