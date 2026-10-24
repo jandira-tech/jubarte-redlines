@@ -78,7 +78,8 @@ SHA-1/FNV content keys preserve the comparison algorithm's upstream behavior;
 they are **not authentication, signatures or collision-resistant security
 identities**. SHA-256 guards edit snapshots and release checksums. The CLI's
 self-update uses the `self_update` crate with rustls HTTPS and supports zipsign
-Ed25519 verification. See [SELF_UPDATE.md](docs/SELF_UPDATE.md) for whether a
+Ed25519 verification (jubarte's own check, `src/update/zipsign.rs`, on
+ed25519-dalek 3). See [SELF_UPDATE.md](docs/SELF_UPDATE.md) for whether a
 release requires signatures and the risks of checksum-only releases. Download
 archives and their checksums only over HTTPS; a checksum fetched over HTTP
 without signature verification is not acceptable. The engine does not provide
