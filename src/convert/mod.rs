@@ -13134,7 +13134,8 @@ fn table_block(
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
             // A `w:type` on a gridCol, or a gridCol without a width, is
             // a grid Word never wrote: it fits the columns to their
-            // content on open (0edc50c464's `<w:gridCol/>` tables).
+            // content on open (0edc50c464's `<w:gridCol/>` tables). So is
+            // a cell without a width, below.
             let width = dom.attribute(col, &W::name("w"));
             foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
             let w = width
@@ -13239,6 +13240,13 @@ fn table_block(
         }
         for cell in wrapped_children(dom, row, "tc") {
             row_has_cell_del |= cell_is_deleted(dom, cell);
+            // Word writes a tcW on every cell it saves. A cell without one,
+            // or with an auto one, marks a table another tool wrote, and
+            // Word fits it to its content on open as it does a foreign
+            // grid (#1716: probes g2 and q1 fitted; q3, with a tcW on
+            // every cell, kept its grid).
+            let pref = cell_pref_width(dom, cell);
+            foreign_grid |= matches!(pref, PrefWidth::Auto);
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
             let mut nested_at = Vec::new();
@@ -13553,7 +13561,7 @@ fn table_block(
                 paras: cell_paras,
                 nested,
                 nested_at,
-                pref: cell_pref_width(dom, cell),
+                pref,
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
@@ -49995,20 +50003,24 @@ mod coverage_round_three_tests {
 
     #[test]
     fn single_column_foreign_grids_expand_evenly_and_invalid_widths_keep_defaults() {
-        for (grid, expected, autofit) in [
-            (r#"<w:gridCol w:w="2400"/>"#, vec![60.0, 60.0], false),
+        // A valid grid is foreign only when a cell has no width (#1716).
+        let width = r#"<w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>"#;
+        for (grid, tcpr, expected, autofit) in [
+            (r#"<w:gridCol w:w="2400"/>"#, width, vec![60.0, 60.0], false),
+            (r#"<w:gridCol w:w="2400"/>"#, "", vec![60.0, 60.0], true),
             (
                 r#"<w:gridCol w:w="bad" w:type="auto"/>"#,
+                width,
                 vec![40.0, 40.0],
                 true,
             ),
-            ("<w:gridCol/>", vec![40.0, 40.0], true),
+            ("<w:gridCol/>", width, vec![40.0, 40.0], true),
         ] {
             let Block::Table {
                 cols, rows, geom, ..
             } = table(
                 &format!(
-                    r#"<w:tbl><w:tblGrid>{grid}</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+                    r#"<w:tbl><w:tblGrid>{grid}</w:tblGrid><w:tr><w:tc>{tcpr}<w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc>{tcpr}<w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
                 ),
                 &sheet(),
             )
