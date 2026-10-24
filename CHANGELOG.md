@@ -19,8 +19,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **`read -p` repeats** (#1690). `read FILE -p p3 -p p8` reads as `-p p3,p8`, in the view, `--json`, `--tables` and `--for-edit`; `--select` repeats the same way.
 - **`read --tables -o FILE`** (#1690) writes the grids it prints to FILE, in the binary and the Python CLI. A `.json` name is refused (exit 2). An existing file needs `--force`.
-- **`changes --author NAME`** (#1690) lists only that author's changes. The match is exact and the flag repeats, as `accept --author` selects. It filters the text listing and `--json` alike, and the Python CLI and `list_changes_json` / `changes_text(docx, authors=...)` take it too.
-- **`edit --help` shows a complete plan** (#1690): a plan is a list of operations, applied all or none. The help also shows the separate PlanV2 workflow (`edit template`, then `edit apply`).
+- **`changes --author NAME`** (#1690) lists only that author's changes. The match is exact and the flag repeats. Like `changes` itself it does not list revisions inside comment bodies, which `accept --author` does resolve (#1706). It filters the text listing and `--json` alike, and the Python CLI and `list_changes_json` / `changes_text(docx, authors=...)` take it too.
+- **`edit --help` shows a complete plan** (#1690): a plan is a list of operations, applied all or none. The binary's help also shows the separate PlanV2 workflow (`edit template`, then `edit apply`); the Python CLI, which cannot run those routes, leaves that section out.
 
 ### Changed
 

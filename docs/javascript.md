@@ -426,12 +426,13 @@ Mirrors `jubarte::markdown::changed_view`.
 ### `changesText`
 
 ```typescript
-changesText(docx: Uint8Array): string
+changesText(docx: Uint8Array, authors?: string[] | null): string
 ```
 
 The listing `jubarte changes` prints: a line per change with its short
 id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
 for a change Word wrote as several marks), then `N change(s)`.
+`authors` filters as in `listChanges`.
 
 Mirrors `jubarte::changes::changes_text`.
 
@@ -684,7 +685,7 @@ Mirrors `jubarte::inspect::inspect_json`.
 ### `listChanges`
 
 ```typescript
-listChanges(docx: Uint8Array): string
+listChanges(docx: Uint8Array, authors?: string[] | null): string
 ```
 
 List the tracked changes as a JSON array string, one object per
@@ -698,8 +699,10 @@ the ones `jubarte changes --json` prints: `id`, `ref` (the same id),
 `move_name`, `move_side`, `inside`, `holds_comments` when the change
 holds comment marks, and `members` (each mark's `id`, `kind`,
 `target`, `date` and `text`) for a change of several marks.
+`authors` keeps those authors' changes (exact names), as `jubarte
+changes --author`; omitted or empty, every change.
 
-Mirrors `jubarte::changes::list_logical_changes`.
+Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
 
 ### `listComments`
 
@@ -1298,7 +1301,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -1466,6 +1470,9 @@ Options:
       --force
           Overwrite the output file if it already exists
 
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
+
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
           `header1.r1`, or `r1+2` (both). Repeatable. Comment-body changes have no ids
@@ -1557,6 +1564,9 @@ Options:
 
       --force
           Overwrite the output file if it already exists
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed, on an empty anchor
 
       --id <ID>
           Only this change: `r12` (as the view and `jubarte changes` print it),
@@ -1672,6 +1682,10 @@ Options:
           - reject: Reject every change
 
           [default: all]
+
+      --keep-nested-comment
+          Keep comments and replies whose whole anchor is removed; requires
+          --track-changes accept or reject
 
       --no-critic
           Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text
@@ -2011,7 +2025,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -2130,10 +2145,10 @@ Arguments:
 
 Options:
       --plan [<PLAN.json>]
-          Edit plan JSON: batches and the other operation kinds (see `jubarte
-          capabilities --json`). Alone, it is applied to FILE; with operation flags,
-          they are recorded into it (created on first use) and FILE is left as it is.
-          Without a value: FILE_plan.json beside FILE
+          Edit plan JSON: a list of operations of any kind (see `jubarte capabilities
+          --json`). Alone, it is applied to FILE; with operation flags, they are
+          recorded into it (created on first use) and FILE is left as it is. Without a
+          value: FILE_plan.json beside FILE
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with
@@ -2305,9 +2320,23 @@ WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
 t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
 (a revision).
 
+A plan (--plan plan.json) is a list of operations, applied all or none;
+`jubarte capabilities --json` lists every operation kind:
+  {"schema_version": 1, "source_sha256": "<sha256 from jubarte read>", "author":
+  "Claude",
+   "operations": [
+    {"kind": "replace", "paragraph": "p1", "find": "his or her", "replacement":
+    "their"},
+    {"kind": "delete_paragraph", "paragraph": "p2"}]}
+
+Desired-text plans (PlanV2), a separate workflow:
+  jubarte edit template FILE --select p12,p20-p25 -o edits.json   the paragraphs as they
+  read
+  (edit the desired text in edits.json)
+  jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for
+  the difference
+
 Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]
-  jubarte edit template FILE --select p12,p20-p25 -o edits.json
-  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx
   Inline --save-plan FILE saves without applying; writes require -o or --out-dir.
   Run jubarte edit ACTION --help for its grammar.
 Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
