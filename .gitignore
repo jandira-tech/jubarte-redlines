@@ -125,3 +125,4 @@ report.json
 
 # uv-managed virtualenv (created by `uv sync` in eval/cli-v2-pilot/)
 .venv/
+merge013/
