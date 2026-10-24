@@ -957,6 +957,8 @@ fn run_read_tables(
         render: &render,
     });
     if let Some(out) = &out {
+        refuse_output_alias(out.path, &[(file, "the input")])
+            .map_err(|(code, message)| ConvertFailure { code, message })?;
         check_output(out)?;
     }
     let bytes = read_input(file, quiet)?;
