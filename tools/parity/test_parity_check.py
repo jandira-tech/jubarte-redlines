@@ -306,3 +306,7 @@ def test_release_sh_runs_these_tests_and_names_the_tools():
     items = items[:items.index("\n}\n")]
     assert "tools/parity/build.sh" in items and "tools/parity/parity_check.py" in items
     assert "parity_build_v2" not in items
+    # parity_check.py is a PEP 723 script (PyMuPDF): plain python3 cannot
+    # import fitz, and uv's default interpreter may have no PyMuPDF wheel (#1799)
+    assert "uv run --python 3.12 --script tools/parity/parity_check.py" in items
+    assert "python3 tools/parity/parity_check.py" not in items
