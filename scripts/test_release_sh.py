@@ -2255,5 +2255,120 @@ class AdoptionAndHeaders(unittest.TestCase):
         self.assertIn("4|auto|docs/adoption", RELEASE_SH.read_text())
 
 
+
+class TagShape(unittest.TestCase):
+    """#1755 (readiness 12#1, 12#2): the annotated tag release.yml reads has
+    the subject `jubarte vX.Y.Z` and the github summary in its body. 0.13.0's
+    tag held the summary as its subject with an empty body: release.yml
+    prepended nothing, and step 12's gh_note could never pass."""
+
+    SUMMARY = "-- New: a flag; PDFs mean 79.19 (LibreOffice 54.61)."
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="tagshape-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.git = ["git", "-C", str(self.tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q"], check=True)
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", "-m", "release"], check=True)
+
+    def shape(self) -> int:
+        script = f"set -euo pipefail\n{shell_functions('tag_shape_ok')}\ntag_shape_ok\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=30,
+                              env=dict(os.environ, TAG="v9.9.9", GITHUB_SUMMARY=self.SUMMARY)).returncode
+
+    def tag(self, *args: str) -> None:
+        subprocess.run([*self.git, "tag", *args], check=True)
+
+    def test_the_shape_release_sh_writes_passes(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY)
+        self.assertEqual(self.shape(), 0)
+
+    def test_the_summary_as_subject_with_an_empty_body_fails(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)  # 0.13.0's shape
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_another_subject_fails(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", "v9.9.9", "-m", self.SUMMARY)
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_a_lightweight_tag_fails(self) -> None:
+        self.tag("v9.9.9")
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_no_tag_fails(self) -> None:
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_step_8_checks_every_tag_it_keeps_or_writes(self) -> None:
+        s8 = step(8)
+        block = s8[s8.index("tag_shape_ok"):s8.index("check_engine_commit.sh")]
+        self.assertGreaterEqual(block.count("tag_shape_ok"), 2, "the kept tag, then the tag written")
+        # a tag on origin is the one release.yml reads: it must be the local
+        # one, and a wrong shape there dies unless the notes were put right
+        self.assertIn("ls-remote", block)
+        self.assertIn("gh_note || die", block)
+        self.assertNotIn("release notes will lack it", s8)
+        # step(8) ends at POINT OF NO RETURN, before main or the tag is pushed
+        self.assertNotIn("push_main", s8)
+
+    def block(self, *, notes_ok: bool) -> subprocess.CompletedProcess[str]:
+        """Step 8's tag block, run as written against a bare origin."""
+        text = step(8)
+        start = text.index("remote_tag=$(git ls-remote")
+        body = text[start:text.index("# A resumed run keeps the npm build", start)]
+        script = ("set -euo pipefail\n" + shell_functions("tag_shape_ok")
+                  + 'die() { echo "DIE: $*"; exit 9; }\nstep() { echo "  - $*"; }\n'
+                  + f"gh_note() {{ {'true' if notes_ok else 'false'}; }}\n" + body + "echo survived\n")
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60,
+                              env=dict(os.environ, TAG="v9.9.9", GITHUB_SUMMARY=self.SUMMARY,
+                                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t"))
+
+    def origin(self) -> None:
+        bare = self.tmp.parent / (self.tmp.name + "-origin.git")
+        self.addCleanup(shutil.rmtree, bare, ignore_errors=True)
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        subprocess.run([*self.git, "remote", "add", "origin", str(bare)], check=True)
+
+    def push_tag(self) -> None:
+        subprocess.run([*self.git, "push", "-q", "origin", "refs/tags/v9.9.9"], check=True)
+
+    def test_the_block_writes_a_fresh_tag_in_shape(self) -> None:
+        self.origin()
+        r = self.block(notes_ok=False)
+        self.assertIn("survived", r.stdout, r.stdout + r.stderr)
+        self.assertEqual(self.shape(), 0)
+
+    def test_the_block_recreates_a_local_tag_of_the_wrong_shape(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)  # 0.13.0's shape, not pushed
+        r = self.block(notes_ok=False)
+        self.assertIn("re-creating", r.stdout, r.stdout + r.stderr)
+        self.assertEqual(self.shape(), 0)
+
+    def test_a_pushed_tag_of_the_wrong_shape_dies_unless_the_notes_carry_it(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        r = self.block(notes_ok=False)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("gh release edit", r.stdout)
+        r = self.block(notes_ok=True)
+        self.assertIn("survived", r.stdout, r.stdout + r.stderr)
+        self.assertIn("its GitHub notes carry it", r.stderr)
+
+    def test_a_pushed_tag_that_is_not_the_local_one_dies(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        subprocess.run([*self.git, "tag", "-d", "v9.9.9"], check=True, capture_output=True)
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY + " again")
+        r = self.block(notes_ok=True)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("is not the local tag", r.stdout)
+
+    def test_gh_note_is_defined_before_step_8_calls_it(self) -> None:
+        text = RELEASE_SH.read_text()
+        self.assertLess(text.index("\ngh_note() "), text.index('say "8. '))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -199,7 +199,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 5|auto|Security scan: cargo-deny advisories across the five workspace manifests and gitleaks over the whole reachable history plus every publishable file — it runs even under --skip-gates|bash scripts/security-check.sh (unconditionally, just above the gates block)
 6|auto|API drift: the private rustdoc builds with warnings denied and its drift from the previous release's snapshot is logged; the sign-off is step 0's cargo-semver-checks gate (--open-docs also opens the rendered docs)|scripts/release.sh step 6; scripts/api_snapshot.py --drift <previous tag> v@V@
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
-8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag carrying the github summary; a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
+8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag with subject 'jubarte v@V@' and the github summary in its body (a local tag of another shape is re-created; a pushed one must be the local tag, and of another shape dies unless the GitHub notes carry the summary — 0.13.0's tag held it as its subject); a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
 8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
@@ -597,6 +597,20 @@ security_gate() {
   [ -z "$blocking" ] \
     || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub, then rerun"
   step "security: no advisory in triage, no open medium-or-higher Dependabot or code-scanning alert"
+}
+# The GitHub release notes carry the github summary (step 12; step 8 asks
+# it of a tag already on origin).
+gh_note() {
+  gh release view "$TAG" --json body -q .body -R jandira-tech/jubarte-redlines 2>/dev/null \
+    | grep -F -e "$GITHUB_SUMMARY" >/dev/null
+}
+# The annotated tag release.yml reads: subject `jubarte $TAG`, the github
+# summary in its body, which release.yml prepends to the release notes.
+# 0.13.0's tag held the summary as its subject and an empty body (#1755).
+tag_shape_ok() {
+  [ "$(git tag -l --format='%(objecttype)' "$TAG")" = tag ] || return 1
+  [ "$(git tag -l --format='%(contents:subject)' "$TAG")" = "jubarte $TAG" ] || return 1
+  git tag -l --format='%(contents:body)' "$TAG" | grep -F -e "$GITHUB_SUMMARY" >/dev/null
 }
 # docs/adoption labels each row released, main or pending; a release ships
 # everything merged, so a row still labelled main is stale once it is out
@@ -1252,20 +1266,30 @@ else
 fi
 
 # The github summary is the tag annotation body; release.yml prepends it to
-# the release notes. An existing local tag that lacks it is re-created; a tag
-# already on origin cannot be changed and only earns a warning.
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  if git tag -l --format='%(contents:body)' "$TAG" | grep -F "$GITHUB_SUMMARY" >/dev/null; then
-    step "tag $TAG exists and already carries the github summary"
-  elif git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
-    echo "  ! $TAG is already on origin without the summary — release notes will lack it" >&2
+# the release notes (tag_shape_ok). A local tag of another shape is
+# re-created. A tag on origin is the one release.yml read: it must be this
+# one, and when its shape is wrong only notes put right by hand let the run
+# go on (#1755).
+remote_tag=$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1) \
+  || die "cannot read origin's tags (git ls-remote)"
+if [ -n "$remote_tag" ]; then
+  [ "$remote_tag" = "$(git rev-parse -q --verify "refs/tags/$TAG" || true)" ] \
+    || die "origin's $TAG ($remote_tag) is not the local tag — git fetch origin tag $TAG --force, then rerun"
+  if tag_shape_ok; then
+    step "tag $TAG on origin carries subject 'jubarte $TAG' and the github summary"
   else
-    git tag -d "$TAG" >/dev/null
-    git tag -a "$TAG" -m "jubarte $TAG" -m "$GITHUB_SUMMARY"
-    step "re-created local tag $TAG with summary annotation"
+    gh_note || die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, so release.yml's notes lack the summary — put it into the notes (gh release edit $TAG -R jandira-tech/jubarte-redlines --notes-file <file>), then rerun"
+    echo "  ! $TAG on origin lacks the summary in its body; its GitHub notes carry it" >&2
   fi
 else
-  git tag -a "$TAG" -m "jubarte $TAG" -m "$GITHUB_SUMMARY"
+  if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && ! tag_shape_ok; then
+    git tag -d "$TAG" >/dev/null
+    step "local tag $TAG was not subject 'jubarte $TAG' with the github summary in its body — re-creating it"
+  fi
+  git rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
+    || git tag -a "$TAG" -m "jubarte $TAG" -m "$GITHUB_SUMMARY"
+  tag_shape_ok || die "tag $TAG was not written as release.yml reads it (subject 'jubarte $TAG', the github summary in its body)"
+  step "tag $TAG: subject 'jubarte $TAG', the github summary in its body"
 fi
 # A resumed run keeps the npm build it finds, so the stamp is checked on the
 # tag itself: npm ships only artifacts the tagged engine produces (#1088).
@@ -1500,10 +1524,6 @@ npm_note() {
         process.exit(o && o[process.env.VER] === process.env.TXT ? 0 : 1);
       } catch { process.exit(1) }
     })'
-}
-gh_note() {
-  gh release view "$TAG" --json body -q .body -R jandira-tech/jubarte-redlines 2>/dev/null \
-    | grep -F "$GITHUB_SUMMARY" >/dev/null
 }
 # release.yml's release job attests every asset SHA256SUMS.txt names; one
 # archive, verified against the workflow that signed it on a GitHub-hosted
