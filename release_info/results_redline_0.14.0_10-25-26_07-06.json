@@ -14,7 +14,7 @@
   "ties": 57,
   "wins": 354
  },
- "generated": "2026-10-25T05:20:29+00:00",
+ "generated": "2026-10-25T11:06:05+00:00",
  "provenance": {
   "measure": "results/redlines_0929_full/measure.py --fresh results/compare_regen/out --sample-csv results/release_0.14.0_evidence/sample_redline_0.14.0.csv",
   "scores": {
@@ -24,7 +24,7 @@
  },
  "release": "0.14.0",
  "sample": {
-  "csv": "sample_redline_0.14.0_10-25-26_01-20.csv",
+  "csv": "sample_redline_0.14.0_10-25-26_07-06.csv",
   "drawn": {
    "by_state": {
     "clean": 2,
@@ -45,7 +45,7 @@
   "sha256": "710fe6774df0616e68e298bca5d7b23d3eab832a0623ad6d8011ae9d44e5bce9"
  },
  "schema": "jubarte-redlines/release_info/results_redline/1",
- "stamp": "10-25-26_01-20",
+ "stamp": "10-25-26_07-06",
  "tools": {
   "docxodus": {
    "at_least_90": 76,
