@@ -54,6 +54,7 @@ import hashlib
 import json
 import re
 import sys
+from bisect import bisect_right
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -135,20 +136,36 @@ SENTENCE = re.compile(
 # the count, then the next four words, which name what was counted, an
 # adjective included ("the 23 failed document pairs") (#1777, #1784)
 COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+(?:-[A-Za-z]+)*){0,4})")
-# where a sentence ends: the measured sentence's claims are read from the
-# boundary before its match, not from "N-item samples" (#1783)
-SENTENCE_END = re.compile(r"[.!?]\s")
+# the words that end a counted noun phrase: what follows them is not what was
+# counted ("23 PDFs instead of redlines", "23 documents without redlines") (#1787)
+PHRASE_END = frozenset((
+    "of", "instead", "without", "with", "from", "by", "for", "in", "on", "at", "to", "into", "than",
+    "rather", "not", "no", "nor", "but", "and", "or", "that", "which", "whose", "who", "whom", "where",
+    "when", "while", "because", "as", "the", "a", "an", "their", "its", "except", "excluding", "unlike",
+    "versus", "vs"))
+# where a sentence ends: its stop, any closing quotes or brackets, then a
+# space (#1789); the measured sentence's claims are read from the boundary
+# before its match, not from "N-item samples" (#1783)
+SENTENCE_END = re.compile(r"[.!?][\"'\u201d\u2019\u00bb)\]]*\s")
+# a blank line or a list item starts a block no sentence runs across; a
+# wrapped line stays in its block (#1789)
+BLOCK = re.compile(r"\n[^\S\n]*\n|\n(?=[^\S\n]*(?:[-*+]|\d+[.)])[^\S\n])")
+# "no failed redlines have been omitted", "… redline-pair outputs ever
+# excluded": a noun, up to four auxiliaries or adverbs, then the omission
+# verb says the failures are counted, the opposite of a claim that none
+# failed (#1783, #1788)
+OMISSION = (r"(?:-[A-Za-z]+)*(?:\s+(?:document|item|pdf|redline|conversion|comparison|pair|output|result)s?)?"
+            r"(?:\s+(?:are|is|were|was|be|been|being|have|has|had|will|would|ever|[a-z]+ly)){0,4}"
+            r"\s+(?:omitted|excluded|dropped|left out|skipped)\b")
 # "no failed …" in the measured sentence, in any case: a claim about the
 # samples. Another sentence's is not read: the checker cannot tell what it is
 # about ("No failed redlines are omitted …", a test suite's) (#1776).
-# "no failed redlines (are) omitted" says the failures are counted, the
-# opposite of a claim that none failed (#1783)
-NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline|conversion|pair)s?\b"
-                       r"(?!\s+(?:(?:are|is|were|was|been)\s+)?(?:omitted|excluded|dropped|left out|skipped)\b)", re.I)
+NO_FAILED = re.compile(rf"\bno failed (document|item|PDF|redline|conversion|comparison|pair)s?\b(?!{OMISSION})", re.I)
 # the nouns that speak for each sample: every one COUNTED_WORDS knows, and
 # "item", which speaks for both (#1779)
-NONE_WORDS = {"redline": ("redline", "pair", "item"), "conversion": ("document", "pdf", "conversion", "item")}
-COUNTED_WORDS = {"redline": ("redline", "pair"), "conversion": ("document", "pdf", "conversion")}
+NONE_WORDS = {"redline": ("redline", "comparison", "pair", "item"),
+              "conversion": ("document", "pdf", "conversion", "item")}
+COUNTED_WORDS = {"redline": ("redline", "comparison", "pair"), "conversion": ("document", "pdf", "conversion")}
 # the results' tool keys as the sentence names them
 DISPLAY = {"docxodus": "Docxodus", "soffice": "LibreOffice"}
 
@@ -408,18 +425,35 @@ def two(value: float) -> str:
     return str(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def counted_kinds(words: str) -> set[str]:
-    """The samples the nouns of a counted phrase belong to ("document pairs":
-    both, so neither sample's clause refuses it)."""
-    return {kind for w in re.split(r"[\s-]+", words) for kind, nouns in COUNTED_WORDS.items()
-            if w.lower().removesuffix("s") in nouns}
+def counted_kind(words: str) -> tuple[str | None, list[str], str]:
+    """The sample a counted phrase names, the phrase up to its noun, and the
+    noun. A noun phrase ends with its head, so the last sample noun before a
+    word that ends the phrase names it ("failed document pairs whose …": a
+    pair, the redline sample's; "PDFs instead of redlines": PDFs) (#1787)."""
+    phrase: list[str] = []
+    kind, upto, noun = None, 0, ""
+    for token in words.split():
+        if token.lower() in PHRASE_END:
+            break
+        phrase.append(token)
+        for part in token.split("-"):
+            one = part.removesuffix("s")
+            named = next((k for k, nouns in COUNTED_WORDS.items() if one.lower() in nouns), None)
+            if named:
+                kind, upto, noun = named, len(phrase), one
+    return kind, phrase[:upto], noun
 
 
-def sentence_of(text: str, m: re.Match[str]) -> str:
+def sentence_ends(text: str) -> list[int]:
+    """Where each sentence of TEXT after the first starts, found once (#1790)."""
+    return [end.end() for end in SENTENCE_END.finditer(text)]
+
+
+def sentence_of(text: str, m: re.Match[str], ends: list[int]) -> str:
     """The whole sentence holding the match: from the sentence boundary
     before it (or the text's start) to the match's end."""
-    start = max((end.end() for end in SENTENCE_END.finditer(text, 0, m.start())), default=0)
-    return text[start:m.end()]
+    i = bisect_right(ends, m.start())
+    return text[ends[i - 1] if i else 0:m.end()]
 
 
 def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sentence: str) -> list[str]:
@@ -450,15 +484,14 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sente
                    for c, _ in counted if c != str(failures))
         other_kind = "conversion" if kind == "redline" else "redline"
         for c, w in counted:
-            if counted_kinds(w) == {other_kind}:
-                words = w.split()
-                i = next(i for i, x in enumerate(words)
-                         if counted_kinds(x) & {other_kind})
-                out.append(f'{where}: {sample} "counting as 0 the {c} {" ".join(words[:i + 1])}" — a {words[i]} '
+            named, phrase, one = counted_kind(w)
+            if named == other_kind:
+                out.append(f'{where}: {sample} "counting as 0 the {c} {" ".join(phrase)}" — a {one} '
                            f"is the {other_kind} sample's, not the {kind} sample's")
         counted = [c for c, _ in counted]
         if said_none and failures:
-            out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed}')
+            out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed} '
+                       f'(to say none was left out of the mean, write "no failed {noun}s are omitted")')
         elif failures and not counted:
             out.append(f"{where}: {sample}: the sentence leaves out the {failed} the mean counts as 0")
     return out
@@ -466,15 +499,19 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sente
 
 def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
     """Every measured sentence in TEXT against the results JSONs' aggregates."""
-    text = re.sub(r"\s+", " ", text)
-    found = list(SENTENCE.finditer(text))
+    blocks = (re.sub(r"\s+", " ", block) for block in BLOCK.split(text))
+    found = [(block, matches) for block in blocks if (matches := list(SENTENCE.finditer(block)))]
     if not found:
         return [f"{where} carries no measured sentence (\"On two N-item samples …: redlines mean X "
                 f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\")"]
     docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
             for name in ("results_redline", "results_conversion")}
+    out: list[str] = []
+    for block, matches in found:
+        ends = sentence_ends(block)
+        out += [p for m in matches for p in sentence_problems(m, where, docs, sentence_of(block, m, ends))]
     # each problem once, however many sentences repeat it
-    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs, sentence_of(text, m))))
+    return list(dict.fromkeys(out))
 
 
 def changelog_section(path: Path, version: str) -> str | None:

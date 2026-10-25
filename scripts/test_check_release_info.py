@@ -656,6 +656,57 @@ class MeasuredSentence(SixFiles):
                 r = self.numbers("--summary", text)
                 self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_no_failed_omitted_reads_auxiliaries_and_adverbs(self) -> None:
+        # codex on #1743 (#1788): one auxiliary was all the exception allowed
+        for opening in ("No failed redlines have been omitted from two 3-item samples",
+                        "With no failed redlines ever omitted from two 3-item samples",
+                        "With no failed redlines permanently excluded from two 3-item samples",
+                        "With no failed redline-pair outputs omitted from two 3-item samples"):
+            with self.subTest(opening=opening):
+                r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples", opening))
+                self.assertEqual(r.returncode, 0, r.stderr)
+        # a phrasing outside the exception is a claim, and the refusal says
+        # how to write an omission
+        r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples",
+                                                          "No failed redlines occurred on two 3-item samples"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redlines are omitted"', r.stderr)
+
+    def test_a_sentence_ends_inside_closing_quotes_and_at_a_block(self) -> None:
+        # codex on #1743 (#1789): another sentence's claim joined the
+        # measured one through a closing quote, a bracket or a blank line
+        for before in ('The validation suite reported "no failed redlines." ',
+                       "The validation suite reported “no failed redlines.” ",
+                       "The validation suite is green (no failed redlines.) ",
+                       "Validation suite: no failed redlines\n\n"):
+            with self.subTest(before=before):
+                r = self.numbers("--summary", before + self.SOUND)
+                self.assertEqual(r.returncode, 0, r.stderr)
+        # without a full stop, the quote is still the measured sentence's
+        r = self.numbers("--summary", 'The suite reported "no failed redlines"; ' + self.SOUND)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redline"', r.stderr)
+        # a list item starts a new sentence; a wrapped line does not
+        changelog = self.tmp / "CHANGELOG.md"
+        wrapped = self.SOUND.replace("; PDFs", ";\n  PDFs")
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- Validation suite: no failed redlines\n- {wrapped}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- Validation suite: no failed redlines\n  {wrapped}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redline"', r.stderr)
+
+    def test_many_measured_sentences_are_read_in_linear_time(self) -> None:
+        # codex on #1743 (#1790): every match rescanned the text before it
+        # (4,000 sentences took 9 s)
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n" + (self.SOUND + "\n") * 6000)
+        start = time.monotonic()
+        r = self.numbers("--changelog", str(changelog))
+        self.assertLess(time.monotonic() - start, 3.0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_a_long_run_of_digits_in_the_preamble_is_read_in_linear_time(self) -> None:
         # codex on #1743 (#1785): the size lookahead rescanned the run at
         # every digit (100,000 digits took 16 s)
@@ -697,7 +748,28 @@ class MeasuredSentence(SixFiles):
         self.assertIn('"counting as 0 the 1 document"', r.stderr)
         r = self.numbers("--summary", self.SOUND.replace("the 1 document jubarte", "the 1 redline pair jubarte"))
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn('"counting as 0 the 1 redline"', r.stderr)
+        self.assertIn('"counting as 0 the 1 redline pair" — a pair is the redline sample\'s', r.stderr)
+
+    def test_a_noun_the_counted_phrase_excludes_does_not_name_its_sample(self) -> None:
+        # codex on #1743 (#1787): the phrase ends at "instead", "without",
+        # "the" …; its last sample noun before that word names the sample
+        for phrase, named, noun in (("the 1 PDF instead of redlines", "the 1 PDF", "PDF"),
+                                    ("the 1 PDF from non-redline runs", "the 1 PDF", "PDF"),
+                                    ("the 1 document without redlines", "the 1 document", "document"),
+                                    ("the 1 document with no redlines", "the 1 document", "document"),
+                                    ("the 1 PDF the redline renderer produced", "the 1 PDF", "PDF"),
+                                    ("the 1 failed-PDFs output", "the 1 failed-PDFs", "PDF")):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(f'"counting as 0 {named}" — a {noun} is the conversion sample\'s, '
+                              "not the redline sample's", r.stderr)
+        for phrase in ("the 1 document-to-document comparison Word cannot open",
+                       "the 1 document-comparison redline Word cannot open",
+                       "the 1 failed Word document pair Word cannot open"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
         # codex on #1743 (#1777): document pairs are the redline sample's;
@@ -804,6 +876,9 @@ class ReleaseSh(unittest.TestCase):
         self.assertIn("another sentence's is not read", row)
         # empryo on #1743 (#1779): a counted phrase need not name a noun
         self.assertIn("their noun when the phrase names one", row)
+        # codex on #1743 (#1787, #1788): the grammar the writer follows
+        self.assertIn('the last sample noun before a word like "of", "instead" or "whose"', row)
+        self.assertIn('"no failed X are omitted" says they are counted', row)
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:
