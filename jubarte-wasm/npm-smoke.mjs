@@ -43,7 +43,7 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.equal(JSON.parse(mod.getRevisions(mod.rejectRevisions(redline))).length, 0, `${name}: reject drains revisions`);
   const changes = JSON.parse(mod.listChanges(redline));
   assert.ok(changes.length > 1 && /^r\d/.test(changes[0].id), `${name}: changes listed by id`);
-  assert.match(changes[0].ref, /^r\d+$/, `${name}: the short ref`);
+  assert.match(changes[0].ref, /^r\d+(?:\+\d+)?$/, `${name}: the short ref`);
   assert.ok(mod.changesText(redline).startsWith(`${changes[0].ref}\t`), `${name}: the listing leads with the short ref`);
   const kept = JSON.parse(mod.listChanges(mod.acceptChanges(redline, JSON.stringify({ ids: [changes[0].id] }))));
   assert.ok(!kept.some((c) => c.id === changes[0].id) && kept.length > 0, `${name}: accepting one change keeps the rest`);
