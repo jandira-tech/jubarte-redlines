@@ -6225,16 +6225,6 @@ fn detect_unrelated_sources_word_mode_inner(
         std::cell::OnceCell::new();
     let full_tokens_2: std::cell::OnceCell<std::collections::HashSet<String>> =
         std::cell::OnceCell::new();
-    // The existing M42 merged-table route follows Word's physical-cell mesh.
-    // Tag its observed package geometry before row windows lose table context.
-    if settings.merge_replaced_paragraphs {
-        lcs_table::mark_word_table_mesh_context(
-            dom,
-            cu1,
-            cu2,
-            lcs_table::WordTableMeshContext::M42,
-        );
-    }
     let groups1 = contentful_group_sha1s(dom, cu1);
     let groups2 = contentful_group_sha1s(dom, cu2);
     // C# used >3 groups on BOTH sides. Word also collapses short-vs-long
@@ -7182,12 +7172,6 @@ fn detect_unrelated_sources_word_mode_inner(
                 })
                 .count();
             if n_tbl_next >= 2 {
-                lcs_table::mark_word_table_mesh_context(
-                    dom,
-                    cu1,
-                    cu2,
-                    lcs_table::WordTableMeshContext::M337,
-                );
                 return None;
             }
         }
@@ -7581,12 +7565,6 @@ fn detect_unrelated_sources_word_mode_inner(
             let peel_r = peel_leading_nontbl(cu2);
             // Only peel when next has leading non-table prose (border titles).
             if peel_r >= 2 {
-                lcs_table::mark_word_table_mesh_context(
-                    dom,
-                    cu1,
-                    cu2,
-                    lcs_table::WordTableMeshContext::M333,
-                );
                 let mut residual_settings = settings.clone();
                 residual_settings.detail_threshold = 0.0;
                 let mut out = Vec::new();
@@ -7676,21 +7654,6 @@ fn detect_unrelated_sources_word_mode_inner(
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
                 let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
-                if long_mt {
-                    lcs_table::mark_word_table_mesh_context(
-                        dom,
-                        cu1,
-                        cu2,
-                        lcs_table::WordTableMeshContext::M348,
-                    );
-                } else if ooxml_tbl {
-                    lcs_table::mark_word_table_mesh_context(
-                        dom,
-                        cu1,
-                        cu2,
-                        lcs_table::WordTableMeshContext::M350,
-                    );
-                }
                 residual_settings.detail_threshold =
                     if short_prop || ooxml_tbl || both_tbl || cell_tbl || long_mt {
                         0.0
@@ -10026,21 +9989,31 @@ pub fn resolve_correlated_sequences(
             return cs_list;
         };
         let unknown = cs_list.remove(idx);
-        // H4 can deliver bare Row groups without passing table dispatch. Keep
-        // distinct row lifetimes before positional Unid correlation collapses
-        // differing horizontal partitions; correlate their table ancestors only.
-        let horizontal_rows = match (&unknown.com_units_1, &unknown.com_units_2) {
+        let bare_rows = match (&unknown.com_units_1, &unknown.com_units_2) {
             (Some(a), Some(b))
                 if a.iter().chain(b).all(|u| {
                     as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Row)
                 }) =>
             {
-                lcs_table::rows_preserving_horizontal_partitions_with_word_context(
-                    dom, a, b, settings,
-                )
+                Some((a, b))
             }
             _ => None,
         };
+        // Word pairs an original table with one revised table: rows that H4
+        // flattened out of several tables pair table by table, before their
+        // Unids correlate across tables and fuse them (#1817, w23).
+        if let Some(by_table) =
+            bare_rows.and_then(|(a, b)| lcs_table::rows_by_table(dom, a, b, settings))
+        {
+            cs_list.splice(idx..idx, by_table);
+            continue;
+        }
+        // H4 can deliver bare Row groups without passing table dispatch. Keep
+        // distinct row lifetimes before positional Unid correlation collapses
+        // differing horizontal partitions; correlate their table ancestors only.
+        let horizontal_rows = bare_rows.and_then(|(a, b)| {
+            lcs_table::rows_preserving_horizontal_partitions_for(dom, a, b, settings)
+        });
         if let Some(rows) = horizontal_rows {
             let revised_row_ids: Vec<_> = unknown
                 .com_units_2
