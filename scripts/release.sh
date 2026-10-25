@@ -689,7 +689,7 @@ head_ci_report() {
 cancel_queued_ci() {
   local id name n=0
   while read -r id name; do
-    [ -n "$id" ] && [ "$name" != Release ] || continue
+    if [ -z "$id" ] || [ "$name" = Release ]; then continue; fi
     gh run cancel "$id" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 && n=$((n + 1))
   done < <(gh run list -L 100 --json databaseId,name,status \
              -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null)
