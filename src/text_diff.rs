@@ -213,7 +213,10 @@ fn clip(text: &str, changed_at: usize, window: Option<usize>) -> String {
     }
     let start = changed_at.saturating_sub(width / 2).min(len);
     let end = start.saturating_add(width).min(len);
-    let mut out = String::new();
+    // Pre-allocate String to prevent reallocations: rough upper bound using exact slice byte len + up to 2 characters ('…') + overhead.
+    let byte_len = text.len();
+    let cap = (end - start).min(byte_len) + 6;
+    let mut out = String::with_capacity(cap);
     if start > 0 {
         out.push('…');
     }
@@ -247,7 +250,8 @@ fn replacement_rows(old: &[&str], new: &[&str]) -> Vec<Row> {
     }
     let old_words: Vec<_> = old.iter().map(|text| matching_words(text)).collect();
     let new_words: Vec<_> = new.iter().map(|text| matching_words(text)).collect();
-    let mut rows = Vec::new();
+    // Pre-allocate Vec to prevent reallocations: maximum required size bounded by old and new words
+    let mut rows = Vec::with_capacity(old_words.len() + new_words.len());
     let mut next = 0;
     for (i, a) in old_words.iter().enumerate() {
         let mut best = None;
