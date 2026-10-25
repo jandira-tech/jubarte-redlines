@@ -1719,20 +1719,19 @@ mod body_section_source_ownership_tests {
             "<w:p><w:pPr><w:spacing w:before='120' w:after='80'/></w:pPr><w:r><w:t>a</w:t></w:r></w:p>"
         };
         let document = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr>{first_properties}</w:pPr><w:r><w:t>ONE</w:t></w:r></w:p>{second}{section}</w:body></w:document>",W::URI));
-        dom.root(document).unwrap()
+        dom.root(document).expect("Missing root")
     }
 
     #[test]
-    fn faithful_final_body_sections_never_become_paragraph_breaks_even_with_identical_authored_geometry()
-     {
+    fn faithful_final_body_sections_never_become_paragraph_breaks_even_with_identical_authored_geometry() -> Result<(), &'static str> {
         for genuine in [false, true] {
             let mut dom = Dom::new();
             let original = source(&mut dom, false, genuine);
             let revised = source(&mut dom, true, genuine);
             let expected_original = source_view(&mut dom, original, false);
             let expected_revised = source_view(&mut dom, revised, true);
-            let original_body = dom.element(original, &W::body()).unwrap();
-            let revised_body = dom.element(revised, &W::body()).unwrap();
+            let original_body = dom.element(original, &W::body()).ok_or("Missing body in original")?;
+            let revised_body = dom.element(revised, &W::body()).ok_or("Missing body in revised")?;
             let settings = WmlComparerSettings {
                 author_for_revisions: "Section editor".into(),
                 date_time_for_revisions: "2026-01-01T00:00:00Z".into(),
@@ -1756,10 +1755,10 @@ mod body_section_source_ownership_tests {
                 expected_revised,
                 "accept genuine={genuine}"
             );
-            let body = dom.element(compared, &W::body()).unwrap();
+            let body = dom.element(compared, &W::body()).ok_or("missing body in compared")?;
             assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
-            let section = dom.element(body, &W::sect_pr()).unwrap();
-            let size = dom.element(section, &W::name("pgSz")).unwrap();
+            let section = dom.element(body, &W::sect_pr()).ok_or("missing sectPr")?;
+            let size = dom.element(section, &W::name("pgSz")).ok_or("missing pgSz")?;
             assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
             assert_eq!(dom.attribute(size, &W::name("h")), Some("15840"));
             for node in dom.descendants_and_self(compared, None) {
@@ -1770,17 +1769,18 @@ mod body_section_source_ownership_tests {
                 );
             }
         }
+        Ok(())
     }
     #[test]
-    fn final_section_change_history_keeps_its_owner_and_identical_genuine_breaks() {
+    fn final_section_change_history_keeps_its_owner_and_identical_genuine_breaks() -> Result<(), &'static str> {
         for genuine in [false, true] {
             let mut dom = Dom::new();
             let original = source(&mut dom, false, genuine);
             let revised = source(&mut dom, true, genuine);
-            let original_body = dom.element(original, &W::body()).unwrap();
-            let revised_body = dom.element(revised, &W::body()).unwrap();
-            let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
-            let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
+            let original_body = dom.element(original, &W::body()).ok_or("Missing body in original")?;
+            let revised_body = dom.element(revised, &W::body()).ok_or("Missing body in revised")?;
+            let revised_section = dom.element(revised_body, &W::sect_pr()).ok_or("missing sectPr")?;
+            let revised_size = dom.element(revised_section, &W::name("pgSz")).ok_or("missing pgSz")?;
             dom.set_attribute_value(revised_size, &W::name("w"), Some("14400"));
             let expected_original = source_view(&mut dom, original, false);
             let expected_revised = source_view(&mut dom, revised, true);
@@ -1814,23 +1814,23 @@ mod body_section_source_ownership_tests {
                 } else {
                     crate::revision_processor::reject_revisions_document(&mut dom, copy)
                 };
-                let projected_body = dom.element(projected, &W::body()).unwrap();
+                let projected_body = dom.element(projected, &W::body()).ok_or("missing projected body")?;
                 let sections = dom.elements(projected_body, Some(&W::sect_pr()));
                 assert_eq!(sections.len(), 1);
-                let size = dom.element(sections[0], &W::name("pgSz")).unwrap();
+                let size = dom.element(sections[0], &W::name("pgSz")).ok_or("missing pgSz")?;
                 assert_eq!(dom.attribute(size, &W::name("w")), Some(width));
                 assert!(
                     dom.descendants(sections[0], Some(&W::name("sectPrChange")))
                         .is_empty()
                 );
             }
-            let body = dom.element(compared, &W::body()).unwrap();
-            let final_section = dom.element(body, &W::sect_pr()).unwrap();
-            let live_size = dom.element(final_section, &W::name("pgSz")).unwrap();
+            let body = dom.element(compared, &W::body()).ok_or("missing body in compared")?;
+            let final_section = dom.element(body, &W::sect_pr()).ok_or("missing sectPr")?;
+            let live_size = dom.element(final_section, &W::name("pgSz")).ok_or("missing pgSz")?;
             assert_eq!(dom.attribute(live_size, &W::name("w")), Some("14400"));
             let history = dom
                 .element(final_section, &W::name("sectPrChange"))
-                .unwrap();
+                .ok_or("missing sectPrChange")?;
             assert_eq!(dom.attribute(history, &W::author()), Some("Section editor"));
             assert_eq!(
                 dom.attribute(history, &W::date()),
@@ -1838,12 +1838,12 @@ mod body_section_source_ownership_tests {
             );
             assert!(
                 dom.attribute(history, &W::id())
-                    .unwrap()
+                    .ok_or("missing id")?
                     .parse::<u32>()
                     .is_ok()
             );
-            let old_section = dom.element(history, &W::sect_pr()).unwrap();
-            let old_size = dom.element(old_section, &W::name("pgSz")).unwrap();
+            let old_section = dom.element(history, &W::sect_pr()).ok_or("missing sectPr")?;
+            let old_size = dom.element(old_section, &W::name("pgSz")).ok_or("missing pgSz")?;
             assert_eq!(dom.attribute(old_size, &W::name("w")), Some("12240"));
             let embedded = dom
                 .descendants(compared, Some(&W::p_pr()))
@@ -1856,7 +1856,7 @@ mod body_section_source_ownership_tests {
             // Each clean projection must have exactly its source-owned break.
             assert_eq!(embedded.len(), 2 * usize::from(genuine));
             for section in embedded {
-                let size = dom.element(section, &W::name("pgSz")).unwrap();
+                let size = dom.element(section, &W::name("pgSz")).ok_or("missing pgSz")?;
                 assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
                 assert!(dom.element(section, &W::name("sectPrChange")).is_none());
             }
@@ -1870,7 +1870,7 @@ mod body_section_source_ownership_tests {
                 // CT_PPrBase cannot own sectPr. The original closing paragraph
                 // had only spacing; replacement of this valid old snapshot on
                 // reject removes the added break from the revised carrier.
-                let old_properties = dom.element(change, &W::p_pr()).unwrap();
+                let old_properties = dom.element(change, &W::p_pr()).ok_or("missing pPr")?;
                 assert!(
                     dom.descendants(old_properties, Some(&W::sect_pr()))
                         .is_empty()
@@ -1890,7 +1890,7 @@ mod body_section_source_ownership_tests {
                 );
                 assert!(
                     dom.attribute(change, &W::id())
-                        .unwrap()
+                        .ok_or("missing id")?
                         .parse::<u32>()
                         .is_ok()
                 );
@@ -1908,33 +1908,34 @@ mod body_section_source_ownership_tests {
                 );
             }
         }
+        Ok(())
     }
     #[test]
-    fn authored_body_paragraph_section_before_an_ending_table_is_never_the_final_body_owner() {
+    fn authored_body_paragraph_section_before_an_ending_table_is_never_the_final_body_owner() -> Result<(), &'static str> {
         let mut dom = Dom::new();
         let mut roots = Vec::new();
         for _ in 0..2 {
             let document = dom.parse_xdocument(&format!(
                 "<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr><w:r><w:t>Authored section boundary</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w='3600' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='3600'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='3600' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Closing table</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI));
-            roots.push(dom.root(document).unwrap());
+            roots.push(dom.root(document).ok_or("missing root")?);
         }
         let expected = source_view(&mut dom, roots[0], true);
-        let bodies = roots
-            .iter()
-            .map(|&root| dom.element(root, &W::body()).unwrap())
-            .collect::<Vec<_>>();
+        let mut bodies = Vec::new();
+        for &root in roots.iter() {
+            bodies.push(dom.element(root, &W::body()).ok_or("missing body")?);
+        }
         let settings = WmlComparerSettings::powertools_faithful();
         let compared = compare_bodies_faithful(
             &mut dom, roots[0], roots[1], bodies[0], bodies[1], &settings,
         );
         assert_eq!(source_view(&mut dom, compared, false), expected);
         assert_eq!(source_view(&mut dom, compared, true), expected);
-        let body = dom.element(compared, &W::body()).unwrap();
+        let body = dom.element(compared, &W::body()).ok_or("missing body in compared")?;
         assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
         let paragraphs = dom.descendants(compared, Some(&W::p()));
         assert!(
             dom.element(
-                dom.element(paragraphs[0], &W::p_pr()).unwrap(),
+                dom.element(paragraphs[0], &W::p_pr()).ok_or("missing pPr")?,
                 &W::sect_pr()
             )
             .is_some()
@@ -1945,5 +1946,6 @@ mod body_section_source_ownership_tests {
                 "the final body section never belongs to a table cell"
             );
         }
+        Ok(())
     }
 }
