@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """knip-style report for a Rust crate: public API items nothing in the repository refers to.
 
 rustc's dead_code lint already covers everything that is not reachable from outside the crate; the gap

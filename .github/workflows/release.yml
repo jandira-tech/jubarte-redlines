@@ -8,7 +8,8 @@
 # section as the release notes. The publish-* jobs put the same release on
 # crates.io, PyPI and npm through OIDC trusted publishing (#1642): no
 # registry token exists anywhere, and scripts/release.sh steps 9-11 wait for
-# them.
+# them. The release job attests every asset's build provenance (SLSA,
+# Sigstore-signed; `gh attestation verify`).
 #
 # Third-party actions are pinned to commit SHAs with the resolved release tag
 # as a trailing comment (Dependabot bumps both); see ci.yml for the
@@ -164,11 +165,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
-            manylinux: 2_28
+            manylinux: "2_28"
             artifact: manylinux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64
-            manylinux: 2_28
+            manylinux: "2_28"
             artifact: manylinux-aarch64
           - os: ubuntu-latest
             target: x86_64
@@ -254,8 +255,15 @@ jobs:
     name: GitHub release
     needs: [version, binaries, wheels, sdist]
     runs-on: ubuntu-latest
+    # id-token, attestations and artifact-metadata serve the provenance
+    # attestation alone. This job runs outside the release environment, so
+    # its ID token carries no environment claim a registry's trusted
+    # publisher accepts: it cannot publish anywhere but the GitHub release.
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -344,6 +352,14 @@ jobs:
           cd dist
           sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      # SLSA build provenance for every asset SHA256SUMS.txt names (the signed
+      # archives, the wheels, the sdist), Sigstore-signed and stored with the
+      # repository: `gh attestation verify FILE -R jandira-tech/jubarte-redlines`
+      # ties a download to this run. scripts/release.sh step 12 checks one.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
 
       - name: Release notes from CHANGELOG.md
         env:
@@ -550,7 +566,10 @@ jobs:
         run: |
           set -euo pipefail
           tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
-          npm publish "${tag[@]}"
+          npm publish "${tag[@]}" || {
+            echo "::error::npm refused jubarte-wasm $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-wasm does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-wasm --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y; then rerun this job."
+            exit 1
+          }
       - if: steps.live.outputs.cli != 'true'
         working-directory: jubarte-wasm/cli
         run: |
@@ -561,4 +580,7 @@ jobs:
             sleep 10
           done
           tag=(); case "$VER" in *-*) tag=(--tag next) ;; esac
-          npm publish "${tag[@]}"
+          npm publish "${tag[@]}" || {
+            echo "::error::npm refused jubarte-redlines $VER. Under trusted publishing an E404 on PUT means npm's trusted publisher for jubarte-redlines does not allow npm publish (one made after 2026-09-03 allows only npm stage publish unless allow-publish is set), or it expired (a new one lapses unless its first publish lands within two days). The owner runs: npm trust github jubarte-redlines --file release.yml --repo jandira-tech/jubarte-redlines --env release --allow-publish -y; then rerun this job."
+            exit 1
+          }

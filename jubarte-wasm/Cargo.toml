@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Standalone workspace for the WASM binding; the neurotic_docx_bench consumes
 # it via a gitignored symlink. All bindings use the root OPC dependency.
 [workspace]

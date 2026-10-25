@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! M228 — mid pure-deleted paragraphs must promote spacing-only `pPrChange`
 //! onto live `w:spacing` (and drop the change mark).
 //!

@@ -35,6 +35,14 @@ SUMMARIES = [
     "--github-summary", "github note",
 ]
 
+# The first lines of every gh stub: an engine call names its repository
+# (#1747), so a stray GH_REPO in the releaser's shell cannot redirect it.
+GH_BOUND = """case " $* " in
+  *" -R jandira-tech/jubarte-redlines "*) ;;
+  *) echo "gh not bound to jandira-tech/jubarte-redlines: $*" >&2; exit 8 ;;
+esac
+"""
+
 
 class ReleaseArgs(unittest.TestCase):
     def setUp(self) -> None:
@@ -139,7 +147,7 @@ class ApiDocDrift(unittest.TestCase):
         )
 
     def test_the_gates_test_the_drift_report(self) -> None:
-        self.assertIn("python3 scripts/test_api_snapshot.py", step(5))
+        self.assertIn('"${py312[@]}" scripts/test_api_snapshot.py', step(5))
 
     def test_release_commit_adds_docs_api(self) -> None:
         text = RELEASE_SH.read_text()
@@ -237,7 +245,7 @@ class Lessons0101(unittest.TestCase):
     def test_the_gates_test_the_engine_commit_check(self) -> None:
         text = RELEASE_SH.read_text()
         gates = text[text.index('say "5. Gates'):text.index('say "5. Gates — SKIPPED')]
-        self.assertIn("python3 scripts/test_check_engine_commit.py", gates)
+        self.assertIn('"${py312[@]}" scripts/test_check_engine_commit.py', gates)
         row = next(l for l in text.splitlines() if l.startswith("8|auto|Release commit"))
         self.assertIn("scripts/check_engine_commit.sh v@V@", row)
 
@@ -458,8 +466,7 @@ while read old new ref; do
   fi
 done
 """
-    GH = """#!/bin/sh
-# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
+    GH = "#!/bin/sh\n" + GH_BOUND + """# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
 # merges the head into main with a merge commit, as GitHub's merge does.
 echo "$@" >> "$GH_LOG"
 case "$1 $2" in
@@ -639,8 +646,8 @@ class LibraryReadmes(unittest.TestCase):
 
     def test_gates_run_the_generator_tests(self) -> None:
         gates = self.section('say "5. Gates', 'say "5. Gates — SKIPPED')
-        self.assertIn("python3 scripts/test_library_readmes.py", gates)
-        self.assertIn("python3 scripts/test_check_release_info.py", gates)
+        self.assertIn('"${py312[@]}" scripts/test_library_readmes.py', gates)
+        self.assertIn('"${py312[@]}" scripts/test_check_release_info.py', gates)
 
     def test_the_crate_points_at_its_generated_readme(self) -> None:
         cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
@@ -660,7 +667,7 @@ class QuietGates(unittest.TestCase):
 
     def script_gates(self):
         """The script tests step 5 runs, this file aside (it runs them)."""
-        found = re.findall(r"^\s*python3 (\S*test_\w+\.py)$", step(5), re.M)
+        found = re.findall(r'^\s*"\$\{py312\[@\]\}" (\S*test_\w+\.py)$', step(5), re.M)
         return [rel for rel in found if Path(rel).name != Path(__file__).name]
 
     def test_every_script_gate_prints_only_its_summary(self) -> None:
@@ -757,9 +764,8 @@ def shell_functions(*names: str) -> str:
 
 # stub gh for step 11: the release, its asset names and the release.yml run,
 # each driven by the environment; every asset listing is counted in $STATE.
-GH_RELEASE_STUB = r"""#!/bin/bash
-case "$*" in
-  "release view v9.9.9")
+GH_RELEASE_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
+  "release view v9.9.9 -R jandira-tech/jubarte-redlines")
     [ -z "${NOREL:-}" ] ;;
   "release view v9.9.9 --json assets"*)
     [ -z "${NOREL:-}" ] || exit 1
@@ -837,8 +843,7 @@ class WheelDownload(unittest.TestCase):
     The stub gh fails the same way whenever its stdin or stdout is a
     terminal, and the run gets one (a pty), as the release did."""
 
-    GH = r"""#!/bin/bash
-case "$*" in
+    GH = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "release download"*)
     if [ -t 0 ] || [ -t 1 ]; then echo "error querying terminal: OSC 11" >&2; exit 1; fi
     [ -z "${DLFAIL:-}" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
@@ -1014,9 +1019,16 @@ class Checklist(unittest.TestCase):
     def test_prints_every_phase(self) -> None:
         out = self.out.stdout
         self.assertIn("BEFORE the script", out)
-        for n in range(15):
-            self.assertIn("step %d " % n, out)
         self.assertIn("AFTER the script", out)
+        # every step the script runs, and every phase an item sits in, prints
+        # (the first checklist carried a dangling empty "step 14" header)
+        text = RELEASE_SH.read_text()
+        for n in sorted({int(n) for n in re.findall(r'say "(\d+)\. ', text)}):
+            self.assertIn("step %d " % n, out)
+        phases = {line.split("|", 1)[0] for line in checklist_block().splitlines()
+                  if line.count("|") == 3}
+        for ph in phases - {"before", "after"}:
+            self.assertIn("step %s " % ph, out)
 
     def test_marks_and_proves_every_line(self) -> None:
         self.assertIn("[auto]", self.out.stdout)
@@ -1074,8 +1086,9 @@ class Checklist(unittest.TestCase):
         lines = self.out.stdout.splitlines()
         stack_line = next(n for n, line in enumerate(lines) if "stack: the release binary" in line)
         self.assertIn(
-            "python3 scripts/stack1m.py <release binary> <bench root> <out dir> "
-            "release_info/sample_*_<version>_*.csv",
+            # the version is filled in, like every @V@ of the checklist (#1757)
+            "python3 scripts/stack1m.py <release binary> ../neurotic_docx_bench <out dir> "
+            "release_info/sample_*_0.11.3_*.csv",
             lines[stack_line + 1],
         )
 
@@ -1119,7 +1132,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_11_the_app_checkout_is_named_and_checked_first(self) -> None:
         self.kw("JUBARTE_APP_DIR")
-        self.kw("jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir . --preflight")
+        self.kw('jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir "$PWD" --preflight')
 
     def test_item_12_mac_app_store(self) -> None:
         self.kw("App Store")
@@ -1135,6 +1148,34 @@ class Checklist(unittest.TestCase):
     def test_item_15_licensing_and_stale_docs(self) -> None:
         self.kw("REUSE")
         self.kw("adoption")
+
+    # The gaps the 0.13.0 checklist close: the website's pages, release.yml,
+    # the full Miri suite, the Ring-3 probe, the self-update path and the
+    # App Store's in-app purchase must all be findable by a stable keyword.
+    def test_item_16_the_websites_pages_are_read(self) -> None:
+        self.kw("/download")
+        self.kw("/benchmark")
+        self.kw("/demo")
+        self.kw("/terms")
+
+    def test_item_17_release_yml_is_reviewed(self) -> None:
+        self.kw("SHA-pinned")
+        self.kw("ZIPSIGN_PRIVATE_KEY")
+
+    def test_item_18_the_full_miri_suite_runs_first(self) -> None:
+        self.kw("miri")
+
+    def test_item_19_ring3_word_probe(self) -> None:
+        self.kw("Ring-3")
+
+    def test_item_20_self_update_serves_the_release(self) -> None:
+        self.kw("self-update")
+
+    def test_item_21_the_app_store_item_lists_the_iap(self) -> None:
+        self.kw("in-app purchase")
+
+    def test_item_22_the_measured_sentence_is_cross_checked(self) -> None:
+        self.kw("NUMBERS sentence")
 
 
 class ChecklistPerStep(unittest.TestCase):
@@ -1162,8 +1203,7 @@ class ChecklistPerStep(unittest.TestCase):
 
 # stub gh for the CI-publish wait: the release.yml run and its publish job's
 # conclusion ("" while the job runs), driven by the environment.
-GH_PUBLISH_STUB = r"""#!/bin/bash
-case "$*" in
+GH_PUBLISH_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "run list"*)
     echo "42 in_progress" ;;
   "run view 42 --json jobs"*)
@@ -1266,6 +1306,1423 @@ class CiPublishing(unittest.TestCase):
 
     def test_local_publish_is_a_documented_flag(self) -> None:
         self.assertIn("--local-publish", RELEASE_SH.read_text().split("set -euo pipefail")[0])
+
+
+# stub cargo for the bump gate: every call is recorded in $CALLS; the
+# semver-checks verdict is $SEMVER (0 passes).
+CARGO_SEMVER_STUB = r"""#!/bin/bash
+echo "cargo $*" >> "$CALLS"
+case "$1" in
+  semver-checks) exit "${SEMVER:-0}" ;;
+  *) echo "unexpected cargo $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class BumpGate(unittest.TestCase):
+    """#1742: docs/VERSIONING.md's bump rule is proven before step 1 writes
+    anything. Pre-1.0, a patch carries no new feature (`### Added`) and no
+    change cargo-semver-checks reports; a minor or major may."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="bumpgate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "cargo").write_text(CARGO_SEMVER_STUB)
+        (self.tmp / "bin" / "cargo").chmod(0o755)
+        self.calls = self.tmp / "calls"
+
+    def gate(self, ver: str, prev: str, section: str, **env: str) -> subprocess.CompletedProcess[str]:
+        (self.tmp / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## [Unreleased]\n\n## [{ver}] - 2026-10-25\n\n{section}\n"
+            f"## [{prev}] - 2026-10-22\n\n### Fixed\n\n- old\n"
+        )
+        functions = shell_functions("bump_kind", "changelog_section", "bump_gate")
+        script = (
+            f"set -euo pipefail\nVER={ver}; TAG=v{ver}\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            'semver_lints_ok() { return "${LINTS:-0}"; }\n'
+            f"{functions}\nbump_gate v{prev}\n"
+        )
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                    CALLS=str(self.calls), **env)
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def cargo_calls(self) -> str:
+        return self.calls.read_text() if self.calls.exists() else ""
+
+    def test_the_bump_kind_reads_the_two_versions(self) -> None:
+        functions = shell_functions("bump_kind")
+        for prev, ver, want in (("0.13.0", "0.13.1", "patch"), ("0.13.0", "0.14.0", "minor"),
+                                ("0.13.2", "0.14.0", "minor"), ("0.13.0", "1.0.0", "major")):
+            r = subprocess.run(["bash", "-c", f"{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, want), (prev, ver, r.stderr))
+
+    def test_a_version_not_above_the_previous_one_is_no_bump(self) -> None:
+        functions = shell_functions("bump_kind")
+        for prev, ver in (("0.13.0", "0.13.0"), ("0.13.1", "0.13.0"), ("0.14.0", "0.13.9")):
+            r = subprocess.run(["bash", "-c", f"{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(r.returncode, 0, (prev, ver))
+
+    def test_a_patch_with_new_features_takes_the_minor_instead(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Added\n\n- **`read -p` repeats**.\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("### Added", r.stderr)
+        self.assertIn("0.14.0", r.stderr)
+        self.assertIn("docs/VERSIONING.md", r.stderr)
+        self.assertEqual(self.cargo_calls(), "", "the heading alone decides; no build")
+
+    def test_a_patch_semver_checks_refuses_stops_the_release(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n", SEMVER="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("0.14.0", r.stderr)
+        calls = self.cargo_calls()
+        self.assertIn("semver-checks check-release", calls)
+        self.assertIn("--baseline-rev v0.13.0", calls)
+        self.assertIn("--release-type patch", calls)
+        self.assertIn("--default-features", calls)
+
+    def test_a_lint_table_that_skips_a_lint_stops_the_patch_first(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n", LINTS="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("cargo-semver-checks.lints", r.stderr)
+        self.assertEqual(self.cargo_calls(), "", "no check runs with lints left out")
+
+    def test_a_clean_patch_passes(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("semver-checks", self.cargo_calls())
+
+    def test_a_minor_may_change_the_api(self) -> None:
+        r = self.gate("0.14.0", "0.13.0", "### Added\n\n- a feature\n### Changed\n\n- an API\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cargo_calls(), "")
+
+    def test_step_0_runs_it_before_step_1_writes_anything(self) -> None:
+        s0 = step(0)
+        self.assertIn("bump_gate", s0)
+        self.assertRegex(s0, r"for t in [^\n]*cargo-semver-checks")
+
+    def test_the_previous_release_is_never_this_tag(self) -> None:
+        # a resumed run (the tag exists) still gates against the release before
+        self.assertRegex(step(0), r'PREV_RELEASE=\$\(last_release_tag "\$TAG"\)')
+
+    def test_a_version_that_is_no_release_is_named_not_compared(self) -> None:
+        # Codex review of #1743: `[ "rc" -gt 0 ]` is bash's "integer
+        # expression expected", which names neither version.
+        functions = shell_functions("bump_kind")
+        for prev, ver in (("0.14.0-rc.1", "0.14.0"), ("0.13.0", "0.14"), ("0.13.x", "0.14.0")):
+            r = subprocess.run(["bash", "-c", f"set -euo pipefail\n{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(r.returncode, 0, (prev, ver))
+            self.assertEqual(r.stdout, "", (prev, ver))
+            self.assertIn("X.Y.Z", r.stderr, (prev, ver))
+            self.assertNotIn("integer expression", r.stderr, (prev, ver))
+
+
+class PreviousRelease(unittest.TestCase):
+    """Codex review of #1743: the release the bump, the CHANGELOG and the API
+    drift are measured from is the newest plain vX.Y.Z tag; a prerelease tag
+    (v0.14.0-rc.1) is no release."""
+
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp(prefix="prevrel-"))
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+
+    def commit(self, subject: str, *tags: str) -> None:
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", "-m", subject], check=True)
+        for tag in tags:
+            subprocess.run([*self.git, "tag", "-a", "-m", tag, tag], check=True)
+
+    def last(self, *args: str) -> subprocess.CompletedProcess[str]:
+        functions = shell_functions("last_release_tag")
+        self.assertIn("last_release_tag()", functions)
+        script = f"set -euo pipefail\n{functions}\nlast_release_tag {' '.join(args)}\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.repo,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_a_prerelease_tag_is_no_release(self) -> None:
+        self.commit("0.13.0", "v0.13.0")
+        self.commit("candidate", "v0.14.0-rc.1")
+        self.commit("fix after the candidate")
+        r = self.last('"v0.14.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.13.0"), r.stderr)
+
+    def test_a_resumed_run_still_finds_the_release_before(self) -> None:
+        self.commit("0.13.0", "v0.13.0")
+        self.commit("candidate", "v0.14.0-rc.1")
+        self.commit("release 0.14.0", "v0.14.0")
+        r = self.last('"v0.14.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.13.0"), r.stderr)
+        # without an exclusion it is the newest release, the tag itself on a
+        # resumed run (step 6 then keeps the snapshot it finds)
+        r = self.last()
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.14.0"), r.stderr)
+
+    def test_no_release_tag_fails(self) -> None:
+        self.commit("first")
+        self.commit("candidate", "v0.1.0-rc.1")
+        self.assertNotEqual(self.last('"v0.1.0"').returncode, 0)
+
+    def test_every_step_takes_the_previous_release_from_it(self) -> None:
+        text = RELEASE_SH.read_text()
+        body = text[text.index("last_release_tag() "):]
+        body = body[body.index("\n}\n"):]
+        self.assertNotIn("git describe", body, "a step finds the previous tag by itself")
+        self.assertRegex(step(4), r"PREV_TAG=\$\(last_release_tag[ )]")
+
+
+# stub gh for the changelog completeness check: closing issues and titles of
+# the PRs the fixture repository merged.
+GH_PR_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
+  "pr view 11 "*) printf '21\nfix(edit): a thing\n' ;;
+  "pr view 13 "*) printf 'feat(cli): another (#23)\n' ;;
+  "pr view 15 "*) printf '25\nperf(convert): faster\n' ;;
+  "pr view 31 "*) echo "GraphQL: Could not resolve to a PullRequest with the number of 31. (repository.pullRequest)" >&2; exit 1 ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class ChangelogCompleteness(unittest.TestCase):
+    """#1742: the release notes are the CHANGELOG section verbatim; every
+    fix/feat/perf/security PR merged since the previous tag is cited in it,
+    by its own number or an issue it closes, or skipped on purpose."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="clcomplete-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(GH_PR_STUB)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        subprocess.run([*git, "tag", "v0.1.0"], check=True)
+        for subject in ("Merge pull request #11 from o/fix/a-thing",
+                        "Merge pull request #12 from o/chore/tidy",
+                        "feat(cli): another (#13)",
+                        "docs: a page (#14)",
+                        "Merge pull request #15 from o/perf/faster",
+                        "Merge pull request #16 from o/pre-release-0-1-1",
+                        # a PR's own commit, naming the issue it fixes; gh pr
+                        # view refuses 31, which is no pull request
+                        "fix(edit): an inner commit (#31)"):
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", subject], check=True)
+        self.repo = repo
+
+    def unlisted(self, section: str) -> subprocess.CompletedProcess[str]:
+        (self.repo / "CHANGELOG.md").write_text(
+            f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- old (#99)\n"
+        )
+        functions = shell_functions("changelog_section", "user_facing_prs", "unlisted_prs")
+        script = f"set -euo pipefail\nVER=0.1.1\n{functions}\nunlisted_prs v0.1.0\n"
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}")
+        return subprocess.run(["bash", "-c", script], cwd=self.repo, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_only_user_facing_prs_are_owed(self) -> None:
+        functions = shell_functions("user_facing_prs")
+        r = subprocess.run(["bash", "-c", f"{functions}\nuser_facing_prs v0.1.0"],
+                           cwd=self.repo, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout.split(), ["11", "13", "15", "31"], r.stderr)
+
+    def test_a_pr_cited_by_its_closing_issue_or_its_number_is_listed(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["31"])
+
+    def test_an_issue_a_fix_commit_names_stays_owed(self) -> None:
+        # 0.14.0: #1670 landed inside #1680's atomic stack merge, with no
+        # merge commit of its own; its commits' "(#1668)" is all that shows it.
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n")
+        self.assertEqual(r.stdout.split(), ["31"], r.stderr)
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n- faster (#15)\n- inner (#31)\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
+    def test_a_pr_cited_by_an_issue_its_title_names_is_listed(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#23)\n- faster (#25)\n<!-- changelog-skip: #31 -->\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
+    def test_a_missing_pr_is_named(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #31 -->\n")
+        self.assertEqual(r.stdout.split(), ["13", "15"], r.stderr)
+
+    def test_a_pr_can_be_skipped_on_purpose(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n<!-- changelog-skip: #13 #15 #31 -->\n")
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
+    def test_an_older_section_does_not_count(self) -> None:
+        r = self.unlisted("### Fixed\n\n- a thing (#21)\n- another (#13)\n")
+        self.assertIn("15", r.stdout.split())
+
+    def test_step_2_dies_on_an_unlisted_pr(self) -> None:
+        s2 = step(2)
+        self.assertIn("unlisted_prs", s2)
+        self.assertIn("die", s2.split("unlisted_prs", 1)[1])
+
+
+# stub gh for the discovery cases: PR 41 is a feature merged from a topic
+# branch, PR 43 a fix from a chore branch; PR 45 cannot be read at all.
+GH_DISCOVERY_STUB = "#!/bin/bash\n" + GH_BOUND + r"""echo "$*" >> "$CALLS"
+case "$*" in
+  "pr view 41 "*) printf 'feat(cli): a new thing\n' ;;
+  "pr view 43 "*) printf '53\nfix(edit): a thing\n' ;;
+  "pr view 45 "*) echo "error connecting to api.github.com" >&2; exit 1 ;;
+  *) echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1 ;;
+esac
+"""
+
+
+class ChangelogDiscovery(unittest.TestCase):
+    """Codex review of #1743 (#1745): a section that cites no number is an
+    empty citation set, not a silent exit; a PR is owed by its branch or by
+    its title (the merge commit's body), and a failed discovery is a named
+    refusal, never an empty set."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="cldiscover-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(GH_DISCOVERY_STUB)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        self.calls = self.tmp / "calls"
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+        self.commit("base")
+        subprocess.run([*self.git, "tag", "v0.1.0"], check=True)
+
+    def commit(self, subject: str, body: str = "") -> None:
+        msg = ["-m", subject, *(["-m", body] if body else [])]
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", *msg], check=True)
+
+    def run_fn(self, call: str, section: str = "### Fixed\n\n- a fix\n") -> subprocess.CompletedProcess[str]:
+        (self.repo / "CHANGELOG.md").write_text(
+            f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- old (#99)\n"
+        )
+        functions = shell_functions("changelog_section", "user_facing_prs", "unlisted_prs")
+        script = f"set -euo pipefail\nVER=0.1.1\n{functions}\n{call}\n"
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}", CALLS=str(self.calls))
+        return subprocess.run(["bash", "-c", script], cwd=self.repo, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_a_section_without_references_and_nothing_owed_passes(self) -> None:
+        # Called directly, under errexit: step 2 calls it inside $(…), where
+        # bash clears errexit, so the grep that finds no number only bites
+        # a direct call.
+        self.commit("docs: a page (#14)")
+        r = self.run_fn("unlisted_prs v0.1.0; echo done")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "done"), r.stderr)
+
+    def test_a_section_without_references_names_what_is_owed(self) -> None:
+        self.commit("feat(cli): a thing (#13)")
+        r = self.run_fn("unlisted_prs v0.1.0; echo done")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["13", "done"]), r.stderr)
+
+    def test_a_pr_is_owed_by_its_title_whatever_its_branch(self) -> None:
+        self.commit("Merge pull request #41 from o/topic/new-thing", "feat(cli): a new thing")
+        self.commit("Merge pull request #43 from o/chore/tidy", "fix(edit): a thing")
+        self.commit("Merge pull request #47 from o/fix/md-pages", "test(md): a page count")
+        self.commit("Merge pull request #48 from o/chore/untrack", "chore: untrack the scan")
+        self.commit("Merge pull request #49 from o/pre-release-0-1-1", "Pre-release 0.1.1")
+        r = self.run_fn("user_facing_prs v0.1.0")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["41", "43", "47"]), r.stderr)
+        r = self.run_fn("unlisted_prs v0.1.0", "### Fixed\n\n- a thing (#53)\n- pages (#47)\n")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["41"]), r.stderr)
+
+    def test_a_pr_gh_cannot_read_is_a_named_refusal(self) -> None:
+        self.commit("fix(edit): unreadable (#45)")
+        r = self.run_fn("unlisted_prs v0.1.0")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("#45", r.stderr)
+        self.assertIn("error connecting", r.stderr)
+
+    def test_a_history_git_cannot_read_is_a_named_refusal(self) -> None:
+        r = self.run_fn("unlisted_prs v9.9.9")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("v9.9.9", r.stderr)
+
+    def test_gh_reads_this_repository_whatever_GH_REPO_says(self) -> None:
+        self.commit("feat(cli): a new thing (#41)")
+        r = self.run_fn("unlisted_prs v0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("-R jandira-tech/jubarte-redlines", self.calls.read_text())
+
+    def test_step_2_dies_when_discovery_fails(self) -> None:
+        self.assertRegex(step(2), r'missing_prs=\$\(unlisted_prs "\$PREV_RELEASE"\) \\\n\s*\|\| die')
+
+
+# stub gh for the CI cancel: three runs in flight, one of them release.yml.
+GH_RUNS_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
+  "run list"*) printf '101 CI\n102 Release\n103 Docs\n' ;;
+  "run cancel"*) echo "$*" >> "$CALLS" ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class CiCancel(unittest.TestCase):
+    """Queued CI is cancelled right before the tag goes up, so release.yml
+    gets the runners first; the push to main has just started CI again."""
+
+    def test_every_run_but_the_release_is_cancelled(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="cicancel-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "gh").write_text(GH_RUNS_STUB)
+        (tmp / "gh").chmod(0o755)
+        calls = tmp / "calls"
+        functions = shell_functions("cancel_queued_ci")
+        script = f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n{functions}\ncancel_queued_ci\n'
+        r = subprocess.run(["bash", "-c", script],
+                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", CALLS=str(calls),
+                                    GH_REPO="other/repo"),
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cancelled = calls.read_text().split("\n")
+        self.assertIn("run cancel 101", cancelled[0])
+        self.assertIn("run cancel 103", calls.read_text())
+        self.assertNotIn("102", calls.read_text())
+
+    def test_it_runs_after_main_and_before_the_tag(self) -> None:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "POINT OF NO RETURN"')
+        tail = text[start:text.index('say "9.', start)]
+        self.assertLess(tail.index("push_main "), tail.index("cancel_queued_ci"))
+        self.assertLess(tail.index("cancel_queued_ci"), tail.index('git push origin "$TAG"'))
+
+
+GH_ATTEST_STUB = "#!/bin/sh\n" + GH_BOUND + """echo "$*" >> "$CALLS"
+case "$1 $2" in
+  "release download")
+    dir=""; pat=""
+    while [ $# -gt 0 ]; do
+      case "$1" in -D) dir=$2; shift ;; -p) pat=$2; shift ;; esac
+      shift
+    done
+    mkdir -p "$dir" && : > "$dir/$pat"
+    exit "${DOWNLOAD_RC:-0}" ;;
+  "attestation verify")
+    # the attestation names the ref and commit release.yml ran on
+    case " $* " in
+      *" --source-ref ${ATTESTED_REF:-refs/tags/v9.9.9} --source-digest ${ATTESTED_SHA:-$TAG_SHA} "*) ;;
+      *) exit 1 ;;
+    esac
+    exit "${ATTEST_RC:-0}" ;;
+esac
+exit 0
+"""
+
+
+class BuildProvenance(unittest.TestCase):
+    """release.yml attests every asset (actions/attest); step 12 downloads one
+    archive and verifies it against the release workflow that signed it."""
+
+    def run_attested(self, rc: int, **env: str) -> tuple[subprocess.CompletedProcess, str]:
+        tmp = Path(tempfile.mkdtemp(prefix="attest-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        self.work = tmp
+        (tmp / "gh").write_text(GH_ATTEST_STUB)
+        (tmp / "gh").chmod(0o755)
+        git = ["git", "-C", str(tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "release"], check=True)
+        subprocess.run([*git, "tag", "-a", "-m", "v9.9.9", "v9.9.9"], check=True)
+        self.sha = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+        calls = tmp / "calls"
+        script = f'set -euo pipefail\nTAG=v9.9.9 VER=9.9.9\n{shell_functions("gh_attested")}\ngh_attested\n'
+        r = subprocess.run(["bash", "-c", script], cwd=tmp,
+                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
+                                    CALLS=str(calls), ATTEST_RC=str(rc), TAG_SHA=self.sha, **env),
+                           capture_output=True, text=True, timeout=30)
+        return r, calls.read_text() if calls.exists() else ""
+
+    def test_an_attested_archive_passes(self) -> None:
+        r, calls = self.run_attested(0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("release download v9.9.9 -p jubarte-9.9.9-linux-x86_64.tar.gz", calls)
+        verify = [c for c in calls.splitlines() if c.startswith("attestation verify")]
+        self.assertEqual(len(verify), 1, calls)
+        self.assertIn("-R jandira-tech/jubarte-redlines", verify[0])
+        self.assertIn("--signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml",
+                      verify[0])
+        self.assertIn("--deny-self-hosted-runners", verify[0])
+        self.assertIn("--source-ref refs/tags/v9.9.9", verify[0])
+        self.assertIn(f"--source-digest {self.sha}", verify[0])
+
+    def test_an_older_releases_archive_under_this_name_fails(self) -> None:
+        # Codex review of #1743 (#1749): the repository, workflow and runner
+        # alone pass an archive another tag's run attested.
+        r, _ = self.run_attested(0, ATTESTED_REF="refs/tags/v9.9.8")
+        self.assertNotEqual(r.returncode, 0)
+        r, _ = self.run_attested(0, ATTESTED_SHA="0" * 40)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_a_failed_download_fails_and_leaves_nothing_behind(self) -> None:
+        # #1768: the early return skipped the cleanup
+        r, _ = self.run_attested(0, DOWNLOAD_RC="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.work / "dist" / "attest").exists())
+
+    def test_an_unattested_archive_fails(self) -> None:
+        r, _ = self.run_attested(1)
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_step_12_reports_provenance_without_failing_the_release(self) -> None:
+        # A release made from run artifacts (release.yml's release job did
+        # not run) has no attestation; that is a warning, not a failure.
+        s12 = step(12)
+        self.assertIn("gh_attested", s12)
+        self.assertNotRegex(s12, r'check "[^"]*"\s+"?(eventually )?gh_attested')
+
+
+# stub gh for the fallback release: the run's artifacts, and the notes the
+# release is created with (copied to $NOTES_OUT).
+GH_FALLBACK_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$1 $2" in
+  "run download")
+    mkdir -p dist/release-art/x
+    for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
+             manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
+      : > "dist/release-art/x/jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+    done
+    : > dist/release-art/x/jubarte_redlines-9.9.9.tar.gz
+    for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64; do
+      : > "dist/release-art/x/jubarte-9.9.9-$a.tar.gz"
+    done
+    : > dist/release-art/x/jubarte-9.9.9-windows-x86_64.zip ;;
+  "release create")
+    while [ $# -gt 0 ]; do
+      [ "$1" = --notes-file ] && cp "$2" "$NOTES_OUT"
+      shift
+    done ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class FallbackProvenance(unittest.TestCase):
+    """Codex review of #1743 (#1749): a release made from run artifacts
+    (release.yml's release job did not run) has no attestation, and its
+    notes say so instead of the CHANGELOG's claim standing alone."""
+
+    def test_the_fallback_notes_disclose_no_attestation(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="fallback-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "bin").mkdir()
+        (tmp / "bin" / "gh").write_text(GH_FALLBACK_STUB)
+        (tmp / "bin" / "gh").chmod(0o755)
+        (tmp / "scripts").mkdir()
+        shutil.copy(HERE / "check_release_artifacts.py", tmp / "scripts")
+        (tmp / "CHANGELOG.md").write_text("## [9.9.9] - 2026-10-25\n\n- a fix\n")
+        notes = tmp / "notes.md"
+        script = (
+            "set -euo pipefail\nTAG=v9.9.9; VER=9.9.9; PREV_TAG=v9.9.8; GITHUB_SUMMARY='the summary'\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f'{shell_functions("release_from_artifacts")}\nrelease_from_artifacts 42\n'
+        )
+        r = subprocess.run(["bash", "-c", script], cwd=tmp,
+                           env=dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}",
+                                    NOTES_OUT=str(notes)),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = notes.read_text()
+        self.assertTrue(text.startswith("the summary"), text)
+        # #1768: the release job may have attested these bytes before it
+        # died, so the note says only what is known
+        self.assertIn("were not published by release.yml's release job", text)
+        self.assertIn("gh attestation verify", text)
+        self.assertNotIn("carry no build-provenance attestation", text)
+        self.assertIn("- a fix", text)
+
+    def test_the_changelog_claims_provenance_for_the_release_job_only(self) -> None:
+        text = (HERE.parent / "CHANGELOG.md").read_text()
+        claim = next(line for line in text.splitlines() if line.startswith("- **Build provenance"))
+        self.assertIn("release job", claim)
+
+
+# stub gh api for the security gate: each endpoint answers the JSON fixture
+# $FIX/<kind>.json through the real jq, so the -q filters themselves run.
+GH_SECURITY_STUB = r"""#!/bin/bash
+[ "$1" = api ] || { echo "unexpected gh $*" >&2; exit 9; }
+case "$2" in
+  repos/jandira-tech/jubarte-redlines) kind=repo ;;
+  repos/jandira-tech/jubarte-redlines/security-advisories*) kind=advisories ;;
+  repos/jandira-tech/jubarte-redlines/dependabot/alerts*) kind=dependabot ;;
+  repos/jandira-tech/jubarte-redlines/code-scanning/alerts*) kind=code-scanning ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+[ "${FAIL:-}" != "$kind" ] || { echo "HTTP 403: Resource not accessible" >&2; exit 1; }
+q=""
+while [ $# -gt 0 ]; do [ "$1" = -q ] && q=$2; shift; done
+jq -r "$q" "$FIX/$kind.json"
+"""
+
+
+@unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+class SecurityGate(unittest.TestCase):
+    """#1750 (checklist before#1, its automated half): SECURITY.md lets no
+    confirmed medium-or-higher finding ship. Step 0 stops on a repository
+    advisory in triage (a private report) or an open medium+ Dependabot or
+    code-scanning alert, and lists drafts and lower alerts."""
+
+    def gate(self, advisories=(), dependabot=(), code=(), admin=True, **env: str) -> subprocess.CompletedProcess[str]:
+        tmp = Path(tempfile.mkdtemp(prefix="secgate-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "gh").write_text(GH_SECURITY_STUB)
+        (tmp / "gh").chmod(0o755)
+        import json
+        (tmp / "repo.json").write_text(json.dumps({"permissions": {"admin": admin, "push": True}}))
+        (tmp / "advisories.json").write_text(json.dumps(list(advisories)))
+        (tmp / "dependabot.json").write_text(json.dumps(list(dependabot)))
+        (tmp / "code-scanning.json").write_text(json.dumps(list(code)))
+        script = (
+            "set -euo pipefail\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f'{shell_functions("security_findings", "security_blocking", "security_gate")}\nsecurity_gate\n'
+        )
+        return subprocess.run(["bash", "-c", script], cwd=tmp,
+                              env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", FIX=str(tmp),
+                                       **{"VER": "9.9.9", **env}),
+                              capture_output=True, text=True, timeout=30)
+
+    @staticmethod
+    def draft(ghsa: str, severity: str | None, *patched: str | None) -> dict:
+        return {"ghsa_id": ghsa, "state": "draft", "severity": severity,
+                "vulnerabilities": [{"package": {"ecosystem": "rust", "name": "jubarte-redlines"},
+                                     "patched_versions": v} for v in patched]}
+
+    @staticmethod
+    def alert(n: int, severity: str | None) -> dict:
+        return {"number": n, "state": "open",
+                "security_advisory": {"severity": severity, "ghsa_id": f"GHSA-dep{n}"},
+                "dependency": {"package": {"name": "opentelemetry-api"}}}
+
+    @staticmethod
+    def scan(n: int, severity: str | None) -> dict:
+        return {"number": n, "state": "open",
+                "rule": {"id": "js/xss", "security_severity_level": severity},
+                "most_recent_instance": {"location": {"path": "src/x.rs"}}}
+
+    def test_nothing_open_passes(self) -> None:
+        r = self.gate(advisories=[{"ghsa_id": "GHSA-old", "state": "published", "severity": "high"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("GHSA-old", r.stdout)
+
+    def test_a_private_report_in_triage_stops_the_release(self) -> None:
+        r = self.gate(advisories=[{"ghsa_id": "GHSA-tri1", "state": "triage", "severity": None}])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-tri1", r.stderr)
+
+    def test_a_low_draft_advisory_is_listed_not_blocking(self) -> None:
+        r = self.gate(advisories=[self.draft("GHSA-drf1", "low", None)])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("GHSA-drf1", r.stdout)
+
+    def test_an_unpatched_high_draft_stops_the_release(self) -> None:
+        # #1761: moving a report from triage to draft fixed nothing
+        r = self.gate(advisories=[self.draft("GHSA-drf2", "high", None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-drf2", r.stderr)
+        self.assertIn("patched version", r.stderr)
+
+    def test_an_unrated_draft_stops_the_release(self) -> None:
+        r = self.gate(advisories=[self.draft("GHSA-drf3", None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-drf3", r.stderr)
+
+    def test_a_draft_this_release_patches_is_listed_not_blocking(self) -> None:
+        # the release that is the fix ships before the advisory is published
+        for patched in ("9.9.9", ">= 9.9.9"):
+            r = self.gate(advisories=[self.draft("GHSA-drf4", "critical", None, patched)])
+            self.assertEqual(r.returncode, 0, (patched, r.stderr))
+            self.assertIn("GHSA-drf4", r.stdout)
+
+    def test_a_draft_another_version_patches_stops_the_release(self) -> None:
+        for patched in ("9.9.10", "19.9.9", "9.9.9-rc.1", "999"):
+            r = self.gate(advisories=[self.draft("GHSA-drf5", "medium", patched)])
+            self.assertEqual(r.returncode, 1, (patched, r.stdout))
+
+    def test_a_token_that_cannot_see_private_reports_is_refused(self) -> None:
+        # GitHub lists unpublished advisories only to admins and security
+        # managers; any other token gets the published ones, successfully
+        r = self.gate(admin=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("admin", r.stderr)
+        self.assertIn("unpublished", r.stderr)
+
+    def test_an_open_medium_dependabot_alert_stops_the_release(self) -> None:
+        r = self.gate(dependabot=[self.alert(7, "medium")])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("#7", r.stderr)
+        self.assertIn("opentelemetry-api", r.stderr)
+
+    def test_a_low_dependabot_alert_is_listed_not_blocking(self) -> None:
+        r = self.gate(dependabot=[self.alert(8, "low")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("#8", r.stdout)
+
+    def test_an_open_high_code_scanning_alert_stops_the_release(self) -> None:
+        r = self.gate(code=[self.scan(45, "high"), self.scan(46, None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("#45", r.stderr)
+        self.assertNotIn("#46", r.stderr.split("ERROR")[-1])
+
+    def test_an_unreadable_api_is_a_refusal(self) -> None:
+        for kind in ("repo", "advisories", "dependabot", "code-scanning"):
+            r = self.gate(FAIL=kind)
+            self.assertEqual(r.returncode, 1, (kind, r.stdout))
+            self.assertIn("cannot read", r.stderr, kind)
+
+    def test_step_0_runs_it_before_the_bump_gate(self) -> None:
+        s0 = step(0)
+        self.assertLess(s0.index("\nsecurity_gate\n"), s0.index("bump_gate \"$PREV_RELEASE\""))
+
+
+# stub gh api for HEAD's check runs: the JSON fixture $FIX/runs.json through
+# the real jq, or an unreadable API when $FAIL is set.
+GH_CHECKS_STUB = r"""#!/bin/bash
+case "$1 $2" in
+  "api repos/jandira-tech/jubarte-redlines/commits/"*/check-runs*) ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+[ -z "${FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+q=""
+while [ $# -gt 0 ]; do [ "$1" = -q ] && q=$2; shift; done
+jq -r "$q" "$FIX/runs.json"
+"""
+
+
+class ReleaseTree(unittest.TestCase):
+    """#1751 (checklist before#4 and before#9): the canonical checkout is the
+    owner's, never the release tree; and HEAD's CI that did not pass is put
+    in front of the releaser before anything is written."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="reltree-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def canonical(self, cwd: Path, canon: str) -> int:
+        script = f'set -euo pipefail\n{shell_functions("canonical_checkout")}\ncanonical_checkout\n'
+        return subprocess.run(["bash", "-c", script], cwd=cwd,
+                              env=dict(os.environ, JUBARTE_CANONICAL_CHECKOUT=canon),
+                              capture_output=True, text=True, timeout=30).returncode
+
+    def test_the_canonical_checkout_is_recognised_through_a_link(self) -> None:
+        real = self.tmp / "temp" / "jubarte-redlines"
+        real.mkdir(parents=True)
+        (self.tmp / "T").symlink_to(self.tmp / "temp")
+        self.assertEqual(self.canonical(real, str(self.tmp / "T" / "jubarte-redlines")), 0)
+        self.assertEqual(self.canonical(self.tmp / "T" / "jubarte-redlines", str(real)), 0)
+
+    def test_a_worktree_elsewhere_is_no_canonical_checkout(self) -> None:
+        (self.tmp / "canon").mkdir()
+        (self.tmp / "release-wt").mkdir()
+        self.assertNotEqual(self.canonical(self.tmp / "release-wt", str(self.tmp / "canon")), 0)
+        self.assertNotEqual(self.canonical(self.tmp / "release-wt", str(self.tmp / "absent")), 0)
+
+    def test_step_0_refuses_it_first(self) -> None:
+        s0 = step(0)
+        first = s0.index("canonical_checkout")
+        self.assertLess(first, s0.index("git fetch"))
+        self.assertIn("die", s0[first:first + 300])
+        self.assertIn("worktree", s0[first:first + 300])
+
+    def ci(self, runs: list[dict], **env: str) -> subprocess.CompletedProcess[str]:
+        import json
+        (self.tmp / "gh").write_text(GH_CHECKS_STUB)
+        (self.tmp / "gh").chmod(0o755)
+        (self.tmp / "runs.json").write_text(json.dumps({"check_runs": runs}))
+        script = (f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n'
+                  f'git() {{ echo 0123456789abcdef0123456789abcdef01234567; }}\n'
+                  f'{shell_functions("head_ci_report")}\nhead_ci_report\necho survived\n')
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp,
+                              env=dict(os.environ, PATH=f"{self.tmp}:{os.environ['PATH']}", FIX=str(self.tmp), **env),
+                              capture_output=True, text=True, timeout=30)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_heads_red_checks_are_shown_and_the_run_goes_on(self) -> None:
+        r = self.ci([{"name": "test (ubuntu)", "status": "completed", "conclusion": "failure"},
+                     {"name": "clippy", "status": "completed", "conclusion": "success"},
+                     {"name": "coverage", "status": "completed", "conclusion": "cancelled"},
+                     {"name": "docs", "status": "in_progress", "conclusion": None},
+                     {"name": "fuzz", "status": "completed", "conclusion": "skipped"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        for name in ("test (ubuntu) failure", "coverage cancelled", "docs in_progress"):
+            self.assertIn(name, r.stdout)
+        for name in ("clippy", "fuzz"):
+            self.assertNotIn(name, r.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_all_green_says_so(self) -> None:
+        r = self.ci([{"name": "clippy", "status": "completed", "conclusion": "success"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("every check run of HEAD passed", r.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_no_check_run_at_all_is_named_not_passed(self) -> None:
+        # #1763: a HEAD whose workflows never ran read as green
+        r = self.ci([])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("CHECK NOW  HEAD has no check run", r.stdout)
+        self.assertNotIn("passed", r.stdout.replace("nothing passed", ""))
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_only_skipped_check_runs_are_named_not_passed(self) -> None:
+        r = self.ci([{"name": "fuzz", "status": "completed", "conclusion": "skipped"},
+                     {"name": "lint", "status": "completed", "conclusion": "neutral"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("CHECK NOW  none of HEAD's 2 check runs succeeded", r.stdout)
+        self.assertNotIn("every check run of HEAD passed", r.stdout)
+
+    def test_an_unreadable_ci_is_named_not_fatal(self) -> None:
+        r = self.ci([], FAIL="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("cannot read", r.stdout + r.stderr)
+
+    def test_step_0_reports_it(self) -> None:
+        self.assertIn("\nhead_ci_report\n", step(0))
+
+
+class AutomatedReview(unittest.TestCase):
+    """#1742: checks a script can make are made by the script, not owed by a
+    person: the release.yml review, the scripts' Python floor, the crate's
+    keyword limits, and the API sign-off (now cargo-semver-checks)."""
+
+    def test_step_0_checks_release_yml(self) -> None:
+        self.assertIn("scripts/test_release_workflow.py", step(0))
+
+    def test_step_0_checks_the_release_environment_and_the_signing_secret(self) -> None:
+        s0 = step(0)
+        self.assertIn("environments/release", s0)
+        self.assertIn("ZIPSIGN_PRIVATE_KEY", s0)
+
+    def test_the_script_tests_run_on_the_python_floor(self) -> None:
+        self.assertIn("--python 3.12", step(5))
+
+    def test_step_7_checks_the_crate_keyword_limits(self) -> None:
+        self.assertIn("crate_keywords_ok", step(7))
+
+    def test_the_keyword_check_counts_against_crates_io(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="kw-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        functions = shell_functions("crate_keywords_ok")
+        for keywords, categories, ok in (
+            ('["docx", "redline"]', '["text-processing"]', True),
+            ('["a", "b", "c", "d", "e", "f"]', '["text-processing"]', False),
+            ('["docx"]', '["a", "b", "c", "d", "e", "f"]', False),
+            ('["a-keyword-that-is-far-too-long"]', '["text-processing"]', False),
+        ):
+            (tmp / "Cargo.toml").write_text(
+                f'[package]\nname = "x"\nversion = "0.1.0"\nkeywords = {keywords}\ncategories = {categories}\n'
+            )
+            r = subprocess.run(["bash", "-c", f"{functions}\ncrate_keywords_ok"], cwd=tmp,
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode == 0, ok, (keywords, categories, r.stderr))
+
+    def test_the_rendered_docs_open_only_on_request(self) -> None:
+        s6 = step(6)
+        self.assertIn('RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items', s6)
+        self.assertRegex(s6, r'if \[ "\$OPEN_DOCS" = 1 \]')
+
+
+class ChangelogPlaceholders(unittest.TestCase):
+    """The section ships verbatim as the GitHub release notes: a TODO in it
+    stops the release at step 2, a word that merely contains one does not."""
+
+    def found(self, section: str) -> subprocess.CompletedProcess[str]:
+        tmp = Path(tempfile.mkdtemp(prefix="clph-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "CHANGELOG.md").write_text(f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- TODO old\n")
+        functions = shell_functions("changelog_section", "changelog_placeholders")
+        return subprocess.run(["bash", "-c", f"VER=0.1.1\n{functions}\nchangelog_placeholders"],
+                              cwd=tmp, capture_output=True, text=True, timeout=30)
+
+    def test_a_placeholder_is_found_with_its_line(self) -> None:
+        for word in ("TODO", "TBD", "FIXME", "XXX"):
+            r = self.found(f"### Fixed\n\n- {word}: describe the fix\n")
+            self.assertEqual(r.returncode, 0, word)
+            self.assertIn(word, r.stdout)
+
+    def test_a_word_containing_one_is_not(self) -> None:
+        r = self.found("### Fixed\n\n- TODOS list and XXXL sizes render\n")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    def test_step_2_dies_on_one(self) -> None:
+        s2 = step(2)
+        self.assertIn("changelog_placeholders", s2)
+        self.assertIn("die", s2.split("changelog_placeholders", 1)[1])
+
+
+# gh at a command's start: the subcommands that act on one repository.
+GH_REPO_CALL = re.compile(
+    r"(?:^|[;&|(!{]|\$\(|\bif\b|\bthen\b|\bdo\b)\s*gh\s+"
+    r"(?:release|run|pr|secret|attestation|workflow|issue|repo|cache|variable)\b")
+
+
+def shell_commands(path: Path) -> list[str]:
+    """The logical commands of a shell script: comment lines and heredoc
+    bodies dropped, backslash continuations joined, and any message text
+    (die/step/echo/printf) cut off, since no gh runs inside one."""
+    out, buf, heredoc = [], "", None
+    for line in path.read_text().splitlines():
+        if heredoc is not None:
+            if line.strip() == heredoc:
+                heredoc = None
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        if line.rstrip().endswith("\\"):
+            buf += line.rstrip()[:-1] + " "
+            continue
+        buf += line
+        m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", buf.replace("<<<", ""))
+        out.append(re.split(r"\b(?:die|step|echo|printf) [\"']", buf)[0])
+        buf = ""
+        if m:
+            heredoc = m.group(1)
+    return out
+
+
+class EngineRepoBinding(unittest.TestCase):
+    """Codex review of #1743 (#1747): gh honours GH_REPO, so a stray one in
+    the releaser's shell cancelled, listed or created things in another
+    repository. Every engine gh call names jandira-tech/jubarte-redlines;
+    the app's step gets no GH_REPO at all."""
+
+    def test_every_engine_gh_call_names_the_repository(self) -> None:
+        unbound = []
+        for script in (RELEASE_SH, HERE / "push_main.sh"):
+            for cmd in shell_commands(script):
+                starts = [m.end() for m in GH_REPO_CALL.finditer(cmd)]
+                for i, start in enumerate(starts):
+                    seg = cmd[start:starts[i + 1] if i + 1 < len(starts) else len(cmd)]
+                    if "-R jandira-tech/jubarte-redlines" not in seg:
+                        unbound.append(f"{script.name}: {cmd.strip()}")
+        self.assertEqual(unbound, [])
+
+    def test_the_scan_sees_the_calls(self) -> None:
+        # the scan would pass vacuously on a script it cannot read
+        calls = [c for c in shell_commands(RELEASE_SH) if GH_REPO_CALL.search(c)]
+        self.assertGreaterEqual(len(calls), 12, calls)
+        self.assertTrue(any("gh run cancel" in c for c in calls))
+        self.assertTrue(any(c.startswith("ghrel_has()") for c in calls), "a one-line function's call")
+        self.assertFalse(any("rerun <id>" in c for c in calls), "a die message is no call")
+
+    def test_a_stray_GH_REPO_never_reaches_the_app_step(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="appgh-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "scripts").mkdir()
+        (tmp / "scripts" / "release-engine.sh").write_text('#!/bin/sh\necho "GH_REPO=${GH_REPO-unset}"\n')
+        (tmp / "scripts" / "release-engine.sh").chmod(0o755)
+        text = RELEASE_SH.read_text()
+        app = re.search(r"^app_release\(\) .*$", text, re.M)
+        self.assertIsNotNone(app)
+        script = f"set -euo pipefail\nAPP_REPO={tmp}; VER=9.9.9\n{app.group(0)}\napp_release --preflight\n"
+        r = subprocess.run(["bash", "-c", script], env=dict(os.environ, GH_REPO="other/repo"),
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "GH_REPO=unset"), r.stderr)
+
+
+
+class AdoptionAndHeaders(unittest.TestCase):
+    """#1754 (checklist 4#2 and 5#1): a docs/adoption row this release ships
+    is not still labelled main, and every tracked file that can carry a
+    comment carries its SPDX header — `reuse lint` cannot see a missing one,
+    because REUSE.toml's `path = "**"` covers every file."""
+
+    # REUSE-IgnoreStart (headers these tests write, not this file's)
+    HEADER = "# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n#\n# SPDX-License-Identifier: AGPL-3.0-only\n"
+    LATE = "//! docs\n" + "// filler\n" * 600 + "// SPDX-License-Identifier: AGPL-3.0-only\n"
+    # REUSE-IgnoreEnd
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="adoption-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def run_fn(self, name: str) -> subprocess.CompletedProcess[str]:
+        script = f"set -euo pipefail\n{shell_functions(name)}\nout=$({name}) || exit 7\nprintf '%s' \"$out\"\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60)
+
+    def write(self, rel: str, text: str) -> None:
+        (self.tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.tmp / rel).write_text(text)
+
+    def test_a_row_still_labelled_main_is_listed(self) -> None:
+        self.write("docs/adoption/a.md", "| Tool | jubarte | Status |\n|---|---|---|\n"
+                   "| pandoc | `jubarte read` | released |\n| soffice | `jubarte convert` |  main |\n")
+        self.write("docs/adoption/README.md", "- **main**: merged, not yet released, on `main`.\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("a.md:4:", r.stdout)
+        self.assertNotIn("pandoc", r.stdout)
+        self.assertNotIn("README", r.stdout)
+
+    def test_released_and_pending_rows_pass(self) -> None:
+        self.write("docs/adoption/a.md", "| x | y | released |\n| z | `main` branch | pending |\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+    def test_a_wrapped_main_label_is_listed(self) -> None:
+        # #1764: the label in code or bold slipped past a bare-word match
+        self.write("docs/adoption/a.md", "| x | y | `main` |\n| z | w | **main** |\n| v | u | released |\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([line.split(":")[1] for line in r.stdout.splitlines()], ["1", "2"])
+
+    def test_no_adoption_pages_is_a_refusal_not_a_pass(self) -> None:
+        self.assertEqual(self.run_fn("adoption_main_rows").returncode, 7)
+
+    def git_repo(self) -> None:
+        git = ["git", "-C", str(self.tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "add", "-A"], check=True)
+
+    def test_a_tracked_file_without_its_header_is_listed(self) -> None:
+        self.write("scripts/ok.py", "#!/usr/bin/env python3\n" + self.HEADER + "print(1)\n")
+        self.write("scripts/bare.py", "#!/usr/bin/env python3\nprint(1)\n")
+        self.write("tests/late.rs", self.LATE)
+        self.write("scripts/probe.zsh", "#!/usr/bin/env zsh\necho hi\n")
+        self.write("docs/notes.md", "no header needed\n")
+        self.git_repo()
+        self.write("scripts/untracked.py", "print(1)\n")  # not in the release
+        r = self.run_fn("headerless_files")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(r.stdout.split()), ["scripts/bare.py", "scripts/probe.zsh", "tests/late.rs"])
+
+    def test_commentable_config_files_are_asked_for_one(self) -> None:
+        # #1764: jubarte-wasm/Cargo.toml and a pyproject.toml carried none
+        self.write("ok/Cargo.toml", self.HEADER + "[package]\n")
+        for rel in ("jubarte-wasm/Cargo.toml", "eval/pyproject.toml", ".github/workflows/ci.yml",
+                    "action.yaml", "stubs/x.pyi", "setup.cfg", "tox.ini"):
+            self.write(rel, "x = 1\n")
+        self.git_repo()
+        r = self.run_fn("headerless_files")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(r.stdout.split()),
+                         sorted([".github/workflows/ci.yml", "action.yaml", "eval/pyproject.toml",
+                                 "jubarte-wasm/Cargo.toml", "setup.cfg", "stubs/x.pyi", "tox.ini"]))
+
+    def test_generated_files_and_fixtures_are_not_asked_for_one(self) -> None:
+        # wasm-bindgen writes npm/'s glue and docs/api snapshots it; REUSE.toml
+        # carries tests/fixtures/' provenance (anymd's copied scripts among them)
+        self.write("jubarte-wasm/npm/web/jubarte_wasm.js", "export {}\n")
+        self.write("jubarte-wasm/npm/node/jubarte_wasm_bg.wasm.d.ts", "export {}\n")
+        self.write("docs/api/jubarte-wasm-node-v0.13.0.d.ts", "export {}\n")
+        self.write("tests/fixtures/from-docx/critic/synthesize.py", "print(1)\n")
+        self.write("jubarte-wasm/npm/build.mjs", "export {}\n")  # hand-written beside them
+        self.git_repo()
+        r = self.run_fn("headerless_files")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["jubarte-wasm/npm/build.mjs"]), r.stderr)
+
+    def test_this_tree_has_no_headerless_file(self) -> None:
+        script = f"set -euo pipefail\n{shell_functions('headerless_files')}\nheaderless_files\n"
+        r = subprocess.run(["bash", "-c", script], cwd=RELEASE_SH.parent.parent,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+    def test_steps_4_and_5_die_on_them(self) -> None:
+        # step 5's header check sits beside the security scan, above the
+        # gates block, so --skip-gates does not skip it
+        text = RELEASE_SH.read_text()
+        s4 = step(4)
+        s5 = text[text.index("\nbash scripts/security-check.sh\n"):text.index('if [ "$SKIP_GATES" = 0 ]; then\n  say "5.')]
+        self.assertIn("adoption_main_rows", s4)
+        self.assertIn("die", s4[s4.index("adoption_main_rows"):][:600])
+        self.assertIn("headerless_files", s5)
+        self.assertIn("die", s5[s5.index("headerless_files"):][:600])
+        self.assertIn("4|auto|docs/adoption", RELEASE_SH.read_text())
+
+
+
+class TagShape(unittest.TestCase):
+    """#1755 (readiness 12#1, 12#2): the annotated tag release.yml reads has
+    the subject `jubarte vX.Y.Z` and the github summary in its body. 0.13.0's
+    tag held the summary as its subject with an empty body: release.yml
+    prepended nothing, and step 12's gh_note could never pass."""
+
+    SUMMARY = "-- New: a flag; PDFs mean 79.19 (LibreOffice 54.61)."
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="tagshape-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.git = ["git", "-C", str(self.tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q"], check=True)
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", "-m", "release"], check=True)
+
+    def shape(self) -> int:
+        script = f"set -euo pipefail\n{shell_functions('tag_shape_ok')}\ntag_shape_ok\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=30,
+                              env=dict(os.environ, TAG="v9.9.9", GITHUB_SUMMARY=self.SUMMARY)).returncode
+
+    def tag(self, *args: str) -> None:
+        subprocess.run([*self.git, "tag", *args], check=True)
+
+    def test_the_shape_release_sh_writes_passes(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY)
+        self.assertEqual(self.shape(), 0)
+
+    def test_the_summary_as_subject_with_an_empty_body_fails(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)  # 0.13.0's shape
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_another_subject_fails(self) -> None:
+        self.tag("-a", "v9.9.9", "-m", "v9.9.9", "-m", self.SUMMARY)
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_a_lightweight_tag_fails(self) -> None:
+        self.tag("v9.9.9")
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_no_tag_fails(self) -> None:
+        self.assertNotEqual(self.shape(), 0)
+
+    def test_step_8_checks_every_tag_it_keeps_or_writes(self) -> None:
+        s8 = step(8)
+        block = s8[s8.index("tag_shape_ok"):s8.index("check_engine_commit.sh")]
+        self.assertGreaterEqual(block.count("tag_shape_ok"), 2, "the kept tag, then the tag written")
+        # a tag on origin is the one release.yml reads: it must be the local
+        # one, and a wrong shape there dies unless the notes were put right
+        self.assertIn("ls-remote", block)
+        self.assertIn("gh_note || {", block)
+        self.assertNotIn("release notes will lack it", s8)
+        # step(8) ends at POINT OF NO RETURN, before main or the tag is pushed
+        self.assertNotIn("push_main", s8)
+
+    def block(self, *, notes_ok: bool, release: bool = True) -> subprocess.CompletedProcess[str]:
+        """Step 8's tag block, run as written against a bare origin; gh
+        answers `release view` as `release` says."""
+        text = step(8)
+        start = text.index("remote_tag=$(git ls-remote")
+        body = text[start:text.index("# A resumed run keeps the npm build", start)]
+        script = ("set -euo pipefail\n" + shell_functions("tag_shape_ok")
+                  + 'die() { echo "DIE: $*"; exit 9; }\nstep() { echo "  - $*"; }\n'
+                  + f"gh_note() {{ {'true' if notes_ok else 'false'}; }}\n"
+                  + f'gh() {{ [ "$1 $2" = "release view" ] || exit 8; {"true" if release else "false"}; }}\n'
+                  + body + "echo survived\n")
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60,
+                              env=dict(os.environ, TAG="v9.9.9", GITHUB_SUMMARY=self.SUMMARY,
+                                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t"))
+
+    def origin(self) -> None:
+        bare = self.tmp.parent / (self.tmp.name + "-origin.git")
+        self.addCleanup(shutil.rmtree, bare, ignore_errors=True)
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        subprocess.run([*self.git, "remote", "add", "origin", str(bare)], check=True)
+
+    def push_tag(self) -> None:
+        subprocess.run([*self.git, "push", "-q", "origin", "refs/tags/v9.9.9"], check=True)
+
+    def test_the_block_writes_a_fresh_tag_in_shape(self) -> None:
+        self.origin()
+        r = self.block(notes_ok=False)
+        self.assertIn("survived", r.stdout, r.stdout + r.stderr)
+        self.assertEqual(self.shape(), 0)
+
+    def test_the_block_recreates_a_local_tag_of_the_wrong_shape(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)  # 0.13.0's shape, not pushed
+        r = self.block(notes_ok=False)
+        self.assertIn("re-creating", r.stdout, r.stdout + r.stderr)
+        self.assertEqual(self.shape(), 0)
+
+    def test_a_pushed_tag_of_the_wrong_shape_dies_unless_the_notes_carry_it(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        r = self.block(notes_ok=False)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("gh release edit", r.stdout)
+        r = self.block(notes_ok=True)
+        self.assertIn("survived", r.stdout, r.stdout + r.stderr)
+        self.assertIn("its GitHub notes carry it", r.stderr)
+
+    def test_a_pushed_tag_of_the_wrong_shape_without_a_release_names_the_tag_fix(self) -> None:
+        # #1766: `gh release edit` cannot fix notes of a release that does not exist
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        r = self.block(notes_ok=False, release=False)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("no GitHub release", r.stdout)
+        self.assertIn("git push origin :refs/tags/v9.9.9", r.stdout)
+        self.assertNotIn("gh release edit", r.stdout)
+
+    def test_a_pushed_tag_that_is_not_the_local_one_dies(self) -> None:
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        subprocess.run([*self.git, "tag", "-d", "v9.9.9"], check=True, capture_output=True)
+        self.tag("-a", "v9.9.9", "-m", "jubarte v9.9.9", "-m", self.SUMMARY + " again")
+        r = self.block(notes_ok=True)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("is not the local tag", r.stdout)
+
+    def test_gh_note_is_defined_before_step_8_calls_it(self) -> None:
+        text = RELEASE_SH.read_text()
+        self.assertLess(text.index("\ngh_note() "), text.index('say "8. '))
+
+
+
+class InstallProofs(unittest.TestCase):
+    """#1756 (checklist after#9, after#10, after#11): step 12 installs each
+    channel the way a user does. 0.13.0 never reached npm (both packages
+    stop at 0.12.0) and no step said so."""
+
+    FNS = ("host_archive", "archive_runs", "pip_installs", "npx_runs", "npm_requires", "docsrs_built")
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="install-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def run_fn(self, call: str, stubs: str = "", **env: str) -> subprocess.CompletedProcess[str]:
+        script = f"set -euo pipefail\n{shell_functions(*self.FNS)}\n{stubs}\n{call}\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60,
+                              env=dict(os.environ, VER="9.9.9", TAG="v9.9.9", ASSETS=str(self.tmp / "assets"), **env))
+
+    def test_the_host_archive_is_named_as_release_yml_names_it(self) -> None:
+        for system, machine, name in (("Darwin", "arm64", "macos-aarch64"), ("Linux", "x86_64", "linux-x86_64"),
+                                      ("Linux", "aarch64", "linux-aarch64"), ("Darwin", "x86_64", "macos-x86_64")):
+            r = self.run_fn("host_archive", f'uname() {{ [ "$1" = -s ] && echo {system} || echo {machine}; }}')
+            self.assertEqual(r.stdout.strip(), f"jubarte-9.9.9-{name}.tar.gz", r.stderr)
+        r = self.run_fn("host_archive", 'uname() { [ "$1" = -s ] && echo SunOS || echo sparc; }')
+        self.assertNotEqual(r.returncode, 0)
+
+    def archive(self, answers: str = "jubarte 9.9.9", listed: bool = True, corrupt: bool = False) -> None:
+        name = "jubarte-9.9.9-macos-aarch64"
+        root = self.tmp / "build" / name
+        root.mkdir(parents=True)
+        (root / "jubarte").write_text(f"#!/bin/sh\necho '{answers}'\n")
+        (root / "jubarte").chmod(0o755)
+        assets = self.tmp / "assets"
+        assets.mkdir()
+        subprocess.run(["tar", "czf", str(assets / f"{name}.tar.gz"), "-C", str(root.parent), name], check=True)
+        digest = subprocess.run(["shasum", "-a", "256", f"{name}.tar.gz"], cwd=assets,
+                                capture_output=True, text=True, check=True).stdout
+        if corrupt:
+            digest = "0" * 64 + digest[64:]
+        (assets / "SHA256SUMS.txt").write_text((digest if listed else "") + "1" * 64 + "  other.zip\n")
+
+    GH = ('uname() { [ "$1" = -s ] && echo Darwin || echo arm64; }\n'
+          'gh() { local d=""; while [ $# -gt 0 ]; do [ "$1" = -D ] && d=$2; shift; done; cp "$ASSETS"/* "$d"/; }')
+
+    def test_the_archive_matching_its_sum_and_answering_the_version_passes(self) -> None:
+        self.archive()
+        r = self.run_fn("archive_runs", self.GH)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists(), "the proof cleans up after itself")
+
+    def test_an_archive_whose_sum_differs_fails(self) -> None:
+        self.archive(corrupt=True)
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_an_archive_sha256sums_does_not_list_fails(self) -> None:
+        self.archive(listed=False)
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_an_archive_answering_another_version_fails(self) -> None:
+        self.archive(answers="jubarte 9.9.8")
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_pip_installs_into_a_fresh_environment_and_reads_the_engine(self) -> None:
+        stub = 'uv() { echo "$*" > "$ASSETS.argv"; echo "${ENGINE:-9.9.9}"; }'
+        r = self.run_fn("pip_installs", stub)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        argv = Path(str(self.tmp / "assets") + ".argv").read_text()
+        # --no-build-package: only a wheel install passes; a releaser's
+        # machine has Rust and would build the sdist (#1765)
+        for word in ("--isolated", "--no-project", "jubarte-redlines==9.9.9", "--refresh-package jubarte-redlines",
+                     "--no-build-package jubarte-redlines", "--python 3.12", 'capabilities()["engine_version"]'):
+            self.assertIn(word, argv)
+        self.assertNotEqual(self.run_fn("pip_installs", stub, ENGINE="9.9.8").returncode, 0)
+        self.assertNotEqual(self.run_fn("pip_installs", "uv() { return 1; }").returncode, 0)
+
+    NPX = ('npm() { [ "$1" = init ] && echo "{}" > package.json; }\n'
+           'npx() { echo "$*" > "$ASSETS.argv"; { pwd -P; ls; } > "$ASSETS.cwd"; [ -n "$ANSWER" ] && echo "$ANSWER"; }')
+
+    def test_npx_runs_the_published_cli(self) -> None:
+        for answer, rc in (("jubarte-redlines 9.9.9", 0), ("jubarte 9.9.9", 0), ("jubarte-redlines 9.9.8", 1), ("", 1)):
+            r = self.run_fn("npx_runs", self.NPX, ANSWER=answer)
+            self.assertEqual(r.returncode != 0, bool(rc), (answer, r.stderr))
+        self.assertIn("-y --prefer-online jubarte-redlines@9.9.9 --version", Path(str(self.tmp / "assets") + ".argv").read_text())
+
+    def test_npx_runs_in_an_empty_project_of_its_own(self) -> None:
+        # #1765: npx answers from a node_modules it finds before the registry
+        # (a planted jubarte-redlines 9.9.9, a version npm never had, passed)
+        (self.tmp / "node_modules" / "jubarte-redlines").mkdir(parents=True)
+        r = self.run_fn("npx_runs", self.NPX, ANSWER="jubarte-redlines 9.9.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cwd, *listing = Path(str(self.tmp / "assets") + ".cwd").read_text().split()
+        self.assertEqual(cwd, str(self.tmp / "dist" / "install-proof" / "npx"))
+        self.assertEqual(listing, ["package.json"])
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists(), "the proof cleans up after itself")
+
+    NPM = ('npm() { case "$1" in init) echo "{}" > package.json ;; i) mkdir -p node_modules/jubarte-wasm\n'
+           '  printf \'{"name":"jubarte-wasm","version":"%s","main":"index.js"}\' "${GOT:-9.9.9}" > node_modules/jubarte-wasm/package.json\n'
+           '  echo "module.exports = { compareDocuments: ${FN:-() => 1} };" > node_modules/jubarte-wasm/index.js ;; esac; }')
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_npm_installs_the_wasm_package_and_requires_it(self) -> None:
+        r = self.run_fn("npm_requires", self.NPM)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists())
+        self.assertNotEqual(self.run_fn("npm_requires", self.NPM, GOT="9.9.8").returncode, 0)
+        self.assertNotEqual(self.run_fn("npm_requires", self.NPM, FN="1").returncode, 0)
+        self.assertNotEqual(self.run_fn("npm_requires", "npm() { return 1; }").returncode, 0)
+
+    def test_docs_rs_status(self) -> None:
+        built = 'curl() { echo \'{"doc_status":true,"version":"9.9.9"}\'; }'
+        self.assertEqual(self.run_fn("docsrs_built", built).returncode, 0)
+        self.assertNotEqual(self.run_fn("docsrs_built", 'curl() { echo \'{"doc_status":false}\'; }').returncode, 0)
+        self.assertNotEqual(self.run_fn("docsrs_built", "curl() { return 22; }").returncode, 0)
+
+    def test_step_12_dies_on_the_installs_and_only_warns_on_docs_rs(self) -> None:
+        s12 = step(12)
+        for fn in ("archive_runs", "eventually pip_installs", "eventually npx_runs", "eventually npm_requires"):
+            line = next((l for l in s12.splitlines() if l.startswith("check ") and fn in l), None)
+            self.assertIsNotNone(line, fn)
+        self.assertNotIn("check ", "".join(l for l in s12.splitlines() if "docsrs_built" in l))
+        self.assertIn("docsrs_built", s12)
+        # the call, not the definition above it (#1765)
+        call = next(m.start() for m in re.finditer(r"^check .*eventually npm_requires", s12, re.M))
+        self.assertLess(call, s12.index('[ "$ok" = 1 ] || die'))
+
+
+
+class ProofTools(unittest.TestCase):
+    """#1757: every proof names a tool a repository holds. The 0.13.0
+    checklist proved five items with tools that lived only in a release work
+    folder (parity_build_v2.sh, apply_changelogs_v2.py,
+    lane_validity_vs_sources.py, queue.sh, build_app_0.11.2.sh), one of
+    which had been deleted and rebuilt from session logs."""
+
+    # a `(cd OTHER && …)` group runs another repository's tools
+    FOREIGN = re.compile(r"\(cd [^)]*\)")
+    # scripts/… or tools/… run from this checkout: not ./scripts/… or app/scripts/…
+    TOOL = re.compile(r"(?<![\w./-])(?:scripts|tools)/[\w.-]+(?:/[\w.-]+)*")
+
+    def test_every_tool_named_from_this_checkout_exists(self) -> None:
+        missing = []
+        for line in checklist_block().splitlines():
+            parts = line.split("|")
+            if len(parts) != 4:
+                continue
+            for path in self.TOOL.findall(self.FOREIGN.sub("", parts[3])):
+                path = path.rstrip(".")
+                # a script, not a folder a tool writes to (tools/parity/parity-work)
+                if Path(path).suffix in {".py", ".sh", ".mjs", ".js"} and not (HERE.parent / path).exists():
+                    missing.append((parts[0], path))
+        self.assertEqual(missing, [])
+
+    def test_no_proof_names_a_release_work_folder_tool(self) -> None:
+        block = checklist_block()
+        for name in ("parity_build_v2", "apply_changelogs_v2", "lane_validity_vs_sources", "queue.sh",
+                     "build_app_0.11.2", "agents/"):
+            self.assertFalse(name in block, f"the checklist still names {name}")
+
+    def test_step_5_runs_the_tests_of_these_tools(self) -> None:
+        s5 = step(5)
+        for test in ("scripts/test_lane_validity.py", "scripts/test_redline_sweep.py"):
+            self.assertIn(f'"${{py312[@]}}" {test}', s5)
+        self.assertIn("pytest -q -p no:cacheprovider tools/parity", s5)
+
+    def test_the_word_sweeps_read_the_redline_sample_only(self) -> None:
+        # sample_*_V_*.csv also matches the conversion sample, which
+        # redline-sweep.sh and lane_validity.py refuse (exit 2)
+        lines = [line for line in checklist_block().splitlines()
+                 if ("redline-sweep.sh" in line or "lane_validity.py" in line) and "release_info/" in line]
+        self.assertGreaterEqual(len(lines), 2, "Ring-3 and lane validity")
+        for line in lines:
+            self.assertNotIn("sample_*_", line)
+            self.assertIn("release_info/sample_redline_@V@_*.csv", line)
+
+
+class Lessons0140(unittest.TestCase):
+    """What the 0.14.0 readiness run learned, kept in the checklist so the
+    next release does not learn it again."""
+
+    def rows(self, needle: str) -> list[list[str]]:
+        return [line.split("|") for line in checklist_block().splitlines()
+                if line.count("|") == 3 and needle in line]
+
+    def one_row(self, needle: str) -> str:
+        rows = self.rows(needle)
+        self.assertEqual(len(rows), 1, f"one checklist row names {needle!r}")
+        return "|".join(rows[0])
+
+    def test_ring3_opens_word_through_the_bench_and_reads_word_own_failures(self) -> None:
+        # #1794: --probe drove Word through an osascript of its own. 0.14.0's
+        # 23 failures crash Word 16.115 on Word's own redlines of most of
+        # the pairs too: the row says how that is read, and who waives it.
+        row = self.one_row("Ring-3 Word open probe")
+        for needle in ("word_pdf.py", "word_watchdog.sh", "NEUROTIC_DOCX_BENCH", "alone",
+                       "Word's own redline", "only the owner waives"):
+            self.assertIn(needle, row)
+        self.assertNotIn("osascript", row)
+
+    def test_a_skipped_miri_suite_is_disclosed(self) -> None:
+        # 0.14.0: miri not installed; the owner released without it
+        row = self.one_row("cargo +nightly miri nextest run")
+        self.assertIn("skips it", row)
+        self.assertIn("release notes", row)
+
+    def test_only_release_sh_tags_and_pushes(self) -> None:
+        # 0.13.0 pushed main and its tag by hand, and step 13 never ran:
+        # jubarte.pro and the app's facts stayed on 0.12.0
+        row = self.one_row("a run in flight owns its worktree")
+        self.assertIn("only release.sh pushes main and the tag", row)
+        self.assertIn("step 13 never ran", row)
+
+    def test_the_bench_flow_resumes_and_pins_libreoffice(self) -> None:
+        row = self.one_row("jubarte_release_info @V@ --engine-dir <engine> --binary")
+        self.assertIn("--only", row)
+        self.assertIn("SOFFICE=", row)
+        self.assertIn("26.8.0.3", row)
+
+    def test_a_missing_previous_snapshot_is_backfilled(self) -> None:
+        row = self.one_row("backfill")
+        phase, mark, _item, proof = row.split("|")
+        self.assertEqual((phase, mark), ("before", "you"))
+        self.assertIn("git worktree add", proof)
+        # codex on #1743 (#1778): the tag's own script may be the one #1769
+        # fixed, so this checkout's runs in the tag's worktree
+        self.assertLess(proof.index("cp scripts/api_snapshot.py <dir>/scripts/"),
+                        proof.index("python3 scripts/api_snapshot.py"))
+
+    def test_step_6_names_a_missing_previous_snapshot(self) -> None:
+        # 0.13.0 skipped step 6: "no previous-release snapshot — … is the
+        # baseline" hid that v0.13.0 exists and its snapshot does not
+        s6 = ApiDocDrift.step6(self)
+        self.assertIn("no snapshot of $PREV_TAG", s6)
+        self.assertIn("backfill", s6)
+        self.assertLess(s6.index("cp scripts/api_snapshot.py <dir>/scripts/"),
+                        s6.index("python3 scripts/api_snapshot.py ${PREV_TAG#v}"))
+
+    def test_hand_run_python_proofs_pin_3_12(self) -> None:
+        # uv's default here was a free-threaded 3.15t; no abi3 wheel serves it
+        row = self.one_row("free-threaded")
+        self.assertIn("--python 3.12", row)
+
+    def test_no_message_folds_a_list_with_an_unquoted_echo(self) -> None:
+        # $(echo $list) globs each word (SC2086) and hides the separator
+        self.assertNotRegex(RELEASE_SH.read_text(), r"\$\(echo \$\w+\)")
+
+    def test_the_app_scripts_run_under_bash(self) -> None:
+        row = self.one_row("never sh or zsh")
+        for script in ("release-engine.sh", "build-release-app.sh", "notarize-direct.sh"):
+            self.assertIn(script, row)
 
 
 if __name__ == "__main__":

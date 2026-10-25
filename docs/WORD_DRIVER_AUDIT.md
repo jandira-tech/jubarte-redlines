@@ -22,6 +22,13 @@ nothing was re-run; where a claim rests on a past run it cites that run's artifa
 other claim is traceable to a file and line, to documented Microsoft/Apple behaviour, or is
 marked unverified.
 
+> **Re-checked 2026-10-25 (0.14.0, #1794):** `word-open-probe.sh` and
+> `word-probe-sweep.sh` are retired. `redline-sweep.sh --probe` now opens
+> Word only through the bench's `scripts/word_pdf.py` under its
+> `word_watchdog.sh`. It re-runs each failure alone, and for a release sample
+> it opens Word's own redline of that pair too. The family-F findings below
+> describe the retired scripts as they were.
+
 > **Re-checked 2026-09-26 (0.9.2):** the audit stands — its citations are
 > pinned to the revisions above and those pins remain the frame of reference.
 > What moved underneath: the family-F scripts (`word-open-probe.sh`,

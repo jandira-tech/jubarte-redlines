@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Where did each unused public item come from, and has it shipped?
 
 Reads docs/analysis/UNUSED_PUBLIC_API.md rows (sections A, B, C), then for each item finds
