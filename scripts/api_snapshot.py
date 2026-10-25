@@ -71,24 +71,23 @@ def build_doc_json() -> None:
         have_nightly = "nightly" in out.stdout
     except FileNotFoundError:
         pass
+    # The rustdoc flags go to rustdoc through RUSTDOCFLAGS, never on cargo's
+    # command line: mbx refuses `cargo doc --output-format json` before
+    # cargo runs ("metadata probing failed", #1769).
+    env = dict(
+        os.environ,
+        RUSTDOCFLAGS="-Z unstable-options --output-format json "
+                     "--document-private-items",
+    )
     if have_nightly:
         subprocess.run(
-            [
-                "cargo", "+nightly", "doc", "--no-deps", "--all-features",
-                "--document-private-items",
-                "-Z", "unstable-options", "--output-format", "json",
-            ],
-            cwd=ROOT, check=True,
+            ["cargo", "+nightly", "doc", "--no-deps", "--all-features"],
+            cwd=ROOT, check=True, env=env,
         )
     else:
         # No nightly toolchain installed: RUSTC_BOOTSTRAP unlocks the same
         # unstable rustdoc flags on the pinned stable toolchain.
-        env = dict(
-            os.environ,
-            RUSTC_BOOTSTRAP="1",
-            RUSTDOCFLAGS="-Z unstable-options --output-format json "
-                         "--document-private-items",
-        )
+        env["RUSTC_BOOTSTRAP"] = "1"
         subprocess.run(
             ["cargo", "doc", "--no-deps", "--all-features"],
             cwd=ROOT, check=True, env=env,

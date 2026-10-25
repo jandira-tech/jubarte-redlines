@@ -313,6 +313,43 @@ class Drift(unittest.TestCase):
         self.assertNotIn("every line:", text)
 
 
+class DocBuild(unittest.TestCase):
+    """mbx 1.24 refuses `cargo doc --output-format json` before cargo runs
+    ("metadata probing failed"), so step 6 died on any machine with a
+    nightly: the rustdoc flags go through RUSTDOCFLAGS, never cargo's
+    command line (#1769)."""
+
+    def runs(self, toolchains: str) -> list[tuple[list[str], dict]]:
+        calls = []
+
+        def run(argv, **kw):
+            calls.append((list(argv), kw.get("env") or {}))
+            return mock.Mock(stdout=toolchains, returncode=0)
+
+        with mock.patch.object(api.subprocess, "run", side_effect=run):
+            api.build_doc_json()
+        return [(argv, env) for argv, env in calls if argv[0] == "cargo"]
+
+    def test_cargo_never_sees_a_rustdoc_flag(self) -> None:
+        for toolchains in ("stable-aarch64-apple-darwin (default)\nnightly-aarch64-apple-darwin\n",
+                           "stable-aarch64-apple-darwin (default)\n"):
+            (argv, env), = self.runs(toolchains)
+            for flag in ("--output-format", "-Z", "unstable-options", "--document-private-items"):
+                self.assertNotIn(flag, argv, toolchains)
+            self.assertIn("--output-format json", env["RUSTDOCFLAGS"])
+            self.assertIn("--document-private-items", env["RUSTDOCFLAGS"])
+
+    def test_a_nightly_documents_with_nightly_rustdoc(self) -> None:
+        (argv, env), = self.runs("nightly-aarch64-apple-darwin\n")
+        self.assertEqual(argv[:2], ["cargo", "+nightly"])
+        self.assertNotIn("RUSTC_BOOTSTRAP", env)
+
+    def test_without_a_nightly_the_pinned_stable_is_unlocked(self) -> None:
+        (argv, env), = self.runs("stable-aarch64-apple-darwin (default)\n")
+        self.assertNotIn("+nightly", argv)
+        self.assertEqual(env["RUSTC_BOOTSTRAP"], "1")
+
+
 class CommittedSnapshots(unittest.TestCase):
     """The two newest release snapshots under docs/api/, as step 6 reads them."""
 
