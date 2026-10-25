@@ -25,6 +25,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 - **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte-redlines` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
 
+- **The audit's fixes, one by one.** The patch gate denies every lint cargo-semver-checks skips (#1744), and `scripts/semver_lints.py` refuses a missing cargo-semver-checks (#1771). Step 2 reads changelog completeness from PR titles and refuses a failed discovery (#1745). A prerelease tag is no previous release (#1746). Every engine `gh` call names `jandira-tech/jubarte-redlines` (#1747). Each matrix row builds what its label names (#1748), and provenance is bound to the tag and its commit (#1749). Step 0 stops on open security findings (#1750), refuses the canonical checkout and shows HEAD's red CI (#1751). Step 3 proves the evidence's engine (#1752) and holds the measured sentence to the evidence (#1753). Adoption rows and headerless files stop the release (#1754). Every tag step 8 keeps or writes has release.yml's shape (#1755). Step 12 installs each channel the way a user does (#1756). Step 6's API snapshot builds under the mbx build cache (#1769). The Ring-3 Word probe opens Word through the bench's `word_pdf.py` under its watchdog, opens each failure again alone, then opens Word's own redline of that pair (#1794). The WASM parity driver resolves `--module` to an absolute path (#1799).
+
+<!-- changelog-skip: #1804 test-only: CodeQL #54 in jubarte-wasm/cli/test/cli.test.mjs -->
+
 - `scripts/release.sh --checklist` is now the whole release, not only the
   script's own steps. New lines cover what a release owes outside them:
   before — the full Miri suite and the docs/VERSIONING.md quality gate,
@@ -130,6 +134,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **A grid column's `w:type` no longer forces content fitting** (#1720). PDF and PNG conversion keeps a numeric grid when the cells specify their widths, with or without that attribute. A missing or nonnumeric grid width triggers content fitting on its own.
 
 ### Security
+
+- **New Python CLI outputs are owner-only** (#1806, #1808). `python -m jubarte_redlines read --tables -o FILE` creates a new FILE with mode 0o600, whatever the umask, so other users of a shared machine can neither read nor write it (CodeQL `py/overly-permissive-file`). The native binary still creates 0o666 before the umask. A file it replaces keeps its own mode.
 
 - **No `block-buffer` 0.10.4 in any build** (#1705, GHSA-qwgh-2vcv-g2f7). `jubarte self-update` checks zipsign signatures itself (`src/update/zipsign.rs`, on ed25519-dalek 3) instead of through `self_update`'s `signatures` feature, whose zipsign-api 0.2 pinned ed25519-dalek 2 and with it `block-buffer` 0.10.4. The archive format and the keys are unchanged; no release key is committed yet, so nothing is checked until one is. Cargo.lock still records the unbuilt chain, because `self_update`'s archive features name `zipsign-api?/…` (rust-lang/cargo#12937). Rust API: `jubarte::update::verify_signature` and `ReleaseKey`.
 
