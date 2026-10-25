@@ -93,3 +93,32 @@ pub fn assign_to_self_and_descendants(dom: &mut Dom, root: NodeId) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_unid_format() {
+        let unid = generate_unid();
+        assert_eq!(unid.len(), 32, "UNID should be exactly 32 characters long");
+        assert!(
+            unid.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "UNID should contain only lowercase hexadecimal characters"
+        );
+    }
+
+    #[test]
+    fn test_generate_unid_uniqueness() {
+        let unid1 = generate_unid();
+        let unid2 = generate_unid();
+
+        assert_ne!(unid1, unid2, "Consecutive UNIDs must be different");
+
+        assert!(
+            unid2 > unid1,
+            "Subsequent UNIDs should have a greater counter value"
+        );
+    }
+}
