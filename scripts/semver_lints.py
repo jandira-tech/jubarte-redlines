@@ -40,8 +40,14 @@ TABLE = "[package.metadata.cargo-semver-checks.lints]"
 
 
 def installed_version() -> str:
-    out = subprocess.run(["cargo", "semver-checks", "--version"],
-                         capture_output=True, text=True, check=True).stdout
+    try:
+        out = subprocess.run(["cargo", "semver-checks", "--version"],
+                             capture_output=True, text=True, check=True).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # no cargo, or no subcommand: nothing to audit against (exit 2)
+        print("semver_lints: cargo-semver-checks is not installed "
+              "(cargo install --locked cargo-semver-checks)", file=sys.stderr)
+        raise SystemExit(2) from None
     m = re.search(r"(\d+\.\d+\.\d+)", out)
     if m is None:
         raise SystemExit(f"semver_lints: cannot read the cargo-semver-checks version from {out!r}")

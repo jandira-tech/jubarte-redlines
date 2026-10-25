@@ -107,10 +107,33 @@ class Audit(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stdout)
         self.assertIn("1.2.4", r.stderr)
 
+    def no_tool(self, cargo: str | None) -> subprocess.CompletedProcess[str]:
+        # a PATH holding only the given cargo stub (or none at all)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        if cargo is not None:
+            (bin_dir / "cargo").write_text(cargo)
+            (bin_dir / "cargo").chmod(0o755)
+        return self.audit('method_added = "deny"\n', PATH=str(bin_dir))
+
+    def test_no_cargo_is_a_refusal_not_a_traceback(self) -> None:
+        # the convert-sweep runner has no cargo (CI on #1743)
+        r = self.no_tool(None)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("cargo-semver-checks is not installed", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_cargo_without_the_subcommand_is_a_refusal(self) -> None:
+        r = self.no_tool("#!/bin/sh\necho 'error: no such command: `semver-checks`' >&2\nexit 101\n")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("cargo-semver-checks is not installed", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_this_manifest_denies_what_the_installed_tool_skips(self) -> None:
         r = subprocess.run([sys.executable, str(SCRIPT), "--manifest", str(ROOT / "Cargo.toml")],
                            capture_output=True, text=True, timeout=120)
-        if r.returncode == 2 and "no cargo-semver-checks lint sources" in r.stderr:
+        if r.returncode == 2 and ("no cargo-semver-checks lint sources" in r.stderr
+                                  or "cargo-semver-checks is not installed" in r.stderr):
             self.skipTest(r.stderr.strip())
         self.assertEqual(r.returncode, 0, r.stderr)
 
