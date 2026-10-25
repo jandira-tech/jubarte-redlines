@@ -2021,9 +2021,9 @@ impl Task {
     /// What `-o PATH`'s extension says for this task: `diff` reads `.patch`
     /// and `.diff` as text too.
     fn known(self, path: &Path) -> Option<Format> {
-        let patch = extension(path)
+        let is_patch = extension(path)
             .is_some_and(|e| e.eq_ignore_ascii_case("patch") || e.eq_ignore_ascii_case("diff"));
-        if self == Self::Diff && patch {
+        if self == Self::Diff && is_patch {
             return Some(Format::Md);
         }
         Format::of_path(path)

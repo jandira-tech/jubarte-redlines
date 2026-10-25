@@ -328,16 +328,26 @@ pub(crate) fn recorded_properties(dom: &Dom, record: NodeId) -> String {
             .filter_map(|(attribute, value)| {
                 let value =
                     if crate::xmllinq::serialize::is_namespace_prefix_list(&name, &attribute) {
-                        value
-                            .split_whitespace()
-                            .map(|prefix| {
-                                crate::validate::namespace_in_scope(dom, node, prefix).map_or_else(
-                                    || format!("{prefix}:"),
-                                    |uri| format!("{{{uri}}}"),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ")
+                        let mut out = String::with_capacity(value.len());
+                        let mut first = true;
+                        for prefix in value.split_whitespace() {
+                            if !first {
+                                out.push(' ');
+                            }
+                            first = false;
+                            match crate::validate::namespace_in_scope(dom, node, prefix) {
+                                Some(uri) => {
+                                    out.push('{');
+                                    out.push_str(uri);
+                                    out.push('}');
+                                }
+                                None => {
+                                    out.push_str(prefix);
+                                    out.push(':');
+                                }
+                            }
+                        }
+                        out
                     } else if attribute == W::val() && on_off(&name) {
                         match value.as_str() {
                             // `<w:b/>` and `<w:b w:val="true"/>` are both on.
