@@ -23,6 +23,9 @@ ignore = [
     # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained: direct dep (glyph metrics, TTF embed) and via rustybuzz 0.20; same 2e migration" },
+    { id = "RUSTSEC-2026-0367", reason = "we only use ZipWriter, not extraction, so SUID issue does not affect us" },
+    { id = "RUSTSEC-2026-0368", reason = "we only use ZipWriter, not extraction, so symlink issue does not affect us" },
+    { id = "RUSTSEC-2026-0369", reason = "we only use ZipWriter, not extraction, so symlink permissions issue does not affect us" },
 ]
 
 [licenses]

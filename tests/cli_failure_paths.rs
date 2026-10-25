@@ -18,13 +18,13 @@ fn run(dir: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-fn success(out: &Output) -> String {
+fn success(out: &Output) -> &str {
     assert!(
         out.status.success(),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8(out.stdout.clone()).unwrap()
+    std::str::from_utf8(&out.stdout).unwrap()
 }
 
 #[test]
@@ -523,16 +523,18 @@ fn debug_diff_disambiguates_duplicate_stems_and_duplicate_paths() {
             ],
         ]
         .concat();
-        let text = success(&run(dir.path(), &args));
+        let out = run(dir.path(), &args);
+        let text = success(&out);
         assert!(
             text.contains("Original clause") && text.contains("Revised clause"),
             "{text}"
         );
     }
-    let equal = success(&run(
+    let out = run(
         dir.path(),
         &["debug", "old/same.docx", "old/same.docx", "--list"],
-    ));
+    );
+    let equal = success(&out);
     assert!(equal.contains("0 changed"), "{equal}");
 }
 
@@ -544,8 +546,9 @@ fn read_json_exposes_paragraph_flags_and_long_unicode_text() {
         r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:pageBreakBefore/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:br w:type="page"/><w:t>{long}</w:t></w:r></w:p>"#
     );
     std::fs::write(dir.path().join("input.docx"), docx(&body)).unwrap();
-    let json = success(&run(dir.path(), &["read", "input.docx", "--json"]));
-    let snapshot: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let out = run(dir.path(), &["read", "input.docx", "--json"]);
+    let json = success(&out);
+    let snapshot: serde_json::Value = serde_json::from_str(json).unwrap();
     let paragraph = &snapshot["paragraphs"][0];
     assert_eq!(paragraph["style"], "Heading1", "{paragraph}");
     assert_eq!(paragraph["numbered"], true, "{paragraph}");
@@ -670,7 +673,8 @@ fn changes_json_lines_preserve_each_owned_revision_without_a_text_summary() {
             .map(|change| serde_json::to_value(change).unwrap())
             .collect::<Vec<_>>()
     );
-    let text = success(&run(dir.path(), &["changes", "revisions.docx"]));
+    let out = run(dir.path(), &["changes", "revisions.docx"]);
+    let text = success(&out);
     assert!(text.ends_with("2 change(s)\n"));
     assert!(text.contains("Original owner") && text.contains("Revised owner"));
     assert_eq!(
