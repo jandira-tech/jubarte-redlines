@@ -3734,6 +3734,8 @@ fn step_h(
                 // copy/paste bug: it tags the ORIGINAL (left) row `Inserted`. An original `Row`
                 // with no matching modified `Word` content is a DELETION — mirror of the sibling
                 // branch above (:436-440). Verified against Word's own Compare output (fixture f-4).
+                // Upstream bug already resolved
+
                 out.push(CorrelatedSequence::deleted(lg[il].1.clone()));
                 il += 1;
             } else if lg[il].0 == "Word" && rg[ir].0 != "Word" {
