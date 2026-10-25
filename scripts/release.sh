@@ -443,10 +443,21 @@ eventually() {
 }
 
 # --- the bump kind (docs/VERSIONING.md) and the CHANGELOG section ---------------
+# The newest release tag reachable from HEAD, other than $1: a plain vX.Y.Z,
+# since a prerelease tag (v0.14.0-rc.1) is no release. Every step measures
+# the bump, the CHANGELOG and the API drift from it.
+last_release_tag() {
+  git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' \
+    --exclude "${1:-v*-*}" 2>/dev/null
+}
 # patch, minor or major from the previous release's version $1 to $2; fails
-# when $2 is not above $1.
+# when $2 is not above $1, or when either is no X.Y.Z.
 bump_kind() {
-  local a b
+  local a b v
+  for v in "$1" "$2"; do
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || { echo "  ! $v is no release version (X.Y.Z)" >&2; return 1; }
+  done
   IFS=. read -r -a a <<<"$1"
   IFS=. read -r -a b <<<"$2"
   if [ "${b[0]}" -ne "${a[0]}" ]; then
@@ -615,8 +626,8 @@ step "release.yml reviewed; the release environment and the signing secret are i
 
 # The bump kind, before step 1 writes it. A resumed run (the tag exists)
 # still gates against the release before this one.
-PREV_RELEASE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude "$TAG" 2>/dev/null) \
-  || die "no earlier release tag (v*) to gate the bump against — git fetch --tags"
+PREV_RELEASE=$(last_release_tag "$TAG") \
+  || die "no earlier release tag (vX.Y.Z) to gate the bump against — git fetch --tags"
 bump_gate "$PREV_RELEASE"
 
 # =============================================================================
@@ -778,7 +789,7 @@ EOF
 
 # What the docs statement is about: README/docs files touched since the last
 # release tag (the version sync above already moved the README badge).
-PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+PREV_TAG=$(last_release_tag || true)
 if [ -n "$PREV_TAG" ]; then
   step "docs changed since $PREV_TAG:"
   { git diff --name-only "$PREV_TAG" -- '*.md' 'docs/' 'skills/'; \

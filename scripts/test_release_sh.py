@@ -1396,7 +1396,73 @@ class BumpGate(unittest.TestCase):
 
     def test_the_previous_release_is_never_this_tag(self) -> None:
         # a resumed run (the tag exists) still gates against the release before
-        self.assertRegex(step(0), r"--exclude \"\$TAG\"")
+        self.assertRegex(step(0), r'PREV_RELEASE=\$\(last_release_tag "\$TAG"\)')
+
+    def test_a_version_that_is_no_release_is_named_not_compared(self) -> None:
+        # Codex review of #1743: `[ "rc" -gt 0 ]` is bash's "integer
+        # expression expected", which names neither version.
+        functions = shell_functions("bump_kind")
+        for prev, ver in (("0.14.0-rc.1", "0.14.0"), ("0.13.0", "0.14"), ("0.13.x", "0.14.0")):
+            r = subprocess.run(["bash", "-c", f"set -euo pipefail\n{functions}\nbump_kind {prev} {ver}"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(r.returncode, 0, (prev, ver))
+            self.assertEqual(r.stdout, "", (prev, ver))
+            self.assertIn("X.Y.Z", r.stderr, (prev, ver))
+            self.assertNotIn("integer expression", r.stderr, (prev, ver))
+
+
+class PreviousRelease(unittest.TestCase):
+    """Codex review of #1743: the release the bump, the CHANGELOG and the API
+    drift are measured from is the newest plain vX.Y.Z tag; a prerelease tag
+    (v0.14.0-rc.1) is no release."""
+
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp(prefix="prevrel-"))
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
+        self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+
+    def commit(self, subject: str, *tags: str) -> None:
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", "-m", subject], check=True)
+        for tag in tags:
+            subprocess.run([*self.git, "tag", "-a", "-m", tag, tag], check=True)
+
+    def last(self, *args: str) -> subprocess.CompletedProcess[str]:
+        functions = shell_functions("last_release_tag")
+        self.assertIn("last_release_tag()", functions)
+        script = f"set -euo pipefail\n{functions}\nlast_release_tag {' '.join(args)}\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.repo,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_a_prerelease_tag_is_no_release(self) -> None:
+        self.commit("0.13.0", "v0.13.0")
+        self.commit("candidate", "v0.14.0-rc.1")
+        self.commit("fix after the candidate")
+        r = self.last('"v0.14.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.13.0"), r.stderr)
+
+    def test_a_resumed_run_still_finds_the_release_before(self) -> None:
+        self.commit("0.13.0", "v0.13.0")
+        self.commit("candidate", "v0.14.0-rc.1")
+        self.commit("release 0.14.0", "v0.14.0")
+        r = self.last('"v0.14.0"')
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.13.0"), r.stderr)
+        # without an exclusion it is the newest release, the tag itself on a
+        # resumed run (step 6 then keeps the snapshot it finds)
+        r = self.last()
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "v0.14.0"), r.stderr)
+
+    def test_no_release_tag_fails(self) -> None:
+        self.commit("first")
+        self.commit("candidate", "v0.1.0-rc.1")
+        self.assertNotEqual(self.last('"v0.1.0"').returncode, 0)
+
+    def test_every_step_takes_the_previous_release_from_it(self) -> None:
+        text = RELEASE_SH.read_text()
+        body = text[text.index("last_release_tag() "):]
+        body = body[body.index("\n}\n"):]
+        self.assertNotIn("git describe", body, "a step finds the previous tag by itself")
+        self.assertRegex(step(4), r"PREV_TAG=\$\(last_release_tag[ )]")
 
 
 # stub gh for the changelog completeness check: closing issues and titles of
