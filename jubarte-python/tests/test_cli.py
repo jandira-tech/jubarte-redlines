@@ -1503,3 +1503,17 @@ def test_replace_never_writes_through_a_link_at_the_staging_name(tmp_path: Path)
     assert victim.read_text() == "keep"
     assert out.read_text() == "new" and not out.is_symlink()
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp") and not p.is_symlink()] == []
+
+
+def test_replace_never_creates_a_world_writable_output(tmp_path: Path) -> None:
+    # A new output is created 0o644 before the umask, so even under umask 0
+    # nobody else can write it (CodeQL py/overly-permissive-file, #1805).
+    from jubarte_redlines.__main__ import _replace
+
+    out = tmp_path / "new.md"
+    old = os.umask(0)
+    try:
+        assert _replace(out, "x") == 1
+    finally:
+        os.umask(old)
+    assert out.stat().st_mode & 0o777 == 0o644
