@@ -165,11 +165,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
-            manylinux: 2_28
+            manylinux: "2_28"
             artifact: manylinux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64
-            manylinux: 2_28
+            manylinux: "2_28"
             artifact: manylinux-aarch64
           - os: ubuntu-latest
             target: x86_64

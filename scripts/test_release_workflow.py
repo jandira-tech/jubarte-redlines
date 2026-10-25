@@ -65,6 +65,69 @@ def wheel_artifact(tag: str) -> str:
     raise AssertionError(f"no wheels-job artifact for {tag}")
 
 
+# What each GitHub-hosted runner label runs on: (OS family, architecture).
+# Every release build is native, so a job could run what it ships.
+RUNNERS = {
+    "ubuntu-latest": ("linux", "x86_64"),
+    "ubuntu-24.04-arm": ("linux", "aarch64"),
+    "macos-15-intel": ("macos", "x86_64"),
+    "macos-latest": ("macos", "aarch64"),
+    "windows-latest": ("windows", "x86_64"),
+}
+TRIPLE_OS = {"linux": "unknown-linux-gnu", "macos": "apple-darwin", "windows": "pc-windows-msvc"}
+ARCHS = {"x86_64": "x86_64", "x64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+WHEEL_OS = {"manylinux": "linux", "musllinux": "linux", "macos": "macos", "windows": "windows"}
+# the wheels job's `manylinux` value per family (none on macOS and Windows)
+MANYLINUX = {"manylinux": "2_28", "musllinux": "musllinux_1_2"}
+
+
+def label_platform(artifact: str) -> tuple[str, str]:
+    """`linux-aarch64` -> ("linux", "aarch64"): what an artifact's name promises."""
+    family, arch = artifact.split("-", 1)
+    return family, ARCHS[arch]
+
+
+def wheel_platform(artifact: str) -> tuple[str, str]:
+    """A wheels-job artifact as the README names it: ("manylinux_2_28", "aarch64")."""
+    family, arch = label_platform(artifact)
+    tag = MANYLINUX.get(family)
+    if tag is None:
+        return family, arch
+    return (tag if tag.startswith(family) else f"{family}_{tag}"), arch
+
+
+def readme_platforms(cell: str) -> set[tuple[str, str]]:
+    """`macOS x86_64/arm64, manylinux_2_28 x86_64/arm64` -> {("macos", "x86_64"), …}."""
+    out = set()
+    for group in cell.split(", "):
+        name, archs = group.split(" ", 1)
+        out |= {(name.lower(), ARCHS[a]) for a in archs.split("/")}
+    return out
+
+
+def runner_problems(row: dict, family: str, arch: str) -> list[str]:
+    runner = RUNNERS.get(row["os"])
+    if runner is None:
+        return [f"unknown runner {row['os']}"]
+    return [] if runner == (family, arch) else [f"{row['os']} runs {runner}, not {(family, arch)}"]
+
+
+def binary_row_problems(row: dict) -> list[str]:
+    family, arch = label_platform(row["artifact"])
+    want = f"{arch}-{TRIPLE_OS[family]}"
+    problems = [] if row["target"] == want else [f"target {row['target']}, not {want}"]
+    return problems + runner_problems(row, family, arch)
+
+
+def wheel_row_problems(row: dict) -> list[str]:
+    family, arch = label_platform(row["artifact"])
+    problems = [] if ARCHS.get(row["target"]) == arch else [f"target {row['target']}, not {arch}"]
+    # a string: unquoted, `2_28` is YAML 1.1's integer 228
+    if row.get("manylinux") != MANYLINUX.get(family):
+        problems.append(f"manylinux {row.get('manylinux')}, not {MANYLINUX.get(family)}")
+    return problems + runner_problems(row, WHEEL_OS[family], arch)
+
+
 def step_index(job: dict, predicate) -> int:
     for i, s in enumerate(job["steps"]):
         if predicate(s):
@@ -162,8 +225,51 @@ class Matrices(unittest.TestCase):
         readme = (HERE.parent / "README.md").read_text(encoding="utf-8")
         row = re.search(r"^\| Python release wheels \| (.+?) \(abi3", readme, re.M)
         self.assertIsNotNone(row, "README lost its Python release wheels row")
-        archs = [a for group in row.group(1).split(", ") for a in group.split(" ", 1)[1].split("/")]
-        self.assertEqual(len(archs), len(matrix_artifacts(self.jobs["wheels"])))
+        self.assertEqual(readme_platforms(row.group(1)),
+                         {wheel_platform(a) for a in matrix_artifacts(self.jobs["wheels"])})
+
+    def test_every_binary_row_builds_what_its_label_names(self) -> None:
+        for row in self.jobs["binaries"]["strategy"]["matrix"]["include"]:
+            with self.subTest(artifact=row["artifact"]):
+                self.assertEqual(binary_row_problems(row), [])
+
+    def test_every_wheel_row_builds_what_its_label_names(self) -> None:
+        for row in self.jobs["wheels"]["strategy"]["matrix"]["include"]:
+            with self.subTest(artifact=row["artifact"]):
+                self.assertEqual(wheel_row_problems(row), [])
+
+
+class RowMutations(unittest.TestCase):
+    """Codex review of #1743 (#1748): an x86-64 build in an ARM64-named
+    archive passed every test. Each check catches its wrong row."""
+
+    def test_a_wrong_architecture_target_is_caught(self) -> None:
+        row = {"os": "ubuntu-24.04-arm", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-aarch64"}
+        self.assertTrue(binary_row_problems(row))
+
+    def test_a_wrong_os_target_is_caught(self) -> None:
+        row = {"os": "macos-latest", "target": "aarch64-unknown-linux-gnu", "artifact": "macos-aarch64"}
+        self.assertTrue(binary_row_problems(row))
+
+    def test_a_runner_of_another_architecture_is_caught(self) -> None:
+        row = {"os": "ubuntu-latest", "target": "aarch64-unknown-linux-gnu", "artifact": "linux-aarch64"}
+        self.assertTrue(binary_row_problems(row))
+
+    def test_an_unknown_runner_is_caught(self) -> None:
+        row = {"os": "ubuntu-26.04-riscv", "target": "x86_64-unknown-linux-gnu", "artifact": "linux-x86_64"}
+        self.assertTrue(binary_row_problems(row))
+
+    def test_a_wheel_of_another_architecture_is_caught(self) -> None:
+        row = {"os": "ubuntu-24.04-arm", "target": "x86_64", "manylinux": "2_28", "artifact": "manylinux-aarch64"}
+        self.assertTrue(wheel_row_problems(row))
+
+    def test_a_wheel_of_another_libc_is_caught(self) -> None:
+        row = {"os": "ubuntu-latest", "target": "x86_64", "manylinux": "2_28", "artifact": "musllinux-x86_64"}
+        self.assertTrue(wheel_row_problems(row))
+
+    def test_a_readme_with_another_architecture_differs(self) -> None:
+        self.assertNotEqual(readme_platforms("macOS x86_64/arm64, Windows x86_64"),
+                            readme_platforms("macOS x86_64/arm64, Windows arm64"))
 
 
 class Provenance(unittest.TestCase):
