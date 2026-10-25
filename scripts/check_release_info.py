@@ -123,19 +123,28 @@ FACTS_KEYS = ("engine.version", "engine.released", "release.history",
 MEAN = r"\d+(?:\.\d+)?"
 # The preamble may hold colons ("(see release_info: …)") but never ends a
 # sentence: it runs to the first ": redlines mean" without crossing ". " (#1773),
-# or another "N-item samples", so the size held is the one nearest the means (#1775).
+# or another "N-item samples", so the size held is the one nearest the means
+# (#1775); the lookahead starts at a word boundary, so a run of digits is
+# scanned once, not at every digit (#1785).
 SENTENCE = re.compile(
-    rf"\b(?P<n>\d+)-item samples\b(?:(?!\.\s)(?!\d+-item samples\b).)*?:\s*"
+    rf"\b(?P<n>\d+)-item samples\b(?:(?!\.\s)(?!\b\d+-item samples\b).)*?:\s*"
     rf"redlines mean (?P<redline>{MEAN}) \((?P<redline_name>[^\s()]+) (?P<redline_other>{MEAN})\)(?P<redline_tail>.*?)"
     rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
     rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
 )
-# the count, then the next two words, which name what was counted (#1777)
-COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+){0,2})")
+# the count, then the next four words, which name what was counted, an
+# adjective included ("the 23 failed document pairs") (#1777, #1784)
+COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+(?:-[A-Za-z]+)*){0,4})")
+# where a sentence ends: the measured sentence's claims are read from the
+# boundary before its match, not from "N-item samples" (#1783)
+SENTENCE_END = re.compile(r"[.!?]\s")
 # "no failed …" in the measured sentence, in any case: a claim about the
 # samples. Another sentence's is not read: the checker cannot tell what it is
 # about ("No failed redlines are omitted …", a test suite's) (#1776).
-NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline|conversion|pair)s?\b", re.I)
+# "no failed redlines (are) omitted" says the failures are counted, the
+# opposite of a claim that none failed (#1783)
+NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline|conversion|pair)s?\b"
+                       r"(?!\s+(?:(?:are|is|were|was|been)\s+)?(?:omitted|excluded|dropped|left out|skipped)\b)", re.I)
 # the nouns that speak for each sample: every one COUNTED_WORDS knows, and
 # "item", which speaks for both (#1779)
 NONE_WORDS = {"redline": ("redline", "pair", "item"), "conversion": ("document", "pdf", "conversion", "item")}
@@ -402,13 +411,21 @@ def two(value: float) -> str:
 def counted_kinds(words: str) -> set[str]:
     """The samples the nouns of a counted phrase belong to ("document pairs":
     both, so neither sample's clause refuses it)."""
-    return {kind for w in words.split() for kind, nouns in COUNTED_WORDS.items()
+    return {kind for w in re.split(r"[\s-]+", words) for kind, nouns in COUNTED_WORDS.items()
             if w.lower().removesuffix("s") in nouns}
 
 
-def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> list[str]:
+def sentence_of(text: str, m: re.Match[str]) -> str:
+    """The whole sentence holding the match: from the sentence boundary
+    before it (or the text's start) to the match's end."""
+    start = max((end.end() for end in SENTENCE_END.finditer(text, 0, m.start())), default=0)
+    return text[start:m.end()]
+
+
+def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sentence: str) -> list[str]:
+    """SENTENCE: the whole sentence M stands in, whose "no failed" claims are read."""
     out = []
-    claims = NO_FAILED.findall(m[0])
+    claims = NO_FAILED.findall(sentence)
     for kind, noun, sample in (("redline", "redline", "redlines"), ("conversion", "PDF", "PDFs")):
         doc = docs[f"results_{kind}"]
         tools = doc.get("tools") or {}
@@ -432,9 +449,13 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> li
         out.extend(f'{where}: {sample} "counting as 0 the {c}" — the evidence counts {failed}'
                    for c, _ in counted if c != str(failures))
         other_kind = "conversion" if kind == "redline" else "redline"
-        out.extend(f'{where}: {sample} "counting as 0 the {c} {w.split()[0]}" — a {w.split()[0]} is the '
-                   f"{other_kind} sample's, not the {kind} sample's" for c, w in counted
-                   if counted_kinds(w) == {other_kind})
+        for c, w in counted:
+            if counted_kinds(w) == {other_kind}:
+                words = w.split()
+                i = next(i for i, x in enumerate(words)
+                         if counted_kinds(x) & {other_kind})
+                out.append(f'{where}: {sample} "counting as 0 the {c} {" ".join(words[:i + 1])}" — a {words[i]} '
+                           f"is the {other_kind} sample's, not the {kind} sample's")
         counted = [c for c, _ in counted]
         if said_none and failures:
             out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed}')
@@ -453,7 +474,7 @@ def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
     docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
             for name in ("results_redline", "results_conversion")}
     # each problem once, however many sentences repeat it
-    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs)))
+    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs, sentence_of(text, m))))
 
 
 def changelog_section(path: Path, version: str) -> str | None:

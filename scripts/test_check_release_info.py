@@ -20,6 +20,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -635,6 +636,35 @@ class MeasuredSentence(SixFiles):
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn(named, r.stderr)
 
+    def test_a_no_failed_before_the_sample_size_is_in_the_sentence(self) -> None:
+        # codex on #1743 (#1783): the match starts at "N-item samples", the
+        # sentence before it
+        r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples",
+                                                          "No failed documents occurred on two 3-item samples"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed document"', r.stderr)
+        r = self.numbers("--summary", "Breaking: none. " + self.SOUND)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_failed_omitted_says_the_failures_are_counted(self) -> None:
+        # codex on #1743 (#1783): "no failed redlines are omitted" in the
+        # sentence is the opposite of a claim that none failed
+        for text in (self.SOUND.replace("On two 3-item samples", "No failed redlines are omitted from two 3-item samples"),
+                     self.SOUND.replace("On two 3-item samples scored",
+                                        "On two 3-item samples, with no failed documents omitted from the means, scored")):
+            with self.subTest(text=text[:70]):
+                r = self.numbers("--summary", text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_long_run_of_digits_in_the_preamble_is_read_in_linear_time(self) -> None:
+        # codex on #1743 (#1785): the size lookahead rescanned the run at
+        # every digit (100,000 digits took 16 s)
+        text = self.SOUND.replace("samples scored", "samples (" + "9" * 100_000 + ") scored")
+        start = time.monotonic()
+        r = self.numbers("--summary", text)
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_a_no_failed_outside_the_measured_sentence_is_not_a_claim(self) -> None:
         # codex on #1743 (#1776): the checker cannot tell what another
         # sentence's "no failed" is about; the measured sentence still has
@@ -670,10 +700,19 @@ class MeasuredSentence(SixFiles):
         self.assertIn('"counting as 0 the 1 redline"', r.stderr)
 
     def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
-        # codex on #1743 (#1777): document pairs are the redline sample's
-        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening",
-                                                          "the 1 document pair whose redline Word cannot open"))
-        self.assertEqual(r.returncode, 0, r.stderr)
+        # codex on #1743 (#1777): document pairs are the redline sample's;
+        # an adjective does not push the noun out of reach (#1784)
+        for phrase in ("the 1 document pair whose redline Word cannot open",
+                       "the 1 failed document pair whose redline Word cannot open",
+                       "the 1 document-pair output Word cannot open"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_other_samples_noun_is_named_past_an_adjective(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 failed PDF Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 failed PDF" — a PDF is the conversion sample\'s', r.stderr)
 
     def test_an_unreadable_changelog_is_named_as_unreadable(self) -> None:
         r = self.numbers("--changelog", str(self.tmp / "no-such-CHANGELOG.md"))
