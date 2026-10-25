@@ -8,6 +8,7 @@ compare_painted_characters / parse_bindings / pdf_coverage_failure are pure.
     python3 -m pytest test_parity_v2.py -q
 """
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -279,6 +280,23 @@ def test_build_wants_its_out_dir():
     r = subprocess.run(["bash", str(BUILD)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 2
     assert "usage" in r.stderr
+
+
+def test_the_wasm_driver_loads_a_module_named_relative_to_its_cwd(tmp_path):
+    # release.sh names the package relative to the engine root (#1799); a bare
+    # relative path reached require() as a package name and failed
+    pkg = tmp_path / "parity-work/wasm-pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "jubarte_wasm.js").write_text("module.exports = { compareDocuments() {} };\n")
+    (pkg / "package.json").write_text('{"name": "jubarte-wasm", "version": "0.0.0"}\n')
+    (tmp_path / "jobs.json").write_text('{"jobs": []}')
+    r = subprocess.run(["node", str(HERE / "parity_wasm.mjs"), "--module", "parity-work/wasm-pkg",
+                        "--jobs", "jobs.json", "--out", "out.json"],
+                       capture_output=True, text=True, cwd=tmp_path, timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads((tmp_path / "out.json").read_text())
+    assert out["module"] == str(pkg / "jubarte_wasm.js")
+    assert out["packageVersion"] == "0.0.0"
 
 
 def test_release_sh_runs_these_tests_and_names_the_tools():

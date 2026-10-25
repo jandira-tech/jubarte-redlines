@@ -68,7 +68,8 @@ function resolveModule(p) {
   throw new Error(`no jubarte_wasm.js under ${p} (looked in: ${candidates.join(", ")})`);
 }
 
-const modulePath = resolveModule(arg("module"));
+// absolute: require() takes a bare relative path for a package name (#1799)
+const modulePath = resolveModule(path.resolve(arg("module")));
 const require = createRequire(import.meta.url);
 const mod = require(modulePath);
 if (typeof mod.initPanicHook === "function") mod.initPanicHook();
