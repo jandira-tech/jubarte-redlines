@@ -1,0 +1,4 @@
+## 2024-10-23 - Path Traversal in MCP Server via Absolute Paths
+**Vulnerability:** The `contained()` helper in the MCP server used `Path(path).expanduser()` joined to a `root` path. However, `pathlib.Path` treats paths with leading slashes as absolute, ignoring the left operand of the division (`root / absolute_path` results in `absolute_path`). This allowed an absolute path to bypass the root jail.
+**Learning:** In Python, `pathlib.Path`'s `/` operator has a surprising side effect: `Path("/a") / Path("/b")` resolves to `/b`. Joining a user-supplied path directly to a base path with `/` is unsafe if the user input can start with a `/`.
+**Prevention:** Always strip leading slashes from user-supplied paths (e.g., `path.lstrip("/")`) before joining them to a root path to ensure they are treated strictly as relative segments.
