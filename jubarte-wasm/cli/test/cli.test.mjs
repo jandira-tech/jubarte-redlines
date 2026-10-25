@@ -1842,8 +1842,10 @@ test("read --tables -o replaces a link, never writing through it (#1698)", () =>
   const written = runTables("read", untracked, "--tables", "-o", link, "--force");
   assert.equal(written.code, 0, written.err);
   assert.equal(fs.readFileSync(referent, "utf8"), "keep me\n", "the link's referent keeps its bytes");
+  // Read before checking the link (CodeQL js/file-system-race, #1803).
+  const replaced = fs.readFileSync(link, "utf8");
   assert.ok(!fs.lstatSync(link).isSymbolicLink(), "the link itself is replaced");
-  assert.match(fs.readFileSync(link, "utf8"), /^table 0: /);
+  assert.match(replaced, /^table 0: /);
   // A hard link to the input is the input: it is refused, not written
   // through, and the document keeps its bytes.
   const source = path.join(tmp, "hard-link-source.docx");
