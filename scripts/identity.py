@@ -27,9 +27,11 @@ ones are deleted. A row where neither binary writes an output and both exit
 alike is identical (a jubarte failure is the same failure), but a run where
 no row writes anything proves nothing and fails.
 
-Exit 0 when every row agrees; 1 on a difference, a one-sided output or
-timeout, or a run with no output at all; 2 when a CSV is of neither sample
-kind or names an input the bench root lacks. Plain Python 3, stdlib only.
+Exit 0 when every row agrees; 1 on a difference, a one-sided output, a
+timeout on either side, or a run with no output at all; 2 when a binary is
+no executable file, or a CSV cannot be read, is of neither sample kind, has
+a row short of a path, or names an input outside the bench root or missing
+from it. Plain Python 3, stdlib only.
 """
 
 from __future__ import annotations
@@ -76,9 +78,12 @@ def jobs_of(csvs: list[Path], root: Path) -> list[Job] | str:
     """Every row of every CSV as a job, or the reason a CSV is refused."""
     out, absent = [], []
     for c, path in enumerate(csvs):
-        with path.open(newline="") as f:
-            rows = list(csv.DictReader(f))
-            fields = set(rows[0]) if rows else set()
+        try:
+            with path.open(newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        except (OSError, UnicodeDecodeError) as e:
+            return f"cannot read {path} ({getattr(e, 'strerror', None) or e})"
+        fields = set(rows[0]) if rows else set()
         if {"key", "base", "next"} <= fields:
             kind, columns, ident = "redline", ("base", "next"), "key"
         elif {"stem", "docx"} <= fields:
@@ -86,6 +91,14 @@ def jobs_of(csvs: list[Path], root: Path) -> list[Job] | str:
         else:
             return f"{path} is neither a redline sample (key, base, next) nor a conversion sample (stem, docx)"
         for r, row in enumerate(rows):
+            short = [col for col in columns if not row.get(col)]
+            if short:
+                return f"{path.name} row {r} names no {', '.join(short)}"
+            # every input relative to the root, as check_release_info.py --bench-root holds them
+            outside = [row[col] for col in columns
+                       if Path(row[col]).is_absolute() or ".." in Path(row[col]).parts]
+            if outside:
+                return f"{path.name} row {r} names a path outside --root: {outside[0]}"
             inputs = tuple(root / row[col] for col in columns)
             absent += [str(p.relative_to(root)) for p in inputs if not p.is_file()]
             out.append(Job(f"{path.name}#{r} {row[ident]}", f"{c}-{r}", kind, inputs))
@@ -114,8 +127,8 @@ def described(binary: Path) -> str:
 def compare(job: Job, a: Run, b: Run, paths: tuple[Path, Path]) -> str | None:
     """None when the two runs agree; otherwise the line naming the difference."""
     timed_out = [side for side, r in (("A", a), ("B", b)) if r.code is None]
-    if len(timed_out) == 1:
-        return f"TIMEOUT {job.label}: {timed_out[0]} only"
+    if timed_out:  # a hang on both sides proves nothing either (#1774)
+        return f"TIMEOUT {job.label}: {' and '.join(timed_out)}"
     if (a.data is None) != (b.data is None):
         side = "B" if b.data is None else "A"
         return f"MISSING {job.label}: no output from {side} (exits {a.code} / {b.code})"
@@ -137,6 +150,10 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=300, help="seconds per binary per row (default 300)")
     args = ap.parse_args()
 
+    for binary in (args.bin_a, args.bin_b):
+        if not (binary.is_file() and os.access(binary, os.X_OK)):
+            print(f"identity: {binary} is no executable file", file=sys.stderr)
+            return 2
     jobs = jobs_of(args.csvs, args.root.resolve())
     if isinstance(jobs, str):
         print(f"identity: {jobs}", file=sys.stderr)

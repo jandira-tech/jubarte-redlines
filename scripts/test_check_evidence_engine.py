@@ -109,6 +109,47 @@ class EvidenceEngine(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("assets/font.txt", r.stderr)
 
+    def test_a_binary_asset_change_is_named_not_a_traceback(self) -> None:
+        # pi on #1752 (#1772): the fonts under assets/ are binary, and every
+        # changed input was decoded as UTF-8
+        (self.repo / "assets/fonts").mkdir(parents=True)
+        (self.repo / "assets/fonts/Fake.ttf").write_bytes(b"\x00\x01\x00\x00\xff\xfe\x81")
+        engine = self.commit("a binary font")
+        (self.repo / "assets/fonts/Fake.ttf").write_bytes(b"\x00\x01\x00\x00\xff\xfe\x82")
+        self.write("Cargo.toml", CARGO_TOML.replace('zip = "8"', 'zip = "9"'))
+        self.results(engine)
+        self.commit("another font, another zip")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("assets/fonts/Fake.ttf", r.stderr)
+        # the manifest comparison after the loop still runs
+        self.assertIn("Cargo.toml", r.stderr)
+
+    def test_a_path_holding_a_space_is_named_whole(self) -> None:
+        self.write("assets/a font.txt", "one\n")
+        engine = self.commit("a spaced name")
+        self.write("assets/a font.txt", "two\n")
+        self.results(engine)
+        self.commit("it changed")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("! assets/a font.txt\n", r.stderr)
+
+    def test_a_layout_change_counts_as_an_engine_change(self) -> None:
+        # conservative by design: comments are set aside, layout is not —
+        # whitespace runs collapse, but `{ 1 }` and `{1}` differ (#1772)
+        r = self.changed_rs("pub fn f() -> u8 { 1 }\n", "pub fn f() -> u8 {1}\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        r = self.changed_rs("pub fn f() -> u8 {  1  }\n", "pub fn f() -> u8 {\n    1\n}\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_docstrings_promise_no_layout_insensitivity(self) -> None:
+        for path in (SCRIPT, RELEASE_SH):
+            text = path.read_text()
+            for claim in ("or layout", "token for token"):
+                self.assertFalse(claim in text, f"{path.name} still says {claim!r}")
+
     def test_the_version_bump_and_release_notes_are_no_engine_change(self) -> None:
         # step 1's bump, step 4's notes and a semver-checks lint table (#1744)
         self.write("Cargo.toml", CARGO_TOML.replace('version = "0.1.0"', 'version = "0.2.0"')

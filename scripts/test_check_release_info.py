@@ -601,6 +601,42 @@ class MeasuredSentence(SixFiles):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("no measured sentence", r.stderr)
 
+    def test_a_colon_in_the_preamble_is_read_through(self) -> None:
+        # pi on #1753 (#1773): `[^:]*` stopped at the first colon
+        for preamble in ("samples (see release_info: the six files) scored",
+                         "samples: 3 redline pairs and 3 conversions, scored"):
+            with self.subTest(preamble=preamble):
+                r = self.numbers("--summary", self.SOUND.replace("samples scored", preamble))
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_preamble_does_not_cross_a_sentence(self) -> None:
+        r = self.numbers("--summary", "We drew 600-item samples. " + self.SOUND)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_no_failed_claim_anywhere_in_the_text_is_held(self) -> None:
+        # each one denies the conversion sample's 1 failure (#1773)
+        for text in (
+            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), and no failed documents; PDFs"),
+            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), no failed PDFs; PDFs"),
+            self.SOUND + " no failed documents.",
+            self.SOUND + " No failed documents.",
+        ):
+            with self.subTest(text=text[-60:]):
+                r = self.numbers("--summary", text)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("1 failed PDF", r.stderr)
+
+    def test_a_counted_noun_of_the_other_sample_is_named(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 document Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 document"', r.stderr)
+
+    def test_an_unreadable_changelog_is_named_as_unreadable(self) -> None:
+        r = self.numbers("--changelog", str(self.tmp / "no-such-CHANGELOG.md"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("cannot read", r.stderr)
+        self.assertNotIn("has no ## [", r.stderr)
+
     def test_a_changelog_without_the_versions_section_fails(self) -> None:
         changelog = self.tmp / "CHANGELOG.md"
         changelog.write_text(f"## [0.11.1] - 2026-10-01\n\n- {self.SOUND}\n")
@@ -674,6 +710,13 @@ class ReleaseSh(unittest.TestCase):
         self.assertIn('--summary "$CHANGELOG_SUMMARY"', call[:200])
         self.assertIn('--changelog "$APP_REPO/CHANGELOG.md"', call[:200])
         self.assertIn("|| die", call[:400])
+
+    @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
+    def test_the_checklist_says_which_figures_are_held(self) -> None:
+        # pi on #1753 (#1773): medians and the paired interval are not checked
+        text = (HERE / "release.sh").read_text()
+        row = next(line for line in text.splitlines() if line.startswith("3|auto|The measured NUMBERS sentence"))
+        self.assertIn("a median or interval it states is not checked", row)
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:

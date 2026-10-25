@@ -10,8 +10,11 @@
 release_info/'s results JSONs name (`tools.jubarte.commit`, the commit the
 scored candidate was built from) and compares the CLI engine's inputs there
 with REV's (default HEAD): assets/, schemas/, keys/ and Cargo.lock byte for
-byte; the Rust sources under src/ token for token, so a change to comments
-alone (0.12.0's doc comment) is no engine change; and Cargo.toml with the
+byte; the Rust sources under src/ with their comments dropped and their
+whitespace runs collapsed, so a change to comments alone (0.12.0's doc
+comment) is no engine change, while a layout change (`{ 1 }` to `{1}`, a
+rustfmt reflow) still is one: the check errs toward a rescore; and
+Cargo.toml with the
 [package] fields cargo builds nothing from set aside: the version (step 1's
 bump), the metadata (step 4's release notes) and the crates.io listing
 (0.11.2's keywords). The bump's line in Cargo.lock is set aside the same
@@ -32,8 +35,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-# the files the CLI embeds or is built from: Rust sources token for token,
-# every other file byte for byte
+# the files the CLI embeds or is built from: Rust sources outside their
+# comments, every other file byte for byte
 INPUTS = ("src", "assets", "schemas", "keys")
 # [package] fields cargo builds nothing from: the version, the metadata
 # tables and the crates.io listing and packaging
@@ -48,9 +51,11 @@ CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
 
 def rust_tokens(text: str) -> str:
     """A Rust source without its comments, whitespace runs collapsed: two
-    sources that differ only in comments (doc comments too) or layout
-    compile to the same program. String, raw-string and char literals are
-    kept verbatim, and block comments nest, as rustc reads them."""
+    sources that differ only in comments (doc comments too) compile to the
+    same program. No tokenizer: `{ 1 }` and `{1}` still differ, so a layout
+    change counts as an engine change (#1772). String, raw-string and char
+    literals are kept verbatim, and block comments nest, as rustc reads
+    them."""
     out, i, n = [], 0, len(text)
     while i < n:
         if text.startswith("//", i):
@@ -101,7 +106,9 @@ def rust_tokens(text: str) -> str:
 
 
 def git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], capture_output=True, text=True)
+    # surrogateescape: a byte git prints that is no UTF-8 never raises
+    return subprocess.run(["git", *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="surrogateescape")
 
 
 def usage(message: str) -> int:
@@ -178,17 +185,20 @@ def main() -> int:
         if git("cat-file", "-e", f"{rev}^{{commit}}").returncode != 0:
             return usage(f"{rev} is no commit of this repository — git fetch, or the evidence names a build from elsewhere")
 
-    diff = git("diff", "--name-only", commit, args.rev, "--", *INPUTS)
+    # -z: a path holding a space is one path (#1772)
+    diff = git("diff", "--name-only", "-z", commit, args.rev, "--", *INPUTS)
     if diff.returncode != 0:
         return usage(f"git diff {commit} {args.rev} failed: {diff.stderr.strip()}")
     changed, comments = [], []
-    for path in diff.stdout.split():
-        before, after = text_at(commit, path), text_at(args.rev, path)
-        if (path.endswith(".rs") and before is not None and after is not None
-                and rust_tokens(before) == rust_tokens(after)):
-            comments.append(path)
-        else:
-            changed.append(path)
+    for path in filter(None, diff.stdout.split("\0")):
+        # only Rust sources are read as text: any other changed input (the
+        # fonts under assets/ are binary) is a change as it stands (#1772)
+        if path.endswith(".rs"):
+            before, after = text_at(commit, path), text_at(args.rev, path)
+            if before is not None and after is not None and rust_tokens(before) == rust_tokens(after):
+                comments.append(path)
+                continue
+        changed.append(path)
     if manifest(toml_at(commit, "Cargo.toml")) != manifest(toml_at(args.rev, "Cargo.toml")):
         changed.append("Cargo.toml (beyond its version, metadata and crates.io listing)")
     if lockfile(toml_at(commit, "Cargo.lock")) != lockfile(toml_at(args.rev, "Cargo.lock")):

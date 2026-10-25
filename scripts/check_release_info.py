@@ -121,16 +121,20 @@ FACTS_KEYS = ("engine.version", "engine.released", "release.history",
 # The measured sentence: the sample size, then each sample's jubarte mean with
 # its comparator's in parentheses, each followed by its failure clause.
 MEAN = r"\d+(?:\.\d+)?"
+# The preamble may hold colons ("(see release_info: …)") but never ends a
+# sentence: it runs to the first ": redlines mean" without crossing ". " (#1773).
 SENTENCE = re.compile(
-    rf"(?P<n>\d+)-item samples\b[^:]*:\s*"
+    rf"(?P<n>\d+)-item samples\b(?:(?!\.\s).)*?:\s*"
     rf"redlines mean (?P<redline>{MEAN}) \((?P<redline_name>[^\s()]+) (?P<redline_other>{MEAN})\)(?P<redline_tail>.*?)"
     rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
     rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
 )
-COUNTED = re.compile(r"counting as 0 the (\d+)\b")
-NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline)s?\b")
-# "no failed …": the words that speak for each sample
-NONE_WORDS = {"redline": ("redline", "item"), "conversion": ("document", "PDF", "item")}
+COUNTED = re.compile(r"counting as 0 the (\d+)\b(?: (\w+))?")
+# "no failed …" anywhere in the text, in any case: a claim about the samples
+NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline)s?\b", re.I)
+# the nouns that speak for each sample ("item" speaks for both)
+NONE_WORDS = {"redline": ("redline", "item"), "conversion": ("document", "pdf", "item")}
+COUNTED_WORDS = {"redline": ("redline", "pair"), "conversion": ("document", "pdf", "conversion")}
 # the results' tool keys as the sentence names them
 DISPLAY = {"docxodus": "Docxodus", "soffice": "LibreOffice"}
 
@@ -390,7 +394,8 @@ def two(value: float) -> str:
     return str(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> list[str]:
+def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], claims: list[str]) -> list[str]:
+    """CLAIMS: every "no failed <noun>" in the text the sentence stands in."""
     out = []
     for kind, noun, sample in (("redline", "redline", "redlines"), ("conversion", "PDF", "PDFs")):
         doc = docs[f"results_{kind}"]
@@ -409,14 +414,16 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> li
         elif m[f"{kind}_other"] != two(other.get("mean", 0)):
             out.append(f'{where}: "{name} {m[f"{kind}_other"]}" — the evidence\'s {name} mean is {two(other.get("mean", 0))}')
         failures = jub.get("failures", 0)
-        tail = m[f"{kind}_tail"]
-        counted = COUNTED.findall(tail)
-        said_none = [w for w in NO_FAILED.findall(tail) if w in NONE_WORDS[kind]]
-        if kind == "redline":  # "no failed item" closes the PDFs' clause but speaks for both samples
-            said_none += [w for w in NO_FAILED.findall(m["conversion_tail"]) if w == "item"]
+        counted = COUNTED.findall(m[f"{kind}_tail"])
+        said_none = [w for w in claims if w.lower() in NONE_WORDS[kind]]
         failed = f"{failures} failed {noun}{'' if failures == 1 else 's'}"
         out.extend(f'{where}: {sample} "counting as 0 the {c}" — the evidence counts {failed}'
-                   for c in counted if c != str(failures))
+                   for c, _ in counted if c != str(failures))
+        other_kind = "conversion" if kind == "redline" else "redline"
+        out.extend(f'{where}: {sample} "counting as 0 the {c} {w}" — a {w} is the {other_kind} sample\'s, '
+                   f"not the {kind} sample's" for c, w in counted
+                   if w.lower().removesuffix("s") in COUNTED_WORDS[other_kind])
+        counted = [c for c, _ in counted]
         if said_none and failures:
             out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed}')
         elif failures and not counted:
@@ -426,21 +433,22 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> li
 
 def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
     """Every measured sentence in TEXT against the results JSONs' aggregates."""
-    found = list(SENTENCE.finditer(re.sub(r"\s+", " ", text)))
+    text = re.sub(r"\s+", " ", text)
+    found = list(SENTENCE.finditer(text))
     if not found:
         return [f"{where} carries no measured sentence (\"On two N-item samples …: redlines mean X "
                 f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\")"]
     docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
             for name in ("results_redline", "results_conversion")}
-    return [p for m in found for p in sentence_problems(m, where, docs)]
+    claims = NO_FAILED.findall(text)
+    # each problem once, however many sentences repeat it
+    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs, claims)))
 
 
 def changelog_section(path: Path, version: str) -> str | None:
-    """FILE's `## [VERSION]` section (either heading dash), or None."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
+    """FILE's `## [VERSION]` section (either heading dash), or None; an
+    unreadable FILE raises OSError, never reads as a missing section (#1773)."""
+    text = path.read_text(encoding="utf-8")
     m = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.M | re.S)
     return m.group(1) if m else None
 
@@ -518,7 +526,11 @@ def main(argv: list[str] | None = None) -> int:
              for i, s in enumerate(args.summary, 1)]
     wrong = []
     for path in args.changelog:
-        section = changelog_section(path, args.version)
+        try:
+            section = changelog_section(path, args.version)
+        except (OSError, UnicodeDecodeError) as e:
+            wrong.append(f"cannot read {path} ({getattr(e, 'strerror', None) or e})")
+            continue
         if section is None:
             wrong.append(f"{path} has no ## [{args.version}] section")
         else:

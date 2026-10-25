@@ -27,7 +27,8 @@ SCRIPT = HERE / "identity.py"
 
 # stub jubarte: --version, `convert SRC -o DEST …` and `BASE NEXT -o DEST …`;
 # writes its inputs (and $SALT on rows whose inputs contain $SALT_ON) to DEST;
-# no output at all on rows whose inputs contain $FAIL_ON.
+# no output at all on rows whose inputs contain $FAIL_ON; it hangs on rows
+# whose inputs contain $HANG_ON.
 STUB = r"""#!/bin/bash
 [ "$1" = --version ] && { echo "jubarte 9.9.9 (${NAME})"; exit 0; }
 echo "$*" >> "$ARGV_LOG"
@@ -41,6 +42,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 sleep 0.05
+case "$ins" in *"${HANG_ON:-@none@}"*) sleep 30 ;; esac
 case "$ins" in *"${FAIL_ON:-@none@}"*) exit 1 ;; esac
 salt=""
 case "$ins" in *"${SALT_ON:-@none@}"*) salt=${SALT:-} ;; esac
@@ -89,12 +91,55 @@ class Identity(unittest.TestCase):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             (self.root / rel).write_text(rel)
 
-    def run_identity(self, a: Path, b: Path, *csvs: Path, jobs: int = 4) -> subprocess.CompletedProcess[str]:
+    def run_identity(self, a: Path, b: Path, *csvs: Path, jobs: int = 4,
+                     extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(SCRIPT), str(a), str(b), str(self.out), *map(str, csvs),
-             "--root", str(self.root), "--jobs", str(jobs)],
+             "--root", str(self.root), "--jobs", str(jobs), *extra],
             capture_output=True, text=True, timeout=120,
         )
+
+    def test_a_timeout_on_both_sides_is_no_identity(self) -> None:
+        # pi on #1752 (#1774): None == None compared equal
+        a, b = self.stub("a", HANG_ON="base0"), self.stub("b", HANG_ON="base0")
+        r = self.run_identity(a, b, self.redline_csv(2), extra=("--timeout", "1"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("TIMEOUT", r.stdout)
+        self.assertIn("A and B", r.stdout)
+
+    def refused(self, *csvs: Path, a: Path | None = None) -> subprocess.CompletedProcess[str]:
+        r = self.run_identity(a or self.stub("a"), self.stub("b"), *csvs)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        return r
+
+    def test_a_missing_binary_is_refused(self) -> None:
+        r = self.refused(self.redline_csv(1), a=self.tmp / "no-such-jubarte")
+        self.assertIn("no-such-jubarte", r.stderr)
+
+    def test_a_short_row_is_refused(self) -> None:
+        path = self.redline_csv(1)
+        with path.open("a", newline="") as f:
+            f.write("pair9,corpus/base9.docx\r\n")
+        r = self.refused(path)
+        self.assertIn("next", r.stderr)
+
+    def test_a_csv_that_is_no_utf8_is_refused(self) -> None:
+        path = self.redline_csv(1)
+        path.write_bytes(path.read_bytes() + b"pair9,corpus/b\xff.docx,x,corpus/n.docx,x,\r\n")
+        r = self.refused(path)
+        self.assertIn(path.name, r.stderr)
+
+    def test_a_path_outside_the_root_is_refused(self) -> None:
+        outside = self.tmp / "outside.docx"
+        outside.write_text("x")
+        for escape in (str(outside), "../outside.docx"):
+            with self.subTest(escape=escape):
+                path = self.conversion_csv(["clean__x"])
+                with path.open("a", newline="") as f:
+                    f.write(f"clean,clean__y,{escape},{'0' * 64}\r\n")
+                r = self.refused(path)
+                self.assertIn("outside", r.stderr)
 
     def test_two_binaries_that_agree_pass_and_are_named(self) -> None:
         a, b = self.stub("a"), self.stub("b")
