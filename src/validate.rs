@@ -2479,16 +2479,16 @@ mod public_memory_validator_owner_boundary_tests {
             word_fatal: true,
             repairable: false,
         };
-        assert_eq!(ring1(&pkg), vec![expected.clone()]);
+        assert_eq!(ring1(&pkg), *std::slice::from_ref(&expected));
         let report = validate(&bytes).unwrap();
-        assert_eq!(report, vec![expected.clone()]);
+        assert_eq!(report, *std::slice::from_ref(&expected));
         let result = repair(&bytes).unwrap();
         assert_eq!(
             result.docx, bytes,
             "an unknown opaque part requires a maintainer-selected type, not guessed rewriting"
         );
         assert!(result.repaired.is_empty());
-        assert_eq!(result.remaining, vec![expected]);
+        assert_eq!(result.remaining, *std::slice::from_ref(&expected));
         assert_eq!(snapshot(&PartFs::open(&result.docx).unwrap()), source);
         let again = repair(&result.docx).unwrap();
         assert_eq!(again, result);
