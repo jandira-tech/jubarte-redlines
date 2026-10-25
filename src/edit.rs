@@ -5854,9 +5854,14 @@ impl<'p> Transaction<'p> {
             if parts.is_empty() {
                 continue;
             }
+            let mut it = parts.into_iter();
+            let mut joined = it.next().unwrap_or_default();
+            for next_part in it {
+                joined.push_str(", ");
+                joined.push_str(&next_part);
+            }
             let message = format!(
-                "the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it",
-                parts.into_iter().collect::<Vec<_>>().join(", ")
+                "the redacted text still occurs in {joined}; redact every copy in the same plan, or remove the comment or part that holds it"
             );
             let mut error = self.conflict(op, &message);
             error.code = "REDACTION_LEAK".into();

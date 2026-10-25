@@ -46746,7 +46746,13 @@ mod comment_listing_review_tests {
             pages.len() > 2,
             "heading and contents must spill onto a fresh listing page"
         );
-        let all = all.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut it = all.split_whitespace();
+        let mut joined = it.next().unwrap_or_default().to_string();
+        for next_part in it {
+            joined.push(' ');
+            joined.push_str(next_part);
+        }
+        let all = joined;
         assert!(all.contains("First content"));
         assert!(all.contains(author));
         assert!(all.contains("page 1"));
