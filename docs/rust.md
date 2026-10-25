@@ -177,6 +177,35 @@ convention. PNG output caps at `MAX_PNG_DPI` (1200).
 An existing output without `--force` is a usage refusal (exit 2).
 Input, operational and I/O failures exit 1.
 
+Exit status, for scripts and agents that chain commands:
+
+| exit | meaning |
+|---|---|
+| 0 | done |
+| 1 | an input, operational or I/O failure |
+| 2 | usage, refused before any work: a flag, a combination, an existing output |
+| 3 | an edit plan refused, nothing written; see stderr and any report on stdout |
+| 4 | a substituted font under `--fail-on-substitution` |
+
+Parse/schema refusals may leave stdout empty; read stderr for the reason.
+Execution refusals report on stdout; plan-level refusals may have no operation.
+
+`validate` also exits 2 on any error, on any `word` or `edits` finding, and
+with `--strict` on any warning.
+
+A chain passes files by path. Name each output with `-o` or `--out-dir`,
+check the exit status before the next step, and validate the delivered file
+against the original as received:
+
+```sh
+cp contract.docx contract.orig.docx
+jubarte read contract.docx -p p3 -p p12 --json > p3_p12.json   # -p repeats
+jubarte read contract.docx --tables -o tables.md
+jubarte changes contract.docx --author "Ann Counsel" --json > ann.jsonl
+jubarte edit contract.docx --plan plan.json --out-dir review || exit $?
+jubarte validate review/redline.docx --original contract.orig.docx --author Claude
+```
+
 The block below is generated from the real `--help` output of this source
 tree's `jubarte` binary — every command, every flag, every default. Hidden
 debug flags are not shown; `jubarte <command> --help` on the installed
@@ -407,7 +436,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -534,6 +564,10 @@ Arguments:
 Options:
       --json
           Emit one JSON object per line
+
+      --author <NAME>
+          Only listed changes by this author (exact match); repeat for several.
+          Comment-body revisions are not listed, even without this filter
 
   -q, --quiet
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
@@ -1126,7 +1160,8 @@ Read options:
           retires them — spell the end, `p17-p20`). With --tables, select top-level
           tables (including their nested tables) by the same tN as the view, or by a pN
           inside them; a pick that reaches no table is refused. Print their grid, then a
-          blank line and the same view as read -p SPEC
+          blank line and the same view as read -p SPEC. Repeat it to add blocks: `-p p3
+          -p p8` reads as `-p p3,p8`
 
           [alias: --select]
 
@@ -1245,10 +1280,10 @@ Arguments:
 
 Options:
       --plan [<PLAN.json>]
-          Edit plan JSON: batches and the other operation kinds (see `jubarte
-          capabilities --json`). Alone, it is applied to FILE; with operation flags,
-          they are recorded into it (created on first use) and FILE is left as it is.
-          Without a value: FILE_plan.json beside FILE
+          Edit plan JSON: a list of operations of any kind (see `jubarte capabilities
+          --json`). Alone, it is applied to FILE; with operation flags, they are
+          recorded into it (created on first use) and FILE is left as it is. Without a
+          value: FILE_plan.json beside FILE
 
       --consume
           Delete PLAN.json once it has been applied and the outputs are written (with
@@ -1420,9 +1455,23 @@ WHERE is an id from `jubarte read`: p12, header1, footer2.p1,
 t0.row1.cell2, c5 (a comment), c5.text (the text it covers) or r12
 (a revision).
 
+A plan (--plan plan.json) is a list of operations, applied all or none;
+`jubarte capabilities --json` lists every operation kind:
+  {"schema_version": 1, "source_sha256": "<sha256 from jubarte read>", "author":
+  "Claude",
+   "operations": [
+    {"kind": "replace", "paragraph": "p1", "find": "his or her", "replacement":
+    "their"},
+    {"kind": "delete_paragraph", "paragraph": "p2"}]}
+
+Desired-text plans (PlanV2), a separate workflow:
+  jubarte edit template FILE --select p12,p20-p25 -o edits.json   the paragraphs as they
+  read
+  (edit the desired text in edits.json)
+  jubarte edit apply FILE --plan edits.json -o OUTPUT.docx        tracked changes for
+  the difference
+
 Typed actions: jubarte edit replace|rewrite|insert|delete FILE [OPTIONS]
-  jubarte edit template FILE --select p12,p20-p25 -o edits.json
-  jubarte edit apply FILE --plan PLAN.json -o OUTPUT.docx
   Inline --save-plan FILE saves without applying; writes require -o or --out-dir.
   Run jubarte edit ACTION --help for its grammar.
 Routing: valid legacy calls, including `edit replace -p p0 --content TEXT`,
@@ -1765,7 +1814,10 @@ Options:
           fail without it
 
       --repair <FILE>
-          Write the repaired package here; remaining findings still fail
+          Write the repaired package here; remaining findings still fail.
+
+          A structural repair: it does not check the edits' history. Add --original and
+          --author for that.
 
       --baseline <FILE>
           The document the edits started from: its findings print as already in the

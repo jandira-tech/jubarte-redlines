@@ -20,6 +20,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -499,6 +500,334 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
 
+class MeasuredSentence(SixFiles):
+    """--summary TEXT and --changelog FILE: the measured sentence that ships
+    in the CHANGELOG, the GitHub notes, the app and jubarte.pro states the
+    evidence's own aggregates at two decimals (#1753; checklist 3#3).
+
+    The fixture's results: redlines jubarte 80.0 with 1 failure against
+    Docxodus 60.0; PDFs jubarte 80.0 with 1 failure against LibreOffice 60.0."""
+
+    SOUND = ("On two 3-item samples scored against Word's own output: redlines mean 80.00 "
+             "(Docxodus 60.00), counting as 0 the 1 redline Word 16.115 crashes opening "
+             "(KNOWN_ISSUES #8); PDFs mean 80.00 (LibreOffice 60.00), counting as 0 the 1 document "
+             "jubarte fails.")
+
+    def numbers(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return self.check(*args)
+
+    def test_a_sentence_stating_the_aggregates_passes(self) -> None:
+        r = self.numbers("--summary", "Breaking: none. " + self.SOUND + " Docs follow.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("measured sentence", r.stdout)
+
+    def test_each_figure_that_differs_is_named(self) -> None:
+        for right, wrong in (
+            ("redlines mean 80.00", "redlines mean 80.01"),
+            ("(Docxodus 60.00)", "(Docxodus 60.10)"),
+            ("PDFs mean 80.00", "PDFs mean 79.99"),
+            ("(LibreOffice 60.00)", "(LibreOffice 59.00)"),
+            ("two 3-item samples", "two 600-item samples"),
+        ):
+            with self.subTest(wrong=wrong):
+                r = self.numbers("--summary", self.SOUND.replace(right, wrong))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(wrong.strip("()").replace("two ", ""), r.stderr)
+
+    def test_the_comparator_is_named_as_the_evidence_names_it(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("(Docxodus 60.00)", "(LibreOffice 60.00)"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Docxodus", r.stderr)
+
+    def test_a_wrong_failure_count_is_named(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("counting as 0 the 1 redline", "counting as 0 the 2 redlines"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("counting as 0 the 2", r.stderr)
+
+    def test_failures_the_sentence_leaves_out_are_named(self) -> None:
+        text = self.SOUND.replace(", counting as 0 the 1 redline Word 16.115 crashes opening (KNOWN_ISSUES #8)", "")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("1 failed redline", r.stderr)
+
+    def test_no_failed_document_is_true_only_without_failures(self) -> None:
+        text = self.SOUND.replace("counting as 0 the 1 document jubarte fails", "no failed document")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no failed document", r.stderr)
+        self._edit_results("results_conversion", tools={"jubarte": {"failures": 0}})
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_failed_item_speaks_for_both_samples(self) -> None:
+        # 0.10's form: "redlines mean …, PDFs mean …, no failed item."
+        self._edit_results("results_conversion", tools={"jubarte": {"failures": 0}})
+        text = ("On two 3-item samples scored against Word's own output: redlines mean 80.00 "
+                "(Docxodus 60.00), PDFs mean 80.00 (LibreOffice 60.00), no failed item.")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("1 failed redline", r.stderr)
+        self._edit_results("results_redline", tools={"jubarte": {"failures": 0}})
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_two_decimals_round_half_up(self) -> None:
+        self._edit_results("results_redline", tools={"jubarte": {"mean": 71.6339}, "docxodus": {"mean": 64.915}})
+        r = self.numbers("--summary", self.SOUND.replace("80.00 (Docxodus 60.00)", "71.63 (Docxodus 64.92)"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_summary_without_the_sentence_fails(self) -> None:
+        r = self.numbers("--summary", "Breaking: none. New: a flag.")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no measured sentence", r.stderr)
+
+    def test_every_sentence_in_a_text_is_checked(self) -> None:
+        r = self.numbers("--summary", self.SOUND + " Again: " + self.SOUND.replace("PDFs mean 80.00", "PDFs mean 81.00"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("PDFs mean 81.00", r.stderr)
+
+    def test_a_changelog_section_is_read_under_either_heading_dash(self) -> None:
+        # the engine writes "## [V] - date", the app "## [V] — date"
+        changelog = self.tmp / "CHANGELOG.md"
+        wrapped = self.SOUND.replace("; PDFs", ";\n  PDFs")
+        changelog.write_text(f"# Changelog\n\n## [{VER}] — 2026-10-25\n\n- {wrapped}\n\n"
+                             f"## [0.11.1] — 2026-10-01\n\n- {self.SOUND.replace('80.00', '1.00')}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_sentence_in_another_versions_section_does_not_count(self) -> None:
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- New: a flag.\n\n## [0.11.1] - 2026-10-01\n\n- {self.SOUND}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no measured sentence", r.stderr)
+
+    def test_a_colon_in_the_preamble_is_read_through(self) -> None:
+        # pi on #1753 (#1773): `[^:]*` stopped at the first colon
+        for preamble in ("samples (see release_info: the six files) scored",
+                         "samples: 3 redline pairs and 3 conversions, scored"):
+            with self.subTest(preamble=preamble):
+                r = self.numbers("--summary", self.SOUND.replace("samples scored", preamble))
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_preamble_does_not_cross_a_sentence(self) -> None:
+        r = self.numbers("--summary", "We drew 600-item samples. " + self.SOUND)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_no_failed_claim_in_either_clause_is_held(self) -> None:
+        # each one denies the conversion sample's 1 failure (#1773)
+        for text in (
+            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), and no failed documents; PDFs"),
+            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), No failed PDFs; PDFs"),
+        ):
+            with self.subTest(text=text[-60:]):
+                r = self.numbers("--summary", text)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("1 failed PDF", r.stderr)
+
+    def test_a_no_failed_claim_reads_every_sample_noun(self) -> None:
+        # empryo on #1743 (#1779): conversions and pairs were never read
+        for right, wrong, named in (
+            ("jubarte fails.", "jubarte fails, and no failed conversions.", '"no failed conversion"'),
+            ("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), and no failed pairs; PDFs", '"no failed pair"'),
+        ):
+            with self.subTest(wrong=wrong):
+                r = self.numbers("--summary", self.SOUND.replace(right, wrong))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(named, r.stderr)
+
+    def test_a_no_failed_before_the_sample_size_is_in_the_sentence(self) -> None:
+        # codex on #1743 (#1783): the match starts at "N-item samples", the
+        # sentence before it
+        r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples",
+                                                          "No failed documents occurred on two 3-item samples"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed document"', r.stderr)
+        r = self.numbers("--summary", "Breaking: none. " + self.SOUND)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_failed_omitted_says_the_failures_are_counted(self) -> None:
+        # codex on #1743 (#1783): "no failed redlines are omitted" in the
+        # sentence is the opposite of a claim that none failed
+        for text in (self.SOUND.replace("On two 3-item samples", "No failed redlines are omitted from two 3-item samples"),
+                     self.SOUND.replace("On two 3-item samples scored",
+                                        "On two 3-item samples, with no failed documents omitted from the means, scored")):
+            with self.subTest(text=text[:70]):
+                r = self.numbers("--summary", text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_failed_omitted_reads_auxiliaries_and_adverbs(self) -> None:
+        # codex on #1743 (#1788): one auxiliary was all the exception allowed
+        for opening in ("No failed redlines have been omitted from two 3-item samples",
+                        "With no failed redlines ever omitted from two 3-item samples",
+                        "With no failed redlines permanently excluded from two 3-item samples",
+                        "With no failed redline-pair outputs omitted from two 3-item samples"):
+            with self.subTest(opening=opening):
+                r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples", opening))
+                self.assertEqual(r.returncode, 0, r.stderr)
+        # a phrasing outside the exception is a claim, and the refusal says
+        # how to write an omission
+        r = self.numbers("--summary", self.SOUND.replace("On two 3-item samples",
+                                                          "No failed redlines occurred on two 3-item samples"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redlines are omitted"', r.stderr)
+
+    def test_a_sentence_ends_inside_closing_quotes_and_at_a_block(self) -> None:
+        # codex on #1743 (#1789): another sentence's claim joined the
+        # measured one through a closing quote, a bracket or a blank line
+        for before in ('The validation suite reported "no failed redlines." ',
+                       "The validation suite reported “no failed redlines.” ",
+                       "The validation suite is green (no failed redlines.) ",
+                       "Validation suite: no failed redlines\n\n"):
+            with self.subTest(before=before):
+                r = self.numbers("--summary", before + self.SOUND)
+                self.assertEqual(r.returncode, 0, r.stderr)
+        # without a full stop, the quote is still the measured sentence's
+        r = self.numbers("--summary", 'The suite reported "no failed redlines"; ' + self.SOUND)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redline"', r.stderr)
+        # a list item starts a new sentence; a wrapped line does not
+        changelog = self.tmp / "CHANGELOG.md"
+        wrapped = self.SOUND.replace("; PDFs", ";\n  PDFs")
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- Validation suite: no failed redlines\n- {wrapped}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- Validation suite: no failed redlines\n  {wrapped}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"no failed redline"', r.stderr)
+
+    def test_many_measured_sentences_are_read_in_linear_time(self) -> None:
+        # codex on #1743 (#1790): every match rescanned the text before it
+        # (4,000 sentences took 9 s)
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n" + (self.SOUND + "\n") * 6000)
+        start = time.monotonic()
+        r = self.numbers("--changelog", str(changelog))
+        self.assertLess(time.monotonic() - start, 3.0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_long_run_of_digits_in_the_preamble_is_read_in_linear_time(self) -> None:
+        # codex on #1743 (#1785): the size lookahead rescanned the run at
+        # every digit (100,000 digits took 16 s)
+        text = self.SOUND.replace("samples scored", "samples (" + "9" * 100_000 + ") scored")
+        start = time.monotonic()
+        r = self.numbers("--summary", text)
+        self.assertLess(time.monotonic() - start, 5.0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_no_failed_outside_the_measured_sentence_is_not_a_claim(self) -> None:
+        # codex on #1743 (#1776): the checker cannot tell what another
+        # sentence's "no failed" is about; the measured sentence still has
+        # to count every failure
+        for after in ("No failed redlines are omitted from these means.",
+                      "The document-validation regression suite has no failed redlines.",
+                      "The previous release had no failed documents.",
+                      "The Word oracle produced no failed PDFs on this corpus."):
+            with self.subTest(after=after):
+                r = self.numbers("--summary", self.SOUND + " " + after)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_sample_size_nearest_the_means_is_held(self) -> None:
+        # codex on #1743 (#1775): the colon-tolerant preamble bound the first
+        # of two sizes
+        text = self.SOUND.replace("On two 3-item samples scored",
+                                  "We drew two 3-item samples: after filtering, results on two 2-item samples scored")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"2-item samples"', r.stderr)
+        # empryo on #1743: an earlier size before a colon is not the one held
+        text = self.SOUND.replace("On two 3-item samples scored",
+                                  "On two 400-item samples: an earlier draft, rescored; on two 3-item samples scored")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_counted_noun_of_the_other_sample_is_named(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 document Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 document"', r.stderr)
+        r = self.numbers("--summary", self.SOUND.replace("the 1 document jubarte", "the 1 redline pair jubarte"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 redline pair" — a pair is the redline sample\'s', r.stderr)
+
+    def test_a_noun_the_counted_phrase_excludes_does_not_name_its_sample(self) -> None:
+        # codex on #1743 (#1787): the phrase ends at "instead", "without",
+        # "the" …; its last sample noun before that word names the sample
+        for phrase, named, noun in (("the 1 PDF instead of redlines", "the 1 PDF", "PDF"),
+                                    ("the 1 PDF from non-redline runs", "the 1 PDF", "PDF"),
+                                    ("the 1 document without redlines", "the 1 document", "document"),
+                                    ("the 1 document with no redlines", "the 1 document", "document"),
+                                    ("the 1 PDF the redline renderer produced", "the 1 PDF", "PDF"),
+                                    ("the 1 failed-PDFs output", "the 1 failed-PDFs", "PDF")):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(f'"counting as 0 {named}" — a {noun} is the conversion sample\'s, '
+                              "not the redline sample's", r.stderr)
+        for phrase in ("the 1 document-to-document comparison Word cannot open",
+                       "the 1 document-comparison redline Word cannot open",
+                       "the 1 failed Word document pair Word cannot open"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_an_uppercase_plural_names_its_sample(self) -> None:
+        # codex on #1743 (#1792): "PDFS" lost its plural before lowercasing
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 PDFS Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 PDFS" — a PDF is the conversion sample\'s', r.stderr)
+
+    def test_the_whole_counted_phrase_reaches_its_head_noun(self) -> None:
+        # codex on #1743 (#1793): four words cut a phrase before its head;
+        # an auxiliary, or a name after the head, opens the clause that
+        # follows it
+        for phrase in ("the 1 failed redline-producing Word document pair whose opening crashes Word",
+                       "the 1 failed large Word document pair Word cannot open",
+                       "the 1 redline Word cannot open as documents",
+                       "the 1 redline jubarte cannot write documents for"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
+        # each refusal depends on one rule (#1795): read past "Docxodus",
+        # the phrase would reach "pairs"; taken for a head, the modifier
+        # "redline-producing" would end the phrase at "Word"
+        for phrase, named, noun in (("the 1 PDF Docxodus wrote comparing document pairs", "the 1 PDF", "PDF"),
+                                    ("the 1 redline-producing Word documents whose opening crashes Word",
+                                     "the 1 redline-producing Word documents", "document")):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(f'"counting as 0 {named}" — a {noun} is the conversion sample\'s', r.stderr)
+
+    def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
+        # codex on #1743 (#1777): document pairs are the redline sample's;
+        # an adjective does not push the noun out of reach (#1784)
+        for phrase in ("the 1 document pair whose redline Word cannot open",
+                       "the 1 failed document pair whose redline Word cannot open",
+                       "the 1 document-pair output Word cannot open"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_other_samples_noun_is_named_past_an_adjective(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 failed PDF Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 failed PDF" — a PDF is the conversion sample\'s', r.stderr)
+
+    def test_an_unreadable_changelog_is_named_as_unreadable(self) -> None:
+        r = self.numbers("--changelog", str(self.tmp / "no-such-CHANGELOG.md"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("cannot read", r.stderr)
+        self.assertNotIn("has no ## [", r.stderr)
+
+    def test_a_changelog_without_the_versions_section_fails(self) -> None:
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [0.11.1] - 2026-10-01\n\n- {self.SOUND}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"## [{VER}]", r.stderr)
+
+
 class Version(unittest.TestCase):
     def test_only_a_release_version_is_accepted(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="release_info_ver_"))
@@ -556,6 +885,28 @@ class ReleaseSh(unittest.TestCase):
         self.assertIn('--bench-root "$BENCH_ROOT"', step)
         self.assertIn("NEUROTIC_DOCX_BENCH", step)
         self.assertIn("format-checked", step)  # the no-bench warning says what is NOT proven
+
+    @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
+    def test_step_3_checks_the_measured_sentence(self) -> None:
+        step = self.step3()
+        call = step[step.index("--summary"):]
+        self.assertIn('--summary "$CHANGELOG_SUMMARY"', call[:200])
+        self.assertIn('--changelog "$APP_REPO/CHANGELOG.md"', call[:200])
+        self.assertIn("|| die", call[:400])
+
+    @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
+    def test_the_checklist_says_which_figures_are_held(self) -> None:
+        # pi on #1753 (#1773): medians and the paired interval are not checked
+        text = (HERE / "release.sh").read_text()
+        row = next(line for line in text.splitlines() if line.startswith("3|auto|The measured NUMBERS sentence"))
+        self.assertIn("a median or interval it states is not checked", row)
+        # codex on #1743 (#1776): a claim outside the sentence is not read
+        self.assertIn("another sentence's is not read", row)
+        # empryo on #1743 (#1779): a counted phrase need not name a noun
+        self.assertIn("their noun when the phrase names one", row)
+        # codex on #1743 (#1787, #1788): the grammar the writer follows
+        self.assertIn('the last sample noun before a word like "of", "instead" or "whose"', row)
+        self.assertIn('"no failed X are omitted" says they are counted', row)
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:

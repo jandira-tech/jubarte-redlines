@@ -329,9 +329,33 @@ fn story_selectors_and_story_limits_are_checked() {
     assert_eq!(comment.code, "COMMENT_NOT_IN_BODY");
     assert!(comment.message.contains("body"), "{}", comment.message);
 
-    // A header keeps at least one paragraph.
-    let last = refuse(r#"[{"kind":"delete_paragraph","paragraph":"header1"}]"#);
-    assert_eq!(last.code, "UNSUPPORTED_STRUCTURE");
+    // A header's only paragraph is emptied, not removed: Word keeps a
+    // story's final paragraph mark (#1668).
+    let emptied = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"delete_paragraph","paragraph":"header1"}]"#,
+        ),
+    )
+    .unwrap();
+    let header = part_string(&emptied.clean, "word/header1.xml").unwrap();
+    assert!(part_texts(&emptied.clean, "word/header1.xml").is_empty());
+    assert_eq!(
+        header.matches("<w:p>").count()
+            + header.matches("<w:p ").count()
+            + header.matches("<w:p/>").count(),
+        1,
+        "{header}"
+    );
+    assert_eq!(
+        part_texts(
+            &reject_revisions(&emptied.redline).unwrap(),
+            "word/header1.xml"
+        ),
+        [HEADER]
+    );
+    assert_word_valid_package(&emptied.redline);
 
     // Body selectors never reach into a story.
     let body_only =

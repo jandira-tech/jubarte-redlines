@@ -515,17 +515,22 @@ fn run_resolution(
     }
 }
 
-fn run_changes(file: &Path, json: bool, quiet: bool) -> Result<(), String> {
+fn run_changes(file: &Path, json: bool, authors: &[String], quiet: bool) -> Result<(), String> {
+    let listed = |bytes: &[u8]| {
+        jubarte::changes::list_logical_changes(bytes)
+            .map(|changes| jubarte::changes::by_authors(changes, authors))
+            .map_err(|e| e.to_string())
+    };
     if json {
         let (bytes, validity) = read_input_json(file)?;
-        let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
+        let changes = listed(&bytes)?;
         for c in &changes {
             outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
         }
         return validity_line(&validity);
     }
     let bytes = read_input(file, quiet)?;
-    let changes = jubarte::changes::list_logical_changes(&bytes).map_err(|e| e.to_string())?;
+    let changes = listed(&bytes)?;
     outln!(
         "{}",
         jubarte::changes::changes_text(&changes).trim_end_matches('\n')
@@ -930,8 +935,32 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 /// `read --tables`: each body table as a grid; with `-p` the grids of the
 /// tables the view's selection reaches, then that view (#1161), and
 /// `--track-changes reject` reads the rejected text. A pick that reaches
-/// no table exits 2; what the view refuses, as `read -p` does.
-fn run_read_tables(file: &Path, args: &ReadArgs, quiet: bool) -> Result<(), ConvertFailure> {
+/// no table exits 2; what the view refuses, as `read -p` does. `-o FILE`
+/// writes the same text to FILE instead of stdout (#1690).
+fn run_read_tables(
+    file: &Path,
+    args: &ReadArgs,
+    output: Option<&Path>,
+    force: bool,
+    quiet: bool,
+) -> Result<(), ConvertFailure> {
+    let render = RenderArgs::default();
+    let out = output.map(|path| Output {
+        kind: Format::Md,
+        path,
+        force,
+        quiet,
+        input: file,
+        markdown_input: false,
+        view: args,
+        source: String::new(),
+        render: &render,
+    });
+    if let Some(out) = &out {
+        refuse_output_alias(out.path, &[(file, "the input")])
+            .map_err(|(code, message)| ConvertFailure { code, message })?;
+        check_output(out)?;
+    }
     let bytes = read_input(file, quiet)?;
     warn_nested_text_boxes(&bytes);
     let view = jubarte::markdown::read_tables(
@@ -952,7 +981,10 @@ fn run_read_tables(file: &Path, args: &ReadArgs, quiet: bool) -> Result<(), Conv
     for warning in &view.warnings {
         eprintln!("warning: {warning}");
     }
-    Ok(write_stdout(view.markdown)?)
+    match &out {
+        Some(out) => write_text(out, &view.markdown, "tables"),
+        None => Ok(write_stdout(view.markdown)?),
+    }
 }
 
 /// A usage error: exit 2.
@@ -1025,7 +1057,7 @@ fn run_text(
         return run_for_edit(file, args, output, force, quiet);
     }
     if args.tables {
-        return run_read_tables(file, args, quiet);
+        return run_read_tables(file, args, output, force, quiet);
     }
     let source = file.file_name().map(|n| n.to_string_lossy().into_owned());
     if let Some(path) = output {
@@ -1087,7 +1119,7 @@ fn snapshot_options(
 /// The paragraphs `-p`, `--head`, `--tail`, `--changed` and `--by` select.
 fn selection(args: &ReadArgs) -> Result<Option<jubarte::markdown::Select>, String> {
     jubarte::markdown::Select::from_flags(
-        args.paragraphs.as_deref(),
+        args.paragraph_spec().as_deref(),
         args.head,
         args.tail,
         args.changed,
@@ -3061,6 +3093,15 @@ fn read_word(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// [`read_word`] for an input a task must open before it writes anything
+/// (`validate --original`): the package is admitted whole
+/// ([`jubarte::admission::admit`]), so a ZIP that holds no Word main part
+/// is refused by name, `CODE: FILE is …`, before any output exists.
+fn read_package(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = read_word(path)?;
+    jubarte::cli::refused_package(path, &bytes).map_or(Ok(bytes), Err)
+}
+
 /// [`read_word`] for a task that reads the document (`read`, `changes`,
 /// `comments`): unless `quiet`, one stderr line says how many validity
 /// findings the input has ([`jubarte::validate::input_notice`]), so they
@@ -3964,19 +4005,29 @@ fn run_validate(job: &ValidateJob<'_>) -> Result<bool, ConvertFailure> {
     };
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let mut docx = read(job.file)?;
+    // An original that cannot be read, or is no Word package, stops the run
+    // before any repair.
+    let before = job.original.map(read_package).transpose()?;
     if let Some(out) = job.repair {
         ensure_writable(out, job.force)?;
         let fixed = repair(&docx).map_err(|e| e.to_string())?;
         publish_file(out, &fixed.docx, job.force)?;
         if !job.json {
-            outln!("repaired {} finding(s)", fixed.repaired.len());
+            // A structural repair: the edits' history is a separate check.
+            let history = match job.original {
+                Some(original) => format!("history check against {} follows", original.display()),
+                None => "history not checked (--original, --author)".to_string(),
+            };
+            outln!(
+                "repaired {} finding(s), structure only; {history}",
+                fixed.repaired.len()
+            );
         }
         if !job.quiet {
             eprintln!("{}", wrote_line(out, Format::Docx, fixed.docx.len(), None));
         }
         docx = fixed.docx;
     }
-    let before = job.original.map(read).transpose()?;
     let rules: Vec<&str> = job.rules.iter().map(String::as_str).collect();
     if let Some(path) = job.baseline {
         // A baseline that is no Word package is refused by its name.
@@ -4155,8 +4206,8 @@ fn cli_main() -> ExitCode {
         Some(Command::Compare(compare)) => {
             return convert_exit_code(run(&resolve_compare(compare, quiet)));
         }
-        Some(Command::Changes { file, json }) => {
-            return exit_code(run_changes(&file, json, quiet));
+        Some(Command::Changes { file, json, author }) => {
+            return exit_code(run_changes(&file, json, &author, quiet));
         }
         Some(Command::Comments {
             file,

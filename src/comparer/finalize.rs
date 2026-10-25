@@ -10613,36 +10613,11 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
                 ("hideMark", 130),
                 ("headers", 140),
             ],
-            "tcBorders" => &[
-                ("top", 10),
-                ("start", 20),
-                ("left", 30),
-                ("bottom", 40),
-                ("right", 50),
-                ("end", 60),
-                ("insideH", 70),
-                ("insideV", 80),
-                ("tl2br", 90),
-                ("tr2bl", 100),
-            ],
-            "tblBorders" => &[
-                ("top", 10),
-                ("left", 20),
-                ("start", 30),
-                ("bottom", 40),
-                ("right", 50),
-                ("end", 60),
-                ("insideH", 70),
-                ("insideV", 80),
-            ],
-            "pBdr" => &[
-                ("top", 10),
-                ("left", 20),
-                ("bottom", 30),
-                ("right", 40),
-                ("between", 50),
-                ("bar", 60),
-            ],
+            "tcBorders" => crate::comparer::order_tables::TCBORDERS_ORDER,
+            "tblBorders" => crate::comparer::order_tables::TBLBORDERS_ORDER,
+            "pBdr" => crate::comparer::order_tables::PBDR_ORDER,
+            // Sources write margins in any order; the schema has one (#1712).
+            "tblCellMar" | "tcMar" => crate::comparer::order_tables::CELL_MARGINS_ORDER,
             // Not a PowerTools table — C# has no numPr container, so a source
             // writing numId before ilvl was copied through and rejected by the
             // validator (Sch_UnexpectedElementContentExpectingComplex on
@@ -10666,6 +10641,8 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
         "tblBorders",
         "pBdr",
         "numPr",
+        "tblCellMar",
+        "tcMar",
     ];
     for el in dom.descendants_and_self(root, None) {
         let Some(name) = dom.name(el) else { continue };
@@ -14881,10 +14858,25 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
             }
         }
     }
-    for shd in dom.descendants_and_self(root, Some(&W::name("shd"))) {
+    // `ST_HexColor` has no empty value: an empty fill says nothing, and the
+    // schema refuses it (#1712).
+    let fill = W::fill();
+    for shd in dom.descendants_and_self(root, Some(&W::shd())) {
         if dom.attribute(shd, &W::val()).is_none() {
             dom.set_attribute_value(shd, &W::val(), Some("clear"));
         }
+        if dom
+            .attribute(shd, &fill)
+            .is_some_and(|f| f.trim().is_empty())
+        {
+            dom.set_attribute_value(shd, &fill, None);
+        }
+    }
+    // `CT_TblGridCol` declares `w:w` alone: the width is in twips already
+    // (#1712).
+    let kind = W::type_();
+    for col in dom.descendants_and_self(root, Some(&W::grid_col())) {
+        dom.set_attribute_value(col, &kind, None);
     }
     // A theme colour with no `val` (the schema requires one): `auto` changes
     // nothing on screen, because the theme colour overrides `val`.
@@ -29384,9 +29376,13 @@ mod closing_authored_section_boundary_tests {
                         .len(),
                     1
                 );
-                assert!(
+                // The saved pPr cannot hold a section break, so Reject keeps
+                // the live one, as Word's Reject All does (#1708). An added
+                // break should be an inserted paragraph mark instead (#1718).
+                assert_eq!(
                     dom.descendants(rejected_paragraph, Some(&W::sect_pr()))
-                        .is_empty()
+                        .len(),
+                    1
                 );
                 assert_eq!(dom.value(accepted_paragraph), "ONE");
                 assert_eq!(dom.value(rejected_paragraph), "ONE");
@@ -29470,9 +29466,12 @@ mod closing_authored_section_boundary_tests {
             canonical(&dom, dom.element(ap, &W::p_pr()).unwrap()),
             canonical(&dom, revised)
         );
+        // Reject keeps the live section break, as Word's Reject All does
+        // (#1708, #1718). The saved and revised spacing are the same here,
+        // so the reverted pPr is the revised one.
         assert_eq!(
             canonical(&dom, dom.element(rp, &W::p_pr()).unwrap()),
-            canonical(&dom, original)
+            canonical(&dom, revised)
         );
     }
 
@@ -29487,7 +29486,12 @@ mod closing_authored_section_boundary_tests {
         ] {
             let mut dom = Dom::new();
             let roots=[original_section,revised_section].map(|has_section|parse(&mut dom,&format!("<w:document xmlns:w='{}'><w:body><w:p>{}<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>ONE</w:t></w:r></w:p>{}</w:body></w:document>",W::URI,props(has_section.then_some(12240)),section(12240))));
-            let expected_original = projection(&mut dom, roots[0], false);
+            // An added break is tracked as a pPr change, whose saved pPr
+            // cannot hold it, so Reject keeps it, as Word's Reject All does:
+            // the revised body with the original spacing, which here is the
+            // same (#1708). Word's Compare inserts the paragraph mark (#1718).
+            let added = !original_section && revised_section;
+            let expected_original = projection(&mut dom, roots[usize::from(added)], false);
             let expected_revised = projection(&mut dom, roots[1], true);
             let bodies = roots.map(|root| dom.element(root, &W::body()).unwrap());
             let settings = if word {

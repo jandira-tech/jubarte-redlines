@@ -15,6 +15,124 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-24
+
+### Release
+
+- **`scripts/release.sh` proves what a person used to sign off** (#1742). Step 0 refuses a patch bump that adds a feature (a `### Added` heading) or breaks the public API (`cargo semver-checks` against the previous tag), runs `scripts/test_release_workflow.py`, and checks the `release` environment and, once `keys/` holds a public key, the `ZIPSIGN_PRIVATE_KEY` secret. Step 2 refuses a CHANGELOG section that misses a fix/feat/perf/security pull request merged since the previous release, or that still holds placeholder text. The script tests run on Python 3.12, the crate's keywords are checked against crates.io's limits, queued CI is cancelled before the tag goes up, and step 12 verifies one archive's build provenance. Rustdoc no longer opens in a browser unless `--open-docs` asks. When npm refuses a trusted publish, release.yml's log names the two causes, a trusted publisher that does not allow `npm publish` or one that expired, and the command that fixes it.
+
+- **The 0.13.0 release audit, closed in the script** (#1742, #1744-#1790, #1792, #1793). Step 0 reads GitHub's security findings with an admin's token and stops on a report in triage or an unpatched draft above low, and the patch gate denies every cargo-semver-checks lint, including one the manifest would lower. Step 3 refuses evidence scored on another engine and a measured sentence its results do not hold. Step 6 builds its API snapshot under the mbx build cache again, and names a previous release that left no snapshot. Step 8 checks the tag's shape. Step 12 installs each channel the way a user does: this machine's archive against `SHA256SUMS.txt`, a PyPI wheel, `npx` and `npm i` with `require()`. 0.13.0 never reached npm, and no step said so; 0.14.0 is the first npm release since 0.12.0. Every checklist proof names a tool a repository holds: the parity check (`tools/parity`), the lane-validity check and the two-binary identity run are now committed.
+
+- **Build provenance for every release asset** (#1742). When release.yml's release job publishes the GitHub release, its archives, wheels and sdist carry a SLSA build-provenance attestation, Sigstore-signed by the release workflow: `gh attestation verify jubarte-X.Y.Z-linux-x86_64.tar.gz -R jandira-tech/jubarte-redlines` ties a download to the run that built it. A release made from a run's artifacts instead says in its notes that the release job did not publish it, and how to check whether an attestation covers it (#1749, #1768).
+
+- `scripts/release.sh --checklist` is now the whole release, not only the
+  script's own steps. New lines cover what a release owes outside them:
+  before — the full Miri suite and the docs/VERSIONING.md quality gate,
+  the Ring-3 Word open probe on the release samples, the bump decision,
+  reading the engine CHANGELOG section that becomes the release notes,
+  drafting the six one-line notes, a release.yml review (wheel and binary
+  matrices, SHA-pinned actions, the ZIPSIGN secret vs `keys/`, and the
+  `release` environment the OIDC publish jobs run under), and the App
+  Store path's credentials and unused version number; during — the
+  NUMBERS sentence against the checker's aggregates, the security scan,
+  the GitHub release page's assets and notes, the site's own release
+  ladder, and reading every jubarte.pro page the deploy rebuilt
+  (/download, /benchmark, /demo, home, /pro, /terms); after — merging the
+  app's `release/vX.Y.Z` pull request, `jubarte self-update --version`,
+  installing each library the way a user does, reading docs.rs and the
+  registries' pages, and the App Store item now carries the in-app
+  purchase and the metadata checks of `MAC_APP_STORE_RELEASE.md`. The
+  dangling empty "step 14" phase is gone, the one proof that carried jq
+  pipes (the checklist printer splits on `|`) is written pipe-free, and
+  the checklist test derives its phases from the script instead of
+  counting to 14.
+
+### Breaking
+
+- **Rust CLI argument types change** (#1690). `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>`, one entry per `-p`, instead of `Option<String>`. `paragraph_spec()` returns the joined comma list. `Command::Changes` also gains `author: Vec<String>`. The read facade JSON still carries one string or `null`.
+
+### Added
+
+- **`read -p` repeats** (#1690). `read FILE -p p3 -p p8` reads as `-p p3,p8`, in the view, `--json`, `--tables` and `--for-edit`. `--select` repeats the same way.
+
+- **`read --tables -o FILE` writes the printed grids to a file** (#1690). This works in the binary, Python CLI and npm CLI. A `.json` name is refused. An existing file needs `--force`.
+
+- **`changes --author NAME` lists only that author's changes** (#1690). The match is exact and the flag repeats. It filters text and JSON output in the binary, Python CLI and npm CLI. The Python native bindings and WASM `listChanges` / `changesText` also take an optional author list. Revisions inside comment bodies remain outside the listing.
+
+- **`edit --help` shows a complete plan** (#1690). The binary and npm help also show the separate PlanV2 workflow, `edit template` then `edit apply`. Python help leaves out those routes because its CLI cannot run them.
+
+- **`validate` reports `CELL_FINAL_MARK_REVISION`** (#1669). It identifies a cell's final paragraph mark with an insertion or deletion that no matching row or cell revision covers. Word opens that shape, but Accept All or Reject All can hang. The finding blocks an edit; `--repair` does not repair it.
+
+- **Rust can check package admission before writing** (#1665). `jubarte::cli::refused_package(path, bytes)` returns a refusal message when the bytes are not an admitted Word package, or `None` when they are.
+
+- **Rust exposes release-archive signature verification** (#1705). `jubarte::update::verify_signature` takes an archive path and a slice of `ReleaseKey` public keys. It checks zipsign `.tar.gz`, `.tgz` and `.zip` archives.
+
+- **Rust exposes border and cell-margin order tables** (#1712). `jubarte::comparer::order_tables` adds `TCBORDERS_ORDER`, `TBLBORDERS_ORDER`, `PBDR_ORDER` and `CELL_MARGINS_ORDER`.
+
+- **Rust has more cached XML-name helpers** (#1669, #1694, #1712, #1716, #1720). `jubarte::namespaces` adds `W::custom_xml`, `M::r`, `M::r_pr`, `M::o_math`; `W::proof_err`, `W::comment_range_start`, `W::comment_range_end`, `W::comment_reference`, `W::perm_start`, `W::perm_end`; `W::grid_col`, `W::type_`, `W::shd`, `W::fill`; `W::rsid_r`, `W::rsid_tr`, `W14::para_id`; and `W::w`. Each returns a cached `XName`.
+
+### Changed
+
+- **`validate --repair` says what it checked** (#1665). The binary and Python CLI print `structure only`, followed by either `history not checked (--original, --author)` or notice that the history check follows. Add `--original` and `--author` to check history. A history failure still exits 2 after repair.
+
+### Fixed
+
+- **Edits split formatting history without repeating its id** (#1656). Under `existing_revisions: "keep"`, splitting a run gives copied formatting records fresh ids. The original fragment keeps its id, author, date and old properties.
+
+- **Formatting-history checks recognize split records** (#1659). `validate --original ORIGINAL --author NAME` and typed edit plans compare the recorded properties and the text they cover. A legitimate split no longer reports new foreign history or refuses the edit merely because its copies have new ids.
+
+- **New words do not acquire another author's formatting history** (#1658). Inserted and replacement text gets separate runs without the earlier formatting record. This applies to the clean copy and to tracked replay inside the editor's own insertion.
+
+- **A formatting range stops between text elements in one run** (#1658). Formatting that ends at the end of one `w:t` no longer spills into the next `w:t` in that run.
+
+- **Typed replacements keep the words they keep inside existing insertions** (#1658). The clean copy preserves the earlier insertion record on unchanged words. A replacement's comment covers its new edge words in the redline as well as the clean copy.
+
+- **`edit` refuses new duplicate revision ids before writing files** (#1665). A clean copy or redline that adds a same-kind duplicate fails with `CANDIDATE_INVALID`. Existing duplicates pass unless the edit adds another occurrence. The refusal names the output, part, record type and id.
+
+- **`validate` finds XML parts by content type too** (#1665). Word XML stored under a name such as `word/main.dat` is checked. Custom XML data is excluded from revision-id and paragraph-id checks and their repairs.
+
+- **Revision-id checks and repairs handle range markers** (#1665). Duplicate range starts and the range ends that require unique ids are reported. Case variants of `customXmlDelRangeStart`, `customXmlDelRangeEnd` and `moveToRangeStart` ids count as the same id. Repair renumbers a duplicate start with its matching end; it does not rename an end on its own.
+
+- **Strict DOCX translation reads XML parts without an `.xml` name** (#1665). It leaves custom XML data and parts that are not UTF-8 untouched.
+
+- **An invalid `--original` stops repair before it writes** (#1665). In the binary and Python CLI, `validate --repair OUT --original ORIGINAL --author NAME` checks that ORIGINAL can be read as a Word package before repairing the input.
+
+- **One plan can replace a cell's only paragraph** (#1668). `edit` allows paragraph insertion beside a paragraph the plan deletes. Deleting every paragraph of a cell or story leaves an empty final paragraph with its closing mark kept. Both legacy and typed plans use this rule.
+
+- **Tracked paragraph deletion refuses equations and subdocuments it cannot track** (#1668). Under `existing_revisions: "keep"`, deleting a paragraph containing an equation or subdocument is refused. Apply that operation without `keep` to use the comparer path.
+
+- **Tracked final-paragraph edits protect existing records** (#1668, #1669). Under `existing_revisions: "keep"`, a replacement or append is refused if its formatting would undo a retained formatting record. Appending after a final paragraph whose mark is already tracked is also refused.
+
+- **Markdown paragraph replacements stay in their cell or story** (#1668). Replacing a paragraph whole anchors the new paragraph on the one it replaces. A paragraph added after it follows the replacement.
+
+- **Table redlines avoid the final-mark revision that hangs Word** (#1669, #1684). In both comparison modes and tracked edit replay, a cell's final paragraph mark carries no insertion or deletion without a matching row or cell revision. This also covers cells in nested tables, notes, headers, footers and text boxes.
+
+- **Resolving a row or cell also resolves its final paragraph marks** (#1679). Selective `accept` and `reject` take the matching insertion or deletion off those marks, including nested cells covered by the same revision. A nested row revised on its own stays separate.
+
+- **Candidate refusals name the operation that causes them** (#1681). `CANDIDATE_INVALID` messages name the operation and target, with any earlier operations it needs. Typed plans use `/operations/N`. A refusal that also occurs without operations stays at plan level; codes and exit statuses stay the same.
+
+- **`edit --skip-failed` can skip an operation that fails the candidate checks** (#1681). It leaves out the named operation and prepares the remaining plan instead of refusing the whole plan for lack of an operation id.
+
+- **`accept` and `reject` keep block content controls where Word keeps them** (#1694). When paragraph marks resolve, a control stays around the joined paragraph if the other paragraph contributes no surviving content. It can become inline when both sides contribute content. Multi-paragraph boundaries keep their marks where Word does.
+
+- **Comparison removes inherited shading and table schema errors** (#1712). Redlines drop empty shading fills and `gridCol/@w:type`, keeping other shading attributes and column widths. Cell and table-cell margins are ordered `top, left, start, bottom, right, end`. This includes saved property snapshots and tables in comments; identical-input comparisons still return the source unchanged.
+
+- **Comparison keeps cell borders in schema order** (#1712). A valid border set containing both `left` and `start` no longer becomes invalid in the redline.
+
+- **Rejecting paragraph formatting keeps the live section break** (#1708). `reject` no longer merges two sections when the section's last paragraph has a formatting revision. Saved paragraph properties cannot add a stale section break or duplicate the live paragraph-mark properties.
+
+- **Rejecting an inserted row removes it even when its properties changed** (#1713). `reject` also removes a wholly inserted table whose rows carry property revisions. Selective rejection by author follows the same rule.
+
+- **PDF and PNG conversion fits more tables without saved Word widths** (#1716). An autofit table with an automatic table width can fit its content when every grid column has a cell without its own width. Missing cell widths, automatic widths and zero dxa widths qualify. The new rule keeps the grid for tables carrying Word save marks and for columns whose cells all specify widths.
+
+- **Fitted table columns account for pictures, nested tables and spans** (#1716). PDF and PNG conversion includes picture widths and nested-table grids, and shares a spanning cell's content across its columns. Overlong words no longer push the fitted table past the available width. A cell without its own width no longer takes the first nested cell's width.
+
+- **A grid column's `w:type` no longer forces content fitting** (#1720). PDF and PNG conversion keeps a numeric grid when the cells specify their widths, with or without that attribute. A missing or nonnumeric grid width triggers content fitting on its own.
+
+### Security
+
+- **No `block-buffer` 0.10.4 in any build** (#1705, GHSA-qwgh-2vcv-g2f7). `jubarte self-update` checks zipsign signatures itself (`src/update/zipsign.rs`, on ed25519-dalek 3) instead of through `self_update`'s `signatures` feature, whose zipsign-api 0.2 pinned ed25519-dalek 2 and with it `block-buffer` 0.10.4. The archive format and the keys are unchanged; no release key is committed yet, so nothing is checked until one is. Cargo.lock still records the unbuilt chain, because `self_update`'s archive features name `zipsign-api?/…` (rust-lang/cargo#12937). Rust API: `jubarte::update::verify_signature` and `ReleaseKey`.
+
 ## [0.13.0] - 2026-10-22
 
 > **Summary.** Breaking: replace writes only the words that differ, so kept words keep their formatting; the marks Word writes for one edit are one logical change with a composite id (r7+8+9+10), and accept/reject take it whole; jubarte prints short ids; the timestamp flag is -d, --datetime everywhere (--date is removed); validate and audit are one command. New: edit --skip-failed applies what passes and writes a plan of the failures; visible rejects (--strike, --restore); Word math reads and writes as LaTeX; charts, fields, images and inline HTML round-trip through Markdown; check FILE --expect; typed v2 edit plans. PDFs lay out math fractions, radicals and delimiters, divide columns as Word does and update header PAGE fields; Strict OOXML packages read and compare as themselves. Dual-header and structurally inconsistent ZIP packages are refused (GHSA-m665-v7pm-7grj); rustls 0.23.46 fixes RUSTSEC-2026-0346 and -0347. Registries now publish from CI through OIDC trusted publishing. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document.
@@ -4601,6 +4719,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
 [0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
 [0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
 [0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3

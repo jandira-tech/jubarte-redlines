@@ -32,6 +32,18 @@ file — the actual proof the evidence names real files. --commit SHA and
 binary_sha256 to the release's own binary; release.sh passes neither, since
 the scored binary is a candidate built before the release commit exists
 (release_info/README.md, "Which binary the evidence names").
+
+--summary TEXT and --changelog FILE (each repeatable) check the measured
+sentence the release ships ("On two 600-item samples …: redlines mean 71.63
+(Docxodus 64.92), counting as 0 the 23 redlines …; PDFs mean 79.19
+(LibreOffice 54.61), no failed document."): every such sentence in the text,
+or in FILE's `## [VERSION]` section, must state the results' sample size,
+jubarte's and the comparator's means at two decimals (half up), the
+comparator by name, and jubarte's failures — a count that differs, failures
+left unsaid, or "no failed …" over a failure is named. A text without the
+sentence fails. release.sh step 3 passes its --changelog-summary and the
+app's CHANGELOG.md (#1753): the sentence reaches the CHANGELOG, the GitHub
+notes, the app's About window and jubarte.pro.
 """
 
 from __future__ import annotations
@@ -42,7 +54,9 @@ import hashlib
 import json
 import re
 import sys
+from bisect import bisect_right
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -105,6 +119,60 @@ JUBARTE = "jubarte"
 # "pending": true (a placeholder the site step fills) counts as present.
 FACTS_KEYS = ("engine.version", "engine.released", "release.history",
               "release.archives", "release.wheels")
+# The measured sentence: the sample size, then each sample's jubarte mean with
+# its comparator's in parentheses, each followed by its failure clause.
+MEAN = r"\d+(?:\.\d+)?"
+# The preamble may hold colons ("(see release_info: …)") but never ends a
+# sentence: it runs to the first ": redlines mean" without crossing ". " (#1773),
+# or another "N-item samples", so the size held is the one nearest the means
+# (#1775); the lookahead starts at a word boundary, so a run of digits is
+# scanned once, not at every digit (#1785).
+SENTENCE = re.compile(
+    rf"\b(?P<n>\d+)-item samples\b(?:(?!\.\s)(?!\b\d+-item samples\b).)*?:\s*"
+    rf"redlines mean (?P<redline>{MEAN}) \((?P<redline_name>[^\s()]+) (?P<redline_other>{MEAN})\)(?P<redline_tail>.*?)"
+    rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
+    rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
+)
+# the count, then the next eight words, which name what was counted,
+# adjectives included ("the 23 failed large Word document pairs") (#1777,
+# #1784, #1793)
+COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+(?:-[A-Za-z]+)*){0,8})")
+# the words that end a counted noun phrase: what follows them is not what was
+# counted ("23 PDFs instead of redlines", "23 documents without redlines")
+# (#1787), and the auxiliaries that open the clause after it ("23 redlines
+# jubarte cannot write documents for") (#1793)
+PHRASE_END = frozenset((
+    "of", "instead", "without", "with", "from", "by", "for", "in", "on", "at", "to", "into", "than",
+    "rather", "not", "no", "nor", "but", "and", "or", "that", "which", "whose", "who", "whom", "where",
+    "when", "while", "because", "as", "the", "a", "an", "their", "its", "except", "excluding", "unlike",
+    "versus", "vs",
+    "cannot", "can", "could", "would", "will", "does", "did", "do", "is", "are", "was", "were", "has",
+    "have", "had", "should", "may", "might", "must"))
+# where a sentence ends: its stop, any closing quotes or brackets, then a
+# space (#1789); the measured sentence's claims are read from the boundary
+# before its match, not from "N-item samples" (#1783)
+SENTENCE_END = re.compile(r"[.!?][\"'\u201d\u2019\u00bb)\]]*\s")
+# a blank line or a list item starts a block no sentence runs across; a
+# wrapped line stays in its block (#1789)
+BLOCK = re.compile(r"\n[^\S\n]*\n|\n(?=[^\S\n]*(?:[-*+]|\d+[.)])[^\S\n])")
+# "no failed redlines have been omitted", "… redline-pair outputs ever
+# excluded": a noun, up to four auxiliaries or adverbs, then the omission
+# verb says the failures are counted, the opposite of a claim that none
+# failed (#1783, #1788)
+OMISSION = (r"(?:-[A-Za-z]+)*(?:\s+(?:document|item|pdf|redline|conversion|comparison|pair|output|result)s?)?"
+            r"(?:\s+(?:are|is|were|was|be|been|being|have|has|had|will|would|ever|[a-z]+ly)){0,4}"
+            r"\s+(?:omitted|excluded|dropped|left out|skipped)\b")
+# "no failed …" in the measured sentence, in any case: a claim about the
+# samples. Another sentence's is not read: the checker cannot tell what it is
+# about ("No failed redlines are omitted …", a test suite's) (#1776).
+NO_FAILED = re.compile(rf"\bno failed (document|item|PDF|redline|conversion|comparison|pair)s?\b(?!{OMISSION})", re.I)
+# the nouns that speak for each sample: every one COUNTED_WORDS knows, and
+# "item", which speaks for both (#1779)
+NONE_WORDS = {"redline": ("redline", "comparison", "pair", "item"),
+              "conversion": ("document", "pdf", "conversion", "item")}
+COUNTED_WORDS = {"redline": ("redline", "comparison", "pair"), "conversion": ("document", "pdf", "conversion")}
+# the results' tool keys as the sentence names them
+DISPLAY = {"docxodus": "Docxodus", "soffice": "LibreOffice"}
 
 
 def _valid_stamp(stamp: str) -> bool:
@@ -357,6 +425,118 @@ def print_aggregates(six: dict[str, Path]) -> None:
                   f"seed {comparison.get('bootstrap', {}).get('seed')})")
 
 
+def two(value: float) -> str:
+    """A figure as the sentence states it: two decimals, half up."""
+    return str(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def sample_of(word: str) -> str | None:
+    """The sample a noun belongs to, in any case or number ("PDFS": the
+    conversion sample's) (#1792)."""
+    one = word.lower().removesuffix("s")
+    return next((kind for kind, nouns in COUNTED_WORDS.items() if one in nouns), None)
+
+
+def counted_kind(words: str) -> tuple[str | None, list[str], str]:
+    """The sample a counted phrase names, the phrase up to its noun, and the
+    noun. A noun phrase ends with its head, so the last sample noun before a
+    word that ends the phrase names it ("failed document pairs whose …": a
+    pair, the redline sample's; "PDFs instead of redlines": PDFs) (#1787).
+    After a head, a name that is no sample noun opens a clause ("redlines
+    Word crashes opening"); a hyphenated modifier is no head
+    ("redline-producing Word document pairs": pairs) (#1793)."""
+    phrase: list[str] = []
+    kind, upto, noun, headed = None, 0, "", False
+    for token in words.split():
+        parts = token.split("-")
+        if token.lower() in PHRASE_END or (headed and token[0].isupper() and not sample_of(parts[-1])):
+            break
+        phrase.append(token)
+        for part in parts:
+            if named := sample_of(part):
+                kind, upto, noun = named, len(phrase), part[:len(part.lower().removesuffix("s"))]
+        headed = headed or sample_of(parts[-1]) is not None
+    return kind, phrase[:upto], noun
+
+
+def sentence_ends(text: str) -> list[int]:
+    """Where each sentence of TEXT after the first starts, found once (#1790)."""
+    return [end.end() for end in SENTENCE_END.finditer(text)]
+
+
+def sentence_of(text: str, m: re.Match[str], ends: list[int]) -> str:
+    """The whole sentence holding the match: from the sentence boundary
+    before it (or the text's start) to the match's end."""
+    i = bisect_right(ends, m.start())
+    return text[ends[i - 1] if i else 0:m.end()]
+
+
+def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], sentence: str) -> list[str]:
+    """SENTENCE: the whole sentence M stands in, whose "no failed" claims are read."""
+    out = []
+    claims = NO_FAILED.findall(sentence)
+    for kind, noun, sample in (("redline", "redline", "redlines"), ("conversion", "PDF", "PDFs")):
+        doc = docs[f"results_{kind}"]
+        tools = doc.get("tools") or {}
+        jub = tools.get(JUBARTE) or {}
+        comparator = (doc.get("comparison") or {}).get("comparator") \
+            or next((t for t in sorted(tools) if t != JUBARTE), "")
+        other = tools.get(comparator) or {}
+        if m["n"] != str(jub.get("n")):
+            out.append(f'{where}: "{m["n"]}-item samples" — the {kind} sample holds {jub.get("n")} items')
+        if m[kind] != two(jub.get("mean", 0)):
+            out.append(f'{where}: "{sample} mean {m[kind]}" — the evidence\'s mean is {two(jub.get("mean", 0))}')
+        name = DISPLAY.get(comparator, comparator)
+        if m[f"{kind}_name"] != name:
+            out.append(f'{where}: {sample} compared with "{m[f"{kind}_name"]}" — the evidence\'s comparator is {name}')
+        elif m[f"{kind}_other"] != two(other.get("mean", 0)):
+            out.append(f'{where}: "{name} {m[f"{kind}_other"]}" — the evidence\'s {name} mean is {two(other.get("mean", 0))}')
+        failures = jub.get("failures", 0)
+        counted = COUNTED.findall(m[f"{kind}_tail"])
+        said_none = [w for w in claims if w.lower() in NONE_WORDS[kind]]
+        failed = f"{failures} failed {noun}{'' if failures == 1 else 's'}"
+        out.extend(f'{where}: {sample} "counting as 0 the {c}" — the evidence counts {failed}'
+                   for c, _ in counted if c != str(failures))
+        other_kind = "conversion" if kind == "redline" else "redline"
+        for c, w in counted:
+            named, phrase, one = counted_kind(w)
+            if named == other_kind:
+                out.append(f'{where}: {sample} "counting as 0 the {c} {" ".join(phrase)}" — a {one} '
+                           f"is the {other_kind} sample's, not the {kind} sample's")
+        counted = [c for c, _ in counted]
+        if said_none and failures:
+            out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed} '
+                       f'(to say none was left out of the mean, write "no failed {noun}s are omitted")')
+        elif failures and not counted:
+            out.append(f"{where}: {sample}: the sentence leaves out the {failed} the mean counts as 0")
+    return out
+
+
+def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
+    """Every measured sentence in TEXT against the results JSONs' aggregates."""
+    blocks = (re.sub(r"\s+", " ", block) for block in BLOCK.split(text))
+    found = [(block, matches) for block in blocks if (matches := list(SENTENCE.finditer(block)))]
+    if not found:
+        return [f"{where} carries no measured sentence (\"On two N-item samples …: redlines mean X "
+                f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\")"]
+    docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
+            for name in ("results_redline", "results_conversion")}
+    out: list[str] = []
+    for block, matches in found:
+        ends = sentence_ends(block)
+        out += [p for m in matches for p in sentence_problems(m, where, docs, sentence_of(block, m, ends))]
+    # each problem once, however many sentences repeat it
+    return list(dict.fromkeys(out))
+
+
+def changelog_section(path: Path, version: str) -> str | None:
+    """FILE's `## [VERSION]` section (either heading dash), or None; an
+    unreadable FILE raises OSError, never reads as a missing section (#1773)."""
+    text = path.read_text(encoding="utf-8")
+    m = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.M | re.S)
+    return m.group(1) if m else None
+
+
 def problems(version: str, folder: Path, rows: int, bench_root: Path | None = None,
              want_commit: str | None = None, want_sha: str | None = None) -> list[str]:
     six, found = find_six(folder, version)
@@ -391,6 +571,10 @@ def main(argv: list[str] | None = None) -> int:
                                      "tools.jubarte.commit must equal it")
     ap.add_argument("--binary-sha256", help="the scored binary's sha256 (64 hex); "
                                             "tools.jubarte.binary_sha256 must equal it")
+    ap.add_argument("--summary", action="append", default=[], metavar="TEXT",
+                    help="a release summary that must carry the measured sentence (repeatable)")
+    ap.add_argument("--changelog", action="append", default=[], type=Path, metavar="FILE",
+                    help="a changelog whose VERSION section must carry the measured sentence (repeatable)")
     args = ap.parse_args(argv)
     if not VERSION.fullmatch(args.version):
         print(f"not a release version: {args.version}", file=sys.stderr)
@@ -422,6 +606,31 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("  (sha256 columns format-checked only — pass --bench-root <bench checkout> "
               "to verify them against the real files)")
+    texts = [(f"--summary #{i}" if len(args.summary) > 1 else "--summary", s)
+             for i, s in enumerate(args.summary, 1)]
+    wrong = []
+    for path in args.changelog:
+        try:
+            section = changelog_section(path, args.version)
+        except (OSError, UnicodeDecodeError) as e:
+            wrong.append(f"cannot read {path} ({getattr(e, 'strerror', None) or e})")
+            continue
+        if section is None:
+            wrong.append(f"{path} has no ## [{args.version}] section")
+        else:
+            texts.append((f"{path} ## [{args.version}]", section))
+    six, _ = find_six(folder, args.version)
+    for where, text in texts:
+        found = measured_problems(text, where, six)
+        wrong += found
+        if not found:
+            print(f"  the measured sentence in {where} states the evidence's aggregates")
+    for p in wrong:
+        print(f"  ✗ {p}", file=sys.stderr)
+    if wrong:
+        print("the measured sentence does not state release_info/'s aggregates: correct the text "
+              "(the evidence's figures are above, at two decimals)", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! WebAssembly bindings for the canonical **jubarte-redlines** Word-mode compare.
 //!
 //! Built with **wasm-pack** + **wasm-opt -O3** (Binaryen) — the standard
@@ -124,11 +128,14 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
 /// `move_name`, `move_side`, `inside`, `holds_comments` when the change
 /// holds comment marks, and `members` (each mark's `id`, `kind`,
 /// `target`, `date` and `text`) for a change of several marks.
+/// `authors` keeps those authors' changes (exact names), as `jubarte
+/// changes --author`; omitted or empty, every change.
 ///
-/// Mirrors `jubarte::changes::list_logical_changes`.
+/// Mirrors `jubarte::changes::list_logical_changes` and `by_authors`.
 #[wasm_bindgen(js_name = listChanges)]
-pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
+pub fn list_changes(docx: &[u8], authors: Option<Vec<String>>) -> Result<String, JsValue> {
     let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::by_authors(changes, &authors.unwrap_or_default());
     serde_json::to_string(&changes).map_err(js_err)
 }
 
@@ -154,11 +161,13 @@ pub fn list_comments(
 /// The listing `jubarte changes` prints: a line per change with its short
 /// id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
 /// for a change Word wrote as several marks), then `N change(s)`.
+/// `authors` filters as in [`listChanges`](list_changes).
 ///
 /// Mirrors `jubarte::changes::changes_text`.
 #[wasm_bindgen(js_name = changesText)]
-pub fn changes_text(docx: &[u8]) -> Result<String, JsValue> {
+pub fn changes_text(docx: &[u8], authors: Option<Vec<String>>) -> Result<String, JsValue> {
     let changes = jubarte::changes::list_logical_changes(docx).map_err(js_err)?;
+    let changes = jubarte::changes::by_authors(changes, &authors.unwrap_or_default());
     Ok(jubarte::changes::changes_text(&changes))
 }
 
@@ -636,7 +645,7 @@ fn for_edit_of(docx: &[u8], options_json: Option<&str>) -> Result<String, String
         })
         .transpose()?;
     let args = jubarte::cli::ReadArgs {
-        paragraphs: options.paragraphs,
+        paragraphs: options.paragraphs.into_iter().collect(),
         head: options.head,
         tail: options.tail,
         find: options.find,
@@ -2385,7 +2394,7 @@ mod tests {
     #[test]
     fn listings_are_the_binary_text() {
         let docx = word("Due in {~~30~>45~~} days.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
-        let changes = changes_text(&docx).unwrap();
+        let changes = changes_text(&docx, None).unwrap();
         // Word typing order writes the deletion, then the insertion; the
         // listing is the binary's: one logical change of both marks, by the
         // neutral default author (#916).

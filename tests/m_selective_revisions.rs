@@ -594,7 +594,27 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
                     || story != "body"
                         && part_string(&partial, &format!("word/{story}.xml")).is_none()
             };
-            if !left.is_subset(&expected) || expected.difference(&left).any(|id| !story_went(id)) {
+            // A cell's final mark inserted or deleted with its row goes
+            // with the row (#1669): the two resolve together.
+            let with_row = |id: &str| {
+                let Some(c) = by_id.get(id) else {
+                    return false;
+                };
+                c.target == "paragraph_mark"
+                    && c.inside
+                        .as_deref()
+                        .and_then(|h| by_id.get(h))
+                        .is_some_and(|holder| {
+                            matches!(holder.target, "table_row" | "table_cell")
+                                && holder.kind == c.kind
+                                && selected(holder)
+                        })
+            };
+            if !left.is_subset(&expected)
+                || expected
+                    .difference(&left)
+                    .any(|id| !story_went(id) && !with_row(id))
+            {
                 let mut lost: Vec<_> = expected.difference(&left).collect();
                 let mut stayed: Vec<_> = left.difference(&expected).collect();
                 lost.sort();
@@ -1228,4 +1248,241 @@ fn cli_id_selection_reports_comment_body_changes_left() {
         stderr.contains("2 tracked changes inside comments were left"),
         "{stderr}"
     );
+}
+
+/// A table whose second row the revision inserts (`inserted`) or deletes:
+/// the row's revision is `w:id="1"`, its two cells' final marks `2` and
+/// `4`, their words `3` and `5`, as Word writes a row added or removed
+/// whole.
+fn revised_row(inserted: bool) -> Vec<u8> {
+    let (kind, text) = if inserted {
+        ("ins", "t")
+    } else {
+        ("del", "delText")
+    };
+    let cell = |mark: u32, words: u32, value: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p></w:tc>"#
+        )
+    };
+    let plain = |value: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    docx(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr>{}{}</w:tr></w:tbl><w:p/>"#,
+        plain("Kept."),
+        plain("Also kept."),
+        cell(2, 3, "Left."),
+        cell(4, 5, "Right.")
+    ))
+}
+
+/// Resolving only a row's insertion or deletion so the row stays resolves
+/// the same revision on its cells' final marks, which Word writes only
+/// with the row's: left on them, Word's Accept All or Reject All never
+/// returns (#1679, #1669). The cells' words stay tracked.
+#[test]
+fn resolving_a_row_alone_takes_its_cells_final_marks_along() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let source = revised_row(inserted);
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(
+            report.ok(),
+            "{name}: {:?}\n{}",
+            report.errors,
+            part_string(&partial, "word/document.xml").unwrap()
+        );
+        let mut left = ids(&partial);
+        left.sort();
+        assert_eq!(left, ["r3", "r5"], "{name}: the words stay tracked");
+    }
+}
+
+/// The same with a nested table in the row's cell whose own row carries
+/// no revision, as Open-Xml-PowerTools writes it: the outer row's revision
+/// covers the nested cell's final mark, so resolving the row alone takes
+/// that mark along too (#1684, G2 of #1680's round 9).
+#[test]
+fn resolving_a_row_alone_takes_its_nested_cells_final_marks_along() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let (kind, text) = if inserted {
+            ("ins", "t")
+        } else {
+            ("del", "delText")
+        };
+        let marked = |mark: u32, words: u32, value: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p>"#
+            )
+        };
+        let nested = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
+            marked(6, 7, "Inner.")
+        );
+        let source = docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kept.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{nested}{}</w:tc></w:tr></w:tbl><w:p/>"#,
+            marked(2, 3, "Outer.")
+        ));
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(
+            report.ok(),
+            "{name}: {:?}\n{}",
+            report.errors,
+            part_string(&partial, "word/document.xml").unwrap()
+        );
+        let mut left = ids(&partial);
+        left.sort();
+        assert_eq!(left, ["r3", "r7"], "{name}: the words stay tracked");
+    }
+}
+
+/// A cell of the resolved row that carries the row's revision itself
+/// (`w:cellIns`, `w:cellDel`) covers its own final mark, as a nested row
+/// does: resolving the row alone leaves that cell's revision, its final
+/// mark and its words tracked (CodeRabbit on #1680, round 11).
+#[test]
+fn a_cell_revised_on_its_own_stays_when_its_row_resolves() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let (kind, text, cell_kind) = if inserted {
+            ("ins", "t", "cellIns")
+        } else {
+            ("del", "delText", "cellDel")
+        };
+        let cell = |own: &str, mark: u32, words: u32, value: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{own}</w:tcPr><w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p></w:tc>"#
+            )
+        };
+        let plain = |value: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{value}</w:t></w:r></w:p></w:tc>"#
+            )
+        };
+        let source = docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr>{}{}</w:tr></w:tbl><w:p/>"#,
+            plain("Kept."),
+            plain("Also kept."),
+            cell("", 2, 3, "Left."),
+            cell(&format!(r#"<w:{cell_kind} w:id="8" {A}/>"#), 4, 5, "Right.")
+        ));
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let xml = part_string(&partial, "word/document.xml").unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(report.ok(), "{name}: {:?}\n{xml}", report.errors);
+        assert!(xml.contains(&format!("<w:{cell_kind} ")), "{name}: {xml}");
+        let mark = format!(r#"<w:rPr><w:{kind} w:id="4""#);
+        assert!(
+            xml.contains(&mark),
+            "{name}: the cell's own mark stays: {xml}"
+        );
+        assert!(
+            !xml.contains(&format!(r#"<w:rPr><w:{kind} w:id="2""#)),
+            "{name}: the other cell's mark goes with the row: {xml}"
+        );
+    }
+}
+
+/// A nested row that carries the outer row's revision itself covers its
+/// own cells: resolving the outer row alone leaves that row, its cell's
+/// final mark and its words tracked (CodeRabbit on #1680).
+#[test]
+fn a_nested_row_revised_on_its_own_stays_when_its_outer_row_resolves() {
+    for (inserted, name, resolve) in [
+        (
+            true,
+            "accept the inserted row",
+            accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+        ),
+        (false, "reject the deleted row", reject_elements),
+    ] {
+        let (kind, text) = if inserted {
+            ("ins", "t")
+        } else {
+            ("del", "delText")
+        };
+        let marked = |mark: u32, words: u32, value: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="{mark}" {A}/></w:rPr></w:pPr><w:{kind} w:id="{words}" {A}><w:r><w:{text}>{value}</w:{text}></w:r></w:{kind}></w:p>"#
+            )
+        };
+        let nested = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="1800" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1800"/></w:tblGrid><w:tr><w:trPr><w:{kind} w:id="8" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="1800" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>"#,
+            marked(6, 7, "Inner.")
+        );
+        let source = docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kept.</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:{kind} w:id="1" {A}/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{nested}{}</w:tc></w:tr></w:tbl><w:p/>"#,
+            marked(2, 3, "Outer.")
+        ));
+        assert!(check_word_valid_package(&source).ok(), "{name}: source");
+        let partial = resolve(&source, &filter_ids(&["r1"])).unwrap();
+        let report = check_word_valid_package(&partial);
+        assert!(
+            report.ok(),
+            "{name}: {:?}\n{}",
+            report.errors,
+            part_string(&partial, "word/document.xml").unwrap()
+        );
+        let mut left = ids(&partial);
+        left.sort();
+        assert_eq!(
+            left,
+            ["r3", "r6", "r7", "r8"],
+            "{name}: the nested row stays"
+        );
+    }
+}
+
+/// #1713: rejecting Ann's changes drops the row Ann inserted, though Ann
+/// also changed its properties.
+#[test]
+fn rejecting_an_authors_row_insertion_drops_it_with_its_property_change() {
+    let row = |pr: &str, text: &str| {
+        format!(
+            r#"<w:tr><w:trPr>{pr}</w:trPr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let ann =
+        format!(r#"<w:ins w:id="1" {A}/><w:trPrChange w:id="2" {A}><w:trPr/></w:trPrChange>"#);
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>{}{}</w:tbl><w:p/>"#,
+        row("", "Kept row."),
+        row(&ann, "Ann's row.")
+    );
+    let filter = ChangeFilter {
+        authors: Some(vec!["Ann".into()]),
+        ..Default::default()
+    };
+    let out = reject_changes(&docx(&body), &filter).unwrap();
+    assert_word_valid_package(&out);
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert!(!xml.contains("Ann's row."), "{xml}");
+    assert!(xml.contains("Kept row."), "{xml}");
 }

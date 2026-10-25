@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Reproduce release diagnostics in a new directory using a supplied binary.
 
 Usage: python probe_release.py --binary /path/to/jubarte --out-dir /new/probe-dir

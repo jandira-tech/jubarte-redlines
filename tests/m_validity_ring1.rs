@@ -2277,3 +2277,568 @@ fn a_data_binding_whose_store_the_main_part_reaches_passes_ring1() {
         report.findings
     );
 }
+
+/// Two `w:customXmlInsRangeStart` may not share an id (OpenXmlValidator:
+/// `Sem_UniqueAttributeValue`); a start and its end do. Repair gives the
+/// second start and its end one fresh id (#1665).
+#[test]
+fn custom_xml_range_starts_take_unique_ids() {
+    let range = |id: u32| {
+        format!(
+            r#"<w:customXmlInsRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:customXmlInsRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let duplicates = |bytes: &[u8]| {
+        jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+            .into_iter()
+            .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+            .count()
+    };
+    let unique = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(6)));
+    assert_eq!(duplicates(&unique), 0);
+    // The two starts and the two ends each share an id.
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5), range(5)));
+    assert_eq!(duplicates(&bytes), 2);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicates(&repaired.docx), 0);
+    // The end goes with the start that is renumbered: both are repaired.
+    let repaired_duplicates = repaired
+        .repaired
+        .iter()
+        .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+        .count();
+    assert_eq!(repaired_duplicates, 2, "{:?}", repaired.repaired);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    let ids = |tag: &str| -> Vec<String> {
+        xml.match_indices(&format!("<w:{tag} w:id=\""))
+            .map(|(at, m)| {
+                let id = &xml[at + m.len()..];
+                id[..id.find('"').unwrap()].to_string()
+            })
+            .collect()
+    };
+    let (starts, ends) = (ids("customXmlInsRangeStart"), ids("customXmlInsRangeEnd"));
+    assert_eq!(starts, ends, "{xml}");
+    assert_eq!(starts[0], "5", "{xml}");
+    assert_ne!(starts[1], "5", "{xml}");
+}
+
+fn duplicate_revision_ids(bytes: &[u8]) -> usize {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+        .count()
+}
+
+/// Range ends of one kind take unique ids too: OpenXmlValidator refuses
+/// two `w:customXmlInsRangeEnd`, or two `w:moveFromRangeEnd`, that share
+/// one (`Sem_UniqueAttributeValue`), and lets two
+/// `w:customXmlMoveToRangeEnd` share one. Repair renames no end on its own:
+/// it cannot tell which start an end closes (Codex on #1666).
+#[test]
+fn range_ends_of_one_kind_take_unique_ids() {
+    let ends = |start: &str, end: &str| {
+        common::docx::docx(&format!(
+            r#"<w:p><w:{start} w:id="7" w:name="m" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:{end} w:id="9"/></w:p><w:p><w:{start} w:id="8" w:name="n" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>b</w:t></w:r><w:{end} w:id="9"/></w:p>"#
+        ))
+    };
+    for kind in [
+        "customXmlIns",
+        "customXmlDel",
+        "customXmlMoveFrom",
+        "moveFrom",
+        "moveTo",
+    ] {
+        let bytes = ends(&format!("{kind}RangeStart"), &format!("{kind}RangeEnd"));
+        assert_eq!(duplicate_revision_ids(&bytes), 1, "{kind}");
+        // So the finding is not one repair fixes, and the package comes back
+        // as it was (CodeRabbit on #1666).
+        let findings = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap());
+        assert!(
+            findings
+                .iter()
+                .filter(|f| f.code == "DUPLICATE_REVISION_ID")
+                .all(|f| !f.repairable),
+            "{kind}: {findings:?}"
+        );
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        assert_eq!(repaired.docx, bytes, "{kind}");
+        assert!(repaired.repaired.is_empty(), "{kind}");
+        let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+        assert_eq!(
+            xml.matches(&format!(r#"<w:{kind}RangeEnd w:id="9""#))
+                .count(),
+            2,
+            "{kind}: {xml}"
+        );
+    }
+    let bytes = ends("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd");
+    assert_eq!(duplicate_revision_ids(&bytes), 0);
+}
+
+/// OpenXmlValidator compares `w:customXmlDelRangeStart` and
+/// `w:customXmlDelRangeEnd` ids case-blind: `ABC` and `abc` repeat
+/// (Codex on #1666).
+#[test]
+fn custom_xml_deletion_ids_repeat_whatever_their_case() {
+    let range = |id: &str| {
+        format!(
+            r#"<w:customXmlDelRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r><w:customXmlDelRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range("ABC"), range("abc")));
+    assert_eq!(duplicate_revision_ids(&bytes), 2);
+}
+
+/// A custom XML data part holds the application's XML, not
+/// WordprocessingML: OpenXmlValidator checks no revision id in it, whatever
+/// its name, and repair leaves it alone (Codex on #1666).
+#[test]
+fn custom_xml_data_holds_no_revision_ids() {
+    const CUSTOM_XML: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+    let data = r#"<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="5"/><w:ins w:id="5"/></root>"#;
+    for name in ["customXml/item1.xml", "customXml/item1.dat"] {
+        let mut pkg =
+            PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+        pkg.set_part(name, data.as_bytes().to_vec());
+        pkg.add_content_type_override(&format!("/{name}"), "application/xml");
+        pkg.add_document_relationship("word/document.xml", CUSTOM_XML, &format!("../{name}"));
+        let bytes = pkg.to_zip().unwrap();
+        assert_eq!(duplicate_revision_ids(&bytes), 0, "{name}");
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        let held = PartFs::open(&repaired.docx).unwrap();
+        assert_eq!(held.part_bytes(name), Some(data.as_bytes()), "{name}");
+    }
+}
+
+/// Nor paragraph ids: `PARA_ID_OUT_OF_RANGE` reads no custom XML data
+/// part, and the renumbering a document's own paraId sets off leaves the
+/// data's bytes alone (codex on #1666).
+#[test]
+fn custom_xml_data_holds_no_paragraph_ids() {
+    const CUSTOM_XML: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+    const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let data = format!(r#"<root xmlns:w14="{W14}" w14:paraId="FFFFFFFF"/>"#);
+    for name in ["customXml/item1.xml", "customXml/item1.dat"] {
+        let body = format!(
+            r#"<w:p xmlns:w14="{W14}" w14:paraId="80000001"><w:r><w:t>x</w:t></w:r></w:p>"#
+        );
+        let mut pkg = PartFs::open(&common::docx::docx(&body)).unwrap();
+        pkg.set_part(name, data.as_bytes().to_vec());
+        pkg.add_content_type_override(&format!("/{name}"), "application/xml");
+        pkg.add_document_relationship("word/document.xml", CUSTOM_XML, &format!("../{name}"));
+        let bytes = pkg.to_zip().unwrap();
+        let flagged: Vec<String> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+            .into_iter()
+            .filter(|f| f.code == "PARA_ID_OUT_OF_RANGE")
+            .map(|f| f.part)
+            .collect();
+        assert_eq!(flagged, ["word/document.xml"], "{name}");
+        let repaired = jubarte::validate::repair(&bytes).unwrap();
+        let held = PartFs::open(&repaired.docx).unwrap();
+        assert_eq!(held.part_bytes(name), Some(data.as_bytes()), "{name}");
+    }
+}
+
+/// Repair renames the end that closes a renumbered start, not an element
+/// of another namespace that shares its local name and id (Codex on
+/// #1666).
+#[test]
+fn repair_renames_the_range_end_in_wordprocessingml() {
+    let range = |id: u32, extra: &str| {
+        format!(
+            r#"<w:customXmlInsRangeStart w:id="{id}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>a</w:t></w:r>{extra}<w:customXmlInsRangeEnd w:id="{id}"/>"#
+        )
+    };
+    let other = r#"<x:customXmlInsRangeEnd xmlns:x="urn:example:other" w:id="5"/>"#;
+    let bytes = common::docx::docx(&format!("<w:p>{}{}</w:p>", range(5, ""), range(5, other)));
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicate_revision_ids(&repaired.docx), 0);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"<x:customXmlInsRangeEnd xmlns:x="urn:example:other" w:id="5""#),
+        "{xml}"
+    );
+}
+
+const CUSTOM_XML_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+
+/// Two insertions in one paragraph sharing `w:id` 5.
+const TWO_FIVES: &str = r#"<w:p><w:ins w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:r><w:t>a</w:t></w:r></w:ins><w:ins w:id="5" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:r><w:t>b</w:t></w:r></w:ins></w:p>"#;
+
+/// A Word story stays checked whatever `customXml` relationship also
+/// reaches it: only a part that nothing but `customXml` relationships
+/// reach is custom XML data, and a type that merely ends in `/customXml`
+/// is no `customXml` relationship (codex and crush on #1666, round 6).
+#[test]
+fn a_word_story_stays_checked_whatever_custom_xml_relationship_reaches_it() {
+    for rel_type in ["urn:application/customXml", CUSTOM_XML_REL] {
+        let mut pkg = PartFs::open(&common::docx::docx(TWO_FIVES)).unwrap();
+        pkg.add_document_relationship("word/document.xml", rel_type, "document.xml");
+        assert_eq!(
+            duplicate_revision_ids(&pkg.to_zip().unwrap()),
+            1,
+            "main document, {rel_type}"
+        );
+    }
+    const HEADER_REL: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+    let header = format!(
+        r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{TWO_FIVES}</w:hdr>"#
+    );
+    let mut pkg = PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+    pkg.set_part("word/header1.xml", header.into_bytes());
+    pkg.add_content_type_override(
+        "/word/header1.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    pkg.add_document_relationship("word/document.xml", HEADER_REL, "header1.xml");
+    pkg.add_document_relationship("word/document.xml", CUSTOM_XML_REL, "header1.xml");
+    assert_eq!(duplicate_revision_ids(&pkg.to_zip().unwrap()), 1, "header");
+}
+
+/// Custom XML data the package's own relationships reach is data too
+/// (glm-5.3 on #1666, round 6).
+#[test]
+fn custom_xml_data_the_package_reaches_holds_no_revision_ids() {
+    let data = r#"<root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:ins w:id="5"/><w:ins w:id="5"/></root>"#;
+    let mut pkg = PartFs::open(&common::docx::docx("<w:p><w:r><w:t>x</w:t></w:r></w:p>")).unwrap();
+    pkg.set_part("customXml/item1.xml", data.as_bytes().to_vec());
+    pkg.add_content_type_override("/customXml/item1.xml", "application/xml");
+    pkg.add_package_relationship(CUSTOM_XML_REL, "customXml/item1.xml");
+    assert_eq!(duplicate_revision_ids(&pkg.to_zip().unwrap()), 0);
+}
+
+/// Repair pairs a renumbered start with its end by the key the duplicate
+/// check reads: `customXmlDelRange` ids compare case-blind, so the end
+/// `ABC` that follows the start `abc` is its end (MiniMax on #1666,
+/// round 6).
+#[test]
+fn repair_pairs_a_case_blind_range_end_with_its_start() {
+    let range = |start: &str, end: &str, text: &str| {
+        format!(
+            r#"<w:customXmlDelRangeStart w:id="{start}" w:author="Alice" w:date="2026-10-17T09:00:00Z"/><w:r><w:t>{text}</w:t></w:r><w:customXmlDelRangeEnd w:id="{end}"/>"#
+        )
+    };
+    let bytes = common::docx::docx(&format!(
+        "<w:p>{}{}</w:p>",
+        range("ABC", "abc", "a"),
+        range("abc", "ABC", "b")
+    ));
+    assert_eq!(duplicate_revision_ids(&bytes), 2);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(duplicate_revision_ids(&repaired.docx), 0);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    let ids = |tag: &str| -> Vec<String> {
+        xml.match_indices(&format!("<w:{tag} w:id=\""))
+            .map(|(at, m)| {
+                let id = &xml[at + m.len()..];
+                id[..id.find('"').unwrap()].to_string()
+            })
+            .collect()
+    };
+    let (starts, ends) = (ids("customXmlDelRangeStart"), ids("customXmlDelRangeEnd"));
+    assert_eq!(
+        (starts[0].as_str(), ends[0].as_str()),
+        ("ABC", "abc"),
+        "{xml}"
+    );
+    assert_eq!(starts[1], ends[1], "{xml}");
+    assert!(!starts[1].eq_ignore_ascii_case("abc"), "{xml}");
+}
+
+/// A one-row table whose two cells hold `cells`, the row's properties
+/// `tr_pr`, in a document.
+fn table_package(tr_pr: &str, cells: [&str; 2]) -> Vec<u8> {
+    let cell = |content: &str| {
+        format!(r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{content}</w:tc>"#)
+    };
+    common::docx::docx(&format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{tr_pr}{}{}</w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        cell(cells[0]),
+        cell(cells[1])
+    ))
+}
+
+/// A paragraph whose mark carries `revision` (`ins` or `del`, or none).
+fn marked(text: &str, revision: Option<&str>) -> String {
+    let mark = revision.map_or(String::new(), |kind| {
+        format!(
+            r#"<w:pPr><w:rPr><w:{kind} w:id="{}" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:rPr></w:pPr>"#,
+            text.bytes().map(u32::from).sum::<u32>()
+        )
+    });
+    format!("<w:p>{mark}<w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+fn cell_final_marks(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "CELL_FINAL_MARK_REVISION")
+        .collect()
+}
+
+/// Word opens a table cell whose final paragraph mark is inserted or
+/// deleted while its row is not, but Accept All or Reject All never
+/// returns (#1669: `zapk`, `z2c`, `z3c`, `zap`, Word 16, 2026-10-23).
+/// Word's own Compare never writes it: the revision goes on the mark
+/// before. An error, not Word-fatal (the file opens), not repairable.
+#[test]
+fn probe_a_revision_on_a_cells_final_mark_fails() {
+    for kind in ["ins", "del"] {
+        let bytes = table_package(
+            "",
+            [
+                &format!("{}{}", marked("Old.", None), marked("New.", Some(kind))),
+                &marked("B.", None),
+            ],
+        );
+        let found = cell_final_marks(&bytes);
+        assert_eq!(found.len(), 1, "{kind}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.part, "word/document.xml");
+        assert_eq!(
+            finding.location,
+            "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+        );
+        assert_eq!(finding.severity, "error", "{finding:?}");
+        assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+        assert!(
+            finding.message.contains(&format!("w:{kind}")),
+            "{finding:?}"
+        );
+        assert!(!check_word_valid_package(&bytes).ok());
+    }
+    // A cell's only paragraph, and one in a block content control.
+    let only = table_package("", [&marked("New.", Some("ins")), &marked("B.", None)]);
+    assert_eq!(cell_final_marks(&only).len(), 1);
+    let wrapped = table_package(
+        "",
+        [
+            &format!(
+                r#"{}<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
+                marked("Old.", None),
+                marked("New.", Some("del"))
+            ),
+            &marked("B.", None),
+        ],
+    );
+    assert_eq!(cell_final_marks(&wrapped).len(), 1);
+}
+
+/// Only the stories Accept or Reject All walks count: the same cell in
+/// the glossary's building blocks is no story, and the comparer copies it
+/// as it was (`a_part_that_is_no_story_is_copied_as_it_was`); in a header
+/// it is one (codex on #1680).
+#[test]
+fn a_cells_final_mark_counts_only_in_a_story() {
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let table = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl><w:p/>"#,
+        marked("Old.", None),
+        marked("New.", Some("ins"))
+    );
+    let document = format!(
+        r#"<w:document xmlns:w="{W}" xmlns:r="{R}"><w:body><w:p><w:r><w:t>Body.</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr></w:body></w:document>"#
+    );
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{R}/glossaryDocument" Target="glossary/document.xml"/><Relationship Id="rId2" Type="{R}/header" Target="header1.xml"/></Relationships>"#
+    );
+    let glossary = format!(
+        r#"<w:glossaryDocument xmlns:w="{W}"><w:docParts><w:docPart><w:docPartPr><w:name w:val="Block"/></w:docPartPr><w:docPartBody>{table}</w:docPartBody></w:docPart></w:docParts></w:glossaryDocument>"#
+    );
+    let header = format!(r#"<w:hdr xmlns:w="{W}">{table}</w:hdr>"#);
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &document),
+        ("word/_rels/document.xml.rels", &rels),
+        ("word/glossary/document.xml", &glossary),
+        ("word/header1.xml", &header),
+    ]);
+    let parts: Vec<String> = cell_final_marks(&bytes)
+        .into_iter()
+        .map(|f| f.part)
+        .collect();
+    assert_eq!(parts, ["word/header1.xml"]);
+}
+
+/// Word's own shapes pass: the revision on the mark before the cell's
+/// last (an append, as Word's Compare writes it), and every mark of an
+/// inserted or deleted row revised with the row (`w:trPr/w:ins`,
+/// `w:trPr/w:del`; Word 16 Compare, 2026-10-23, #1669). The body's
+/// final mark is not a cell's: Word resolves it (#1669, `zbap`, `zbak`).
+#[test]
+fn word_shapes_of_a_cells_final_mark_pass() {
+    let append = table_package(
+        "",
+        [
+            &format!("{}{}", marked("Old.", Some("ins")), marked("New.", None)),
+            &marked("B.", None),
+        ],
+    );
+    assert_eq!(cell_final_marks(&append), []);
+    for kind in ["ins", "del"] {
+        let row = table_package(
+            &format!(
+                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
+            ),
+            [&marked("C.", Some(kind)), &marked("D.", Some(kind))],
+        );
+        assert_eq!(cell_final_marks(&row), [], "{kind}");
+        assert_word_valid_package(&row);
+    }
+    let body = common::docx::docx(&format!(
+        "{}{}",
+        marked("Alpha.", None),
+        marked("Beta.", Some("ins"))
+    ));
+    assert_eq!(cell_final_marks(&body), []);
+    // A nested table's cells in a deleted or inserted outer row: the outer
+    // row's revision covers them, whether or not the nested rows repeat it
+    // (Open-Xml-PowerTools marks only the outer row). Word 16 resolves
+    // both ways (2026-10-23, `nl`: Accept All and Reject All return the
+    // two sources).
+    for kind in ["ins", "del"] {
+        let nested = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc></w:tr></w:tbl>{}"#,
+            marked("Inner.", Some(kind)),
+            marked("Outer.", Some(kind))
+        );
+        let outer = table_package(
+            &format!(
+                r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#
+            ),
+            [&nested, &marked("D.", Some(kind))],
+        );
+        assert_eq!(cell_final_marks(&outer), [], "nested {kind}");
+        assert_word_valid_package(&outer);
+    }
+}
+
+/// A part that writes WordprocessingML in the default namespace (`<tc>`,
+/// no prefix) is checked like any other (codex on #1680, round 9: the
+/// check's byte prefilter looked for `:tc>` only).
+#[test]
+fn probe_a_revised_final_mark_in_an_unprefixed_part_fails() {
+    let w = common::docx::W_NS;
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<document xmlns="{w}" xmlns:w="{w}"><body><tbl><tblPr><tblW w:w="2000" w:type="dxa"/></tblPr><tblGrid><gridCol w:w="2000"/></tblGrid><tr><tc><tcPr><tcW w:w="2000" w:type="dxa"/></tcPr><p><r><t>Old.</t></r></p><p><pPr><rPr><ins w:id="1" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></rPr></pPr><r><t>New.</t></r></p></tc></tr></tbl><p><r><t>After.</t></r></p><sectPr><pgSz w:w="12240" w:h="15840"/></sectPr></body></document>"#
+    );
+    let bytes = common::docx::replace_entry(
+        &common::docx::docx("<w:p/>"),
+        "word/document.xml",
+        document.as_bytes(),
+    );
+    let found = cell_final_marks(&bytes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+    );
+}
+
+/// A cell that a row-level content control wraps (`w:tr/w:sdt/…/w:tc`)
+/// takes its row's revision like any other (codex on #1680, round 9: the
+/// check read the cell's parent as its row, a false positive).
+#[test]
+fn a_cell_in_a_row_level_content_control_takes_its_rows_revision() {
+    for kind in ["ins", "del"] {
+        let cell = |text: &str| {
+            format!(
+                r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{}</w:tc>"#,
+                marked(text, Some(kind))
+            )
+        };
+        let bytes = common::docx::docx(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>{}<w:sdt><w:sdtPr><w:id w:val="7"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+            cell("C."),
+            cell("D.")
+        ));
+        assert_eq!(cell_final_marks(&bytes), [], "{kind}");
+        // Without the row's revision the wrapped cell is flagged.
+        let bare = String::from_utf8(
+            common::docx::part_string(&bytes, "word/document.xml")
+                .unwrap()
+                .into_bytes(),
+        )
+        .unwrap()
+        .replace(
+            &format!(r#"<w:trPr><w:{kind} w:id="5" w:author="Ana" w:date="2026-10-23T00:00:00Z"/></w:trPr>"#),
+            "",
+        );
+        let bare = common::docx::replace_entry(&bytes, "word/document.xml", bare.as_bytes());
+        assert_eq!(cell_final_marks(&bare).len(), 2, "{kind}");
+    }
+}
+
+/// A cell's tags may carry whitespace before their `>` (`<w:tc >`,
+/// `</w:tc\n>`): the check still reads the part (codex on #1680: the
+/// byte prefilter wanted a literal `tc>`).
+#[test]
+fn probe_a_revised_final_mark_in_cells_with_spaced_tags_fails() {
+    let w = common::docx::W_NS;
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{w}"><w:body><w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc ><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc
+></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+        marked("New.", Some("ins"))
+    );
+    let bytes = common::docx::replace_entry(
+        &common::docx::docx("<w:p/>"),
+        "word/document.xml",
+        document.as_bytes(),
+    );
+    let found = cell_final_marks(&bytes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].location,
+        "w:body[0]/w:tbl[0]/w:tr[0]/w:tc[0]/w:p[1]"
+    );
+}
+
+/// A custom XML data part is application data, not a Word story: a cell
+/// shape in it is no cell of the document (codex on #1680).
+#[test]
+fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
+    let w = common::docx::W_NS;
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="{w}"><w:body><w:p><w:r><w:t>Body.</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let item = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:tbl xmlns:w="{w}"><w:tr><w:tc><w:p><w:r><w:t>Old.</w:t></w:r></w:p>{}</w:tc></w:tr></w:tbl>"#,
+        marked("New.", Some("ins"))
+    );
+    let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="../customXml/item1.xml"/>
+</Relationships>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &doc),
+        ("word/_rels/document.xml.rels", rels),
+        ("customXml/item1.xml", &item),
+    ]);
+    assert_eq!(cell_final_marks(&bytes), []);
+    // The same shape in the main part is flagged.
+    let main = doc.replace(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &format!(
+            "{}<w:p/>",
+            item.split_once("?>\n")
+                .unwrap()
+                .1
+                .replace(&format!(r#" xmlns:w="{w}""#), "")
+        ),
+    );
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", &main),
+        ("word/_rels/document.xml.rels", rels),
+        ("customXml/item1.xml", &item),
+    ]);
+    assert_eq!(cell_final_marks(&bytes).len(), 1);
+}

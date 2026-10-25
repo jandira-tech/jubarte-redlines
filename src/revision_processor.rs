@@ -669,12 +669,46 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::name(saved)),
         };
-        // pPrChange specially re-adds the live rPr (so run-mark formatting survives)
-        if name == W::p_pr()
-            && let Some(rpr) = dom.element(node, &W::r_pr())
-        {
-            let rpr_clone = dom.clone_subtree(rpr);
-            dom.add(new_prop, rpr_clone);
+        // The saved pPr (CT_PPrBase) holds neither the paragraph mark's
+        // run properties nor a section break (#1708), so the live ones stay,
+        // last as the schema orders them: rPr, then sectPr. A source that
+        // left either in the saved copy gets the live state back, once:
+        // never a doubled rPr, nor a section break the paragraph lacks.
+        if name == W::p_pr() {
+            for e in dom.elements(new_prop, None) {
+                if dom
+                    .name(e)
+                    .is_some_and(|n| n == W::r_pr() || n == W::sect_pr())
+                {
+                    dom.remove(e);
+                }
+            }
+            for kept in [W::r_pr(), W::sect_pr()] {
+                if let Some(live) = dom.element(node, &kept) {
+                    let live_clone = dom.clone_subtree(live);
+                    dom.add(new_prop, live_clone);
+                }
+            }
+        }
+        // #1713: the saved trPr (CT_TrPrBase) has no row insertion or
+        // deletion. The live w:ins/w:del stay, so the reversal below still
+        // finds the row's own revision and Reject All removes an inserted
+        // row whose properties also changed.
+        if name == W::tr_pr() {
+            for e in dom.elements(new_prop, None) {
+                if dom.name(e).is_some_and(|n| n == W::ins() || n == W::del()) {
+                    dom.remove(e);
+                }
+            }
+            for mark in dom.elements(node, None) {
+                if dom
+                    .name(mark)
+                    .is_some_and(|n| n == W::ins() || n == W::del())
+                {
+                    let mark_clone = dom.clone_subtree(mark);
+                    dom.add(new_prop, mark_clone);
+                }
+            }
         }
         // R9: a sectPrChange records the section's properties, never its
         // header and footer references (CT_SectPrBase has none): the live
@@ -2067,18 +2101,37 @@ fn accept_paragraph_marks_with_owners(
     let mut infos: Vec<(bool, i32)> = Vec::with_capacity(chain.len());
     let mut current_key = 0i32;
     let mut state = 0u8; // 0 = non-deleted, 1 = in deleted, 2 = paragraph following
+    // Does the deleted-mark run so far keep anything once its marks go?
+    let mut run_brings = false;
+    // Deleted marks Word keeps, each with the paragraph after it, whose
+    // properties the kept paragraph takes.
+    let mut held_marks: HashMap<NodeId, NodeId> = HashMap::new();
     for c in &chain {
         let this = c.this_block_content_element.unwrap();
         let tn = dom.name(this).unwrap();
         if tn == W::p() {
-            if paragraph_mark_is_deleted_or_moved_from(dom, this) {
+            let brings = !brings_nothing(dom, this);
+            let mark_goes = paragraph_mark_is_deleted_or_moved_from(dom, this);
+            let held = mark_goes
+                && c.next_block_content_element.is_some_and(|next| {
+                    dom.name_is(next, &W::p())
+                        && holds_mark(dom, this, next, brings || (state == 1 && run_brings))
+                });
+            if held {
+                held_marks.insert(this, c.next_block_content_element.unwrap());
+            }
+            if mark_goes && !held {
                 match state {
                     0 | 2 => {
                         state = 1;
                         current_key += 1;
+                        run_brings = brings;
                         infos.push((true, current_key));
                     }
-                    _ => infos.push((true, current_key)),
+                    _ => {
+                        run_brings |= brings;
+                        infos.push((true, current_key));
+                    }
                 }
             } else {
                 match state {
@@ -2132,9 +2185,15 @@ fn accept_paragraph_marks_with_owners(
             // DeletedRange: merge into one paragraph.
             let last_this = group.last().unwrap().0.this_block_content_element.unwrap();
             let np = dom.new_element(W::p());
-            for ppr in dom.elements(last_this, Some(&W::p_pr())) {
-                let c = dom.clone_subtree(ppr);
-                dom.add(np, c);
+            if let Some(&next) = held_marks.get(&last_this) {
+                if let Some(ppr) = held_mark_properties(dom, next) {
+                    dom.add(np, ppr);
+                }
+            } else {
+                for ppr in dom.elements(last_this, Some(&W::p_pr())) {
+                    let c = dom.clone_subtree(ppr);
+                    dom.add(np, c);
+                }
             }
             let mut orig_ids = Vec::new();
             for z in group {
@@ -2189,7 +2248,16 @@ fn accept_paragraph_marks_with_owners(
                 for (an, av) in dom.attributes(this) {
                     dom.set_attribute_value(re, &an, Some(&av));
                 }
+                let held = held_marks.get(&this).copied();
+                if let Some(next) = held
+                    && let Some(ppr) = held_mark_properties(dom, next)
+                {
+                    dom.add(re, ppr);
+                }
                 for c in dom.nodes(this) {
+                    if held.is_some() && dom.name_is(c, &W::p_pr()) {
+                        continue;
+                    }
                     let tc = accept_paragraph_marks_with_owners(dom, c, paragraph_owners);
                     dom.add(re, tc);
                 }
@@ -2347,6 +2415,26 @@ fn annotate_paragraph_elements_with_id(dom: &mut Dom, element: NodeId) {
     }
 }
 
+/// Number what a paragraph holds besides its properties and its runs
+/// (`pt:UniqueId` `c0`, `c1`, …: an equation, a hyperlink, a field), so an
+/// emptied control can anchor on the content of the paragraph after it when
+/// that content starts with no run (the #1714 A/B: Word keeps the control
+/// before an equation, as before a run).
+fn annotate_paragraph_content_with_id(dom: &mut Dom, element: NodeId) {
+    let unique_id = PT::unique_id();
+    let (p_pr, r) = (W::p_pr(), W::r());
+    let mut content_id = 0;
+    for p in dom.descendants(element, Some(&W::p())) {
+        for child in dom.elements(p, None) {
+            if dom.name_is(child, &p_pr) || dom.name_is(child, &r) {
+                continue;
+            }
+            dom.set_attribute_value(child, &unique_id, Some(&format!("c{content_id}")));
+            content_id += 1;
+        }
+    }
+}
+
 /// Descendants of `element` in document order, not descending INTO elements
 /// named `trim` (the `DescendantsTrimmed` helper the annotators use).
 fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> {
@@ -2456,6 +2544,24 @@ fn add_content_controls_with_owners(
             paragraph_by_id.entry(id.to_string()).or_insert(p);
         }
     }
+    let mut original_run_by_id: HashMap<String, NodeId> = HashMap::new();
+    for r in dom.descendants(original, Some(&W::r())) {
+        if let Some(id) = dom.attribute(r, &unique_id) {
+            original_run_by_id.entry(id.to_string()).or_insert(r);
+        }
+    }
+    // What a paragraph holds besides runs, by its `c` id: where an emptied
+    // control goes when no run follows it.
+    let mut original_content_by_id: HashMap<String, NodeId> = HashMap::new();
+    for p in dom.descendants(original, Some(&W::p())) {
+        for child in dom.elements(p, None) {
+            if let Some(id) = dom.attribute(child, &unique_id) {
+                original_content_by_id
+                    .entry(id.to_string())
+                    .or_insert(child);
+            }
+        }
+    }
 
     for cc in original_ccs {
         let cc_id = dom.attribute(cc, &unique_id).unwrap_or("").to_string();
@@ -2509,6 +2615,90 @@ fn add_content_controls_with_owners(
                         }))
             })
             .collect();
+        // A paragraph the merge joined to this control's brings something to
+        // the join when it keeps words or sits in a control of its own; one
+        // that brings nothing goes, and leaves the control a block (Word 16,
+        // the #1694 A/B).
+        let cc_ancestors = dom.ancestors(cc, None);
+        let brings = |dom: &Dom, source: NodeId| {
+            !brings_nothing(dom, source)
+                || std::iter::successors(dom.parent(source), |&a| dom.parent(a))
+                    .any(|a| dom.name_is(a, &sdt) && a != cc && !cc_ancestors.contains(&a))
+        };
+        let foreign = |dom: &Dom, owners: &[NodeId]| {
+            owners
+                .iter()
+                .any(|&source| !owned_paragraphs.contains(&source) && brings(dom, source))
+        };
+        // A control whose paragraphs all go keeps its place, emptied: inline
+        // in the paragraph they join when that paragraph holds something
+        // else, else a block around it.
+        if block_removed
+            && runs_in_new_document.is_empty()
+            && let Some(paragraph_owners) = paragraph_owners
+            && let Some(&last_own) = paragraphs.last()
+            && let Some((&joined, owners)) = paragraph_owners.iter().find(|(joined, owners)| {
+                owners.contains(&last_own)
+                    && owners
+                        .last()
+                        .is_some_and(|last| !owned_paragraphs.contains(last))
+                    && std::iter::successors(dom.parent(**joined), |&a| dom.parent(a))
+                        .any(|a| a == new_document)
+            })
+        {
+            let after: &[NodeId] = owners
+                .iter()
+                .rposition(|source| owned_paragraphs.contains(source))
+                .map(|last| &owners[last + 1..])
+                .unwrap_or_default();
+            // The first of the joined paragraph's children that came from a
+            // paragraph after the control: a run, or content without one
+            // (an equation, codex on #1714).
+            let from_after = |dom: &Dom, node: NodeId| {
+                dom.attribute(node, &unique_id)
+                    .and_then(|id| {
+                        original_run_by_id
+                            .get(id)
+                            .or_else(|| original_content_by_id.get(id))
+                    })
+                    .is_some_and(|&source| {
+                        std::iter::successors(dom.parent(source), |&a| dom.parent(a))
+                            .any(|a| after.contains(&a))
+                    })
+            };
+            let later = dom.elements(joined, None).into_iter().find(|&child| {
+                dom.descendants_and_self(child, None)
+                    .into_iter()
+                    .any(|node| from_after(dom, node))
+            });
+            let emptied = dom.new_element(sdt.clone());
+            for (an, av) in dom.attributes(cc) {
+                dom.set_attribute_value(emptied, &an, Some(&av));
+            }
+            let props: Vec<NodeId> = dom
+                .elements(cc, None)
+                .into_iter()
+                .filter(|&e| dom.name(e) != Some(W::sdt_content()))
+                .collect();
+            let mut kids: Vec<NodeId> = props.into_iter().map(|e| dom.clone_subtree(e)).collect();
+            let content = dom.new_element(W::sdt_content());
+            kids.push(content);
+            kids.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
+            for e in kids {
+                dom.add(emptied, e);
+            }
+            if !foreign(dom, owners) {
+                dom.add_before_self(joined, emptied);
+                dom.remove(joined);
+                dom.add(content, joined);
+                continue;
+            }
+            match later {
+                Some(child) => dom.add_before_self(child, emptied),
+                None => dom.add(joined, emptied),
+            }
+            continue;
+        }
         // No run left to anchor it: the control stands on the paragraphs
         // that kept their marks, emptied. A paragraph nested in the
         // control's own content (a cell of the table it wraps) anchors it
@@ -2605,10 +2795,7 @@ fn add_content_controls_with_owners(
                                 // Every contributing source pilcrow must belong
                                 // to this control, including runless successors.
                                 let owners = paragraph_owners.get(&owner)?;
-                                if owners
-                                    .iter()
-                                    .any(|source| !owned_paragraphs.contains(source))
-                                {
+                                if foreign(dom, owners) {
                                     return None;
                                 }
                             } else {
@@ -2675,11 +2862,7 @@ fn add_content_controls_with_owners(
             .collect();
         let foreign_pilcrow_owner = paragraph_owners
             .and_then(|owners| owners.get(&common_ancestor))
-            .is_some_and(|owners| {
-                owners
-                    .iter()
-                    .any(|source| !owned_paragraphs.contains(source))
-            });
+            .is_some_and(|owners| foreign(dom, owners));
         if dom.name(common_ancestor) == Some(W::p())
             && !foreign_pilcrow_owner
             && significant.first() == Some(&first_run_child)
@@ -2745,6 +2928,100 @@ fn add_content_controls_with_owners(
     new_document
 }
 
+/// Does `paragraph` (a source paragraph, before the mark merge) leave nothing
+/// once its marks go: no run with content outside a deletion or a move away,
+/// nothing else but its properties and markers? The markers are bookmarks,
+/// proofing marks, a comment's range and its reference run, and permission
+/// ranges. Anything not known to be empty brings something (#1694: only
+/// these shapes were checked against Word, rounds 1 to 9).
+fn brings_nothing(dom: &Dom, paragraph: NodeId) -> bool {
+    let reference = W::comment_reference();
+    dom.elements(paragraph, None).into_iter().all(|child| {
+        dom.name(child).is_none_or(|name| {
+            name == W::p_pr()
+                || name == W::del()
+                || name == W::move_from()
+                || name == W::bookmark_start()
+                || name == W::bookmark_end()
+                || name == W::proof_err()
+                || name == W::comment_range_start()
+                || name == W::comment_range_end()
+                || name == W::perm_start()
+                || name == W::perm_end()
+                || (name == W::r()
+                    && dom
+                        .elements(child, None)
+                        .into_iter()
+                        .all(|e| dom.name_is(e, &W::r_pr()) || dom.name_is(e, &reference)))
+        })
+    })
+}
+
+/// Does Word keep the deleted mark of paragraph `a` before `b`? It does
+/// where the join would cross the edge of a block control holding more than
+/// one paragraph, and the paragraph outside that control keeps something:
+/// words (`a_keeps` for `a`, with the deleted-mark run before it) or a
+/// control the other paragraph is not in. Such a control cannot become
+/// inline, and Word does not take a paragraph out of it to join one outside
+/// (the #1694 A/B: hn13, hn20, hn32–hn35, hn39, hn40). An outside paragraph
+/// that keeps nothing goes, as at any join (hn23, hn24, hn31).
+///
+/// A control ending at `a` still holds more than one paragraph only while
+/// one of its marks stays: once they all go, its paragraphs join the one
+/// after it, and it can become inline there (round 9: k01, k06, k08).
+fn holds_mark(dom: &Dom, a: NodeId, b: NodeId, a_keeps: bool) -> bool {
+    let sdt = W::sdt();
+    let around_a = dom.ancestors(a, Some(&sdt));
+    let around_b = dom.ancestors(b, Some(&sdt));
+    let own = |around: &[NodeId], other: &[NodeId]| around.iter().any(|s| !other.contains(s));
+    let a_keeps = a_keeps || own(&around_a, &around_b);
+    let b_keeps = !brings_nothing(dom, b) || own(&around_b, &around_a);
+    let paragraphs = |s: NodeId| dom.descendants(s, Some(&W::p()));
+    // Several paragraphs, one of them keeping its mark: each control's
+    // paragraphs are listed once.
+    let multi_keeping_a_mark = |s: NodeId| {
+        let ps = paragraphs(s);
+        ps.len() > 1
+            && ps
+                .into_iter()
+                .any(|p| !paragraph_mark_is_deleted_or_moved_from(dom, p))
+    };
+    (a_keeps
+        && around_b
+            .iter()
+            .any(|&s| !around_a.contains(&s) && paragraphs(s).len() > 1))
+        || (b_keeps
+            && around_a
+                .iter()
+                .any(|&s| !around_b.contains(&s) && multi_keeping_a_mark(s)))
+}
+
+/// The properties of a paragraph whose deleted mark Word kept: those of the
+/// paragraph after it, as if the two had joined (the #1694 A/B, hn41; style
+/// and numbering included, round 9: c02). No mark of the next paragraph's
+/// goes with them, nor its section break (c03); the kept paragraph's own
+/// section break goes with the deleted mark that carried it (c04, e05).
+fn held_mark_properties(dom: &mut Dom, next: NodeId) -> Option<NodeId> {
+    let ppr = dom.new_element(W::p_pr());
+    if let Some(source) = dom.element(next, &W::p_pr()) {
+        for child in dom.elements(source, None) {
+            if dom.name_is(child, &W::sect_pr()) {
+                continue;
+            }
+            let copy = dom.clone_subtree(child);
+            if dom.name_is(copy, &W::r_pr()) {
+                for mark in dom.elements(copy, None) {
+                    if dom.name_is(mark, &W::del()) || dom.name_is(mark, &W::move_from()) {
+                        dom.remove(mark);
+                    }
+                }
+            }
+            dom.add(ppr, copy);
+        }
+    }
+    dom.has_elements(ppr).then_some(ppr)
+}
+
 /// A.5b — `AcceptDeletedAndMoveFromParagraphMarks` (:2098): annotate runs and
 /// content controls (on the ORIGINAL, in place), run the A.5a transform, then
 /// re-wrap the content controls the transform stripped.
@@ -2759,6 +3036,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
     }
     annotate_run_elements_with_id(dom, element);
     annotate_paragraph_elements_with_id(dom, element);
+    annotate_paragraph_content_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let mut paragraph_owners = HashMap::new();
     let new_element = accept_paragraph_marks_with_owners(dom, element, &mut paragraph_owners);
@@ -3023,9 +3301,9 @@ fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
     for child in dom.elements(parent, None) {
         if dom.name_is(child, name) {
             children.push(child);
-        } else if dom.name(child) == Some(W::name("sdt"))
-            || dom.name(child) == Some(W::name("sdtContent"))
-            || dom.name(child) == Some(W::name("customXml"))
+        } else if dom.name(child) == Some(W::sdt())
+            || dom.name(child) == Some(W::sdt_content())
+            || dom.name(child) == Some(W::custom_xml())
         {
             children.extend(wrapped_children(dom, child, name));
         }
@@ -3615,7 +3893,7 @@ fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bo
 /// Give every `w:comment` under a `w:comments` root without a block child
 /// (`w:p`, `w:tbl`, `w:sdt`, `w:customXml`) an empty paragraph (#1223).
 fn ensure_comment_paragraphs(dom: &mut Dom, root: NodeId) {
-    let block = [W::p(), W::tbl(), W::sdt(), W::name("customXml")];
+    let block = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
     for comment in dom.elements(root, Some(&W::name("comment"))) {
         if !dom
             .elements(comment, None)
@@ -3858,15 +4136,30 @@ pub(crate) fn clone_with_fresh_property_ids(
     next_id: &mut RevisionIds,
 ) -> NodeId {
     let copy = dom.clone_subtree(source);
+    refresh_property_ids(dom, copy, |_| next_id.allocate());
+    copy
+}
+
+/// Give every property history under `copy`, `copy` included, an id from
+/// `allocate`, which is passed the id the record had, leaving its
+/// attribution and payload untouched: a copy of a record is a distinct
+/// record.
+pub(crate) fn refresh_property_ids(
+    dom: &mut Dom,
+    copy: NodeId,
+    mut allocate: impl FnMut(Option<u64>) -> u64,
+) {
     for node in std::iter::once(copy).chain(dom.descendants(copy, None)) {
         if dom.name(node).is_some_and(|name| {
             matches!(name.namespace_name(), W::URI | FROZEN_NS)
                 && matches!(name.local_name(), "rPrChange" | "pPrChange")
         }) {
-            dom.set_attribute_value(node, &W::id(), Some(&next_id.allocate().to_string()));
+            let old = dom
+                .attribute(node, &W::id())
+                .and_then(|id| id.parse::<u64>().ok());
+            dom.set_attribute_value(node, &W::id(), Some(&allocate(old).to_string()));
         }
     }
-    copy
 }
 
 /// Called with each revision-bearing part's name and parsed root before it

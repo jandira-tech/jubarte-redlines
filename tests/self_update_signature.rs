@@ -3,67 +3,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! The signer and the verifier agree. release.yml signs each archive with
-//! `zipsign sign tar <archive> <key>`, whose context defaults to the archive's
-//! file name; `jubarte self-update` downloads the asset under its release name
-//! and checks it with `self_update::verify_signature`, whose context is the
-//! downloaded file's name. These tests sign the way the CLI does and check
-//! with the updater's own verifier, offline.
+//! `zipsign sign tar <archive> <key>` (`zipsign sign zip` for Windows), whose
+//! context defaults to the archive's file name; `jubarte self-update` saves
+//! the download under its release asset name and checks it with
+//! [`jubarte::update::verify_signature`], whose context is that file name.
 //!
-//! Every key here is derived from a fixed, test-only seed. None of them signs
-//! or ever signed a release.
+//! The archives in `tests/data/self_update/` were signed by the zipsign 0.2.2
+//! CLI itself (`signed-a.*` with key A, `signed-b.tar.gz` with key B,
+//! `signed-ab.tar.gz` with both), under the asset names below. Only the two
+//! public keys are committed. Neither key signs or ever signed a release, and
+//! their private halves were never kept.
 
 #![cfg(feature = "self-update")]
 
-use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
-use self_update::{Extract, VerifyingKey, verify_signature};
-use zipsign_api::SigningKey;
-use zipsign_api::sign::copy_and_sign_tar;
-
-/// TEST ONLY: a throwaway seed so the test is deterministic. Not a release key.
-const TEST_ONLY_SEED: [u8; 32] = [0x5a; 32];
-/// TEST ONLY: a second throwaway seed, for an untrusted signer and rotation.
-const OTHER_TEST_ONLY_SEED: [u8; 32] = [0xa5; 32];
+use jubarte::update::{ReleaseKey, verify_signature};
+use self_update::Extract;
 
 /// Named as release.yml stages a Linux archive.
 const ASSET: &str = "jubarte-9.9.9-linux-x86_64.tar.gz";
+/// Named as release.yml stages a Windows archive.
+const ZIP_ASSET: &str = "jubarte-9.9.9-windows-x86_64.zip";
+/// A Linux archive under the short gzipped-tar extension.
+const TGZ_ASSET: &str = "jubarte-9.9.9-linux-x86_64.tgz";
 const BIN_IN_ARCHIVE: &str = "jubarte-9.9.9-linux-x86_64/jubarte";
 const BIN_BYTES: &[u8] = b"test-only stand-in for the jubarte binary\n";
 
-fn tar_gz() -> Vec<u8> {
-    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    let mut tar = tar::Builder::new(gz);
-    let mut header = tar::Header::new_gnu();
-    header.set_size(BIN_BYTES.len() as u64);
-    header.set_mode(0o755);
-    header.set_mtime(0);
-    header.set_cksum();
-    tar.append_data(&mut header, BIN_IN_ARCHIVE, BIN_BYTES)
-        .expect("append");
-    let mut gz = tar.into_inner().expect("finish tar");
-    gz.flush().expect("flush");
-    gz.finish().expect("finish gzip")
-}
+const KEY_A: ReleaseKey = *include_bytes!("data/self_update/a.pub");
+const KEY_B: ReleaseKey = *include_bytes!("data/self_update/b.pub");
 
-/// Sign as `zipsign sign tar <file> <keys>...` does without `--context`: the
-/// context is the file name (zipsign 0.2.1, `get_context` in src/main.rs).
-fn sign(unsigned: &[u8], file_name: &str, seeds: &[[u8; 32]]) -> Vec<u8> {
-    let keys: Vec<SigningKey> = seeds.iter().map(SigningKey::from_bytes).collect();
-    let mut signed = Cursor::new(Vec::new());
-    copy_and_sign_tar(
-        &mut Cursor::new(unsigned),
-        &mut signed,
-        &keys,
-        Some(file_name.as_bytes()),
-    )
-    .expect("sign");
-    signed.into_inner()
-}
-
-fn public(seed: &[u8; 32]) -> VerifyingKey {
-    SigningKey::from_bytes(seed).verifying_key().to_bytes()
-}
+const UNSIGNED: &[u8] = include_bytes!("data/self_update/unsigned.tar.gz");
+const SIGNED_A: &[u8] = include_bytes!("data/self_update/signed-a.tar.gz");
+const SIGNED_B: &[u8] = include_bytes!("data/self_update/signed-b.tar.gz");
+const SIGNED_AB: &[u8] = include_bytes!("data/self_update/signed-ab.tar.gz");
+const UNSIGNED_ZIP: &[u8] = include_bytes!("data/self_update/unsigned.zip");
+const SIGNED_A_ZIP: &[u8] = include_bytes!("data/self_update/signed-a.zip");
+const SIGNED_A_TGZ: &[u8] = include_bytes!("data/self_update/signed-a.tgz");
 
 /// Write `bytes` as `dir/name`, the way the updater stores a download under
 /// its asset name before checking it.
@@ -73,16 +49,18 @@ fn download(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+fn flipped(bytes: &[u8], at: usize) -> Vec<u8> {
+    let mut bytes = bytes.to_vec();
+    bytes[at] ^= 0x01;
+    bytes
+}
+
 #[test]
 fn a_signed_archive_verifies_and_still_extracts() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download(
-        dir.path(),
-        ASSET,
-        &sign(&tar_gz(), ASSET, &[TEST_ONLY_SEED]),
-    );
+    let path = download(dir.path(), ASSET, SIGNED_A);
 
-    verify_signature(&path, &[public(&TEST_ONLY_SEED)]).expect("signature accepted");
+    verify_signature(&path, &[KEY_A]).expect("signature accepted");
 
     // The signature rides in a trailing empty gzip member; the updater's
     // extractor still finds the binary, byte for byte.
@@ -97,19 +75,94 @@ fn a_signed_archive_verifies_and_still_extracts() {
 }
 
 #[test]
+fn a_signed_windows_zip_verifies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), ZIP_ASSET, SIGNED_A_ZIP);
+    verify_signature(&path, &[KEY_A]).expect("signature accepted");
+}
+
+#[test]
+fn a_signed_tgz_verifies_and_still_extracts() {
+    // self_update's archive detection reads `.tgz` as a gzipped tar, and
+    // `zipsign sign tar` signs one under its own name.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), TGZ_ASSET, SIGNED_A_TGZ);
+    verify_signature(&path, &[KEY_A]).expect("signature accepted");
+
+    let out = tempfile::tempdir().expect("tempdir");
+    Extract::from_source(&path)
+        .extract_file(out.path(), BIN_IN_ARCHIVE)
+        .expect("extract");
+    assert_eq!(
+        std::fs::read(out.path().join(BIN_IN_ARCHIVE)).expect("read"),
+        BIN_BYTES
+    );
+
+    // Signed as `.tgz`, so not valid as `.tar.gz`.
+    let path = download(dir.path(), ASSET, SIGNED_A_TGZ);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+}
+
+#[test]
+fn any_trusted_key_may_have_signed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), ASSET, SIGNED_A);
+    verify_signature(&path, &[KEY_B, KEY_A]).expect("the second key signed");
+}
+
+#[test]
 fn a_tampered_archive_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let mut bytes = sign(&tar_gz(), ASSET, &[TEST_ONLY_SEED]);
-    bytes[20] ^= 0x01;
-    let path = download(dir.path(), ASSET, &bytes);
-    assert!(verify_signature(&path, &[public(&TEST_ONLY_SEED)]).is_err());
+    let path = download(dir.path(), ASSET, &flipped(SIGNED_A, 20));
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+    // A zip's signature block is its first 80 bytes; byte 100 is archive data.
+    let path = download(dir.path(), ZIP_ASSET, &flipped(SIGNED_A_ZIP, 100));
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+}
+
+#[test]
+fn a_tampered_signature_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // The tar signature is base64 text just before the 30-byte gzip tail.
+    let at = SIGNED_A.len() - 40;
+    let path = download(dir.path(), ASSET, &flipped(SIGNED_A, at));
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+    // The zip signature follows the 16-byte header.
+    let path = download(dir.path(), ZIP_ASSET, &flipped(SIGNED_A_ZIP, 30));
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
 }
 
 #[test]
 fn an_unsigned_archive_is_refused_once_a_key_is_trusted() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download(dir.path(), ASSET, &tar_gz());
-    assert!(verify_signature(&path, &[public(&TEST_ONLY_SEED)]).is_err());
+    let path = download(dir.path(), ASSET, UNSIGNED);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+    let path = download(dir.path(), ZIP_ASSET, UNSIGNED_ZIP);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+}
+
+#[test]
+fn a_truncated_or_empty_download_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    for bytes in [&b""[..], &SIGNED_A[..10], &SIGNED_A[SIGNED_A.len() - 30..]] {
+        let path = download(dir.path(), ASSET, bytes);
+        assert!(verify_signature(&path, &[KEY_A]).is_err());
+    }
+    for bytes in [&b""[..], &SIGNED_A_ZIP[..40]] {
+        let path = download(dir.path(), ZIP_ASSET, bytes);
+        assert!(verify_signature(&path, &[KEY_A]).is_err());
+    }
+}
+
+#[test]
+fn a_signature_header_that_counts_no_signatures_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Bytes 14..16 of a signed zip count its signatures (little endian).
+    let mut bytes = SIGNED_A_ZIP.to_vec();
+    bytes[14] = 0;
+    bytes[15] = 0;
+    let path = download(dir.path(), ZIP_ASSET, &bytes);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
 }
 
 #[test]
@@ -117,19 +170,15 @@ fn with_no_trusted_key_nothing_is_checked() {
     // Today's state: RELEASE_KEYS is empty, and SHA256SUMS.txt alone guards
     // the download.
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download(dir.path(), ASSET, &tar_gz());
+    let path = download(dir.path(), ASSET, UNSIGNED);
     verify_signature(&path, &[]).expect("no keys, no check");
 }
 
 #[test]
 fn an_untrusted_signer_is_refused() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download(
-        dir.path(),
-        ASSET,
-        &sign(&tar_gz(), ASSET, &[OTHER_TEST_ONLY_SEED]),
-    );
-    assert!(verify_signature(&path, &[public(&TEST_ONLY_SEED)]).is_err());
+    let path = download(dir.path(), ASSET, SIGNED_B);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
 }
 
 #[test]
@@ -138,23 +187,68 @@ fn the_signature_is_bound_to_the_asset_name() {
     // archive cannot stand in for another's, and an archive signed under one
     // name fails once uploaded under another.
     let dir = tempfile::tempdir().expect("tempdir");
-    let other = "jubarte-9.9.9-linux-aarch64.tar.gz";
+    let path = download(dir.path(), "jubarte-9.9.9-linux-aarch64.tar.gz", SIGNED_A);
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
     let path = download(
         dir.path(),
-        other,
-        &sign(&tar_gz(), ASSET, &[TEST_ONLY_SEED]),
+        "jubarte-9.9.9-windows-aarch64.zip",
+        SIGNED_A_ZIP,
     );
-    assert!(verify_signature(&path, &[public(&TEST_ONLY_SEED)]).is_err());
+    assert!(verify_signature(&path, &[KEY_A]).is_err());
+}
+
+#[test]
+fn an_archive_zipsign_cannot_sign_is_refused_once_a_key_is_trusted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = download(dir.path(), "jubarte-9.9.9-linux-x86_64.tar.xz", SIGNED_A);
+    let error = verify_signature(&path, &[KEY_A]).expect_err("no signature format");
+    assert!(error.contains(".tar.gz"), "{error}");
 }
 
 #[test]
 fn during_a_rotation_either_key_verifies_a_doubly_signed_archive() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = download(
-        dir.path(),
-        ASSET,
-        &sign(&tar_gz(), ASSET, &[TEST_ONLY_SEED, OTHER_TEST_ONLY_SEED]),
-    );
-    verify_signature(&path, &[public(&TEST_ONLY_SEED)]).expect("old key");
-    verify_signature(&path, &[public(&OTHER_TEST_ONLY_SEED)]).expect("new key");
+    let path = download(dir.path(), ASSET, SIGNED_AB);
+    verify_signature(&path, &[KEY_A]).expect("old key");
+    verify_signature(&path, &[KEY_B]).expect("new key");
+}
+
+#[test]
+fn a_header_announcing_more_signatures_than_zipsign_writes_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut bytes = SIGNED_A_ZIP.to_vec();
+    bytes[14] = 0xff;
+    bytes[15] = 0xff;
+    let path = download(dir.path(), ZIP_ASSET, &bytes);
+    let error = verify_signature(&path, &[KEY_A]).expect_err("too many signatures");
+    assert!(error.contains("too many"), "{error}");
+}
+
+#[test]
+fn a_malformed_or_out_of_range_signature_offset_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // The 16 hex digits before the 14-byte gzip end give the signature
+    // member's offset.
+    let digits = SIGNED_A.len() - 30;
+    for replacement in [
+        &b"zzzzzzzzzzzzzzzz"[..],
+        b"ffffffffffffffff",
+        b"0000000000000000",
+    ] {
+        let mut bytes = SIGNED_A.to_vec();
+        bytes[digits..digits + 16].copy_from_slice(replacement);
+        let path = download(dir.path(), ASSET, &bytes);
+        assert!(verify_signature(&path, &[KEY_A]).is_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_name_that_is_not_utf8_cannot_be_a_signing_context() {
+    use std::os::unix::ffi::OsStrExt;
+    // The name is checked before the file is opened, so the path need not
+    // exist (APFS refuses to create it).
+    let path = Path::new(std::ffi::OsStr::from_bytes(b"jubarte-\xff.tar.gz"));
+    let error = verify_signature(path, &[KEY_A]).expect_err("not UTF-8");
+    assert!(error.contains("UTF-8"), "{error}");
 }

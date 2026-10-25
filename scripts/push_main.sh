@@ -22,13 +22,13 @@ push_main() {
   printf '  - main refused a direct push; going through a pull request (%s)\n' "$branch"
   git push -q --force origin "HEAD:refs/heads/$branch" \
     || { printf '%s\n' "$refusal" >&2; return 1; }
-  if ! gh pr view "$branch" --json state --jq .state 2>/dev/null | grep -x OPEN >/dev/null; then
-    gh pr create --base main --head "$branch" --title "$title" --body "$body" >/dev/null || return 1
+  if ! gh pr view "$branch" --json state --jq .state -R jandira-tech/jubarte-redlines 2>/dev/null | grep -x OPEN >/dev/null; then
+    gh pr create --base main --head "$branch" --title "$title" --body "$body" -R jandira-tech/jubarte-redlines >/dev/null || return 1
   fi
   # GitHub computes mergeability after the pull request exists: a first
   # merge can be refused for a few seconds.
   for try in 1 2 3 4 5 6; do
-    if gh pr merge "$branch" --merge >/dev/null; then
+    if gh pr merge "$branch" --merge -R jandira-tech/jubarte-redlines >/dev/null; then
       git fetch -q origin main && git merge -q --ff-only FETCH_HEAD
       return
     fi

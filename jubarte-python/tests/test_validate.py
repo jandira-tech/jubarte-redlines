@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -80,7 +81,9 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     fixed = tmp_path / "fixed.docx"
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 0
     captured = capsys.readouterr()
-    assert captured.out == "repaired 1 finding(s)\nno findings\n"
+    assert captured.out == (
+        "repaired 1 finding(s), structure only; history not checked (--original, --author)\nno findings\n"
+    )
     assert captured.err.startswith(f"wrote {fixed} (docx, ")
     assert main(["validate", str(fixed)]) == 0
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 1
@@ -90,6 +93,35 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     assert exit.value.code == 2
     assert "--author" in capsys.readouterr().err
     assert main(["validate", str(tmp_path / "missing.docx")]) == 1
+
+
+def test_validate_repair_tells_structure_from_history(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # A repair mends structure; the history check is a separate one, and
+    # the line says which of the two ran (#1665), as the binary's does.
+    broken = tmp_path / "broken.docx"
+    broken.write_bytes(docx(DELETED))
+    original = tmp_path / "original.docx"
+    original.write_bytes(docx(para("gone")))
+    fixed = tmp_path / "fixed.docx"
+    main(["validate", str(broken), "--repair", str(fixed), "--original", str(original), "--author", "A"])
+    first = capsys.readouterr().out.splitlines()[0]
+    assert first == f"repaired 1 finding(s), structure only; history check against {original} follows"
+    # An original that cannot be read stops the run before any repair.
+    unwritten = tmp_path / "unwritten.docx"
+    missing = tmp_path / "missing.docx"
+    assert main(["validate", str(broken), "--repair", str(unwritten), "--original", str(missing), "--author", "A"]) == 1
+    captured = capsys.readouterr()
+    assert "history" not in captured.out and str(missing) in captured.err
+    assert not unwritten.exists()
+    # So does one that is no Word package: the binary admits the original
+    # whole before it writes (codex on #1666).
+    notes = tmp_path / "notes.docx"
+    with zipfile.ZipFile(notes, "w") as z:
+        z.writestr("notes.txt", "not a document")
+    assert main(["validate", str(broken), "--repair", str(unwritten), "--original", str(notes), "--author", "A"]) == 1
+    captured = capsys.readouterr()
+    assert "history" not in captured.out and str(notes) in captured.err
+    assert not unwritten.exists()
 
 
 def test_validate_command_audits_against_an_original(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

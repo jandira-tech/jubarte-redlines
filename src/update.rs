@@ -5,9 +5,12 @@
 //! `jubarte self-update`: replace this binary with a GitHub release when the
 //! user runs `jubarte self-update` (docs/SELF_UPDATE.md).
 //!
-//! The release lookup, SHA-256 check against `SHA256SUMS.txt`, zipsign
-//! signature check, archive extraction and binary swap are the
-//! [`self_update`](https://docs.rs/self_update) crate's. This module builds
+//! The release lookup, SHA-256 check against `SHA256SUMS.txt`, archive
+//! extraction and binary swap are the
+//! [`self_update`](https://docs.rs/self_update) crate's; the zipsign
+//! signature check is [`verify_signature`](crate::update::verify_signature)
+//! (`zipsign.rs`), which `self_update`
+//! runs on the downloaded archive before extracting it. This module builds
 //! the call the binary makes: it picks the release archive for this platform
 //! (`asset_target`), decides whether the target is newer
 //! (`plan`) and refuses to ask on a non-interactive stdin
@@ -22,6 +25,9 @@ use std::io::{BufRead, IsTerminal, Write};
 use self_update::backends::github;
 use self_update::version::cmp_versions;
 
+mod zipsign;
+pub use zipsign::{ReleaseKey, verify_signature};
+
 const REPO_OWNER: &str = "jandira-tech";
 const REPO_NAME: &str = "jubarte-redlines";
 const SUMS_ASSET: &str = "SHA256SUMS.txt";
@@ -34,14 +40,14 @@ const SUMS_ASSET: &str = "SHA256SUMS.txt";
 /// `zipsign gen-key` writes and list it here:
 ///
 /// ```text
-/// const RELEASE_KEYS: &[self_update::VerifyingKey] =
+/// const RELEASE_KEYS: &[ReleaseKey] =
 ///     &[*include_bytes!("../keys/release-signing.pub")];
 /// ```
 ///
 /// A file that is not exactly 32 bytes fails the build. Set
 /// [`FIRST_SIGNED_RELEASE`] in the same commit; docs/SELF_UPDATE.md has the
 /// steps, including key rotation.
-const RELEASE_KEYS: &[self_update::VerifyingKey] = &[];
+const RELEASE_KEYS: &[ReleaseKey] = &[];
 
 /// The first release whose archives `release.yml` signed, without a leading
 /// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
@@ -274,7 +280,10 @@ pub fn run(opts: &Options) -> Result<(), String> {
 
     let signed = signature_required(&to, FIRST_SIGNED_RELEASE, !RELEASE_KEYS.is_empty())?;
     if signed {
-        builder.verifying_keys(RELEASE_KEYS);
+        builder.verify_archive(|archive| {
+            verify_signature(archive, RELEASE_KEYS)
+                .map_err(self_update::Error::archive_verification_rejected)
+        });
     } else if !RELEASE_KEYS.is_empty() {
         eprintln!("note: {to} predates signed releases; only its SHA-256 is checked.");
     }

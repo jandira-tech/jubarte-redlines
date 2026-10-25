@@ -194,3 +194,14 @@ columns are format-checked only, and both the script and the checker say
 so. It prints the aggregates (per tool: n, failures, mean, median, =100,
 ≥90; jubarte's binary sha and commit; and the paired interval) before the
 release may go on.
+
+Step 3 then proves two more things. `scripts/check_evidence_engine.py
+"$VER"` refuses evidence scored on another engine: the commit both results
+name must build the CLI engine of HEAD (`src/` token for token, so comments
+aside; `assets/`, `schemas/`, `keys/` byte for byte; `Cargo.toml` and
+`Cargo.lock` beyond the version and the crates.io listing). And
+`check_release_info.py "$VER" --summary "<changelog summary>" --changelog
+<app>/CHANGELOG.md` holds the measured sentence the release ships
+("On two 600-item samples …: redlines mean X (Docxodus Y) …; PDFs mean X
+(LibreOffice Y) …") to these results: the sample size, both means at two
+decimals, the comparator and jubarte's failures.

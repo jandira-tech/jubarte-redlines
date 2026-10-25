@@ -187,7 +187,15 @@ fn case(site: &str) -> Case {
                 c.reject = "removes the proposed paragraph break";
             }
             if site == "last_paragraph" {
-                c.lead = "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark: that mark is";
+                // The last paragraph of a content control, not its
+                // container's: a container's final paragraph is emptied or
+                // carried away instead (#1670).
+                c.body = format!(
+                    r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>{}"#,
+                    c.body,
+                    para("Tail.")
+                );
+                c.lead = "under keep, the last paragraph of a content control or a custom XML element cannot be deleted when the paragraph before it already has a deleted mark: that mark is";
                 delete(&mut c, "p1");
             } else {
                 c.lead = "under keep, a paragraph whose mark is already tracked cannot be merged: that mark is";
@@ -1247,11 +1255,18 @@ fn legacy_edit_and_add_have_no_json_flag() {
             .unwrap();
         assert!(output.status.success());
         let help = String::from_utf8(output.stdout).unwrap();
+        // Option headings have six spaces; wrapped descriptions have ten.
+        // `jubarte capabilities --json` can wrap onto a continuation line.
         assert!(
-            !help
-                .lines()
-                .any(|line| line.trim_start().starts_with("--json")),
+            !help.lines().any(|line| line.starts_with("      --json")),
             "{verb} must use --dry-run or --out-dir for JSONL: {help}"
         );
+        let output = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args([verb, "source.docx", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("unexpected argument '--json'"), "{stderr}");
     }
 }
