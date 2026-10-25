@@ -367,11 +367,11 @@ crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-re
 pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/json" | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
-ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
+ghrel_has()   { gh release view "$TAG" -R jandira-tech/jubarte-redlines >/dev/null 2>&1; }
 # The release carries every advertised wheel and the sdist. release.yml
 # creates the release first and attaches its assets after (0.11.2: step 11
 # found the release, then no wheel, and died minutes before they arrived).
-ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' </dev/null 2>/dev/null \
+ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null \
                    | python3 scripts/check_release_artifacts.py - --version "$VER" --sdist >/dev/null 2>&1; }
 # The CI wheels and sdist of $TAG into dist/pypi. gh gets no terminal: under
 # one (0.11.3 ran inside `script` for its log) the download's progress
@@ -382,7 +382,7 @@ ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' </dev/
 download_ci_wheels() {
   local err=dist/pypi-download.err
   if gh release download "$TAG" --pattern 'jubarte_redlines-*' \
-      --dir dist/pypi --clobber </dev/null >/dev/null 2>"$err" \
+      --dir dist/pypi --clobber -R jandira-tech/jubarte-redlines </dev/null >/dev/null 2>"$err" \
      && ls dist/pypi/*.whl >/dev/null 2>&1; then
     rm -f "$err"
     return 0
@@ -396,7 +396,7 @@ download_ci_wheels() {
 # The release.yml run of $TAG: "<id> <status>", empty before it is listed.
 release_run() {
   gh run list -w Release --branch "$TAG" -L 1 --json databaseId,status \
-    -q '.[0] | "\(.databaseId) \(.status)"' 2>/dev/null || true
+    -q '.[0] | "\(.databaseId) \(.status)"' -R jandira-tech/jubarte-redlines 2>/dev/null || true
 }
 # The conclusion of release.yml's job named $1 on $TAG: empty while it runs
 # or before the run is listed.
@@ -405,7 +405,7 @@ ci_job_state() {
   read -r run_id _ <<<"$(release_run)"
   [ -n "${run_id:-}" ] || return 0
   gh run view "$run_id" --json jobs \
-    -q ".jobs[] | select(.name == \"$1\") | .conclusion" </dev/null 2>/dev/null || true
+    -q ".jobs[] | select(.name == \"$1\") | .conclusion" -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null || true
 }
 # Waits for release.yml's publish job $2 to put $VER on registry $1, which
 # the probe "${@:3}" proves (#1642). A job that ended without the registry
@@ -569,9 +569,9 @@ cancel_queued_ci() {
   local id name n=0
   while read -r id name; do
     [ -n "$id" ] && [ "$name" != Release ] || continue
-    gh run cancel "$id" >/dev/null 2>&1 && n=$((n + 1))
+    gh run cancel "$id" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 && n=$((n + 1))
   done < <(gh run list -L 100 --json databaseId,name,status \
-             -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' </dev/null 2>/dev/null)
+             -q '.[] | select(.status != "completed") | "\(.databaseId) \(.name)"' -R jandira-tech/jubarte-redlines </dev/null 2>/dev/null)
   step "cancelled $n CI run(s) in flight so release.yml gets the runners"
 }
 # crates.io takes at most five keywords (ASCII, a letter first, then letters,
@@ -634,7 +634,9 @@ step "tools + credentials OK"
 APP_REPO=${JUBARTE_APP_DIR:-jubarte-app}
 [ -x "$APP_REPO/scripts/release-engine.sh" ] \
   || die "no app checkout with scripts/release-engine.sh at $APP_REPO — git clone https://github.com/arthrod/jubarte-app jubarte-app (or export JUBARTE_APP_DIR)"
-app_release() { "$APP_REPO/scripts/release-engine.sh" "$VER" --engine-dir "$PWD" "$@"; }
+# The app's gh calls resolve the app repository from its own checkout; a
+# GH_REPO in this shell would send them elsewhere (#1747).
+app_release() { env -u GH_REPO "$APP_REPO/scripts/release-engine.sh" "$VER" --engine-dir "$PWD" "$@"; }
 app_release --preflight
 
 # The release.yml review — the wheel and binary matrices against the README
@@ -1270,7 +1272,7 @@ release_from_artifacts() {
   mkdir -p dist/release
   # The run's sdist artifact is the one publish-pypi uploads: the release
   # takes it as is, never a second maturin build with other bytes.
-  gh run download "$run_id" -D dist/release-art
+  gh run download "$run_id" -D dist/release-art -R jandira-tech/jubarte-redlines
   find dist/release-art -type f -exec mv {} dist/release/ \;
   rm -rf dist/release-art
   # A run that lost a wheel job (or the sdist) never becomes a public
@@ -1297,7 +1299,7 @@ release_from_artifacts() {
       '\n**Full Changelog**: https://github.com/jandira-tech/jubarte-redlines/compare/%s...%s\n' \
       "$PREV_TAG" "$TAG"
   } > dist/release-notes.md
-  gh release create "$TAG" --title "jubarte $TAG" --notes-file dist/release-notes.md dist/release/*
+  gh release create "$TAG" --title "jubarte $TAG" --notes-file dist/release-notes.md -R jandira-tech/jubarte-redlines dist/release/*
   step "GitHub release $TAG created from run $run_id${missing:+ — missing:$missing}"
 }
 
@@ -1386,7 +1388,7 @@ npm_note() {
     })'
 }
 gh_note() {
-  gh release view "$TAG" --json body -q .body 2>/dev/null \
+  gh release view "$TAG" --json body -q .body -R jandira-tech/jubarte-redlines 2>/dev/null \
     | grep -F "$GITHUB_SUMMARY" >/dev/null
 }
 # release.yml's release job attests every asset SHA256SUMS.txt names; one
@@ -1395,7 +1397,7 @@ gh_note() {
 gh_attested() {
   local f="jubarte-$VER-linux-x86_64.tar.gz" rc=0
   rm -rf dist/attest
-  gh release download "$TAG" -p "$f" -D dist/attest >/dev/null 2>&1 || return 1
+  gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte-redlines >/dev/null 2>&1 || return 1
   gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte-redlines \
     --signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml \
     --deny-self-hosted-runners >/dev/null 2>&1 || rc=1

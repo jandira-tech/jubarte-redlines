@@ -35,6 +35,14 @@ SUMMARIES = [
     "--github-summary", "github note",
 ]
 
+# The first lines of every gh stub: an engine call names its repository
+# (#1747), so a stray GH_REPO in the releaser's shell cannot redirect it.
+GH_BOUND = """case " $* " in
+  *" -R jandira-tech/jubarte-redlines "*) ;;
+  *) echo "gh not bound to jandira-tech/jubarte-redlines: $*" >&2; exit 8 ;;
+esac
+"""
+
 
 class ReleaseArgs(unittest.TestCase):
     def setUp(self) -> None:
@@ -458,8 +466,7 @@ while read old new ref; do
   fi
 done
 """
-    GH = """#!/bin/sh
-# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
+    GH = "#!/bin/sh\n" + GH_BOUND + """# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
 # merges the head into main with a merge commit, as GitHub's merge does.
 echo "$@" >> "$GH_LOG"
 case "$1 $2" in
@@ -757,9 +764,8 @@ def shell_functions(*names: str) -> str:
 
 # stub gh for step 11: the release, its asset names and the release.yml run,
 # each driven by the environment; every asset listing is counted in $STATE.
-GH_RELEASE_STUB = r"""#!/bin/bash
-case "$*" in
-  "release view v9.9.9")
+GH_RELEASE_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
+  "release view v9.9.9 -R jandira-tech/jubarte-redlines")
     [ -z "${NOREL:-}" ] ;;
   "release view v9.9.9 --json assets"*)
     [ -z "${NOREL:-}" ] || exit 1
@@ -837,8 +843,7 @@ class WheelDownload(unittest.TestCase):
     The stub gh fails the same way whenever its stdin or stdout is a
     terminal, and the run gets one (a pty), as the release did."""
 
-    GH = r"""#!/bin/bash
-case "$*" in
+    GH = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "release download"*)
     if [ -t 0 ] || [ -t 1 ]; then echo "error querying terminal: OSC 11" >&2; exit 1; fi
     [ -z "${DLFAIL:-}" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
@@ -1197,8 +1202,7 @@ class ChecklistPerStep(unittest.TestCase):
 
 # stub gh for the CI-publish wait: the release.yml run and its publish job's
 # conclusion ("" while the job runs), driven by the environment.
-GH_PUBLISH_STUB = r"""#!/bin/bash
-case "$*" in
+GH_PUBLISH_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "run list"*)
     echo "42 in_progress" ;;
   "run view 42 --json jobs"*)
@@ -1474,8 +1478,7 @@ class PreviousRelease(unittest.TestCase):
 
 # stub gh for the changelog completeness check: closing issues and titles of
 # the PRs the fixture repository merged.
-GH_PR_STUB = r"""#!/bin/bash
-case "$*" in
+GH_PR_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "pr view 11 "*) printf '21\nfix(edit): a thing\n' ;;
   "pr view 13 "*) printf 'feat(cli): another (#23)\n' ;;
   "pr view 15 "*) printf '25\nperf(convert): faster\n' ;;
@@ -1567,8 +1570,7 @@ class ChangelogCompleteness(unittest.TestCase):
 
 # stub gh for the discovery cases: PR 41 is a feature merged from a topic
 # branch, PR 43 a fix from a chore branch; PR 45 cannot be read at all.
-GH_DISCOVERY_STUB = r"""#!/bin/bash
-echo "$*" >> "$CALLS"
+GH_DISCOVERY_STUB = "#!/bin/bash\n" + GH_BOUND + r"""echo "$*" >> "$CALLS"
 case "$*" in
   "pr view 41 "*) printf 'feat(cli): a new thing\n' ;;
   "pr view 43 "*) printf '53\nfix(edit): a thing\n' ;;
@@ -1659,8 +1661,7 @@ class ChangelogDiscovery(unittest.TestCase):
 
 
 # stub gh for the CI cancel: three runs in flight, one of them release.yml.
-GH_RUNS_STUB = r"""#!/bin/bash
-case "$*" in
+GH_RUNS_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in
   "run list"*) printf '101 CI\n102 Release\n103 Docs\n' ;;
   "run cancel"*) echo "$*" >> "$CALLS" ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
@@ -1681,7 +1682,8 @@ class CiCancel(unittest.TestCase):
         functions = shell_functions("cancel_queued_ci")
         script = f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n{functions}\ncancel_queued_ci\n'
         r = subprocess.run(["bash", "-c", script],
-                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", CALLS=str(calls)),
+                           env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", CALLS=str(calls),
+                                    GH_REPO="other/repo"),
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         cancelled = calls.read_text().split("\n")
@@ -1697,8 +1699,7 @@ class CiCancel(unittest.TestCase):
         self.assertLess(tail.index("cancel_queued_ci"), tail.index('git push origin "$TAG"'))
 
 
-GH_ATTEST_STUB = """#!/bin/sh
-echo "$*" >> "$CALLS"
+GH_ATTEST_STUB = "#!/bin/sh\n" + GH_BOUND + """echo "$*" >> "$CALLS"
 case "$1 $2" in
   "release download")
     dir=""; pat=""
@@ -1822,6 +1823,76 @@ class ChangelogPlaceholders(unittest.TestCase):
         s2 = step(2)
         self.assertIn("changelog_placeholders", s2)
         self.assertIn("die", s2.split("changelog_placeholders", 1)[1])
+
+
+# gh at a command's start: the subcommands that act on one repository.
+GH_REPO_CALL = re.compile(
+    r"(?:^|[;&|(!{]|\$\(|\bif\b|\bthen\b|\bdo\b)\s*gh\s+"
+    r"(?:release|run|pr|secret|attestation|workflow|issue|repo|cache|variable)\b")
+
+
+def shell_commands(path: Path) -> list[str]:
+    """The logical commands of a shell script: comment lines and heredoc
+    bodies dropped, backslash continuations joined, and any message text
+    (die/step/echo/printf) cut off, since no gh runs inside one."""
+    out, buf, heredoc = [], "", None
+    for line in path.read_text().splitlines():
+        if heredoc is not None:
+            if line.strip() == heredoc:
+                heredoc = None
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        if line.rstrip().endswith("\\"):
+            buf += line.rstrip()[:-1] + " "
+            continue
+        buf += line
+        m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", buf.replace("<<<", ""))
+        out.append(re.split(r"\b(?:die|step|echo|printf) [\"']", buf)[0])
+        buf = ""
+        if m:
+            heredoc = m.group(1)
+    return out
+
+
+class EngineRepoBinding(unittest.TestCase):
+    """Codex review of #1743 (#1747): gh honours GH_REPO, so a stray one in
+    the releaser's shell cancelled, listed or created things in another
+    repository. Every engine gh call names jandira-tech/jubarte-redlines;
+    the app's step gets no GH_REPO at all."""
+
+    def test_every_engine_gh_call_names_the_repository(self) -> None:
+        unbound = []
+        for script in (RELEASE_SH, HERE / "push_main.sh"):
+            for cmd in shell_commands(script):
+                starts = [m.end() for m in GH_REPO_CALL.finditer(cmd)]
+                for i, start in enumerate(starts):
+                    seg = cmd[start:starts[i + 1] if i + 1 < len(starts) else len(cmd)]
+                    if "-R jandira-tech/jubarte-redlines" not in seg:
+                        unbound.append(f"{script.name}: {cmd.strip()}")
+        self.assertEqual(unbound, [])
+
+    def test_the_scan_sees_the_calls(self) -> None:
+        # the scan would pass vacuously on a script it cannot read
+        calls = [c for c in shell_commands(RELEASE_SH) if GH_REPO_CALL.search(c)]
+        self.assertGreaterEqual(len(calls), 12, calls)
+        self.assertTrue(any("gh run cancel" in c for c in calls))
+        self.assertTrue(any(c.startswith("ghrel_has()") for c in calls), "a one-line function's call")
+        self.assertFalse(any("rerun <id>" in c for c in calls), "a die message is no call")
+
+    def test_a_stray_GH_REPO_never_reaches_the_app_step(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="appgh-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "scripts").mkdir()
+        (tmp / "scripts" / "release-engine.sh").write_text('#!/bin/sh\necho "GH_REPO=${GH_REPO-unset}"\n')
+        (tmp / "scripts" / "release-engine.sh").chmod(0o755)
+        text = RELEASE_SH.read_text()
+        app = re.search(r"^app_release\(\) .*$", text, re.M)
+        self.assertIsNotNone(app)
+        script = f"set -euo pipefail\nAPP_REPO={tmp}; VER=9.9.9\n{app.group(0)}\napp_release --preflight\n"
+        r = subprocess.run(["bash", "-c", script], env=dict(os.environ, GH_REPO="other/repo"),
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "GH_REPO=unset"), r.stderr)
 
 
 if __name__ == "__main__":
