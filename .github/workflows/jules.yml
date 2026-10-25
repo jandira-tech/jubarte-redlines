@@ -447,8 +447,10 @@ jobs:
           }
           # 🐇 Valid UTF-8 only: the runner decodes outputs as UTF-8 and turns each
           # invalid byte into a 3-byte U+FFFD, which would break the budget.
-          # iconv -c drops those bytes and exits 1 when it did.
-          utf8() { iconv -c -f UTF-8 -t UTF-8 < "$1" > "$2" || true; }
+          # iconv -c drops those bytes. glibc's iconv still writes the output
+          # but exits 1 when the input ends in a truncated sequence; any other
+          # failure (127: no iconv) must stop the step, not send an empty diff.
+          utf8() { iconv -c -f UTF-8 -t UTF-8 < "$1" > "$2" || [ $? -eq 1 ]; }
 
           raw="$(mktemp)"
           files="$(mktemp)"

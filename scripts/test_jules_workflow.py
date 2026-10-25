@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -88,6 +89,15 @@ def fixture(root: Path, files: dict[str, bytes | str]) -> Path:
     for key, file in SKILL_FILES.items():
         (skills / file).write_text(SKILL_TEXT[key], encoding="utf-8")
     return work
+
+
+def iconv_shim(root: Path, body: str) -> Path:
+    """A directory whose `iconv` runs `body`, to put first on PATH."""
+    shim = root / "shim"
+    shim.mkdir()
+    (shim / "iconv").write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    (shim / "iconv").chmod(0o755)
+    return shim
 
 
 def run_step_raw(cwd: Path, env: dict[str, str] | None = None) -> bytes:
@@ -256,6 +266,24 @@ class ConejoDiffStep(unittest.TestCase):
             outputs = run_step(work)
         self.assertNotIn("injected", outputs)
         self.assertIn("+injected=1", outputs["diff"])
+
+    def test_keeps_the_output_when_iconv_reports_invalid_input(self) -> None:
+        # glibc's iconv -c still writes the output but exits 1 when the input
+        # ends in a truncated sequence; the shim reproduces that on any host.
+        with tempfile.TemporaryDirectory(prefix="conejo-diff-") as tmp:
+            shim = iconv_shim(Path(tmp), f'"{shutil.which("iconv")}" "$@"; exit 1')
+            work = fixture(Path(tmp), {"lib.rs": "fn main() {}\n"})
+            outputs = run_step(work, {"PATH": f"{shim}:{os.environ['PATH']}"})
+        self.assertIn("+fn main() {}", outputs["diff"])
+
+    def test_fails_loudly_when_iconv_cannot_run(self) -> None:
+        # Exit 127 is "command not found"; swallowing it would send Jules an
+        # empty diff labelled complete.
+        with tempfile.TemporaryDirectory(prefix="conejo-diff-") as tmp:
+            shim = iconv_shim(Path(tmp), "exit 127")
+            work = fixture(Path(tmp), {"lib.rs": "fn main() {}\n"})
+            with self.assertRaises(subprocess.CalledProcessError):
+                run_step_raw(work, {"PATH": f"{shim}:{os.environ['PATH']}"})
 
 
 if __name__ == "__main__":
