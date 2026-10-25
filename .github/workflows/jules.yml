@@ -210,7 +210,7 @@ jobs:
           components: clippy
       - name: 🐇 Cache cargo builds
         if: steps.skills.outputs.rust_changed == 'true'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: 🥕 Install cargo-deny
         if: steps.skills.outputs.rust_changed == 'true'
         uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
