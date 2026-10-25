@@ -499,6 +499,116 @@ class SixFiles(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
 
+class MeasuredSentence(SixFiles):
+    """--summary TEXT and --changelog FILE: the measured sentence that ships
+    in the CHANGELOG, the GitHub notes, the app and jubarte.pro states the
+    evidence's own aggregates at two decimals (#1753; checklist 3#3).
+
+    The fixture's results: redlines jubarte 80.0 with 1 failure against
+    Docxodus 60.0; PDFs jubarte 80.0 with 1 failure against LibreOffice 60.0."""
+
+    SOUND = ("On two 3-item samples scored against Word's own output: redlines mean 80.00 "
+             "(Docxodus 60.00), counting as 0 the 1 redline Word 16.115 crashes opening "
+             "(KNOWN_ISSUES #8); PDFs mean 80.00 (LibreOffice 60.00), counting as 0 the 1 document "
+             "jubarte fails.")
+
+    def numbers(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return self.check(*args)
+
+    def test_a_sentence_stating_the_aggregates_passes(self) -> None:
+        r = self.numbers("--summary", "Breaking: none. " + self.SOUND + " Docs follow.")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("measured sentence", r.stdout)
+
+    def test_each_figure_that_differs_is_named(self) -> None:
+        for right, wrong in (
+            ("redlines mean 80.00", "redlines mean 80.01"),
+            ("(Docxodus 60.00)", "(Docxodus 60.10)"),
+            ("PDFs mean 80.00", "PDFs mean 79.99"),
+            ("(LibreOffice 60.00)", "(LibreOffice 59.00)"),
+            ("two 3-item samples", "two 600-item samples"),
+        ):
+            with self.subTest(wrong=wrong):
+                r = self.numbers("--summary", self.SOUND.replace(right, wrong))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(wrong.strip("()").replace("two ", ""), r.stderr)
+
+    def test_the_comparator_is_named_as_the_evidence_names_it(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("(Docxodus 60.00)", "(LibreOffice 60.00)"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Docxodus", r.stderr)
+
+    def test_a_wrong_failure_count_is_named(self) -> None:
+        r = self.numbers("--summary", self.SOUND.replace("counting as 0 the 1 redline", "counting as 0 the 2 redlines"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("counting as 0 the 2", r.stderr)
+
+    def test_failures_the_sentence_leaves_out_are_named(self) -> None:
+        text = self.SOUND.replace(", counting as 0 the 1 redline Word 16.115 crashes opening (KNOWN_ISSUES #8)", "")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("1 failed redline", r.stderr)
+
+    def test_no_failed_document_is_true_only_without_failures(self) -> None:
+        text = self.SOUND.replace("counting as 0 the 1 document jubarte fails", "no failed document")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no failed document", r.stderr)
+        self._edit_results("results_conversion", tools={"jubarte": {"failures": 0}})
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_failed_item_speaks_for_both_samples(self) -> None:
+        # 0.10's form: "redlines mean …, PDFs mean …, no failed item."
+        self._edit_results("results_conversion", tools={"jubarte": {"failures": 0}})
+        text = ("On two 3-item samples scored against Word's own output: redlines mean 80.00 "
+                "(Docxodus 60.00), PDFs mean 80.00 (LibreOffice 60.00), no failed item.")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("1 failed redline", r.stderr)
+        self._edit_results("results_redline", tools={"jubarte": {"failures": 0}})
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_two_decimals_round_half_up(self) -> None:
+        self._edit_results("results_redline", tools={"jubarte": {"mean": 71.6339}, "docxodus": {"mean": 64.915}})
+        r = self.numbers("--summary", self.SOUND.replace("80.00 (Docxodus 60.00)", "71.63 (Docxodus 64.92)"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_summary_without_the_sentence_fails(self) -> None:
+        r = self.numbers("--summary", "Breaking: none. New: a flag.")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no measured sentence", r.stderr)
+
+    def test_every_sentence_in_a_text_is_checked(self) -> None:
+        r = self.numbers("--summary", self.SOUND + " Again: " + self.SOUND.replace("PDFs mean 80.00", "PDFs mean 81.00"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("PDFs mean 81.00", r.stderr)
+
+    def test_a_changelog_section_is_read_under_either_heading_dash(self) -> None:
+        # the engine writes "## [V] - date", the app "## [V] — date"
+        changelog = self.tmp / "CHANGELOG.md"
+        wrapped = self.SOUND.replace("; PDFs", ";\n  PDFs")
+        changelog.write_text(f"# Changelog\n\n## [{VER}] — 2026-10-25\n\n- {wrapped}\n\n"
+                             f"## [0.11.1] — 2026-10-01\n\n- {self.SOUND.replace('80.00', '1.00')}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_sentence_in_another_versions_section_does_not_count(self) -> None:
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [{VER}] - 2026-10-25\n\n- New: a flag.\n\n## [0.11.1] - 2026-10-01\n\n- {self.SOUND}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("no measured sentence", r.stderr)
+
+    def test_a_changelog_without_the_versions_section_fails(self) -> None:
+        changelog = self.tmp / "CHANGELOG.md"
+        changelog.write_text(f"## [0.11.1] - 2026-10-01\n\n- {self.SOUND}\n")
+        r = self.numbers("--changelog", str(changelog))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(f"## [{VER}]", r.stderr)
+
+
 class Version(unittest.TestCase):
     def test_only_a_release_version_is_accepted(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="release_info_ver_"))
@@ -556,6 +666,14 @@ class ReleaseSh(unittest.TestCase):
         self.assertIn('--bench-root "$BENCH_ROOT"', step)
         self.assertIn("NEUROTIC_DOCX_BENCH", step)
         self.assertIn("format-checked", step)  # the no-bench warning says what is NOT proven
+
+    @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
+    def test_step_3_checks_the_measured_sentence(self) -> None:
+        step = self.step3()
+        call = step[step.index("--summary"):]
+        self.assertIn('--summary "$CHANGELOG_SUMMARY"', call[:200])
+        self.assertIn('--changelog "$APP_REPO/CHANGELOG.md"', call[:200])
+        self.assertIn("|| die", call[:400])
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:

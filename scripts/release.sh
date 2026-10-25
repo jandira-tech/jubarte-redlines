@@ -192,7 +192,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer|grep -n "^## \[@V@\]" CHANGELOG.md
 3|auto|The six release_info files verified: results bound to their sample CSV by sha256 and to the scored binary by commit + sha256, website and app data records sound|python3 scripts/check_release_info.py @V@ --bench-root ../neurotic_docx_bench
 3|auto|The evidence was scored on this tree's CLI engine: the commit both results JSONs name differs from HEAD in no engine input (src/ token for token, so comments aside; assets, schemas, keys byte for byte; Cargo.toml and Cargo.lock beyond the version and crates.io listing) — 0.11.2's evidence missed two code changes|python3 scripts/check_evidence_engine.py @V@
-3|you|The measured NUMBERS sentence in both changelogs equals the aggregates the checker just printed — mean and median of both samples, the paired interval; the same sentence reaches the app's changelog and About window and jubarte.pro, so a mismatch ships a wrong claim three times|python3 scripts/check_release_info.py @V@ (its aggregate lines); grep -n '600-item samples' CHANGELOG.md jubarte-app/CHANGELOG.md
+3|auto|The measured NUMBERS sentence of --changelog-summary and of the app's CHANGELOG section states the evidence's own figures at two decimals — sample size, both means, the comparator, the failures; it reaches the GitHub notes, the app's About window and jubarte.pro, so a mismatch ships a wrong claim three times|python3 scripts/check_release_info.py @V@ --summary "<changelog summary>" --changelog jubarte-app/CHANGELOG.md
 4|auto|The five summaries + the docs statement land in their channels; step 4 lists the docs files changed since the previous tag beside the statement|scripts/release.sh step 4 (it greps each landing)
 4|you|docs/adoption pages: a row this release ships still labelled main flips to released by hand (the README's labels name no moving version); the docs statement is checked against the diff, these pages are not|grep -rn ' main ' docs/adoption
 5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint — every new file needs its SPDX headers|uv tool run --from reuse[charset-normalizer] reuse lint
@@ -873,6 +873,12 @@ fi
 # release commit changes only what the check sets aside.
 python3 scripts/check_evidence_engine.py "$VER" \
   || die "the evidence was not scored on this tree's engine (above) — rebuild the candidate from HEAD and rerun the bench flow, or take the engine change out"
+# The measured sentence ships in the CHANGELOG (from --changelog-summary, step
+# 4), the GitHub notes, the app's changelog and About window and jubarte.pro:
+# each figure must be the evidence's own, at two decimals (#1753).
+python3 scripts/check_release_info.py "$VER" --summary "$CHANGELOG_SUMMARY" --changelog "$APP_REPO/CHANGELOG.md" >/dev/null \
+  || die "the measured sentence of --changelog-summary or $APP_REPO/CHANGELOG.md does not state the evidence's aggregates (above)"
+step "the measured sentence states the evidence's aggregates (the changelog summary and the app's changelog)"
 check_now 3
 
 # =============================================================================
