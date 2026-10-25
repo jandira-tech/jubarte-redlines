@@ -1,10 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Standalone workspace for the WASM binding; the neurotic_docx_bench consumes
 # it via a gitignored symlink. All bindings use the root OPC dependency.
 [workspace]
 
 [package]
 name = "jubarte-wasm"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 publish = false
 description = "wasm-bindgen bindings for jubarte-redlines compare_documents (Word-mode redline)"

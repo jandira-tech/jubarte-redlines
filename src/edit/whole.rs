@@ -56,6 +56,7 @@ pub(super) fn mark(
     (start, end): (usize, usize),
     (op, part): (usize, Option<String>),
     (find, replacement): (&str, &str),
+    ids: &mut super::RevisionCounter,
 ) -> Option<Mark> {
     let root = dom
         .ancestors(paragraph, None)
@@ -75,7 +76,7 @@ pub(super) fn mark(
     dom.set_attribute_value(open, &W::name("name"), Some(&name));
     let close = dom.new_element(W::bookmark_end());
     dom.set_attribute_value(close, &W::id(), Some(&id));
-    wrap_range(dom, paragraph, start, end, open, close).then(|| Mark {
+    wrap_range(dom, paragraph, start, end, open, close, ids).then(|| Mark {
         op,
         part,
         name,

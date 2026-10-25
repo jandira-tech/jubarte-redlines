@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
-SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
+SPDX-License-Identifier: AGPL-3.0-only AND Apache-2.0 AND OFL-1.1 AND LicenseRef-Microsoft-MIT AND LicenseRef-Docxodus-MIT AND LicenseRef-anymd-MIT AND LicenseRef-markdown2pdf-MIT AND LicenseRef-zipsign-MIT AND LicenseRef-docen-MIT AND LicenseRef-Bench-Fixtures AND MIT AND MPL-2.0
 -->
 
 # Third-party attribution texts
@@ -29,6 +29,12 @@ did not author:
   (c) 2023 Ismael Shakverdiev. The MATH font reader and layout arithmetic
   in `src/convert/math_font.rs` and `src/convert/math_layout.rs` are adapted
   from its `src/lib/render/math/` modules.
+- `LICENSES/LicenseRef-zipsign-MIT.txt` — the preserved MIT notice from
+  [zipsign](https://github.com/Kijewski/zipsign), Copyright (c) 2023-2025
+  René Kijewski (zipsign-api 0.2.2 is `MIT OR Apache-2.0 OR Apache-2.0 WITH
+  LLVM-exception`; jubarte uses it under MIT). The release
+  archive signature check in `src/update/zipsign.rs` is adapted from its
+  `verify/`, `verify_unsign_tar.rs` and `constants.rs`.
 - `LICENSES/LicenseRef-docen-MIT.txt` — the MIT notice of
   [docen](https://github.com/DemoMacro/docen), Copyright (c) 2025 Demo Macro.
   `tests/fixtures/md-roundtrip/demo.docx` is docen's feature showcase as

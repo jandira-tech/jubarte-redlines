@@ -125,9 +125,12 @@ report.json
 
 # uv-managed virtualenv (created by `uv sync` in eval/cli-v2-pilot/)
 .venv/
+merge013/
 
 # redline-bench struggle reports (generated every 5 min by /tmp/rb_gw/jub_report.py)
 bench-reports/
 
 # Codex security-scan output (findings, threat model): never committed
 .scan/
+# tools/parity/build.sh and parity_check.py write here by default (#1757)
+tools/parity/parity-work/

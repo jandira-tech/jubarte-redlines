@@ -2098,9 +2098,10 @@ struct TableGeom {
     /// rules, which a pct table's columns give up so its rim stays at the
     /// pct width (Word 16 probe pct3, 2026-10-02).
     pct_rules: f32,
-    /// An autofit table whose tblGrid another tool wrote (`gridCol`
-    /// carries a `w:type`, which Word never writes): Word fits the columns
-    /// to their content on open (PHPWord's 00046848 label column).
+    /// An autofit table another tool wrote (a `gridCol` without a width,
+    /// or cells without a width of their own in every column of a table
+    /// Word did not save): Word fits the columns to their content on open
+    /// (PHPWord's 00046848 label column).
     content_autofit: bool,
     /// `w:tblCellSpacing` in points: Word leaves twice it between cells
     /// and around them.
@@ -2352,6 +2353,8 @@ struct RawCell {
 
 #[derive(Clone)]
 struct LaidImage {
+    /// A wrapping group's box already counts this member's width (codex on #1732).
+    group_reserved: bool,
     w: f32,
     h: f32,
     kind: ImageKind,
@@ -3095,6 +3098,7 @@ fn vml_rect_foot(pad: f32, width: f32) -> f32 {
 /// An inline text box as a flow picture its size, which paints the box.
 fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
     LaidImage {
+        group_reserved: false,
         w: b.w + effect[0] + effect[2],
         h: b.h + effect[1] + effect[3],
         kind: ImageKind::TextBox(std::rc::Rc::new(b)),
@@ -10040,85 +10044,159 @@ fn autofit_to_words(
 
 /// A cell's (longest word, widest unbroken paragraph) in points.
 fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
+    let (min, max) = cell
+        .paras
+        .iter()
+        .map(|para| para_content_extent(fonts, para))
+        .fold((0.0_f32, 0.0_f32), |(min, max), (lo, hi)| {
+            (min.max(lo), max.max(hi))
+        });
+    (min, max.max(min))
+}
+
+/// A cell paragraph's (longest word, widest unbroken line) in points.
+fn para_content_extent(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
     let mut min = 0.0_f32;
     let mut max = 0.0_f32;
-    for para in &cell.paras {
-        let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
-        let mut line = 0.0_f32;
-        // The blanks a line ends with hang past it: Word's autofit of
-        // 0edc50c464's "npm" + 15 blanks + a 24-letter link + 17 blanks
-        // spans the content without the trailing blanks (201.3pt with
-        // the cell margins; the blanks would make it 300).
-        let mut trailing = 0.0_f32;
-        // The unit a run leaves open at its end: a word cut by a run
-        // boundary is one unit, as `wrap_runs_segment` glues it
-        // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
-        // inserted run against a deleted one stays apart: Word breaks
-        // 25897f5751's inserted "GDP" + deleted "Block" in its column
-        // rather than widen it.
-        let mut carry = 0.0_f32;
-        let mut marks: Option<(bool, bool)> = None;
-        for run in &para.runs {
-            let mark = (run.style.strike, run.style.underline);
-            if marks.replace(mark).is_some_and(|prev| prev != mark) {
+    let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
+    let mut line = 0.0_f32;
+    // The blanks a line ends with hang past it: Word's autofit of
+    // 0edc50c464's "npm" + 15 blanks + a 24-letter link + 17 blanks
+    // spans the content without the trailing blanks (201.3pt with
+    // the cell margins; the blanks would make it 300).
+    let mut trailing = 0.0_f32;
+    // The unit a run leaves open at its end: a word cut by a run
+    // boundary is one unit, as `wrap_runs_segment` glues it
+    // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
+    // inserted run against a deleted one stays apart: Word breaks
+    // 25897f5751's inserted "GDP" + deleted "Block" in its column
+    // rather than widen it.
+    let mut carry = 0.0_f32;
+    let mut marks: Option<(bool, bool)> = None;
+    for run in &para.runs {
+        let mark = (run.style.strike, run.style.underline);
+        if marks.replace(mark).is_some_and(|prev| prev != mark) {
+            carry = 0.0;
+        }
+        let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+        let size = run.style.layout_size();
+        let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
+        for (i, piece) in run.text.split('\n').enumerate() {
+            if i > 0 {
+                max = max.max(line - trailing + indent);
+                line = 0.0;
+                trailing = 0.0;
                 carry = 0.0;
             }
-            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
-            let size = run.style.layout_size();
-            let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
-            for (i, piece) in run.text.split('\n').enumerate() {
-                if i > 0 {
-                    max = max.max(line - trailing + indent);
-                    line = 0.0;
-                    trailing = 0.0;
-                    carry = 0.0;
-                }
-                if piece.is_empty() {
-                    continue;
-                }
-                line += width(piece);
-                let kept = piece.trim_end_matches(is_wrap_space);
-                trailing = if kept.is_empty() {
-                    trailing + width(piece)
-                } else {
-                    width(&piece[kept.len()..])
-                };
-                let opens =
-                    |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
-                let mut glue = opens(piece.chars().next());
-                let mut last = 0.0_f32;
-                // The longest unit the line may not break inside: a URL
-                // wraps after its hyphens (6ac97492's calor.co.uk link),
-                // a word after a hyphen, as `wrap_runs_segment` does.
-                for word in piece.split(is_wrap_space).filter(|w| !w.is_empty()) {
-                    let url = url_wrap_pieces(word);
-                    let units = if url.len() > 1 {
-                        url
-                    } else {
-                        hyphen_wrap_pieces(
-                            word,
-                            !run.style.ideograph_words,
-                            !run.style.punct_compress,
-                        )
-                    };
-                    for unit in units {
-                        last = width(unit)
-                            + if std::mem::take(&mut glue) {
-                                carry
-                            } else {
-                                0.0
-                            };
-                        min = min.max(last + indent);
-                    }
-                }
-                carry = if opens(piece.chars().last()) && !breaks_after(run, piece) {
-                    last
-                } else {
-                    0.0
-                };
+            if piece.is_empty() {
+                continue;
             }
+            line += width(piece);
+            let kept = piece.trim_end_matches(is_wrap_space);
+            trailing = if kept.is_empty() {
+                trailing + width(piece)
+            } else {
+                width(&piece[kept.len()..])
+            };
+            let opens =
+                |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
+            let mut glue = opens(piece.chars().next());
+            let mut last = 0.0_f32;
+            // The longest unit the line may not break inside: a URL
+            // wraps after its hyphens (6ac97492's calor.co.uk link),
+            // a word after a hyphen, as `wrap_runs_segment` does.
+            for word in piece.split(is_wrap_space).filter(|w| !w.is_empty()) {
+                let url = url_wrap_pieces(word);
+                let units = if url.len() > 1 {
+                    url
+                } else {
+                    hyphen_wrap_pieces(word, !run.style.ideograph_words, !run.style.punct_compress)
+                };
+                for unit in units {
+                    last = width(unit)
+                        + if std::mem::take(&mut glue) {
+                            carry
+                        } else {
+                            0.0
+                        };
+                    min = min.max(last + indent);
+                }
+            }
+            carry = if opens(piece.chars().last()) && !breaks_after(run, piece) {
+                last
+            } else {
+                0.0
+            };
         }
-        max = max.max(line - trailing + indent);
+    }
+    max = max.max(line - trailing + indent);
+    (min, max.max(min))
+}
+
+/// [`cell_content_extent`] with the rest a fitted column holds: a picture
+/// is one unit as wide as itself and a paragraph's pictures stand on its
+/// line beside its text (#1716 probes pabv and inlv: Word's picture column
+/// is the 120pt picture's, anchored to the column or inline; #1732 probe
+/// i1: a caption and its 60pt picture fit a column wider than either). A
+/// nested table is as wide as its grid, less the cell margins it pulls
+/// into ours (probes m1 and m2: a column holding a 200pt nested table is
+/// 201.6pt in Word); a nested table fitted to its own content spans that
+/// fit (#1732 probe t1). A picture placed on the page takes no room; a pct
+/// table contributes only its intrinsic minimum (codex on #1732).
+fn cell_fit_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
+    let (mut min, mut max) = (0.0_f32, 0.0_f32);
+    for para in &cell.paras {
+        let held = || {
+            para.images.iter().filter(|image| {
+                // Page alignment need not have an offset (codex on #1732).
+                !image.group_reserved
+                    && !matches!(
+                        image.slot,
+                        ImageSlot::Float {
+                            page_x: Some(_),
+                            ..
+                        } | ImageSlot::Float {
+                            h_rel: RelFrame::Page,
+                            ..
+                        }
+                    )
+            })
+        };
+        let (lo, hi) = para_content_extent(fonts, para);
+        min = min
+            .max(lo)
+            .max(held().map(|image| image.w).fold(0.0, f32::max));
+        max = max.max(hi + held().map(|image| image.w).sum::<f32>());
+    }
+    for nested in &cell.nested {
+        if let Block::Table {
+            cols, rows, geom, ..
+        } = nested.as_ref()
+        {
+            let (lo, hi) = if geom.content_autofit {
+                let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
+                let (mins, maxs) = content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                (
+                    mins.iter().sum::<f32>() + gaps,
+                    maxs.iter().sum::<f32>() + gaps,
+                )
+            } else {
+                let width = match geom.width {
+                    TblWidth::Grid => cols.iter().sum(),
+                    TblWidth::Dxa(w) => w,
+                    TblWidth::Pct(_) => {
+                        let gaps = 2.0 * geom.cell_spacing * cols.len() as f32;
+                        let (mins, _) =
+                            content_autofit_extents(fonts, cols.len(), rows, geom, false);
+                        mins.iter().sum::<f32>() + gaps
+                    }
+                };
+                (width, width)
+            };
+            let pulled = geom.tbl_ind - 2.0 * geom.mar_l;
+            min = min.max((lo + pulled).max(0.0));
+            max = max.max((hi + pulled).max(0.0));
+        }
     }
     (min, max.max(min))
 }
@@ -10139,34 +10217,21 @@ fn content_autofit_widths(
     avail: f32,
     pref_caps: bool,
 ) -> Vec<f32> {
-    let mut mins = vec![0.0_f32; n];
-    let mut maxs = vec![0.0_f32; n];
-    for cell in rows.iter().flatten() {
-        // A gridBefore/gridAfter placeholder is no cell: it has no
-        // margins and sets no minimum, its grid column stays as drafted
-        // (ed36b607e8: a 5-twip column a row skips keeps Word's 0.25pt;
-        // a cell's margins there pushed the row 10.5pt in).
-        if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
-            continue;
-        }
-        // The spacing inset in pad_l is the column's gap, counted below.
-        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
-        let (lo, hi) = cell_content_extent(fonts, cell);
-        mins[cell.col] = mins[cell.col].max(lo + pads);
-        maxs[cell.col] = maxs[cell.col].max(hi + pads);
-    }
-    for (j, max) in maxs.iter_mut().enumerate() {
-        if let Some(PrefWidth::Dxa(w)) = geom.pref.get(j) {
-            *max = if pref_caps { *w } else { max.max(*w) };
-        }
-        *max = max.max(mins[j]);
-    }
+    let (mins, maxs) = content_autofit_extents(fonts, n, rows, geom, pref_caps);
     let gap = 2.0 * geom.cell_spacing;
     // A legacy document's autofit spans the text plus the table's cell
     // margins, as its pct tables do (00046848's lines reach 525pt in a
     // 523pt measure).
     let room = (avail + geom.pct_margins - gap * (n as f32 + 1.0)).max(0.0);
     let (lo, hi): (f32, f32) = (mins.iter().sum(), maxs.iter().sum());
+    // Longest words that overrun the room still leave the table on the
+    // page: Word gives probe long's unbroken 110-letter word the room and
+    // breaks it, the table ending at the margin. The columns share the
+    // room by their longest words.
+    if !pref_caps && lo > room && lo > 0.0 {
+        let scale = room / lo;
+        return mins.iter().map(|lo| lo * scale + gap).collect();
+    }
     let k = if hi <= room {
         1.0
     } else if lo >= room || hi - lo < 0.01 {
@@ -10178,6 +10243,73 @@ fn content_autofit_widths(
         .zip(&maxs)
         .map(|(lo, hi)| lo + (hi - lo) * k + gap)
         .collect()
+}
+
+/// Each column's (minimum, maximum) for [`content_autofit_widths`], its
+/// cell margins included and its gaps not.
+fn content_autofit_extents(
+    fonts: &Fonts,
+    n: usize,
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    pref_caps: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let mut mins = vec![0.0_f32; n];
+    let mut maxs = vec![0.0_f32; n];
+    // The pictures, nested tables, spanning cells and overrun below are
+    // what Word showed of a fitted table (#1716); a grid too wide for its
+    // room (`pref_caps`) keeps to its words.
+    let extent = |cell: &TableCell| {
+        if pref_caps {
+            cell_content_extent(fonts, cell)
+        } else {
+            cell_fit_extent(fonts, cell)
+        }
+    };
+    for cell in rows.iter().flatten() {
+        // A gridBefore/gridAfter placeholder is no cell: it has no
+        // margins and sets no minimum, its grid column stays as drafted
+        // (ed36b607e8: a 5-twip column a row skips keeps Word's 0.25pt;
+        // a cell's margins there pushed the row 10.5pt in).
+        if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
+            continue;
+        }
+        // The spacing inset in pad_l is the column's gap, counted below.
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let (lo, hi) = extent(cell);
+        mins[cell.col] = mins[cell.col].max(lo + pads);
+        maxs[cell.col] = maxs[cell.col].max(hi + pads);
+    }
+    let gap = 2.0 * geom.cell_spacing;
+    // A spanning cell needs its columns to hold its content between them,
+    // and they share what they lack evenly: Word spreads probe span's
+    // sentence over its two columns without a tcW, 231.8 and 236.6pt.
+    for cell in rows.iter().flatten() {
+        let end = cell.col + cell.colspan;
+        if pref_caps || cell.colspan < 2 || end > n || cell.grid_skip {
+            continue;
+        }
+        let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
+        let inner = gap * (cell.colspan - 1) as f32;
+        let (lo, hi) = extent(cell);
+        for (need, have) in [
+            (lo + pads - inner, &mut mins),
+            (hi + pads - inner, &mut maxs),
+        ] {
+            let cover: f32 = have[cell.col..end].iter().sum();
+            if need > cover {
+                let each = (need - cover) / cell.colspan as f32;
+                have[cell.col..end].iter_mut().for_each(|w| *w += each);
+            }
+        }
+    }
+    for (j, max) in maxs.iter_mut().enumerate() {
+        if let Some(PrefWidth::Dxa(w)) = geom.pref.get(j) {
+            *max = if pref_caps { *w } else { max.max(*w) };
+        }
+        *max = max.max(mins[j]);
+    }
+    (mins, maxs)
 }
 
 fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
@@ -11692,6 +11824,7 @@ fn paragraph_block(
         images.insert(
             0,
             LaidImage {
+                group_reserved: false,
                 w,
                 h,
                 kind,
@@ -13131,17 +13264,22 @@ fn table_block(
     // capability matrix wraps into a hairline column.
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
-        for col in dom.elements(grid, Some(&W::name("gridCol"))) {
-            // A `w:type` on a gridCol, or a gridCol without a width, is
-            // a grid Word never wrote: it fits the columns to their
-            // content on open (0edc50c464's `<w:gridCol/>` tables).
-            let width = dom.attribute(col, &W::name("w"));
-            foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
-            let w = width
+        let w = W::w();
+        for col in dom.elements(grid, Some(&W::grid_col())) {
+            // A gridCol without a width, or with one that is no finite
+            // number (`NaN` and `inf` parse as f32), is a grid Word never
+            // wrote: it fits the columns to their
+            // content on open (0edc50c464's `<w:gridCol/>` tables). Cells
+            // without a width can say so too (`cells_foreign`, below). A
+            // gridCol's `w:type` says nothing: Word keeps the grid of a
+            // table whose every cell has a tcW, with or without it (#1720
+            // probes b1, b2).
+            let width = dom
+                .attribute(col, &w)
                 .and_then(|s| s.parse::<f32>().ok())
-                .map(twip)
-                .unwrap_or(80.0);
-            cols.push(w);
+                .filter(|v| v.is_finite());
+            foreign_grid |= width.is_none();
+            cols.push(width.map(twip).unwrap_or(80.0));
         }
     }
     // With no table style anywhere Word pads a cell 0.5pt, not 108 twips
@@ -13208,6 +13346,13 @@ fn table_block(
     let table_borders = table_pr(dom, table)
         .and_then(|pr| parse_tbl_borders(dom, pr))
         .or_else(|| tdef.as_ref().and_then(|t| t.borders));
+    // The grid columns where some cell of a single column has no width of
+    // its own (no tcW, or an auto or zero one), read by `cells_foreign`;
+    // the columns a cell of a single column starts in; and the columns a
+    // spanning cell without a width covers.
+    let mut widthless_cols = vec![false; cols.len()];
+    let mut single_cols = vec![false; cols.len()];
+    let mut span_widthless = vec![false; cols.len()];
     for (ri, row) in all_rows.into_iter().enumerate() {
         let [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b] =
             row_cell_mar(dom, row, [tbl_pad_l, tbl_pad_r, tbl_pad_t, tbl_pad_b]);
@@ -13239,6 +13384,7 @@ fn table_block(
         }
         for cell in wrapped_children(dom, row, "tc") {
             row_has_cell_del |= cell_is_deleted(dom, cell);
+            let pref = cell_pref_width(dom, cell);
             let mut cell_paras = Vec::new();
             let mut nested = Vec::new();
             let mut nested_at = Vec::new();
@@ -13486,6 +13632,21 @@ fn table_block(
                 &nested_at,
             );
             let (colspan, vmerge) = cell_span(dom, cell);
+            let widthless = cell_without_width(dom, cell);
+            if colspan <= 1 {
+                if let Some(seen) = single_cols.get_mut(grid_at) {
+                    *seen = true;
+                }
+                if widthless && let Some(seen) = widthless_cols.get_mut(grid_at) {
+                    *seen = true;
+                }
+            } else if widthless {
+                span_widthless
+                    .iter_mut()
+                    .skip(grid_at)
+                    .take(colspan)
+                    .for_each(|seen| *seen = true);
+            }
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
                 row_exception_cell_borders(b, ri == 0, ri + 1 == row_count, grid_at == 0, last_col)
@@ -13553,7 +13714,7 @@ fn table_block(
                 paras: cell_paras,
                 nested,
                 nested_at,
-                pref: cell_pref_width(dom, cell),
+                pref,
                 colspan,
                 vmerge,
                 fill: cell_fill(dom, cell),
@@ -13637,6 +13798,41 @@ fn table_block(
         cols = vec![80.0; occupancy];
     }
     let fixed = table_layout_fixed(dom, table);
+    // Word writes a tcW on every cell it saves, and fits a table another
+    // tool wrote to its content on open when every column holds a cell
+    // without a width of its own (#1716 probes g2, q1, n1-n3, n7; #1720
+    // b6-b11). A column with a width in every row keeps it, which the fit
+    // does not model, so such a table keeps its grid (probe n4: Word
+    // keeps 120pt). A table Word saved keeps its grid too: that grid is
+    // Word's own fit, and re-fitting its auto cells only moved them
+    // (b6dd0b6ae8's statistics tables gained a page; codex's corpus
+    // review of #1716). Word's marks on its rows and paragraphs tell such
+    // a table; Word itself does not lay out by them (probe m3, q1 with
+    // the marks, still fits). A nested table's marks are its own: Word
+    // fits #1732 probe p1's unmarked table around a marked one.
+    let (rsid_r, rsid_tr, para_id, tbl) = (W::rsid_r(), W::rsid_tr(), W14::para_id(), W::tbl());
+    let word_saved = wrapped_children(dom, table, "tr")
+        .into_iter()
+        .any(|row| dom.attribute(row, &rsid_r).is_some() || dom.attribute(row, &rsid_tr).is_some())
+        || dom.descendants(table, Some(&W::p())).into_iter().any(|p| {
+            dom.attribute(p, &para_id).is_some()
+                // A copied text box's marks belong to it (codex on #1732).
+                && !inside_text_box(dom, p, table)
+                && std::iter::successors(dom.parent(p), |&n| dom.parent(n))
+                    .find(|&n| dom.name_is(n, &tbl))
+                    == Some(table)
+        });
+    // A column only a spanning cell without a width reaches is a column
+    // without a width too: Word fits #1732 probe s2's one spanning title
+    // to its words. A column a cell of its own sizes is not (probe s1,
+    // #1733). Rows with more cells than the grid has columns are judged
+    // by the grid's columns: Word fits a one-column grid under two-cell
+    // rows whether or not the second column has a tcW (#1732 probes
+    // g1-g3, CodeRabbit's review).
+    let cells_foreign = !word_saved
+        && !widthless_cols.is_empty()
+        && (0..widthless_cols.len())
+            .all(|j| widthless_cols[j] || (!single_cols[j] && span_widthless[j]));
     let pref = column_prefs(&raw_rows, &cols, fixed);
     let mut rows = resolve_table_merges(raw_rows);
     // A row sets all its cells at their largest top margin: 17c3e72c's
@@ -13811,7 +14007,7 @@ fn table_block(
                 },
                 content_autofit: !fixed
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
-                    && foreign_grid,
+                    && (foreign_grid || cells_foreign),
                 cell_spacing: tbl_spacing,
             })
         },
@@ -14246,7 +14442,10 @@ fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {
 }
 
 fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
-    let Some(pr) = first_named(dom, cell, "tcPr") else {
+    // The cell's own tcPr: a cell without one is no wider for the first
+    // cell of the table nested in it (#1716 probe m2's tcW-less cell took
+    // its nested table's 2000-twip tcW).
+    let Some(pr) = direct_named(dom, cell, "tcPr") else {
         return PrefWidth::Auto;
     };
     let Some(tw) = direct_named(dom, pr, "tcW") else {
@@ -14272,6 +14471,26 @@ fn cell_pref_width(dom: &Dom, cell: NodeId) -> PrefWidth {
             }
         }
         _ => PrefWidth::Auto,
+    }
+}
+
+/// Whether a cell gives itself no width, for the cue on which Word fits an
+/// unsaved autofit table (#1716): no `tcW`, an auto one whatever its `w:w`
+/// (probes n1, q1, o3, b7), or a zero dxa one (b6). Word keeps the grid
+/// where every cell's `tcW` has no `w:type` (probe o1: it is a dxa width)
+/// or a nil one (o2), and splits a table of zero pct ones evenly (o4,
+/// #1731); [`cell_pref_width`] reads all three as auto.
+fn cell_without_width(dom: &Dom, cell: NodeId) -> bool {
+    let Some(tw) = direct_named(dom, cell, "tcPr").and_then(|pr| direct_named(dom, pr, "tcW"))
+    else {
+        return true;
+    };
+    match attr_any(dom, tw, "type") {
+        Some("nil" | "pct") => false,
+        None => attr_any(dom, tw, "w")
+            .and_then(parse_len)
+            .is_none_or(|w| w <= 0.0),
+        Some(_) => matches!(cell_pref_width(dom, cell), PrefWidth::Auto),
     }
 }
 
@@ -18320,6 +18539,7 @@ fn collect_images(
             );
             if wraps {
                 out.push(LaidImage {
+                    group_reserved: false,
                     w,
                     h,
                     kind: ImageKind::Reserve,
@@ -18377,6 +18597,7 @@ fn collect_images(
                     continue;
                 };
                 out.push(LaidImage {
+                    group_reserved: wraps,
                     w: w * frac[2],
                     h: h * frac[3],
                     kind: decode_image(bytes).unwrap_or(ImageKind::Reserve),
@@ -18445,6 +18666,7 @@ fn collect_images(
                         None => (w, h, inset),
                     };
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: w + inset[0] + inset[2],
                         h: h + inset[1] + inset[3],
                         kind,
@@ -18482,6 +18704,7 @@ fn collect_images(
                     });
                 } else {
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: 72.0,
                         h: 72.0,
                         kind: ImageKind::Broken,
@@ -18560,6 +18783,7 @@ fn collect_images(
                     // Missing OLE/VML preview Target: Word's 1in box
                     // (plan.md Step 10 E), not drawing_extent_pt 200×120.
                     out.push(LaidImage {
+                        group_reserved: false,
                         w: 72.0,
                         h: 72.0,
                         kind: ImageKind::Broken,
@@ -18605,6 +18829,7 @@ fn collect_images(
                     (w, h)
                 };
                 out.push(LaidImage {
+                    group_reserved: false,
                     w,
                     h,
                     kind,
@@ -18779,6 +19004,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         (slot, w, h, a, b)
     };
     Some(LaidImage {
+        group_reserved: false,
         w,
         h,
         kind: ImageKind::VmlLine {
@@ -18864,6 +19090,7 @@ fn vml_rect_image(
     };
     let pad = if width >= 2.0 { width / 2.0 } else { 0.0 };
     Some(LaidImage {
+        group_reserved: false,
         w: w + 2.0 * pad,
         h: h + pad + vml_rect_foot(pad, width),
         kind: ImageKind::VmlRect {
@@ -49995,20 +50222,26 @@ mod coverage_round_three_tests {
 
     #[test]
     fn single_column_foreign_grids_expand_evenly_and_invalid_widths_keep_defaults() {
-        for (grid, expected, autofit) in [
-            (r#"<w:gridCol w:w="2400"/>"#, vec![60.0, 60.0], false),
+        // A valid grid is foreign only when a cell has no width (#1716);
+        // a gridCol whose width is missing or no number always is, and its
+        // `w:type` plays no part (#1720).
+        let width = r#"<w:tcPr><w:tcW w:w="1200" w:type="dxa"/></w:tcPr>"#;
+        for (grid, tcpr, expected, autofit) in [
+            (r#"<w:gridCol w:w="2400"/>"#, width, vec![60.0, 60.0], false),
+            (r#"<w:gridCol w:w="2400"/>"#, "", vec![60.0, 60.0], true),
             (
                 r#"<w:gridCol w:w="bad" w:type="auto"/>"#,
+                width,
                 vec![40.0, 40.0],
                 true,
             ),
-            ("<w:gridCol/>", vec![40.0, 40.0], true),
+            ("<w:gridCol/>", width, vec![40.0, 40.0], true),
         ] {
             let Block::Table {
                 cols, rows, geom, ..
             } = table(
                 &format!(
-                    r#"<w:tbl><w:tblGrid>{grid}</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+                    r#"<w:tbl><w:tblGrid>{grid}</w:tblGrid><w:tr><w:tc>{tcpr}<w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc>{tcpr}<w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
                 ),
                 &sheet(),
             )
@@ -62661,7 +62894,8 @@ mod complete_coordinate_layout_contract_tests {
     }
 
     #[test]
-    fn content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins() {
+    fn content_autofit_spreads_a_span_and_skips_grid_before_placeholders_without_inventing_margins()
+    {
         let fonts = fonts();
         let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
         let em = f32::from(
@@ -62671,8 +62905,11 @@ mod complete_coordinate_layout_contract_tests {
             / f32::from(raw.units_per_em());
         for (rows_xml, expected) in [
             (
+                // The spanning cell's 16-letter word is shared by the two
+                // columns it covers (#1716 probe span: Word spreads a
+                // spanning cell over its columns).
                 "<w:tr><w:tc><w:tcPr><w:gridSpan w:val='2'/></w:tcPr><w:p><w:r><w:t>AAAAAAAAAAAAAAAA</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
-                vec![0.0, 0.0, em],
+                vec![8.0 * em, 8.0 * em, em],
             ),
             (
                 "<w:tr><w:trPr><w:gridBefore w:val='1'/><w:gridAfter w:val='1'/></w:trPr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
@@ -62708,9 +62945,9 @@ mod complete_coordinate_layout_contract_tests {
                     }
                 }
             }
-            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 100.0, false);
+            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 200.0, false);
             for (actual, wanted) in widths.iter().zip(expected) {
-                assert!((actual - wanted).abs() < 0.0001);
+                assert!((actual - wanted).abs() < 0.0001, "{widths:?}");
             }
             assert_eq!(
                 rows.iter()

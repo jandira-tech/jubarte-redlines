@@ -9,10 +9,11 @@
 //
 //   npx jubarte-redlines redline a.docx b.docx -o redline.docx
 //
-// Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage,
-// 3 edit plan refused (its per-operation report is on stdout; nothing was
-// written).
+// Exit codes: 0 success, 1 error (I/O, engine), 2 usage (a flag, a
+// combination, an existing output), 3 edit plan refused (its per-operation
+// report is on stdout; nothing was written).
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -29,7 +30,7 @@ const EXIT_PLAN_REFUSED = 3;
 /** A user-facing failure; printed as `error: ...`, exit 1. */
 class CliError extends Error {}
 
-/** A host capability mismatch; rejected before file I/O, exit 2. */
+/** A usage refusal: a flag, a combination or an existing output; exit 2. */
 class UsageError extends Error {}
 
 /** An engine refusal that exits 3, as `read --for-edit`'s. */
@@ -94,9 +95,33 @@ function readInput(file, o, json = false) {
   return docx;
 }
 
+/** The no-clobber refusal, as the binary words and codes it: a usage
+ * refusal (exit 2) with the OUTPUT_EXISTS code. */
 function ensureWritable(file, force) {
   if (fs.existsSync(file) && !force) {
-    throw new CliError(`output '${file}' already exists (use --force to overwrite)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${file}' already exists (use --force to overwrite)`);
+  }
+}
+
+/** Whether two paths name the same file: the same device and inode when
+ * both exist (a link to the input is the input), else the same path once
+ * resolved (`out.md` and `./out.md` are one file). A file system that
+ * reports no inode (0) compares by path. */
+function sameFile(a, b) {
+  try {
+    const left = fs.statSync(a, { bigint: true });
+    const right = fs.statSync(b, { bigint: true });
+    if (left.ino !== 0n && right.ino !== 0n) return left.dev === right.dev && left.ino === right.ino;
+  } catch {}
+  return path.resolve(a) === path.resolve(b);
+}
+
+/** The refusal of an output that names its own input, as the binary words
+ * and codes it: a usage refusal (exit 2) with the OUTPUT_ALIAS code.
+ * --force authorizes replacing an output, never an input. */
+function refuseOutputAlias(output, input) {
+  if (sameFile(output, input)) {
+    throw new UsageError(`OUTPUT_ALIAS: the output '${output}' is the same file as the input '${input}'`);
   }
 }
 
@@ -124,10 +149,36 @@ function markdownText(file, bytes) {
   }
 }
 
+/** Writes `data` to `file` through a staged file beside it, renamed over
+ * it: a link is replaced, never written through, and an input that shares
+ * the output's file keeps its bytes. A replaced regular file keeps its
+ * mode, as the binary's does. The staged name is random and created only
+ * if absent, so a link planted beside the output is never followed
+ * (#1698). */
 function write(file, data) {
+  const partial = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.partial`);
+  let created = false;
   try {
-    fs.writeFileSync(file, data);
+    let mode;
+    try {
+      const old = fs.lstatSync(file);
+      if (old.isFile()) mode = old.mode & 0o777;
+    } catch {}
+    const fd = fs.openSync(partial, "wx");
+    created = true;
+    try {
+      fs.writeFileSync(fd, data);
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (mode !== undefined) fs.chmodSync(partial, mode);
+    fs.renameSync(partial, file);
   } catch (e) {
+    if (created) {
+      try {
+        fs.rmSync(partial, { force: true });
+      } catch {}
+    }
     throw new CliError(`writing ${file}: ${osError(e)}`);
   }
 }
@@ -271,8 +322,10 @@ const COMMANDS = {
   changes: {
     run(_, [file], o) {
       const docx = readInput(file, o, o.json);
-      if (!o.json) return void process.stdout.write(wasm.changesText(docx));
-      for (const change of JSON.parse(wasm.listChanges(docx))) {
+      // --author: only those authors' changes, exact names (#1690).
+      const authors = o.author?.length ? o.author : undefined;
+      if (!o.json) return void process.stdout.write(wasm.changesText(docx, authors));
+      for (const change of JSON.parse(wasm.listChanges(docx, authors))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
       if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
@@ -282,15 +335,30 @@ const COMMANDS = {
   reject: resolution(false),
   read: {
     run(_, [file], o) {
+      // The output is refused before the input is read, as the binary does:
+      // an existing output is a usage refusal, not an error the input's
+      // reading would have found first (#1690).
+      if (o.output != null && !o.for_edit) {
+        // An output that names the input would destroy it: the tables view
+        // of a document written over itself.
+        if (o.tables) refuseOutputAlias(o.output, file);
+        ensureWritable(o.output, o.force);
+      }
       const docx = readInput(file, o, (o.json || o.for_edit) && o.output == null);
       if (o.for_edit) {
         if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
         return void process.stdout.write(forEditJson(docx, o, file));
       }
       if (o.tables) {
+        // -o FILE writes the grids it would print (#1690).
+        const emit = (text) => {
+          if (o.output == null) return void process.stdout.write(text);
+          write(o.output, text);
+          if (!o.quiet) console.error(`wrote ${o.output} (tables, ${Buffer.byteLength(text, "utf8")} bytes)`);
+        };
         // (A binding older than #1255 has no tablesView; its parser
         // refuses -p and --track-changes here.)
-        if (!wasm.tablesView) return void process.stdout.write(wasm.tablesText(docx));
+        if (!wasm.tablesView) return void emit(wasm.tablesText(docx));
         // With -p, the grids of the tables it reaches, then its view; a
         // pick that reaches no table is a usage error.
         let view;
@@ -305,7 +373,7 @@ const COMMANDS = {
           throw e;
         }
         for (const warning of view.warnings) console.error(`warning: ${warning}`);
-        return void process.stdout.write(view.markdown);
+        return void emit(view.markdown);
       }
       if (o.output != null) return void writeResult(o, docx, path.basename(file), o, file);
       if (o.json) return void console.log(wasm.readJson(docx, JSON.stringify({ ...selection(o), source: path.basename(file), ...validity(file) })));
@@ -613,7 +681,7 @@ function applyEdit(verb, file, docx, o) {
   const outDir = o.out_dir;
   if (outDir == null) return writeEdited(o.output, result, notes, o, docx, plan);
   if (fs.existsSync(outDir) && !o.force) {
-    throw new CliError(`output directory '${outDir}' already exists (use --force to replace its files)`);
+    throw new UsageError(`OUTPUT_EXISTS: output '${outDir}' already exists (use --force to overwrite)`);
   }
   if (path.resolve(outDir) === path.dirname(path.resolve(file))) {
     throw new CliError("--out-dir must not be the input's own directory");
@@ -732,7 +800,7 @@ function writeEdited(output, result, notes, o, docx, plan) {
   const pdfPath = o.pdf ? `${output.slice(0, output.length - path.extname(output).length)}.pdf` : null;
   for (const taken of [output, pdfPath]) {
     if (taken != null && fs.existsSync(taken) && !o.force) {
-      throw new UsageError(`output '${taken}' already exists (use --force to overwrite)`);
+      throw new UsageError(`OUTPUT_EXISTS: output '${taken}' already exists (use --force to overwrite)`);
     }
   }
   // Render before writing, so a failed render writes nothing.

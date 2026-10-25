@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
@@ -56,12 +56,64 @@ include = [
 "0.11.3" = "convert reads Word 97-2003 .doc files and writes page markers into Markdown; OMML math is laid out as Word does; the font report no longer counts a guessed face as a match; MSRV 1.94. On two 600-item samples scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.14 (LibreOffice 54.61), no failed document."
 "0.12.0" = "Agent view (jubarte::markdown, read/edit/add flag plans), text diff views, PdfOptions::comments (CommentPlacement::End) and PdfOptions::changed_only (a struct literal naming every field now needs ..PdfOptions::default()), Word's Roman/letter field formats, a searchable PDF text layer for text no font covers (/ActualText), and redline fixes for files Word 16.115 hung on. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document."
 "0.13.0" = "replace keeps the words it keeps; one logical change per edit (composite ids); edit --skip-failed; visible rejects (strike, restore); Word math as LaTeX and Markdown round-trips for charts, fields and images; PDF math layout, columns and header PAGE fields; Strict OOXML read and compared as itself; malformed ZIP packages refused (GHSA-m665-v7pm-7grj); -d, --datetime replaces --date. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document."
+"0.14.0" = "Breaking: `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>` and `Command::Changes` gains `author`. New Rust API: `cli::refused_package`, `update::verify_signature` with `ReleaseKey`, `comparer::order_tables`, more `namespaces` helpers. Tracked edits keep formatting history apart and refuse duplicate revision ids; table redlines avoid the final-mark revision that hangs Word. No `block-buffer` 0.10.4 in any build. Known: 3 of 600 sample redlines crash Word 16.115 where Word's own does not (#1802)."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"
 
 [package.metadata.docs.rs]
 all-features = true
+
+# The patch gate (scripts/release.sh, step 0) fails only on lints at deny;
+# cargo-semver-checks ships these at allow (never run) or warn (only
+# reported), so a patch could grow the public API (#1744).
+# scripts/semver_lints.py checks this table against the installed tool.
+[package.metadata.cargo-semver-checks.lints]
+auto_trait_impl_added = "deny"
+enum_must_use_removed = "deny"
+enum_no_longer_non_exhaustive = "deny"
+enum_non_exhaustive_struct_variant_field_added = "deny"
+enum_non_exhaustive_tuple_variant_field_added = "deny"
+enum_repr_int_added = "deny"
+enum_variant_no_longer_non_exhaustive = "deny"
+exhaustive_enum_added = "deny"
+exhaustive_struct_added = "deny"
+exhaustive_struct_with_doc_hidden_fields_added = "deny"
+exhaustive_struct_with_private_fields_added = "deny"
+feature_newly_enables_feature = "deny"
+function_must_use_removed = "deny"
+function_no_longer_unsafe = "deny"
+function_now_const = "deny"
+inherent_associated_pub_const_added = "deny"
+inherent_method_added = "deny"
+inherent_method_must_use_removed = "deny"
+inherent_method_no_longer_unsafe = "deny"
+inherent_method_now_const = "deny"
+non_exhaustive_enum_added = "deny"
+non_exhaustive_struct_added = "deny"
+partial_ord_enum_struct_variant_fields_reordered = "deny"
+partial_ord_enum_variants_reordered = "deny"
+partial_ord_struct_fields_reordered = "deny"
+pub_api_sealed_trait_became_unconditionally_sealed = "deny"
+pub_api_sealed_trait_became_unsealed = "deny"
+pub_api_sealed_trait_method_receiver_added = "deny"
+pub_api_sealed_trait_method_receiver_mut_ref_became_ref = "deny"
+pub_api_sealed_trait_method_return_value_added = "deny"
+pub_api_sealed_trait_method_target_feature_removed = "deny"
+pub_const_added = "deny"
+pub_static_added = "deny"
+repr_c_added = "deny"
+repr_c_enum_struct_variant_fields_reordered = "deny"
+repr_c_plain_struct_fields_reordered = "deny"
+struct_must_use_removed = "deny"
+struct_no_longer_has_non_pub_fields = "deny"
+struct_no_longer_non_exhaustive = "deny"
+trait_must_use_removed = "deny"
+unconditionally_sealed_trait_became_pub_api_sealed = "deny"
+unconditionally_sealed_trait_became_unsealed = "deny"
+union_added = "deny"
+union_field_added_with_non_pub_fields = "deny"
+union_must_use_removed = "deny"
 
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
@@ -97,7 +149,7 @@ perf-profile = []
 # `jubarte self-update`: installs a GitHub release on request (docs/SELF_UPDATE.md).
 # Default-on for the binary; library consumers use `default-features = false`
 # and get no network code.
-self-update = ["cli", "dep:self_update"]
+self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 
 [dependencies]
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
@@ -135,16 +187,19 @@ same-file = { version = "1", optional = true }
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
 # pure-library dependency tree so downstream consumers pick their own allocator.
 mimalloc = { version = "0.1", default-features = false, optional = true }
-# `jubarte self-update`: release lookup, SHA256SUMS.txt check, zipsign
-# signature check (`signatures`, enforced once a release key is committed:
-# docs/SELF_UPDATE.md), archive extraction and binary replacement. Only the
-# command contacts the network.
-self_update = { version = "1.3.1", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums", "signatures"], optional = true }
+# `jubarte self-update`: release lookup, SHA256SUMS.txt check, archive
+# extraction and binary replacement. Only the command contacts the network.
+self_update = { version = "1.3.1", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums"], optional = true }
+# The zipsign signature check (src/update/zipsign.rs, enforced once a release
+# key is committed: docs/SELF_UPDATE.md): ed25519ph over SHA-512. Not
+# `self_update`'s `signatures`, whose zipsign-api 0.2 pins ed25519-dalek 2 and
+# with it block-buffer 0.10.4 (GHSA-qwgh-2vcv-g2f7, #1705).
+ed25519-dalek = { version = "3", default-features = false, features = ["digest"], optional = true }
 
 # Windows releases are .zip. Zip support stays off elsewhere: it turns on the
 # zip crate's `time` feature, which stamps wall-clock times into our own
-# archives unless every entry sets its time (986c526). `archive-zip` also
-# turns on zipsign's zip verifier when `signatures` is on (above).
+# archives unless every entry sets its time (986c526). The zip signature
+# check needs no zip support: it hashes the bytes after the signatures.
 [target.'cfg(windows)'.dependencies]
 self_update = { version = "1.3.1", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 
@@ -181,11 +236,6 @@ ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] 
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
 saphyr = "0.2"
 tempfile = "3"
-# tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
-# `zipsign sign tar` does in release.yml, then check it with the updater's
-# verifier. Test-only keys; nothing here signs a release.
-zipsign-api = { version = "0.2", default-features = false, features = ["sign-tar"] }
-tar = { version = "0.4", default-features = false }
 
 [[bench]]
 name = "redline"

@@ -143,7 +143,7 @@ pub static ELEMENTS_TO_HAVE_SHA1: LazyLock<HashSet<XName>> = LazyLock::new(|| {
 pub static INVALID_ELEMENTS: LazyLock<HashSet<XName>> = LazyLock::new(|| {
     set(&[
         W::name("altChunk"),
-        W::name("customXml"),
+        W::custom_xml(),
         W::name("customXmlDelRangeStart"),
         W::name("customXmlDelRangeEnd"),
         W::name("customXmlInsRangeStart"),

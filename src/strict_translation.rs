@@ -805,25 +805,57 @@ pub fn strict_to_transitional_docx_within(
             return Ok(bytes.to_vec());
         }
         total = total.saturating_add(buf.len() as u64);
-
-        // Fast path: only text parts carrying the Strict marker can change.
-        if name.ends_with(".rels") || name.ends_with(".xml") {
-            let text = String::from_utf8_lossy(&buf);
-            if text.contains(STRICT_MARKER) {
-                let (table, site) = if name.ends_with(".rels") {
-                    (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)
-                } else {
-                    (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
-                };
-                let translated = translate(&text, table, site);
-                if translated != text.as_ref() {
-                    any_changed = true;
-                    buf = translated.into_bytes();
-                }
-            }
-        }
-
         entries.push((name, buf));
+    }
+
+    // The XML parts are those named `.xml` in any case, and those the
+    // content types call XML: a main part may be `word/main.dat`.
+    let typed = crate::opc::typed_as_xml(
+        entries
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("[Content_Types].xml"))
+            .map(|(_, data)| data.as_slice()),
+    );
+    // Custom XML data holds the application's own XML, whatever namespace
+    // it declares: it is never translated.
+    let relationships: Vec<(String, crate::opc::Relationships)> = entries
+        .iter()
+        .filter_map(|(name, data)| {
+            let owner = crate::opc::rels_path_to_part_name(name)?;
+            Some((owner, crate::opc::Relationships::from_xml(data).ok()?))
+        })
+        .collect();
+    let data = crate::opc::custom_xml_data(
+        relationships
+            .iter()
+            .map(|(owner, rels)| (owner.as_str(), rels)),
+    );
+    for (name, buf) in &mut entries {
+        let rels = crate::opc::ends_with_ignore_case(name, ".rels");
+        if !rels && !crate::opc::ends_with_ignore_case(name, ".xml") && !typed(name)
+            || data.iter().any(|item| item.eq_ignore_ascii_case(name))
+        {
+            continue;
+        }
+        // Fast path: only text parts carrying the Strict marker can change.
+        // A part that is no UTF-8 is left as it is, never rewritten through
+        // a lossy decoding.
+        let Ok(text) = std::str::from_utf8(buf) else {
+            continue;
+        };
+        if !text.contains(STRICT_MARKER) {
+            continue;
+        }
+        let (table, site) = if rels {
+            (&*RELATIONSHIP_SORTED, UriSite::RelationshipType)
+        } else {
+            (&*NAMESPACE_SORTED, UriSite::NamespaceDeclaration)
+        };
+        let translated = translate(text, table, site);
+        if translated != text {
+            any_changed = true;
+            *buf = translated.into_bytes();
+        }
     }
 
     if !any_changed {
@@ -1148,6 +1180,86 @@ mod tests {
         assert!(!main_part_is_strict(&package(
             "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         )));
+    }
+
+    /// A package of `(name, bytes)` entries, Deflated.
+    fn zipped(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn entry(package: &[u8], name: &str) -> Vec<u8> {
+        let mut archive = ZipArchive::new(Cursor::new(package)).unwrap();
+        let mut f = archive.by_name(name).unwrap();
+        let mut out = Vec::new();
+        f.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    /// Custom XML data holds the application's own XML: a Strict namespace
+    /// it declares stays, however its name is spelled, in a Strict package
+    /// and in a Transitional one (crush on #1666, round 6).
+    #[test]
+    fn custom_xml_data_is_never_translated() {
+        let data: &[u8] = br#"<inventory xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><item w:id="1"/></inventory>"#;
+        for (dialect, rels_uri, main_uri) in [
+            (
+                "Strict",
+                "http://purl.oclc.org/ooxml/officeDocument/relationships/customXml",
+                "http://purl.oclc.org/ooxml/wordprocessingml/main",
+            ),
+            (
+                "Transitional",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml",
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            ),
+        ] {
+            let rels = format!(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{rels_uri}" Target="../customXml/item1.XML"/></Relationships>"#
+            );
+            let doc = format!(r#"<w:document xmlns:w="{main_uri}"><w:body/></w:document>"#);
+            let package = zipped(&[
+                ("word/document.xml", doc.as_bytes()),
+                ("word/_rels/document.xml.rels", rels.as_bytes()),
+                ("customXml/item1.XML", data),
+            ]);
+            let out = strict_to_transitional_docx(&package).unwrap();
+            assert_eq!(entry(&out, "customXml/item1.XML"), data, "{dialect}");
+            if dialect == "Transitional" {
+                assert_eq!(out, package, "a Transitional package round-trips");
+            } else {
+                assert!(
+                    !String::from_utf8(entry(&out, "word/document.xml"))
+                        .unwrap()
+                        .contains(STRICT_MARKER)
+                );
+            }
+        }
+    }
+
+    /// A part typed as XML whose bytes are no UTF-8 is left as it is, never
+    /// written back through a lossy decoding (MiniMax on #1666, round 6).
+    #[test]
+    fn a_typed_part_that_is_no_utf8_keeps_its_bytes() {
+        let types: &[u8] = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/blob.dat" ContentType="application/xml"/></Types>"#;
+        let doc: &[u8] = br#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body/></w:document>"#;
+        let mut blob = vec![0xFF, 0xFE];
+        blob.extend_from_slice(
+            br#"<x xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"/>"#,
+        );
+        let package = zipped(&[
+            ("[Content_Types].xml", types),
+            ("word/document.xml", doc),
+            ("word/blob.dat", &blob),
+        ]);
+        let out = strict_to_transitional_docx(&package).unwrap();
+        assert_ne!(out, package, "the Strict main part is translated");
+        assert_eq!(entry(&out, "word/blob.dat"), blob);
     }
 
     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).

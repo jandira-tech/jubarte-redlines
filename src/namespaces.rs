@@ -197,6 +197,13 @@ impl W {
     cached_xname!(W::URI, p, "p");
     cached_xname!(W::URI, r, "r");
     cached_xname!(W::URI, t, "t");
+    // The markers a paragraph may hold and still bring nothing to a join.
+    cached_xname!(W::URI, proof_err, "proofErr");
+    cached_xname!(W::URI, comment_range_start, "commentRangeStart");
+    cached_xname!(W::URI, comment_range_end, "commentRangeEnd");
+    cached_xname!(W::URI, comment_reference, "commentReference");
+    cached_xname!(W::URI, perm_start, "permStart");
+    cached_xname!(W::URI, perm_end, "permEnd");
     cached_xname!(W::URI, p_pr, "pPr");
     cached_xname!(W::URI, r_pr, "rPr");
     cached_xname!(W::URI, footnote, "footnote");
@@ -215,6 +222,12 @@ impl W {
     cached_xname!(W::URI, tbl_pr, "tblPr");
     cached_xname!(W::URI, tr_pr, "trPr");
     cached_xname!(W::URI, grid_span, "gridSpan");
+    // The schema-hygiene pass: a table grid's columns and their `w:type`,
+    // shading and its `w:fill` (#1719).
+    cached_xname!(W::URI, grid_col, "gridCol");
+    cached_xname!(W::URI, type_, "type");
+    cached_xname!(W::URI, shd, "shd");
+    cached_xname!(W::URI, fill, "fill");
     cached_xname!(W::URI, bookmark_start, "bookmarkStart");
     cached_xname!(W::URI, bookmark_end, "bookmarkEnd");
     cached_xname!(W::URI, del_text, "delText");
@@ -230,6 +243,7 @@ impl W {
     // NAME-01c: accept / RP pipeline locals (hit every has_rev document).
     cached_xname!(W::URI, move_from_range_end, "moveFromRangeEnd");
     cached_xname!(W::URI, move_to_range_end, "moveToRangeEnd");
+    cached_xname!(W::URI, custom_xml, "customXml");
     cached_xname!(W::URI, sdt, "sdt");
     cached_xname!(W::URI, sdt_content, "sdtContent");
     // NAME-01d: hottest remaining finalize/lcs locals (sectPr/pPrChange/
@@ -255,6 +269,15 @@ impl W {
     cached_xname!(W::URI, hdr, "hdr");
     cached_xname!(W::URI, ftr, "ftr");
     cached_xname!(W::URI, fld_simple, "fldSimple");
+    // The marks Word saves a table with, read per table by the convert fit.
+    cached_xname!(W::URI, rsid_r, "rsidR");
+    cached_xname!(W::URI, rsid_tr, "rsidTr");
+    // A table grid column's width, read per column (`grid_col` is above).
+    cached_xname!(W::URI, w, "w");
+}
+
+impl W14 {
+    cached_xname!(W14::URI, para_id, "paraId");
 }
 
 // ── PowerTools correlation attribute names ────────────────────────────────────
@@ -273,4 +296,11 @@ impl PT {
     // Word-mode stamp on each source root: "1" when that document's styles
     // define a default table style (read by the table-margin synthesis).
     cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
+}
+
+// ── OMML names the comparer's final-mark pass reads per paragraph ─────────────
+impl M {
+    cached_xname!(M::URI, r, "r");
+    cached_xname!(M::URI, r_pr, "rPr");
+    cached_xname!(M::URI, o_math, "oMath");
 }

@@ -50,6 +50,7 @@
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
+//! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -102,7 +103,8 @@ pub struct Finding {
     /// The rule set it belongs to: one of `RULE_SETS`.
     pub set: String,
     /// `error`, `warning` or `info`. A `word` finding is an `error` when
-    /// Word-fatal or OOXML-invalid (`DUPLICATE_REVISION_ID`); otherwise a
+    /// Word-fatal, OOXML-invalid (`DUPLICATE_REVISION_ID`), or a revision
+    /// Word cannot resolve (`CELL_FINAL_MARK_REVISION`); otherwise a
     /// `warning` (a lead), or `info` for direct
     /// same-kind revision nesting that Word reads faithfully.
     pub severity: String,
@@ -128,8 +130,8 @@ pub(crate) const RULE_SETS: &[&str] = &["word", "edits", "a11y", "style", "struc
 
 impl Finding {
     /// A `word` finding with `word_fatal` and `repairable` taken from the
-    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids
-    /// are errors, though Word opens them.
+    /// code's table ([`traits`]). OOXML-invalid duplicate revision ids and
+    /// a cell's final mark revision are errors, though Word opens them.
     pub fn new(
         code: &str,
         part: &str,
@@ -142,7 +144,7 @@ impl Finding {
         Finding {
             code: code.to_string(),
             set: "word".to_string(),
-            severity: if word_fatal || code == "DUPLICATE_REVISION_ID" {
+            severity: if word_fatal || ERROR_LEADS.contains(&code) {
                 "error"
             } else {
                 "warning"
@@ -157,6 +159,11 @@ impl Finding {
         }
     }
 }
+
+/// Codes that are errors though Word opens the file: OOXML-invalid
+/// duplicate revision ids, and a cell's final mark revision Word's Accept
+/// All or Reject All never returns from (#1669).
+const ERROR_LEADS: [&str; 2] = ["DUPLICATE_REVISION_ID", "CELL_FINAL_MARK_REVISION"];
 
 /// `(word_fatal, repairable)` for a code; an unknown code is a lead with
 /// no repair.
@@ -199,7 +206,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 29] = [
+const RING1_CODES: [&str; 30] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
@@ -229,6 +236,7 @@ const RING1_CODES: [&str; 29] = [
     "COMMENT_ID_REPEATED",
     "COMMENT_METADATA_MISMATCH",
     "STYLE_NAME_COMMA",
+    "CELL_FINAL_MARK_REVISION",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -512,6 +520,59 @@ impl Finding {
             place: Place::default(),
         }
     }
+
+    /// What tells this finding from another of its code in its part when
+    /// other edits renumber the document around it: its location's element
+    /// chain without the indices (`p#` for a paragraph id), and its message
+    /// [`normalised`] and without the numbers that stand alone. Names stay
+    /// (a bookmark's `Clause1`, a style's); revision ids, counts and
+    /// indices, which a rerun of fewer operations shifts, do not.
+    pub(crate) fn unnumbered(&self) -> String {
+        let location = if self.location.contains('[') {
+            let mut out = String::with_capacity(self.location.len());
+            for (i, step) in self.location.split('/').enumerate() {
+                if i > 0 {
+                    out.push('/');
+                }
+                out.push_str(step.split_once('[').map_or(step, |(name, _)| name));
+            }
+            out
+        } else if is_paragraph_id(&self.location) {
+            "p#".to_string()
+        } else {
+            self.location.clone()
+        };
+        format!(
+            "{location}\u{1f}{}",
+            without_numbers(&normalised(&self.message))
+        )
+    }
+}
+
+/// `text` with every number that stands alone, not glued to a letter or a
+/// digit-led name, spelled `#`.
+fn without_numbers(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let digits = bytes[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits > 0 {
+            let glued = |at: Option<&u8>| at.is_some_and(u8::is_ascii_alphanumeric);
+            let before = i.checked_sub(1).and_then(|at| bytes.get(at));
+            if glued(before) || glued(bytes.get(i + digits)) {
+                out.push_str(&text[i..i + digits]);
+            } else {
+                out.push('#');
+            }
+            i += digits;
+            continue;
+        }
+        let ch = text[i..].chars().next().expect("a char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// Each of `findings`' [`FindingKey`], read in `docx`, the document they
@@ -1181,6 +1242,131 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_nested_ppr(pkg, &mut out);
     check_move_range_counts(pkg, &mut out);
     check_data_bindings_have_stores(pkg, &mut out);
+    check_cell_final_marks(pkg, &mut out);
+    out
+}
+
+/// A table cell's final paragraph mark inserted or deleted while its row
+/// is not: Word opens the file, but Accept All or Reject All never returns
+/// (#1669, Word 16, 2026-10-23). Word's Compare puts such a revision on the
+/// mark before, and revises every mark of a row it inserts or deletes with
+/// the row (`w:trPr/w:ins`, `w:trPr/w:del`). A nested table's cells in a
+/// revised outer row pass whether or not their own rows repeat the
+/// revision, as Open-Xml-PowerTools writes them: Word resolves those
+/// (2026-10-23). The body's final mark is not flagged: Word resolves it.
+/// Only the stories Accept and Reject All walk are read, the parts the
+/// comparer's settle pass sweeps: a glossary's building blocks or a
+/// custom XML data item is no story (codex on #1680).
+fn check_cell_final_marks(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for (part, styles) in crate::revision_processor::revision_bearing_parts(pkg) {
+        if styles {
+            continue;
+        }
+        // A cell's start tag, whatever its prefix (none included) and
+        // whatever follows its name: `<w:tc>`, `<tc `, `<w:tc\n>`.
+        if !pkg.part_bytes(&part).is_some_and(|bytes| {
+            bytes.windows(4).any(|w| {
+                matches!(w[0], b'<' | b':')
+                    && &w[1..3] == b"tc"
+                    && matches!(w[3], b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n')
+            })
+        }) {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        for cell in dom.descendants(root, Some(&W::tc())) {
+            for (last, kind) in uncovered_final_marks(&dom, cell) {
+                out.push(Finding::new(
+                    "CELL_FINAL_MARK_REVISION",
+                    &part,
+                    element_path(&dom, last),
+                    format!("a table cell's final paragraph mark carries w:{kind} while its row does not; Word opens it, but Accept All or Reject All never returns (#1669). Word puts the revision on the mark before"),
+                ));
+            }
+        }
+    }
+}
+
+/// The revisions (`"ins"`, `"del"`) on `cell`'s final paragraph mark that
+/// no row covers, with that paragraph: `CELL_FINAL_MARK_REVISION`'s rule,
+/// which the comparer's settle pass applies too. The cell and every cell
+/// around it count, through nested tables (an outer row's revision covers
+/// a nested table's cells), each with the row that holds it, through any
+/// content control between them.
+pub(crate) fn uncovered_final_marks(dom: &Dom, cell: NodeId) -> Vec<(NodeId, &'static str)> {
+    let Some(last) = last_block_paragraph(dom, cell) else {
+        return Vec::new();
+    };
+    let Some(rpr) = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return Vec::new();
+    };
+    let cells: Vec<NodeId> = std::iter::once(cell)
+        .chain(dom.ancestors(cell, Some(&W::tc())))
+        .collect();
+    ["ins", "del"]
+        .into_iter()
+        .filter(|kind| {
+            dom.element(rpr, &revision_name(kind)).is_some()
+                && !cells.iter().any(|&c| {
+                    dom.ancestors(c, Some(&W::tr()))
+                        .first()
+                        .is_some_and(|&row| row_revised(dom, row, c, kind))
+                })
+        })
+        .map(|kind| (last, kind))
+        .collect()
+}
+
+/// Whether `row` (or the cell itself) is inserted or deleted as `kind`
+/// says: `w:trPr/w:ins` or `w:trPr/w:del`, or the cell's
+/// `w:tcPr/w:cellIns` or `w:tcPr/w:cellDel`.
+pub(crate) fn row_revised(dom: &Dom, row: NodeId, cell: NodeId, kind: &str) -> bool {
+    let cell_kind = if kind == "ins" {
+        W::cell_ins()
+    } else {
+        W::cell_del()
+    };
+    dom.element(row, &W::tr_pr())
+        .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
+        || dom
+            .element(cell, &W::tc_pr())
+            .is_some_and(|pr| dom.element(pr, &cell_kind).is_some())
+}
+
+/// `w:ins` for `"ins"`, `w:del` for `"del"`.
+pub(crate) fn revision_name(kind: &str) -> XName {
+    if kind == "ins" { W::ins() } else { W::del() }
+}
+
+/// The last paragraph among a container's blocks, through block content
+/// controls and custom XML elements, not into nested tables.
+pub(crate) fn last_block_paragraph(dom: &Dom, container: NodeId) -> Option<NodeId> {
+    container_blocks(dom, container)
+        .into_iter()
+        .rev()
+        .find(|&block| dom.name_is(block, &W::p()))
+}
+
+/// The paragraphs and tables of `container` in order, through block
+/// content controls and custom XML elements, not into nested tables.
+pub(crate) fn container_blocks(dom: &Dom, container: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    for child in dom.elements(container, None) {
+        if dom.name_is(child, &W::p()) || dom.name_is(child, &W::tbl()) {
+            out.push(child);
+        } else if dom.name_is(child, &W::sdt()) {
+            if let Some(content) = dom.element(child, &W::sdt_content()) {
+                out.extend(container_blocks(dom, content));
+            }
+        } else if dom.name_is(child, &W::custom_xml()) {
+            out.extend(container_blocks(dom, child));
+        }
+    }
     out
 }
 
@@ -1474,10 +1660,37 @@ fn parse_part(pkg: &PartFs, name: &str) -> Option<(Dom, NodeId)> {
     Some((dom, root))
 }
 
+/// The package's XML parts: by name, or by content type (a main document
+/// part may be `word/main.dat`).
 fn xml_parts(pkg: &PartFs) -> Vec<String> {
     pkg.parts()
         .into_iter()
-        .filter(|name| name.ends_with(".xml"))
+        .filter(|name| {
+            crate::opc::ends_with_ignore_case(name, ".xml")
+                || pkg
+                    .content_type_for(name)
+                    .is_some_and(|ct| crate::opc::is_xml_content_type(&ct))
+        })
+        .collect()
+}
+
+/// The XML parts that hold WordprocessingML: every XML part but custom XML
+/// data, which holds the application's own XML whatever its name
+/// ([`crate::opc::custom_xml_data`]: a part only `customXml` relationships
+/// reach, the package's own included). OpenXmlValidator checks no revision
+/// id there, and no paragraph id (codex on #1666).
+fn wordml_parts(pkg: &PartFs) -> Vec<String> {
+    let parts = pkg.parts();
+    let data =
+        crate::opc::custom_xml_data(std::iter::once(("", pkg.package_relationships())).chain(
+            parts.iter().filter_map(|source| {
+                pkg.read_rels_for(source)
+                    .map(|rels| (source.as_str(), rels))
+            }),
+        ));
+    xml_parts(pkg)
+        .into_iter()
+        .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
         .collect()
 }
 
@@ -1694,7 +1907,7 @@ fn check_picture_bullets(pkg: &PartFs, out: &mut Vec<Finding>) {
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &name) else {
             continue;
         };
@@ -1707,7 +1920,9 @@ fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Revision elements whose `w:id` must be unique among elements of the
 /// same record type within a part (the SDK's `Sem_UniqueAttributeValue`).
 /// Different kinds can share an id: Word pairs a style's `pPrChange` and `rPrChange`.
-/// Range ends share their starts' ids and comment/bookmark ids have other scopes.
+/// A range end shares its start's id, but two ends of one kind may not
+/// share one; OpenXmlValidator lets two `customXmlMoveToRangeEnd` do so.
+/// Comment and bookmark ids have other scopes.
 pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
     name.namespace_name() == W::URI
         && (name.local_name().ends_with("PrChange")
@@ -1718,7 +1933,16 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
                     | "moveFrom"
                     | "moveTo"
                     | "moveFromRangeStart"
+                    | "moveFromRangeEnd"
                     | "moveToRangeStart"
+                    | "moveToRangeEnd"
+                    | "customXmlInsRangeStart"
+                    | "customXmlInsRangeEnd"
+                    | "customXmlDelRangeStart"
+                    | "customXmlDelRangeEnd"
+                    | "customXmlMoveFromRangeStart"
+                    | "customXmlMoveFromRangeEnd"
+                    | "customXmlMoveToRangeStart"
                     | "tblGridChange"
                     | "tblPrExChange"
                     | "numberingChange"
@@ -1732,14 +1956,100 @@ pub(crate) fn has_unique_revision_id(name: &XName) -> bool {
 /// even though both use `ins`, `del`, `moveFrom` or `moveTo`. Row and
 /// paragraph marks share their own scope; the immediate parent alone is
 /// therefore not the scope. Keep detection and repair on the same key.
-fn revision_id_key(dom: &Dom, node: NodeId, name: &XName, id: &str) -> String {
-    let property_mark = matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+/// The SDK compares some kinds' ids case-blind (`ABC` repeats `abc`).
+fn revision_id_key(dom: &Dom, node: NodeId, local: &str, id: &str) -> String {
+    let property_mark = matches!(local, "ins" | "del" | "moveFrom" | "moveTo")
         && dom.parent(node).is_some_and(|parent| {
             dom.name(parent).is_some_and(|parent| {
                 parent.namespace_name() == W::URI && matches!(parent.local_name(), "rPr" | "trPr")
             })
         });
-    format!("{}:{property_mark}:{id}", name.local_name())
+    if id_case_blind(local) {
+        format!("{local}:{property_mark}:{}", id.to_lowercase())
+    } else {
+        format!("{local}:{property_mark}:{id}")
+    }
+}
+
+/// Whether the SDK compares a kind's ids case-blind (`ABC` repeats `abc`).
+fn id_case_blind(local: &str) -> bool {
+    matches!(
+        local,
+        "customXmlDelRangeStart" | "customXmlDelRangeEnd" | "moveToRangeStart"
+    )
+}
+
+/// Two ids compared as [`revision_id_key`] compares them, without building
+/// either key.
+fn same_revision_id(case_blind: bool, a: &str, b: &str) -> bool {
+    if !case_blind {
+        a == b
+    } else if a.is_ascii() && b.is_ascii() {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a.to_lowercase() == b.to_lowercase()
+    }
+}
+
+/// The end that closes a range start of this kind.
+fn range_end_of(start: &str) -> Option<&'static str> {
+    Some(match start {
+        "moveFromRangeStart" => "moveFromRangeEnd",
+        "moveToRangeStart" => "moveToRangeEnd",
+        "customXmlInsRangeStart" => "customXmlInsRangeEnd",
+        "customXmlDelRangeStart" => "customXmlDelRangeEnd",
+        "customXmlMoveFromRangeStart" => "customXmlMoveFromRangeEnd",
+        "customXmlMoveToRangeStart" => "customXmlMoveToRangeEnd",
+        _ => return None,
+    })
+}
+
+/// The range start a range end of this kind closes.
+fn range_start_of(end: &str) -> Option<&'static str> {
+    Some(match end {
+        "moveFromRangeEnd" => "moveFromRangeStart",
+        "moveToRangeEnd" => "moveToRangeStart",
+        "customXmlInsRangeEnd" => "customXmlInsRangeStart",
+        "customXmlDelRangeEnd" => "customXmlDelRangeStart",
+        "customXmlMoveFromRangeEnd" => "customXmlMoveFromRangeStart",
+        "customXmlMoveToRangeEnd" => "customXmlMoveToRangeStart",
+        _ => return None,
+    })
+}
+
+/// How often each revision id occurs, by the scope `DUPLICATE_REVISION_ID`
+/// checks: part, then record type and id ([`revision_id_key`]). A Strict
+/// package is read as the Transitional one an edit writes.
+pub(crate) fn revision_id_occurrences(
+    docx: &[u8],
+) -> Result<HashMap<(String, String), usize>, ValidateError> {
+    let transitional = crate::strict_translation::strict_to_transitional_docx(docx)
+        .map_err(|e| ValidateError::Package(e.to_string()))?;
+    let pkg = PartFs::open(&transitional)?;
+    let mut out = HashMap::new();
+    for part in wordml_parts(&pkg) {
+        let Some((dom, root)) = parse_part(&pkg, &part) else {
+            continue;
+        };
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let id_name = W::id();
+        for e in dom.descendants(root, None) {
+            if let Some(name) = dom.name(e)
+                && has_unique_revision_id(&name)
+                && let Some(id) = dom.attribute(e, &id_name)
+            {
+                *counts
+                    .entry(revision_id_key(&dom, e, name.local_name(), id))
+                    .or_default() += 1;
+            }
+        }
+        out.extend(
+            counts
+                .into_iter()
+                .map(|(key, count)| ((part.clone(), key), count)),
+        );
+    }
+    Ok(out)
 }
 
 fn collect_ids(
@@ -1750,6 +2060,9 @@ fn collect_ids(
     out: &mut Vec<Finding>,
     part: &str,
 ) {
+    // Repeated range starts not yet paired with a repeated end, by key.
+    let mut repeated_starts: HashMap<String, usize> = HashMap::new();
+    let id_name = W::id();
     for e in dom.descendants(root, None) {
         let Some(name) = dom.name(e) else {
             continue;
@@ -1758,15 +2071,30 @@ fn collect_ids(
         // Revision ids are scoped by record type, not by the union of
         // ins/del/move/property records. Comment ids have a separate scope.
         if has_unique_revision_id(&name)
-            && let Some(id) = dom.attribute(e, &W::name("id"))
-            && !rev_ids.insert(revision_id_key(dom, e, &name, id))
+            && let Some(id) = dom.attribute(e, &id_name)
         {
-            out.push(Finding::new(
+            let key = revision_id_key(dom, e, name.local_name(), id);
+            if rev_ids.insert(key.clone()) {
+                continue;
+            }
+            let mut finding = Finding::new(
                 "DUPLICATE_REVISION_ID",
                 part,
                 element_path(dom, e),
                 format!("duplicate w:id '{id}' on revision markup in '{part}' ({local}:{id})"),
-            ));
+            );
+            // Repair renames an end only with a repeated start before it
+            // ([`renumber_duplicate_revision_ids`]); an end with none stays
+            // as it was (CodeRabbit on #1666).
+            if local.ends_with("RangeStart") {
+                *repeated_starts.entry(key).or_default() += 1;
+            } else if let Some(start) = range_start_of(local) {
+                match repeated_starts.get_mut(&revision_id_key(dom, e, start, id)) {
+                    Some(n) if *n > 0 => *n -= 1,
+                    _ => finding.repairable = false,
+                }
+            }
+            out.push(finding);
         }
         if local == "docPr" {
             let wp_id = XName::get(
@@ -1832,7 +2160,7 @@ fn out_of_range_para_ids(xml: &str) -> Vec<(&'static str, String)> {
 }
 
 fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
-    for name in xml_parts(pkg) {
+    for name in wordml_parts(pkg) {
         let Some(xml) = pkg.part_string(&name) else {
             continue;
         };
@@ -2619,7 +2947,13 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, out: &mut Vec<Finding
     }
 }
 
-fn namespace_in_scope<'a>(dom: &'a Dom, element: NodeId, prefix: &str) -> Option<&'a str> {
+/// The namespace `prefix` names at `element`: the nearest `xmlns:prefix`
+/// declaration on it or an ancestor.
+pub(crate) fn namespace_in_scope<'a>(
+    dom: &'a Dom,
+    element: NodeId,
+    prefix: &str,
+) -> Option<&'a str> {
     let mut current = Some(element);
     while let Some(node) = current {
         for index in 0..dom.attr_count(node) {
@@ -2853,13 +3187,14 @@ fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &Hash
 }
 
 /// A second use of a revision id on the same record type is renumbered
-/// from the part's highest `w:id` upwards; a move range start takes its end
-/// along. Accepted cross-kind pairs retain their ids.
+/// from the part's highest `w:id` upwards; a range start takes its end
+/// along. An end is never renumbered on its own: which start it closes is
+/// not known. Accepted cross-kind pairs retain their ids.
 pub(crate) fn renumber_duplicate_revision_ids(
     dom: &mut Dom,
     root: NodeId,
 ) -> Vec<(String, String)> {
-    let id_name = W::name("id");
+    let id_name = W::id();
     let all: Vec<NodeId> = dom.descendants(root, None);
     let mut next: u64 = all
         .iter()
@@ -2868,36 +3203,59 @@ pub(crate) fn renumber_duplicate_revision_ids(
         .max()
         .unwrap_or(0)
         + 1;
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut renames: Vec<(NodeId, String)> = Vec::new();
-    let mut revisions = Vec::new();
+    // The revision records with an id (range ends aside), and how often
+    // each key occurs.
+    let mut starts = Vec::new();
+    let mut count: HashMap<String, usize> = HashMap::new();
     for (i, &n) in all.iter().enumerate() {
         let Some(name) = dom.name(n) else { continue };
-        let local = name.local_name();
-        if !has_unique_revision_id(&name) {
+        if !has_unique_revision_id(&name) || name.local_name().ends_with("RangeEnd") {
             continue;
         }
         let Some(id) = dom.attribute(n, &id_name).map(str::to_string) else {
             continue;
         };
-        if seen.insert(revision_id_key(dom, n, &name, &id)) {
+        let key = revision_id_key(dom, n, name.local_name(), &id);
+        *count.entry(key.clone()).or_default() += 1;
+        starts.push((i, n, name, id, key));
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    // Range ends a start before has taken.
+    let mut taken: HashSet<NodeId> = HashSet::new();
+    let mut renames: Vec<(NodeId, String)> = Vec::new();
+    let mut revisions = Vec::new();
+    for (i, n, name, id, key) in starts {
+        if count[&key] < 2 {
+            continue;
+        }
+        // A range start's end shares its id: the first that follows with
+        // it, by the rule the duplicate check reads (`ABC` closes `abc`
+        // where ids compare case-blind, MiniMax on #1666), and that no
+        // start before has taken, so three starts of one id before their
+        // three ends pair one to one (codex on #1666).
+        let end = range_end_of(name.local_name()).and_then(|end_local| {
+            let blind = id_case_blind(end_local);
+            all[i + 1..].iter().copied().find(|&e| {
+                !taken.contains(&e)
+                    && dom.name(e).is_some_and(|x| {
+                        x.namespace_name() == W::URI && x.local_name() == end_local
+                    })
+                    && dom
+                        .attribute(e, &id_name)
+                        .is_some_and(|own| same_revision_id(blind, own, &id))
+            })
+        });
+        if let Some(end) = end {
+            taken.insert(end);
+        }
+        if seen.insert(key) {
             continue;
         }
         let fresh = next.to_string();
         next += 1;
-        revisions.push((id.clone(), fresh.clone()));
+        revisions.push((id, fresh.clone()));
         renames.push((n, fresh.clone()));
-        let end_local = match local {
-            "moveFromRangeStart" => Some("moveFromRangeEnd"),
-            "moveToRangeStart" => Some("moveToRangeEnd"),
-            _ => None,
-        };
-        if let Some(end_local) = end_local
-            && let Some(&end) = all[i + 1..].iter().find(|&&e| {
-                dom.name(e).is_some_and(|x| x.local_name() == end_local)
-                    && dom.attribute(e, &id_name) == Some(id.as_str())
-            })
-        {
+        if let Some(end) = end {
             renames.push((end, fresh));
         }
     }
@@ -2911,7 +3269,7 @@ pub(crate) fn renumber_duplicate_revision_ids(
 /// into Word's range, and every reference to it (`paraIdParent`, the
 /// comment parts) follows.
 fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
-    let parts = xml_parts(pkg);
+    let parts = wordml_parts(pkg);
     let mut used: HashSet<u32> = HashSet::new();
     for name in &parts {
         let Some(xml) = pkg.part_string(name) else {
@@ -3262,6 +3620,9 @@ struct ForeignKey {
     target: &'static str,
     date: Option<String>,
     move_side: Option<crate::changes::MoveSide>,
+    /// A run formatting change's recorded old properties: fragments of one
+    /// record compare equal only when they recorded the same formatting.
+    payload: Option<String>,
 }
 
 struct ForeignGroup<'a> {
@@ -3272,6 +3633,21 @@ struct ForeignGroup<'a> {
     end: usize,
     relaxed_start: usize,
     relaxed_end: usize,
+    /// The characters a run formatting change covers in its paragraph's
+    /// text. Rejecting the author's changes restores the paragraph's text,
+    /// so these compare across the two documents (#1656).
+    characters: Option<(usize, usize)>,
+}
+
+impl ForeignGroup<'_> {
+    /// What the comparison matches: the text, and for a run formatting
+    /// change also where in its paragraph the text is.
+    fn label(&self) -> String {
+        match self.characters {
+            Some((start, end)) => format!("{start}-{end}:{}", self.text),
+            None => self.text.clone(),
+        }
+    }
 }
 
 /// Story-local paragraph identities. Full text includes deleted text, so a
@@ -3330,11 +3706,56 @@ fn foreign_paragraphs(
     identities
 }
 
+/// Where each counted character of an edited paragraph sits in the
+/// original paragraph aligned with it, for the aligned paragraphs whose
+/// content differs: (original, edited) index pairs, both increasing.
+type CharacterPairs = HashMap<(String, String), (Vec<(usize, usize)>, usize)>;
+
+fn foreign_characters(
+    before: &[crate::changes::AuditStory],
+    after: &[crate::changes::AuditStory],
+    paragraphs: &HashMap<(String, String), usize>,
+) -> CharacterPairs {
+    let mut out = HashMap::new();
+    for edited in after {
+        let Some(original) = before.iter().find(|s| s.part == edited.part) else {
+            continue;
+        };
+        for ((id, _), content) in edited.paragraphs.iter().zip(&edited.contents) {
+            let key = (edited.part.clone(), id.clone());
+            let Some(old) = paragraphs.get(&key).and_then(|&i| original.contents.get(i)) else {
+                continue;
+            };
+            if old != content {
+                let a: Vec<char> = old.chars().collect();
+                let b: Vec<char> = content.chars().collect();
+                out.insert(key, (ordered_pairs(&a, &b), a.len()));
+            }
+        }
+    }
+    out
+}
+
+/// An edited paragraph's characters `start..end` in the original's
+/// positions ([`foreign_characters`]): from the first kept character at or
+/// after `start` to the last kept one before `end`.
+fn original_characters(
+    (pairs, length): &(Vec<(usize, usize)>, usize),
+    (start, end): (usize, usize),
+) -> (usize, usize) {
+    let first = pairs.partition_point(|&(_, j)| j < start);
+    let from = pairs.get(first).map_or(*length, |&(i, _)| i);
+    let last = pairs.partition_point(|&(_, j)| j < end);
+    let to = last.checked_sub(1).map_or(0, |k| pairs[k].0 + 1);
+    (from, to.max(from))
+}
+
 /// Keep each carrier for attribution. Windows may combine touching text,
 /// but an altered window must still name the carrier that actually changed.
 fn foreign_revisions<'a>(
     stories: &'a [crate::changes::AuditStory],
     paragraphs: &HashMap<(String, String), usize>,
+    characters: &CharacterPairs,
     edited: bool,
 ) -> Vec<ForeignGroup<'a>> {
     let mut out: Vec<ForeignGroup<'a>> = Vec::new();
@@ -3369,6 +3790,7 @@ fn foreign_revisions<'a>(
                 target: c.target,
                 date: c.date.clone(),
                 move_side: c.move_side,
+                payload: located.payload.clone(),
             };
             out.push(ForeignGroup {
                 key,
@@ -3378,6 +3800,17 @@ fn foreign_revisions<'a>(
                 end: located.end,
                 relaxed_start: located.start,
                 relaxed_end: located.end,
+                characters: located.characters.map(|span| {
+                    match c
+                        .paragraph
+                        .as_ref()
+                        .filter(|_| edited)
+                        .and_then(|id| characters.get(&(story.part.clone(), id.clone())))
+                    {
+                        Some(pairs) => original_characters(pairs, span),
+                        None => span,
+                    }
+                }),
             });
         }
     }
@@ -3444,22 +3877,40 @@ fn relax_foreign_boundaries(
 
 /// A comparison window may lose boundaries only where a missing separator
 /// explains them. Retain every carrier for attribution if the text differs.
+/// The fragments of a run formatting change join only where their
+/// characters touch, and the window keeps where its characters are.
 fn foreign_window(groups: &[ForeignGroup<'_>], indices: &[usize]) -> Vec<(Vec<usize>, String)> {
-    let mut out: Vec<(Vec<usize>, String)> = Vec::new();
+    // Carriers, joined text and, for run formatting, joined characters.
+    type Window = (Vec<usize>, String, Option<(usize, usize)>);
+    let mut windows: Vec<Window> = Vec::new();
     let mut previous = None;
     for &index in indices {
         let group = &groups[index];
-        if previous.is_some_and(|p: usize| groups[p].relaxed_end == group.relaxed_start)
-            && let Some((carriers, text)) = out.last_mut()
+        let touches = |p: usize| match (groups[p].characters, group.characters) {
+            (Some((_, end)), Some((start, _))) => end == start,
+            (None, None) => groups[p].relaxed_end == group.relaxed_start,
+            _ => false,
+        };
+        if previous.is_some_and(touches)
+            && let Some((carriers, text, characters)) = windows.last_mut()
         {
             carriers.push(index);
             text.push_str(&group.text);
+            if let (Some(window), Some((_, end))) = (characters, group.characters) {
+                window.1 = end;
+            }
         } else {
-            out.push((vec![index], group.text.clone()));
+            windows.push((vec![index], group.text.clone(), group.characters));
         }
         previous = Some(index);
     }
-    out
+    windows
+        .into_iter()
+        .map(|(carriers, text, characters)| match characters {
+            Some((start, end)) => (carriers, format!("{start}-{end}:{text}")),
+            None => (carriers, text),
+        })
+        .collect()
 }
 
 fn foreign_finding(group: &ForeignGroup<'_>, state: &str) -> Finding {
@@ -3541,8 +3992,8 @@ fn report_foreign_carriers(
     new: &[usize],
     findings: &mut ForeignFindings,
 ) {
-    let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-    let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+    let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+    let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
     let (mut i, mut j) = (0, 0);
     for (x, y) in ordered_pairs(&a, &b)
         .into_iter()
@@ -3574,8 +4025,9 @@ fn check_foreign_revisions(
     let original = crate::changes::audit_stories(original)?;
     let reverted = crate::changes::audit_stories(reverted)?;
     let paragraphs = foreign_paragraphs(&original, &reverted);
-    let mut before = foreign_revisions(&original, &paragraphs, false);
-    let mut after = foreign_revisions(&reverted, &paragraphs, true);
+    let characters = foreign_characters(&original, &reverted, &paragraphs);
+    let mut before = foreign_revisions(&original, &paragraphs, &characters, false);
+    let mut after = foreign_revisions(&reverted, &paragraphs, &characters, true);
     let mut by_key: HashMap<ForeignKey, (Vec<usize>, Vec<usize>)> = HashMap::new();
     for (i, group) in before.iter().enumerate() {
         by_key.entry(group.key.clone()).or_default().0.push(i);
@@ -3586,8 +4038,8 @@ fn check_foreign_revisions(
     let mut before_present = vec![false; before.len()];
     let mut after_present = vec![false; after.len()];
     for (old, new) in by_key.values() {
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+        let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
         for (i, j) in aligned_pairs(&a, &b) {
             before_present[old[i]] = true;
             after_present[new[j]] = true;
@@ -3601,8 +4053,8 @@ fn check_foreign_revisions(
         if key.author.as_deref() == Some(author) {
             continue;
         }
-        let a: Vec<_> = old.iter().map(|&i| &before[i].text).collect();
-        let b: Vec<_> = new.iter().map(|&i| &after[i].text).collect();
+        let a: Vec<_> = old.iter().map(|&i| before[i].label()).collect();
+        let b: Vec<_> = new.iter().map(|&i| after[i].label()).collect();
         let (mut i, mut j) = (0, 0);
         for (x, y) in ordered_pairs(&a, &b)
             .into_iter()
@@ -4228,6 +4680,26 @@ mod literal_revision_repair_contract_tests {
             expected_dom.serialize_document(expected_doc)
         );
     }
+
+    #[test]
+    fn three_starts_of_one_id_before_their_ends_pair_one_to_one() {
+        // Each start takes the first end of its id that no earlier start
+        // has taken; the first start keeps its id (codex on #1666).
+        let range = |tag: &str, id: u32| format!(r#"<w:customXmlIns{tag} w:id="{id}"/>"#);
+        let body = |ids: [u32; 3]| {
+            let starts: String = ids.iter().map(|&id| range("RangeStart", id)).collect();
+            let ends: String = ids.iter().map(|&id| range("RangeEnd", id)).collect();
+            format!("<w:p>{starts}<w:r><w:t>held</w:t></w:r>{ends}</w:p>")
+        };
+        let (mut dom, doc) = tree(&body([9, 9, 9]));
+        let root = dom.root(doc).unwrap();
+        let (expected_dom, expected_doc) = tree(&body([9, 10, 11]));
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -4805,6 +5277,38 @@ mod baseline_tests {
         // Comments and revisions are entities, not positions.
         assert_eq!(normalised("c5 on r12 and c5.text"), "c5 on r12 and c5.text");
         assert_eq!(normalised("durableId '00251B63'"), "durableId '00251B63'");
+    }
+
+    /// A rerun of fewer operations renumbers paragraphs and mints other
+    /// ids: the unnumbered key ignores both, and keeps the names.
+    #[test]
+    fn unnumbered_keeps_names_and_drops_numbers() {
+        let here = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[3]",
+            "Clause1: w:ins w:id 12 in w:p[3], 2 times",
+        );
+        let there = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[9]",
+            "Clause1: w:ins w:id 40 in w:p[9], 3 times",
+        );
+        assert_eq!(here.unnumbered(), there.unnumbered());
+        assert_eq!(
+            here.unnumbered(),
+            "w:body/w:p\u{1f}Clause1: w:ins w:id # in w:p, # times"
+        );
+        let other = finding(
+            "BOOKMARK_CROSSES_REVISION",
+            "w:body[0]/w:p[3]",
+            "Clause2: w:ins w:id 12 in w:p[3], 2 times",
+        );
+        assert_ne!(here.unnumbered(), other.unnumbered());
+        assert_eq!(finding("X", "p3", "m").unnumbered(), "p#\u{1f}m");
+        assert_eq!(
+            without_numbers("durableId '00251B63', 1st, x7y, #1669, 2.5"),
+            "durableId '00251B63', 1st, x7y, ##, #.#"
+        );
     }
 
     #[test]

@@ -523,16 +523,29 @@ fn operations(
         })
         .collect();
     let stays = |p: &usize| !gone.contains(p);
+    // A paragraph replaced whole still anchors: its new paragraph sits
+    // right after it, so what the Markdown adds after it follows (codex on
+    // #1670, round 8).
+    let replaced: HashSet<usize> = edits
+        .iter()
+        .enumerate()
+        .filter(|(entry, _)| !dropped.contains(entry) && whole.contains(entry))
+        .filter_map(|(_, edit)| match *edit {
+            Edit::Pair(p, _) => Some(p),
+            _ => None,
+        })
+        .collect();
+    let anchors = |p: &usize| stays(p) || replaced.contains(p);
     // A paragraph for `block` between paragraph positions `after` and
     // `next`: placed next to a staying neighbour, with the properties of the
     // nearest staying paragraph of the block's kind.
     let insert = |block: &Block, after: Option<usize>, next: Option<usize>| {
         let after = after
-            .filter(stays)
-            .or_else(|| after.and_then(|a| (0..a).rev().find(|p| stays(p))));
+            .filter(anchors)
+            .or_else(|| after.and_then(|a| (0..a).rev().find(|p| anchors(p))));
         let next = next
-            .filter(stays)
-            .or_else(|| next.and_then(|n| (n + 1..paragraphs.len()).find(|p| stays(p))));
+            .filter(anchors)
+            .or_else(|| next.and_then(|n| (n + 1..paragraphs.len()).find(|p| anchors(p))));
         let (anchor, side) = match (after, next) {
             (Some(a), _) => (a, Side::After),
             (None, Some(n)) => (n, Side::Before),
@@ -591,21 +604,21 @@ fn operations(
                     });
                     continue;
                 }
-                // The paragraph replaced whole: the new one next to a
-                // neighbour, then the old one deleted.
-                let replaced = Block {
-                    kind: paragraph.kind,
-                    runs: block.runs.clone(),
-                };
-                let before = p.checked_sub(1);
-                let after = (p + 1 < paragraphs.len()).then_some(p + 1);
-                let Some(kind) = insert(&replaced, before, after) else {
-                    continue;
-                };
+                // The paragraph replaced whole: the new one right after it,
+                // with its properties, then the old one deleted. A new
+                // paragraph beside a deleted one takes its place, in its
+                // cell or story (#1668).
                 operations.push(Operation {
                     id: Some(format!("edit:{entry}:new")),
                     group: None,
-                    kind,
+                    kind: OperationKind::InsertParagraph {
+                        paragraph: at(p),
+                        position: Side::After,
+                        runs: block.runs.clone(),
+                        like: None,
+                        style: None,
+                        comment: None,
+                    },
                 });
                 operations.push(Operation {
                     id,

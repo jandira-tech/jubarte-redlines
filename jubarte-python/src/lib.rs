@@ -33,6 +33,13 @@ fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
+/// A selection refusal as `JubarteError` with `USAGE: ` before its
+/// message, the category the CLI exits 2 for; the hosts map that prefix
+/// to the binary's usage exit and code.
+fn usage_err(message: String) -> PyErr {
+    JubarteError::new_err(format!("USAGE: {message}"))
+}
+
 /// Where a PDF's comments go and which pages it keeps: the binary's
 /// `--move-comments` and `--changed-only`.
 #[derive(Clone, Copy, Default)]
@@ -141,11 +148,18 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
 /// List the tracked changes as a JSON array string, one object per
 /// logical change, each with the id `accept_changes` / `reject_changes`
 /// select by (the same objects as `jubarte changes --json`): a change Word wrote as several marks is one
-/// object with `members`.
+/// object with `members`. `authors` keeps those authors' changes (exact
+/// names), as `jubarte changes --author`.
 #[pyfunction]
-fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, authors = None))]
+fn list_changes_json(
+    py: Python<'_>,
+    docx: &[u8],
+    authors: Option<Vec<String>>,
+) -> PyResult<String> {
     py.detach(|| {
         let changes = jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
+        let changes = jubarte::changes::by_authors(changes, &authors.unwrap_or_default());
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -173,11 +187,13 @@ fn list_comments_json(
 
 /// The listing `jubarte changes` prints: a line per tracked change with its
 /// short id (`r12`), kind, target, author, paragraph (`p3`) and text, then
-/// `N change(s)`.
+/// `N change(s)`. `authors` filters as in [`list_changes_json`].
 #[pyfunction]
-fn changes_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, authors = None))]
+fn changes_text(py: Python<'_>, docx: &[u8], authors: Option<Vec<String>>) -> PyResult<String> {
     py.detach(|| {
         jubarte::changes::list_logical_changes(docx)
+            .map(|changes| jubarte::changes::by_authors(changes, &authors.unwrap_or_default()))
             .map(|changes| jubarte::changes::changes_text(&changes))
             .map_err(|e| e.to_string())
     })
@@ -255,7 +271,7 @@ fn tables_view(
         dates,
         page_markers,
         select: jubarte::markdown::Select::from_flags(paragraphs, None, None, false, None)
-            .map_err(err)?,
+            .map_err(usage_err)?,
         source,
     };
     let view = py
@@ -316,8 +332,8 @@ fn read_json(
     validity_file: Option<&str>,
 ) -> PyResult<String> {
     let track_changes = track_changes_of(track_changes)?;
-    let select =
-        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
+    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by)
+        .map_err(usage_err)?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         select,
@@ -413,7 +429,7 @@ fn for_edit_json(
         })
         .transpose()?;
     let args = jubarte::cli::ReadArgs {
-        paragraphs,
+        paragraphs: paragraphs.into_iter().collect(),
         head,
         tail,
         find,
@@ -473,6 +489,13 @@ fn wrote_line(
 #[pyfunction]
 fn refused_input(path: std::path::PathBuf, data: &[u8], word: bool) -> Option<String> {
     jubarte::cli::refused_input(&path, data, word)
+}
+
+/// [`refused_input`] for a package read whole (`validate --original`): it
+/// must also pass admission, as the binary's does; `None` when admitted.
+#[pyfunction]
+fn refused_package(path: std::path::PathBuf, data: &[u8]) -> Option<String> {
+    jubarte::cli::refused_package(&path, data)
 }
 
 /// The line for PNG pages: `wrote out/r-page-NN.png (png, 3 pages, 96 dpi)`,
@@ -1086,8 +1109,8 @@ fn read_view(
     source: Option<String>,
 ) -> PyResult<(String, Vec<String>)> {
     let track_changes = track_changes_of(track_changes)?;
-    let select =
-        jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
+    let select = jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by)
+        .map_err(usage_err)?;
     let options = jubarte::markdown::ReadOptions {
         track_changes,
         comments,
@@ -1147,7 +1170,7 @@ fn record_plan(
     options: &str,
     held: Option<&str>,
 ) -> PyResult<String> {
-    use jubarte::edit::record::{record_json, RecordError};
+    use jubarte::edit::record::{RecordError, record_json};
     py.detach(|| record_json(verb, operations, docx, held, options))
         .map_err(|e| match e {
             RecordError::Usage(m) => pyo3::exceptions::PyValueError::new_err(m),
@@ -1621,6 +1644,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
     m.add_function(wrap_pyfunction!(refused_input, m)?)?;
+    m.add_function(wrap_pyfunction!(refused_package, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
@@ -1674,10 +1698,12 @@ mod publication_tests {
                 .enumerate()
             {
                 let warning = caught.get_item(index).unwrap();
-                assert!(warning
-                    .getattr("category")
-                    .unwrap()
-                    .is(py.get_type::<PyRuntimeWarning>()));
+                assert!(
+                    warning
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
                 assert_eq!(
                     warning
                         .getattr("message")
@@ -1719,12 +1745,14 @@ mod publication_tests {
             let raised = publish_result(py, Err(error)).unwrap_err();
             assert_eq!(caught.len().unwrap(), 2);
             for index in 0..2 {
-                assert!(caught
-                    .get_item(index)
-                    .unwrap()
-                    .getattr("category")
-                    .unwrap()
-                    .is(py.get_type::<PyRuntimeWarning>()));
+                assert!(
+                    caught
+                        .get_item(index)
+                        .unwrap()
+                        .getattr("category")
+                        .unwrap()
+                        .is(py.get_type::<PyRuntimeWarning>())
+                );
             }
             context
                 .call_method1("__exit__", (py.None(), py.None(), py.None()))
