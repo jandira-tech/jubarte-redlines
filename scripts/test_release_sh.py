@@ -1086,8 +1086,9 @@ class Checklist(unittest.TestCase):
         lines = self.out.stdout.splitlines()
         stack_line = next(n for n, line in enumerate(lines) if "stack: the release binary" in line)
         self.assertIn(
-            "python3 scripts/stack1m.py <release binary> <bench root> <out dir> "
-            "release_info/sample_*_<version>_*.csv",
+            # the version is filled in, like every @V@ of the checklist (#1757)
+            "python3 scripts/stack1m.py <release binary> ../neurotic_docx_bench <out dir> "
+            "release_info/sample_*_0.11.3_*.csv",
             lines[stack_line + 1],
         )
 
@@ -2475,6 +2476,55 @@ class InstallProofs(unittest.TestCase):
         self.assertNotIn("check ", "".join(l for l in s12.splitlines() if "docsrs_built" in l))
         self.assertIn("docsrs_built", s12)
         self.assertLess(s12.index("npm_requires"), s12.index('[ "$ok" = 1 ] || die'))
+
+
+
+class ProofTools(unittest.TestCase):
+    """#1757: every proof names a tool a repository holds. The 0.13.0
+    checklist proved five items with tools that lived only in a release work
+    folder (parity_build_v2.sh, apply_changelogs_v2.py,
+    lane_validity_vs_sources.py, queue.sh, build_app_0.11.2.sh), one of
+    which had been deleted and rebuilt from session logs."""
+
+    # a `(cd OTHER && …)` group runs another repository's tools
+    FOREIGN = re.compile(r"\(cd [^)]*\)")
+    # scripts/… or tools/… run from this checkout: not ./scripts/… or app/scripts/…
+    TOOL = re.compile(r"(?<![\w./-])(?:scripts|tools)/[\w.-]+(?:/[\w.-]+)*")
+
+    def test_every_tool_named_from_this_checkout_exists(self) -> None:
+        missing = []
+        for line in checklist_block().splitlines():
+            parts = line.split("|")
+            if len(parts) != 4:
+                continue
+            for path in self.TOOL.findall(self.FOREIGN.sub("", parts[3])):
+                path = path.rstrip(".")
+                # a script, not a folder a tool writes to (tools/parity/parity-work)
+                if Path(path).suffix in {".py", ".sh", ".mjs", ".js"} and not (HERE.parent / path).exists():
+                    missing.append((parts[0], path))
+        self.assertEqual(missing, [])
+
+    def test_no_proof_names_a_release_work_folder_tool(self) -> None:
+        block = checklist_block()
+        for name in ("parity_build_v2", "apply_changelogs_v2", "lane_validity_vs_sources", "queue.sh",
+                     "build_app_0.11.2", "agents/"):
+            self.assertFalse(name in block, f"the checklist still names {name}")
+
+    def test_step_5_runs_the_tests_of_these_tools(self) -> None:
+        s5 = step(5)
+        for test in ("scripts/test_lane_validity.py", "scripts/test_redline_sweep.py"):
+            self.assertIn(f'"${{py312[@]}}" {test}', s5)
+        self.assertIn("pytest -q -p no:cacheprovider tools/parity", s5)
+
+    def test_the_word_sweeps_read_the_redline_sample_only(self) -> None:
+        # sample_*_V_*.csv also matches the conversion sample, which
+        # redline-sweep.sh and lane_validity.py refuse (exit 2)
+        lines = [line for line in checklist_block().splitlines()
+                 if ("redline-sweep.sh" in line or "lane_validity.py" in line) and "release_info/" in line]
+        self.assertGreaterEqual(len(lines), 2, "Ring-3 and lane validity")
+        for line in lines:
+            self.assertNotIn("sample_*_", line)
+            self.assertIn("release_info/sample_redline_@V@_*.csv", line)
 
 
 if __name__ == "__main__":

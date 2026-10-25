@@ -132,3 +132,5 @@ bench-reports/
 
 # Codex security-scan output (findings, threat model): never committed
 .scan/
+# tools/parity/build.sh and parity_check.py write here by default (#1757)
+tools/parity/parity-work/

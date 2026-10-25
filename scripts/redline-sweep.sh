@@ -11,12 +11,20 @@
 # Usage:
 #   scripts/redline-sweep.sh <mapping.csv> <source-dir> <out-dir> [--probe] [--validate]
 #
-# CSV columns (header row skipped):
-#   1 pair_stem, 5 docx_source_base, 6 docx_source_next
-# Pairs whose source files are missing are counted and skipped.
+# The CSV is read by its header row:
+#   a bench mapping (pair_stem,…): 1 pair_stem, 5 docx_source_base,
+#     6 docx_source_next; pairs whose sources are missing are counted and
+#     skipped;
+#   a release_info redline sample (key,base,base_sha256,next,…): 1 key,
+#     2 base, 4 next, relative to <source-dir> (the bench root); a missing
+#     source fails, since the sample names real files. CRLF line ends are
+#     fine.
+# Any other header exits 2.
 #
-# Writes <out-dir>/<pair_stem>.docx per pair plus sweep.log / probe.log
-# summaries. Exit 1 if any generation or probe failed.
+# Writes <out-dir>/<stem>.docx per pair plus sweep.log / probe.log
+# summaries; sweep.log opens with the binary's path, sha256 and version.
+# Exit 1 if any generation or probe failed, or if no pair was generated at
+# all: a sweep that checked nothing passes nothing (#1757).
 #
 # --validate (Ring 2): after generation, run tools/validate-docx against every
 # output and ratchet findings against tools/validity_baseline.tsv on
@@ -49,14 +57,33 @@ VALIDATOR_DIR="$SCRIPT_DIR/../tools/validate-docx"
 [ -x "$BIN" ] || { echo "error: $BIN not built (cargo build --release)" >&2; exit 2; }
 mkdir -p "$OUT"
 
+IFS= read -r header < "$CSV" || header=""
+header=${header%$'\r'}
+case "$header" in
+  pair_stem,*) LAYOUT=mapping ;;
+  key,base,base_sha256,next,*) LAYOUT=release ;;
+  *) echo "error: $CSV is neither a bench mapping (pair_stem,…) nor a release_info redline sample (key,base,base_sha256,next,…)" >&2; exit 2 ;;
+esac
+
 gen_ok=0 gen_fail=0 skipped=0
 : > "$OUT/sweep.log"
+BIN_LINE="binary: $BIN sha256 $(shasum -a 256 "$BIN" | cut -d' ' -f1) ($("$BIN" --version 2>&1))"
+echo "$BIN_LINE" | tee -a "$OUT/sweep.log"
 # Manifest of artifacts produced by THIS sweep only (CR #3642397959).
 MANIFEST="$OUT/.sweep_manifest"
 : > "$MANIFEST"
 
-while IFS=, read -r stem _base _next _origin src_base src_next _rest; do
-  [ "$stem" = "pair_stem" ] && continue
+first=1
+while IFS= read -r line || [ -n "$line" ]; do
+  line=${line%$'\r'}
+  if [ "$first" = 1 ]; then first=0; continue; fi
+  [ -z "$line" ] && continue
+  IFS=, read -r f1 f2 f3 f4 f5 f6 _rest <<< "$line"
+  if [ "$LAYOUT" = release ]; then
+    stem=$f1 src_base=$f2 src_next=$f4
+  else
+    stem=$f1 src_base=$f5 src_next=$f6
+  fi
   [ -z "$stem" ] && continue
   a="$SRC/$src_base"; b="$SRC/$src_next"
   if [ ! -f "$a" ] || [ ! -f "$b" ]; then
@@ -75,6 +102,14 @@ while IFS=, read -r stem _base _next _origin src_base src_next _rest; do
 done < "$CSV"
 
 echo "generation: ok=$gen_ok fail=$gen_fail skipped=$skipped"
+if [ "$gen_ok" -eq 0 ]; then
+  echo "error: no pair was generated ($gen_fail failed, $skipped skipped) — the sweep checked nothing" >&2
+  exit 1
+fi
+if [ "$LAYOUT" = release ] && [ "$skipped" -gt 0 ]; then
+  echo "error: $skipped pair(s) of the release sample have a missing source under $SRC (sweep.log names them)" >&2
+  gen_fail=$((gen_fail+skipped))
+fi
 
 probe_ok=0 probe_fail=0
 if [ "$PROBE" = "--probe" ]; then
