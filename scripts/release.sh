@@ -158,7 +158,7 @@ before|you|Full suite once before the release: cargo miri nextest run over the w
 before|you|The quality gate of docs/VERSIONING.md on the release binary: the parity ladder sweep shows no NEW fails, and the criterion bench holds its baseline — any case more than 5 percent worse blocks, a median generate-time regression past +10 percent triggers the speed review before the release|tools/parity_ladder.py sweep --bin target/release/jubarte; cargo bench --bench redline -- --baseline <baseline> (docs/SPEED_REVIEW.md)
 before|you|Decide where the release runs: a clean worktree on main, release PR merged, main in sync with origin/main — the canonical checkout is the owner's and is never the release tree|git worktree add <dir> main; git -C <dir> status --porcelain (empty); git -C <dir> rev-parse HEAD == origin/main
 before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
-before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run), or the assumption is stated in the release notes when skipped|python3 identity27.py <candidate> <release-commit binary> <out dir> (from the bench root; keeps only differences)
+before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run, exit 0 and its identity.log kept), or the assumption is stated in the release notes when skipped|python3 scripts/identity.py <candidate> <release-commit binary> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench (outputs named by row index; keeps only differences)
 before|you|parity: the CLI, PyO3 and WASM bindings agree on the samples, build identity proven (--expect-commit HEAD), stale artifacts refused|zsh agents/parity_v2/parity_build_v2.sh then parity_check.py --expect-commit <sha> --engine-dir <engine>
 0|auto|release.yml reviewed before the tag, by scripts/test_release_workflow.py on Python 3.12: the wheel matrix (7 jobs) equals the README's supported-environments row and scripts/check_release_artifacts.py REQUIRED_WHEEL_TAGS, the binary matrix (5 jobs) equals step 11's list, the three publish jobs (crates.io, PyPI, npm) run in the release environment the trusted publishers name (#1642) and alone with the GitHub-release attestation may mint an id-token, every action is SHA-pinned; GitHub holds the release environment and, whenever keys/ holds a public key, the ZIPSIGN_PRIVATE_KEY secret — the signed era refuses unsigned archives|uv run --no-project --python 3.12 --with pyyaml python scripts/test_release_workflow.py; gh api repos/jandira-tech/jubarte-redlines/environments/release (docs/SELF_UPDATE.md, Signed releases)
 before|you|CI of the release PR: read each red check's log — fix only genuine test or coverage failures; billing, quota, paused-bot and runner-offline reds are reported and left; pushes that start hosted runners are batched into ONE|gh run view <run-id> --log-failed (one batched push per review round)
@@ -191,7 +191,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 1|auto|Version sync: every manifest, the 5 Cargo.locks, the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer|grep -n "^## \[@V@\]" CHANGELOG.md
 3|auto|The six release_info files verified: results bound to their sample CSV by sha256 and to the scored binary by commit + sha256, website and app data records sound|python3 scripts/check_release_info.py @V@ --bench-root ../neurotic_docx_bench
-3|you|Confirm which binary and commit the evidence names — the scored candidate, deliberately not the shipped binary; state the assumption if the identity run was skipped|jq '.tools.jubarte' release_info/results_redline_@V@_*.json (commit + binary_sha256)
+3|auto|The evidence was scored on this tree's CLI engine: the commit both results JSONs name differs from HEAD in no engine input (src/ token for token, so comments aside; assets, schemas, keys byte for byte; Cargo.toml and Cargo.lock beyond the version and crates.io listing) — 0.11.2's evidence missed two code changes|python3 scripts/check_evidence_engine.py @V@
 3|you|The measured NUMBERS sentence in both changelogs equals the aggregates the checker just printed — mean and median of both samples, the paired interval; the same sentence reaches the app's changelog and About window and jubarte.pro, so a mismatch ships a wrong claim three times|python3 scripts/check_release_info.py @V@ (its aggregate lines); grep -n '600-item samples' CHANGELOG.md jubarte-app/CHANGELOG.md
 4|auto|The five summaries + the docs statement land in their channels; step 4 lists the docs files changed since the previous tag beside the statement|scripts/release.sh step 4 (it greps each landing)
 4|you|docs/adoption pages: a row this release ships still labelled main flips to released by hand (the README's labels name no moving version); the docs statement is checked against the diff, these pages are not|grep -rn ' main ' docs/adoption
@@ -220,7 +220,7 @@ after|you|notarize: Developer ID sign inside-out (nested bundles deepest first, 
 after|you|benchmark lane upload: after the full-corpus run, the site fixtures restage uploads to the Hugging Face dataset, pins fixtures.lock to the @V@ lane and deploys — the release's own figures are on jubarte.pro since step 13; the pages this second deploy rewrites are read again (the use-cases strips now come from the @V@ lane, the full-corpus tables moved)|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
 after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still runs for @V@|(cd ../neurotic_docx_bench && uv run scripts/release_jubarte.py @V@)
 after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
-after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 identity27.py <released binary> <candidate> <out dir> (from the bench root)
+after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
 after|you|self-update serves the release: jubarte self-update --version @V@ installs the archive, verifies it against the release's SHA256SUMS.txt (and its signature once keys/ holds a public key), and the replaced binary answers @V@ — the path every prebuilt user takes|jubarte self-update --version @V@ --yes; jubarte --version
 after|you|each library answers the way a user installs it: pip install jubarte-redlines==@V@ imports and capabilities() reports @V@, npm i jubarte-wasm@@V@ loads, npx -y jubarte-redlines@@V@ --version prints @V@|pip install jubarte-redlines==@V@; python3 -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'; npx -y jubarte-redlines@@V@ --version
 after|you|the public pages of @V@ are read once, human eyes: docs.rs built the release's docs, and each registry page shows the README cut for v@V@ with its note where the channel accepts one|open https://docs.rs/jubarte-redlines/@V@ https://crates.io/crates/jubarte-redlines/@V@ https://pypi.org/project/jubarte-redlines/@V@/ https://www.npmjs.com/package/jubarte-wasm/v/@V@ https://www.npmjs.com/package/jubarte-redlines/v/@V@
@@ -867,6 +867,12 @@ else
     || die "release_info/ does not carry $VER's six files — run the bench flow that writes them (release_info/README.md), commit them, then rerun"
   step "six files verified: samples + results + website/app data (sha256 columns format-checked only)"
 fi
+# The candidate the bench scored was built from the commit both results
+# name; its CLI engine inputs must be this tree's (#1752). HEAD is the
+# committed tree: step 1's bump is not committed yet, and a resumed run's
+# release commit changes only what the check sets aside.
+python3 scripts/check_evidence_engine.py "$VER" \
+  || die "the evidence was not scored on this tree's engine (above) — rebuild the candidate from HEAD and rerun the bench flow, or take the engine change out"
 check_now 3
 
 # =============================================================================
@@ -1013,6 +1019,8 @@ if [ "$SKIP_GATES" = 0 ]; then
   "${py312[@]}" scripts/test_semver_lints.py
   "${py312[@]}" scripts/test_check_engine_commit.py
   "${py312[@]}" scripts/test_check_release_info.py
+  "${py312[@]}" scripts/test_check_evidence_engine.py
+  "${py312[@]}" scripts/test_identity.py
   "${py312[@]}" scripts/test_library_readmes.py
   "${py312[@]}" scripts/test_api_snapshot.py
   # Python bindings: build the extension from this checkout and run pytest.
