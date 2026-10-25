@@ -215,7 +215,7 @@ fn deleted_footnote_compare_does_not_panic() {
     let mut found_note_text = false;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).unwrap();
-        let name = f.name().expect("decode ZIP fixture name").into_owned();
+        let name = f.name().to_string();
         if !name.ends_with(".xml") {
             continue;
         }

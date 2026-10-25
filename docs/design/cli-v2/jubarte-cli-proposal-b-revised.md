@@ -590,24 +590,6 @@ Counts distinguish operations, logical revisions, revision carrier elements, roo
 
 Errors identify code, operation pointer, source hash, resolved target, match count where applicable, bounded actual context and safe next actions. Keep the existing useful per-operation refusal information. Add `retryable`/commit-state detail; an unknown publication state is not authorization to retry with force.
 
-An `ANCHOR_NOT_FOUND` refusal may add a report-only `error.near` object:
-`{"total":1,"occurrences":[{"text":"services.  Such","shown":"\"services.  Such\"","offset":6}]}`.
-`total` counts every near occurrence, including overlaps; at most five entries
-are returned in source order. Each entry preserves exact document `text`, its
-quoted visible `shown` form (the anchor refusal codec, e.g. `\u{a0}`, `\t`),
-and its UTF-8 byte `offset` in the searched logical paragraph. A search across
-paragraphs adds a `target` ID per entry. No diagnostic hits means no `near`.
-For target-specific v2 resolvers, the bounded `context` points at the first
-near occurrence while `matches` remains zero. Text output adds a `near:` line
-asking the caller to copy the text exactly; code, message and exit 3 remain.
-
-This diagnostic treats nonempty runs of all Unicode `char::is_whitespace`
-characters as one class and skips U+200B/U+200C/U+200D/U+2060/U+FEFF only in
-document text. This exposes both spacing and invisible document characters
-without inventing equivalence for punctuation or deleting characters from the
-request. It never selects, retargets or edits a near occurrence. Section 7's
-literal matching rule still governs every successful v2 edit.
-
 Next-call suggestions are argument arrays, with prerequisites and purpose. Do not construct executable shell strings from document text. A pending-revision refusal offers explicit inspect/decision choices without choosing acceptance for the caller. A successful artifact receipt uses its actual output path, not a conventional filename the harness may expect.
 
 ## 12. Shared argument, stream and safety contract
@@ -674,8 +656,6 @@ Flags override environment/project/user presentation defaults. Ambient configura
 | 5 | Comparison differences when `--exit-code` was requested. |
 | 64 | Invalid CLI usage or malformed request/schema. |
 | 124 | Deadline exceeded before commit. |
-
-The current CLI refuses an existing output without `--force` as a usage error (exit 2); an I/O failure exits 1.
 
 Moving usage errors from existing code 2 to 64 is breaking and belongs to a declared protocol/release boundary. Keep detailed error codes and retry classification in JSON.
 

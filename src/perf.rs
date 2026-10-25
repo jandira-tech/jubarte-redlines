@@ -306,7 +306,7 @@ mod active {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -329,50 +329,8 @@ mod tests {
         assert!(j.contains("\"units\":15"));
     }
 
-    /// The counters are process-wide: tests that write them take this lock,
-    /// so `cargo test`'s threads cannot interleave them.
-    static COUNTERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn reset_zeroes_all_counters() {
-        let _guard = COUNTERS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for stage in [
-            Stage::PackageOpen,
-            Stage::Preprocess,
-            Stage::Atomize,
-            Stage::Unitize,
-            Stage::Lcs,
-            Stage::Produce,
-            Stage::Serialize,
-            Stage::Zip,
-        ] {
-            record_stage_ns(stage, 500);
-        }
-        inc_lcs_calls();
-        add_lcs_window_area(3, 4);
-        inc_corr_run_scans();
-        inc_corr_run_hits();
-        add_unit_clones(2);
-        set_atom_count(100);
-        set_unit_count(8);
-        if ENABLED {
-            let seeded = snapshot();
-            assert!(seeded.stage_ns.iter().all(|&ns| ns > 0), "{seeded:?}");
-            assert_ne!(seeded, Snapshot::default());
-        }
-
-        reset();
-
-        assert_eq!(snapshot(), Snapshot::default());
-    }
-
     #[test]
     fn reset_and_record_are_safe_without_feature() {
-        let _guard = COUNTERS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         reset();
         record_stage_ns(Stage::Lcs, 42);
         inc_lcs_calls();

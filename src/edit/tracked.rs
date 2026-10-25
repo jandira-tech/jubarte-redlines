@@ -10,14 +10,13 @@
 //! as tracked changes by the plan's author and date, which is what Word does
 //! when you type on a received redline with Track Changes on: new `w:ins`
 //! and `w:del` runs, inserted and deleted paragraph marks, and `w:pPrChange`
-//! for paragraph formatting. An edit inside another author's insertion
-//! nests the deletion there and splits off the new words and remainder.
-//! The editor's own insertion is edited in place.
+//! for paragraph formatting. The other party's markup is never touched.
+//! Resolution already refuses ranges inside a revision, so every range here
+//! holds only runs that are direct children of their paragraph.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::structural;
-use super::visible;
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounts,
     ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format,
@@ -25,25 +24,16 @@ use super::{
     new_position, place_reply_markers, remove_comment_markers, runs_in_range, set_text,
     split_run_at, toc_paragraphs,
 };
-use crate::changes::{list_changes, list_logical_changes};
+use crate::changes::list_changes;
 use crate::inspect::{Opened, Piece, project_paragraph};
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XName};
-
-/// The original identity of a pending insertion, retained across every split.
-#[derive(Clone)]
-struct InsertionOrigin {
-    story: String,
-    id: String,
-    root: NodeId,
-}
 
 /// Revision attribution for the containers the emitter creates.
 struct Stamp<'a> {
     author: &'a str,
     date: &'a str,
     next_id: u64,
-    insertions: HashMap<NodeId, InsertionOrigin>,
 }
 
 impl Stamp<'_> {
@@ -55,69 +45,58 @@ impl Stamp<'_> {
         dom.set_attribute_value(node, &W::date(), Some(self.date));
         node
     }
-
-    fn insertion_origins(&self, dom: &Dom) -> BTreeMap<String, String> {
-        self.insertions
-            .iter()
-            .filter_map(|(&node, origin)| {
-                if !dom.ancestors(node, None).contains(&origin.root) {
-                    return None;
-                }
-                let id = dom.attribute(node, &W::id())?;
-                Some((
-                    crate::ids::ChangeId::new(&origin.story, id).short(),
-                    origin.id.clone(),
-                ))
-            })
-            .collect()
-    }
 }
 
 /// The operation kind of `resolved` when the emitter cannot write it as a
 /// tracked change: such a plan goes through the comparer, or is refused
 /// under `keep`, never left out of the redline.
-fn untracked_kind(tx: &Transaction<'_>, operation: usize) -> Option<&'static str> {
-    let kind = super::kind_name(&tx.plan.operations[operation].kind);
-    (!super::operation_supports_keep(kind)).then_some(kind)
+fn untracked_kind(resolved: &Resolved) -> Option<&'static str> {
+    match resolved {
+        Resolved::FillControl { .. } => Some("fill_control"),
+        Resolved::InsertFootnote { .. } => Some("insert_footnote"),
+        Resolved::InsertImage { .. } => Some("insert_image"),
+        Resolved::PageSetup { .. } => Some("page_setup"),
+        _ => None,
+    }
 }
 
 /// Whether the emitter writes every operation of `tx` as tracked changes.
 pub(super) fn emits_all(tx: &Transaction<'_>) -> bool {
-    tx.resolved
-        .iter()
-        .all(|(op, _)| untracked_kind(tx, *op).is_none())
+    tx.resolved.iter().all(|(_, r)| untracked_kind(r).is_none())
 }
 
-/// The tracked formatting change (`w:rPrChange`) of the first run holding
-/// `[start, end)` of `paragraph` that has one.
-fn formatting_tracked(dom: &Dom, paragraph: NodeId, start: usize, end: usize) -> Option<NodeId> {
+/// Whether a run holding `[start, end)` of `paragraph` has a tracked
+/// formatting change.
+fn formatting_tracked(dom: &Dom, paragraph: NodeId, start: usize, end: usize) -> bool {
     project_paragraph(dom, paragraph)
         .segments
         .iter()
         .filter(|s| s.start < end && start < s.end)
-        .find_map(|s| {
+        .any(|s| {
             let (Piece::Text { run, .. } | Piece::Glyph { run, .. }) = &s.piece;
             dom.element(*run, &W::r_pr())
                 .and_then(|rpr| dom.element(rpr, &W::r_pr_change()))
+                .is_some()
         })
 }
 
-/// Refusals that only `keep` needs, checked on the untouched working source.
-/// Each revision conflict retains its actual carriers for caller-specific advice.
+/// Refusals that only `keep` needs, checked on the untouched source after
+/// resolution: an operation the emitter cannot track, and a paragraph- or
+/// run-level change on top of another revision of the same paragraph mark
+/// or properties.
 pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
     if tx.plan.existing_revisions != ExistingRevisions::Keep {
         return Ok(());
     }
-    tx.revision_refusal.take();
     let dom = &tx.opened.dom;
     let refuse = |op: usize, message: &str| {
         let mut error = tx.conflict(op, message);
         error.code = "UNSUPPORTED_STRUCTURE".into();
         error.outcomes[op].code = Some(error.code.clone());
-        tx.attach_revision_refusal(error)
+        error
     };
     for (op, resolved) in &tx.resolved {
-        if let Some(kind) = untracked_kind(tx, *op) {
+        if let Some(kind) = untracked_kind(resolved) {
             return Err(refuse(
                 *op,
                 &format!(
@@ -125,70 +104,62 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                 ),
             ));
         }
-        // What is refused, then the revision in the way and each route
-        // around it (#1108).
-        let named = |lead: &str, revision: NodeId| tx.revision_hint(revision, lead);
         let message = match resolved {
             Resolved::DeleteParagraph { para } => {
                 let node = tx.paragraph_nodes[*para];
-                if let Some(moved) = moved_in(dom, node) {
-                    Some(named(
-                        "under keep, a paragraph that holds a move cannot be deleted yet: the move is",
-                        moved,
-                    ))
+                if holds_revision(dom, node) {
+                    Some(
+                        "under keep, a paragraph that holds tracked changes cannot be deleted; resolve them first with resolve_revisions",
+                    )
                 } else if dom
                     .next_element(node)
                     .is_none_or(|n| !dom.name_is(n, &W::p()))
+                    && previous_paragraph(dom, node).is_some_and(|p| mark_has(dom, p, &DELETED))
                 {
-                    previous_paragraph(dom, node)
-                        .and_then(|p| mark_revision(dom, p, &DELETED))
-                        .map(|mark| {
-                            named(
-                                "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark: that mark is",
-                                mark,
-                            )
-                        })
+                    Some(
+                        "under keep, the last paragraph cannot be deleted when the paragraph before it already has a deleted mark; resolve that change first",
+                    )
                 } else {
                     None
                 }
             }
-            Resolved::MergeParagraphs { para, .. } => {
-                mark_revision(dom, tx.paragraph_nodes[*para], &TRACKED).map(|mark| {
-                    named(
-                        "under keep, a paragraph whose mark is already tracked cannot be merged: that mark is",
-                        mark,
-                    )
-                })
+            Resolved::MergeParagraphs { para, .. }
+                if mark_has(dom, tx.paragraph_nodes[*para], &TRACKED) =>
+            {
+                Some(
+                    "under keep, a paragraph whose mark is already tracked cannot be merged; resolve that change first with resolve_revisions",
+                )
             }
-            Resolved::FormatParagraph { para, .. } => {
-                paragraph_format_change(dom, tx.paragraph_nodes[*para]).map(|change| {
-                    named(
-                        "under keep, a paragraph whose formatting change is still tracked cannot be formatted again: that change is",
-                        change,
-                    )
-                })
+            Resolved::FormatParagraph { para, .. }
+                if dom
+                    .element(tx.paragraph_nodes[*para], &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+                    .is_some() =>
+            {
+                Some(
+                    "under keep, a paragraph whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
+                )
             }
-            Resolved::List { paras, .. } => paras
-                .iter()
-                .find_map(|&para| paragraph_format_change(dom, tx.paragraph_nodes[para]))
-                .map(|change| {
-                    named(
-                        "under keep, a paragraph whose formatting change is still tracked cannot be numbered: that change is",
-                        change,
-                    )
-                }),
+            Resolved::List { paras, .. }
+                if paras.iter().any(|&para| {
+                    dom.element(tx.paragraph_nodes[para], &W::p_pr())
+                        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+                        .is_some()
+                }) =>
+            {
+                Some(
+                    "under keep, a paragraph whose formatting change is still tracked cannot be numbered; resolve that change first with resolve_revisions",
+                )
+            }
             Resolved::FormatRun {
                 para, start, end, ..
-            } => formatting_tracked(dom, tx.paragraph_nodes[*para], *start, *end).map(|change| {
-                named(
-                    "under keep, text whose formatting change is still tracked cannot be formatted again: that change is",
-                    change,
-                )
-            }),
+            } if formatting_tracked(dom, tx.paragraph_nodes[*para], *start, *end) => Some(
+                "under keep, text whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
+            ),
             _ => None,
         };
         if let Some(message) = message {
-            return Err(refuse(*op, &message));
+            return Err(refuse(*op, message));
         }
     }
     Ok(())
@@ -197,70 +168,12 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
 /// The result under `keep`: the clean copy as `finish` made it, the redline
 /// by emission, and revision counts of the plan's own changes.
 pub(super) fn result(tx: &Transaction<'_>, clean: Vec<u8>) -> Result<EditResult, EditError> {
-    result_with_order(tx, clean, false)
-}
-
-/// The tracked primary's paragraph identity, for the v2 expectations
-/// correspondence: `base` walks the replay's starting DOM (positionally the
-/// transaction's own `paragraph_nodes`, both loaded from the same base
-/// bytes), and `output` walks it again after the tracked emission — in the
-/// checker's projection order, so output indices address the reopened
-/// redline's paragraphs.
-#[derive(Clone, Debug)]
-pub(super) struct TrackedParagraphs {
-    /// The replay's base paragraphs, one per transaction paragraph.
-    pub(super) base: Vec<NodeId>,
-    /// The emitted redline's paragraphs, in projection order.
-    pub(super) output: Vec<NodeId>,
-    /// Each `output` paragraph's final-view disposition, computed on the
-    /// replay's own DOM before this call returns and that DOM is dropped.
-    /// The correspondence reads the redline's marks here instead of
-    /// reopening the emitted bytes (#1087); `None` when the caller asked
-    /// for no final-view scan. These equal a reparse of the emitted
-    /// redline because `finish` changes that DOM only through
-    /// `apply_watermark`, which no v2 operation reaches; the regression
-    /// net under `v2_apply`'s tests pins that equivalence.
-    pub(super) output_states: Option<Vec<super::v2_apply::FinalView>>,
-    /// Every surviving source insertion piece's emitted id -> source id.
-    /// Split pieces share an origin even when a leading edit renumbers it.
-    pub(super) insertion_origins: BTreeMap<String, String>,
-}
-
-/// As [`result_v2`], also returning the tracked primary's paragraph walks
-/// (see [`TrackedParagraphs`]).
-pub(super) fn result_v2_with_paragraphs(
-    tx: &Transaction<'_>,
-    clean: Vec<u8>,
-) -> Result<(EditResult, TrackedParagraphs), EditError> {
-    let (redline, floor, paragraphs) = redline(tx, true, true)?;
+    let (redline, floor) = redline(tx)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
-    report.split_revisions = splits(&paragraphs.insertion_origins);
-    Ok((
-        EditResult {
-            clean,
-            redline,
-            report,
-        },
-        paragraphs,
-    ))
-}
-
-fn result_with_order(
-    tx: &Transaction<'_>,
-    clean: Vec<u8>,
-    array_order: bool,
-) -> Result<EditResult, EditError> {
-    let (redline, floor, paragraphs) = redline(tx, array_order, false)?;
-    let mut report = tx.report(true);
-    report.paragraphs.to = crate::inspect::paragraphs(&clean)
-        .map(|p| p.len())
-        .unwrap_or(report.paragraphs.from);
-    report.revisions = revision_counts(&redline, &tx.plan.author, &tx.date, floor);
-    report.split_revisions = splits(&paragraphs.insertion_origins);
     Ok(EditResult {
         clean,
         redline,
@@ -270,21 +183,9 @@ fn result_with_order(
 
 /// Replay `tx`'s resolved operations on a fresh copy of its base as tracked
 /// changes. `tx` has been applied, so its outcomes hold the comment ids.
-/// Returns the redline, the first id its own revisions took (every
-/// source revision's id is below it) and the replay's paragraph walks
-/// ([`TrackedParagraphs`]); the walk is taken after the emission and
-/// before `finish`. `finish` changes the DOM only through
-/// `apply_watermark`, a step no v2 operation reaches, so the walk still
-/// addresses the emitted redline's paragraphs; the regression net under
-/// `v2_apply`'s tests pins that. When `final_views` is
-/// set, each output paragraph's final-view disposition is scanned off the
-/// replay's DOM here, while that DOM still lives — the one place the
-/// emitted redline's marks can be read without reopening its bytes.
-fn redline(
-    tx: &Transaction<'_>,
-    array_order: bool,
-    final_views: bool,
-) -> Result<(Vec<u8>, u64, TrackedParagraphs), EditError> {
+/// Returns the redline and the first id its own revisions took: every
+/// source revision's id is below it.
+fn redline(tx: &Transaction<'_>) -> Result<(Vec<u8>, u64), EditError> {
     let plan = EditPlan {
         source_sha256: None,
         date: Some(tx.date.clone()),
@@ -303,7 +204,7 @@ fn redline(
     // the deleted text, instead of into a commented base for the comparer.
     let mut comments = tx.comments.clone();
     for &(id, op) in &tx.deletion_comments {
-        if let Some(text) = tx.deleted_text_comment(op) {
+        if let Some(text) = tx.deletion_comment(op) {
             comments.push((id, text.to_string()));
         }
     }
@@ -314,29 +215,13 @@ fn redline(
         .enumerate()
         .filter_map(|(op, outcome)| outcome.comment_id.map(|id| (op, id)))
         .collect();
-    let mut insertions = HashMap::new();
-    for story in &t.stories {
-        for node in t.opened.dom.descendants(story.root, Some(&W::ins())) {
-            if let Some(id) = t.opened.dom.attribute(node, &W::id()) {
-                insertions.insert(
-                    node,
-                    InsertionOrigin {
-                        story: story.id.clone(),
-                        id: crate::ids::ChangeId::new(&story.id, id).short(),
-                        root: story.root,
-                    },
-                );
-            }
-        }
-    }
     let mut stamp = Stamp {
         author: &tx.plan.author,
         date: &tx.date,
         next_id: first_free_id(&t.opened, &comments),
-        insertions,
     };
     let floor = stamp.next_id;
-    let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);
+    let tables = emit(&mut t, &comment_ids, &mut stamp);
     thread_markers(&mut t, &comment_ids);
     // 7. A paragraph after each new table, and between it and a table
     // before it: inserted paragraphs here.
@@ -345,81 +230,22 @@ fn redline(
     }
     t.comments = comments;
     t.reply_parents = tx.reply_parents.clone();
-    let base = t.paragraph_nodes.clone();
-    let output = t.paragraph_walk();
-    let output_states = final_views.then(|| {
-        output
-            .iter()
-            .map(|&node| super::v2_apply::paragraph_final_state(&t.opened.dom, node))
-            .collect()
-    });
-    let insertion_origins = stamp.insertion_origins(&t.opened.dom);
     let (redline, _) = t.finish()?;
-    Ok((
-        redline,
-        floor,
-        TrackedParagraphs {
-            base,
-            output,
-            output_states,
-            insertion_origins,
-        },
-    ))
+    Ok((redline, floor))
 }
 
-/// The source insertions the emission split, from each emitted piece's
-/// origin: a source id with more than one piece, or whose one piece took a
-/// new id.
-fn splits(origins: &BTreeMap<String, String>) -> Vec<super::RevisionSplit> {
-    let mut pieces: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (emitted, source) in origins {
-        pieces.entry(source).or_default().push(emitted);
-    }
-    // `r9` before `r10`: the number, then the text for an id without one.
-    let order = |id: &str| {
-        (
-            crate::ids::change_id(id).and_then(|c| c.wid.parse::<u64>().ok()),
-            id.to_string(),
-        )
-    };
-    let mut out: Vec<super::RevisionSplit> = pieces
-        .into_iter()
-        .filter(|(source, to)| to.len() > 1 || to.first() != Some(source))
-        .map(|(source, mut to)| {
-            to.sort_by_key(|id| order(id));
-            super::RevisionSplit {
-                from: source.to_string(),
-                to: to.into_iter().map(str::to_string).collect(),
-            }
-        })
-        .collect();
-    out.sort_by_key(|split| order(&split.from));
-    out
-}
-
-/// Counts of the redline's logical changes holding a mark stamped with
-/// `author` and `date` whose `w:id` is at least `floor`: the edit's own. A
-/// source change carrying the very same stamp has an id below `floor`, so
-/// it does not count.
+/// Counts of the redline's changes stamped with `author` and `date` whose
+/// `w:id` is at least `floor`: the edit's own. A source change carrying the
+/// very same stamp has an id below `floor`, so it does not count.
 fn revision_counts(redline: &[u8], author: &str, date: &str, floor: u64) -> RevisionCounts {
     let changes = list_changes(redline).unwrap_or_default();
-    let own: HashSet<&str> = changes
-        .iter()
-        .filter(|c| {
-            c.author.as_deref() == Some(author)
-                && c.date.as_deref() == Some(date)
-                && crate::ids::change_id(&c.id)
-                    .and_then(|id| id.wid.parse::<u64>().ok())
-                    .is_some_and(|id| id >= floor)
-        })
-        .map(|c| c.id.as_str())
-        .collect();
-    let logical = list_logical_changes(redline).unwrap_or_default();
-    RevisionCounts::from_changes(
-        logical
-            .iter()
-            .filter(|c| c.element_ids().any(|id| own.contains(id))),
-    )
+    RevisionCounts::from_changes(changes.iter().filter(|c| {
+        c.author.as_deref() == Some(author)
+            && c.date.as_deref() == Some(date)
+            && crate::ids::change_id(&c.id)
+                .and_then(|id| id.wid.parse::<u64>().ok())
+                .is_some_and(|id| id >= floor)
+    }))
 }
 
 /// One past the highest `w:id` in every revision-bearing part and among the
@@ -453,7 +279,6 @@ fn emit(
     t: &mut Transaction<'_>,
     comment_ids: &BTreeMap<usize, u32>,
     stamp: &mut Stamp<'_>,
-    array_order: bool,
 ) -> Vec<NodeId> {
     // 0. Run formatting, on source offsets (no text edit overlaps it), each
     // run's old properties in `w:rPrChange`.
@@ -473,13 +298,8 @@ fn emit(
     // 1. Text edits and their comments, paragraph by paragraph.
     let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
     let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
-    let mut strike_comments: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
     for (i, r) in &t.resolved {
         match r {
-            Resolved::StrikeComment { para, start, end } => strike_comments
-                .entry(*para)
-                .or_default()
-                .push((*start, *end, *i)),
             Resolved::Text {
                 para,
                 start,
@@ -515,32 +335,11 @@ fn emit(
         let node = t.paragraph_nodes[para];
         let dom = &mut t.opened.dom;
         let mut edits = by_para.remove(&para).unwrap_or_default();
-        let mut empty = project_paragraph(dom, node)
-            .text
-            .is_empty()
-            .then(super::EmptyPlacement::default);
-        super::sort_edits(&mut edits, empty.is_some());
+        edits.sort_by_key(|e| (e.start, e.end, e.op));
         // In reverse, so earlier source offsets stay valid: a deletion
         // leaves the projection and an insertion joins it, exactly as the
         // plain edit changes the clean copy.
-        // Emit a simultaneous V2 insertion group once, using its agreed
-        // original attachment side. Otherwise the first replayed insertion
-        // becomes a non-direct segment and can hide the source insertion
-        // point from the next replay (notably at paragraph start). Keep the
-        // original edits below for each comment's separate resulting range.
-        let emission = if array_order {
-            coalesce_insertions(&edits)
-        } else {
-            edits.clone()
-        };
-        // A strike's comment, on the words before they are struck: their
-        // text leaves the projection with the deletion.
-        for (start, end, i) in strike_comments.remove(&para).unwrap_or_default() {
-            if let Some(&id) = comment_ids.get(&i) {
-                anchor_comment(dom, node, start, end, id);
-            }
-        }
-        for edit in emission.iter().rev() {
+        for edit in edits.iter().rev() {
             if matches!(
                 t.plan.operations[edit.op].kind,
                 OperationKind::Redact { .. }
@@ -557,17 +356,7 @@ fn emit(
                     edit.attach_before,
                 );
             } else {
-                let pieces = if matches!(
-                    t.plan.operations[edit.op].kind,
-                    OperationKind::Replace { whole: false, .. }
-                ) {
-                    insertion_replacement(dom, node, edit)
-                } else {
-                    vec![edit.clone()]
-                };
-                for piece in pieces.iter().rev() {
-                    emit_text(dom, node, piece, stamp, empty.as_mut());
-                }
+                emit_text(dom, node, edit, stamp);
             }
         }
         let mut pending: Vec<(usize, usize, usize)> = Vec::new();
@@ -597,29 +386,6 @@ fn emit(
             let (first, last) = (t.paragraph_nodes[*para], t.paragraph_nodes[*last]);
             anchor_span(&mut t.opened.dom, first, last, id);
         }
-    }
-    // 1c. Restores: their deletion stays, and our insertion of a copy of
-    // its runs follows it.
-    for (i, r) in &t.resolved {
-        let Resolved::Restore { para, wid, .. } = r else {
-            continue;
-        };
-        let node = t.paragraph_nodes[*para];
-        let dom = &mut t.opened.dom;
-        let Some(del) = visible::revision_in(dom, node, "del", wid) else {
-            continue;
-        };
-        let ours = stamp.container(dom, W::ins());
-        for copy in visible::copy_runs(dom, del) {
-            dom.add(ours, copy);
-        }
-        let runs = dom.elements(ours, None);
-        if let (Some(&first), Some(&last), Some(&id)) =
-            (runs.first(), runs.last(), comment_ids.get(i))
-        {
-            visible::comment_around(dom, first, last, id);
-        }
-        place_beside(dom, del, ours, stamp);
     }
     // 2. Paragraph and table insertions: every run, row and paragraph mark
     // inserted.
@@ -807,24 +573,6 @@ fn emit(
     tables
 }
 
-fn coalesce_insertions(edits: &[ScheduledEdit]) -> Vec<ScheduledEdit> {
-    let mut emission: Vec<ScheduledEdit> = Vec::new();
-    for edit in edits {
-        if let Some(previous) = emission.last_mut()
-            && previous.start == previous.end
-            && edit.start == edit.end
-            && previous.start == edit.start
-            && previous.attach_before == edit.attach_before
-            && previous.format == edit.format
-        {
-            previous.replacement.push_str(&edit.replacement);
-        } else {
-            emission.push(edit.clone());
-        }
-    }
-    emission
-}
-
 /// Wrap a new paragraph's content in one `w:ins` and mark it inserted.
 fn insert_paragraph_content(dom: &mut Dom, paragraph: NodeId, stamp: &mut Stamp<'_>) {
     let content: Vec<NodeId> = dom
@@ -981,127 +729,11 @@ fn thread_markers(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>) {
     }
 }
 
-/// Reuse the word diff for default replacements inside an insertion. For
-/// example, `month.` -> `month, in cash.` only inserts `, in cash` and
-/// preserves both the word and period. A `whole` replacement bypasses this.
-fn insertion_replacement(dom: &Dom, paragraph: NodeId, edit: &ScheduledEdit) -> Vec<ScheduledEdit> {
-    // A formatted replacement formats every word of it, the ones it keeps
-    // too, as the clean copy does: one deletion, one insertion.
-    if edit.format.is_some() {
-        return vec![edit.clone()];
-    }
-    let projection = project_paragraph(dom, paragraph);
-    let touched: Vec<_> = projection
-        .segments
-        .iter()
-        .filter(|s| s.start < edit.end && edit.start < s.end)
-        .collect();
-    let ins = touched
-        .first()
-        .and_then(|s| super::editable_insertion(dom, &s.piece));
-    if ins.is_none()
-        || !touched
-            .iter()
-            .all(|s| super::editable_insertion(dom, &s.piece) == ins)
-    {
-        return vec![edit.clone()];
-    }
-    let old = &projection.text[edit.start..edit.end];
-    let ranges = super::rewrite::rewrite_ranges(old, &edit.replacement);
-    let mut rewritten = old.to_string();
-    for (start, end, replacement) in ranges.iter().rev() {
-        rewritten.replace_range(*start..*end, replacement);
-    }
-    // The rewrite diff normalizes whitespace. An exact replacement still
-    // has to write every requested byte, including whitespace-only edits.
-    if rewritten != edit.replacement {
-        return vec![edit.clone()];
-    }
-    ranges
-        .into_iter()
-        .map(|(start, end, replacement)| ScheduledEdit {
-            start: edit.start + start,
-            end: edit.start + end,
-            replacement,
-            ..edit.clone()
-        })
-        .collect()
-}
-
 /// Emit one text edit: the range's runs in `w:del`, then the replacement in
 /// a `w:ins` run formatted like the first deleted run, or like the run the
-/// insertion attaches to. `empty` places the text of a paragraph that had
-/// none.
-fn emit_text(
-    dom: &mut Dom,
-    paragraph: NodeId,
-    edit: &ScheduledEdit,
-    stamp: &mut Stamp<'_>,
-    empty: Option<&mut super::EmptyPlacement>,
-) {
-    if let Some(placement) = empty {
-        // Typed into an empty paragraph: a run formatted as the mark, in
-        // our insertion, at its edge. Placed in reverse order, no text is
-        // before it yet, so its words start at 0.
-        if edit.replacement.is_empty() {
-            return;
-        }
-        let ins = stamp.container(dom, W::ins());
-        placement.place(dom, paragraph, ins, edit.attach_before);
-        let run = super::mark_run(dom, paragraph);
-        dom.add(ins, run);
-        super::write_mark_run_text(dom, run, &edit.replacement);
-        if let Some(format) = &edit.format {
-            super::format_range(dom, paragraph, 0, edit.replacement.len(), format);
-        }
-        return;
-    }
-    let projection = project_paragraph(dom, paragraph);
-    let touched: Vec<_> = if edit.start == edit.end {
-        attach_segment(&projection, edit.start, edit.attach_before)
-            .into_iter()
-            .collect()
-    } else {
-        projection
-            .segments
-            .iter()
-            .filter(|s| s.start < edit.end && edit.start < s.end)
-            .collect()
-    };
-    // Word treats typing in one's own insertion as a correction to that
-    // insertion, preserving its original id and timestamp.
-    if let Some(ins) = touched
-        .first()
-        .and_then(|s| super::editable_insertion(dom, &s.piece))
-        && dom.attribute(ins, &W::author()) == Some(stamp.author)
-        && touched
-            .iter()
-            .all(|s| super::editable_insertion(dom, &s.piece) == Some(ins))
-    {
-        apply_text_edit(
-            dom,
-            &projection,
-            edit.start,
-            edit.end,
-            &edit.replacement,
-            edit.attach_before,
-        );
-        if let Some(format) = &edit.format {
-            super::format_range(
-                dom,
-                paragraph,
-                edit.start,
-                edit.start + edit.replacement.len(),
-                format,
-            );
-        }
-        remove_empty_insertion(dom, ins);
-        return;
-    }
+/// insertion attaches to.
+fn emit_text(dom: &mut Dom, paragraph: NodeId, edit: &ScheduledEdit, stamp: &mut Stamp<'_>) {
     let (start, end) = (edit.start, edit.end);
-    let mut replacement = edit.replacement.as_str();
-    // This edit's own deletions, in document order.
-    let mut ours = Vec::new();
     // `None` places the insertion right after `anchor`, `Some(true)` before.
     let (template, anchor, before) = if start < end {
         let runs = isolate_range(dom, paragraph, start, end);
@@ -1115,35 +747,7 @@ fn emit_text(
             }
         }
         let mut last_del = None;
-        for (index, group) in groups.into_iter().enumerate() {
-            if let Some(ins) = dom.parent(group[0]).filter(|&n| dom.name_is(n, &W::ins()))
-                && dom.attribute(ins, &W::author()) == Some(stamp.author)
-            {
-                let projection = project_paragraph(dom, paragraph);
-                let pieces: Vec<_> = projection
-                    .segments
-                    .iter()
-                    .filter(|s| group.contains(&super::run_of(&s.piece)))
-                    .collect();
-                if let (Some(first), Some(last)) = (pieces.first(), pieces.last()) {
-                    let text = if index == 0 { replacement } else { "" };
-                    apply_text_edit(dom, &projection, first.start, last.end, text, true);
-                    if index == 0 {
-                        if let Some(format) = &edit.format {
-                            super::format_range(
-                                dom,
-                                paragraph,
-                                first.start,
-                                first.start + text.len(),
-                                format,
-                            );
-                        }
-                        replacement = "";
-                    }
-                }
-                remove_empty_insertion(dom, ins);
-                continue;
-            }
+        for group in groups {
             let del = stamp.container(dom, W::del());
             dom.add_before_self(group[0], del);
             for run in group {
@@ -1151,7 +755,6 @@ fn emit_text(
                 dom.add(del, run);
                 rename_deleted_text(dom, run);
             }
-            ours.push(del);
             last_del = Some(del);
         }
         (runs.first().copied(), last_del, false)
@@ -1162,14 +765,9 @@ fn emit_text(
         };
         split_run_at(dom, &seg, start);
         let projection = project_paragraph(dom, paragraph);
-        let text_piece = |s: &crate::inspect::Segment| {
-            if !s.direct && super::editable_insertion(dom, &s.piece).is_none() {
-                return None;
-            }
-            Some(match s.piece {
-                Piece::Text { t, run } => (t, run),
-                Piece::Glyph { element, run } => (element, run),
-            })
+        let text_piece = |s: &crate::inspect::Segment| match s.piece {
+            Piece::Text { t, run } if s.direct => Some((t, run)),
+            _ => None,
         };
         let left = projection
             .segments
@@ -1190,329 +788,44 @@ fn emit_text(
         };
         let (t, run) = chosen;
         isolate(dom, run, t);
-        let anchor = insertion_boundary_anchor(dom, run, before);
-        (Some(run), Some(anchor), before)
+        (Some(run), Some(run), before)
     };
-    // A deletion stays inside the source insertion, which stays whole, as
-    // Word leaves it: only the editor's words split it. Range endpoints stay
-    // beside their words; the remaining children follow the editor's words.
-    let split = anchor
-        .filter(|_| !replacement.is_empty())
-        .and_then(|anchor| {
-            let ins = dom.parent(anchor).filter(|&n| dom.name_is(n, &W::ins()))?;
-            let children = dom.elements(ins, None);
-            let at = children.iter().position(|&n| n == anchor)? + usize::from(!before);
-            let at = insertion_split_boundary(dom, &children, at, before);
-            if at == 0 {
-                // There is no first piece to keep. The complete source
-                // insertion becomes the newly numbered trailing piece.
-                return Some((ins, true, Some(ins)));
-            }
-            let tail = if at < children.len() {
-                let tail = dom.clone_subtree(ins);
-                for child in dom.nodes(tail) {
-                    dom.remove(child);
-                }
-                for &child in &children[at..] {
-                    dom.remove(child);
-                    dom.add(tail, child);
-                }
-                Some(tail)
-            } else {
-                None
-            };
-            Some((ins, false, tail))
-        });
-    let (anchor, before) = split.map_or((anchor, before), |(ins, before, _)| (Some(ins), before));
-    // New words meet no range they were not typed in: past the openers
-    // before them, past the closers after them (#1156). A replacement takes
-    // the place of words its ranges cover, and stays beside its deletion,
-    // past the end of a comment its deletion holds whole: Accept removes
-    // that comment, and the new words must not be in it.
-    let anchor = anchor.map(|anchor| {
-        if start == end {
-            outside_ranges(dom, anchor, before)
-        } else if before || replacement.is_empty() {
-            anchor
-        } else {
-            let (last, references) = past_deleted_comments(dom, anchor, &ours);
-            // Their references go with the deleted text, as deleting the
-            // whole commented text writes them.
-            let mut last = last;
-            for run in references {
-                let del = stamp.container(dom, W::del());
-                dom.add_before_self(run, del);
-                dom.remove(run);
-                dom.add(del, run);
-                if last == run {
-                    last = del;
-                }
-            }
-            last
-        }
-    });
-    let mut last = anchor;
-    if !replacement.is_empty() {
-        let run = dom.new_element(W::r());
-        let rpr = template
-            .and_then(|r| dom.element(r, &W::r_pr()))
-            .map(|rpr| clean_rpr(dom, rpr));
-        let rpr = match (rpr, &edit.format) {
-            (Some(rpr), _) => Some(rpr),
-            (None, Some(_)) => Some(dom.new_element(W::r_pr())),
-            (None, None) => None,
-        };
-        if let Some(rpr) = rpr {
-            if let Some(format) = &edit.format {
-                apply_run_format(dom, rpr, format);
-            }
-            if dom.elements(rpr, None).is_empty() {
-                dom.remove(rpr);
-            } else {
-                dom.add(run, rpr);
-            }
-        }
-        let text = dom.new_element(W::t());
-        set_text(dom, text, replacement);
-        dom.add(run, text);
-        let ins = stamp.container(dom, W::ins());
-        dom.add(ins, run);
-        match anchor {
-            Some(anchor) if before => dom.add_before_self(anchor, ins),
-            Some(anchor) => dom.add_after_self(anchor, ins),
-            None => dom.add(paragraph, ins),
-        }
-        last = Some(ins);
-    }
-    if let Some((source, _, Some(tail))) = split {
-        if let Some(origin) = stamp.insertions.get(&source).cloned() {
-            stamp.insertions.insert(tail, origin);
-        }
-        // Allocate after the deletion and editor insertion, using the same
-        // package-wide allocator. The source attribution stays on the tail.
-        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
-        stamp.next_id += 1;
-        dom.remove(tail);
-        dom.add_after_self(last.expect("a split has a first piece"), tail);
-    }
-}
-
-/// The sibling an insertion at `run`'s edge goes beside: past the range
-/// markers that open before the run (`before`) or close after it, so those
-/// ranges keep their source endpoints. `run` itself when none sit there.
-pub(super) fn insertion_boundary_anchor(dom: &Dom, run: NodeId, before: bool) -> NodeId {
-    let Some(parent) = dom.parent(run) else {
-        return run;
-    };
-    let children = dom.elements(parent, None);
-    let Some(index) = children.iter().position(|&n| n == run) else {
-        return run;
-    };
-    let at = insertion_split_boundary(dom, &children, index + usize::from(!before), before);
-    children[if before { at } else { at - 1 }]
-}
-
-/// The range openers an insertion can hold: they travel with the words to
-/// their right.
-pub(super) const RANGE_STARTS: [&str; 5] = [
-    "bookmarkStart",
-    "commentRangeStart",
-    "permStart",
-    "moveFromRangeStart",
-    "moveToRangeStart",
-];
-/// The range closers that travel with the words to their left; a comment's
-/// end also takes its reference, so it is read on its own.
-pub(super) const RANGE_ENDS: [&str; 4] = [
-    "bookmarkEnd",
-    "permEnd",
-    "moveFromRangeEnd",
-    "moveToRangeEnd",
-];
-
-/// A comment range's closer: it travels with the words to its left, and
-/// takes its reference along.
-pub(super) const COMMENT_RANGE_END: &str = "commentRangeEnd";
-
-/// Whether `node` is a `w:` element named one of `locals`.
-fn is_one_of(dom: &Dom, node: NodeId, locals: &[&str]) -> bool {
-    dom.name(node)
-        .is_some_and(|n| n.namespace_name() == W::URI && locals.contains(&n.local_name()))
-}
-
-/// The sibling of `anchor` that new words go `before` (or after) so they
-/// join no range they meet: the first of the openers right before
-/// `anchor`, or the last of the closers right after it, a comment's end
-/// with its reference. `anchor` itself when no marker is in the way. Body-
-/// level markers are no siblings of a run and stay where they are.
-pub(super) fn outside_ranges(dom: &Dom, anchor: NodeId, before: bool) -> NodeId {
-    let Some(parent) = dom.parent(anchor) else {
-        return anchor;
-    };
-    let children = dom.elements(parent, None);
-    let Some(index) = children.iter().position(|&n| n == anchor) else {
-        return anchor;
-    };
-    let at = insertion_split_boundary(dom, &children, index + usize::from(!before), before);
-    if before {
-        children[at]
-    } else {
-        children[at - 1]
-    }
-}
-
-/// Opening markers travel with the words to their right, closing markers
-/// with the words to their left. A comment reference stays with its end.
-fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, before: bool) -> usize {
-    if before {
-        while at > 0 && is_one_of(dom, children[at - 1], &RANGE_STARTS) {
-            at -= 1;
-        }
-        return at;
-    }
-    let mut closed_comments = BTreeSet::new();
-    while let Some(&child) = children.get(at) {
-        if dom.name_is(child, &W::name(COMMENT_RANGE_END)) {
-            if let Some(id) = dom.attribute(child, &W::id()) {
-                closed_comments.insert(id);
-            }
-        } else if !is_one_of(dom, child, &RANGE_ENDS) {
-            if !dom.name_is(child, &W::r()) {
-                break;
-            }
-            let references = dom.elements(child, Some(&W::name("commentReference")));
-            if references.is_empty()
-                || references.iter().any(|&reference| {
-                    dom.attribute(reference, &W::id())
-                        .is_none_or(|id| !closed_comments.contains(id))
-                })
-                || dom.elements(child, None).iter().any(|&element| {
-                    !dom.name_is(element, &W::r_pr())
-                        && !dom.name_is(element, &W::name("commentReference"))
-                })
-            {
-                break;
-            }
-        }
-        at += 1;
-    }
-    at
-}
-
-/// The last sibling after deletion `del` that closes a comment opened
-/// inside the deletions `ours` of one edit, after its first deleted word:
-/// its end and the run with its reference (`del` itself when none follows),
-/// and those reference runs. A comment opened on kept text, or on the
-/// edit's first word (the replaced text is the commented text), keeps the
-/// new words, in Word's order.
-fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Vec<NodeId>) {
-    let Some(parent) = dom.parent(del) else {
-        return (del, Vec::new());
-    };
-    let children = dom.elements(parent, None);
-    let Some(index) = children.iter().position(|&n| n == del) else {
-        return (del, Vec::new());
-    };
-    let opened_in_deletion = |id: &str| {
-        let mut back = children[..index].iter().rev();
-        let found = back.by_ref().find_map(|&c| {
-            if dom.name_is(c, &W::name("commentRangeStart"))
-                && dom.attribute(c, &W::id()) == Some(id)
-            {
-                Some(true)
-            } else if ours.contains(&c) || is_one_of(dom, c, &RANGE_STARTS) {
-                None
-            } else {
-                Some(false)
-            }
-        }) == Some(true);
-        found
-            && back
-                .find(|&&c| !is_one_of(dom, c, &RANGE_STARTS))
-                .is_some_and(|c| ours.contains(c))
-    };
-    let mut closed = BTreeSet::new();
-    let mut last = del;
-    let mut references_passed = Vec::new();
-    for &child in &children[index + 1..] {
-        let is_end = dom.name_is(child, &W::name(COMMENT_RANGE_END));
-        let passes = if is_end {
-            dom.attribute(child, &W::id())
-                .filter(|id| opened_in_deletion(id))
-                .is_some_and(|id| closed.insert(id))
-        } else {
-            let references = dom.elements(child, Some(&W::name("commentReference")));
-            dom.name_is(child, &W::r())
-                && !references.is_empty()
-                && references.iter().all(|&r| {
-                    dom.attribute(r, &W::id())
-                        .is_some_and(|id| closed.contains(id))
-                })
-                && dom.elements(child, None).iter().all(|&e| {
-                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::name("commentReference"))
-                })
-        };
-        if !passes {
-            break;
-        }
-        if !is_end {
-            references_passed.push(child);
-        }
-        last = child;
-    }
-    (last, references_passed)
-}
-
-/// Our insertion `ours` right after deletion `del`. A deletion inside an
-/// insertion splits it there, as typing does in Word: ours follows the
-/// piece that holds the deletion, and the rest follows ours under a new id
-/// with the source attribution.
-fn place_beside(dom: &mut Dom, del: NodeId, ours: NodeId, stamp: &mut Stamp<'_>) {
-    let Some(host) = dom.parent(del).filter(|&p| dom.name_is(p, &W::ins())) else {
-        dom.add_after_self(del, ours);
+    if edit.replacement.is_empty() {
         return;
+    }
+    let run = dom.new_element(W::r());
+    let rpr = template
+        .and_then(|r| dom.element(r, &W::r_pr()))
+        .map(|rpr| clean_rpr(dom, rpr));
+    let rpr = match (rpr, &edit.format) {
+        (Some(rpr), _) => Some(rpr),
+        (None, Some(_)) => Some(dom.new_element(W::r_pr())),
+        (None, None) => None,
     };
-    let children = dom.elements(host, None);
-    let at = children
-        .iter()
-        .position(|&n| n == del)
-        .map_or(children.len(), |i| i + 1);
-    let at = insertion_split_boundary(dom, &children, at, false);
-    dom.add_after_self(host, ours);
-    if at < children.len() {
-        let tail = dom.clone_subtree(host);
-        for child in dom.nodes(tail) {
-            dom.remove(child);
+    if let Some(rpr) = rpr {
+        if let Some(format) = &edit.format {
+            apply_run_format(dom, rpr, format);
         }
-        for &child in &children[at..] {
-            dom.remove(child);
-            dom.add(tail, child);
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        } else {
+            dom.add(run, rpr);
         }
-        if let Some(origin) = stamp.insertions.get(&host).cloned() {
-            stamp.insertions.insert(tail, origin);
-        }
-        dom.set_attribute_value(tail, &W::id(), Some(&stamp.next_id.to_string()));
-        stamp.next_id += 1;
-        dom.add_after_self(ours, tail);
+    }
+    let text = dom.new_element(W::t());
+    set_text(dom, text, &edit.replacement);
+    dom.add(run, text);
+    let ins = stamp.container(dom, W::ins());
+    dom.add(ins, run);
+    match anchor {
+        Some(anchor) if before => dom.add_before_self(anchor, ins),
+        Some(anchor) => dom.add_after_self(anchor, ins),
+        None => dom.add(paragraph, ins),
     }
 }
 
-/// Empty run shells must not keep an otherwise deleted own insertion alive.
-pub(super) fn remove_empty_insertion(dom: &mut Dom, ins: NodeId) {
-    for run in dom.elements(ins, Some(&W::r())) {
-        if dom.elements(run, None).iter().all(|&c| {
-            dom.name_is(c, &W::r_pr()) || (dom.name_is(c, &W::t()) && dom.value(c).is_empty())
-        }) {
-            dom.remove(run);
-        }
-    }
-    if dom.elements(ins, None).is_empty() {
-        dom.remove(ins);
-    }
-}
-
-/// Split runs so each text or glyph of `[start, end)` sits alone in its
-/// run (beside the run's `w:rPr`); return the runs in document order.
+/// Split runs so that each `w:t` of `[start, end)` sits alone in its run
+/// (beside the run's `w:rPr`); the runs, in document order.
 fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> Vec<NodeId> {
     for at in [start, end] {
         let projection = project_paragraph(dom, paragraph);
@@ -1531,9 +844,9 @@ fn isolate_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize) -> 
             .segments
             .iter()
             .filter(|s| s.start >= start && s.end <= end && s.start < s.end)
-            .map(|s| match s.piece {
-                Piece::Text { t, run } => (t, run),
-                Piece::Glyph { element, run } => (element, run),
+            .filter_map(|s| match s.piece {
+                Piece::Text { t, run } => Some((t, run)),
+                Piece::Glyph { .. } => None,
             })
             .collect();
         match pieces.iter().find(|&&(t, run)| !alone(dom, run, t)) {
@@ -1590,12 +903,8 @@ fn isolate(dom: &mut Dom, run: NodeId, t: NodeId) {
         } else {
             dom.add_after_self(run, copy);
         }
-    }
-    // Both copies need the original child indexes. Removing the left
-    // side before cloning the right shifts those indexes and loses text.
-    for child in children {
-        if child != t && content(dom, child) {
-            dom.remove(child);
+        for c in side {
+            dom.remove(c);
         }
     }
 }
@@ -1614,9 +923,6 @@ fn rename_deleted_text(dom: &mut Dom, run: NodeId) {
 
 /// Every run of `container`, at any depth of hyperlinks, content controls,
 /// smart tags and simple fields, inside a `w:del`; consecutive runs share one.
-/// Under `keep` (#1136), another author's insertion keeps its words with
-/// the deletion nested in it, the plan author's own pending insertion goes,
-/// and a deletion stays as it is.
 fn delete_runs(dom: &mut Dom, container: NodeId, stamp: &mut Stamp<'_>) {
     let mut group: Vec<NodeId> = Vec::new();
     for child in dom.elements(container, None) {
@@ -1637,57 +943,10 @@ fn delete_runs(dom: &mut Dom, container: NodeId, stamp: &mut Stamp<'_>) {
                     delete_runs(dom, content, stamp);
                 }
             }
-            "ins" if dom.attribute(child, &W::author()) == Some(stamp.author) => {
-                remove_own_insertion(dom, child, stamp);
-            }
-            "ins" => delete_runs(dom, child, stamp),
             _ => {}
         }
     }
     wrap_deleted(dom, group, stamp);
-}
-
-/// What a run may hold and still go outright: text Word types, nothing a
-/// field or a note needs.
-const TYPED: [&str; 9] = [
-    "rPr",
-    "t",
-    "tab",
-    "br",
-    "cr",
-    "sym",
-    "noBreakHyphen",
-    "softHyphen",
-    "lastRenderedPageBreak",
-];
-
-/// The plan author's own pending insertion, deleted: its typed runs go
-/// outright, a run holding a field character or a reference is deleted
-/// inside it so no field or note loses a part, and the markers it held
-/// (bookmarks, comment ranges) stay where they were.
-fn remove_own_insertion(dom: &mut Dom, ins: NodeId, stamp: &mut Stamp<'_>) {
-    for run in dom.elements(ins, Some(&W::r())) {
-        if dom
-            .elements(run, None)
-            .into_iter()
-            .all(|c| is_one_of(dom, c, &TYPED))
-        {
-            dom.remove(run);
-        }
-    }
-    delete_runs(dom, ins, stamp);
-    let left = dom.elements(ins, None);
-    if left.iter().all(|&c| {
-        is_one_of(dom, c, &RANGE_STARTS)
-            || is_one_of(dom, c, &RANGE_ENDS)
-            || is_one_of(dom, c, &[COMMENT_RANGE_END])
-    }) {
-        for marker in left {
-            dom.remove(marker);
-            dom.add_before_self(ins, marker);
-        }
-        dom.remove(ins);
-    }
 }
 
 fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
@@ -1706,37 +965,27 @@ fn wrap_deleted(dom: &mut Dom, group: Vec<NodeId>, stamp: &mut Stamp<'_>) {
 /// Revision elements of a paragraph mark that delete it.
 const DELETED: [&str; 2] = ["del", "moveFrom"];
 /// Every revision element a paragraph mark can carry.
-pub(super) const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"];
+const TRACKED: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"];
 
 /// Whether `paragraph`'s mark (`w:pPr/w:rPr`) carries one of `locals`.
 fn mark_has(dom: &Dom, paragraph: NodeId, locals: &[&str]) -> bool {
-    mark_revision(dom, paragraph, locals).is_some()
-}
-
-/// The revision among `locals` that `paragraph`'s mark (`w:pPr/w:rPr`)
-/// carries.
-fn mark_revision(dom: &Dom, paragraph: NodeId, locals: &[&str]) -> Option<NodeId> {
-    let rpr = dom
-        .element(paragraph, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::r_pr()))?;
-    dom.elements(rpr, None).into_iter().find(|&c| {
-        dom.name(c)
-            .is_some_and(|n| n.namespace_name() == W::URI && locals.contains(&n.local_name()))
-    })
-}
-
-/// `paragraph`'s tracked properties change (`w:pPr/w:pPrChange`).
-fn paragraph_format_change(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
     dom.element(paragraph, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None).into_iter().any(|c| {
+                dom.name(c).is_some_and(|n| {
+                    n.namespace_name() == W::URI && locals.contains(&n.local_name())
+                })
+            })
+        })
 }
 
-/// The first move (`w:moveFrom`, `w:moveTo`) `node` holds, in its runs or
-/// its mark.
-fn moved_in(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    dom.descendants(node, None)
-        .into_iter()
-        .find(|&n| is_one_of(dom, n, &["moveFrom", "moveTo"]))
+/// Whether `paragraph` holds an inserted, deleted or moved run or mark.
+fn holds_revision(dom: &Dom, paragraph: NodeId) -> bool {
+    dom.descendants(paragraph, None).into_iter().any(|n| {
+        dom.name(n)
+            .is_some_and(|n| n.namespace_name() == W::URI && TRACKED.contains(&n.local_name()))
+    })
 }
 
 /// The paragraph right before `node` among its siblings.
@@ -1786,14 +1035,12 @@ fn mark(dom: &mut Dom, paragraph: NodeId, name: XName, stamp: &mut Stamp<'_>) {
 
 /// A copy of a run's `w:rPr` for new text: without another revision's
 /// format change or mark revisions, whose ids must stay unique.
-pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
+fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
     let copy = dom.clone_subtree(rpr);
     for child in dom.elements(copy, None) {
         if dom.name_is(child, &W::r_pr_change())
             || dom.name_is(child, &W::ins())
             || dom.name_is(child, &W::del())
-            || dom.name_is(child, &W::name("moveFrom"))
-            || dom.name_is(child, &W::name("moveTo"))
         {
             dom.remove(child);
         }
@@ -1802,7 +1049,7 @@ pub(super) fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1841,7 +1088,6 @@ mod tests {
             author: "Me",
             date: "2026-10-02T00:00:00Z",
             next_id: 5,
-            insertions: HashMap::new(),
         };
         mark(&mut dom, p, W::ins(), &mut stamp);
         mark(&mut dom, p, W::del(), &mut stamp);
@@ -1857,7 +1103,7 @@ mod tests {
         assert_eq!(names, ["ins", "del"]);
         assert_eq!(stamp.next_id, 7);
         assert!(mark_has(&dom, p, &DELETED));
-        assert!(moved_in(&dom, dom.elements(p, Some(&W::r()))[0]).is_none());
+        assert!(!holds_revision(&dom, dom.elements(p, Some(&W::r()))[0]));
     }
 
     #[test]
@@ -1871,7 +1117,6 @@ mod tests {
             author: "Me",
             date: "d",
             next_id: 0,
-            insertions: HashMap::new(),
         };
         delete_runs(&mut dom, p, &mut stamp);
         assert_eq!(
@@ -1887,7 +1132,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nested_run_deletion_source_boundary_tests {
     use super::*;
     fn semantic(dom: &Dom, node: NodeId) -> String {
@@ -1896,7 +1141,8 @@ mod nested_run_deletion_source_boundary_tests {
         }
         let name = dom.name(node).unwrap();
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
@@ -1911,7 +1157,7 @@ mod nested_run_deletion_source_boundary_tests {
             (
                 n.namespace_name().to_string(),
                 n.local_name().to_string(),
-                *v,
+                v.clone(),
             )
         });
         format!(
@@ -1957,7 +1203,6 @@ mod nested_run_deletion_source_boundary_tests {
                 author: "New owner",
                 date: "2001-02-03T04:05:06Z",
                 next_id: 100,
-                insertions: HashMap::new(),
             };
             delete_runs(&mut dom, paragraph, &mut stamp);
             mark(&mut dom, paragraph, W::del(), &mut stamp);
@@ -1982,7 +1227,7 @@ mod nested_run_deletion_source_boundary_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tracked_source_property_boundary_tests {
     use super::*;
 
@@ -2016,7 +1261,6 @@ mod tracked_source_property_boundary_tests {
                 author: "Ada",
                 date: "2026-10-09T12:34:00Z",
                 next_id: 50,
-                insertions: HashMap::new(),
             };
             track_properties(&mut dom, p, &mut stamp, |dom| {
                 let ppr = paragraph_properties(dom, p);
@@ -2106,7 +1350,7 @@ mod tracked_source_property_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_adjacent_run_replacement_owner_tests {
     use super::*;
     use crate::changes::ChangeKind;
@@ -2117,12 +1361,19 @@ mod public_adjacent_run_replacement_owner_tests {
             return dom.text_value(node).unwrap_or_default().into();
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(n, _)| {
                 n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
             })
             .collect::<Vec<_>>();
-        attrs.sort_by_key(|(n, v)| (n.namespace_name().to_owned(), n.local_name().to_owned(), *v));
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_owned(),
+                n.local_name().to_owned(),
+                v.clone(),
+            )
+        });
         format!(
             "{:?}{attrs:?}[{}]",
             dom.name(node),

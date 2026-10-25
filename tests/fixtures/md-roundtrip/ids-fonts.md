@@ -68,22 +68,22 @@ Verdana font (screen-optimized)
 <!-- p16 3 -->
 ## 2.2 Different Font Sizes
 
-<!-- p17 size 8pt -->
+<!-- p17 -->
 8pt text (very small)
 
-<!-- p18 size 10pt -->
+<!-- p18 -->
 10pt text (small)
 
 <!-- p19 -->
 12pt text (standard body)
 
-<!-- p20 size 14pt -->
+<!-- p20 -->
 14pt text (slightly larger)
 
-<!-- p21 size 18pt -->
+<!-- p21 -->
 18pt text (subheading size)
 
-<!-- p22 size 24pt -->
+<!-- p22 -->
 24pt text (heading size)
 
 <!-- p23 2 -->
@@ -143,7 +143,7 @@ This sentence has **red bold character style** and _blue italic character style_
 <!-- p41 -->
 Below is a table demonstrating borders, shading, and cell formatting:
 
-<!-- t0 4x3, cells p42-p53 by row, p42 center, p43 center, p44 center, widths 2.167in 2.167in 2.167in, width auto, header row repeats, borders single 0.5pt, row-borders single 0.5pt in t0.row0 t0.row1 t0.row2 t0.row3, cell-borders top,left,bottom,right single 0pt 000000 in t0.row0; top,left,bottom,right single 0pt CCCCCC in t0.row1 t0.row2 t0.row3 -->
+<!-- t0 4x3, cells p42-p53 by row, p42 center, p43 center, p44 center, header row repeats, borders single 0.5pt, row-borders single 0.5pt in t0.row0 t0.row1 t0.row2 t0.row3, cell-borders top,left,bottom,right single 0pt 000000 in t0.row0; top,left,bottom,right single 0pt CCCCCC in t0.row1 t0.row2 t0.row3 -->
 |**Feature**|**Description**|**Example**|
 |-|-|-|
 |Bold|Makes text bold|**Bold text**|

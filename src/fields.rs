@@ -1456,7 +1456,7 @@ fn style_definition(id: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::io::{Cursor, Write};
 
@@ -1726,7 +1726,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod boundary_coverage_tests {
     use super::*;
 
@@ -1893,7 +1893,7 @@ mod boundary_coverage_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod field_story_ownership_tests {
     use super::*;
     fn body(xml: &str) -> (Dom, NodeId) {
@@ -2037,7 +2037,7 @@ mod field_story_ownership_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod field_cache_boundary_tests {
     use super::*;
     fn story(xml: &str) -> (Dom, NodeId) {
@@ -2175,7 +2175,7 @@ mod field_cache_boundary_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod field_decline_source_boundary_tests {
     use super::*;
 
@@ -2269,7 +2269,7 @@ mod field_decline_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod authored_field_projection_contract_tests {
     use super::*;
 

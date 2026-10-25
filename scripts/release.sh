@@ -158,7 +158,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint — every new file needs its SPDX headers|uv tool run --from reuse[charset-normalizer] reuse lint
 6|you|rustdoc drift review — REQUIRED sign-off: read the opened docs and the diff against the previous release's API snapshot before the point of no return|cargo doc --no-deps --document-private-items --open (step 6 opens it; --skip-gates skips it on a resume only)
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
-8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag carrying the github summary; a kept (resumed) build whose stamp does not vouch for the tagged engine dies|scripts/check_engine_commit.sh v@V@
+8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag carrying the github summary|cat jubarte-wasm/npm/ENGINE_COMMIT.txt
 8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
 9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
 10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
@@ -662,7 +662,6 @@ if [ "$SKIP_GATES" = 0 ]; then
   RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
   python3 scripts/test_convert_sweep.py
   python3 scripts/test_release_sh.py
-  python3 scripts/test_check_engine_commit.py
   python3 scripts/test_check_release_info.py
   python3 scripts/test_library_readmes.py
   python3 scripts/test_api_snapshot.py
@@ -867,9 +866,6 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
 else
   git tag -a "$TAG" -m "jubarte $TAG" -m "$GITHUB_SUMMARY"
 fi
-# A resumed run keeps the npm build it finds, so the stamp is checked on the
-# tag itself: npm ships only artifacts the tagged engine produces (#1088).
-scripts/check_engine_commit.sh "$TAG^{commit}" || die "scripts/check_engine_commit.sh refused $TAG (its reason is above)"
 check_now 8
 
 # =============================================================================
@@ -1056,17 +1052,7 @@ else
     # missing wheels only after the release is out.
     [ "$NO_WAIT" = 1 ] \
       || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --no-wait to consent to the partial set"
-    # The wheel's panic locations would name this home and checkout (#1480);
-    # jubarte-python has no .cargo/config.toml recipe for RUSTFLAGS to replace.
-    # As build-npm.sh does: the checkout by both its paths, and no whitespace,
-    # which cargo would split the list on.
-    repo_logical=$(pwd -L)
-    repo_physical=$(pwd -P)
-    case "$HOME$repo_logical$repo_physical" in
-      *[[:space:]]*) die "whitespace in \$HOME or the checkout path; cargo splits RUSTFLAGS on it" ;;
-    esac
-    RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines" \
-      uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
+    uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2
   fi

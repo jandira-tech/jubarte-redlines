@@ -20,12 +20,7 @@ const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 /// not ids.
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""(?:[^"\\]|\\.)*""#).unwrap());
 /// A note, `{>>…<<}`.
-static NOTE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?s)\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b[^{}]*?)(?:<<)?\}",
-    )
-    .unwrap()
-});
+static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>(.*?)<<\}").unwrap());
 /// An HTML comment anywhere on a line: an id line, or the ` <!-- rev … -->`
 /// a note definition ends with (pi review of #464).
 static COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!-- (.*?) -->").unwrap());
@@ -44,7 +39,7 @@ static ID_SHAPED: LazyLock<Regex> =
 /// `r389 @??`, `body: p0-p172` and the comment lists): the words of each id
 /// line and of the YAML header outside quoted text, and the heads of notes
 /// (`r1 @AC; r2 @JD`, `c6 @AS re c5:`), never a comment's own text. Notes
-/// inside quoted YAML values (`text: "{++x++}{footer2.r1660 @AB}"`) count.
+/// inside quoted YAML values (`text: "{++x++}{>>footer2.r1660 @AB<<}"`) count.
 fn printed_places(view: &str) -> Vec<String> {
     let mut places: Vec<String> = Vec::new();
     let mut lines = view.lines();
@@ -88,64 +83,6 @@ fn printed_ids(places: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The shared audit used by the fixture gate and synthetic probes.
-fn printed_failures(view: &str) -> (usize, Vec<String>) {
-    let mut places = printed_places(view);
-    let mut checked = 0;
-    let mut failures = Vec::new();
-    places.retain(|place| {
-        let Some((label, _)) = place.split_once(" drawing:") else {
-            return true;
-        };
-        if label.is_empty() || label.chars().any(char::is_whitespace) {
-            return true;
-        }
-        // A payload comment's label is the writer's `imageK` media name
-        // (`src/markdown/from_docx/drawing.rs`). A d-number label (d1, d9x,
-        // d01) never names a payload there, so it stays in the strict
-        // ShortId audit, whether referenced or not, as before this check.
-        if label
-            .strip_prefix('d')
-            .is_some_and(|tail| tail.starts_with(|c: char| c.is_ascii_digit()))
-        {
-            return true;
-        }
-        checked += 1;
-        let reference = format!("[{label}]");
-        let definition = format!("{reference}:");
-        let used = view.lines().any(|line| {
-            !line.trim_start().starts_with(&definition)
-                && COMMENT.replace_all(line, "").contains(&reference)
-        });
-        if !used {
-            failures.push(format!(
-                "    ✗ {label}: drawing label has no reference in the text"
-            ));
-        }
-        false
-    });
-    for expired in places.iter().flat_map(|p| EXPIRED.captures_iter(p)) {
-        checked += 1;
-        let line = format!("    ✗ {}: an expired spelling is printed", &expired[1]);
-        if !failures.contains(&line) {
-            failures.push(line);
-        }
-    }
-    for token in printed_ids(&places) {
-        checked += 1;
-        let why = match token.parse::<ShortId>() {
-            Ok(id) if id.to_string() == token => continue,
-            Ok(id) => format!("prints back as {id}"),
-            Err(e) => e.to_string(),
-        };
-        let line = format!("    ✗ {token}: {why}");
-        if !failures.contains(&line) {
-            failures.push(line);
-        }
-    }
-    (checked, failures)
-}
-
 #[test]
 fn every_id_the_views_print_parses_and_prints_back() {
     let mut fixtures: Vec<_> = std::fs::read_dir(FIXTURES)
@@ -159,10 +96,27 @@ fn every_id_the_views_print_parses_and_prints_back() {
     for path in &fixtures {
         let text = std::fs::read_to_string(path).unwrap();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let (count, lines) = printed_failures(&text);
-        checked += count;
-        if !lines.is_empty() {
-            failures.insert(name, lines);
+        let places = printed_places(&text);
+        for expired in places.iter().flat_map(|p| EXPIRED.captures_iter(p)) {
+            checked += 1;
+            let line = format!("    ✗ {}: an expired spelling is printed", &expired[1]);
+            let list = failures.entry(name.clone()).or_default();
+            if !list.contains(&line) {
+                list.push(line);
+            }
+        }
+        for token in printed_ids(&places) {
+            checked += 1;
+            let why = match token.parse::<ShortId>() {
+                Ok(id) if id.to_string() == token => continue,
+                Ok(id) => format!("prints back as {id}"),
+                Err(e) => e.to_string(),
+            };
+            let list = failures.entry(name.clone()).or_default();
+            let line = format!("    ✗ {token}: {why}");
+            if !list.contains(&line) {
+                list.push(line);
+            }
         }
     }
     assert!(checked > 1000, "only {checked} ids found in {FIXTURES}");
@@ -180,8 +134,8 @@ fn every_id_the_views_print_parses_and_prints_back() {
 
 #[test]
 fn places_include_trailing_comments_quoted_notes_and_expired_spellings() {
-    let view = "---\nfooter2:\n  text: \"{++x++}{footer2.r1660 @AB}\"\n---\n\
-                [^1]: Text.{r10 @AS} <!-- rev footnotes.r11 @AS -->\n\
+    let view = "---\nfooter2:\n  text: \"{++x++}{>>footer2.r1660 @AB<<}\"\n---\n\
+                [^1]: Text.{>>r10 @AS<<} <!-- rev footnotes.r11 @AS -->\n\
                 <!-- p3 rev #12 -->\n";
     let places = printed_places(view);
     let ids = printed_ids(&places);
@@ -194,38 +148,4 @@ fn places_include_trailing_comments_quoted_notes_and_expired_spellings() {
         .map(|c| c[1].to_string())
         .collect();
     assert_eq!(expired, ["#12"]);
-}
-
-#[test]
-fn referenced_foreign_drawing_labels_are_not_short_ids() {
-    for text in ["![Alice][image1]", "![image1][]", "![image1]"] {
-        let view = format!(
-            "{text}\n[image1]: <data:image/png;base64,AA==>\n<!-- image1 drawing:AA== -->\n"
-        );
-        let (checked, failures) = printed_failures(&view);
-        assert_eq!(checked, 1);
-        assert!(failures.is_empty(), "{text}: {failures:?}");
-    }
-}
-
-#[test]
-fn drawing_labels_still_require_short_id_round_trips() {
-    for label in ["d9x", "d01"] {
-        let view = format!("![Alice][{label}]\n<!-- {label} drawing:AA== -->\n");
-        let (checked, failures) = printed_failures(&view);
-        assert_eq!(checked, 1);
-        assert_eq!(failures.len(), 1, "{label}: {failures:?}");
-        assert!(failures[0].contains(label), "{failures:?}");
-    }
-}
-
-#[test]
-fn foreign_drawing_labels_require_a_reference_in_the_text() {
-    for text in ["", "![Alice][other]", "<!-- ![Alice][logo] -->"] {
-        let view =
-            format!("{text}\n[logo]: <data:image/png;base64,AA==>\n<!-- logo drawing:AA== -->\n");
-        let (_, failures) = printed_failures(&view);
-        assert_eq!(failures.len(), 1, "{text}: {failures:?}");
-        assert!(failures[0].contains("logo"), "{failures:?}");
-    }
 }

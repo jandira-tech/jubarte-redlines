@@ -143,20 +143,3 @@ def test_compare_options_input_limits_are_an_immutable_copy() -> None:
 def test_compare_options_input_limits_reject_bad_values(value: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         CompareOptions(input_limits=value)  # type: ignore[arg-type]
-
-
-def test_a_filter_kind_is_an_element_kind_never_replacement():
-    # A replacement is a listed kind, but no element has it, so the filter
-    # refuses it: the filter annotations must not offer it (#1353 review).
-    import inspect
-    from collections.abc import Sequence
-    from typing import get_args, get_type_hints
-
-    from jubarte_redlines import Document
-    from jubarte_redlines.models import ChangeKind, FilterKind, change_filter
-
-    assert set(get_args(FilterKind)) == set(get_args(ChangeKind)) - {"replacement"}
-    assert get_type_hints(change_filter)["kinds"] == Sequence[FilterKind] | None
-    for method in (Document.accept, Document.reject):
-        kinds = inspect.signature(method).parameters["kinds"].annotation
-        assert kinds == "Sequence[FilterKind] | None", method.__name__

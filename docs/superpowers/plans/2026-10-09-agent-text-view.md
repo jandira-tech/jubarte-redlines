@@ -1,7 +1,5 @@
 # Agent Text View Implementation Plan
 
-> DOCX publication output is superseded by issue #1140: SUCCESS and a fenced diff of the full before/after agent views replace empty stdout, changed-range views and resolved-lines output. Status lines remain on stderr; non-DOCX output is unchanged.
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Status (reconciled 2026-10-17 against `main` `aba48bd5`): IMPLEMENTED, with the id grammar since revised twice.** The view shipped — `src/markdown/from_docx/agent.rs` (`11c3a1f4 feat(markdown): agent view numbering, tags, handles and timestamps`), `header.rs`, `read` as the default view with `-p/--head/--tail/--changed/--dates`, `edit`/`add` on `-p/--anchor/--content`, and the goldens under `tests/fixtures/agent-view/` — and became the default output in `cab8ab73 feat(md): agent view by default`. Two later settlements changed the id spellings this plan was written with, and the text below has been updated to the current ones:

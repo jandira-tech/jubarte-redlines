@@ -24,11 +24,7 @@ fn corpus_pair(a: &str, b: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 fn zip_names(docx: &[u8]) -> Vec<String> {
     let mut zip = zip::ZipArchive::new(Cursor::new(docx.to_vec())).unwrap();
     (0..zip.len())
-        .filter_map(|i| {
-            zip.by_index(i)
-                .ok()
-                .map(|f| f.name().expect("decode ZIP fixture name").into_owned())
-        })
+        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
         .collect()
 }
 

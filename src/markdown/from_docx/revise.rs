@@ -20,19 +20,6 @@ use super::ooxml::{Element, Node};
 pub(crate) fn resolve(element: &Element, accept: bool) -> Element {
     let mut out = element.clone();
     resolve_in(&mut out, accept);
-    // Captured settled box templates must use ordinary text slots too.
-    fn box_text(element: &mut Element, in_box: bool) {
-        let in_box = in_box || element.is("txbxContent");
-        if in_box && element.is("delText") {
-            element.name = "w:t".to_string();
-        }
-        for child in &mut element.children {
-            if let Node::Element(child) = child {
-                box_text(child, in_box);
-            }
-        }
-    }
-    box_text(&mut out, false);
     out
 }
 

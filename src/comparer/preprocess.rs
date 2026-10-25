@@ -1370,7 +1370,7 @@ pub fn hash_block_level_content(
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod escape_xml_tests {
     use super::{escape_xml_attr, escape_xml_text};
 
@@ -1388,7 +1388,7 @@ mod escape_xml_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_hash_owner_boundaries {
     use super::*;
 

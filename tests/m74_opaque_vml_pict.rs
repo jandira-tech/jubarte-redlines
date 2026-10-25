@@ -27,12 +27,7 @@ fn corpus_pair(a: &str, b: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 fn zip_has_media(docx: &[u8]) -> bool {
     let mut zip = zip::ZipArchive::new(Cursor::new(docx.to_vec())).unwrap();
     for i in 0..zip.len() {
-        let name = zip
-            .by_index(i)
-            .unwrap()
-            .name()
-            .expect("decode ZIP fixture name")
-            .into_owned();
+        let name = zip.by_index(i).unwrap().name().to_string();
         if name.contains("/media/") {
             return true;
         }

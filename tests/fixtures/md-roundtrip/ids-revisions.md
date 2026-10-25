@@ -1,11 +1,11 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 1668                    # 1571 marks shown as 854 changes: 659 insertions, 30 deletions, 23 substitutions, 18 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 3 in footer3 (4 marks); 3 in footer2 (4 marks); 3 in footer1 (4 marks)
+revisions: 1668                    # 1571 marks shown as 1549 changes: 660 insertions, 30 deletions, 22 substitutions, 713 paragraph marks, 124 table rows; 84 formatting; 1 in header1; 4 in footer3; 4 in footer2; 4 in footer1
 comments: 0
 authors:
   document_owner: Jones, SA        # dc:creator
-  AB: Aliyu Bamidele               # 1667 revisions, latest 2026-09-25T21:07:00-04:00
+  AB: Aliyu Bamidele               # 1667 revisions, 2026-09-25T21:07:00Z
 body: p0-p737, 18 tables, 2 pages  # pages from Word's cached layout
 page: Letter portrait, margins top 0.945in, right 1.671in, bottom 2.416in, left 1.583in, header 0.5in, footer 1.878in; fmt r1667 @AB
 styles:
@@ -15,1003 +15,1006 @@ styles:
 style_changes: {Normal: styles.r0 @AB}  # tracked changes to the styles
 notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 headers:
-  default: {id: header1, text: "{--![][image1]![Picture 3][d2]--}{header1.r1654 @AB}"}
+  default: {id: header1, text: "{--![][image1]![Picture 3][d2]--}{>>header1.r1654 @AB<<}"}
 footers:
   first:                           # defined, but different first page is off
     id: footer3
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer3.r1664+1663 @AB}¶{footer3.r1664+1663 @AB}", center, indent: {first-line: 0in, left: 0in}}
-    p1: {text: "{++ ++}{footer3.r1666 @AB}", left, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer3.r1664 @AB<<}", center}
+    p1: {text: "{++ ++}{>>footer3.r1666 @AB<<}", left}
     style: Normal
     inactive: true
+    rev: break-ins footer3.r1663 @AB in footer3
     fmt: footer3.r1665 @AB in footer3.p1
   default:
     id: footer2
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer2.r1660+1659 @AB}¶{footer2.r1660+1659 @AB}", center, indent: {first-line: 0in, left: 0in}}
-    p1: {text: "{++ ++}{footer2.r1662 @AB}", left, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer2.r1660 @AB<<}", center}
+    p1: {text: "{++ ++}{>>footer2.r1662 @AB<<}", left}
     style: Normal
+    rev: break-ins footer2.r1659 @AB in footer2
     fmt: footer2.r1661 @AB in footer2.p1
   even:                            # defined, but even/odd headers are off
     id: footer1
-    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{footer1.r1656+1655 @AB}¶{footer1.r1656+1655 @AB}", center, indent: {first-line: 0in, left: 0in}}
-    p1: {text: "{++ ++}{footer1.r1658 @AB}", left, indent: {first-line: 0in, left: 0in}}
+    p0: {text: "{++{PAGE   \\* MERGEFORMAT}119{/} ++}{>>footer1.r1656 @AB<<}", center}
+    p1: {text: "{++ ++}{>>footer1.r1658 @AB<<}", left}
     style: Normal
     inactive: true
+    rev: break-ins footer1.r1655 @AB in footer1
     fmt: footer1.r1657 @AB in footer1.p1
 ---
 
-<!-- p0 center, left 0.007in, right -0.0104in, after 11.5pt, line 1.025 -->
-{++CODE-SWITCHING IN NIGERIAN CHRISTIAN SONGS  ++}{r2+1 @AB}¶{r2+1 @AB}
+<!-- p0 center, left 0.007in, right -0.0104in, break-ins r1 @AB -->
+{++CODE-SWITCHING IN NIGERIAN CHRISTIAN SONGS  ++}{>>r2 @AB<<}
 
-<!-- p1 center, left 0.007in, right -0.0104in, after 1.4pt, line 1.025 -->
-{++ADAMU, PAUL ++}{r4+3 @AB}¶{r4+3 @AB}
+<!-- p1 center, left 0.007in, right -0.0104in, break-ins r3 @AB -->
+{++ADAMU, PAUL ++}{>>r4 @AB<<}
 
-<!-- p2 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Department of English, ++}{r6+5 @AB}¶{r6+5 @AB}
+<!-- p2 center, left 1.594in, right -0.0104in, break-ins r5 @AB -->
+{++Department of English, ++}{>>r6 @AB<<}
 
-<!-- p3 center, left 1.594in, right 1.324in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r8+7 @AB}¶{r8+7 @AB}
+<!-- p3 center, left 1.594in, right 1.324in, break-ins r7 @AB -->
+{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{>>r8 @AB<<}
 
-<!-- p4 center, left 1.594in, right 1.557in, after 11.5pt, line 1.012, size 9.5pt -->
-{++Email: pauladams830@gmail. com Tel: 07036968338 ++}{r10+9 @AB}¶{r10+9 @AB}
+<!-- p4 center, left 1.594in, right 1.557in, break-ins r9 @AB -->
+{++Email: pauladams830@gmail. com Tel: 07036968338 ++}{>>r10 @AB<<}
 
-<!-- p5 center, first-line 0in, left 0in, after 11.9pt, line 1 -->
-{++& ++}{r12+11 @AB}¶{r12+11 @AB}
+<!-- p5 center, first-line 0in, left 0in, break-ins r11 @AB -->
+{++& ++}{>>r12 @AB<<}
 
-<!-- p6 center, left 0.007in, right -0.0104in, after 1.4pt, line 1.025 -->
-{++HAYAB, FORTUNE JOSIAH ++}{r14+13 @AB}¶{r14+13 @AB}
+<!-- p6 center, left 0.007in, right -0.0104in, break-ins r13 @AB -->
+{++HAYAB, FORTUNE JOSIAH ++}{>>r14 @AB<<}
 
-<!-- p7 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Department of English, ++}{r16+15 @AB}¶{r16+15 @AB}
+<!-- p7 center, left 1.594in, right -0.0104in, break-ins r15 @AB -->
+{++Department of English, ++}{>>r16 @AB<<}
 
-<!-- p8 center, left 1.594in, right 1.324in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{r18+17 @AB}¶{r18+17 @AB}
+<!-- p8 center, left 1.594in, right 1.324in, break-ins r17 @AB -->
+{++Kaduna State College of Education, GidanWaya, Kafanchan, Kaduna. ++}{>>r18 @AB<<}
 
-<!-- p9 center, left 1.594in, right -0.0104in, after 1.75pt, line 1.012, size 9.5pt -->
-{++Email: forhayab@yahoo.com ++}{r20+19 @AB}¶{r20+19 @AB}
+<!-- p9 center, left 1.594in, right -0.0104in, break-ins r19 @AB -->
+{++Email: forhayab@yahoo.com ++}{>>r20 @AB<<}
 
-<!-- p10 center, left 1.594in, right -0.0104in, after 11.95pt, line 1.012, size 9.5pt -->
-{++Telephone: 07036968338 ++}{r22+21 @AB}¶{r22+21 @AB}
+<!-- p10 center, left 1.594in, right -0.0104in, break-ins r21 @AB -->
+{++Telephone: 07036968338 ++}{>>r22 @AB<<}
 
-<!-- p11 left, right -0.0104in, after 2pt, line 1 -->
-{++Abstract ++}{r24+23 @AB}¶{r24+23 @AB}
+<!-- p11 left, right -0.0104in, break-ins r23 @AB -->
+{++Abstract ++}{>>r24 @AB<<}
 
-<!-- p12 first-line 0in, left -0.0104in, after 2.1pt, line 0.975 -->
-{++This paper investigates the phenomenon of code-switching and also the types of code-switching that occur in gospel songs. Therefore, using purposive random sampling and Poplack’s (1980) model, the excerpts of from ten gospel songs are collected and analysed. Findings reveal that the most dominant type of codeswitching that occurs in Christian music is inter-sentential code switching while others like intra-switching and tag switching occur rather sparingly. Also, the English language and Pidgin, according to the findings, remain the most dominant language being code switched with indigenous languages. To this end, it can be asserted that code-switching is not only a recurring decimal in Christian songs but also a manifestation of a brand of music that can be labelled Nigerian gospel music.             ++}{r26+25 @AB}¶{r26+25 @AB}
+<!-- p12 first-line 0in, left -0.0104in, break-ins r25 @AB -->
+{++This paper investigates the phenomenon of code-switching and also the types of code-switching that occur in gospel songs. Therefore, using purposive random sampling and Poplack’s (1980) model, the excerpts of from ten gospel songs are collected and analysed. Findings reveal that the most dominant type of codeswitching that occurs in Christian music is inter-sentential code switching while others like intra-switching and tag switching occur rather sparingly. Also, the English language and Pidgin, according to the findings, remain the most dominant language being code switched with indigenous languages. To this end, it can be asserted that code-switching is not only a recurring decimal in Christian songs but also a manifestation of a brand of music that can be labelled Nigerian gospel music.             ++}{>>r26 @AB<<}
 
-<!-- p13 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r28+27 @AB}¶{r28+27 @AB}
+<!-- p13 left, first-line 0in, left 0in, break-ins r27 @AB -->
+{++ ++}{>>r28 @AB<<}
 
-<!-- p14 left, right -0.0104in, after 2pt, line 1 -->
-{++Introduction  ++}{r30+29 @AB}¶{r30+29 @AB}
+<!-- p14 left, right -0.0104in, break-ins r29 @AB -->
+{++Introduction  ++}{>>r30 @AB<<}
 
-<!-- p15 -->
-{++The Nigerian music industry today is swarming with different kinds of artistes, each with different kind of songs and lyrics. One peculiar features of the Nigerian music industry however is the tendency to use English alongside several other languages- a recurrent decimal that has become all too obvious to many lovers of Nigerian music today. While this may be considered as mere entertainment in some quarters; to linguists, this trend can be investigated linguistically, but then since music itself is meant to communicate something, an idea, a culture, a belief, a doctrine etc. through language. ++}{r32+31 @AB}¶{r32+31 @AB}
+<!-- p15 break-ins r31 @AB -->
+{++The Nigerian music industry today is swarming with different kinds of artistes, each with different kind of songs and lyrics. One peculiar features of the Nigerian music industry however is the tendency to use English alongside several other languages- a recurrent decimal that has become all too obvious to many lovers of Nigerian music today. While this may be considered as mere entertainment in some quarters; to linguists, this trend can be investigated linguistically, but then since music itself is meant to communicate something, an idea, a culture, a belief, a doctrine etc. through language. ++}{>>r32 @AB<<}
 
-<!-- p16 first-line 0.47in, left -0.0104in -->
-{++In the Nigerian context, many languages exist and are used for different communication purposes, and are often designated foreign language (e.g. English, French, and German etc.) or indigenous languages (e.g. Hausa, Igbo and Yoruba among several others). Some scholars even classify them into indigenous, exogenous and indi-exogenous language like Pidgin. ++}{r34+33 @AB}¶{r34+33 @AB}
+<!-- p16 first-line 0.47in, left -0.0104in, break-ins r33 @AB -->
+{++In the Nigerian context, many languages exist and are used for different communication purposes, and are often designated foreign language (e.g. English, French, and German etc.) or indigenous languages (e.g. Hausa, Igbo and Yoruba among several others). Some scholars even classify them into indigenous, exogenous and indi-exogenous language like Pidgin. ++}{>>r34 @AB<<}
 
-<!-- p17 -->
-{++The implication of this linguistic pluralism is that terms like bilingualism, borrowing, code switching and code mixing have recurrent linguistic features over time; and as such, speakers of a given language will have a wide variety to make deliberate or conscious linguistic choices given the different linguistic codes at their disposal; however, the language aptitude and attitude of the language users among other linguistic parameters often come to bear. Nevertheless, this linguistic reality which is a clear manifestation of languages in contact has its pros and cons. Be that as it may, Nigerian musicians or artistes have benefited from this linguistic pluralism highlighted thus far, producing songs that have a blend of many Nigerian languages much to the delight of many numerous fans across the country and beyond. In the North where Hausa is the dominant lingua franca, there is a tendency for many music artistes there to adopt English language as well as Hausa in their songs, and this situation is expected to in other regions. To this end, some Christian songs are not left out of this trend. Consequently, these songs will serve as a case in point to justify the prevalence of code-switching in Christian songs.  ++}{r36+35 @AB}¶{r36+35 @AB}
+<!-- p17 break-ins r35 @AB -->
+{++The implication of this linguistic pluralism is that terms like bilingualism, borrowing, code switching and code mixing have recurrent linguistic features over time; and as such, speakers of a given language will have a wide variety to make deliberate or conscious linguistic choices given the different linguistic codes at their disposal; however, the language aptitude and attitude of the language users among other linguistic parameters often come to bear. Nevertheless, this linguistic reality which is a clear manifestation of languages in contact has its pros and cons. Be that as it may, Nigerian musicians or artistes have benefited from this linguistic pluralism highlighted thus far, producing songs that have a blend of many Nigerian languages much to the delight of many numerous fans across the country and beyond. In the North where Hausa is the dominant lingua franca, there is a tendency for many music artistes there to adopt English language as well as Hausa in their songs, and this situation is expected to in other regions. To this end, some Christian songs are not left out of this trend. Consequently, these songs will serve as a case in point to justify the prevalence of code-switching in Christian songs.  ++}{>>r36 @AB<<}
 
-<!-- p18 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r38+37 @AB}¶{r38+37 @AB}
+<!-- p18 left, first-line 0in, left 0in, break-ins r37 @AB -->
+{++ ++}{>>r38 @AB<<}
 
-<!-- p19 left, right -0.0104in, after 2pt, line 1 -->
-{++Statement of the Problem ++}{r40+39 @AB}¶{r40+39 @AB}
+<!-- p19 left, right -0.0104in, break-ins r39 @AB -->
+{++Statement of the Problem ++}{>>r40 @AB<<}
 
-<!-- p20 -->
-{++While code-switching is not a recent phenomenon in the lyric and study of secular music or non-religious songs, very little or no work has been written on this linguistic occurrence in Christian religious songs. Moreover, while it appears that many papers like Babalola (2009), Olarunfemi (2009) and Guerrero (2009) among others seem to stress the impact or prevalence of code switching in hip hop and traditional music respectively, this paper is concerned with the linguistic content of religious songs with a view to finding cases of code-switching in them.    ++}{r42+41 @AB}¶{r42+41 @AB}
+<!-- p20 break-ins r41 @AB -->
+{++While code-switching is not a recent phenomenon in the lyric and study of secular music or non-religious songs, very little or no work has been written on this linguistic occurrence in Christian religious songs. Moreover, while it appears that many papers like Babalola (2009), Olarunfemi (2009) and Guerrero (2009) among others seem to stress the impact or prevalence of code switching in hip hop and traditional music respectively, this paper is concerned with the linguistic content of religious songs with a view to finding cases of code-switching in them.    ++}{>>r42 @AB<<}
 
-<!-- p21 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r44+43 @AB}¶{r44+43 @AB}
+<!-- p21 left, first-line 0in, left 0in, break-ins r43 @AB -->
+{++ ++}{>>r44 @AB<<}
 
-<!-- p22 left, right -0.0104in, after 2pt, line 1 -->
-{++Basic Assumptions of this Paper ++}{r46+45 @AB}¶{r46+45 @AB}
+<!-- p22 left, right -0.0104in, break-ins r45 @AB -->
+{++Basic Assumptions of this Paper ++}{>>r46 @AB<<}
 
-<!-- p23 -->
-{++This paper rests on the following assumptions:  ++}{r48+47 @AB}¶{r48+47 @AB}
+<!-- p23 break-ins r47 @AB -->
+{++This paper rests on the following assumptions:  ++}{>>r48 @AB<<}
 
-<!-- p24 hanging 0.235in, left 0.548in, bullet -->
-- {++That code-switching occurs in Christian music or non-secular music  ++}{r50+49 @AB}¶{r50+49 @AB}
+<!-- p24 hanging 0.235in, left 0.548in, bullet, break-ins r49 @AB -->
+- {++That code-switching occurs in Christian music or non-secular music  ++}{>>r50 @AB<<}
 
-<!-- p25 hanging 0.235in, left 0.548in, bullet -->
-- {++That there is a preponderance of inter-sentential code-switching in gospel songs than any other type of code switching    ++}{r52+51 @AB}¶{r52+51 @AB}
+<!-- p25 hanging 0.235in, left 0.548in, bullet, break-ins r51 @AB -->
+- {++That there is a preponderance of inter-sentential code-switching in gospel songs than any other type of code switching    ++}{>>r52 @AB<<}
 
-<!-- p26 hanging 0.235in, left 0.548in, bullet -->
-- {++That  intra-sentential code-switching only occurs minimally in the ++}{r54+53 @AB}¶{r54+53 @AB}
+<!-- p26 hanging 0.235in, left 0.548in, bullet, break-ins r53 @AB -->
+- {++That  intra-sentential code-switching only occurs minimally in the ++}{>>r54 @AB<<}
 
-<!-- p27 left 0.5556in -->
-{++Christian songs compared to inter-sentential code switching ++}{r56+55 @AB}¶{r56+55 @AB}
+<!-- p27 left 0.5556in, break-ins r55 @AB -->
+{++Christian songs compared to inter-sentential code switching ++}{>>r56 @AB<<}
 
-<!-- p28 hanging 0.235in, left 0.548in, bullet -->
-- {++That tag switching hardly occurs or occurs minimally in Christian songs  ++}{r58+57 @AB}¶{r58+57 @AB}
+<!-- p28 hanging 0.235in, left 0.548in, bullet, break-ins r57 @AB -->
+- {++That tag switching hardly occurs or occurs minimally in Christian songs  ++}{>>r58 @AB<<}
 
-<!-- p29 hanging 0.235in, left 0.548in, bullet -->
-- {++That code-switching does  not occur between a lexical stem and a bound morpheme but on “utterance construction level” and ++}{r60+59 @AB}¶{r60+59 @AB}
+<!-- p29 hanging 0.235in, left 0.548in, bullet, break-ins r59 @AB -->
+- {++That code-switching does  not occur between a lexical stem and a bound morpheme but on “utterance construction level” and ++}{>>r60 @AB<<}
 
-<!-- p30 hanging 0.235in, left 0.548in, bullet -->
-- {++That this “utterance construction level” is used as a reference to the lyrics in the lines of Christian songs dismissed as “excerpts” in this paper            ++}{r62+61 @AB}¶{r62+61 @AB}
+<!-- p30 hanging 0.235in, left 0.548in, bullet, break-ins r61 @AB -->
+- {++That this “utterance construction level” is used as a reference to the lyrics in the lines of Christian songs dismissed as “excerpts” in this paper            ++}{>>r62 @AB<<}
 
-<!-- p31 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r64+63 @AB}¶{r64+63 @AB}
+<!-- p31 left, first-line 0in, left 0in, break-ins r63 @AB -->
+{++ ++}{>>r64 @AB<<}
 
-<!-- p32 left, right -0.0104in, after 2pt, line 1 -->
-{++Methodology  ++}{r66+65 @AB}¶{r66+65 @AB}
+<!-- p32 left, right -0.0104in, break-ins r65 @AB -->
+{++Methodology  ++}{>>r66 @AB<<}
 
-<!-- p33 -->
-{++Using ten (10) songs form Christian artistes or gospel musicians, this paper seeks to unveil the advent of code switching in Christian songs. Using two (2) excerpts only from these songs, this paper attempts to justify the existence of the following type of code switching: ++}{r68+67 @AB}¶{r68+67 @AB}
+<!-- p33 break-ins r67 @AB -->
+{++Using ten (10) songs form Christian artistes or gospel musicians, this paper seeks to unveil the advent of code switching in Christian songs. Using two (2) excerpts only from these songs, this paper attempts to justify the existence of the following type of code switching: ++}{>>r68 @AB<<}
 
-<!-- p34 hanging 0.235in, left 0.4694in, num "(a)" -->
-1. {++Inter-sentential code switching ++}{r70+69 @AB}¶{r70+69 @AB}
+<!-- p34 hanging 0.235in, left 0.4694in, num "(a)", break-ins r69 @AB -->
+1. {++Inter-sentential code switching ++}{>>r70 @AB<<}
 
-<!-- p35 hanging 0.235in, left 0.4694in, num "(b)" -->
-2. {++Intra-sentential code switching ++}{r72+71 @AB}¶{r72+71 @AB}
+<!-- p35 hanging 0.235in, left 0.4694in, num "(b)", break-ins r71 @AB -->
+2. {++Intra-sentential code switching ++}{>>r72 @AB<<}
 
-<!-- p36 hanging 0.235in, left 0.4694in, num "(c)" -->
-3. {++Tag switching ++}{r74+73 @AB}¶{r74+73 @AB}
+<!-- p36 hanging 0.235in, left 0.4694in, num "(c)", break-ins r73 @AB -->
+3. {++Tag switching ++}{>>r74 @AB<<}
 
-<!-- p37 hanging 0.235in, left 0.4694in, num "(d)" -->
-4. {++Word switching       ++}{r76+75 @AB}¶{r76+75 @AB}
+<!-- p37 hanging 0.235in, left 0.4694in, num "(d)", break-ins r75 @AB -->
+4. {++Word switching       ++}{>>r76 @AB<<}
 
-<!-- p38 -->
-{++Inter-sentential switching occurs outside the sentence or the clause (i.e. at the sentence or the clause boundaries). It is sometimes called “extra-sentential”. Intraswitching on the other hand occurs within a sentence or a clause. Also, tag switching is the switching of either a tag phrase or word, or both, from one language to another (Mclure, 2001, p.166).   ++}{r78+77 @AB}¶{r78+77 @AB}
+<!-- p38 break-ins r77 @AB -->
+{++Inter-sentential switching occurs outside the sentence or the clause (i.e. at the sentence or the clause boundaries). It is sometimes called “extra-sentential”. Intraswitching on the other hand occurs within a sentence or a clause. Also, tag switching is the switching of either a tag phrase or word, or both, from one language to another (Mclure, 2001, p.166).   ++}{>>r78 @AB<<}
 
-<!-- p39 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r80+79 @AB}¶{r80+79 @AB}
+<!-- p39 left, first-line 0in, left 0in, break-ins r79 @AB -->
+{++ ++}{>>r80 @AB<<}
 
-<!-- p40 left, right -0.0104in, after 2pt, line 1 -->
-{++Theoretical Framework:  ++}{r82+81 @AB}¶{r82+81 @AB}
+<!-- p40 left, right -0.0104in, break-ins r81 @AB -->
+{++Theoretical Framework:  ++}{>>r82 @AB<<}
 
-<!-- p41 left, right -0.0104in, after 2pt, line 1 -->
-{++Constraint-Bases Model: Poplack’s (1980) ++}{r84+83 @AB}¶{r84+83 @AB}
+<!-- p41 left, right -0.0104in, break-ins r83 @AB -->
+{++Constraint-Bases Model: Poplack’s (1980) ++}{>>r84 @AB<<}
 
-<!-- p42 -->
-{++The major backdrop of this model or theory is that it provides for the classification of code switching that exists and which is deployed in the analysis of data as is the case here. They include inter-sentential, intra-sentential and tag switching and word switching. This theory is predicted on two major constraints: the freemorpheme constraints and the free equivalence constraints. The former rests on the assumption that code-switching cannot occur between lexical stem and bound morphemes. Essentially, this constraint distinguishes code-switching from borrowing. Generally borrowing occurs in the lexicon, while code-switching occurs at either the syntax level or the utterance construction level.  ++}{r86+85 @AB}¶{r86+85 @AB}
+<!-- p42 break-ins r85 @AB -->
+{++The major backdrop of this model or theory is that it provides for the classification of code switching that exists and which is deployed in the analysis of data as is the case here. They include inter-sentential, intra-sentential and tag switching and word switching. This theory is predicted on two major constraints: the freemorpheme constraints and the free equivalence constraints. The former rests on the assumption that code-switching cannot occur between lexical stem and bound morphemes. Essentially, this constraint distinguishes code-switching from borrowing. Generally borrowing occurs in the lexicon, while code-switching occurs at either the syntax level or the utterance construction level.  ++}{>>r86 @AB<<}
 
-<!-- p43 first-line 0.47in, left -0.0104in -->
-{++The equivalence constraint predicts that the switches occur only at points where the surface structures of the languages coincide, or between sentence elements that are normally ordered in the same way by each individual grammar. To a large extent therefore, this paper seeks to use this model specifically the “free morpheme constraint” as a yardstick to test the validity or otherwise of the major propositions of this theory. Therefore, code-switching, in this context, will not occur between a lexical stem and a bound morpheme but on “utterance construction level” investigated using excerpts from Christian songs.          ++}{r88+87 @AB}¶{r88+87 @AB}
+<!-- p43 first-line 0.47in, left -0.0104in, break-ins r87 @AB -->
+{++The equivalence constraint predicts that the switches occur only at points where the surface structures of the languages coincide, or between sentence elements that are normally ordered in the same way by each individual grammar. To a large extent therefore, this paper seeks to use this model specifically the “free morpheme constraint” as a yardstick to test the validity or otherwise of the major propositions of this theory. Therefore, code-switching, in this context, will not occur between a lexical stem and a bound morpheme but on “utterance construction level” investigated using excerpts from Christian songs.          ++}{>>r88 @AB<<}
 
-<!-- p44 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r90+89 @AB}¶{r90+89 @AB}
+<!-- p44 left, first-line 0in, left 0in, break-ins r89 @AB -->
+{++ ++}{>>r90 @AB<<}
 
-<!-- p45 left, right -0.0104in, after 2pt, line 1 -->
-{++Code-switching ++}{r92+91 @AB}¶{r92+91 @AB}
+<!-- p45 left, right -0.0104in, break-ins r91 @AB -->
+{++Code-switching ++}{>>r92 @AB<<}
 
-<!-- p46 -->
-{++In linguistics, code-switching is the concurrent use of more than one language variety in a conversation. Code-switching can occur between sentences (intersentential). Wardhaugh (2006) is however of the view that code switching is the same thing as code mixing: “code switching (also called mixing) can occur in conversation between speakers’ turns or within a single speaker’s turn” (p.101).  To him, “code-switching is a conversational strategy used to establish, cross or destroy group boundaries; to create, evoke or change interpersonal relations with their rights or obligations”. The term “code switching” is preferred to “language shift” in order to accommodate other kinds of varieties, dialects and registers (Hudson 2005, pp.51-52). ++}{r94+93 @AB}¶{r94+93 @AB}
+<!-- p46 break-ins r93 @AB -->
+{++In linguistics, code-switching is the concurrent use of more than one language variety in a conversation. Code-switching can occur between sentences (intersentential). Wardhaugh (2006) is however of the view that code switching is the same thing as code mixing: “code switching (also called mixing) can occur in conversation between speakers’ turns or within a single speaker’s turn” (p.101).  To him, “code-switching is a conversational strategy used to establish, cross or destroy group boundaries; to create, evoke or change interpersonal relations with their rights or obligations”. The term “code switching” is preferred to “language shift” in order to accommodate other kinds of varieties, dialects and registers (Hudson 2005, pp.51-52). ++}{>>r94 @AB<<}
 
-<!-- p47 first-line 0.47in, left -0.0104in -->
-{++Code-switching also function to announce specific identities, create certain meanings and facilitate particular and interpersonal relationships (Johnson 2000, p.184). Similarly, according to Wardhaugh (2006, p.101), it is unusual for a speaker to have command of, use only one such code system. He said that most speakers command several varieties of language they speak, and bilingualism, even multilingualism, is a norm among many people throughout the world than “monolingualism”. He emphasizes that there are two kinds of code switching: situational and metaphorical. Gumpez and Hymes (19986) make a distinction between the two thus: ++}{r96+95 @AB}¶{r96+95 @AB}
+<!-- p47 first-line 0.47in, left -0.0104in, break-ins r95 @AB -->
+{++Code-switching also function to announce specific identities, create certain meanings and facilitate particular and interpersonal relationships (Johnson 2000, p.184). Similarly, according to Wardhaugh (2006, p.101), it is unusual for a speaker to have command of, use only one such code system. He said that most speakers command several varieties of language they speak, and bilingualism, even multilingualism, is a norm among many people throughout the world than “monolingualism”. He emphasizes that there are two kinds of code switching: situational and metaphorical. Gumpez and Hymes (19986) make a distinction between the two thus: ++}{>>r96 @AB<<}
 
-<!-- p48 left 0.477in -->
-{++An important distinction is made from situational and metaphorical codeswitching. Situational code-switching is where alternation between varieties redefines a situation, being a change in governing norms. Metaphorical switching is when alternation enriches a situation, allowing for allusion to more than one social relationship within the situation. In metaphorical code-switching, the context of the conversation is undisturbed but rather the changes adhere to the social context including the roles of those involved in the conversation          ++}{r98+97 @AB}¶{r98+97 @AB}
+<!-- p48 left 0.477in, break-ins r97 @AB -->
+{++An important distinction is made from situational and metaphorical codeswitching. Situational code-switching is where alternation between varieties redefines a situation, being a change in governing norms. Metaphorical switching is when alternation enriches a situation, allowing for allusion to more than one social relationship within the situation. In metaphorical code-switching, the context of the conversation is undisturbed but rather the changes adhere to the social context including the roles of those involved in the conversation          ++}{>>r98 @AB<<}
 
-<!-- p49 -->
-{++It can therefore be argued that Nigeria is a typical example of code switching and code mixing situations. This is because there are over 400 hundred languages in Nigeria but English is often used for official purposes while Igbo, Hausa and Yoruba are regarded as the language of the majority. ++}{r100+99 @AB}¶{r100+99 @AB}
+<!-- p49 break-ins r99 @AB -->
+{++It can therefore be argued that Nigeria is a typical example of code switching and code mixing situations. This is because there are over 400 hundred languages in Nigeria but English is often used for official purposes while Igbo, Hausa and Yoruba are regarded as the language of the majority. ++}{>>r100 @AB<<}
 
-<!-- p50 -->
-{++ In another submission, Martin and Nakayama (2007) concur that “code-switching is a technical term in communication that refers to the phenomenon of changing languages, dialects, or even accents. People code switch for several reasons: (1) to accommodate the other speakers, (2) to avoid   accommodating others, or (3) to express another aspect of their cultural identity (p.241). ++}{r102+101 @AB}¶{r102+101 @AB}
+<!-- p50 break-ins r101 @AB -->
+{++ In another submission, Martin and Nakayama (2007) concur that “code-switching is a technical term in communication that refers to the phenomenon of changing languages, dialects, or even accents. People code switch for several reasons: (1) to accommodate the other speakers, (2) to avoid   accommodating others, or (3) to express another aspect of their cultural identity (p.241). ++}{>>r102 @AB<<}
 
-<!-- p51 -->
-{++Code switching occurs frequently in almost all conversations, in professional setting and even in music because of the existence of the multiple languages in the country. There is also the mixing of English and tribal languages. Code mixing between indigenous languages is rare. However, Wardhaugh (2006, p.102) summarizes the issue of code switching succinctly below: ++}{r104+103 @AB}¶{r104+103 @AB}
+<!-- p51 break-ins r103 @AB -->
+{++Code switching occurs frequently in almost all conversations, in professional setting and even in music because of the existence of the multiple languages in the country. There is also the mixing of English and tribal languages. Code mixing between indigenous languages is rare. However, Wardhaugh (2006, p.102) summarizes the issue of code switching succinctly below: ++}{>>r104 @AB<<}
 
-<!-- p52 first-line 0.47in, left -0.0104in -->
-{++Most speakers command several varieties of any language they speak, and bilingualism even multilingualism is the norm rather than unilingualism. People, then, are usually required to select a particular code whenever they choose to speak, and they may also decide to switch from one code to another or to mix codes even within s ometimes very short utterances and thereby create a new code in a process known as code switching  Having explained the linguistic concept of code-switching, the next step, in this paper, is to explain how this term occurs in the Gospel songs of Nigerian musicians. to this effect, the data is given and analysed below.  ++}{r106+105 @AB}¶{r106+105 @AB}
+<!-- p52 first-line 0.47in, left -0.0104in, break-ins r105 @AB -->
+{++Most speakers command several varieties of any language they speak, and bilingualism even multilingualism is the norm rather than unilingualism. People, then, are usually required to select a particular code whenever they choose to speak, and they may also decide to switch from one code to another or to mix codes even within s ometimes very short utterances and thereby create a new code in a process known as code switching  Having explained the linguistic concept of code-switching, the next step, in this paper, is to explain how this term occurs in the Gospel songs of Nigerian musicians. to this effect, the data is given and analysed below.  ++}{>>r106 @AB<<}
 
-<!-- p53 left, right -0.0104in, after 2pt, line 1 -->
-{++Data Presentation and Analysis  ++}{r108+107 @AB}¶{r108+107 @AB}
+<!-- p53 left, right -0.0104in, break-ins r107 @AB -->
+{++Data Presentation and Analysis  ++}{>>r108 @AB<<}
 
-<!-- p54 -->
-{++This section examines the issue of code switching in Nigerian gospel or Christian songs, and the songs have been numbered accordingly: ++}{r110+109 @AB}¶{r110+109 @AB}
+<!-- p54 break-ins r109 @AB -->
+{++This section examines the issue of code switching in Nigerian gospel or Christian songs, and the songs have been numbered accordingly: ++}{>>r110 @AB<<}
 
-<!-- p55 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt One: “OniseIyanu” (Song) by NATHANIEL BASSEY  ++}{r112+111 @AB}¶{r112+111 @AB}
+<!-- p55 left, right -0.0104in, break-ins r111 @AB -->
+{++Excerpt One: “OniseIyanu” (Song) by NATHANIEL BASSEY  ++}{>>r112 @AB<<}
 
-<!-- p56 -->
-{++In song one, two major languages are code switched: English language and Yoruba. The type of code switching evident in this song can be described as partial and total code switching.  The examples of partial code switching are given below: ++}{r114+113 @AB}¶{r114+113 @AB}
+<!-- p56 break-ins r113 @AB -->
+{++In song one, two major languages are code switched: English language and Yoruba. The type of code switching evident in this song can be described as partial and total code switching.  The examples of partial code switching are given below: ++}{>>r114 @AB<<}
 
-<!-- p57 -->
-{++OniseIyanu ++}{r116+115 @AB}¶{r116+115 @AB}
+<!-- p57 break-ins r115 @AB -->
+{++OniseIyanu ++}{>>r116 @AB<<}
 
-<!-- p58 -->
-{++You are the God of awesome wonders  ++}{r118+117 @AB}¶{r118+117 @AB}
+<!-- p58 break-ins r117 @AB -->
+{++You are the God of awesome wonders  ++}{>>r118 @AB<<}
 
-<!-- p59 -->
-{++I have tasted of your power ++}{r120+119 @AB}¶{r120+119 @AB}
+<!-- p59 break-ins r119 @AB -->
+{++I have tasted of your power ++}{>>r120 @AB<<}
 
-<!-- p60 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r122+121 @AB}¶{r122+121 @AB}
+<!-- p60 left, first-line 0in, left 0in, break-ins r121 @AB -->
+{++ ++}{>>r122 @AB<<}
 
-<!-- p61 -->
-{++OniseIyanu ++}{r124+123 @AB}¶{r124+123 @AB}
+<!-- p61 break-ins r123 @AB -->
+{++OniseIyanu ++}{>>r124 @AB<<}
 
-<!-- p62 -->
-{++You have shown me so much mercy  ++}{r126+125 @AB}¶{r126+125 @AB}
+<!-- p62 break-ins r125 @AB -->
+{++You have shown me so much mercy  ++}{>>r126 @AB<<}
 
-<!-- p63 -->
-{++Much more than deserve ++}{r128+127 @AB}¶{r128+127 @AB}
+<!-- p63 break-ins r127 @AB -->
+{++Much more than deserve ++}{>>r128 @AB<<}
 
-<!-- p64 -->
-{++My eyes have seen  ++}{r130+129 @AB}¶{r130+129 @AB}
+<!-- p64 break-ins r129 @AB -->
+{++My eyes have seen  ++}{>>r130 @AB<<}
 
-<!-- p65 -->
-{++My ears of have heard…  ++}{r132+131 @AB}¶{r132+131 @AB}
+<!-- p65 break-ins r131 @AB -->
+{++My ears of have heard…  ++}{>>r132 @AB<<}
 
-<!-- p66 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r134+133 @AB}¶{r134+133 @AB}
+<!-- p66 left, first-line 0in, left 0in, break-ins r133 @AB -->
+{++ ++}{>>r134 @AB<<}
 
-<!-- p67 -->
-{++A few of these words, from the English and Yoruba language, are highlighted below: ++}{r136+135 @AB}¶{r136+135 @AB}
+<!-- p67 break-ins r135 @AB -->
+{++A few of these words, from the English and Yoruba language, are highlighted below: ++}{>>r136 @AB<<}
 
-<!-- p68 center, size 18pt, break-del r138+137 @AB -->
-{--**GCSE PE – Year 10**--}{r138+137 @AB}
+<!-- p68 center, break-del r137 @AB -->
+{--**GCSE PE – Year 10**--}{>>r138 @AB<<}
 
-<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, p70 center, p71 center, p72 center, p73 center, p74 center, p75 center, p76 center, p79 center, p80 center, p81 center, p82 center, p83 center, p84 center, p85 center, p118 justify, p119 justify, p120 justify, p121 justify, p124 justify, p125 justify, p128 justify, p129 justify, p133 justify, p118-p121 ListParagraph, p124-p125 ListParagraph, p128-p129 ListParagraph, p133 ListParagraph, p69 after 0pt line 1.15, p71-p76 size 12pt, p77-p78 after 0pt line 1.15, p80-p85 size 12pt, p86-p87 after 0pt line 1.15, p89-p91 size 12pt, p92-p93 after 0pt line 1.15, p95 size 12pt, p96-p97 after 0pt line 1.15, p99-p100 after 0pt line 1.15, p102 size 12pt, p103-p107 after 0pt line 1.15, p108-p109 size 12pt, p110 after 0pt line 1.15, p112-p114 size 12pt, p115-p116 after 0pt line 1.15, p134-p135 after 0pt line 1.15, p137-p141 size 12pt, p142 after 0pt line 1.15 size 12pt, widths 1.146in 0.976in 0.996in 1.5924in 0.0035in, width 2.482in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t0.row0 t0.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t0.row2; top,left,bottom,right single 0.5pt 000000 in t0.row3 t0.row4 t0.row5 t0.row6 t0.row7 t0.row8 t0.row9 t0.row10, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, gaps t0.row3 after 1; t0.row4 after 1; t0.row5 after 1; t0.row6 after 1; t0.row7 after 1; t0.row8 after 1; t0.row9 after 1; t0.row10 after 1, break-del r149+150+148 @AB in p70; r152+151 @AB in p71; r154+153 @AB in p72; r156+155 @AB in p73; r158+157 @AB in p74; r159 @AB in p75; r161+160 @AB in p76; r172+173+171 @AB in p79; r175+174 @AB in p80; r177+176 @AB in p81; r179+178 @AB in p82; r181+180 @AB in p83; r182 @AB in p84; r184+183 @AB in p85; r195+196+194 @AB in p88; r197 @AB in p89; r199+198 @AB in p90; r200 @AB in p91; r211+212+210 @AB in p94; r213 @AB in p95; r224+225+223 @AB in p98; r236+237+235 @AB in p101; r238 @AB in p102; r275+276+274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r290+291+289 @AB in p117; r293+292 @AB in p118; r295+294 @AB in p119; r297+296 @AB in p120; r299+298 @AB in p121; r300 @AB in p122; r302+301 @AB in p123; r304+303 @AB in p124; r306+305 @AB in p125; r307 @AB in p126; r309+308 @AB in p127; r311+310 @AB in p128; r313+312 @AB in p129; r314 @AB in p130; r316+315 @AB in p131; r317 @AB in p132; r319+318 @AB in p133; r331+332+330 @AB in p136; r333 @AB in p137; r335+334 @AB in p138; r336 @AB in p139; r338+337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
-|{++English Words  ++}{r145+146 @AB}{-- Theory Topics--}{r145+146 @AB}|{++Yoruba Words  ++}{r149+150+148 @AB}{--Applied anatomy and Physiology--}{r149+150+148 @AB}{--<br>Movement analysis--}{r152+151 @AB}{--<br>Physical training--}{r154+153 @AB}{--<br>Use of data--}{r156+155 @AB}{--<br>Sports Psychology--}{r158+157 @AB}<br>{--<br>Topics are worked through in the order provided by the exam boards specification. Pupils will be moved onto a new topic when the class teacher is happy with the level of understanding. This is made possible the amount of time available within the life of the course.--}{r161+160 @AB}<br>|||
+<!-- t0 11x5, cells t0.row0 p69-p77 t0.row1 p78-p86 t0.row2 p87-p92 t0.row3 p93-p96 t0.row4 p97-p99 t0.row5 p100-p103 t0.row6 p104-p105 t0.row7 p106-p109 t0.row8 p110-p115 t0.row9 p116-p134 t0.row10 p135-p142, p70 center, p71 center, p72 center, p73 center, p74 center, p75 center, p76 center, p79 center, p80 center, p81 center, p82 center, p83 center, p84 center, p85 center, p118 justify, p119 justify, p120 justify, p121 justify, p124 justify, p125 justify, p128 justify, p129 justify, p133 justify, p118-p121 ListParagraph, p124-p125 ListParagraph, p128-p129 ListParagraph, p133 ListParagraph, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t0.row0 t0.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t0.row2; top,left,bottom,right single 0.5pt 000000 in t0.row3 t0.row4 t0.row5 t0.row6 t0.row7 t0.row8 t0.row9 t0.row10, merged t0.row0.cell1 across 4; t0.row1.cell1 across 4; t0.row2.cell1 across 4; t0.row3.cell1 across 3; t0.row4.cell1 across 3; t0.row5.cell1 across 3; t0.row6.cell1 across 3; t0.row8.cell1 across 3; t0.row9.cell1 across 3; t0.row10.cell1 across 3, gaps t0.row3 after 1; t0.row4 after 1; t0.row5 after 1; t0.row6 after 1; t0.row7 after 1; t0.row8 after 1; t0.row9 after 1; t0.row10 after 1, break-del r148 @AB in p70; r151 @AB in p71; r153 @AB in p72; r155 @AB in p73; r157 @AB in p74; r159 @AB in p75; r160 @AB in p76; r171 @AB in p79; r174 @AB in p80; r176 @AB in p81; r178 @AB in p82; r180 @AB in p83; r182 @AB in p84; r183 @AB in p85; r194 @AB in p88; r197 @AB in p89; r198 @AB in p90; r200 @AB in p91; r210 @AB in p94; r213 @AB in p95; r223 @AB in p98; r235 @AB in p101; r238 @AB in p102; r274 @AB in p111; r277 @AB in p112; r278 @AB in p113; r279 @AB in p114; r289 @AB in p117; r292 @AB in p118; r294 @AB in p119; r296 @AB in p120; r298 @AB in p121; r300 @AB in p122; r301 @AB in p123; r303 @AB in p124; r305 @AB in p125; r307 @AB in p126; r308 @AB in p127; r310 @AB in p128; r312 @AB in p129; r314 @AB in p130; r315 @AB in p131; r317 @AB in p132; r318 @AB in p133; r330 @AB in p136; r333 @AB in p137; r334 @AB in p138; r336 @AB in p139; r337 @AB in p140; r339 @AB in p141, fmt r139 @AB; r140 @??; r141 @AB in t0.row0; r142 @AB in t0.row0.cell0; r143 @AB in p69; r144 @AB in p69; r147 @AB in t0.row0.cell1; r162 @AB in p77; r163 @AB in p77; r164 @AB in t0.row1; r165 @AB in t0.row1.cell0; r166 @AB in p78; r167 @AB in p78; r170 @AB in t0.row1.cell1; r185 @AB in p86; r186 @AB in p86; r187 @AB in t0.row2; r188 @AB in t0.row2.cell0; r189 @AB in p87; r190 @AB in p87; r193 @AB in t0.row2.cell1; r201 @AB in p92; r202 @AB in p92; r203 @AB in t0.row3; r204 @AB in t0.row3.cell0; r205 @AB in p93; r206 @AB in p93; r209 @AB in t0.row3.cell1; r214 @AB in p96; r215 @AB in p96; r216 @AB in t0.row4; r217 @AB in t0.row4.cell0; r218 @AB in p97; r219 @AB in p97; r222 @AB in t0.row4.cell1; r226 @AB in p99; r227 @AB in p99; r228 @AB in t0.row5; r229 @AB in t0.row5.cell0; r230 @AB in p100; r231 @AB in p100; r234 @AB in t0.row5.cell1; r239 @AB in p103; r240 @AB in p103; r241 @AB in t0.row6; r242 @AB in t0.row6.cell0; r243 @AB in p104; r244 @AB in p104; r247 @AB in t0.row6.cell1; r248 @AB in p105; r249 @AB in p105; r252 @AB in t0.row7; r253 @AB in t0.row7.cell0; r254 @AB in p106; r255 @AB in p106; r258 @AB in t0.row7.cell1; r259 @AB in p107; r260 @AB in p107; r263 @AB in t0.row7.cell2; r265 @AB in t0.row7.cell3; r267 @AB in t0.row8; r268 @AB in t0.row8.cell0; r269 @AB in p110; r270 @AB in p110; r273 @AB in t0.row8.cell1; r280 @AB in p115; r281 @AB in p115; r282 @AB in t0.row9; r283 @AB in t0.row9.cell0; r284 @AB in p116; r285 @AB in p116; r288 @AB in t0.row9.cell1; r320 @AB in p134; r321 @AB in p134; r323 @AB in t0.row10; r324 @AB in t0.row10.cell0; r325 @AB in p135; r326 @AB in p135; r329 @AB in t0.row10.cell1; r340 @AB in p142; r341 @AB in p142 -->
+|{~~ Theory Topics~>English Words  ~~}{>>r146+145 @AB<<}|{~~Applied anatomy and Physiology~>Yoruba Words  ~~}{>>r150+149 @AB<<}{--<br>Movement analysis--}{>>r152 @AB<<}{--<br>Physical training--}{>>r154 @AB<<}{--<br>Use of data--}{>>r156 @AB<<}{--<br>Sports Psychology--}{>>r158 @AB<<}<br>{--<br>Topics are worked through in the order provided by the exam boards specification. Pupils will be moved onto a new topic when the class teacher is happy with the level of understanding. This is made possible the amount of time available within the life of the course.--}{>>r161 @AB<<}<br>|||
 |:-|-|:-:|-|
-|{++You  ++}{r168+169 @AB}{--Practical Topics--}{r168+169 @AB}|{++Onise ++}{r172+173+171 @AB}{--Athletics--}{r172+173+171 @AB}{--<br>Handball--}{r175+174 @AB}{--<br>Badminton--}{r177+176 @AB}{--<br>Football--}{r179+178 @AB}{--<br>Netball--}{r181+180 @AB}<br>{--<br>Pupils are free to be assessed in any sport that is covered by the exam boards specification, but these are the sports that are routinely covered in lessons. --}{r184+183 @AB}<br>|||
-|{++Awesome ++}{r191+192 @AB}{--Assessment--}{r191+192 @AB}|{++Iyanu ++}{r195+196+194 @AB}{--Written end of topic test for each unit--}{r195+196+194 @AB}<br>{--<br>Ongoing practical assessment in each sport covered--}{r199+198 @AB}<br><br>|||
-|{++Eyes  ++}{r207+208 @AB}{--Building on Prior Learning--}{r207+208 @AB}|{++ ++}{r211+212+210 @AB}{--All practical activities taught are those activities that were taught at KS3. Sports mentioned above have been historically strong for our students, however, they are subject to change dependent on student needs. Key terminology that have been drip fed to pupils at KS3 are used and explored in greater detail. --}{r211+212+210 @AB}<br><br>|||
-|{++Mercy  ++}{r220+221 @AB}{--Linked learning--}{r220+221 @AB}|{++ ++}{r224+225+223 @AB}{--The course specification is taught in the order provided by the exam board. As the course progresses, earlier topics are re-visited through starter activities to spiral the curriculum. Reference is made to earlier topics when there is a cross over, as well as when topics that are commonly paired together in exam questions are taught.  --}{r224+225+223 @AB}<br>|||
-|{++Deserve  ++}{r232+233 @AB}{--Links with other subjects--}{r232+233 @AB}|{++ ++}{r236+237+235 @AB}{--Science, specifically related to the content on body systems. Mathematics, specifically related to interpreting data, the calculation of training intensities and the measurement / timing in athletics. English, specifically related to key words and terminology and structuring longer answer exam style questions.--}{r236+237+235 @AB}<br><br>|||
-|{++Ears  ++}{r245+246 @AB}{--Extracurricular opportunities--}{r245+246 @AB}|{++ ++}{r250+251 @AB}{--Numerous after school extra-curricular clubs run in the PE department throughout the year. In addition, lunch clubs run, with some targeting GCSE students. GCSE specific clubs are sometimes added to the timetable to prepare for moderations, or if there is a general developmental need. School fixtures/competitions also give opportunity to compete in full recognised competitive games/events where evidence can be gathered and used for moderation. --}{r250+251 @AB}|||
-|{++Heard  ++}{r256+257 @AB}{--Literacy--}{r256+257 @AB}|{++ ++}{r261+262 @AB}{--Use of key terminology and definitions. Ability to decipher the meaning of command words in exam questions, and in turn use the correct level of detail required. Ability to apply examples within their work to support their point. --}{r261+262 @AB}|{--Numeracy--}{r264 @AB}|{--Interpreting data that is presented in different formats, the calculation of training intensities, the measuring and recording of fitness testing data, the comparison of data against national averages and the measurement/timing in athletics.--}{r266 @AB}|
-|{++Seen  ++}{r271+272 @AB}{--A successful learner in this subject will demonstrate--}{r271+272 @AB}|{++ ++}{r275+276+274 @AB}{--Successful PE students will be well motivated to take up all available extra-curricular opportunities to enhance their practical grades. They will be well organised and show resilience to learn work on a weekly basis, reviewing and improving their knowledge and understanding. They will demonstrate a strong general knowledge and genuine interest in all sports to enable them to apply theoretical content to practical situations. --}{r275+276+274 @AB}<br><br><br><br>|||
-|{++Shown  ++}{r286+287 @AB}{--Links to SMSC--}{r286+287 @AB}|{++ ++}{r290+291+289 @AB}{--253. Provision for the spiritual development of pupils includes developing their:--}{r290+291+289 @AB}{--<br>ability to be reflective about their own beliefs (religious or otherwise) and perspective on life--}{r293+292 @AB}{--<br>sense of enjoyment and fascination in learning about themselves, others and the world around them--}{r295+294 @AB}{--<br>use of imagination and creativity in their learning--}{r297+296 @AB}{--<br>willingness to reflect on their experiences--}{r299+298 @AB}<br>{--<br>254. Provision for the moral development of pupils includes developing their:--}{r302+301 @AB}{--<br>understanding of the consequences of their behaviour and actions--}{r304+303 @AB}{--<br>interest in investigating and offering reasoned views about moral and ethical issues and ability to understand and appreciate the viewpoints of others on these issues--}{r306+305 @AB}<br>{--<br>255. Provision for the social development of pupils includes developing their:--}{r309+308 @AB}{--<br>use of a range of social skills in different contexts, for example working and socialising with other pupils, including those from different religious, ethnic and socio-economic backgrounds--}{r311+310 @AB}{--<br>willingness to participate in a variety of communities and social settings, including by volunteering, cooperating well with others and being able to resolve conflicts effectively--}{r313+312 @AB}<br>{--<br>256. Provision for the cultural development of pupils includes developing their:--}{r316+315 @AB}<br>{--<br>willingness to participate in and respond positively to artistic, musical, sporting and cultural opportunities--}{r319+318 @AB}{--<br>understanding and appreciation of the wide range of cultural influences that have shaped their own heritage and that of others--}{r322 @AB}|||
-|{++ ++}{r327+328 @AB}{--Ways to support student learning in this subject--}{r327+328 @AB}|{++ ++}{r331+332+330 @AB}{--Encourage students to master skills in three practical sports / activities, which must include at least one team and one individual sport / activity. --}{r331+332+330 @AB}<br>{--<br>To gain video evidence of sports / activities where necessary.--}{r335+334 @AB}<br>{--<br>Encourage students to watch and read about a wide range of sports / activities, which will enhance their ability to apply theory content to practical situations.--}{r338+337 @AB}<br>{--<br>To encourage students to learn work on a weekly basis; to complete homework to the best of their ability and submit it on time, asking their member of staff for support if unsure.--}{r342 @AB}|||
+|{~~Practical Topics~>You  ~~}{>>r169+168 @AB<<}|{~~Athletics~>Onise ~~}{>>r173+172 @AB<<}{--<br>Handball--}{>>r175 @AB<<}{--<br>Badminton--}{>>r177 @AB<<}{--<br>Football--}{>>r179 @AB<<}{--<br>Netball--}{>>r181 @AB<<}<br>{--<br>Pupils are free to be assessed in any sport that is covered by the exam boards specification, but these are the sports that are routinely covered in lessons. --}{>>r184 @AB<<}<br>|||
+|{~~Assessment~>Awesome ~~}{>>r192+191 @AB<<}|{~~Written end of topic test for each unit~>Iyanu ~~}{>>r196+195 @AB<<}<br>{--<br>Ongoing practical assessment in each sport covered--}{>>r199 @AB<<}<br><br>|||
+|{~~Building on Prior Learning~>Eyes  ~~}{>>r208+207 @AB<<}|{~~All practical activities taught are those activities that were taught at KS3. Sports mentioned above have been historically strong for our students, however, they are subject to change dependent on student needs. Key terminology that have been drip fed to pupils at KS3 are used and explored in greater detail. ~> ~~}{>>r212+211 @AB<<}<br><br>|||
+|{~~Linked learning~>Mercy  ~~}{>>r221+220 @AB<<}|{~~The course specification is taught in the order provided by the exam board. As the course progresses, earlier topics are re-visited through starter activities to spiral the curriculum. Reference is made to earlier topics when there is a cross over, as well as when topics that are commonly paired together in exam questions are taught.  ~> ~~}{>>r225+224 @AB<<}<br>|||
+|{~~Links with other subjects~>Deserve  ~~}{>>r233+232 @AB<<}|{~~Science, specifically related to the content on body systems. Mathematics, specifically related to interpreting data, the calculation of training intensities and the measurement / timing in athletics. English, specifically related to key words and terminology and structuring longer answer exam style questions.~> ~~}{>>r237+236 @AB<<}<br><br>|||
+|{~~Extracurricular opportunities~>Ears  ~~}{>>r246+245 @AB<<}|{~~Numerous after school extra-curricular clubs run in the PE department throughout the year. In addition, lunch clubs run, with some targeting GCSE students. GCSE specific clubs are sometimes added to the timetable to prepare for moderations, or if there is a general developmental need. School fixtures/competitions also give opportunity to compete in full recognised competitive games/events where evidence can be gathered and used for moderation. ~> ~~}{>>r251+250 @AB<<}|||
+|{~~Literacy~>Heard  ~~}{>>r257+256 @AB<<}|{~~Use of key terminology and definitions. Ability to decipher the meaning of command words in exam questions, and in turn use the correct level of detail required. Ability to apply examples within their work to support their point. ~> ~~}{>>r262+261 @AB<<}|{--Numeracy--}{>>r264 @AB<<}|{--Interpreting data that is presented in different formats, the calculation of training intensities, the measuring and recording of fitness testing data, the comparison of data against national averages and the measurement/timing in athletics.--}{>>r266 @AB<<}|
+|{~~A successful learner in this subject will demonstrate~>Seen  ~~}{>>r272+271 @AB<<}|{~~Successful PE students will be well motivated to take up all available extra-curricular opportunities to enhance their practical grades. They will be well organised and show resilience to learn work on a weekly basis, reviewing and improving their knowledge and understanding. They will demonstrate a strong general knowledge and genuine interest in all sports to enable them to apply theoretical content to practical situations. ~> ~~}{>>r276+275 @AB<<}<br><br><br><br>|||
+|{~~Links to SMSC~>Shown  ~~}{>>r287+286 @AB<<}|{~~253. Provision for the spiritual development of pupils includes developing their:~> ~~}{>>r291+290 @AB<<}{--<br>ability to be reflective about their own beliefs (religious or otherwise) and perspective on life--}{>>r293 @AB<<}{--<br>sense of enjoyment and fascination in learning about themselves, others and the world around them--}{>>r295 @AB<<}{--<br>use of imagination and creativity in their learning--}{>>r297 @AB<<}{--<br>willingness to reflect on their experiences--}{>>r299 @AB<<}<br>{--<br>254. Provision for the moral development of pupils includes developing their:--}{>>r302 @AB<<}{--<br>understanding of the consequences of their behaviour and actions--}{>>r304 @AB<<}{--<br>interest in investigating and offering reasoned views about moral and ethical issues and ability to understand and appreciate the viewpoints of others on these issues--}{>>r306 @AB<<}<br>{--<br>255. Provision for the social development of pupils includes developing their:--}{>>r309 @AB<<}{--<br>use of a range of social skills in different contexts, for example working and socialising with other pupils, including those from different religious, ethnic and socio-economic backgrounds--}{>>r311 @AB<<}{--<br>willingness to participate in a variety of communities and social settings, including by volunteering, cooperating well with others and being able to resolve conflicts effectively--}{>>r313 @AB<<}<br>{--<br>256. Provision for the cultural development of pupils includes developing their:--}{>>r316 @AB<<}<br>{--<br>willingness to participate in and respond positively to artistic, musical, sporting and cultural opportunities--}{>>r319 @AB<<}{--<br>understanding and appreciation of the wide range of cultural influences that have shaped their own heritage and that of others--}{>>r322 @AB<<}|||
+|{~~Ways to support student learning in this subject~> ~~}{>>r328+327 @AB<<}|{~~Encourage students to master skills in three practical sports / activities, which must include at least one team and one individual sport / activity. ~> ~~}{>>r332+331 @AB<<}<br>{--<br>To gain video evidence of sports / activities where necessary.--}{>>r335 @AB<<}<br>{--<br>Encourage students to watch and read about a wide range of sports / activities, which will enhance their ability to apply theory content to practical situations.--}{>>r338 @AB<<}<br>{--<br>To encourage students to learn work on a weekly basis; to complete homework to the best of their ability and submit it on time, asking their member of staff for support if unsure.--}{>>r342 @AB<<}|||
 
-<!-- p143 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r344+343 @AB}¶{r344+343 @AB}
+<!-- p143 left, first-line 0in, left 0in, break-ins r343 @AB -->
+{++ ++}{>>r344 @AB<<}
 
-<!-- t1 9x2, cells p144-p161 by row, p144-p161 after 0pt line 1.15, widths 3.0215in 2.1486in, width 5.17in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t1.row0 t1.row1 t1.row2 t1.row3 t1.row4 t1.row5; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t1.row6; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t1.row7 t1.row8, break-ins r347+346 @AB in p144; r349+348 @AB in p145; r352+351 @AB in p146; r354+353 @AB in p147; r357+356 @AB in p148; r359+358 @AB in p149; r362+361 @AB in p150; r364+363 @AB in p151; r367+366 @AB in p152; r369+368 @AB in p153; r372+371 @AB in p154; r374+373 @AB in p155; r377+376 @AB in p156; r379+378 @AB in p157; r382+381 @AB in p158; r384+383 @AB in p159; r387+386 @AB in p160; r389+388 @AB in p161, rev r345 @AB in t1.row0; r350 @AB in t1.row1; r355 @AB in t1.row2; r360 @AB in t1.row3; r365 @AB in t1.row4; r370 @AB in t1.row5; r375 @AB in t1.row6; r380 @AB in t1.row7; r385 @AB in t1.row8 -->
-|{++English Sentences  ++}{r347+346 @AB}|{++Yoruba Sentences (Repeated) ++}{r349+348 @AB}|
+<!-- t1 9x2, cells p144-p161 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t1.row0 t1.row1 t1.row2 t1.row3 t1.row4 t1.row5; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t1.row6; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t1.row7 t1.row8, break-ins r346 @AB in p144; r348 @AB in p145; r351 @AB in p146; r353 @AB in p147; r356 @AB in p148; r358 @AB in p149; r361 @AB in p150; r363 @AB in p151; r366 @AB in p152; r368 @AB in p153; r371 @AB in p154; r373 @AB in p155; r376 @AB in p156; r378 @AB in p157; r381 @AB in p158; r383 @AB in p159; r386 @AB in p160; r388 @AB in p161, rev r345 @AB in t1.row0; r350 @AB in t1.row1; r355 @AB in t1.row2; r360 @AB in t1.row3; r365 @AB in t1.row4; r370 @AB in t1.row5; r375 @AB in t1.row6; r380 @AB in t1.row7; r385 @AB in t1.row8 -->
+|{++English Sentences  ++}{>>r347 @AB<<}|{++Yoruba Sentences (Repeated) ++}{>>r349 @AB<<}|
 |:-|:-|
-|{++You are the God of awesome wonder ++}{r352+351 @AB}|{++OniseIyanu ++}{r354+353 @AB}|
-|{++I have tasted of your power ++}{r357+356 @AB}|{++OniseIyanu ++}{r359+358 @AB}|
-|{++You have shown me so much mercy… ++}{r362+361 @AB}|{++OniseIyanu ++}{r364+363 @AB}|
-|{++My eyes have seen ++}{r367+366 @AB}|{++ ++}{r369+368 @AB}|
-|{++My ears have heard ++}{r372+371 @AB}|{++ ++}{r374+373 @AB}|
-|{++Creation bow in awe of you ++}{r377+376 @AB}|{++ ++}{r379+378 @AB}|
-|{++The words you speak turn things around ++}{r382+381 @AB}|{++ ++}{r384+383 @AB}|
-|{++Your outstretched hands has lifted me ++}{r387+386 @AB}|{++ ++}{r389+388 @AB}|
+|{++You are the God of awesome wonder ++}{>>r352 @AB<<}|{++OniseIyanu ++}{>>r354 @AB<<}|
+|{++I have tasted of your power ++}{>>r357 @AB<<}|{++OniseIyanu ++}{>>r359 @AB<<}|
+|{++You have shown me so much mercy… ++}{>>r362 @AB<<}|{++OniseIyanu ++}{>>r364 @AB<<}|
+|{++My eyes have seen ++}{>>r367 @AB<<}|{++ ++}{>>r369 @AB<<}|
+|{++My ears have heard ++}{>>r372 @AB<<}|{++ ++}{>>r374 @AB<<}|
+|{++Creation bow in awe of you ++}{>>r377 @AB<<}|{++ ++}{>>r379 @AB<<}|
+|{++The words you speak turn things around ++}{>>r382 @AB<<}|{++ ++}{>>r384 @AB<<}|
+|{++Your outstretched hands has lifted me ++}{>>r387 @AB<<}|{++ ++}{>>r389 @AB<<}|
 
-<!-- p162 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ ++}{r391+390 @AB}¶{r391+390 @AB}
+<!-- p162 left, first-line 0in, left 0in, break-ins r390 @AB -->
+{++ ++}{>>r391 @AB<<}
 
-<!-- p163 -->
-{++Other examples in sentences: ++}{r393+392 @AB}¶{r393+392 @AB}
+<!-- p163 break-ins r392 @AB -->
+{++Other examples in sentences: ++}{>>r393 @AB<<}
 
-<!-- t2 12x4, cells p164-p211 by row, p164-p211 after 0pt line 1.15, widths 1.51in 1.512in 1.512in 0.707in, width 5.24in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t2.row0 t2.row1 t2.row2 t2.row3 t2.row9 t2.row10 t2.row11; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t2.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t2.row5 t2.row6 t2.row7; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t2.row8, break-ins r396+395 @AB in p164; r398+397 @AB in p165; r400+399 @AB in p166; r402+401 @AB in p167; r405+404 @AB in p168; r407+406 @AB in p169; r409+408 @AB in p170; r411+410 @AB in p171; r414+413 @AB in p172; r416+415 @AB in p173; r418+417 @AB in p174; r420+419 @AB in p175; r423+422 @AB in p176; r425+424 @AB in p177; r427+426 @AB in p178; r429+428 @AB in p179; r432+431 @AB in p180; r434+433 @AB in p181; r436+435 @AB in p182; r438+437 @AB in p183; r441+440 @AB in p184; r443+442 @AB in p185; r445+444 @AB in p186; r447+446 @AB in p187; r450+449 @AB in p188; r452+451 @AB in p189; r454+453 @AB in p190; r456+455 @AB in p191; r459+458 @AB in p192; r461+460 @AB in p193; r463+462 @AB in p194; r465+464 @AB in p195; r468+467 @AB in p196; r470+469 @AB in p197; r472+471 @AB in p198; r474+473 @AB in p199; r477+476 @AB in p200; r479+478 @AB in p201; r481+480 @AB in p202; r483+482 @AB in p203; r486+485 @AB in p204; r488+487 @AB in p205; r490+489 @AB in p206; r492+491 @AB in p207; r495+494 @AB in p208; r497+496 @AB in p209; r499+498 @AB in p210; r501+500 @AB in p211, rev r394 @AB in t2.row0; r403 @AB in t2.row1; r412 @AB in t2.row2; r421 @AB in t2.row3; r430 @AB in t2.row4; r439 @AB in t2.row5; r448 @AB in t2.row6; r457 @AB in t2.row7; r466 @AB in t2.row8; r475 @AB in t2.row9; r484 @AB in t2.row10; r493 @AB in t2.row11 -->
-|{++Nouns  ++}{r396+395 @AB}|{++Verbs  ++}{r398+397 @AB}|{++Adjectives ++}{r400+399 @AB}|{++Adverbs ++}{r402+401 @AB}|
+<!-- t2 12x4, cells p164-p211 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t2.row0 t2.row1 t2.row2 t2.row3 t2.row9 t2.row10 t2.row11; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t2.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t2.row5 t2.row6 t2.row7; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t2.row8, break-ins r395 @AB in p164; r397 @AB in p165; r399 @AB in p166; r401 @AB in p167; r404 @AB in p168; r406 @AB in p169; r408 @AB in p170; r410 @AB in p171; r413 @AB in p172; r415 @AB in p173; r417 @AB in p174; r419 @AB in p175; r422 @AB in p176; r424 @AB in p177; r426 @AB in p178; r428 @AB in p179; r431 @AB in p180; r433 @AB in p181; r435 @AB in p182; r437 @AB in p183; r440 @AB in p184; r442 @AB in p185; r444 @AB in p186; r446 @AB in p187; r449 @AB in p188; r451 @AB in p189; r453 @AB in p190; r455 @AB in p191; r458 @AB in p192; r460 @AB in p193; r462 @AB in p194; r464 @AB in p195; r467 @AB in p196; r469 @AB in p197; r471 @AB in p198; r473 @AB in p199; r476 @AB in p200; r478 @AB in p201; r480 @AB in p202; r482 @AB in p203; r485 @AB in p204; r487 @AB in p205; r489 @AB in p206; r491 @AB in p207; r494 @AB in p208; r496 @AB in p209; r498 @AB in p210; r500 @AB in p211, rev r394 @AB in t2.row0; r403 @AB in t2.row1; r412 @AB in t2.row2; r421 @AB in t2.row3; r430 @AB in t2.row4; r439 @AB in t2.row5; r448 @AB in t2.row6; r457 @AB in t2.row7; r466 @AB in t2.row8; r475 @AB in t2.row9; r484 @AB in t2.row10; r493 @AB in t2.row11 -->
+|{++Nouns  ++}{>>r396 @AB<<}|{++Verbs  ++}{>>r398 @AB<<}|{++Adjectives ++}{>>r400 @AB<<}|{++Adverbs ++}{>>r402 @AB<<}|
 |:-|:-|:-|:-|
-|{++God ++}{r405+404 @AB}|{++Are  ++}{r407+406 @AB}|{++Awesome ++}{r409+408 @AB}|{++So ++}{r411+410 @AB}|
-|{++Power ++}{r414+413 @AB}|{++Tasted ++}{r416+415 @AB}|{++Outstretched  ++}{r418+417 @AB}|{++Much ++}{r420+419 @AB}|
-|{++Mercy ++}{r423+422 @AB}|{++Have  ++}{r425+424 @AB}|{++ ++}{r427+426 @AB}|{++ ++}{r429+428 @AB}|
-|{++Wonders  ++}{r432+431 @AB}|{++Shown  ++}{r434+433 @AB}|{++ ++}{r436+435 @AB}|{++ ++}{r438+437 @AB}|
-|{++Praise  ++}{r441+440 @AB}|{++Seen  ++}{r443+442 @AB}|{++ ++}{r445+444 @AB}|{++ ++}{r447+446 @AB}|
-|{++Creations  ++}{r450+449 @AB}|{++Heard  ++}{r452+451 @AB}|{++ ++}{r454+453 @AB}|{++ ++}{r456+455 @AB}|
-|{++Words  ++}{r459+458 @AB}|{++Bow ++}{r461+460 @AB}|{++ ++}{r463+462 @AB}|{++ ++}{r465+464 @AB}|
-|{++Chains  ++}{r468+467 @AB}|{++Speak ++}{r470+469 @AB}|{++ ++}{r472+471 @AB}|{++ ++}{r474+473 @AB}|
-|{++Colts  ++}{r477+476 @AB}|{++Turn ++}{r479+478 @AB}|{++ ++}{r481+480 @AB}|{++ ++}{r483+482 @AB}|
-|{++Things  ++}{r486+485 @AB}|{++Lifted  ++}{r488+487 @AB}|{++ ++}{r490+489 @AB}|{++ ++}{r492+491 @AB}|
-|{++Arm ++}{r495+494 @AB}|{++ ++}{r497+496 @AB}|{++ ++}{r499+498 @AB}|{++ ++}{r501+500 @AB}|
+|{++God ++}{>>r405 @AB<<}|{++Are  ++}{>>r407 @AB<<}|{++Awesome ++}{>>r409 @AB<<}|{++So ++}{>>r411 @AB<<}|
+|{++Power ++}{>>r414 @AB<<}|{++Tasted ++}{>>r416 @AB<<}|{++Outstretched  ++}{>>r418 @AB<<}|{++Much ++}{>>r420 @AB<<}|
+|{++Mercy ++}{>>r423 @AB<<}|{++Have  ++}{>>r425 @AB<<}|{++ ++}{>>r427 @AB<<}|{++ ++}{>>r429 @AB<<}|
+|{++Wonders  ++}{>>r432 @AB<<}|{++Shown  ++}{>>r434 @AB<<}|{++ ++}{>>r436 @AB<<}|{++ ++}{>>r438 @AB<<}|
+|{++Praise  ++}{>>r441 @AB<<}|{++Seen  ++}{>>r443 @AB<<}|{++ ++}{>>r445 @AB<<}|{++ ++}{>>r447 @AB<<}|
+|{++Creations  ++}{>>r450 @AB<<}|{++Heard  ++}{>>r452 @AB<<}|{++ ++}{>>r454 @AB<<}|{++ ++}{>>r456 @AB<<}|
+|{++Words  ++}{>>r459 @AB<<}|{++Bow ++}{>>r461 @AB<<}|{++ ++}{>>r463 @AB<<}|{++ ++}{>>r465 @AB<<}|
+|{++Chains  ++}{>>r468 @AB<<}|{++Speak ++}{>>r470 @AB<<}|{++ ++}{>>r472 @AB<<}|{++ ++}{>>r474 @AB<<}|
+|{++Colts  ++}{>>r477 @AB<<}|{++Turn ++}{>>r479 @AB<<}|{++ ++}{>>r481 @AB<<}|{++ ++}{>>r483 @AB<<}|
+|{++Things  ++}{>>r486 @AB<<}|{++Lifted  ++}{>>r488 @AB<<}|{++ ++}{>>r490 @AB<<}|{++ ++}{>>r492 @AB<<}|
+|{++Arm ++}{>>r495 @AB<<}|{++ ++}{>>r497 @AB<<}|{++ ++}{>>r499 @AB<<}|{++ ++}{>>r501 @AB<<}|
 
-<!-- p212 left, first-line 0in, left 0in, after 2.75pt, line 1 -->
-{++ ++}{r503+502 @AB}¶{r503+502 @AB}
+<!-- p212 left, first-line 0in, left 0in, break-ins r502 @AB -->
+{++ ++}{>>r503 @AB<<}
 
-<!-- p213 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Two: “Mai Girma” (Song) by SOLOMON LANGE ++}{r505+504 @AB}¶{r505+504 @AB}
+<!-- p213 left, right -0.0104in, break-ins r504 @AB -->
+{++Excerpt Two: “Mai Girma” (Song) by SOLOMON LANGE ++}{>>r505 @AB<<}
 
-<!-- p214 -->
-{++In the second song, the two major languages being code switched are English and Hausa as seen in the first two lines of the song below: ++}{r507+506 @AB}¶{r507+506 @AB}
+<!-- p214 break-ins r506 @AB -->
+{++In the second song, the two major languages being code switched are English and Hausa as seen in the first two lines of the song below: ++}{>>r507 @AB<<}
 
-<!-- p215 -->
-{++I will lift up my voice and sing  ++}{r509+508 @AB}¶{r509+508 @AB}
+<!-- p215 break-ins r508 @AB -->
+{++I will lift up my voice and sing  ++}{>>r509 @AB<<}
 
-<!-- p216 -->
-{++Of the mercies of the Lord  ++}{r511+510 @AB}¶{r511+510 @AB}
+<!-- p216 break-ins r510 @AB -->
+{++Of the mercies of the Lord  ++}{>>r511 @AB<<}
 
-<!-- p217 -->
-{++Mai girma ++}{r513+512 @AB}¶{r513+512 @AB}
+<!-- p217 break-ins r512 @AB -->
+{++Mai girma ++}{>>r513 @AB<<}
 
-<!-- p218 -->
-{++Mai girma ne kai  ++}{r515+514 @AB}¶{r515+514 @AB}
+<!-- p218 break-ins r514 @AB -->
+{++Mai girma ne kai  ++}{>>r515 @AB<<}
 
-<!-- p219 -->
-{++Mai mulkialmasihu ++}{r517+516 @AB}¶{r517+516 @AB}
+<!-- p219 break-ins r516 @AB -->
+{++Mai mulkialmasihu ++}{>>r517 @AB<<}
 
-<!-- p220 -->
-{++Babu wanikamar da kai  ++}{r519+518 @AB}¶{r519+518 @AB}
+<!-- p220 break-ins r518 @AB -->
+{++Babu wanikamar da kai  ++}{>>r519 @AB<<}
 
-<!-- p221 -->
-{++Babu wanikamar da kai  ++}{r521+520 @AB}¶{r521+520 @AB}
+<!-- p221 break-ins r520 @AB -->
+{++Babu wanikamar da kai  ++}{>>r521 @AB<<}
 
-<!-- p222 -->
-{++Mai girmamaigirma ne kai  ++}{r523+522 @AB}¶{r523+522 @AB}
+<!-- p222 break-ins r522 @AB -->
+{++Mai girmamaigirma ne kai  ++}{>>r523 @AB<<}
 
-<!-- p223 -->
-{++Karbasujada ++}{r525+524 @AB}¶{r525+524 @AB}
+<!-- p223 break-ins r524 @AB -->
+{++Karbasujada ++}{>>r525 @AB<<}
 
-<!-- p224 -->
-{++Karbadaukaka ++}{r527+526 @AB}¶{r527+526 @AB}
+<!-- p224 break-ins r526 @AB -->
+{++Karbadaukaka ++}{>>r527 @AB<<}
 
-<!-- p225 -->
-{++Karbayabo o uba ++}{r529+528 @AB}¶{r529+528 @AB}
+<!-- p225 break-ins r528 @AB -->
+{++Karbayabo o uba ++}{>>r529 @AB<<}
 
-<!-- p226 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r531+530 @AB}¶{r531+530 @AB}
+<!-- p226 left, first-line 0in, left 0in, break-ins r530 @AB -->
+{++ ++}{>>r531 @AB<<}
 
-<!-- t3 9x2, cells p227-p244 by row, p227-p244 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t3.row0 t3.row1 t3.row8; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t3.row2; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t3.row3 t3.row4 t3.row5 t3.row6; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t3.row7, break-ins r534+533 @AB in p227; r536+535 @AB in p228; r539+538 @AB in p229; r541+540 @AB in p230; r544+543 @AB in p231; r546+545 @AB in p232; r549+548 @AB in p233; r551+550 @AB in p234; r554+553 @AB in p235; r556+555 @AB in p236; r559+558 @AB in p237; r561+560 @AB in p238; r564+563 @AB in p239; r566+565 @AB in p240; r569+568 @AB in p241; r571+570 @AB in p242; r574+573 @AB in p243; r576+575 @AB in p244, rev r532 @AB in t3.row0; r537 @AB in t3.row1; r542 @AB in t3.row2; r547 @AB in t3.row3; r552 @AB in t3.row4; r557 @AB in t3.row5; r562 @AB in t3.row6; r567 @AB in t3.row7; r572 @AB in t3.row8 -->
-|{++English Words  ++}{r534+533 @AB}|{++Hausa Words ++}{r536+535 @AB}|
+<!-- t3 9x2, cells p227-p244 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t3.row0 t3.row1 t3.row8; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t3.row2; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t3.row3 t3.row4 t3.row5 t3.row6; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t3.row7, break-ins r533 @AB in p227; r535 @AB in p228; r538 @AB in p229; r540 @AB in p230; r543 @AB in p231; r545 @AB in p232; r548 @AB in p233; r550 @AB in p234; r553 @AB in p235; r555 @AB in p236; r558 @AB in p237; r560 @AB in p238; r563 @AB in p239; r565 @AB in p240; r568 @AB in p241; r570 @AB in p242; r573 @AB in p243; r575 @AB in p244, rev r532 @AB in t3.row0; r537 @AB in t3.row1; r542 @AB in t3.row2; r547 @AB in t3.row3; r552 @AB in t3.row4; r557 @AB in t3.row5; r562 @AB in t3.row6; r567 @AB in t3.row7; r572 @AB in t3.row8 -->
+|{++English Words  ++}{>>r534 @AB<<}|{++Hausa Words ++}{>>r536 @AB<<}|
 |:-|:-|
-|{++I ++}{r539+538 @AB}|{++Mai ++}{r541+540 @AB}|
-|{++Will ++}{r544+543 @AB}|{++Girma ++}{r546+545 @AB}|
-|{++Lift ++}{r549+548 @AB}|{++Ne kai ++}{r551+550 @AB}|
-|{++My ++}{r554+553 @AB}|{++Mai ++}{r556+555 @AB}|
-|{++Voice ++}{r559+558 @AB}|{++Mulki ++}{r561+560 @AB}|
-|{++Sing ++}{r564+563 @AB}|{++Babu ++}{r566+565 @AB}|
-|{++Setting  ++}{r569+568 @AB}|{++Wani ++}{r571+570 @AB}|
-|{++Mercies  ++}{r574+573 @AB}|{++Kamar ++}{r576+575 @AB}|
+|{++I ++}{>>r539 @AB<<}|{++Mai ++}{>>r541 @AB<<}|
+|{++Will ++}{>>r544 @AB<<}|{++Girma ++}{>>r546 @AB<<}|
+|{++Lift ++}{>>r549 @AB<<}|{++Ne kai ++}{>>r551 @AB<<}|
+|{++My ++}{>>r554 @AB<<}|{++Mai ++}{>>r556 @AB<<}|
+|{++Voice ++}{>>r559 @AB<<}|{++Mulki ++}{>>r561 @AB<<}|
+|{++Sing ++}{>>r564 @AB<<}|{++Babu ++}{>>r566 @AB<<}|
+|{++Setting  ++}{>>r569 @AB<<}|{++Wani ++}{>>r571 @AB<<}|
+|{++Mercies  ++}{>>r574 @AB<<}|{++Kamar ++}{>>r576 @AB<<}|
 
-<!-- p245 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r578+577 @AB}¶{r578+577 @AB}
+<!-- p245 left, first-line 0in, left 0in, break-ins r577 @AB -->
+{++ ++}{>>r578 @AB<<}
 
-<!-- p246 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r580+579 @AB}¶{r580+579 @AB}
+<!-- p246 left, first-line 0in, left 0in, break-ins r579 @AB -->
+{++ ++}{>>r580 @AB<<}
 
-<!-- p247 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ ++}{r582+581 @AB}¶{r582+581 @AB}
+<!-- p247 left, first-line 0in, left 0in, break-ins r581 @AB -->
+{++ ++}{>>r582 @AB<<}
 
-<!-- t4 5x4, cells p248-p267 by row, p248-p267 after 0pt line 1.15, widths 0.666in 0.62in 0.836in 0.64in, width 2.7625in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t4.row0.cell0 t4.row0.cell1 t4.row1.cell0 t4.row1.cell1 t4.row2.cell0 t4.row2.cell1 t4.row3.cell0 t4.row3.cell1 t4.row4.cell0 t4.row4.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t4.row0.cell2 t4.row1.cell2 t4.row2.cell2 t4.row3.cell2 t4.row4.cell2; top,bottom single 0.5pt 000000 + left,right single 0.375pt 000000 in t4.row0.cell3 t4.row1.cell3 t4.row2.cell3 t4.row3.cell3 t4.row4.cell3, break-ins r585+584 @AB in p248; r587+586 @AB in p249; r589+588 @AB in p250; r591+590 @AB in p251; r594+593 @AB in p252; r596+595 @AB in p253; r598+597 @AB in p254; r600+599 @AB in p255; r603+602 @AB in p256; r605+604 @AB in p257; r607+606 @AB in p258; r609+608 @AB in p259; r612+611 @AB in p260; r614+613 @AB in p261; r616+615 @AB in p262; r618+617 @AB in p263; r621+620 @AB in p264; r623+622 @AB in p265; r625+624 @AB in p266; r627+626 @AB in p267, rev r583 @AB in t4.row0; r592 @AB in t4.row1; r601 @AB in t4.row2; r610 @AB in t4.row3; r619 @AB in t4.row4 -->
-|{++Nouns  ++}{r585+584 @AB}|{++Verbs  ++}{r587+586 @AB}|{++Adjectives  ++}{r589+588 @AB}|{++Adverb ++}{r591+590 @AB}|
+<!-- t4 5x4, cells p248-p267 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t4.row0.cell0 t4.row0.cell1 t4.row1.cell0 t4.row1.cell1 t4.row2.cell0 t4.row2.cell1 t4.row3.cell0 t4.row3.cell1 t4.row4.cell0 t4.row4.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t4.row0.cell2 t4.row1.cell2 t4.row2.cell2 t4.row3.cell2 t4.row4.cell2; top,bottom single 0.5pt 000000 + left,right single 0.375pt 000000 in t4.row0.cell3 t4.row1.cell3 t4.row2.cell3 t4.row3.cell3 t4.row4.cell3, break-ins r584 @AB in p248; r586 @AB in p249; r588 @AB in p250; r590 @AB in p251; r593 @AB in p252; r595 @AB in p253; r597 @AB in p254; r599 @AB in p255; r602 @AB in p256; r604 @AB in p257; r606 @AB in p258; r608 @AB in p259; r611 @AB in p260; r613 @AB in p261; r615 @AB in p262; r617 @AB in p263; r620 @AB in p264; r622 @AB in p265; r624 @AB in p266; r626 @AB in p267, rev r583 @AB in t4.row0; r592 @AB in t4.row1; r601 @AB in t4.row2; r610 @AB in t4.row3; r619 @AB in t4.row4 -->
+|{++Nouns  ++}{>>r585 @AB<<}|{++Verbs  ++}{>>r587 @AB<<}|{++Adjectives  ++}{>>r589 @AB<<}|{++Adverb ++}{>>r591 @AB<<}|
 |:-|:-|:-|:-|
-|{++Sun ++}{r594+593 @AB}|{++Rising  ++}{r596+595 @AB}|{++Nil  ++}{r598+597 @AB}|{++Nil ++}{r600+599 @AB}|
-|{++Voice  ++}{r603+602 @AB}|{++Setting  ++}{r605+604 @AB}|{++ ++}{r607+606 @AB}|{++ ++}{r609+608 @AB}|
-|{++Mercies  ++}{r612+611 @AB}|{++Will  ++}{r614+613 @AB}|{++ ++}{r616+615 @AB}|{++ ++}{r618+617 @AB}|
-|{++Lord  ++}{r621+620 @AB}|{++Lift ++}{r623+622 @AB}|{++ ++}{r625+624 @AB}|{++ ++}{r627+626 @AB}|
+|{++Sun ++}{>>r594 @AB<<}|{++Rising  ++}{>>r596 @AB<<}|{++Nil  ++}{>>r598 @AB<<}|{++Nil ++}{>>r600 @AB<<}|
+|{++Voice  ++}{>>r603 @AB<<}|{++Setting  ++}{>>r605 @AB<<}|{++ ++}{>>r607 @AB<<}|{++ ++}{>>r609 @AB<<}|
+|{++Mercies  ++}{>>r612 @AB<<}|{++Will  ++}{>>r614 @AB<<}|{++ ++}{>>r616 @AB<<}|{++ ++}{>>r618 @AB<<}|
+|{++Lord  ++}{>>r621 @AB<<}|{++Lift ++}{>>r623 @AB<<}|{++ ++}{>>r625 @AB<<}|{++ ++}{>>r627 @AB<<}|
 
-<!-- p268 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r629+628 @AB}¶{r629+628 @AB}
+<!-- p268 left, first-line 0in, left 0in, break-ins r628 @AB -->
+{++ ++}{>>r629 @AB<<}
 
-<!-- t5 6x2, cells p269-p280 by row, p269-p280 after 0pt line 1.15, widths 1.462in 1.575in, width 3.037in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t5.row0 t5.row1 t5.row2 t5.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t5.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t5.row5, break-ins r632+631 @AB in p269; r634+633 @AB in p270; r637+636 @AB in p271; r639+638 @AB in p272; r642+641 @AB in p273; r644+643 @AB in p274; r647+646 @AB in p275; r649+648 @AB in p276; r652+651 @AB in p277; r654+653 @AB in p278; r657+656 @AB in p279; r659+658 @AB in p280, rev r630 @AB in t5.row0; r635 @AB in t5.row1; r640 @AB in t5.row2; r645 @AB in t5.row3; r650 @AB in t5.row4; r655 @AB in t5.row5 -->
-|{++English Sentence(s) ++}{r632+631 @AB}|{++Hausa Sentences  ++}{r634+633 @AB}|
+<!-- t5 6x2, cells p269-p280 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t5.row0 t5.row1 t5.row2 t5.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t5.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t5.row5, break-ins r631 @AB in p269; r633 @AB in p270; r636 @AB in p271; r638 @AB in p272; r641 @AB in p273; r643 @AB in p274; r646 @AB in p275; r648 @AB in p276; r651 @AB in p277; r653 @AB in p278; r656 @AB in p279; r658 @AB in p280, rev r630 @AB in t5.row0; r635 @AB in t5.row1; r640 @AB in t5.row2; r645 @AB in t5.row3; r650 @AB in t5.row4; r655 @AB in t5.row5 -->
+|{++English Sentence(s) ++}{>>r632 @AB<<}|{++Hausa Sentences  ++}{>>r634 @AB<<}|
 |:-|:-|
-|{++I will lift ++}{r637+636 @AB}|{++Babu wanikamar kai ++}{r639+638 @AB}|
-|{++ ++}{r642+641 @AB}|{++Karbasujada ++}{r644+643 @AB}|
-|{++ ++}{r647+646 @AB}|{++Karbadaukaka ++}{r649+648 @AB}|
-|{++ ++}{r652+651 @AB}|{++Karbayaboyau ++}{r654+653 @AB}|
-|{++ ++}{r657+656 @AB}|{++Karbasujadayau ++}{r659+658 @AB}|
+|{++I will lift ++}{>>r637 @AB<<}|{++Babu wanikamar kai ++}{>>r639 @AB<<}|
+|{++ ++}{>>r642 @AB<<}|{++Karbasujada ++}{>>r644 @AB<<}|
+|{++ ++}{>>r647 @AB<<}|{++Karbadaukaka ++}{>>r649 @AB<<}|
+|{++ ++}{>>r652 @AB<<}|{++Karbayaboyau ++}{>>r654 @AB<<}|
+|{++ ++}{>>r657 @AB<<}|{++Karbasujadayau ++}{>>r659 @AB<<}|
 
-<!-- p281 left, first-line 0in, left 0in, after 0.75pt, line 1.15 -->
-{++ ++}{r661+660 @AB}¶{r661+660 @AB}
+<!-- p281 left, first-line 0in, left 0in, break-ins r660 @AB -->
+{++ ++}{>>r661 @AB<<}
 
-<!-- t6 3x2, cells p282-p287 by row, p282-p287 after 0pt line 1.15, widths 1.833in 0.926in, width 2.759in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t6.row0.cell0; top,bottom,right single 0.375pt 000000 + left single 0.5pt 000000 in t6.row0.cell1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t6.row1.cell0; top,right single 0.375pt 000000 + left,bottom single 0.5pt 000000 in t6.row1.cell1; top,left,bottom,right single 0.5pt 000000 in t6.row2.cell0; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t6.row2.cell1, break-ins r664+663 @AB in p282; r666+665 @AB in p283; r669+668 @AB in p284; r671+670 @AB in p285; r674+673 @AB in p286; r676+675 @AB in p287, rev r662 @AB in t6.row0; r667 @AB in t6.row1; r672 @AB in t6.row2 -->
-|{++Prepositional phrases  ++}{r664+663 @AB}|{++Preposition  ++}{r666+665 @AB}|
+<!-- t6 3x2, cells p282-p287 by row, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t6.row0.cell0; top,bottom,right single 0.375pt 000000 + left single 0.5pt 000000 in t6.row0.cell1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t6.row1.cell0; top,right single 0.375pt 000000 + left,bottom single 0.5pt 000000 in t6.row1.cell1; top,left,bottom,right single 0.5pt 000000 in t6.row2.cell0; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t6.row2.cell1, break-ins r663 @AB in p282; r665 @AB in p283; r668 @AB in p284; r670 @AB in p285; r673 @AB in p286; r675 @AB in p287, rev r662 @AB in t6.row0; r667 @AB in t6.row1; r672 @AB in t6.row2 -->
+|{++Prepositional phrases  ++}{>>r664 @AB<<}|{++Preposition  ++}{>>r666 @AB<<}|
 |:-|:-|
-|{++From the rising of the sun  ++}{r669+668 @AB}|{++From, of  ++}{r671+670 @AB}|
-|{++To the setting of the same ++}{r674+673 @AB}|{++To, of  ++}{r676+675 @AB}|
+|{++From the rising of the sun  ++}{>>r669 @AB<<}|{++From, of  ++}{>>r671 @AB<<}|
+|{++To the setting of the same ++}{>>r674 @AB<<}|{++To, of  ++}{>>r676 @AB<<}|
 
-<!-- p288 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r678+677 @AB}¶{r678+677 @AB}
+<!-- p288 left, first-line 0in, left 0in, break-ins r677 @AB -->
+{++ ++}{>>r678 @AB<<}
 
-<!-- p289 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Three: “My Trust is in You” (song) by DAVID, G.   ++}{r680+679 @AB}¶{r680+679 @AB}
+<!-- p289 left, right -0.0104in, break-ins r679 @AB -->
+{++Excerpt Three: “My Trust is in You” (song) by DAVID, G.   ++}{>>r680 @AB<<}
 
-<!-- p290 -->
-{++In the third song, there are four languages that have been switched notably, English, Igbo, Hausa and Yoruba:   ++}{r682+681 @AB}¶{r682+681 @AB}
+<!-- p290 break-ins r681 @AB -->
+{++In the third song, there are four languages that have been switched notably, English, Igbo, Hausa and Yoruba:   ++}{>>r682 @AB<<}
 
-<!-- p291 -->
-{++My trust is in you  ++}{r684+683 @AB}¶{r684+683 @AB}
+<!-- p291 break-ins r683 @AB -->
+{++My trust is in you  ++}{>>r684 @AB<<}
 
-<!-- p292 -->
-{++Oyigiyigi ++}{r686+685 @AB}¶{r686+685 @AB}
+<!-- p292 break-ins r685 @AB -->
+{++Oyigiyigi ++}{>>r686 @AB<<}
 
-<!-- p293 -->
-{++My trust is in you  ++}{r688+687 @AB}¶{r688+687 @AB}
+<!-- p293 break-ins r687 @AB -->
+{++My trust is in you  ++}{>>r688 @AB<<}
 
-<!-- p294 -->
-{++Serikiduniya ++}{r690+689 @AB}¶{r690+689 @AB}
+<!-- p294 break-ins r689 @AB -->
+{++Serikiduniya ++}{>>r690 @AB<<}
 
-<!-- p295 -->
-{++My trust is in you ++}{r692+691 @AB}¶{r692+691 @AB}
+<!-- p295 break-ins r691 @AB -->
+{++My trust is in you ++}{>>r692 @AB<<}
 
-<!-- p296 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r694+693 @AB}¶{r694+693 @AB}
+<!-- p296 left, first-line 0in, left 0in, break-ins r693 @AB -->
+{++ ++}{>>r694 @AB<<}
 
-<!-- p297 right 3.837in -->
-{++I put them on you  My trust is in you  ++}{r696+695 @AB}¶{r696+695 @AB}
+<!-- p297 right 3.837in, break-ins r695 @AB -->
+{++I put them on you  My trust is in you  ++}{>>r696 @AB<<}
 
-<!-- p298 -->
-{++Kabiyeosi o ++}{r698+697 @AB}¶{r698+697 @AB}
+<!-- p298 break-ins r697 @AB -->
+{++Kabiyeosi o ++}{>>r698 @AB<<}
 
-<!-- p299 -->
-{++My trust is in   ++}{r700+699 @AB}¶{r700+699 @AB}
+<!-- p299 break-ins r699 @AB -->
+{++My trust is in   ++}{>>r700 @AB<<}
 
-<!-- p300 left, first-line 0in, left 0in, after 0.8pt, line 1.15 -->
-{++ ++}{r702+701 @AB}¶{r702+701 @AB}
+<!-- p300 left, first-line 0in, left 0in, break-ins r701 @AB -->
+{++ ++}{>>r702 @AB<<}
 
-<!-- t7 6x4, cells p301-p324 by row, p301-p324 after 0pt line 1.15, widths 1.183in 1.113in 1.111in 1.297in, width 4.705in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t7.row0.cell0 t7.row0.cell1 t7.row1.cell0 t7.row1.cell1 t7.row2.cell0 t7.row2.cell1 t7.row3.cell0 t7.row3.cell1 t7.row4.cell0 t7.row4.cell1 t7.row5.cell0 t7.row5.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t7.row0.cell2 t7.row1.cell2 t7.row2.cell2 t7.row3.cell2 t7.row4.cell2 t7.row5.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t7.row0.cell3 t7.row1.cell3 t7.row2.cell3 t7.row3.cell3 t7.row4.cell3 t7.row5.cell3, break-ins r705+704 @AB in p301; r707+706 @AB in p302; r709+708 @AB in p303; r711+710 @AB in p304; r714+713 @AB in p305; r716+715 @AB in p306; r718+717 @AB in p307; r720+719 @AB in p308; r723+722 @AB in p309; r725+724 @AB in p310; r727+726 @AB in p311; r729+728 @AB in p312; r732+731 @AB in p313; r734+733 @AB in p314; r736+735 @AB in p315; r738+737 @AB in p316; r741+740 @AB in p317; r743+742 @AB in p318; r745+744 @AB in p319; r747+746 @AB in p320; r750+749 @AB in p321; r752+751 @AB in p322; r754+753 @AB in p323; r756+755 @AB in p324, rev r703 @AB in t7.row0; r712 @AB in t7.row1; r721 @AB in t7.row2; r730 @AB in t7.row3; r739 @AB in t7.row4; r748 @AB in t7.row5 -->
-|{++English words  ++}{r705+704 @AB}|{++Igbo Words ++}{r707+706 @AB}|{++Hausa words  ++}{r709+708 @AB}|{++Yoruba Words ++}{r711+710 @AB}|
+<!-- t7 6x4, cells p301-p324 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t7.row0.cell0 t7.row0.cell1 t7.row1.cell0 t7.row1.cell1 t7.row2.cell0 t7.row2.cell1 t7.row3.cell0 t7.row3.cell1 t7.row4.cell0 t7.row4.cell1 t7.row5.cell0 t7.row5.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t7.row0.cell2 t7.row1.cell2 t7.row2.cell2 t7.row3.cell2 t7.row4.cell2 t7.row5.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t7.row0.cell3 t7.row1.cell3 t7.row2.cell3 t7.row3.cell3 t7.row4.cell3 t7.row5.cell3, break-ins r704 @AB in p301; r706 @AB in p302; r708 @AB in p303; r710 @AB in p304; r713 @AB in p305; r715 @AB in p306; r717 @AB in p307; r719 @AB in p308; r722 @AB in p309; r724 @AB in p310; r726 @AB in p311; r728 @AB in p312; r731 @AB in p313; r733 @AB in p314; r735 @AB in p315; r737 @AB in p316; r740 @AB in p317; r742 @AB in p318; r744 @AB in p319; r746 @AB in p320; r749 @AB in p321; r751 @AB in p322; r753 @AB in p323; r755 @AB in p324, rev r703 @AB in t7.row0; r712 @AB in t7.row1; r721 @AB in t7.row2; r730 @AB in t7.row3; r739 @AB in t7.row4; r748 @AB in t7.row5 -->
+|{++English words  ++}{>>r705 @AB<<}|{++Igbo Words ++}{>>r707 @AB<<}|{++Hausa words  ++}{>>r709 @AB<<}|{++Yoruba Words ++}{>>r711 @AB<<}|
 |:-|:-|:-|:-|
-|{++My ++}{r714+713 @AB}|{++Isi  ++}{r716+715 @AB}|{++Seriki ++}{r718+717 @AB}|{++Kabiyeosi ++}{r720+719 @AB}|
-|{++Trust  ++}{r723+722 @AB}|{++Iyi ++}{r725+724 @AB}|{++Duniya ++}{r727+726 @AB}|{++Oyigi ++}{r729+728 @AB}|
-|{++Put  ++}{r732+731 @AB}|{++Nke ++}{r734+733 @AB}|{++ ++}{r736+735 @AB}|{++Yigi ++}{r738+737 @AB}|
-|{++Them  ++}{r741+740 @AB}|{++Du ++}{r743+742 @AB}|{++ ++}{r745+744 @AB}|{++ ++}{r747+746 @AB}|
-|{++On  ++}{r750+749 @AB}|{++ ++}{r752+751 @AB}|{++ ++}{r754+753 @AB}|{++ ++}{r756+755 @AB}|
+|{++My ++}{>>r714 @AB<<}|{++Isi  ++}{>>r716 @AB<<}|{++Seriki ++}{>>r718 @AB<<}|{++Kabiyeosi ++}{>>r720 @AB<<}|
+|{++Trust  ++}{>>r723 @AB<<}|{++Iyi ++}{>>r725 @AB<<}|{++Duniya ++}{>>r727 @AB<<}|{++Oyigi ++}{>>r729 @AB<<}|
+|{++Put  ++}{>>r732 @AB<<}|{++Nke ++}{>>r734 @AB<<}|{++ ++}{>>r736 @AB<<}|{++Yigi ++}{>>r738 @AB<<}|
+|{++Them  ++}{>>r741 @AB<<}|{++Du ++}{>>r743 @AB<<}|{++ ++}{>>r745 @AB<<}|{++ ++}{>>r747 @AB<<}|
+|{++On  ++}{>>r750 @AB<<}|{++ ++}{>>r752 @AB<<}|{++ ++}{>>r754 @AB<<}|{++ ++}{>>r756 @AB<<}|
 
-<!-- p325 left, first-line 0in, left 0in, after 0.3pt, line 1.15 -->
-{++ ++}{r758+757 @AB}¶{r758+757 @AB}
+<!-- p325 left, first-line 0in, left 0in, break-ins r757 @AB -->
+{++ ++}{>>r758 @AB<<}
 
-<!-- t8 11x4, cells p326-p369 by row, p326-p369 after 0pt line 1.15, widths 0.7194in 0.557in 0.839in 0.736in, width 2.8514in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t8.row0.cell0 t8.row0.cell1 t8.row1.cell0 t8.row1.cell1 t8.row2.cell0 t8.row2.cell1 t8.row3.cell0 t8.row3.cell1 t8.row4.cell0 t8.row4.cell1 t8.row5.cell0 t8.row5.cell1 t8.row6.cell0 t8.row6.cell1 t8.row7.cell0 t8.row7.cell1 t8.row8.cell0 t8.row8.cell1 t8.row9.cell0 t8.row9.cell1 t8.row10.cell0 t8.row10.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t8.row0.cell2 t8.row1.cell2 t8.row2.cell2 t8.row3.cell2 t8.row4.cell2 t8.row5.cell2 t8.row6.cell2 t8.row7.cell2 t8.row8.cell2 t8.row9.cell2 t8.row10.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t8.row0.cell3 t8.row1.cell3 t8.row2.cell3 t8.row3.cell3 t8.row4.cell3 t8.row5.cell3 t8.row6.cell3 t8.row7.cell3 t8.row8.cell3 t8.row9.cell3 t8.row10.cell3, break-ins r761+760 @AB in p326; r763+762 @AB in p327; r765+764 @AB in p328; r767+766 @AB in p329; r770+769 @AB in p330; r772+771 @AB in p331; r774+773 @AB in p332; r776+775 @AB in p333; r779+778 @AB in p334; r781+780 @AB in p335; r783+782 @AB in p336; r785+784 @AB in p337; r788+787 @AB in p338; r790+789 @AB in p339; r792+791 @AB in p340; r794+793 @AB in p341; r797+796 @AB in p342; r799+798 @AB in p343; r801+800 @AB in p344; r803+802 @AB in p345; r806+805 @AB in p346; r808+807 @AB in p347; r810+809 @AB in p348; r812+811 @AB in p349; r815+814 @AB in p350; r817+816 @AB in p351; r819+818 @AB in p352; r821+820 @AB in p353; r824+823 @AB in p354; r826+825 @AB in p355; r828+827 @AB in p356; r830+829 @AB in p357; r833+832 @AB in p358; r835+834 @AB in p359; r837+836 @AB in p360; r839+838 @AB in p361; r842+841 @AB in p362; r844+843 @AB in p363; r846+845 @AB in p364; r848+847 @AB in p365; r851+850 @AB in p366; r853+852 @AB in p367; r855+854 @AB in p368; r857+856 @AB in p369, rev r759 @AB in t8.row0; r768 @AB in t8.row1; r777 @AB in t8.row2; r786 @AB in t8.row3; r795 @AB in t8.row4; r804 @AB in t8.row5; r813 @AB in t8.row6; r822 @AB in t8.row7; r831 @AB in t8.row8; r840 @AB in t8.row9; r849 @AB in t8.row10 -->
-|{++Nouns  ++}{r761+760 @AB}|{++Verbs ++}{r763+762 @AB}|{++Adjectives  ++}{r765+764 @AB}|{++Adverbs  ++}{r767+766 @AB}|
+<!-- t8 11x4, cells p326-p369 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t8.row0.cell0 t8.row0.cell1 t8.row1.cell0 t8.row1.cell1 t8.row2.cell0 t8.row2.cell1 t8.row3.cell0 t8.row3.cell1 t8.row4.cell0 t8.row4.cell1 t8.row5.cell0 t8.row5.cell1 t8.row6.cell0 t8.row6.cell1 t8.row7.cell0 t8.row7.cell1 t8.row8.cell0 t8.row8.cell1 t8.row9.cell0 t8.row9.cell1 t8.row10.cell0 t8.row10.cell1; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t8.row0.cell2 t8.row1.cell2 t8.row2.cell2 t8.row3.cell2 t8.row4.cell2 t8.row5.cell2 t8.row6.cell2 t8.row7.cell2 t8.row8.cell2 t8.row9.cell2 t8.row10.cell2; top,bottom,right single 0.5pt 000000 + left single 0.375pt 000000 in t8.row0.cell3 t8.row1.cell3 t8.row2.cell3 t8.row3.cell3 t8.row4.cell3 t8.row5.cell3 t8.row6.cell3 t8.row7.cell3 t8.row8.cell3 t8.row9.cell3 t8.row10.cell3, break-ins r760 @AB in p326; r762 @AB in p327; r764 @AB in p328; r766 @AB in p329; r769 @AB in p330; r771 @AB in p331; r773 @AB in p332; r775 @AB in p333; r778 @AB in p334; r780 @AB in p335; r782 @AB in p336; r784 @AB in p337; r787 @AB in p338; r789 @AB in p339; r791 @AB in p340; r793 @AB in p341; r796 @AB in p342; r798 @AB in p343; r800 @AB in p344; r802 @AB in p345; r805 @AB in p346; r807 @AB in p347; r809 @AB in p348; r811 @AB in p349; r814 @AB in p350; r816 @AB in p351; r818 @AB in p352; r820 @AB in p353; r823 @AB in p354; r825 @AB in p355; r827 @AB in p356; r829 @AB in p357; r832 @AB in p358; r834 @AB in p359; r836 @AB in p360; r838 @AB in p361; r841 @AB in p362; r843 @AB in p363; r845 @AB in p364; r847 @AB in p365; r850 @AB in p366; r852 @AB in p367; r854 @AB in p368; r856 @AB in p369, rev r759 @AB in t8.row0; r768 @AB in t8.row1; r777 @AB in t8.row2; r786 @AB in t8.row3; r795 @AB in t8.row4; r804 @AB in t8.row5; r813 @AB in t8.row6; r822 @AB in t8.row7; r831 @AB in t8.row8; r840 @AB in t8.row9; r849 @AB in t8.row10 -->
+|{++Nouns  ++}{>>r761 @AB<<}|{++Verbs ++}{>>r763 @AB<<}|{++Adjectives  ++}{>>r765 @AB<<}|{++Adverbs  ++}{>>r767 @AB<<}|
 |:-|:-|:-|:-|
-|{++Lion  ++}{r770+769 @AB}|{++Is  ++}{r772+771 @AB}|{++Ancient  ++}{r774+773 @AB}|{++Nil  ++}{r776+775 @AB}|
-|{++Judge  ++}{r779+778 @AB}|{++Am ++}{r781+780 @AB}|{++Miracle  ++}{r783+782 @AB}|{++Nil  ++}{r785+784 @AB}|
-|{++Days  ++}{r788+787 @AB}|{++Put ++}{r790+789 @AB}|{++ ++}{r792+791 @AB}|{++ ++}{r794+793 @AB}|
-|{++Valley  ++}{r797+796 @AB}|{++ ++}{r799+798 @AB}|{++ ++}{r801+800 @AB}|{++ ++}{r803+802 @AB}|
-|{++Lilly  ++}{r806+805 @AB}|{++ ++}{r808+807 @AB}|{++ ++}{r810+809 @AB}|{++ ++}{r812+811 @AB}|
-|{++Master ++}{r815+814 @AB}|{++ ++}{r817+816 @AB}|{++ ++}{r819+818 @AB}|{++ ++}{r821+820 @AB}|
-|{++Universe  ++}{r824+823 @AB}|{++ ++}{r826+825 @AB}|{++ ++}{r828+827 @AB}|{++ ++}{r830+829 @AB}|
-|{++King  ++}{r833+832 @AB}|{++ ++}{r835+834 @AB}|{++ ++}{r837+836 @AB}|{++ ++}{r839+838 @AB}|
-|{++Father  ++}{r842+841 @AB}|{++ ++}{r844+843 @AB}|{++ ++}{r846+845 @AB}|{++ ++}{r848+847 @AB}|
-|{++Worker  ++}{r851+850 @AB}|{++ ++}{r853+852 @AB}|{++ ++}{r855+854 @AB}|{++ ++}{r857+856 @AB}|
+|{++Lion  ++}{>>r770 @AB<<}|{++Is  ++}{>>r772 @AB<<}|{++Ancient  ++}{>>r774 @AB<<}|{++Nil  ++}{>>r776 @AB<<}|
+|{++Judge  ++}{>>r779 @AB<<}|{++Am ++}{>>r781 @AB<<}|{++Miracle  ++}{>>r783 @AB<<}|{++Nil  ++}{>>r785 @AB<<}|
+|{++Days  ++}{>>r788 @AB<<}|{++Put ++}{>>r790 @AB<<}|{++ ++}{>>r792 @AB<<}|{++ ++}{>>r794 @AB<<}|
+|{++Valley  ++}{>>r797 @AB<<}|{++ ++}{>>r799 @AB<<}|{++ ++}{>>r801 @AB<<}|{++ ++}{>>r803 @AB<<}|
+|{++Lilly  ++}{>>r806 @AB<<}|{++ ++}{>>r808 @AB<<}|{++ ++}{>>r810 @AB<<}|{++ ++}{>>r812 @AB<<}|
+|{++Master ++}{>>r815 @AB<<}|{++ ++}{>>r817 @AB<<}|{++ ++}{>>r819 @AB<<}|{++ ++}{>>r821 @AB<<}|
+|{++Universe  ++}{>>r824 @AB<<}|{++ ++}{>>r826 @AB<<}|{++ ++}{>>r828 @AB<<}|{++ ++}{>>r830 @AB<<}|
+|{++King  ++}{>>r833 @AB<<}|{++ ++}{>>r835 @AB<<}|{++ ++}{>>r837 @AB<<}|{++ ++}{>>r839 @AB<<}|
+|{++Father  ++}{>>r842 @AB<<}|{++ ++}{>>r844 @AB<<}|{++ ++}{>>r846 @AB<<}|{++ ++}{>>r848 @AB<<}|
+|{++Worker  ++}{>>r851 @AB<<}|{++ ++}{>>r853 @AB<<}|{++ ++}{>>r855 @AB<<}|{++ ++}{>>r857 @AB<<}|
 
-<!-- p370 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r859+858 @AB}¶{r859+858 @AB}
+<!-- p370 left, first-line 0in, left 0in, break-ins r858 @AB -->
+{++ ++}{>>r859 @AB<<}
 
-<!-- p371 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Four: “ArugboOjo” (song) by MINISTER KENN  ++}{r861+860 @AB}¶{r861+860 @AB}
+<!-- p371 left, right -0.0104in, break-ins r860 @AB -->
+{++Excerpt Four: “ArugboOjo” (song) by MINISTER KENN  ++}{>>r861 @AB<<}
 
-<!-- p372 -->
-{++In the fourth song, also, two languages have been code switched. Consider the extracts below:   ++}{r863+862 @AB}¶{r863+862 @AB}
+<!-- p372 break-ins r862 @AB -->
+{++In the fourth song, also, two languages have been code switched. Consider the extracts below:   ++}{>>r863 @AB<<}
 
-<!-- p373 -->
-{++The heavens declare your power and royalty ++}{r865+864 @AB}¶{r865+864 @AB}
+<!-- p373 break-ins r864 @AB -->
+{++The heavens declare your power and royalty ++}{>>r865 @AB<<}
 
-<!-- p374 -->
-{++Lord you reign  ++}{r867+866 @AB}¶{r867+866 @AB}
+<!-- p374 break-ins r866 @AB -->
+{++Lord you reign  ++}{>>r867 @AB<<}
 
-<!-- p375 -->
-{++King of all ages ++}{r869+868 @AB}¶{r869+868 @AB}
+<!-- p375 break-ins r868 @AB -->
+{++King of all ages ++}{>>r869 @AB<<}
 
-<!-- p376 -->
-{++You are the ancient of days ++}{r871+870 @AB}¶{r871+870 @AB}
+<!-- p376 break-ins r870 @AB -->
+{++You are the ancient of days ++}{>>r871 @AB<<}
 
-<!-- p377 -->
-{++Lord you reign  ++}{r873+872 @AB}¶{r873+872 @AB}
+<!-- p377 break-ins r872 @AB -->
+{++Lord you reign  ++}{>>r873 @AB<<}
 
-<!-- p378 -->
-{++Your throne is established justice and righteousness ++}{r875+874 @AB}¶{r875+874 @AB}
+<!-- p378 break-ins r874 @AB -->
+{++Your throne is established justice and righteousness ++}{>>r875 @AB<<}
 
-<!-- p379 -->
-{++Lord you reign ++}{r877+876 @AB}¶{r877+876 @AB}
+<!-- p379 break-ins r876 @AB -->
+{++Lord you reign ++}{>>r877 @AB<<}
 
-<!-- p380 -->
-{++Great are you lord and greatly to be praised  ++}{r879+878 @AB}¶{r879+878 @AB}
+<!-- p380 break-ins r878 @AB -->
+{++Great are you lord and greatly to be praised  ++}{>>r879 @AB<<}
 
-<!-- p381 -->
-{++Lord you reign  ++}{r881+880 @AB}¶{r881+880 @AB}
+<!-- p381 break-ins r880 @AB -->
+{++Lord you reign  ++}{>>r881 @AB<<}
 
-<!-- p382 -->
-{++ArugboOjo (2x)  ++}{r883+882 @AB}¶{r883+882 @AB}
+<!-- p382 break-ins r882 @AB -->
+{++ArugboOjo (2x)  ++}{>>r883 @AB<<}
 
-<!-- p383 -->
-{++(The Ancient of Days) ++}{r885+884 @AB}¶{r885+884 @AB}
+<!-- p383 break-ins r884 @AB -->
+{++(The Ancient of Days) ++}{>>r885 @AB<<}
 
-<!-- p384 -->
-{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r887+886 @AB}¶{r887+886 @AB}
+<!-- p384 break-ins r886 @AB -->
+{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{>>r887 @AB<<}
 
-<!-- p385 -->
-{++(You are the creator of all creatures, He who knows the created) ++}{r889+888 @AB}¶{r889+888 @AB}
+<!-- p385 break-ins r888 @AB -->
+{++(You are the creator of all creatures, He who knows the created) ++}{>>r889 @AB<<}
 
-<!-- p386 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r891+890 @AB}¶{r891+890 @AB}
+<!-- p386 left, first-line 0in, left 0in, break-ins r890 @AB -->
+{++ ++}{>>r891 @AB<<}
 
-<!-- p387 -->
-{++ArugboOjo (2x) ++}{r893+892 @AB}¶{r893+892 @AB}
+<!-- p387 break-ins r892 @AB -->
+{++ArugboOjo (2x) ++}{>>r893 @AB<<}
 
-<!-- p388 -->
-{++Iwo l’oniiyin, kaabo, kaabo ++}{r895+894 @AB}¶{r895+894 @AB}
+<!-- p388 break-ins r894 @AB -->
+{++Iwo l’oniiyin, kaabo, kaabo ++}{>>r895 @AB<<}
 
-<!-- p389 -->
-{++(He who knows the created) ++}{r897+896 @AB}¶{r897+896 @AB}
+<!-- p389 break-ins r896 @AB -->
+{++(He who knows the created) ++}{>>r897 @AB<<}
 
-<!-- p390 left, first-line 0in, left 0in, after 0.4pt, line 1.15 -->
-{++ ++}{r899+898 @AB}¶{r899+898 @AB}
+<!-- p390 left, first-line 0in, left 0in, break-ins r898 @AB -->
+{++ ++}{>>r899 @AB<<}
 
-<!-- t9 6x2, cells p391-p402 by row, p391-p402 after 0pt line 1.15, widths 1.183in 1.205in, width 2.388in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t9.row0 t9.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t9.row2; top,left,bottom,right single 0.5pt 000000 in t9.row3 t9.row4 t9.row5, break-ins r902+901 @AB in p391; r904+903 @AB in p392; r907+906 @AB in p393; r909+908 @AB in p394; r912+911 @AB in p395; r914+913 @AB in p396; r917+916 @AB in p397; r919+918 @AB in p398; r922+921 @AB in p399; r924+923 @AB in p400; r927+926 @AB in p401; r929+928 @AB in p402, rev r900 @AB in t9.row0; r905 @AB in t9.row1; r910 @AB in t9.row2; r915 @AB in t9.row3; r920 @AB in t9.row4; r925 @AB in t9.row5 -->
-|{++English Words  ++}{r902+901 @AB}|{++Yoruba Words ++}{r904+903 @AB}|
+<!-- t9 6x2, cells p391-p402 by row, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t9.row0 t9.row1; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t9.row2; top,left,bottom,right single 0.5pt 000000 in t9.row3 t9.row4 t9.row5, break-ins r901 @AB in p391; r903 @AB in p392; r906 @AB in p393; r908 @AB in p394; r911 @AB in p395; r913 @AB in p396; r916 @AB in p397; r918 @AB in p398; r921 @AB in p399; r923 @AB in p400; r926 @AB in p401; r928 @AB in p402, rev r900 @AB in t9.row0; r905 @AB in t9.row1; r910 @AB in t9.row2; r915 @AB in t9.row3; r920 @AB in t9.row4; r925 @AB in t9.row5 -->
+|{++English Words  ++}{>>r902 @AB<<}|{++Yoruba Words ++}{>>r904 @AB<<}|
 |:-|:-|
-|{++Heavens  ++}{r907+906 @AB}|{++Iwo  ++}{r909+908 @AB}|
-|{++You  ++}{r912+911 @AB}|{++L’aseda ++}{r914+913 @AB}|
-|{++Reign  ++}{r917+916 @AB}|{++Anugbo ++}{r919+918 @AB}|
-|{++Lord  ++}{r922+921 @AB}|{++Kaabo ++}{r924+923 @AB}|
-|{++Ages  ++}{r927+926 @AB}|{++ ++}{r929+928 @AB}|
+|{++Heavens  ++}{>>r907 @AB<<}|{++Iwo  ++}{>>r909 @AB<<}|
+|{++You  ++}{>>r912 @AB<<}|{++L’aseda ++}{>>r914 @AB<<}|
+|{++Reign  ++}{>>r917 @AB<<}|{++Anugbo ++}{>>r919 @AB<<}|
+|{++Lord  ++}{>>r922 @AB<<}|{++Kaabo ++}{>>r924 @AB<<}|
+|{++Ages  ++}{>>r927 @AB<<}|{++ ++}{>>r929 @AB<<}|
 
-<!-- p403 left, first-line 0in, left 0in, after 2.4pt, line 1 -->
-{++ ++}{r931+930 @AB}¶{r931+930 @AB}
+<!-- p403 left, first-line 0in, left 0in, break-ins r930 @AB -->
+{++ ++}{>>r931 @AB<<}
 
-<!-- p404 left, first-line 0in, left 0in, after 0.3pt, line 1.15 -->
-{++ ++}{r933+932 @AB}¶{r933+932 @AB}
+<!-- p404 left, first-line 0in, left 0in, break-ins r932 @AB -->
+{++ ++}{>>r933 @AB<<}
 
-<!-- t10 9x4, cells p405-p440 by row, p405-p440 after 0pt line 1.15, widths 0.8035in 1.008in 1.071in 0.712in, width 3.5944in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t10.row0.cell0 t10.row0.cell1 t10.row0.cell2 t10.row1.cell0 t10.row1.cell1 t10.row1.cell2 t10.row2.cell0 t10.row2.cell1 t10.row2.cell2 t10.row3.cell0 t10.row3.cell1 t10.row3.cell2 t10.row4.cell0 t10.row4.cell1 t10.row4.cell2 t10.row5.cell0 t10.row5.cell1 t10.row5.cell2 t10.row6.cell0 t10.row6.cell1 t10.row6.cell2 t10.row7.cell0 t10.row7.cell1 t10.row7.cell2 t10.row8.cell0 t10.row8.cell1 t10.row8.cell2; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t10.row0.cell3 t10.row1.cell3 t10.row2.cell3 t10.row3.cell3 t10.row4.cell3 t10.row5.cell3 t10.row6.cell3 t10.row7.cell3 t10.row8.cell3, break-ins r936+935 @AB in p405; r938+937 @AB in p406; r940+939 @AB in p407; r942+941 @AB in p408; r945+944 @AB in p409; r947+946 @AB in p410; r949+948 @AB in p411; r951+950 @AB in p412; r954+953 @AB in p413; r956+955 @AB in p414; r958+957 @AB in p415; r960+959 @AB in p416; r963+962 @AB in p417; r965+964 @AB in p418; r967+966 @AB in p419; r969+968 @AB in p420; r972+971 @AB in p421; r974+973 @AB in p422; r976+975 @AB in p423; r978+977 @AB in p424; r981+980 @AB in p425; r983+982 @AB in p426; r985+984 @AB in p427; r987+986 @AB in p428; r990+989 @AB in p429; r992+991 @AB in p430; r994+993 @AB in p431; r996+995 @AB in p432; r999+998 @AB in p433; r1001+1000 @AB in p434; r1003+1002 @AB in p435; r1005+1004 @AB in p436; r1008+1007 @AB in p437; r1010+1009 @AB in p438; r1012+1011 @AB in p439; r1014+1013 @AB in p440, rev r934 @AB in t10.row0; r943 @AB in t10.row1; r952 @AB in t10.row2; r961 @AB in t10.row3; r970 @AB in t10.row4; r979 @AB in t10.row5; r988 @AB in t10.row6; r997 @AB in t10.row7; r1006 @AB in t10.row8 -->
-|{++Nouns  ++}{r936+935 @AB}|{++Verbs  ++}{r938+937 @AB}|{++Adjectives  ++}{r940+939 @AB}|{++Adverbs  ++}{r942+941 @AB}|
+<!-- t10 9x4, cells p405-p440 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t10.row0.cell0 t10.row0.cell1 t10.row0.cell2 t10.row1.cell0 t10.row1.cell1 t10.row1.cell2 t10.row2.cell0 t10.row2.cell1 t10.row2.cell2 t10.row3.cell0 t10.row3.cell1 t10.row3.cell2 t10.row4.cell0 t10.row4.cell1 t10.row4.cell2 t10.row5.cell0 t10.row5.cell1 t10.row5.cell2 t10.row6.cell0 t10.row6.cell1 t10.row6.cell2 t10.row7.cell0 t10.row7.cell1 t10.row7.cell2 t10.row8.cell0 t10.row8.cell1 t10.row8.cell2; top,left,bottom single 0.5pt 000000 + right single 0.375pt 000000 in t10.row0.cell3 t10.row1.cell3 t10.row2.cell3 t10.row3.cell3 t10.row4.cell3 t10.row5.cell3 t10.row6.cell3 t10.row7.cell3 t10.row8.cell3, break-ins r935 @AB in p405; r937 @AB in p406; r939 @AB in p407; r941 @AB in p408; r944 @AB in p409; r946 @AB in p410; r948 @AB in p411; r950 @AB in p412; r953 @AB in p413; r955 @AB in p414; r957 @AB in p415; r959 @AB in p416; r962 @AB in p417; r964 @AB in p418; r966 @AB in p419; r968 @AB in p420; r971 @AB in p421; r973 @AB in p422; r975 @AB in p423; r977 @AB in p424; r980 @AB in p425; r982 @AB in p426; r984 @AB in p427; r986 @AB in p428; r989 @AB in p429; r991 @AB in p430; r993 @AB in p431; r995 @AB in p432; r998 @AB in p433; r1000 @AB in p434; r1002 @AB in p435; r1004 @AB in p436; r1007 @AB in p437; r1009 @AB in p438; r1011 @AB in p439; r1013 @AB in p440, rev r934 @AB in t10.row0; r943 @AB in t10.row1; r952 @AB in t10.row2; r961 @AB in t10.row3; r970 @AB in t10.row4; r979 @AB in t10.row5; r988 @AB in t10.row6; r997 @AB in t10.row7; r1006 @AB in t10.row8 -->
+|{++Nouns  ++}{>>r936 @AB<<}|{++Verbs  ++}{>>r938 @AB<<}|{++Adjectives  ++}{>>r940 @AB<<}|{++Adverbs  ++}{>>r942 @AB<<}|
 |:-|:-|:-|:-|
-|{++Heavens  ++}{r945+944 @AB}|{++Praised  ++}{r947+946 @AB}|{++Holy ++}{r949+948 @AB}|{++greatly ++}{r951+950 @AB}|
-|{++Power  ++}{r954+953 @AB}|{++Declare  ++}{r956+955 @AB}|{++Righteousness  ++}{r958+957 @AB}|{++ ++}{r960+959 @AB}|
-|{++Royalty ++}{r963+962 @AB}|{++Reign  ++}{r965+964 @AB}|{++Justice  ++}{r967+966 @AB}|{++ ++}{r969+968 @AB}|
-|{++King  ++}{r972+971 @AB}|{++Are  ++}{r974+973 @AB}|{++Majesty  ++}{r976+975 @AB}|{++ ++}{r978+977 @AB}|
-|{++Lord  ++}{r981+980 @AB}|{++Is  ++}{r983+982 @AB}|{++ ++}{r985+984 @AB}|{++ ++}{r987+986 @AB}|
-|{++Throne  ++}{r990+989 @AB}|{++Established  ++}{r992+991 @AB}|{++ ++}{r994+993 @AB}|{++ ++}{r996+995 @AB}|
-|{++God  ++}{r999+998 @AB}|{++Cry ++}{r1001+1000 @AB}|{++ ++}{r1003+1002 @AB}|{++ ++}{r1005+1004 @AB}|
-|{++Place  ++}{r1008+1007 @AB}|{++Fill  ++}{r1010+1009 @AB}|{++ ++}{r1012+1011 @AB}|{++ ++}{r1014+1013 @AB}|
+|{++Heavens  ++}{>>r945 @AB<<}|{++Praised  ++}{>>r947 @AB<<}|{++Holy ++}{>>r949 @AB<<}|{++greatly ++}{>>r951 @AB<<}|
+|{++Power  ++}{>>r954 @AB<<}|{++Declare  ++}{>>r956 @AB<<}|{++Righteousness  ++}{>>r958 @AB<<}|{++ ++}{>>r960 @AB<<}|
+|{++Royalty ++}{>>r963 @AB<<}|{++Reign  ++}{>>r965 @AB<<}|{++Justice  ++}{>>r967 @AB<<}|{++ ++}{>>r969 @AB<<}|
+|{++King  ++}{>>r972 @AB<<}|{++Are  ++}{>>r974 @AB<<}|{++Majesty  ++}{>>r976 @AB<<}|{++ ++}{>>r978 @AB<<}|
+|{++Lord  ++}{>>r981 @AB<<}|{++Is  ++}{>>r983 @AB<<}|{++ ++}{>>r985 @AB<<}|{++ ++}{>>r987 @AB<<}|
+|{++Throne  ++}{>>r990 @AB<<}|{++Established  ++}{>>r992 @AB<<}|{++ ++}{>>r994 @AB<<}|{++ ++}{>>r996 @AB<<}|
+|{++God  ++}{>>r999 @AB<<}|{++Cry ++}{>>r1001 @AB<<}|{++ ++}{>>r1003 @AB<<}|{++ ++}{>>r1005 @AB<<}|
+|{++Place  ++}{>>r1008 @AB<<}|{++Fill  ++}{>>r1010 @AB<<}|{++ ++}{>>r1012 @AB<<}|{++ ++}{>>r1014 @AB<<}|
 
-<!-- p441 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1016+1015 @AB}¶{r1016+1015 @AB}
+<!-- p441 left, first-line 0in, left 0in, break-ins r1015 @AB -->
+{++ ++}{>>r1016 @AB<<}
 
-<!-- p442 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1018+1017 @AB}¶{r1018+1017 @AB}
+<!-- p442 left, first-line 0in, left 0in, break-ins r1017 @AB -->
+{++ ++}{>>r1018 @AB<<}
 
-<!-- p443 left, first-line 0in, left 0in, after 0.45pt, line 1.15 -->
-{++ ++}{r1020+1019 @AB}¶{r1020+1019 @AB}
+<!-- p443 left, first-line 0in, left 0in, break-ins r1019 @AB -->
+{++ ++}{>>r1020 @AB<<}
 
-<!-- t11 4x2, cells t11.row0 p444-p445 t11.row1 p446-p450 t11.row2 p451-p454 t11.row3 p455-p458, p444-p445 after 0pt line 1.15, p446 after 2.1pt line 1, p447 line 1, p448 after 0pt line 1.15, p449 line 1, p450 after 0pt line 1.15, p451 after 2.8pt line 0.975, p452 after 0pt line 1.15, p453 line 1, p454 after 0pt line 1.15, p455 line 1, p456 after 0pt line 1.15, p457 line 1, p458 after 0pt line 1.15, widths 2.69in 2.6965in, width 5.387in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t11.row0; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t11.row1 t11.row3; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t11.row2, break-ins r1023+1022 @AB in p444; r1025+1024 @AB in p445; r1028+1027 @AB in p446; r1030+1029 @AB in p447; r1032+1031 @AB in p448; r1034+1033 @AB in p449; r1036+1035 @AB in p450; r1039+1038 @AB in p451; r1041+1040 @AB in p452; r1043+1042 @AB in p453; r1045+1044 @AB in p454; r1048+1047 @AB in p455; r1050+1049 @AB in p456; r1052+1051 @AB in p457; r1054+1053 @AB in p458, rev r1021 @AB in t11.row0; r1026 @AB in t11.row1; r1037 @AB in t11.row2; r1046 @AB in t11.row3 -->
-|{++English Sentences  ++}{r1023+1022 @AB}|{++Yoruba sentences  ++}{r1025+1024 @AB}|
+<!-- t11 4x2, cells t11.row0 p444-p445 t11.row1 p446-p450 t11.row2 p451-p454 t11.row3 p455-p458, cell-borders top,left,bottom,right single 0.5pt 000000 in t11.row0; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t11.row1 t11.row3; top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t11.row2, break-ins r1022 @AB in p444; r1024 @AB in p445; r1027 @AB in p446; r1029 @AB in p447; r1031 @AB in p448; r1033 @AB in p449; r1035 @AB in p450; r1038 @AB in p451; r1040 @AB in p452; r1042 @AB in p453; r1044 @AB in p454; r1047 @AB in p455; r1049 @AB in p456; r1051 @AB in p457; r1053 @AB in p458, rev r1021 @AB in t11.row0; r1026 @AB in t11.row1; r1037 @AB in t11.row2; r1046 @AB in t11.row3 -->
+|{++English Sentences  ++}{>>r1023 @AB<<}|{++Yoruba sentences  ++}{>>r1025 @AB<<}|
 |:-|:-|
-|{++He who all praise belongs to, we ++}{r1028+1027 @AB}{++<br>welcome you in ++}{r1030+1029 @AB}{++<br> ++}{r1032+1031 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1034+1033 @AB}{++<br> ++}{r1036+1035 @AB}|
-|{++You are the creator of all creatures, He who knows the created ++}{r1039+1038 @AB}{++<br> ++}{r1041+1040 @AB}|{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{r1043+1042 @AB}{++<br> ++}{r1045+1044 @AB}|
-|{++He who knows the created ++}{r1048+1047 @AB}{++<br> ++}{r1050+1049 @AB}|{++Iwo l’oniiyin, kaabo, kaabo ++}{r1052+1051 @AB}{++<br> ++}{r1054+1053 @AB}|
+|{++He who all praise belongs to, we ++}{>>r1028 @AB<<}{++<br>welcome you in ++}{>>r1030 @AB<<}{++<br> ++}{>>r1032 @AB<<}|{++Iwo l’oniiyin, kaabo, kaabo ++}{>>r1034 @AB<<}{++<br> ++}{>>r1036 @AB<<}|
+|{++You are the creator of all creatures, He who knows the created ++}{>>r1039 @AB<<}{++<br> ++}{>>r1041 @AB<<}|{++Iwo l’aseda, l’awoneda, l’ameda oh! ++}{>>r1043 @AB<<}{++<br> ++}{>>r1045 @AB<<}|
+|{++He who knows the created ++}{>>r1048 @AB<<}{++<br> ++}{>>r1050 @AB<<}|{++Iwo l’oniiyin, kaabo, kaabo ++}{>>r1052 @AB<<}{++<br> ++}{>>r1054 @AB<<}|
 
-<!-- p459 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1056+1055 @AB}¶{r1056+1055 @AB}
+<!-- p459 left, first-line 0in, left 0in, break-ins r1055 @AB -->
+{++ ++}{>>r1056 @AB<<}
 
-<!-- p460 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt five: “Who am I” (song) by NOELLA ++}{r1058+1057 @AB}¶{r1058+1057 @AB}
+<!-- p460 left, right -0.0104in, break-ins r1057 @AB -->
+{++Excerpt five: “Who am I” (song) by NOELLA ++}{>>r1058 @AB<<}
 
-<!-- p461 left, right 0.668in, after 2.5pt, line 0.975 -->
-{++The fifth songcontains the three languages: English, Idoma and Hausa:   You will not suffer my foot to be moved I carry your presence everywhere! ++}{r1060+1059 @AB}¶{r1060+1059 @AB}
+<!-- p461 left, right 0.668in, break-ins r1059 @AB -->
+{++The fifth songcontains the three languages: English, Idoma and Hausa:   You will not suffer my foot to be moved I carry your presence everywhere! ++}{>>r1060 @AB<<}
 
-<!-- p462 -->
-{++Who am I? ++}{r1062+1061 @AB}¶{r1062+1061 @AB}
+<!-- p462 break-ins r1061 @AB -->
+{++Who am I? ++}{>>r1062 @AB<<}
 
-<!-- p463 -->
-{++Your mind is so full of me! ++}{r1064+1063 @AB}¶{r1064+1063 @AB}
+<!-- p463 break-ins r1063 @AB -->
+{++Your mind is so full of me! ++}{>>r1064 @AB<<}
 
-<!-- p464 -->
-{++Mortal man, Awesome God ++}{r1066+1065 @AB}¶{r1066+1065 @AB}
+<!-- p464 break-ins r1065 @AB -->
+{++Mortal man, Awesome God ++}{>>r1066 @AB<<}
 
-<!-- p465 left, first-line 0in, left 0in, after 1.85pt, line 1 -->
-{++ ++}{r1068+1067 @AB}¶{r1068+1067 @AB}
+<!-- p465 left, first-line 0in, left 0in, break-ins r1067 @AB -->
+{++ ++}{>>r1068 @AB<<}
 
-<!-- p466 -->
-{++Ondu me Adah ++}{r1070+1069 @AB}¶{r1070+1069 @AB}
+<!-- p466 break-ins r1069 @AB -->
+{++Ondu me Adah ++}{>>r1070 @AB<<}
 
-<!-- p467 -->
-{++Omachalla ++}{r1072+1071 @AB}¶{r1072+1071 @AB}
+<!-- p467 break-ins r1071 @AB -->
+{++Omachalla ++}{>>r1072 @AB<<}
 
-<!-- p468 right 4.2924in -->
-{++Onye le b’awa Omanchala Nmor eh no! ++}{r1074+1073 @AB}¶{r1074+1073 @AB}
+<!-- p468 right 4.2924in, break-ins r1073 @AB -->
+{++Onye le b’awa Omanchala Nmor eh no! ++}{>>r1074 @AB<<}
 
-<!-- p469 -->
-{++Oyor eh no! (2x) ++}{r1076+1075 @AB}¶{r1076+1075 @AB}
+<!-- p469 break-ins r1075 @AB -->
+{++Oyor eh no! (2x) ++}{>>r1076 @AB<<}
 
-<!-- p470 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1078+1077 @AB}¶{r1078+1077 @AB}
+<!-- p470 left, first-line 0in, left 0in, break-ins r1077 @AB -->
+{++ ++}{>>r1078 @AB<<}
 
-<!-- p471 -->
-{++Ban san maiyasa ++}{r1080+1079 @AB}¶{r1080+1079 @AB}
+<!-- p471 break-ins r1079 @AB -->
+{++Ban san maiyasa ++}{>>r1080 @AB<<}
 
-<!-- p472 -->
-{++Kana sauna ++}{r1082+1081 @AB}¶{r1082+1081 @AB}
+<!-- p472 break-ins r1081 @AB -->
+{++Kana sauna ++}{>>r1082 @AB<<}
 
-<!-- p473 -->
-{++Ubangijiyayesu ++}{r1084+1083 @AB}¶{r1084+1083 @AB}
+<!-- p473 break-ins r1083 @AB -->
+{++Ubangijiyayesu ++}{>>r1084 @AB<<}
 
-<!-- p474 -->
-{++Ina wan day a kai ka yesu ++}{r1086+1085 @AB}¶{r1086+1085 @AB}
+<!-- p474 break-ins r1085 @AB -->
+{++Ina wan day a kai ka yesu ++}{>>r1086 @AB<<}
 
-<!-- p475 -->
-{++Ban ganiba, masoyina ++}{r1088+1087 @AB}¶{r1088+1087 @AB}
+<!-- p475 break-ins r1087 @AB -->
+{++Ban ganiba, masoyina ++}{>>r1088 @AB<<}
 
-<!-- p476 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ 	 ++}{r1090+1089 @AB}¶{r1090+1089 @AB}
+<!-- p476 left, first-line 0in, left 0in, break-ins r1089 @AB -->
+{++ 	 ++}{>>r1090 @AB<<}
 
-<!-- p477 left, first-line 0in, left 0in, after 0.7pt, line 1.15 -->
-{++ ++}{r1092+1091 @AB}¶{r1092+1091 @AB}
+<!-- p477 left, first-line 0in, left 0in, break-ins r1091 @AB -->
+{++ ++}{>>r1092 @AB<<}
 
-<!-- t12 7x3, cells p478-p498 by row, p478-p498 after 0pt line 1.15, widths 1.183in 1.02in 1.113in, width 3.317in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t12.row0 t12.row1 t12.row2 t12.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t12.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t12.row5 t12.row6, break-ins r1095+1094 @AB in p478; r1097+1096 @AB in p479; r1099+1098 @AB in p480; r1102+1101 @AB in p481; r1104+1103 @AB in p482; r1106+1105 @AB in p483; r1109+1108 @AB in p484; r1111+1110 @AB in p485; r1113+1112 @AB in p486; r1116+1115 @AB in p487; r1118+1117 @AB in p488; r1120+1119 @AB in p489; r1123+1122 @AB in p490; r1125+1124 @AB in p491; r1127+1126 @AB in p492; r1130+1129 @AB in p493; r1132+1131 @AB in p494; r1134+1133 @AB in p495; r1137+1136 @AB in p496; r1139+1138 @AB in p497; r1141+1140 @AB in p498, rev r1093 @AB in t12.row0; r1100 @AB in t12.row1; r1107 @AB in t12.row2; r1114 @AB in t12.row3; r1121 @AB in t12.row4; r1128 @AB in t12.row5; r1135 @AB in t12.row6 -->
-|{++English words ++}{r1095+1094 @AB}|{++Hausa words ++}{r1097+1096 @AB}|{++Idoma words ++}{r1099+1098 @AB}|
+<!-- t12 7x3, cells p478-p498 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t12.row0 t12.row1 t12.row2 t12.row3; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t12.row4; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t12.row5 t12.row6, break-ins r1094 @AB in p478; r1096 @AB in p479; r1098 @AB in p480; r1101 @AB in p481; r1103 @AB in p482; r1105 @AB in p483; r1108 @AB in p484; r1110 @AB in p485; r1112 @AB in p486; r1115 @AB in p487; r1117 @AB in p488; r1119 @AB in p489; r1122 @AB in p490; r1124 @AB in p491; r1126 @AB in p492; r1129 @AB in p493; r1131 @AB in p494; r1133 @AB in p495; r1136 @AB in p496; r1138 @AB in p497; r1140 @AB in p498, rev r1093 @AB in t12.row0; r1100 @AB in t12.row1; r1107 @AB in t12.row2; r1114 @AB in t12.row3; r1121 @AB in t12.row4; r1128 @AB in t12.row5; r1135 @AB in t12.row6 -->
+|{++English words ++}{>>r1095 @AB<<}|{++Hausa words ++}{>>r1097 @AB<<}|{++Idoma words ++}{>>r1099 @AB<<}|
 |:-|:-|:-|
-|{++Hold  ++}{r1102+1101 @AB}|{++Kai  ++}{r1104+1103 @AB}|{++Ondu ++}{r1106+1105 @AB}|
-|{++Close  ++}{r1109+1108 @AB}|{++Ka ++}{r1111+1110 @AB}|{++Me ++}{r1113+1112 @AB}|
-|{++Feel ++}{r1116+1115 @AB}|{++Masoyina ++}{r1118+1117 @AB}|{++Ada  ++}{r1120+1119 @AB}|
-|{++You ++}{r1123+1122 @AB}|{++Kana ++}{r1125+1124 @AB}|{++Omachalla ++}{r1127+1126 @AB}|
-|{++Presence  ++}{r1130+1129 @AB}|{++Ubangiji ++}{r1132+1131 @AB}|{++ ++}{r1134+1133 @AB}|
-|{++Everywhere  ++}{r1137+1136 @AB}|{++ ++}{r1139+1138 @AB}|{++ ++}{r1141+1140 @AB}|
+|{++Hold  ++}{>>r1102 @AB<<}|{++Kai  ++}{>>r1104 @AB<<}|{++Ondu ++}{>>r1106 @AB<<}|
+|{++Close  ++}{>>r1109 @AB<<}|{++Ka ++}{>>r1111 @AB<<}|{++Me ++}{>>r1113 @AB<<}|
+|{++Feel ++}{>>r1116 @AB<<}|{++Masoyina ++}{>>r1118 @AB<<}|{++Ada  ++}{>>r1120 @AB<<}|
+|{++You ++}{>>r1123 @AB<<}|{++Kana ++}{>>r1125 @AB<<}|{++Omachalla ++}{>>r1127 @AB<<}|
+|{++Presence  ++}{>>r1130 @AB<<}|{++Ubangiji ++}{>>r1132 @AB<<}|{++ ++}{>>r1134 @AB<<}|
+|{++Everywhere  ++}{>>r1137 @AB<<}|{++ ++}{>>r1139 @AB<<}|{++ ++}{>>r1141 @AB<<}|
 
-<!-- p499 left, first-line 0in, left 0in, after 0.4pt, line 1.15 -->
-{++ ++}{r1143+1142 @AB}¶{r1143+1142 @AB}
+<!-- p499 left, first-line 0in, left 0in, break-ins r1142 @AB -->
+{++ ++}{>>r1143 @AB<<}
 
-<!-- t13 11x4, cells p500-p543 by row, p500-p543 after 0pt line 1.15, widths 0.72in 0.742in 0.84in 0.735in, width 3.037in, indent -0.0715in, cell-borders top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t13.row0; top,left,bottom,right single 0.5pt 000000 in t13.row1 t13.row2 t13.row3 t13.row4 t13.row5 t13.row6 t13.row7 t13.row8 t13.row9 t13.row10, break-ins r1146+1145 @AB in p500; r1148+1147 @AB in p501; r1150+1149 @AB in p502; r1152+1151 @AB in p503; r1155+1154 @AB in p504; r1157+1156 @AB in p505; r1159+1158 @AB in p506; r1161+1160 @AB in p507; r1164+1163 @AB in p508; r1166+1165 @AB in p509; r1168+1167 @AB in p510; r1170+1169 @AB in p511; r1173+1172 @AB in p512; r1175+1174 @AB in p513; r1177+1176 @AB in p514; r1179+1178 @AB in p515; r1182+1181 @AB in p516; r1184+1183 @AB in p517; r1186+1185 @AB in p518; r1188+1187 @AB in p519; r1191+1190 @AB in p520; r1193+1192 @AB in p521; r1195+1194 @AB in p522; r1197+1196 @AB in p523; r1200+1199 @AB in p524; r1202+1201 @AB in p525; r1204+1203 @AB in p526; r1206+1205 @AB in p527; r1209+1208 @AB in p528; r1211+1210 @AB in p529; r1213+1212 @AB in p530; r1215+1214 @AB in p531; r1218+1217 @AB in p532; r1220+1219 @AB in p533; r1222+1221 @AB in p534; r1224+1223 @AB in p535; r1227+1226 @AB in p536; r1229+1228 @AB in p537; r1231+1230 @AB in p538; r1233+1232 @AB in p539; r1236+1235 @AB in p540; r1238+1237 @AB in p541; r1240+1239 @AB in p542; r1242+1241 @AB in p543, rev r1144 @AB in t13.row0; r1153 @AB in t13.row1; r1162 @AB in t13.row2; r1171 @AB in t13.row3; r1180 @AB in t13.row4; r1189 @AB in t13.row5; r1198 @AB in t13.row6; r1207 @AB in t13.row7; r1216 @AB in t13.row8; r1225 @AB in t13.row9; r1234 @AB in t13.row10 -->
-|{++Nouns  ++}{r1146+1145 @AB}|{++Verbs  ++}{r1148+1147 @AB}|{++Adjectives  ++}{r1150+1149 @AB}|{++Adverbs  ++}{r1152+1151 @AB}|
+<!-- t13 11x4, cells p500-p543 by row, cell-borders top single 0.375pt 000000 + left,bottom,right single 0.5pt 000000 in t13.row0; top,left,bottom,right single 0.5pt 000000 in t13.row1 t13.row2 t13.row3 t13.row4 t13.row5 t13.row6 t13.row7 t13.row8 t13.row9 t13.row10, break-ins r1145 @AB in p500; r1147 @AB in p501; r1149 @AB in p502; r1151 @AB in p503; r1154 @AB in p504; r1156 @AB in p505; r1158 @AB in p506; r1160 @AB in p507; r1163 @AB in p508; r1165 @AB in p509; r1167 @AB in p510; r1169 @AB in p511; r1172 @AB in p512; r1174 @AB in p513; r1176 @AB in p514; r1178 @AB in p515; r1181 @AB in p516; r1183 @AB in p517; r1185 @AB in p518; r1187 @AB in p519; r1190 @AB in p520; r1192 @AB in p521; r1194 @AB in p522; r1196 @AB in p523; r1199 @AB in p524; r1201 @AB in p525; r1203 @AB in p526; r1205 @AB in p527; r1208 @AB in p528; r1210 @AB in p529; r1212 @AB in p530; r1214 @AB in p531; r1217 @AB in p532; r1219 @AB in p533; r1221 @AB in p534; r1223 @AB in p535; r1226 @AB in p536; r1228 @AB in p537; r1230 @AB in p538; r1232 @AB in p539; r1235 @AB in p540; r1237 @AB in p541; r1239 @AB in p542; r1241 @AB in p543, rev r1144 @AB in t13.row0; r1153 @AB in t13.row1; r1162 @AB in t13.row2; r1171 @AB in t13.row3; r1180 @AB in t13.row4; r1189 @AB in t13.row5; r1198 @AB in t13.row6; r1207 @AB in t13.row7; r1216 @AB in t13.row8; r1225 @AB in t13.row9; r1234 @AB in t13.row10 -->
+|{++Nouns  ++}{>>r1146 @AB<<}|{++Verbs  ++}{>>r1148 @AB<<}|{++Adjectives  ++}{>>r1150 @AB<<}|{++Adverbs  ++}{>>r1152 @AB<<}|
 |:-|:-|:-|:-|
-|{++Foot  ++}{r1155+1154 @AB}|{++Hold  ++}{r1157+1156 @AB}|{++Mortal  ++}{r1159+1158 @AB}|{++So  ++}{r1161+1160 @AB}|
-|{++Presence  ++}{r1164+1163 @AB}|{++Feel ++}{r1166+1165 @AB}|{++Awesome ++}{r1168+1167 @AB}|{++Graced  ++}{r1170+1169 @AB}|
-|{++Mind  ++}{r1173+1172 @AB}|{++Said  ++}{r1175+1174 @AB}|{++Divine  ++}{r1177+1176 @AB}|{++Blessed  ++}{r1179+1178 @AB}|
-|{++Man  ++}{r1182+1181 @AB}|{++Will  ++}{r1184+1183 @AB}|{++ ++}{r1186+1185 @AB}|{++ ++}{r1188+1187 @AB}|
-|{++Friend  ++}{r1191+1190 @AB}|{++Leave  ++}{r1193+1192 @AB}|{++ ++}{r1195+1194 @AB}|{++ ++}{r1197+1196 @AB}|
-|{++Clay  ++}{r1200+1199 @AB}|{++Suffer  ++}{r1202+1201 @AB}|{++ ++}{r1204+1203 @AB}|{++ ++}{r1206+1205 @AB}|
-|{++Rock  ++}{r1209+1208 @AB}|{++Carry  ++}{r1211+1210 @AB}|{++ ++}{r1213+1212 @AB}|{++ ++}{r1215+1214 @AB}|
-|{++Jesus  ++}{r1218+1217 @AB}|{++Am  ++}{r1220+1219 @AB}|{++ ++}{r1222+1221 @AB}|{++ ++}{r1224+1223 @AB}|
-|{++God  ++}{r1227+1226 @AB}|{++Is  ++}{r1229+1228 @AB}|{++ ++}{r1231+1230 @AB}|{++ ++}{r1233+1232 @AB}|
-|{++Breath  ++}{r1236+1235 @AB}|{++Took  ++}{r1238+1237 @AB}|{++ ++}{r1240+1239 @AB}|{++ ++}{r1242+1241 @AB}|
+|{++Foot  ++}{>>r1155 @AB<<}|{++Hold  ++}{>>r1157 @AB<<}|{++Mortal  ++}{>>r1159 @AB<<}|{++So  ++}{>>r1161 @AB<<}|
+|{++Presence  ++}{>>r1164 @AB<<}|{++Feel ++}{>>r1166 @AB<<}|{++Awesome ++}{>>r1168 @AB<<}|{++Graced  ++}{>>r1170 @AB<<}|
+|{++Mind  ++}{>>r1173 @AB<<}|{++Said  ++}{>>r1175 @AB<<}|{++Divine  ++}{>>r1177 @AB<<}|{++Blessed  ++}{>>r1179 @AB<<}|
+|{++Man  ++}{>>r1182 @AB<<}|{++Will  ++}{>>r1184 @AB<<}|{++ ++}{>>r1186 @AB<<}|{++ ++}{>>r1188 @AB<<}|
+|{++Friend  ++}{>>r1191 @AB<<}|{++Leave  ++}{>>r1193 @AB<<}|{++ ++}{>>r1195 @AB<<}|{++ ++}{>>r1197 @AB<<}|
+|{++Clay  ++}{>>r1200 @AB<<}|{++Suffer  ++}{>>r1202 @AB<<}|{++ ++}{>>r1204 @AB<<}|{++ ++}{>>r1206 @AB<<}|
+|{++Rock  ++}{>>r1209 @AB<<}|{++Carry  ++}{>>r1211 @AB<<}|{++ ++}{>>r1213 @AB<<}|{++ ++}{>>r1215 @AB<<}|
+|{++Jesus  ++}{>>r1218 @AB<<}|{++Am  ++}{>>r1220 @AB<<}|{++ ++}{>>r1222 @AB<<}|{++ ++}{>>r1224 @AB<<}|
+|{++God  ++}{>>r1227 @AB<<}|{++Is  ++}{>>r1229 @AB<<}|{++ ++}{>>r1231 @AB<<}|{++ ++}{>>r1233 @AB<<}|
+|{++Breath  ++}{>>r1236 @AB<<}|{++Took  ++}{>>r1238 @AB<<}|{++ ++}{>>r1240 @AB<<}|{++ ++}{>>r1242 @AB<<}|
 
-<!-- p544 left, first-line 0in, left 0in, after 1.75pt, line 1 -->
-{++ ++}{r1244+1243 @AB}¶{r1244+1243 @AB}
+<!-- p544 left, first-line 0in, left 0in, break-ins r1243 @AB -->
+{++ ++}{>>r1244 @AB<<}
 
-<!-- p545 -->
-{++In the last part of the song, English is code switched with Hausa: ++}{r1246+1245 @AB}¶{r1246+1245 @AB}
+<!-- p545 break-ins r1245 @AB -->
+{++In the last part of the song, English is code switched with Hausa: ++}{>>r1246 @AB<<}
 
-<!-- p546 -->
-{++Just when I thought I knew your ways  ++}{r1248+1247 @AB}¶{r1248+1247 @AB}
+<!-- p546 break-ins r1247 @AB -->
+{++Just when I thought I knew your ways  ++}{>>r1248 @AB<<}
 
-<!-- p547 -->
-{++That’s when you come to make me see  ++}{r1250+1249 @AB}¶{r1250+1249 @AB}
+<!-- p547 break-ins r1249 @AB -->
+{++That’s when you come to make me see  ++}{>>r1250 @AB<<}
 
-<!-- p548 -->
-{++That all I knew was just a glimpse of you  ++}{r1252+1251 @AB}¶{r1252+1251 @AB}
+<!-- p548 break-ins r1251 @AB -->
+{++That all I knew was just a glimpse of you  ++}{>>r1252 @AB<<}
 
-<!-- p549 -->
-{++Lord, you are more than my mind could ever think  ++}{r1254+1253 @AB}¶{r1254+1253 @AB}
+<!-- p549 break-ins r1253 @AB -->
+{++Lord, you are more than my mind could ever think  ++}{>>r1254 @AB<<}
 
-<!-- p550 -->
-{++It is you, yes it is you I hunger for  ++}{r1256+1255 @AB}¶{r1256+1255 @AB}
+<!-- p550 break-ins r1255 @AB -->
+{++It is you, yes it is you I hunger for  ++}{>>r1256 @AB<<}
 
-<!-- p551 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1258+1257 @AB}¶{r1258+1257 @AB}
+<!-- p551 left, first-line 0in, left 0in, break-ins r1257 @AB -->
+{++ ++}{>>r1258 @AB<<}
 
-<!-- p552 -->
-{++Yesu kai kaidai ne ke so  ++}{r1260+1259 @AB}¶{r1260+1259 @AB}
+<!-- p552 break-ins r1259 @AB -->
+{++Yesu kai kaidai ne ke so  ++}{>>r1260 @AB<<}
 
-<!-- p553 -->
-{++Yesu kai kaidai ne ke so  ++}{r1262+1261 @AB}¶{r1262+1261 @AB}
+<!-- p553 break-ins r1261 @AB -->
+{++Yesu kai kaidai ne ke so  ++}{>>r1262 @AB<<}
 
-<!-- p554 -->
-{++Yesu kai kaidainake so koyaushe ++}{r1264+1263 @AB}¶{r1264+1263 @AB}
+<!-- p554 break-ins r1263 @AB -->
+{++Yesu kai kaidainake so koyaushe ++}{>>r1264 @AB<<}
 
-<!-- t14 8x2, cells p555-p570 by row, p555-p570 after 0pt line 1.15, widths 1.183in 1.113in, width 2.2965in, indent -0.0715in, cell-borders top,left,bottom,right single 0.5pt 000000 in t14.row0 t14.row1 t14.row2 t14.row3 t14.row4; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t14.row5; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t14.row6 t14.row7, break-ins r1267+1266 @AB in p555; r1269+1268 @AB in p556; r1272+1271 @AB in p557; r1274+1273 @AB in p558; r1277+1276 @AB in p559; r1279+1278 @AB in p560; r1282+1281 @AB in p561; r1284+1283 @AB in p562; r1287+1286 @AB in p563; r1289+1288 @AB in p564; r1292+1291 @AB in p565; r1294+1293 @AB in p566; r1297+1296 @AB in p567; r1299+1298 @AB in p568; r1302+1301 @AB in p569; r1304+1303 @AB in p570, rev r1265 @AB in t14.row0; r1270 @AB in t14.row1; r1275 @AB in t14.row2; r1280 @AB in t14.row3; r1285 @AB in t14.row4; r1290 @AB in t14.row5; r1295 @AB in t14.row6; r1300 @AB in t14.row7 -->
-|{++English words  ++}{r1267+1266 @AB}|{++Hausa words  ++}{r1269+1268 @AB}|
+<!-- t14 8x2, cells p555-p570 by row, cell-borders top,left,bottom,right single 0.5pt 000000 in t14.row0 t14.row1 t14.row2 t14.row3 t14.row4; top,left,right single 0.5pt 000000 + bottom single 0.375pt 000000 in t14.row5; top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t14.row6 t14.row7, break-ins r1266 @AB in p555; r1268 @AB in p556; r1271 @AB in p557; r1273 @AB in p558; r1276 @AB in p559; r1278 @AB in p560; r1281 @AB in p561; r1283 @AB in p562; r1286 @AB in p563; r1288 @AB in p564; r1291 @AB in p565; r1293 @AB in p566; r1296 @AB in p567; r1298 @AB in p568; r1301 @AB in p569; r1303 @AB in p570, rev r1265 @AB in t14.row0; r1270 @AB in t14.row1; r1275 @AB in t14.row2; r1280 @AB in t14.row3; r1285 @AB in t14.row4; r1290 @AB in t14.row5; r1295 @AB in t14.row6; r1300 @AB in t14.row7 -->
+|{++English words  ++}{>>r1267 @AB<<}|{++Hausa words  ++}{>>r1269 @AB<<}|
 |:-|:-|
-|{++When  ++}{r1272+1271 @AB}|{++Yesu ++}{r1274+1273 @AB}|
-|{++Thought  ++}{r1277+1276 @AB}|{++Kai kai de  ++}{r1279+1278 @AB}|
-|{++Come  ++}{r1282+1281 @AB}|{++Neke so ++}{r1284+1283 @AB}|
-|{++Make  ++}{r1287+1286 @AB}|{++Koyaushe ++}{r1289+1288 @AB}|
-|{++Me  ++}{r1292+1291 @AB}|{++ ++}{r1294+1293 @AB}|
-|{++You  ++}{r1297+1296 @AB}|{++ ++}{r1299+1298 @AB}|
-|{++More  ++}{r1302+1301 @AB}|{++ ++}{r1304+1303 @AB}|
+|{++When  ++}{>>r1272 @AB<<}|{++Yesu ++}{>>r1274 @AB<<}|
+|{++Thought  ++}{>>r1277 @AB<<}|{++Kai kai de  ++}{>>r1279 @AB<<}|
+|{++Come  ++}{>>r1282 @AB<<}|{++Neke so ++}{>>r1284 @AB<<}|
+|{++Make  ++}{>>r1287 @AB<<}|{++Koyaushe ++}{>>r1289 @AB<<}|
+|{++Me  ++}{>>r1292 @AB<<}|{++ ++}{>>r1294 @AB<<}|
+|{++You  ++}{>>r1297 @AB<<}|{++ ++}{>>r1299 @AB<<}|
+|{++More  ++}{>>r1302 @AB<<}|{++ ++}{>>r1304 @AB<<}|
 
-<!-- p571 left, first-line 0in, left 0in, after 0.75pt, line 1.15 -->
-{++ ++}{r1306+1305 @AB}¶{r1306+1305 @AB}
+<!-- p571 left, first-line 0in, left 0in, break-ins r1305 @AB -->
+{++ ++}{>>r1306 @AB<<}
 
-<!-- t15 10x4, cells p572-p611 by row, p572-p611 after 0pt line 1.15, widths 0.71in 0.6924in 0.8375in 0.702in, width 2.942in, indent -0.0715in, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t15.row0; top,left,bottom,right single 0.5pt 000000 in t15.row1 t15.row2 t15.row3 t15.row4 t15.row5 t15.row6 t15.row7 t15.row8 t15.row9, break-ins r1309+1308 @AB in p572; r1311+1310 @AB in p573; r1313+1312 @AB in p574; r1315+1314 @AB in p575; r1318+1317 @AB in p576; r1320+1319 @AB in p577; r1322+1321 @AB in p578; r1324+1323 @AB in p579; r1327+1326 @AB in p580; r1329+1328 @AB in p581; r1331+1330 @AB in p582; r1333+1332 @AB in p583; r1336+1335 @AB in p584; r1338+1337 @AB in p585; r1340+1339 @AB in p586; r1342+1341 @AB in p587; r1345+1344 @AB in p588; r1347+1346 @AB in p589; r1349+1348 @AB in p590; r1351+1350 @AB in p591; r1354+1353 @AB in p592; r1356+1355 @AB in p593; r1358+1357 @AB in p594; r1360+1359 @AB in p595; r1363+1362 @AB in p596; r1365+1364 @AB in p597; r1367+1366 @AB in p598; r1369+1368 @AB in p599; r1372+1371 @AB in p600; r1374+1373 @AB in p601; r1376+1375 @AB in p602; r1378+1377 @AB in p603; r1381+1380 @AB in p604; r1383+1382 @AB in p605; r1385+1384 @AB in p606; r1387+1386 @AB in p607; r1390+1389 @AB in p608; r1392+1391 @AB in p609; r1394+1393 @AB in p610; r1396+1395 @AB in p611, rev r1307 @AB in t15.row0; r1316 @AB in t15.row1; r1325 @AB in t15.row2; r1334 @AB in t15.row3; r1343 @AB in t15.row4; r1352 @AB in t15.row5; r1361 @AB in t15.row6; r1370 @AB in t15.row7; r1379 @AB in t15.row8; r1388 @AB in t15.row9 -->
-|{++Nouns  ++}{r1309+1308 @AB}|{++Verbs  ++}{r1311+1310 @AB}|{++Adjectives  ++}{r1313+1312 @AB}|{++Adverbs  ++}{r1315+1314 @AB}|
+<!-- t15 10x4, cells p572-p611 by row, cell-borders top,bottom single 0.375pt 000000 + left,right single 0.5pt 000000 in t15.row0; top,left,bottom,right single 0.5pt 000000 in t15.row1 t15.row2 t15.row3 t15.row4 t15.row5 t15.row6 t15.row7 t15.row8 t15.row9, break-ins r1308 @AB in p572; r1310 @AB in p573; r1312 @AB in p574; r1314 @AB in p575; r1317 @AB in p576; r1319 @AB in p577; r1321 @AB in p578; r1323 @AB in p579; r1326 @AB in p580; r1328 @AB in p581; r1330 @AB in p582; r1332 @AB in p583; r1335 @AB in p584; r1337 @AB in p585; r1339 @AB in p586; r1341 @AB in p587; r1344 @AB in p588; r1346 @AB in p589; r1348 @AB in p590; r1350 @AB in p591; r1353 @AB in p592; r1355 @AB in p593; r1357 @AB in p594; r1359 @AB in p595; r1362 @AB in p596; r1364 @AB in p597; r1366 @AB in p598; r1368 @AB in p599; r1371 @AB in p600; r1373 @AB in p601; r1375 @AB in p602; r1377 @AB in p603; r1380 @AB in p604; r1382 @AB in p605; r1384 @AB in p606; r1386 @AB in p607; r1389 @AB in p608; r1391 @AB in p609; r1393 @AB in p610; r1395 @AB in p611, rev r1307 @AB in t15.row0; r1316 @AB in t15.row1; r1325 @AB in t15.row2; r1334 @AB in t15.row3; r1343 @AB in t15.row4; r1352 @AB in t15.row5; r1361 @AB in t15.row6; r1370 @AB in t15.row7; r1379 @AB in t15.row8; r1388 @AB in t15.row9 -->
+|{++Nouns  ++}{>>r1309 @AB<<}|{++Verbs  ++}{>>r1311 @AB<<}|{++Adjectives  ++}{>>r1313 @AB<<}|{++Adverbs  ++}{>>r1315 @AB<<}|
 |:-|:-|:-|:-|
-|{++Ways  ++}{r1318+1317 @AB}|{++Thought  ++}{r1320+1319 @AB}|{++Enough  ++}{r1322+1321 @AB}|{++Nil  ++}{r1324+1323 @AB}|
-|{++Glimpse  ++}{r1327+1326 @AB}|{++Knew  ++}{r1329+1328 @AB}|{++More  ++}{r1331+1330 @AB}|{++ ++}{r1333+1332 @AB}|
-|{++Lord  ++}{r1336+1335 @AB}|{++Come  ++}{r1338+1337 @AB}|{++ ++}{r1340+1339 @AB}|{++ ++}{r1342+1341 @AB}|
-|{++Mind  ++}{r1345+1344 @AB}|{++Make  ++}{r1347+1346 @AB}|{++ ++}{r1349+1348 @AB}|{++ ++}{r1351+1350 @AB}|
-|{++ ++}{r1354+1353 @AB}|{++See  ++}{r1356+1355 @AB}|{++ ++}{r1358+1357 @AB}|{++ ++}{r1360+1359 @AB}|
-|{++ ++}{r1363+1362 @AB}|{++Are  ++}{r1365+1364 @AB}|{++ ++}{r1367+1366 @AB}|{++ ++}{r1369+1368 @AB}|
-|{++ ++}{r1372+1371 @AB}|{++Hunger  ++}{r1374+1373 @AB}|{++ ++}{r1376+1375 @AB}|{++ ++}{r1378+1377 @AB}|
-|{++ ++}{r1381+1380 @AB}|{++Cannot  ++}{r1383+1382 @AB}|{++ ++}{r1385+1384 @AB}|{++ ++}{r1387+1386 @AB}|
-|{++ ++}{r1390+1389 @AB}|{++Have  ++}{r1392+1391 @AB}|{++ ++}{r1394+1393 @AB}|{++ ++}{r1396+1395 @AB}|
+|{++Ways  ++}{>>r1318 @AB<<}|{++Thought  ++}{>>r1320 @AB<<}|{++Enough  ++}{>>r1322 @AB<<}|{++Nil  ++}{>>r1324 @AB<<}|
+|{++Glimpse  ++}{>>r1327 @AB<<}|{++Knew  ++}{>>r1329 @AB<<}|{++More  ++}{>>r1331 @AB<<}|{++ ++}{>>r1333 @AB<<}|
+|{++Lord  ++}{>>r1336 @AB<<}|{++Come  ++}{>>r1338 @AB<<}|{++ ++}{>>r1340 @AB<<}|{++ ++}{>>r1342 @AB<<}|
+|{++Mind  ++}{>>r1345 @AB<<}|{++Make  ++}{>>r1347 @AB<<}|{++ ++}{>>r1349 @AB<<}|{++ ++}{>>r1351 @AB<<}|
+|{++ ++}{>>r1354 @AB<<}|{++See  ++}{>>r1356 @AB<<}|{++ ++}{>>r1358 @AB<<}|{++ ++}{>>r1360 @AB<<}|
+|{++ ++}{>>r1363 @AB<<}|{++Are  ++}{>>r1365 @AB<<}|{++ ++}{>>r1367 @AB<<}|{++ ++}{>>r1369 @AB<<}|
+|{++ ++}{>>r1372 @AB<<}|{++Hunger  ++}{>>r1374 @AB<<}|{++ ++}{>>r1376 @AB<<}|{++ ++}{>>r1378 @AB<<}|
+|{++ ++}{>>r1381 @AB<<}|{++Cannot  ++}{>>r1383 @AB<<}|{++ ++}{>>r1385 @AB<<}|{++ ++}{>>r1387 @AB<<}|
+|{++ ++}{>>r1390 @AB<<}|{++Have  ++}{>>r1392 @AB<<}|{++ ++}{>>r1394 @AB<<}|{++ ++}{>>r1396 @AB<<}|
 
-<!-- p612 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1398+1397 @AB}¶{r1398+1397 @AB}
+<!-- p612 left, first-line 0in, left 0in, break-ins r1397 @AB -->
+{++ ++}{>>r1398 @AB<<}
 
-<!-- p613 left, first-line 0in, left 0in, line 1 -->
-{++ ++}{r1400+1399 @AB}¶{r1400+1399 @AB}
+<!-- p613 left, first-line 0in, left 0in, break-ins r1399 @AB -->
+{++ ++}{>>r1400 @AB<<}
 
-<!-- p614 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Six: “Wekobiro” (song) by SAMSONG  ++}{r1402+1401 @AB}¶{r1402+1401 @AB}
+<!-- p614 left, right -0.0104in, break-ins r1401 @AB -->
+{++Excerpt Six: “Wekobiro” (song) by SAMSONG  ++}{>>r1402 @AB<<}
 
-<!-- p615 -->
-{++The data below show cases of inter-sentential code switching thus it begins with English and ends with an indigenous language and vice versa:    ++}{r1404+1403 @AB}¶{r1404+1403 @AB}
+<!-- p615 break-ins r1403 @AB -->
+{++The data below show cases of inter-sentential code switching thus it begins with English and ends with an indigenous language and vice versa:    ++}{>>r1404 @AB<<}
 
-<!-- p616 -->
-{++You are the present ++}{r1406+1405 @AB}¶{r1406+1405 @AB}
+<!-- p616 break-ins r1405 @AB -->
+{++You are the present ++}{>>r1406 @AB<<}
 
-<!-- p617 -->
-{++You are the past  ++}{r1408+1407 @AB}¶{r1408+1407 @AB}
+<!-- p617 break-ins r1407 @AB -->
+{++You are the past  ++}{>>r1408 @AB<<}
 
-<!-- p618 -->
-{++You are the future… ++}{r1410+1409 @AB}¶{r1410+1409 @AB}
+<!-- p618 break-ins r1409 @AB -->
+{++You are the future… ++}{>>r1410 @AB<<}
 
-<!-- p619 -->
-{++Wekobiro ++}{r1412+1411 @AB}¶{r1412+1411 @AB}
+<!-- p619 break-ins r1411 @AB -->
+{++Wekobiro ++}{>>r1412 @AB<<}
 
-<!-- p620 -->
-{++Agbada buru ++}{r1414+1413 @AB}¶{r1414+1413 @AB}
+<!-- p620 break-ins r1413 @AB -->
+{++Agbada buru ++}{>>r1414 @AB<<}
 
-<!-- p621 -->
-{++Ovie nu tagboru ++}{r1416+1415 @AB}¶{r1416+1415 @AB}
+<!-- p621 break-ins r1415 @AB -->
+{++Ovie nu tagboru ++}{>>r1416 @AB<<}
 
-<!-- p622 -->
-{++Wekobiro ++}{r1418+1417 @AB}¶{r1418+1417 @AB}
+<!-- p622 break-ins r1417 @AB -->
+{++Wekobiro ++}{>>r1418 @AB<<}
 
-<!-- p623 left, right -0.0104in, after 2pt, line 1 -->
-{++English Words  	Indigenous language  ++}{r1420+1419 @AB}¶{r1420+1419 @AB}
+<!-- p623 left, right -0.0104in, break-ins r1419 @AB -->
+{++English Words  	Indigenous language  ++}{>>r1420 @AB<<}
 
-<!-- p624 -->
-{++You are present  	Wekobiro ++}{r1422+1421 @AB}¶{r1422+1421 @AB}
+<!-- p624 break-ins r1421 @AB -->
+{++You are present  	Wekobiro ++}{>>r1422 @AB<<}
 
-<!-- p625 -->
-{++You are the past 	Agbada buru ++}{r1424+1423 @AB}¶{r1424+1423 @AB}
+<!-- p625 break-ins r1423 @AB -->
+{++You are the past 	Agbada buru ++}{>>r1424 @AB<<}
 
-<!-- p626 -->
-{++You are the future  Ovie nu tagboru ++}{r1426+1425 @AB}¶{r1426+1425 @AB}
+<!-- p626 break-ins r1425 @AB -->
+{++You are the future  Ovie nu tagboru ++}{>>r1426 @AB<<}
 
-<!-- p627 -->
-{++ 	Wekobiro ++}{r1428+1427 @AB}¶{r1428+1427 @AB}
+<!-- p627 break-ins r1427 @AB -->
+{++ 	Wekobiro ++}{>>r1428 @AB<<}
 
-<!-- p628 left, first-line 0in, left 0in, after 1.75pt, line 1 -->
-{++ ++}{r1430+1429 @AB}¶{r1430+1429 @AB}
+<!-- p628 left, first-line 0in, left 0in, break-ins r1429 @AB -->
+{++ ++}{>>r1430 @AB<<}
 
-<!-- p629 left, after 2.5pt, line 0.975 -->
-{++Thus from the above, Samasong complete switches from English language to an indigenous language in what can better be described as a case of inter-sentential switching of codes. The extract like the others already sampled above shows the existence of code switching in Christian music. This is also the case in the song below: ++}{r1432+1431 @AB}¶{r1432+1431 @AB}
+<!-- p629 left, break-ins r1431 @AB -->
+{++Thus from the above, Samasong complete switches from English language to an indigenous language in what can better be described as a case of inter-sentential switching of codes. The extract like the others already sampled above shows the existence of code switching in Christian music. This is also the case in the song below: ++}{>>r1432 @AB<<}
 
-<!-- p630 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Seven: “Obezina” (song) by PREYE ODEDE  ++}{r1434+1433 @AB}¶{r1434+1433 @AB}
+<!-- p630 left, right -0.0104in, break-ins r1433 @AB -->
+{++Excerpt Seven: “Obezina” (song) by PREYE ODEDE  ++}{>>r1434 @AB<<}
 
-<!-- p631 -->
-{++Tell me why youre giving up on God  ++}{r1436+1435 @AB}¶{r1436+1435 @AB}
+<!-- p631 break-ins r1435 @AB -->
+{++Tell me why youre giving up on God  ++}{>>r1436 @AB<<}
 
-<!-- p632 -->
-{++Tell me why youre giving up on Him  ++}{r1438+1437 @AB}¶{r1438+1437 @AB}
+<!-- p632 break-ins r1437 @AB -->
+{++Tell me why youre giving up on Him  ++}{>>r1438 @AB<<}
 
-<!-- p633 -->
-{++Tell me why youre giving up on Him ++}{r1440+1439 @AB}¶{r1440+1439 @AB}
+<!-- p633 break-ins r1439 @AB -->
+{++Tell me why youre giving up on Him ++}{>>r1440 @AB<<}
 
-<!-- p634 -->
-{++Hold on, change is on the way,  ++}{r1442+1441 @AB}¶{r1442+1441 @AB}
+<!-- p634 break-ins r1441 @AB -->
+{++Hold on, change is on the way,  ++}{>>r1442 @AB<<}
 
-<!-- p635 -->
-{++Ebezina, Chukwu non so  ++}{r1444+1443 @AB}¶{r1444+1443 @AB}
+<!-- p635 break-ins r1443 @AB -->
+{++Ebezina, Chukwu non so  ++}{>>r1444 @AB<<}
 
-<!-- p636 -->
-{++Oginibunsobubgi ++}{r1446+1445 @AB}¶{r1446+1445 @AB}
+<!-- p636 break-ins r1445 @AB -->
+{++Oginibunsobubgi ++}{>>r1446 @AB<<}
 
-<!-- p637 -->
-{++Ima-naodiadigideh ++}{r1448+1447 @AB}¶{r1448+1447 @AB}
+<!-- p637 break-ins r1447 @AB -->
+{++Ima-naodiadigideh ++}{>>r1448 @AB<<}
 
-<!-- p638 -->
-{++Nwannemo, jidesi eh ike…   ++}{r1450+1449 @AB}¶{r1450+1449 @AB}
+<!-- p638 break-ins r1449 @AB -->
+{++Nwannemo, jidesi eh ike…   ++}{>>r1450 @AB<<}
 
-<!-- p639 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Eight: “All the Way” (song) by EBEN ++}{r1452+1451 @AB}¶{r1452+1451 @AB}
+<!-- p639 left, right -0.0104in, break-ins r1451 @AB -->
+{++Excerpt Eight: “All the Way” (song) by EBEN ++}{>>r1452 @AB<<}
 
-<!-- p640 -->
-{++We go dey hail  ++}{r1454+1453 @AB}¶{r1454+1453 @AB}
+<!-- p640 break-ins r1453 @AB -->
+{++We go dey hail  ++}{>>r1454 @AB<<}
 
-<!-- p641 -->
-{++Hail your name  ++}{r1456+1455 @AB}¶{r1456+1455 @AB}
+<!-- p641 break-ins r1455 @AB -->
+{++Hail your name  ++}{>>r1456 @AB<<}
 
-<!-- p642 -->
-{++Day by day  ++}{r1458+1457 @AB}¶{r1458+1457 @AB}
+<!-- p642 break-ins r1457 @AB -->
+{++Day by day  ++}{>>r1458 @AB<<}
 
-<!-- p643 -->
-{++All the Way(2x) ++}{r1460+1459 @AB}¶{r1460+1459 @AB}
+<!-- p643 break-ins r1459 @AB -->
+{++All the Way(2x) ++}{>>r1460 @AB<<}
 
-<!-- p644 -->
-{++We go dey hail  ++}{r1462+1461 @AB}¶{r1462+1461 @AB}
+<!-- p644 break-ins r1461 @AB -->
+{++We go dey hail  ++}{>>r1462 @AB<<}
 
-<!-- p645 -->
-{++Hail your name  ++}{r1464+1463 @AB}¶{r1464+1463 @AB}
+<!-- p645 break-ins r1463 @AB -->
+{++Hail your name  ++}{>>r1464 @AB<<}
 
-<!-- p646 -->
-{++Day by day  ++}{r1466+1465 @AB}¶{r1466+1465 @AB}
+<!-- p646 break-ins r1465 @AB -->
+{++Day by day  ++}{>>r1466 @AB<<}
 
-<!-- p647 -->
-{++All the way (2x) ++}{r1468+1467 @AB}¶{r1468+1467 @AB}
+<!-- p647 break-ins r1467 @AB -->
+{++All the way (2x) ++}{>>r1468 @AB<<}
 
-<!-- p648 -->
-{++All the way  ++}{r1470+1469 @AB}¶{r1470+1469 @AB}
+<!-- p648 break-ins r1469 @AB -->
+{++All the way  ++}{>>r1470 @AB<<}
 
-<!-- p649 left, first-line 0in, left 0in, after 2.25pt, line 1 -->
-{++ ++}{r1472+1471 @AB}¶{r1472+1471 @AB}
+<!-- p649 left, first-line 0in, left 0in, break-ins r1471 @AB -->
+{++ ++}{>>r1472 @AB<<}
 
-<!-- p650 -->
-{++In the song “All the Way” by Eben above, there is an obvious case of intrasentential code switching. This is because the language elements from another language feature in the same sentence where another language already exists: ++}{r1474+1473 @AB}¶{r1474+1473 @AB}
+<!-- p650 break-ins r1473 @AB -->
+{++In the song “All the Way” by Eben above, there is an obvious case of intrasentential code switching. This is because the language elements from another language feature in the same sentence where another language already exists: ++}{>>r1474 @AB<<}
 
-<!-- t16 3x4, cells p651-p662 by row, p651-p662 after 0pt line 1.15, widths 1.687in 1.758in 1.134in 0.495in, width 5.074in, indent 0.1035in, cell-borders top,left,bottom,right none in all, break-ins r1477+1476 @AB in p651; r1479+1478 @AB in p652; r1481+1480 @AB in p653; r1483+1482 @AB in p654; r1486+1485 @AB in p655; r1488+1487 @AB in p656; r1490+1489 @AB in p657; r1491 @AB in p658; r1494+1493 @AB in p659; r1496+1495 @AB in p660; r1498+1497 @AB in p661; r1499 @AB in p662, rev r1475 @AB in t16.row0; r1484 @AB in t16.row1; r1492 @AB in t16.row2 -->
-|{++English Words  ++}{r1477+1476 @AB}|{++Intra-Occurrence  ++}{r1479+1478 @AB}|{++English (continue) ++}{r1481+1480 @AB}|{++Words ++}{r1483+1482 @AB}|
+<!-- t16 3x4, cells p651-p662 by row, cell-borders top,left,bottom,right none in all, break-ins r1476 @AB in p651; r1478 @AB in p652; r1480 @AB in p653; r1482 @AB in p654; r1485 @AB in p655; r1487 @AB in p656; r1489 @AB in p657; r1491 @AB in p658; r1493 @AB in p659; r1495 @AB in p660; r1497 @AB in p661; r1499 @AB in p662, rev r1475 @AB in t16.row0; r1484 @AB in t16.row1; r1492 @AB in t16.row2 -->
+|{++English Words  ++}{>>r1477 @AB<<}|{++Intra-Occurrence  ++}{>>r1479 @AB<<}|{++English (continue) ++}{>>r1481 @AB<<}|{++Words ++}{>>r1483 @AB<<}|
 |:-|:-|:-|:-|
-|{++We go  ++}{r1486+1485 @AB}|{++dey (Pidgin) ++}{r1488+1487 @AB}|{++hail your name  ++}{r1490+1489 @AB}||
-|{++We go  ++}{r1494+1493 @AB}|{++dey (Pidgin) ++}{r1496+1495 @AB}|{++hail your name  ++}{r1498+1497 @AB}||
+|{++We go  ++}{>>r1486 @AB<<}|{++dey (Pidgin) ++}{>>r1488 @AB<<}|{++hail your name  ++}{>>r1490 @AB<<}||
+|{++We go  ++}{>>r1494 @AB<<}|{++dey (Pidgin) ++}{>>r1496 @AB<<}|{++hail your name  ++}{>>r1498 @AB<<}||
 
-<!-- p663 left, first-line 0in, left 0in, after 2.1pt, line 1 -->
-{++ ++}{r1501+1500 @AB}¶{r1501+1500 @AB}
+<!-- p663 left, first-line 0in, left 0in, break-ins r1500 @AB -->
+{++ ++}{>>r1501 @AB<<}
 
-<!-- p664 -->
-{++ Thus, it is common practice by some Nigerian gospel music to employ intrasentential code switching in their songs, and many reasons could be responsible for this. One of this is the desire to show one’s loyalty or affinity to one’s first language or indigenous language. And in this case, it seems most likely. This linguistic situation is similar to the one in the eight song below by Nosa.   ++}{r1503+1502 @AB}¶{r1503+1502 @AB}
+<!-- p664 break-ins r1502 @AB -->
+{++ Thus, it is common practice by some Nigerian gospel music to employ intrasentential code switching in their songs, and many reasons could be responsible for this. One of this is the desire to show one’s loyalty or affinity to one’s first language or indigenous language. And in this case, it seems most likely. This linguistic situation is similar to the one in the eight song below by Nosa.   ++}{>>r1503 @AB<<}
 
-<!-- p665 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Nine: “Pray for you” (song) by NOSA  ++}{r1505+1504 @AB}¶{r1505+1504 @AB}
+<!-- p665 left, right -0.0104in, break-ins r1504 @AB -->
+{++Excerpt Nine: “Pray for you” (song) by NOSA  ++}{>>r1505 @AB<<}
 
-<!-- p666 -->
-{++As all of us dey go our separate ways  ++}{r1507+1506 @AB}¶{r1507+1506 @AB}
+<!-- p666 break-ins r1506 @AB -->
+{++As all of us dey go our separate ways  ++}{>>r1507 @AB<<}
 
-<!-- p667 -->
-{++Na good tory we go dey tell  ++}{r1509+1508 @AB}¶{r1509+1508 @AB}
+<!-- p667 break-ins r1508 @AB -->
+{++Na good tory we go dey tell  ++}{>>r1509 @AB<<}
 
-<!-- p668 -->
-{++When we see again of how God don bless me  ++}{r1511+1510 @AB}¶{r1511+1510 @AB}
+<!-- p668 break-ins r1510 @AB -->
+{++When we see again of how God don bless me  ++}{>>r1511 @AB<<}
 
-<!-- p669 -->
-{++And bless you too  ++}{r1513+1512 @AB}¶{r1513+1512 @AB}
+<!-- p669 break-ins r1512 @AB -->
+{++And bless you too  ++}{>>r1513 @AB<<}
 
-<!-- p670 -->
-{++I go always pray for you ++}{r1515+1514 @AB}¶{r1515+1514 @AB}
+<!-- p670 break-ins r1514 @AB -->
+{++I go always pray for you ++}{>>r1515 @AB<<}
 
-<!-- p671 -->
-{++And even if I far from you  ++}{r1517+1516 @AB}¶{r1517+1516 @AB}
+<!-- p671 break-ins r1516 @AB -->
+{++And even if I far from you  ++}{>>r1517 @AB<<}
 
-<!-- p672 -->
-{++You go always dey my heart  ++}{r1519+1518 @AB}¶{r1519+1518 @AB}
+<!-- p672 break-ins r1518 @AB -->
+{++You go always dey my heart  ++}{>>r1519 @AB<<}
 
-<!-- p673 -->
-{++This na true ++}{r1521+1520 @AB}¶{r1521+1520 @AB}
+<!-- p673 break-ins r1520 @AB -->
+{++This na true ++}{>>r1521 @AB<<}
 
-<!-- p674 -->
-{++I just wan let you know say  ++}{r1523+1522 @AB}¶{r1523+1522 @AB}
+<!-- p674 break-ins r1522 @AB -->
+{++I just wan let you know say  ++}{>>r1523 @AB<<}
 
-<!-- p675 -->
-{++Whatever I do  ++}{r1525+1524 @AB}¶{r1525+1524 @AB}
+<!-- p675 break-ins r1524 @AB -->
+{++Whatever I do  ++}{>>r1525 @AB<<}
 
-<!-- p676 -->
-{++I go always pray for you   ++}{r1527+1526 @AB}¶{r1527+1526 @AB}
+<!-- p676 break-ins r1526 @AB -->
+{++I go always pray for you   ++}{>>r1527 @AB<<}
 
-<!-- p677 left, first-line 0in, left 0in, after 3.25pt, line 1.15 -->
-{++ ++}{r1529+1528 @AB}¶{r1529+1528 @AB}
+<!-- p677 left, first-line 0in, left 0in, break-ins r1528 @AB -->
+{++ ++}{>>r1529 @AB<<}
 
-<!-- t17 5x3, cells t17.row0 p678-p681 t17.row1 p682-p684 t17.row2 p685-p687 t17.row3 p688-p690 t17.row4 p691-p693, p678-p679 after 0pt line 1.15, p680 after 2.3pt line 1, p681-p693 after 0pt line 1.15, widths 1.767in 1.8146in 1.7in, width 5.281in, cell-borders top,left,bottom,right none in all, break-ins r1532+1531 @AB in p678; r1534+1533 @AB in p679; r1536+1535 @AB in p680; r1538+1537 @AB in p681; r1541+1540 @AB in p682; r1543+1542 @AB in p683; r1545+1544 @AB in p684; r1548+1547 @AB in p685; r1550+1549 @AB in p686; r1552+1551 @AB in p687; r1555+1554 @AB in p688; r1557+1556 @AB in p689; r1559+1558 @AB in p690; r1562+1561 @AB in p691; r1564+1563 @AB in p692; r1566+1565 @AB in p693, rev r1530 @AB in t17.row0; r1539 @AB in t17.row1; r1546 @AB in t17.row2; r1553 @AB in t17.row3; r1560 @AB in t17.row4 -->
-|{++English Words  ++}{r1532+1531 @AB}|{++Intra-Occurrence  ++}{r1534+1533 @AB}|{++English Words ++}{r1536+1535 @AB}{++<br>(continue) ++}{r1538+1537 @AB}|
+<!-- t17 5x3, cells t17.row0 p678-p681 t17.row1 p682-p684 t17.row2 p685-p687 t17.row3 p688-p690 t17.row4 p691-p693, cell-borders top,left,bottom,right none in all, break-ins r1531 @AB in p678; r1533 @AB in p679; r1535 @AB in p680; r1537 @AB in p681; r1540 @AB in p682; r1542 @AB in p683; r1544 @AB in p684; r1547 @AB in p685; r1549 @AB in p686; r1551 @AB in p687; r1554 @AB in p688; r1556 @AB in p689; r1558 @AB in p690; r1561 @AB in p691; r1563 @AB in p692; r1565 @AB in p693, rev r1530 @AB in t17.row0; r1539 @AB in t17.row1; r1546 @AB in t17.row2; r1553 @AB in t17.row3; r1560 @AB in t17.row4 -->
+|{++English Words  ++}{>>r1532 @AB<<}|{++Intra-Occurrence  ++}{>>r1534 @AB<<}|{++English Words ++}{>>r1536 @AB<<}{++<br>(continue) ++}{>>r1538 @AB<<}|
 |:-|:-|:-|
-|{++As all of ++}{r1541+1540 @AB}|{++Us dey go  ++}{r1543+1542 @AB}|{++Our separate ways  ++}{r1545+1544 @AB}|
-|{++When we see again ++}{r1548+1547 @AB}|{++Of how God don bless me ++}{r1550+1549 @AB}|{++And bless you too ++}{r1552+1551 @AB}|
-|{++And even if ++}{r1555+1554 @AB}|{++I far  ++}{r1557+1556 @AB}|{++from you ++}{r1559+1558 @AB}|
-|{++This  ++}{r1562+1561 @AB}|{++Na ++}{r1564+1563 @AB}|{++true  ++}{r1566+1565 @AB}|
+|{++As all of ++}{>>r1541 @AB<<}|{++Us dey go  ++}{>>r1543 @AB<<}|{++Our separate ways  ++}{>>r1545 @AB<<}|
+|{++When we see again ++}{>>r1548 @AB<<}|{++Of how God don bless me ++}{>>r1550 @AB<<}|{++And bless you too ++}{>>r1552 @AB<<}|
+|{++And even if ++}{>>r1555 @AB<<}|{++I far  ++}{>>r1557 @AB<<}|{++from you ++}{>>r1559 @AB<<}|
+|{++This  ++}{>>r1562 @AB<<}|{++Na ++}{>>r1564 @AB<<}|{++true  ++}{>>r1566 @AB<<}|
 
-<!-- p694 -->
-{++I just  	Wan let you know say 	Whatever I do ++}{r1568+1567 @AB}¶{r1568+1567 @AB}
+<!-- p694 break-ins r1567 @AB -->
+{++I just  	Wan let you know say 	Whatever I do ++}{>>r1568 @AB<<}
 
-<!-- p695 -->
-{++I  	go always  	Pray for you ++}{r1570+1569 @AB}¶{r1570+1569 @AB}
+<!-- p695 break-ins r1569 @AB -->
+{++I  	go always  	Pray for you ++}{>>r1570 @AB<<}
 
-<!-- p696 left, first-line 0in, left 0in, after 2.4pt, line 1 -->
-{++ ++}{r1572+1571 @AB}¶{r1572+1571 @AB}
+<!-- p696 left, first-line 0in, left 0in, break-ins r1571 @AB -->
+{++ ++}{>>r1572 @AB<<}
 
-<!-- p697 left, right -0.0104in, after 2pt, line 1 -->
-{++Excerpt Ten: “Na you be God” (Song) by TIM GODFREY ++}{r1574+1573 @AB}¶{r1574+1573 @AB}
+<!-- p697 left, right -0.0104in, break-ins r1573 @AB -->
+{++Excerpt Ten: “Na you be God” (Song) by TIM GODFREY ++}{>>r1574 @AB<<}
 
-<!-- p698 -->
-{++This last song could be considered as a example of tag switching in that it has to do with either a tag phrase or a word:  ++}{r1576+1575 @AB}¶{r1576+1575 @AB}
+<!-- p698 break-ins r1575 @AB -->
+{++This last song could be considered as a example of tag switching in that it has to do with either a tag phrase or a word:  ++}{>>r1576 @AB<<}
 
-<!-- p699 -->
-{++Na you be God  ++}{r1578+1577 @AB}¶{r1578+1577 @AB}
+<!-- p699 break-ins r1577 @AB -->
+{++Na you be God  ++}{>>r1578 @AB<<}
 
-<!-- p700 -->
-{++Almighty God   ++}{r1580+1579 @AB}¶{r1580+1579 @AB}
+<!-- p700 break-ins r1579 @AB -->
+{++Almighty God   ++}{>>r1580 @AB<<}
 
-<!-- p701 -->
-{++You no be man oh, ++}{r1582+1581 @AB}¶{r1582+1581 @AB}
+<!-- p701 break-ins r1581 @AB -->
+{++You no be man oh, ++}{>>r1582 @AB<<}
 
-<!-- p702 -->
-{++You no be man oh,  ++}{r1584+1583 @AB}¶{r1584+1583 @AB}
+<!-- p702 break-ins r1583 @AB -->
+{++You no be man oh,  ++}{>>r1584 @AB<<}
 
-<!-- p703 right 4.2014in -->
-{++Nara Ekele Nara Otuto ++}{r1586+1585 @AB}¶{r1586+1585 @AB}
+<!-- p703 right 4.2014in, break-ins r1585 @AB -->
+{++Nara Ekele Nara Otuto ++}{>>r1586 @AB<<}
 
-<!-- p704 -->
-{++OmeMma ++}{r1588+1587 @AB}¶{r1588+1587 @AB}
+<!-- p704 break-ins r1587 @AB -->
+{++OmeMma ++}{>>r1588 @AB<<}
 
-<!-- p705 -->
-{++Nani Gi ka m gaefe ++}{r1590+1589 @AB}¶{r1590+1589 @AB}
+<!-- p705 break-ins r1589 @AB -->
+{++Nani Gi ka m gaefe ++}{>>r1590 @AB<<}
 
-<!-- p706 -->
-{++A ga m ajagimma ++}{r1592+1591 @AB}¶{r1592+1591 @AB}
+<!-- p706 break-ins r1591 @AB -->
+{++A ga m ajagimma ++}{>>r1592 @AB<<}
 
-<!-- p707 -->
-{++Si naebighebi, ebighebiruona ++}{r1594+1593 @AB}¶{r1594+1593 @AB}
+<!-- p707 break-ins r1593 @AB -->
+{++Si naebighebi, ebighebiruona ++}{>>r1594 @AB<<}
 
-<!-- p708 -->
-{++Ebighebi (2x) ++}{r1596+1595 @AB}¶{r1596+1595 @AB}
+<!-- p708 break-ins r1595 @AB -->
+{++Ebighebi (2x) ++}{>>r1596 @AB<<}
 
-<!-- p709 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1598+1597 @AB}¶{r1598+1597 @AB}
+<!-- p709 left, first-line 0in, left 0in, break-ins r1597 @AB -->
+{++ ++}{>>r1598 @AB<<}
 
-<!-- p710 left, right -0.0104in, after 2pt, line 1 -->
-{++Pidgin Expressions  	English Expressions  ++}{r1600+1599 @AB}¶{r1600+1599 @AB}
+<!-- p710 left, right -0.0104in, break-ins r1599 @AB -->
+{++Pidgin Expressions  	English Expressions  ++}{>>r1600 @AB<<}
 
-<!-- p711 -->
-{++Na you be God 	Almighty God ++}{r1602+1601 @AB}¶{r1602+1601 @AB}
+<!-- p711 break-ins r1601 @AB -->
+{++Na you be God 	Almighty God ++}{>>r1602 @AB<<}
 
-<!-- p712 -->
-{++You no be man oh  	 ++}{r1604+1603 @AB}¶{r1604+1603 @AB}
+<!-- p712 break-ins r1603 @AB -->
+{++You no be man oh  	 ++}{>>r1604 @AB<<}
 
-<!-- p713 -->
-{++You no be man oh 	 ++}{r1606+1605 @AB}¶{r1606+1605 @AB}
+<!-- p713 break-ins r1605 @AB -->
+{++You no be man oh 	 ++}{>>r1606 @AB<<}
 
-<!-- p714 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r1608+1607 @AB}¶{r1608+1607 @AB}
+<!-- p714 left, first-line 0in, left 0in, break-ins r1607 @AB -->
+{++ ++}{>>r1608 @AB<<}
 
-<!-- p715 -->
-{++The position of this paper however is that if you isolate the individual words in an expression like “Na you be God”, it can be guessed that there are English words as well as Pidgin expression in it thus a case of tag switching. For example, it can be argued that the only Pidgin expression is the found in the Pidgin word “Na” while the rest are English words that have been tagged with it, resulting in the advent of tag switching. The same position is also made in reference to an expression like “you no be man oh” where English words have been tagged with Pidgin to give it a local flavour which is highly intonated.  ++}{r1610+1609 @AB}¶{r1610+1609 @AB}
+<!-- p715 break-ins r1609 @AB -->
+{++The position of this paper however is that if you isolate the individual words in an expression like “Na you be God”, it can be guessed that there are English words as well as Pidgin expression in it thus a case of tag switching. For example, it can be argued that the only Pidgin expression is the found in the Pidgin word “Na” while the rest are English words that have been tagged with it, resulting in the advent of tag switching. The same position is also made in reference to an expression like “you no be man oh” where English words have been tagged with Pidgin to give it a local flavour which is highly intonated.  ++}{>>r1610 @AB<<}
 
-<!-- p716 left, first-line 0in, left 0in, after 2.3pt, line 1 -->
-{++ ++}{r1612+1611 @AB}¶{r1612+1611 @AB}
+<!-- p716 left, first-line 0in, left 0in, break-ins r1611 @AB -->
+{++ ++}{>>r1612 @AB<<}
 
-<!-- p717 left, right -0.0104in, after 2pt, line 1 -->
-{++Conclusion ++}{r1614+1613 @AB}¶{r1614+1613 @AB}
+<!-- p717 left, right -0.0104in, break-ins r1613 @AB -->
+{++Conclusion ++}{>>r1614 @AB<<}
 
-<!-- p718 -->
-{++This paper has attempted to investigate aspects of code-switching in Nigerian gospel music. Having examined the excerpts from ten gospel songs, it was discovered that inter-sentential code-switching is the most common type of codeswitching in gospel songs while intra-sentential and tag switching occur only sparingly. The position of this paper therefore is that inter-sentential codeswitching is a welcomed development because through it, languages can maintain their distinct peculiarities while being used to create certain kinds of effect lyrically.  ++}{r1616+1615 @AB}¶{r1616+1615 @AB}
+<!-- p718 break-ins r1615 @AB -->
+{++This paper has attempted to investigate aspects of code-switching in Nigerian gospel music. Having examined the excerpts from ten gospel songs, it was discovered that inter-sentential code-switching is the most common type of codeswitching in gospel songs while intra-sentential and tag switching occur only sparingly. The position of this paper therefore is that inter-sentential codeswitching is a welcomed development because through it, languages can maintain their distinct peculiarities while being used to create certain kinds of effect lyrically.  ++}{>>r1616 @AB<<}
 
-<!-- p719 left, first-line 0in, left 0in, after 0pt, line 1 -->
-{++ 	 ++}{r1618+1617 @AB}¶{r1618+1617 @AB}
+<!-- p719 left, first-line 0in, left 0in, break-ins r1617 @AB -->
+{++ 	 ++}{>>r1618 @AB<<}
 
-<!-- p720 left, right -0.0104in, after 2pt, line 1 -->
-{++References ++}{r1620+1619 @AB}¶{r1620+1619 @AB}
+<!-- p720 left, right -0.0104in, break-ins r1619 @AB -->
+{++References ++}{>>r1620 @AB<<}
 
-<!-- p721 hanging 0.47in, left 0.46in -->
-{++Akindele, F., &Adegbite, W. (1999). The Sociology and Politics of English in Nigeria. Ile-Ife: Obafemi Awolowo University Press.   ++}{r1622+1621 @AB}¶{r1622+1621 @AB}
+<!-- p721 hanging 0.47in, left 0.46in, break-ins r1621 @AB -->
+{++Akindele, F., &Adegbite, W. (1999). The Sociology and Politics of English in Nigeria. Ile-Ife: Obafemi Awolowo University Press.   ++}{>>r1622 @AB<<}
 
-<!-- p722 -->
-{++Goddard, C. (1997). Semantic Analysis.  USA: Oxford UP.  ++}{r1624+1623 @AB}¶{r1624+1623 @AB}
+<!-- p722 break-ins r1623 @AB -->
+{++Goddard, C. (1997). Semantic Analysis.  USA: Oxford UP.  ++}{>>r1624 @AB<<}
 
-<!-- p723 left 0.477in -->
-{++Gumpez, John, Joseph., &Hymes, Dell, H. (1986). Directions in Sociolinguistics: The Ethnography of Communication. Oxford: Basil Blackwell.  ++}{r1626+1625 @AB}¶{r1626+1625 @AB}
+<!-- p723 left 0.477in, break-ins r1625 @AB -->
+{++Gumpez, John, Joseph., &Hymes, Dell, H. (1986). Directions in Sociolinguistics: The Ethnography of Communication. Oxford: Basil Blackwell.  ++}{>>r1626 @AB<<}
 
-<!-- p724 -->
-{++Halliday, M.A.K .(1978). Language as Social Semiotics. London: Edward Arnold.  ++}{r1628+1627 @AB}¶{r1628+1627 @AB}
+<!-- p724 break-ins r1627 @AB -->
+{++Halliday, M.A.K .(1978). Language as Social Semiotics. London: Edward Arnold.  ++}{>>r1628 @AB<<}
 
-<!-- p725 -->
-{++Hudson, R.A. (1996). Sociolinguistic. Cambridge: Cambridge University Press.  ++}{r1630+1629 @AB}¶{r1630+1629 @AB}
+<!-- p725 break-ins r1629 @AB -->
+{++Hudson, R.A. (1996). Sociolinguistic. Cambridge: Cambridge University Press.  ++}{>>r1630 @AB<<}
 
-<!-- p726 hanging 0.47in, left 0.46in -->
-{++Longe, V.U, and Ofuani, O. A. (1996). English Language and Communication.  Benin City: Ilupeju.  ++}{r1632+1631 @AB}¶{r1632+1631 @AB}
+<!-- p726 hanging 0.47in, left 0.46in, break-ins r1631 @AB -->
+{++Longe, V.U, and Ofuani, O. A. (1996). English Language and Communication.  Benin City: Ilupeju.  ++}{>>r1632 @AB<<}
 
-<!-- p727 hanging 0.47in, left 0.46in -->
-{++McClure, Erica. (2001). “Oral and Written Assyrian-English Code-Switching”. In  Radolfo Jacobson. Codeswitching Worldwide II. Berlin, New York: Mouton Gruyter.     ++}{r1634+1633 @AB}¶{r1634+1633 @AB}
+<!-- p727 hanging 0.47in, left 0.46in, break-ins r1633 @AB -->
+{++McClure, Erica. (2001). “Oral and Written Assyrian-English Code-Switching”. In  Radolfo Jacobson. Codeswitching Worldwide II. Berlin, New York: Mouton Gruyter.     ++}{>>r1634 @AB<<}
 
-<!-- p728 hanging 0.47in, left 0.46in -->
-{++Martin, N.J., & Nakayama, T. K. (2010). Intercultural Communication in Contexts. New York: Higher Education. ++}{r1636+1635 @AB}¶{r1636+1635 @AB}
+<!-- p728 hanging 0.47in, left 0.46in, break-ins r1635 @AB -->
+{++Martin, N.J., & Nakayama, T. K. (2010). Intercultural Communication in Contexts. New York: Higher Education. ++}{>>r1636 @AB<<}
 
-<!-- p729 hanging 0.47in, left 0.46in -->
-{++Mc Gregor, W. B. (2000). Linguistics: An Introduction. Maiden, New York: Continuum International Publishing Group.    ++}{r1638+1637 @AB}¶{r1638+1637 @AB}
+<!-- p729 hanging 0.47in, left 0.46in, break-ins r1637 @AB -->
+{++Mc Gregor, W. B. (2000). Linguistics: An Introduction. Maiden, New York: Continuum International Publishing Group.    ++}{>>r1638 @AB<<}
 
-<!-- p730 hanging 0.47in, left 0.46in -->
-{++Olateju, M, &Oyeleye, L. (2005). Perspective on Language and Literature. Nigeria: Awolowo. UP.  ++}{r1640+1639 @AB}¶{r1640+1639 @AB}
+<!-- p730 hanging 0.47in, left 0.46in, break-ins r1639 @AB -->
+{++Olateju, M, &Oyeleye, L. (2005). Perspective on Language and Literature. Nigeria: Awolowo. UP.  ++}{>>r1640 @AB<<}
 
-<!-- p731 hanging 0.477in, left 0.467in, after 2.1pt, line 0.975 -->
-{++Olorunfemi, Royimi. (2009). Code-Switching in Contemporary Nigerian Hip-Hop music. Ile Ife: Obafemi Awolowo University.  ++}{r1642+1641 @AB}¶{r1642+1641 @AB}
+<!-- p731 hanging 0.477in, left 0.467in, break-ins r1641 @AB -->
+{++Olorunfemi, Royimi. (2009). Code-Switching in Contemporary Nigerian Hip-Hop music. Ile Ife: Obafemi Awolowo University.  ++}{>>r1642 @AB<<}
 
-<!-- p732 hanging 0.47in, left 0.46in -->
-{++Poplack, S. (1985). “Contrasting Patterns in Code-Switching in Two Communities” Methods V: Proceedings of the International Conference on Methods in Dialectology. “ed”. Warkentyne, H. J. Victoria: University of Victoria Press.  ++}{r1644+1643 @AB}¶{r1644+1643 @AB}
+<!-- p732 hanging 0.47in, left 0.46in, break-ins r1643 @AB -->
+{++Poplack, S. (1985). “Contrasting Patterns in Code-Switching in Two Communities” Methods V: Proceedings of the International Conference on Methods in Dialectology. “ed”. Warkentyne, H. J. Victoria: University of Victoria Press.  ++}{>>r1644 @AB<<}
 
-<!-- p733 -->
-{++Wardhaugh, R. (2010). Introduction to Sociolinguistics. Malden: Wiley-Blackwell.  ++}{r1646+1645 @AB}¶{r1646+1645 @AB}
+<!-- p733 break-ins r1645 @AB -->
+{++Wardhaugh, R. (2010). Introduction to Sociolinguistics. Malden: Wiley-Blackwell.  ++}{>>r1646 @AB<<}
 
-<!-- p734 left, first-line 0in, left 0in, after 2.2pt, line 1 -->
-{++ ++}{r1648+1647 @AB}¶{r1648+1647 @AB}
+<!-- p734 left, first-line 0in, left 0in, break-ins r1647 @AB -->
+{++ ++}{>>r1648 @AB<<}
 
-<!-- p735 left, first-line 0in, left 0in, after 11.9pt, line 1 -->
-{++ ++}{r1650+1649 @AB}¶{r1650+1649 @AB}
+<!-- p735 left, first-line 0in, left 0in, break-ins r1649 @AB -->
+{++ ++}{>>r1650 @AB<<}
 
-<!-- p736 break-del r1652+1651 @AB -->
-{++ 	 ++}{r1652+1651 @AB}
+<!-- p736 break-del r1651 @AB -->
+{++ 	 ++}{>>r1652 @AB<<}
 
-<!-- p737 empty, left, first-line 0in, left 0in, after 0pt, line 1, fmt r1653 @AB -->
+<!-- p737 empty, left, first-line 0in, left 0in, fmt r1653 @AB -->
 
 [image1]: <data:image/jpeg;base64,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MvhiKLVROeje9rfDJdGnua4PG4zG5lPDVr02qeqW3Nf4ovqmtvxPmG0/bv8A+Cot98c7n9m21/Z9+HbeMrTTxfXGleY4CwFVbd5v9oeWeHU4DZ56V758S/2gf2lvgt+wfqfx7+KngXw/pvxC0mEPe6JGzTWCFtREMf8Aq52JzAyNxKcMe2Co8q8LHP8AwW58RY/6EFP/AEmta9Y/4Kj8fsF/EA4/5dbP/wBL7etsVHCyxmEpKjGKmqcpWT15nqtW9P6uY4R4qGBxdaVacnB1Ixu1pyq6e2/n+B4Lpf8AwUd/b58H/CzSv2kfi1+zJ4YuvhzftC7apoN8YphFJJ5atta5lZMt8o3oAWIBIyDX0p8eP2o38J/sWaj+1V8IYrO/zoFrqejpqkTmJ1mkiG2RUdWyA5yAwIYY7V+efiz9of8AaC8QfsefD39kfxV8MtJ8JeDPFyWdlp/jvWbiRorqGK7jk84svywqrhC+Qx2gnAHI+zv2ufhVp3wR/wCCWOu/CTSb5ryHQfCtnafamXH2hluId8mO25iWxnjOK6cfl+Fp4igpU4xcqrVou6cE0tdWk76b+qOXLswxlTC15RqSko0k7yVmqjjey0Tatqrr0ZwHw1/al/4K8fFnwJpvxH8Bfs0/Du+0fWLfz9Pu2vBEZI8kZ2yairLyDwQK+1fCc/iC58Mafc+LLSK31SSxhbUreBspFcFAZEX5m4DZA5PA6nrX51/sq/Fn9ubRfgL4S0z4e/HH4Jad4dt9OVdPsfEGtJHfxQ72+WVT0fr+lfo5pOpWOsadBq2l38N1bXMKy291byK8cqMMq6spIZSCCCOCOleVnlGNGtyRjBJN25L3sukr9fQ9bh+tKtQ55TqN2jfnta9t426evkWKKKK8M+iCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigArgf2pvg7F+0H+zf46+CTFFk8UeFr3TraSTpFPJCwik/4DJsb8K76igD8zP2ef8AglX+0BoP/BK7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>
 <!-- image1 drawing:eyJ4bWwiOiI8dzpkcmF3aW5nIHhtbG5zOnI9XCJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvb2ZmaWNlRG9jdW1lbnQvMjAwNi9yZWxhdGlvbnNoaXBzXCIgeG1sbnM6dz1cImh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy93b3JkcHJvY2Vzc2luZ21sLzIwMDYvbWFpblwiIHhtbG5zOndwPVwiaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL2RyYXdpbmdtbC8yMDA2L3dvcmRwcm9jZXNzaW5nRHJhd2luZ1wiIHhtbG5zOndwMTQ9XCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL29mZmljZS93b3JkLzIwMTAvd29yZHByb2Nlc3NpbmdEcmF3aW5nXCI-PHdwOmFuY2hvciBkaXN0VD1cIjBcIiBkaXN0Qj1cIjBcIiBkaXN0TD1cIjExNDMwMFwiIGRpc3RSPVwiMTE0MzAwXCIgc2ltcGxlUG9zPVwiMFwiIHJlbGF0aXZlSGVpZ2h0PVwiMjUxNjU5MjY0XCIgYmVoaW5kRG9jPVwiMVwiIGxvY2tlZD1cIjBcIiBsYXlvdXRJbkNlbGw9XCIxXCIgYWxsb3dPdmVybGFwPVwiMVwiIHdwMTQ6YW5jaG9ySWQ9XCIwNDM1OTFBRlwiIHdwMTQ6ZWRpdElkPVwiMTYyMjk1MkZcIj48d3A6c2ltcGxlUG9zIHg9XCIwXCIgeT1cIjBcIi8-PHdwOnBvc2l0aW9uSCByZWxhdGl2ZUZyb209XCJjb2x1bW5cIj48d3A6cG9zT2Zmc2V0Pi03OTA1NzU8L3dwOnBvc09mZnNldD48L3dwOnBvc2l0aW9uSD48d3A6cG9zaXRpb25WIHJlbGF0aXZlRnJvbT1cInBhcmFncmFwaFwiPjx3cDpwb3NPZmZzZXQ-LTEzNTI1NTwvd3A6cG9zT2Zmc2V0Pjwvd3A6cG9zaXRpb25WPjx3cDpleHRlbnQgY3g9XCIyMTkwNzUwXCIgY3k9XCI1MjM4NzVcIi8-PHdwOmVmZmVjdEV4dGVudCBsPVwiMFwiIHQ9XCIwXCIgcj1cIjBcIiBiPVwiOTUyNVwiLz48d3A6d3JhcFRpZ2h0IHdyYXBUZXh0PVwiYm90aFNpZGVzXCI-PHdwOndyYXBQb2x5Z29uIGVkaXRlZD1cIjBcIj48d3A6c3RhcnQgeD1cIjBcIiB5PVwiMFwiLz48d3A6bGluZVRvIHg9XCIwXCIgeT1cIjIxMjA3XCIvPjx3cDpsaW5lVG8geD1cIjIxNDEyXCIgeT1cIjIxMjA3XCIvPjx3cDpsaW5lVG8geD1cIjIxNDEyXCIgeT1cIjBcIi8-PHdwOmxpbmVUbyB4PVwiMFwiIHk9XCIwXCIvPjwvd3A6d3JhcFBvbHlnb24-PC93cDp3cmFwVGlnaHQ-PHdwOmRvY1ByIGlkPVwiMFwiIG5hbWU9XCJQaWN0dXJlIDJcIi8-PHdwOmNOdkdyYXBoaWNGcmFtZVByPjxhOmdyYXBoaWNGcmFtZUxvY2tzIHhtbG5zOmE9XCJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvZHJhd2luZ21sLzIwMDYvbWFpblwiIG5vQ2hhbmdlQXNwZWN0PVwiMVwiLz48L3dwOmNOdkdyYXBoaWNGcmFtZVByPjxhOmdyYXBoaWMgeG1sbnM6YT1cImh0dHA6Ly9zY2hlbWFzLm9wZW54bWxmb3JtYXRzLm9yZy9kcmF3aW5nbWwvMjAwNi9tYWluXCI-PGE6Z3JhcGhpY0RhdGEgdXJpPVwiaHR0cDovL3NjaGVtYXMub3BlbnhtbGZvcm1hdHMub3JnL2RyYXdpbmdtbC8yMDA2L3BpY3R1cmVcIj48cGljOnBpYyB4bWxuczpwaWM9XCJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvZHJhd2luZ21sLzIwMDYvcGljdHVyZVwiPjxwaWM6bnZQaWNQcj48cGljOmNOdlByIGlkPVwiMFwiIG5hbWU9XCJsZXR0ZXJoZWFkIGhlYWRlciBqcGcuanBnXCIvPjxwaWM6Y052UGljUHIvPjwvcGljOm52UGljUHI-PHBpYzpibGlwRmlsbCByb3RXaXRoU2hhcGU9XCIxXCI-PGE6YmxpcCByOmVtYmVkPVwicjFcIiBjc3RhdGU9XCJwcmludFwiPjxhOmV4dExzdD48YTpleHQgdXJpPVwiezI4QTAwOTJCLUM1MEMtNDA3RS1BOTQ3LTcwRTc0MDQ4MUMxQ31cIj48YTE0OnVzZUxvY2FsRHBpIHhtbG5zOmExND1cImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vb2ZmaWNlL2RyYXdpbmcvMjAxMC9tYWluXCIgdmFsPVwiMFwiLz48L2E6ZXh0PjwvYTpleHRMc3Q-PC9hOmJsaXA-PGE6c3JjUmVjdCBsPVwiMTgyXCIgcj1cIjYyMTM4XCIgYj1cIjQxNjEzXCIvPjxhOnN0cmV0Y2gvPjwvcGljOmJsaXBGaWxsPjxwaWM6c3BQciBid01vZGU9XCJhdXRvXCI-PGE6eGZybT48YTpvZmYgeD1cIjBcIiB5PVwiMFwiLz48YTpleHQgY3g9XCIyMTkwNzUwXCIgY3k9XCI1MjM4NzVcIi8-PC9hOnhmcm0-PGE6cHJzdEdlb20gcHJzdD1cInJlY3RcIj48YTphdkxzdC8-PC9hOnByc3RHZW9tPjxhOmxuPjxhOm5vRmlsbC8-PC9hOmxuPjxhOmV4dExzdD48YTpleHQgdXJpPVwiezUzNjQwOTI2LUFBRDctNDREOC1CQkQ3LUNDRTk0MzE2NDVFQ31cIj48YTE0OnNoYWRvd09ic2N1cmVkIHhtbG5zOmExND1cImh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vb2ZmaWNlL2RyYXdpbmcvMjAxMC9tYWluXCIvPjwvYTpleHQ-PC9hOmV4dExzdD48L3BpYzpzcFByPjwvcGljOnBpYz48L2E6Z3JhcGhpY0RhdGE-PC9hOmdyYXBoaWM-PHdwMTQ6c2l6ZVJlbFYgcmVsYXRpdmVGcm9tPVwibWFyZ2luXCI-PHdwMTQ6cGN0SGVpZ2h0PjA8L3dwMTQ6cGN0SGVpZ2h0Pjwvd3AxNDpzaXplUmVsVj48L3dwOmFuY2hvcj48L3c6ZHJhd2luZz4iLCJ3cmFwIjp0cnVlLCJyZWxzIjpbeyJzeW0iOiJyMSIsInQiOiJodHRwOi8vc2NoZW1hcy5vcGVueG1sZm9ybWF0cy5vcmcvb2ZmaWNlRG9jdW1lbnQvMjAwNi9yZWxhdGlvbnNoaXBzL2ltYWdlIiwicGFydCI6MH1dLCJkZXBzIjpbeyJuYW1lIjoid29yZC9tZWRpYS9pbWFnZTEuanBlZyIsInQiOiJpbWFnZS9qcGVnIn1dLCJzbG90IjowfQ -->

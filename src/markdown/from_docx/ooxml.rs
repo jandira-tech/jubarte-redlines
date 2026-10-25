@@ -9,13 +9,9 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
-use std::sync::Arc;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
-
-use crate::admission::InputLimits;
-use crate::xmllinq::parse::TagPolicy;
 
 use super::ConvertError;
 use super::critic::{self, Change};
@@ -26,7 +22,7 @@ pub(crate) const MAX_ENTRY_BYTES: u64 = 200 * 1024 * 1024;
 /// Largest number of entries a container may declare.
 pub(crate) const MAX_ENTRIES: usize = 10_000;
 /// Deepest XML nesting we accept; deeper input is treated as hostile.
-const MAX_DEPTH: usize = crate::xmllinq::parse::PERMISSIVE_MAX_DEPTH;
+const MAX_DEPTH: usize = 512;
 
 pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
     ConvertError::Invalid(message.to_string())
@@ -36,54 +32,15 @@ pub(crate) fn invalid(message: impl std::fmt::Display) -> ConvertError {
 pub(crate) struct Package<'a> {
     archive: zip::ZipArchive<Cursor<&'a [u8]>>,
     names: Vec<String>,
-    pub(crate) input_limits: InputLimits,
 }
 
 impl<'a> Package<'a> {
     pub(crate) fn open(bytes: &'a [u8], kind: &str) -> Result<Self, ConvertError> {
-        let archive = crate::opc::open_archive(Cursor::new(bytes))
+        let archive = zip::ZipArchive::new(Cursor::new(bytes))
             .map_err(|e| invalid(format!("not a valid {kind} file: {e}")))?;
         check_limits(&archive)?;
-        let names = archive
-            .file_names()
-            .map(|name| name.map(|name| name.into_owned()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(invalid)?;
-        Ok(Self {
-            archive,
-            names,
-            input_limits: InputLimits::default(),
-        })
-    }
-
-    /// Policy refusals are fatal even for auxiliary parts the renderer would
-    /// silently skip. Syntax failures keep the existing best-effort behavior.
-    pub(crate) fn check_tag_policy(&mut self) -> Result<(), ConvertError> {
-        for name in self.names.clone() {
-            if !name.ends_with(".xml") && !name.ends_with(".rels") {
-                continue;
-            }
-            let Some(bytes) = self.read(&name)? else {
-                continue;
-            };
-            let text = decode(&bytes);
-            let mut reader = Reader::from_str(&text);
-            let mut policy = TagPolicy::tolerant(self.input_limits);
-            loop {
-                let result = match reader.read_event() {
-                    Ok(Event::Start(tag)) => policy.open(&tag),
-                    Ok(Event::Empty(tag)) => policy.empty(&tag),
-                    Ok(Event::End(_)) => {
-                        policy.close();
-                        Ok(())
-                    }
-                    Ok(Event::Eof) | Err(_) => break,
-                    Ok(_) => Ok(()),
-                };
-                result.map_err(|why| invalid(format!("INVALID_XML: {name}: {why}")))?;
-            }
-        }
-        Ok(())
+        let names = archive.file_names().map(str::to_string).collect();
+        Ok(Self { archive, names })
     }
 
     fn resolve_name(&self, name: &str) -> Option<String> {
@@ -131,7 +88,7 @@ impl<'a> Package<'a> {
     /// Read and parse an XML entry, or `None` when it does not exist.
     pub(crate) fn xml(&mut self, name: &str) -> Result<Option<Element>, ConvertError> {
         match self.read(name)? {
-            Some(bytes) => parse_xml_with_limits(&bytes, self.input_limits)
+            Some(bytes) => parse_xml(&bytes)
                 .map(Some)
                 .map_err(|e| invalid(format!("{name}: {e}"))),
             None => Ok(None),
@@ -300,8 +257,6 @@ pub(crate) struct Element {
     pub name: String,
     pub attrs: Vec<(String, String)>,
     pub children: Vec<Node>,
-    /// Namespace bindings shared by elements in the same scope.
-    pub namespaces: Arc<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -329,36 +284,6 @@ impl Element {
             .iter()
             .find(|(k, _)| local(k) == name)
             .map(|(_, v)| v.as_str())
-    }
-
-    /// Attribute by namespace URI and local name.
-    fn attr_ns(&self, namespace: &str, name: &str) -> Option<&str> {
-        self.attrs.iter().find_map(|(key, value)| {
-            let (prefix, local) = key.split_once(':')?;
-            (local == name
-                && self
-                    .namespaces
-                    .get(prefix)
-                    .is_some_and(|ns| ns == namespace))
-            .then_some(value.as_str())
-        })
-    }
-
-    /// A reporting-only stamp supplied by the linked comment family.
-    pub(crate) const COMMENT_DATE: &str = "\u{E000}jubarteCommentDate";
-
-    pub(crate) fn comment_date(&self) -> Option<&str> {
-        self.attr(Self::COMMENT_DATE).or_else(|| self.attr("date"))
-    }
-
-    pub(crate) fn revision_date(&self) -> Option<String> {
-        crate::changes::revision_date(|ns, local| {
-            if ns == crate::namespaces::W::URI {
-                self.attr(local)
-            } else {
-                self.attr_ns(ns, local)
-            }
-        })
     }
 
     /// A relationship reference (`r:id`, `r:embed`): a prefixed attribute with this local name.
@@ -435,14 +360,7 @@ impl Element {
 }
 
 /// Parse XML bytes into an element tree (the document element).
-/// Internal fragments use the default budgets; package parts use the active
-/// limits through `parse_xml_with_limits`.
 pub(crate) fn parse_xml(bytes: &[u8]) -> Result<Element, String> {
-    parse_xml_with_limits(bytes, InputLimits::default())
-}
-
-pub(crate) fn parse_xml_with_limits(bytes: &[u8], limits: InputLimits) -> Result<Element, String> {
-    let mut policy = TagPolicy::new(limits);
     let text = decode(bytes);
     let mut reader = Reader::from_str(&text);
     reader.config_mut().trim_text(false);
@@ -453,27 +371,16 @@ pub(crate) fn parse_xml_with_limits(bytes: &[u8], limits: InputLimits) -> Result
             .map_err(|e| format!("malformed XML at byte {}: {e}", reader.buffer_position()))?;
         match event {
             Event::Start(start) => {
-                policy
-                    .open(&start)
-                    .map_err(|why| format!("INVALID_XML: {why}"))?;
                 if stack.len() > MAX_DEPTH {
                     return Err("XML nesting too deep".into());
                 }
-                stack.push(element_from(
-                    &start,
-                    &stack.last().expect("document scope").namespaces,
-                )?);
+                stack.push(element_from(&start)?);
             }
             Event::Empty(start) => {
-                policy
-                    .empty(&start)
-                    .map_err(|why| format!("INVALID_XML: {why}"))?;
-                let element =
-                    element_from(&start, &stack.last().expect("document scope").namespaces)?;
+                let element = element_from(&start)?;
                 push_child(&mut stack, Node::Element(element));
             }
             Event::End(_) => {
-                policy.close();
                 if stack.len() <= 1 {
                     return Err("unbalanced end tag".into());
                 }
@@ -547,12 +454,7 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// An element, childless, from its start tag: its name, its attributes
-/// as the parser normalizes them, and the namespaces in scope.
-pub(crate) fn element_from(
-    start: &quick_xml::events::BytesStart<'_>,
-    inherited: &Arc<HashMap<String, String>>,
-) -> Result<Element, String> {
+fn element_from(start: &quick_xml::events::BytesStart<'_>) -> Result<Element, String> {
     let name = start.name().as_ref().to_string();
     let mut attrs = Vec::new();
     for attr in start.attributes().with_checks(false) {
@@ -564,17 +466,10 @@ pub(crate) fn element_from(
         };
         attrs.push((key, value));
     }
-    let mut namespaces = Arc::clone(inherited);
-    for (key, value) in &attrs {
-        if let Some(prefix) = key.strip_prefix("xmlns:") {
-            Arc::make_mut(&mut namespaces).insert(prefix.to_string(), value.clone());
-        }
-    }
     Ok(Element {
         name,
         attrs,
         children: Vec::new(),
-        namespaces,
     })
 }
 
@@ -598,7 +493,7 @@ fn push_text(stack: &mut [Element], text: &str) {
 }
 
 pub(crate) fn collapse_ws(s: &str) -> String {
-    crate::util::collapse_whitespace(s)
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// How a stretch of inline text is set: the marks printed around it.
@@ -935,13 +830,12 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
         let lines: Vec<String> = core
             .split('\n')
             .map(|line| {
-                if marks.code && !line.is_empty() {
-                    let (fence_open, fence_close) = code_fence(line);
-                    return format!("{open}{fence_open}{line}{fence_close}{close}");
-                }
                 let (l, c, t) = split_ws(line);
                 if c.is_empty() {
                     line.to_string()
+                } else if marks.code {
+                    let (fence_open, fence_close) = code_fence(c);
+                    format!("{l}{open}{fence_open}{c}{fence_close}{close}{t}")
                 } else {
                     format!("{l}{open}{c}{close}{t}")
                 }
@@ -958,9 +852,6 @@ fn render_emphasis(spans: &[Span], emphasis: bool) -> String {
 /// strike show on a space, so the spaces at the stretch's edges stay
 /// inside its marks, each `&#32;` so the marks still touch text.
 fn edges(marks: Marks, text: &str) -> (&str, std::borrow::Cow<'_, str>, &str) {
-    if marks.code {
-        return ("", std::borrow::Cow::Borrowed(text), "");
-    }
     let (lead, core, trail) = split_ws(text);
     let spaced = marks.underline || marks.highlight.is_some() || marks.strike;
     let plain = |c: char| c == ' ';
@@ -1011,15 +902,11 @@ fn delimiters_read(
 }
 
 /// The backticks around a code span's text: one more than its longest run
-/// of backticks, padded when an edge backtick or space needs protecting.
-/// CommonMark removes one space at both ends except in an all-space span.
-pub(crate) fn code_fence(text: &str) -> (String, String) {
+/// of backticks, and a space inside when the text starts or ends with one.
+fn code_fence(text: &str) -> (String, String) {
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
     let fence = "`".repeat(longest + 1);
-    let pad = if text.starts_with('`')
-        || text.ends_with('`')
-        || ((text.starts_with(' ') || text.ends_with(' ')) && !text.chars().all(|c| c == ' '))
-    {
+    let pad = if text.starts_with('`') || text.ends_with('`') {
         " "
     } else {
         ""
@@ -1044,51 +931,27 @@ fn tidy_inline(s: &str, keep_spaces: bool, verbatim: bool) -> String {
     for line in s.split('\n') {
         let mut out = String::with_capacity(line.len());
         let mut prev_space = false;
-        // Parse code once per line, with the reader's options so backticks
-        // inside math stay in the equation. The agent and code-block paths
-        // already keep spaces and retain their existing normalization.
-        let code: Vec<_> = if keep_spaces || verbatim || !line.contains('`') {
-            Vec::new()
-        } else {
-            pulldown_cmark::Parser::new_ext(line, super::super::write::parser_options())
-                .into_offset_iter()
-                .filter_map(|(event, range)| {
-                    matches!(event, pulldown_cmark::Event::Code(_)).then_some(range)
-                })
-                .collect()
-        };
-        let mut at = 0;
-        for range in code
-            .into_iter()
-            .chain(std::iter::once(line.len()..line.len()))
-        {
-            let mut rest = &line[at..range.start];
-            while !rest.is_empty() {
-                // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
-                // spaces are the equation's, and Word draws each one.
-                let (text, math, next) = equation_split(rest);
-                for c in text.chars() {
-                    let is_space = c == ' ' || c == '\u{a0}';
-                    if is_space {
-                        if keep_spaces || !prev_space {
-                            out.push(' ');
-                        }
-                    } else {
-                        out.push(c);
+        let mut rest = line;
+        while !rest.is_empty() {
+            // A closed equation (`$…$`, `$$…$$`) is copied as it is: its
+            // spaces are the equation's, and Word draws each one.
+            let (text, math, next) = equation_split(rest);
+            for c in text.chars() {
+                let is_space = c == ' ' || c == '\u{a0}';
+                if is_space {
+                    if keep_spaces || !prev_space {
+                        out.push(' ');
                     }
-                    prev_space = is_space;
+                } else {
+                    out.push(c);
                 }
-                if !math.is_empty() {
-                    out.push_str(math);
-                    prev_space = false;
-                }
-                rest = next;
+                prev_space = is_space;
             }
-            if !range.is_empty() {
-                out.push_str(&line[range.clone()]);
+            if !math.is_empty() {
+                out.push_str(math);
                 prev_space = false;
             }
-            at = range.end;
+            rest = next;
         }
         lines.push(finish_line(&out, keep_spaces, verbatim));
     }
@@ -1330,18 +1193,6 @@ impl Blocks {
         self.trailing_space = trailing;
     }
 
-    /// Keeps an untracked empty paragraph after an explicitly inserted
-    /// paragraph mark. Its extra separator survives rejecting that mark.
-    pub(crate) fn empty_paragraph(&mut self) {
-        let previous = self.out.trim_end();
-        let inserted = previous.rsplit_once('¶').is_some_and(|(_, tag)| {
-            crate::markdown::critic::attribution_tag(tag).is_some_and(|(_, len)| len == tag.len())
-        });
-        if inserted && !self.last_was_list {
-            self.out.push_str("\n\n");
-        }
-    }
-
     /// Records that the paragraph mark ending the last block was inserted or
     /// deleted (`None` clears it).
     pub(crate) fn set_separator(&mut self, change: Option<Change>) {
@@ -1395,7 +1246,7 @@ impl ListIndent {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1419,21 +1270,6 @@ mod tests {
         assert_eq!(resolve_target("word", "media/a.png"), "word/media/a.png");
         assert_eq!(resolve_target("word", "/word/x.xml"), "word/x.xml");
         assert_eq!(resolve_target("", "word/document.xml"), "word/document.xml");
-    }
-
-    #[test]
-    fn inline_code_keeps_spaces_while_surrounding_text_collapses() {
-        for (source, expected) in [
-            ("a  `  x `  b", "a `  x ` b"),
-            ("a  `` `a  b` ``  b", "a `` `a  b` `` b"),
-            ("a  `a  $ b`  $x  y$  b", "a `a  $ b` $x  y$ b"),
-            ("a  $a`b`  c$  `x  y`", "a $a`b`  c$ `x  y`"),
-            (r"a  \`x  y", r"a \`x y"),
-            ("a  `x  y", "a `x y"),
-        ] {
-            assert_eq!(tidy_inline(source, false, false), expected, "{source}");
-            assert_eq!(tidy_inline(source, true, false), source, "{source}");
-        }
     }
 
     #[test]
@@ -1494,60 +1330,6 @@ mod tests {
     }
 
     #[test]
-    fn issue650_converter_tree_preserves_attribute_width_with_raised_limits() {
-        for count in [1024, 1025, 2000] {
-            let attrs: String = (0..count).map(|i| format!(" a{i}='v{i}'")).collect();
-            let xml = format!("<r{attrs}/>");
-            let parsed = parse_xml_with_limits(
-                xml.as_bytes(),
-                InputLimits {
-                    max_element_attributes: 4096,
-                    ..InputLimits::default()
-                },
-            );
-            assert!(
-                parsed.is_ok(),
-                "converter must preserve count {count}: {parsed:?}"
-            );
-            let root = parsed.unwrap();
-            assert_eq!(root.attrs.len(), count);
-            for (i, (name, value)) in root.attrs.iter().enumerate() {
-                assert_eq!(name, &format!("a{i}"));
-                assert_eq!(value, &format!("v{i}"));
-            }
-        }
-    }
-
-    #[test]
-    fn issue650_converter_tree_preserves_long_names_with_raised_limits() {
-        let name = "n".repeat(1025);
-        let xml = format!("<r {name}='Alice'/>");
-        let parsed = parse_xml_with_limits(
-            xml.as_bytes(),
-            InputLimits {
-                max_attribute_name_bytes: 4096,
-                ..InputLimits::default()
-            },
-        );
-        assert!(
-            parsed.is_ok(),
-            "converter must preserve long names: {parsed:?}"
-        );
-        assert_eq!(parsed.unwrap().attrs, [(name, "Alice".to_string())]);
-    }
-
-    #[test]
-    fn issue650_converter_tree_refuses_aliased_duplicate() {
-        let parsed = parse_xml(b"<r xmlns:a='urn:x' xmlns:b='urn:x' a:x='1' b:x='2'/>");
-        assert!(
-            parsed.is_err(),
-            "converter must refuse aliased duplicate: {parsed:?}"
-        );
-        assert!(parsed.unwrap_err().contains("expanded name"));
-        assert!(parse_xml(b"<r xmlns:a='urn:x' x='1' a:x='2'/>").is_ok());
-    }
-
-    #[test]
     fn xml_entities_and_depth() {
         let root = parse_xml(b"<a x=\"1&amp;2\">x &lt; y &#x41;<![CDATA[<z>]]></a>").unwrap();
         assert_eq!(root.attr("x"), Some("1&2"));
@@ -1574,7 +1356,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod ooxml_package_boundary_tests {
     use super::*;
     use std::io::Write as _;

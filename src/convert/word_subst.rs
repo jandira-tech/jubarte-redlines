@@ -213,7 +213,7 @@ pub(crate) fn word_name_substitute(name: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

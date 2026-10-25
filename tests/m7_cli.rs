@@ -112,7 +112,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
     );
     let expected = dir.path().join("a_v_b.docx");
     assert!(!expected.exists(), "no -o, no file");
-    // -o writes the redline, reports status on stderr and confirms its views.
+    // -o writes the redline and says so on stderr only.
     let out = Command::new(BIN)
         .arg("compare")
         .arg(&a)
@@ -123,7 +123,7 @@ fn compare_prints_the_view_and_writes_only_with_o() {
         .unwrap();
     assert!(out.status.success());
     assert!(
-        String::from_utf8_lossy(&out.stdout).starts_with("SUCCESS:\n~~~~diff\n"),
+        out.stdout.is_empty(),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
@@ -172,7 +172,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
         .output()
         .unwrap();
     assert!(first.status.success());
-    // second run without --force fails (exit 2) and does not clobber
+    // second run without --force fails (exit 1) and does not clobber
     let second = Command::new(BIN)
         .arg(&a)
         .arg(&b)
@@ -180,7 +180,7 @@ fn refuses_to_overwrite_without_force_then_force_succeeds() {
         .arg(&out_path)
         .output()
         .unwrap();
-    assert_eq!(second.status.code(), Some(2));
+    assert_eq!(second.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&second.stderr).contains("already exists"));
     // third run with --force overwrites
     let third = Command::new(BIN)
@@ -382,24 +382,15 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         "one row per revision before the summary"
     );
     for line in &lines {
-        // ref \t kind \t target \t author \t paragraph \t {text:?}, then
-        // `\t(2 elements)` for a change Word wrote as several marks (plan
-        // 11), `\tinside r1` for a change inside another and `\tholds
-        // comment c4's mark` for one holding a comment's mark: this fixture
-        // has no change inside another and no comment, so six fields, or
-        // seven with the element count. The count assumes the fixture's
-        // revision authors contain no literal tab (they don't). The human
-        // row format is tab-delimited by contract, so a tab inside an author
-        // would need `changes` to escape it before this could stay parseable.
-        let fields: Vec<&str> = line.split('\t').collect();
-        let elements = fields.get(6).is_some_and(|f| {
-            f.strip_prefix('(')
-                .and_then(|f| f.strip_suffix(" elements)"))
-                .is_some_and(|n| n.parse::<usize>().is_ok_and(|n| n > 1))
-        });
-        assert!(
-            fields.len() == 6 || (fields.len() == 7 && elements),
-            "row has 6 tab-separated fields, and a change of several marks its element count: {line:?}"
+        // ref \t kind \t target \t author \t paragraph \t {text:?}
+        // This 6-field count assumes the fixture's revision authors contain no
+        // literal tab (they don't). The human row format is tab-delimited by
+        // contract, so a tab inside an author would need `changes` to escape
+        // it before this could stay parseable.
+        assert_eq!(
+            line.split('\t').count(),
+            6,
+            "row has 6 tab-separated fields: {line:?}"
         );
         let short = line.split('\t').next().unwrap();
         assert!(
@@ -421,13 +412,7 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         String::from_utf8_lossy(&json.stderr)
     );
     let json_out = String::from_utf8_lossy(&json.stdout).into_owned();
-    let mut json_lines: Vec<&str> = json_out.lines().collect();
-    // The rows end with one line counting the input's validity findings (#1309).
-    let validity = json_lines.pop().expect("validity line present");
-    assert!(
-        validity.starts_with("{\"input_validity\":{\"errors\":"),
-        "{validity:?}"
-    );
+    let json_lines: Vec<&str> = json_out.lines().collect();
     assert_eq!(
         json_lines.len(),
         count,
@@ -477,7 +462,7 @@ fn expected_settings(
         jubarte::comparer::WmlComparerSettings::default()
     };
     jubarte::comparer::WmlComparerSettings {
-        author_for_revisions: "Jubarte".to_string(),
+        author_for_revisions: "Redline".to_string(),
         date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
         detail_threshold: cli_detail_threshold.unwrap_or(base.detail_threshold),
         ..base

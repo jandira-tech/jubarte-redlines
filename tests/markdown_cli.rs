@@ -71,7 +71,7 @@ fn github_file_output_has_no_stdout_and_preserves_no_clobber() {
     let patch = std::fs::read_to_string(dir.path().join("changes.patch")).unwrap();
     assert!(patch.starts_with("diff --git "));
     let refused = jubarte(&args, dir.path());
-    assert_eq!(refused.status.code(), Some(2));
+    assert_eq!(refused.status.code(), Some(1));
     assert!(refused.stdout.is_empty());
     assert!(failed(&refused).contains("already exists"));
     assert_eq!(
@@ -146,20 +146,10 @@ fn ok(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// A file write: DOCX gets a confirmation; status stays on stderr.
+/// A run that wrote a file: stdout empty, the `wrote …` line on stderr.
 fn wrote(out: &Output) -> String {
-    let stdout = ok(out);
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    if stderr.contains(" (docx, ") {
-        assert!(stdout.starts_with("SUCCESS:\n~~~~diff\n"), "{stdout}");
-        assert!(
-            stdout.contains("\n@@ ") && stdout.ends_with("~~~~\n"),
-            "{stdout}"
-        );
-    } else {
-        assert!(stdout.is_empty(), "stdout carries no status line: {stdout}");
-    }
-    stderr
+    assert!(ok(out).is_empty(), "stdout carries no status line");
+    String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 fn failed(out: &Output) -> String {
@@ -329,9 +319,9 @@ fn convert_writes_word_back_as_critic_markup() {
         dir.path(),
     ));
     // The substitution's note names its deletion's id, then its
-    // insertion's, matching the order written to the package.
-    let critic = "Payment is due in {~~30~>45~~}{r1+2 Jubarte (1970-01-01T00:00:00Z)} days.\
-                  {>>Jubarte (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
+    // insertion's: Word writes the insertion first.
+    let critic = "Payment is due in {~~30~>45~~}{>>r2+1 Redline (1970-01-01T00:00:00Z)<<} days.\
+                  {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
     // By default plain Markdown names its pages; the text after the marker
     // is exactly what --no-page-markers writes.
     assert_eq!(
@@ -498,7 +488,7 @@ fn diff_wraps_at_72_columns_unless_told_otherwise() {
 }
 
 #[test]
-fn the_owner_is_jubarte_whatever_git_says() {
+fn the_owner_is_redline_whatever_git_says() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
     let header = |name: Option<&str>| {
@@ -507,13 +497,13 @@ fn the_owner_is_jubarte_whatever_git_says() {
     };
     let named = header(Some("Ana Lima"));
     let fields: Vec<&str> = named.split('\t').collect();
-    assert_eq!(fields[..2], ["+++ b/new.md", "Jubarte"], "{named}");
+    assert_eq!(fields[..2], ["+++ b/new.md", "Redline"], "{named}");
     // YYYY-MM-DDTHH:MM:SSZ, this year or later.
     let date = fields[2];
     assert_eq!(date.len(), 20, "{date}");
     assert!(date.ends_with('Z') && &date[10..11] == "T", "{date}");
     assert!(date[..4].parse::<u32>().unwrap() >= 2026, "{date}");
-    assert!(header(None).contains("\tJubarte\t"));
+    assert!(header(None).contains("\tRedline\t"));
 }
 
 #[test]
@@ -548,7 +538,7 @@ fn diff_with_a_word_side_prints_paragraph_ids_and_writes_nothing() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("@@ [p1] @@\nPayment is due in {+45+}[-30-] days.\n"),
+        stdout.contains("@@ [p1] @@\nPayment is due in [-30-]{+45+} days.\n"),
         "{stdout}"
     );
     assert!(!stdout.contains("{>>Arthur Rodrigues ("), "{stdout}");
@@ -644,7 +634,7 @@ fn diff_writes_the_patch_once_and_never_over_a_file() {
         &["diff", "old.md", "new.md", "-o", "taken.patch"],
         dir.path(),
     );
-    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.status.code(), Some(1));
     assert!(failed(&out).contains("already exists"));
     assert!(out.stdout.is_empty(), "{:?}", out.stdout);
     // Before the inputs are read: missing ones are not what it says.
@@ -662,10 +652,7 @@ fn diff_writes_the_patch_once_and_never_over_a_file() {
         &["diff", "old.md", "new.md", "-o", "fresh.patch"],
         dir.path(),
     ));
-    assert!(
-        stderr.contains("wrote fresh.patch (patch diff, "),
-        "{stderr}"
-    );
+    assert!(stderr.contains("wrote fresh.patch (md, "), "{stderr}");
     assert!(
         std::fs::read_to_string(dir.path().join("fresh.patch"))
             .unwrap()
@@ -689,7 +676,7 @@ fn diff_and_compare_take_word_against_markdown() {
     // diff prints the patch and writes nothing.
     let out = jubarte(&["diff", "contract.docx", "new.md"], dir.path());
     assert!(
-        ok(&out).contains("Payment is due in {+45+}[-30-] days."),
+        ok(&out).contains("Payment is due in [-30-]{+45+} days."),
         "{out:?}"
     );
     assert!(!dir.path().join("contract_v_new.docx").exists());
@@ -954,305 +941,6 @@ fn images_are_read_next_to_the_markdown_with_escapes_decoded() {
     assert!(!String::from_utf8_lossy(&out.stderr).contains("warning:"));
 }
 
-/// A tiny distinctive PNG, as `image` writes one: the bytes a leaked file
-/// would carry into a written package (#617).
-fn probe_png(pixels: &[u8]) -> Vec<u8> {
-    use image::ImageEncoder as _;
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(pixels, 2, 2, image::ExtendedColorType::L8)
-        .unwrap();
-    png
-}
-
-/// Whether any part of a package holds these exact bytes: how a leaked
-/// file's contents would be recognized inside a written .docx (#617).
-fn package_contains(docx: &[u8], bytes: &[u8]) -> bool {
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
-    (0..archive.len()).any(|index| {
-        let mut file = archive.by_index(index).unwrap();
-        let mut data = Vec::new();
-        std::io::Read::read_to_end(&mut file, &mut data).unwrap();
-        data == bytes
-    })
-}
-
-/// `convert host.md` inside `dir`: its one image names a file outside the
-/// resource root. The load must be refused — exactly one warning naming
-/// the reason, the alt text in the document, and none of the secret's
-/// bytes in the package (#617).
-fn refuses_image_outside_the_root(dir: &Path, image: &str, secret: &[u8], reason: &str) {
-    let host = format!("![leaked]({image})\n");
-    seed(dir, &[("host.md", host.as_str())]);
-    let out = jubarte(&["convert", "host.md"], dir);
-    ok(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(
-        stderr.matches("warning:").count(),
-        1,
-        "the bypass must be refused exactly once: {stderr}"
-    );
-    assert!(
-        stderr.contains(&format!(
-            "image '{image}' was written as its alt text ({reason})"
-        )),
-        "{stderr}"
-    );
-    let docx = std::fs::read(dir.join("host.docx")).unwrap();
-    assert!(
-        !package_contains(&docx, secret),
-        "the secret's bytes reached the package"
-    );
-    assert!(
-        common::docx::part_string(&docx, "word/document.xml")
-            .unwrap()
-            .contains("leaked")
-    );
-}
-
-#[test]
-fn a_percent_encoded_absolute_image_path_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[7, 11, 13, 17]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    let image = outside
-        .path()
-        .join("secret.png")
-        .to_str()
-        .unwrap()
-        .replace('\\', "%5C")
-        .replace('/', "%2F");
-    refuses_image_outside_the_root(dir.path(), &image, &secret, "outside the resource root");
-}
-
-#[test]
-fn a_percent_encoded_parent_walk_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[19, 23, 29, 31]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    let neighbour = outside.path().file_name().unwrap().to_str().unwrap();
-    let image = format!("../{neighbour}/secret.png")
-        .replace('\\', "%5C")
-        .replace('/', "%2F");
-    refuses_image_outside_the_root(dir.path(), &image, &secret, "outside the resource root");
-}
-
-#[test]
-fn a_percent_encoded_url_scheme_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[37, 41, 43, 47]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    let file_url =
-        format!("file://{}", outside.path().join("secret.png").display()).replace('\\', "/");
-    let image = file_url
-        .replace(':', "%3A")
-        .replace('\\', "%5C")
-        .replace('/', "%2F");
-    refuses_image_outside_the_root(dir.path(), &image, &secret, "a URL scheme");
-}
-
-#[test]
-fn a_raw_parent_walk_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[53, 59, 61, 67]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    let neighbour = outside.path().file_name().unwrap().to_str().unwrap();
-    let image = format!("../{neighbour}/secret.png");
-    refuses_image_outside_the_root(dir.path(), &image, &secret, "outside the resource root");
-}
-
-#[test]
-fn an_absolute_image_path_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[71, 73, 79, 83]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    let image = outside
-        .path()
-        .join("secret.png")
-        .display()
-        .to_string()
-        .replace('\\', "/");
-    refuses_image_outside_the_root(dir.path(), &image, &secret, "outside the resource root");
-}
-
-#[cfg(unix)]
-#[test]
-fn a_symlink_out_of_the_resource_root_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[89, 97, 101, 103]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    std::os::unix::fs::symlink(
-        outside.path().join("secret.png"),
-        dir.path().join("link.png"),
-    )
-    .unwrap();
-    refuses_image_outside_the_root(dir.path(), "link.png", &secret, "outside the resource root");
-}
-
-#[test]
-fn images_inside_the_resource_root_still_embed() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("figs")).unwrap();
-    let at_root = probe_png(&[2, 3, 5, 7]);
-    let nested = probe_png(&[11, 13, 17, 19]);
-    std::fs::write(dir.path().join("inside.png"), &at_root).unwrap();
-    std::fs::write(dir.path().join("figs").join("nested.png"), &nested).unwrap();
-    seed(
-        dir.path(),
-        &[("doc.md", "![one](inside.png) ![two](figs/nested.png)\n")],
-    );
-    let out = jubarte(&["convert", "doc.md"], dir.path());
-    ok(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("warning:"), "{stderr}");
-    let docx = std::fs::read(dir.path().join("doc.docx")).unwrap();
-    assert!(package_contains(&docx, &at_root));
-    assert!(package_contains(&docx, &nested));
-    // --resource-path is the trusted opt-in: a document may name an image
-    // in another folder when the flag names a root at or above it.
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("shared.png"), &at_root).unwrap();
-    seed(dir.path(), &[("trust.md", "![kept](shared.png)\n")]);
-    let out = jubarte(
-        &[
-            "convert",
-            "trust.md",
-            "--resource-path",
-            outside.path().to_str().unwrap(),
-        ],
-        dir.path(),
-    );
-    ok(&out);
-    assert!(!String::from_utf8_lossy(&out.stderr).contains("warning:"));
-    let docx = std::fs::read(dir.path().join("trust.docx")).unwrap();
-    assert!(package_contains(&docx, &at_root));
-}
-
-#[test]
-fn an_encoded_scheme_without_slashes_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[17, 23, 43, 71]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    // On Unix a colon is legal in a filename. A scheme still must not
-    // become filesystem authority, even when a matching local file exists.
-    #[cfg(unix)]
-    std::fs::write(dir.path().join("file:secret.png"), &secret).unwrap();
-    refuses_image_outside_the_root(dir.path(), "file%3Asecret.png", &secret, "a URL scheme");
-}
-
-#[test]
-fn an_encoded_uppercase_data_scheme_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[19, 29, 47, 73]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    #[cfg(unix)]
-    std::fs::write(dir.path().join("DATA:secret.png"), &secret).unwrap();
-    refuses_image_outside_the_root(dir.path(), "DATA%3Asecret.png", &secret, "a URL scheme");
-}
-
-#[test]
-fn a_missing_image_warning_says_not_found() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[23, 31, 53, 79]);
-    std::fs::write(outside.path().join("secret.png"), &secret).unwrap();
-    refuses_image_outside_the_root(dir.path(), "missing.png", &secret, "not found");
-}
-
-#[test]
-fn compare_refuses_and_reports_an_escaping_markdown_image() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[29, 37, 59, 83]);
-    let path = outside.path().join("secret.png");
-    std::fs::write(&path, &secret).unwrap();
-    let old = format!(
-        "Alice's cover: ![leaked]({})\n",
-        path.display().to_string().replace('\\', "/")
-    );
-    seed(
-        dir.path(),
-        &[("old.md", &old), ("new.md", "Bob's cover.\n")],
-    );
-    let out = jubarte(
-        &["compare", "old.md", "new.md", "-o", "redline.docx"],
-        dir.path(),
-    );
-    ok(&out);
-    let docx = std::fs::read(dir.path().join("redline.docx")).unwrap();
-    assert!(
-        !package_contains(&docx, &secret),
-        "compare embedded the secret"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("was written as its alt text (outside the resource root)"),
-        "{stderr}"
-    );
-    assert_eq!(stderr.matches("warning:").count(), 1, "{stderr}");
-}
-
-#[test]
-fn diff_reports_an_escaping_markdown_image() {
-    let dir = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let secret = probe_png(&[31, 41, 61, 89]);
-    let path = outside.path().join("secret.png");
-    std::fs::write(&path, &secret).unwrap();
-    let old = format!(
-        "Alice's cover: ![leaked]({})\n",
-        path.display().to_string().replace('\\', "/")
-    );
-    seed(
-        dir.path(),
-        &[("old.md", &old), ("new.md", "Bob's cover.\n")],
-    );
-    let out = jubarte(&["diff", "old.md", "new.md"], dir.path());
-    let patch = ok(&out);
-    assert!(patch.contains("leaked"), "{patch}");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("was written as its alt text (outside the resource root)"),
-        "{stderr}"
-    );
-    assert_eq!(stderr.matches("warning:").count(), 1, "{stderr}");
-}
-
-#[cfg(unix)]
-#[test]
-fn a_symlinked_resource_root_and_contained_paths_still_embed() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets = tempfile::tempdir().unwrap();
-    std::fs::create_dir(assets.path().join("sub")).unwrap();
-    let png = probe_png(&[37, 43, 67, 97]);
-    std::fs::write(assets.path().join("kept.png"), &png).unwrap();
-    std::os::unix::fs::symlink(assets.path(), dir.path().join("assets")).unwrap();
-    let absolute = assets.path().join("kept.png");
-    let markdown = format!(
-        "![nested](sub/../kept.png) ![absolute]({})\n",
-        absolute.display()
-    );
-    seed(dir.path(), &[("trusted.md", &markdown)]);
-    let out = jubarte(
-        &["convert", "trusted.md", "--resource-path", "assets"],
-        dir.path(),
-    );
-    ok(&out);
-    assert!(!String::from_utf8_lossy(&out.stderr).contains("warning:"));
-    let docx = std::fs::read(dir.path().join("trusted.docx")).unwrap();
-    assert!(package_contains(&docx, &png));
-    let xml = common::docx::part_string(&docx, "word/document.xml").unwrap();
-    assert_eq!(xml.matches("<w:drawing>").count(), 2, "{xml}");
-}
-
 #[test]
 fn diff_reads_critic_markup_and_compare_takes_a_reference() {
     let dir = tempfile::tempdir().unwrap();
@@ -1382,58 +1070,4 @@ fn github_display_clips_around_unicode_change_and_full_lines_restores_content() 
         dir.path(),
     ));
     assert!(full.contains(&old) && full.contains(&new), "{full}");
-}
-
-#[test]
-fn issue_1137_convert_reports_renamed_revision_and_source_line() {
-    let dir = tempfile::tempdir().unwrap();
-    seed(
-        dir.path(),
-        &[(
-            "changes.md",
-            "---\nauthors:\n  A: Alice\n---\n{++a++}{r1 @A} x {++b++}{r1 @A}\n",
-        )],
-    );
-    let out = jubarte(&["convert", "changes.md"], dir.path());
-    ok(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains(
-            "warning: r1 names two separate changes on line 5; the second is written as r2"
-        ),
-        "{stderr}"
-    );
-    let bytes = std::fs::read(dir.path().join("changes.docx")).unwrap();
-    assert_word_valid_package(&bytes);
-    let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
-    assert_eq!(xml.matches("<w:ins ").count(), 2, "{xml}");
-    assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
-    assert_eq!(xml.matches("w:id=\"2\"").count(), 1, "{xml}");
-    // Reading the docx back names the new id, so the second read is a
-    // fixed point (#1414).
-    let read = jubarte(&["read", "changes.docx", "--no-page-markers"], dir.path());
-    ok(&read);
-    let view = String::from_utf8_lossy(&read.stdout);
-    assert!(view.contains("{++a++}{r1 @A} x {++b++}{r2 @A}"), "{view}");
-}
-
-#[test]
-fn issue_1137_convert_merges_adjacent_revision_without_warning() {
-    let dir = tempfile::tempdir().unwrap();
-    seed(
-        dir.path(),
-        &[(
-            "changes.md",
-            "---\nauthors:\n  A: Alice\n---\n{--a--}{r1 @A}{--b--}{r1 @A}\n",
-        )],
-    );
-    let out = jubarte(&["convert", "changes.md"], dir.path());
-    ok(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("warning:"), "{stderr}");
-    let bytes = std::fs::read(dir.path().join("changes.docx")).unwrap();
-    assert_word_valid_package(&bytes);
-    let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
-    assert_eq!(xml.matches("<w:del ").count(), 1, "{xml}");
-    assert_eq!(xml.matches("w:id=\"1\"").count(), 1, "{xml}");
 }

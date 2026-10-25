@@ -402,7 +402,7 @@ pub(crate) fn is_built_in(name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

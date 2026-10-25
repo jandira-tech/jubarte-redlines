@@ -316,19 +316,6 @@ Word's explicit flattening and faithful mode's original/revised ID, tag and
 alias ancestry. Use faithful mode when retaining revised form controls matters;
 for `fill_control`, the clean edit output also retains the control.
 
-### 13. Duplicate identical empty permission ranges (Compare)
-
-- **What happens.** When both documents carry the same empty permission
-  range (`w:permStart`/`w:permEnd` adjacent, at body level or inside a
-  paragraph), Word's Compare writes both copies: two pairs at the same
-  spot, each with its own document's id (#1215 synthetic pairs `wemptybody`,
-  `wemptyinparagraph`, Word 16, 2026-10-18).
-- **What we do.** The union writes one pair. Two empty ranges of one editor
-  that sit at the same position touch, and touching ranges merge.
-- **Which is better.** Ours. Both pairs grant nothing beyond the same empty
-  spot, and writing one keeps a redline of a redline from growing a pair on
-  every compare.
-
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
@@ -357,8 +344,6 @@ reject should give A back.
 | A13 | Reject All of its own redline drops the paragraphs' direct spacing A had (after=0, line=240) and restores Normal to the docDefaults spacing (after=200, line=276), so A's 4 pages come back as 6 (33.79 against A's own PDF) | Reject gives back A's layout (99.96 against A's PDF) | 1b4d |
 | A14 | Records an old rPr for a style only B has (`List Paragraph`: Arial, sz=18, neither side's value), which Reject All then writes | Leaves a style A lacks as B wrote it | 1b4d |
 | A15 | Drops a deleted paragraph's direct properties that repeat the revision's Normal (`jc=both`, run `sz=20`), so Reject All loses the original's justification and 10pt size | Keeps the original's direct properties on deleted text | 2219 |
-| A16 | Leaves the `w:ins` on the body's last paragraph mark unresolved after Accept All and Reject All, with its date truncated to the minute. Only the body's last paragraph: Word resolves the same mark in headers, footers, footnotes, table cells, text boxes, a section-break paragraph, and resolves a `w:moveTo` mark on a last paragraph moved in from elsewhere. When the last paragraph's text is inserted too, Reject All keeps an empty paragraph that still carries the mark's `w:ins` (`A \| ''`) | Resolves the mark in every story: no revision left, same paragraphs. Reject All of an inserted last paragraph removes it, giving back the original (`A`) | #1155, #1224 (synthetic) |
-| A17 | Renumbers every bookmark and comment the document keeps, 0, 1, … on one counter in reading order, whenever no revision is left (read off 51 files, R5) | Keeps each id the document gave it, so a reply or edit that names `c5` after the accept still reaches c5's thread (#1264). Ids never reach the page; `tests/m_accept_word_parity.rs` and the corpus test compare them by position | 2288f27be1, d6b1d609c1 |
 
 Word behaviour that *is* copied (it keeps what the revision says): see the
 rules pinned in `tests/m_accept_word_parity.rs`, `tests/m_reject_word_parity.rs`

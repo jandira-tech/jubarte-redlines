@@ -521,52 +521,9 @@ pub fn mark_content_as_deleted_or_inserted(
     id_gen: &mut u32,
 ) -> NodeId {
     let v = mark_content_transform(dom, root, settings, id_gen);
-    let root = v
-        .into_iter()
+    v.into_iter()
         .next()
-        .expect("root transform yields one node");
-    join_move_ranges(dom, root);
-    root
-}
-
-/// Marking emits a triple per run (and empty field), but a move names one
-/// range on each side. Word's Reject All duplicates text when the run splits
-/// give the sides different range counts (#1214). Keep every move wrapper and
-/// intervening endpoint in place; retain only the outer range boundaries.
-fn join_move_ranges(dom: &mut Dom, root: NodeId) {
-    for side in ["moveFrom", "moveTo"] {
-        let starts = dom.descendants(root, Some(&W::name(&format!("{side}RangeStart"))));
-        if starts.len() < 2 {
-            continue;
-        }
-        let ends: HashMap<String, NodeId> = dom
-            .descendants(root, Some(&W::name(&format!("{side}RangeEnd"))))
-            .into_iter()
-            .filter_map(|end| dom.attribute(end, &W::id()).map(|id| (id.to_string(), end)))
-            .collect();
-        let mut ranges: HashMap<String, (NodeId, NodeId)> = HashMap::new();
-        for start in starts {
-            let Some(name) = dom.attribute(start, &W::name("name")).map(str::to_string) else {
-                continue;
-            };
-            let Some(end) = dom
-                .attribute(start, &W::id())
-                .and_then(|id| ends.get(id))
-                .copied()
-            else {
-                continue;
-            };
-            if let Some((first, last)) = ranges.get_mut(&name) {
-                let id = dom.attribute(*first, &W::id()).unwrap().to_string();
-                dom.remove(start);
-                dom.remove(*last);
-                dom.set_attribute_value(end, &W::id(), Some(&id));
-                *last = end;
-            } else {
-                ranges.insert(name, (start, end));
-            }
-        }
-    }
+        .expect("root transform yields one node")
 }
 
 /// True when pPr carries structural body props (pStyle/numPr/spacing/jc/ind/…).
@@ -954,8 +911,8 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
         if let Some(n) = dom.name(el) {
             mark(&mut used, n.namespace_name());
         }
-        for (a, _) in dom.attributes_iter(el) {
-            if !dom.is_namespace_declaration(a) {
+        for (a, _) in dom.attributes(el) {
+            if !dom.is_namespace_declaration(&a) {
                 mark(&mut used, a.namespace_name());
             }
         }
@@ -1031,7 +988,8 @@ pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
             continue;
         };
         let lists: Vec<String> = dom
-            .attributes_iter(el)
+            .attributes(el)
+            .into_iter()
             .filter(|(name, _)| is_namespace_prefix_list(&element, name))
             .map(|(_, value)| value.to_string())
             .collect();
@@ -3341,7 +3299,8 @@ fn paragraph_mark_properties_equal(
     }
     fn signature(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| {
                 !dom.is_namespace_declaration(name)
                     && name.namespace_name() != PT::URI
@@ -5589,6 +5548,42 @@ pub fn cleanup_spacing_and_default_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Thin wrappers kept for call-site clarity / tests.
+/// Promote mid pure-del spacing from `pPrChange` onto live spacing (legacy name).
+/// M228 — promote a mid pure-D paragraph's spacing from
+/// `pPrChange` onto the live `pPr` when the deleted paragraph never
+/// had its own live spacing (Word revision style: equal spacing
+/// stays in `pPrChange`, original-only spacing becomes live because
+/// that is the deleted side's actual state).
+///
+/// Runs as part of [`cleanup_spacing_and_default_jc`]; exposed
+/// separately so the test corpus can hit it directly.
+pub fn promote_mid_pure_del_spacing_from_pprchange(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
+}
+
+/// Strip default left `jc` restatements (legacy name; shares cleanup pass).
+/// M231 — strip the default `w:jc="left"` (and the obvious synonyms
+/// `start`, `0`) so a paragraph does not carry an explicit left
+/// alignment when the package default already is left
+/// (`document_default`).
+///
+/// Exposed separately from [`cleanup_spacing_and_default_jc`] for
+/// direct test coverage.
+pub fn strip_default_left_jc(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
+}
+
+/// Strip redundant equal-spacing `pPrChange` (legacy name; shares cleanup pass).
+/// M226 — drop a `w:pPrChange` whose nested `w:spacing` exactly
+/// matches the live `w:spacing` (no layout change to record).
+///
+/// Exposed separately from [`cleanup_spacing_and_default_jc`] for
+/// direct test coverage.
+pub fn strip_redundant_equal_spacing_pprchange(dom: &mut Dom, root: NodeId) {
+    cleanup_spacing_and_default_jc(dom, root);
+}
+
 /// M221 (green_underline×heading_1_bold ~56): MIX residual carries B Heading
 /// spacing (before=400 after=120 line=240) while following pure-D bullets have
 /// none. Word parks that spacing on the **last** pure-D with live spacing +
@@ -6051,7 +6046,7 @@ pub fn strip_propertyless_ppr(dom: &mut Dom, root: NodeId) {
 /// No `w:start` and no `w:chapStyle`. A start value (footnotes sample keeps
 /// `w:start="1"`) or any other format is a real property.
 pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
-    for (name, value) in dom.attributes_iter(n) {
+    for (name, value) in dom.attributes(n) {
         if name.local_name() == "fmt" && value == "decimal" {
             continue;
         }
@@ -6686,7 +6681,7 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
 
 /// Every field char under `node` belongs to a field that begins and ends
 /// under it: no `fldChar` at all, or begins and ends that nest and balance.
-pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
     let mut depth = 0i32;
     for fc in dom.descendants(node, Some(fld_char)) {
         match dom.attribute(fc, &W::name("fldCharType")) {
@@ -6709,7 +6704,7 @@ pub(crate) fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool
 /// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
 /// writes "One two" inserted before the deleted "Click here now" link;
 /// the swap saw a hyperlink, not a deletion, and left the link first).
-pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
     if !dom.is_element(node) {
         return None;
     }
@@ -12563,7 +12558,7 @@ fn final_peel_has_identical_closing_properties(
 /// production pipeline calls
 /// [`fold_midstream_demo_title_into_numbered_heading_with_settings`].
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: NodeId) {
     let mut id = max_numeric_id(dom, root).saturating_add(1);
     fold_midstream_demo_title_into_numbered_heading_with_settings(
@@ -13090,71 +13085,27 @@ fn paragraph_texts(dom: &Dom, block: NodeId) -> Vec<String> {
         .collect()
 }
 
-/// Paragraph-owned properties captured before atomization and layout peels.
-/// Text identifies a source paragraph only when it occurs exactly once on
-/// that side; ambiguous or merged paragraphs cannot supply formatting history.
-#[derive(Default)]
-pub struct ParagraphPropertySources {
-    original: HashMap<String, Vec<NodeId>>,
-    revised: HashMap<String, Vec<NodeId>>,
-}
-
-impl ParagraphPropertySources {
-    /// Save each input paragraph's own comparable properties, including an
-    /// empty `w:pPr` for a paragraph that has none.
-    pub fn capture(dom: &mut Dom, original: NodeId, revised: NodeId) -> Self {
-        let mut capture = |body| {
-            let mut by_text: HashMap<String, Vec<NodeId>> = HashMap::new();
-            for p in dom.descendants(body, Some(&W::p())) {
-                let text = revised_text(dom, p).trim().to_string();
-                let properties = match dom.element(p, &W::p_pr()) {
-                    Some(ppr) => formatchg::project_para_properties_for_change(dom, ppr),
-                    None => dom.new_element(W::p_pr()),
-                };
-                by_text.entry(text).or_default().push(properties);
-            }
-            by_text
-        };
-        Self {
-            original: capture(original),
-            revised: capture(revised),
-        }
-    }
-
-    fn for_mix(&self, dom: &Dom, p: NodeId) -> Option<(NodeId, NodeId)> {
-        let text = |excluded| {
-            text_leaves(dom, p)
-                .into_iter()
-                .filter(|&t| text_side(dom, t, p) != excluded)
-                .map(|t| dom.value(t))
-                .collect::<String>()
-                .trim()
-                .to_string()
-        };
-        let [old] = self.original.get(&text("ins"))?.as_slice() else {
-            return None;
-        };
-        let [new] = self.revised.get(&text("del"))?.as_slice() else {
-            return None;
-        };
-        Some((*old, *new))
-    }
-}
-
-/// M452: a short title MIX can lose its old alignment during layout peels.
-/// Record it only when its own original and revised properties differ.
-/// A text-only edit must not borrow alignment from another body paragraph
-/// (#1149); the history carries the source paragraph's complete comparable pPr.
+/// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
+/// short **title** MIX free-mesh has no pPr; Word parks original `jc` into
+/// `pPrChange` only (no live jc). Abandoned M451 tried **live** jc on title
+/// and thrash'd right_align/center_bold. Park-only matches Word.
+///
+/// Gate: first MIX, short tokens (ins+del side words ≤5), no live jc, no
+/// pPrChange, and a later body para has live `jc` (source value).
+/// M452 — park a body live `w:jc` (typically right-aligned) into
+/// the first short-title MIX paragraph's `w:pPrChange`.
+///
+/// `right_aligned_italic × right_alignment_2` residual: Word keeps
+/// the title paragraph's body `jc` only as `pPrChange` history, not
+/// as live title `jc`. Live title `jc` thrashed (the M451 attempt
+/// was abandoned). Park-only: every body MIX's `jc` history moves
+/// onto the title MIX when the title is short.
 pub fn park_jc_on_first_short_title_mix_from_body(
     dom: &mut Dom,
     root: NodeId,
-    sources: &ParagraphPropertySources,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    if !settings.detect_format_changes {
-        return;
-    }
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -13185,32 +13136,59 @@ pub fn park_jc_on_first_short_title_mix_from_body(
     if ins_w + del_w == 0 || ins_w + del_w > 5 {
         return;
     }
-    let Some((old, new)) = sources.for_mix(dom, p) else {
-        return;
-    };
-    if formatchg::normalize_para_properties(dom, old)
-        == formatchg::normalize_para_properties(dom, new)
-    {
-        return;
-    }
-    let Some(jc) = dom.element(old, &W::jc_el()) else {
-        return;
-    };
-    if !matches!(dom.attribute(jc, &W::val()), Some("right" | "center")) {
-        return;
-    }
     let ppr = match dom.element(p, &W::p_pr()) {
         Some(ppr) => ppr,
         None => {
             let ppr = dom.new_element(W::p_pr());
-            dom.add_first(p, ppr);
+            // pPr must be first child of p for Word validity.
+            if let Some(first) = dom.elements(p, None).first().copied() {
+                dom.add_before_self(first, ppr);
+            } else {
+                dom.add(p, ppr);
+            }
             ppr
         }
     };
-    if dom.element(ppr, &W::jc_el()).is_some() || dom.element(ppr, &W::p_pr_change()).is_some() {
+    // Already live jc or any pPrChange — leave alone (right_align_bold title
+    // has live jc; center_bold title already park-only after other peels).
+    if dom.element(ppr, &W::jc_el()).is_some() {
         return;
     }
-    let old_inner = dom.clone_subtree(old);
+    if dom.element(ppr, &W::p_pr_change()).is_some() {
+        return;
+    }
+    // Source live jc from a later body residual.
+    let mut jc_val: Option<String> = None;
+    for &k in &kids {
+        if k == p || !dom.name_is(k, &W::p()) {
+            continue;
+        }
+        let Some(kppr) = dom.element(k, &W::p_pr()) else {
+            continue;
+        };
+        let Some(jc) = dom.element(kppr, &W::jc_el()) else {
+            continue;
+        };
+        if let Some(v) = dom.attribute(jc, &W::val())
+            && !v.is_empty()
+        {
+            // M452b: justify thrash (−10) when parking jc=both onto title MIX.
+            // Word title park-only shapes are right/center free-mesh demos.
+            if v != "right" && v != "center" {
+                continue;
+            }
+            jc_val = Some(v.to_string());
+            break;
+        }
+    }
+    let Some(val) = jc_val else {
+        return;
+    };
+    // Park-only pPrChange(old jc).
+    let old_inner = dom.new_element(W::p_pr());
+    let old_jc = dom.new_element(W::jc_el());
+    dom.set_attribute_value(old_jc, &W::val(), Some(&val));
+    dom.add(old_inner, old_jc);
     let chg = dom.new_element(W::p_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
@@ -13790,18 +13768,16 @@ fn split_words_preserve(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn word_lcs_indices(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+fn word_lcs_indices(a: &[String], b: &[String]) -> Vec<(usize, usize)> {
     let n = a.len();
     let m = b.len();
-    let mut dp = vec![0u32; (n + 1) * (m + 1)];
-    for (i, a_i) in a.iter().enumerate() {
-        let row_offset = i * (m + 1);
-        let next_row_offset = (i + 1) * (m + 1);
-        for (j, b_j) in b.iter().enumerate() {
-            if a_i == b_j {
-                dp[next_row_offset + j + 1] = dp[row_offset + j] + 1;
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for i in 0..n {
+        for j in 0..m {
+            if a[i] == b[j] {
+                dp[i + 1][j + 1] = dp[i][j] + 1;
             } else {
-                dp[next_row_offset + j + 1] = dp[next_row_offset + j].max(dp[row_offset + j + 1]);
+                dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
             }
         }
     }
@@ -13813,14 +13789,10 @@ fn word_lcs_indices(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
             out.push((i - 1, j - 1));
             i -= 1;
             j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1;
         } else {
-            let row_offset = (i - 1) * (m + 1);
-            let next_row_offset = i * (m + 1);
-            if dp[row_offset + j] >= dp[next_row_offset + j - 1] {
-                i -= 1;
-            } else {
-                j -= 1;
-            }
+            j -= 1;
         }
     }
     out.reverse();
@@ -13843,86 +13815,12 @@ fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec
     if a_idx.is_empty() || b_idx.is_empty() {
         return Vec::new();
     }
-    let a_f: Vec<&str> = a_idx.iter().map(|&i| a[i].as_str()).collect();
-    let b_f: Vec<&str> = b_idx.iter().map(|&j| b[j].as_str()).collect();
+    let a_f: Vec<String> = a_idx.iter().map(|&i| a[i].clone()).collect();
+    let b_f: Vec<String> = b_idx.iter().map(|&j| b[j].clone()).collect();
     word_lcs_indices(&a_f, &b_f)
         .into_iter()
         .map(|(i, j)| (a_idx[i], b_idx[j]))
         .collect()
-}
-
-#[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod word_lcs_tests {
-    use super::*;
-
-    #[test]
-    fn a_tie_drops_the_first_sides_word() {
-        assert_eq!(
-            word_lcs_indices(&["a", "b", "c"], &["b", "a", "c"]),
-            [(0, 1), (2, 2)]
-        );
-    }
-
-    #[test]
-    fn empty_and_disjoint_sides_match_nothing() {
-        assert!(word_lcs_indices(&[], &["a"]).is_empty());
-        assert!(word_lcs_indices(&["a"], &["b"]).is_empty());
-    }
-
-    #[test]
-    fn boilerplate_and_short_words_are_skipped_and_indices_map_back() {
-        let a: Vec<String> = ["the", "limits", "is", "clear"].map(String::from).into();
-        let b: Vec<String> = ["the", "bounds", "is", "clear"].map(String::from).into();
-        assert_eq!(word_lcs_indices_eligible(&a, &b, &["clear"]), [(2, 2)]);
-    }
-
-    /// The table as two-dimensional `usize` rows, as before the flat `u32`
-    /// table: the same recurrence and the same tie-break.
-    fn reference(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
-        let (n, m) = (a.len(), b.len());
-        let mut dp = vec![vec![0usize; m + 1]; n + 1];
-        for i in 0..n {
-            for j in 0..m {
-                dp[i + 1][j + 1] = if a[i] == b[j] {
-                    dp[i][j] + 1
-                } else {
-                    dp[i + 1][j].max(dp[i][j + 1])
-                };
-            }
-        }
-        let (mut i, mut j, mut out) = (n, m, Vec::new());
-        while i > 0 && j > 0 {
-            if a[i - 1] == b[j - 1] {
-                out.push((i - 1, j - 1));
-                i -= 1;
-                j -= 1;
-            } else if dp[i - 1][j] >= dp[i][j - 1] {
-                i -= 1;
-            } else {
-                j -= 1;
-            }
-        }
-        out.reverse();
-        out
-    }
-
-    #[test]
-    fn the_flat_table_matches_the_two_dimensional_one() {
-        const WORDS: [&str; 4] = ["a", "b", "c", "d"];
-        let mut seed = 0x2545_f491_u64;
-        let mut next = |bound: usize| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % bound as u64) as usize
-        };
-        for _ in 0..2000 {
-            let a: Vec<&str> = (0..next(9)).map(|_| WORDS[next(4)]).collect();
-            let b: Vec<&str> = (0..next(9)).map(|_| WORDS[next(4)]).collect();
-            assert_eq!(word_lcs_indices(&a, &b), reference(&a, &b), "{a:?} {b:?}");
-        }
-    }
 }
 
 /// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
@@ -15594,7 +15492,7 @@ fn stamp_trailing_numbering(
     append_empty_ppr_change(dom, ppr, settings, id_gen);
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_tests {
     use super::*;
 
@@ -16846,7 +16744,7 @@ mod coverage_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_two_tests {
     use super::*;
 
@@ -18272,7 +18170,7 @@ mod coverage_round_two_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_three_tests {
     use super::*;
 
@@ -19423,7 +19321,7 @@ mod coverage_round_three_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_round_next_tests {
     use super::*;
 
@@ -20805,7 +20703,7 @@ mod coverage_round_next_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod fragmented_label_regression_tests {
     use super::*;
 
@@ -20962,7 +20860,7 @@ mod fragmented_label_regression_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deep_production_path_tests {
     use super::*;
 
@@ -23611,7 +23509,7 @@ mod deep_production_path_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod row_move_ownership_regressions {
     use super::mark_fully_revised_rows;
     use crate::comparer::WmlComparerSettings;
@@ -23689,7 +23587,7 @@ mod row_move_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod parked_paragraph_history_regressions {
     use super::*;
 
@@ -23751,7 +23649,7 @@ mod parked_paragraph_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod closing_layout_history_regressions {
     use super::*;
 
@@ -23824,7 +23722,7 @@ mod closing_layout_history_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod split_paragraph_boundary_regressions {
     use super::*;
 
@@ -23888,7 +23786,7 @@ mod split_paragraph_boundary_regressions {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod row_nontext_ownership_regressions {
     use super::*;
 
@@ -24033,7 +23931,7 @@ mod row_nontext_ownership_regressions {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod short_label_format_history_tests {
     use super::*;
 
@@ -24328,7 +24226,7 @@ mod short_label_format_history_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_final_batch_finalize_tests {
     use super::*;
 
@@ -24780,7 +24678,7 @@ mod coverage_final_batch_finalize_tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_real_revision_merge_matrix_tests {
     use super::*;
 
@@ -24902,7 +24800,7 @@ mod coverage_real_revision_merge_matrix_tests {
         // no semantic formatting, unlike any actual property child.
         for local in ["rPr", "pPr"] {
             for n in dom.descendants(root, Some(&W::name(local))) {
-                if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
+                if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
                     dom.remove(n);
                 }
             }
@@ -25705,7 +25603,8 @@ mod coverage_real_revision_merge_matrix_tests {
     ) -> String {
         fn semantic(dom: &Dom, node: NodeId) -> String {
             let mut attrs = dom
-                .attributes_iter(node)
+                .attributes(node)
+                .into_iter()
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .collect::<Vec<_>>();
             attrs.sort_by(|a, b| {
@@ -25717,7 +25616,7 @@ mod coverage_real_revision_merge_matrix_tests {
                 .into_iter()
                 .filter(|&child| {
                     !((dom.name_is(child, &W::r_pr()) || dom.name_is(child, &W::p_pr()))
-                        && !dom.has_attributes(child)
+                        && dom.attributes(child).is_empty()
                         && dom.nodes(child).is_empty())
                 })
                 .map(|child| semantic(dom, child))
@@ -26240,7 +26139,7 @@ mod coverage_real_revision_merge_matrix_tests {
                         dom.name(node)
                             .is_none_or(|name| name.namespace_name() != PT::URI)
                             && dom
-                                .attributes_iter(node)
+                                .attributes(node)
                                 .into_iter()
                                 .all(|(name, _)| name.namespace_name() != PT::URI)
                     }),
@@ -28450,7 +28349,7 @@ mod coverage_real_revision_merge_matrix_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod consecutive_block_splice_tests {
     use super::*;
 
@@ -28476,7 +28375,8 @@ mod consecutive_block_splice_tests {
     // text node and child position instead of comparing xmlns placement.
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -28567,7 +28467,7 @@ mod consecutive_block_splice_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod demo_title_pilcrow_history_tests {
     use super::*;
     const DATE: &str = "2001-02-03T04:05:06Z";
@@ -28613,7 +28513,7 @@ mod demo_title_pilcrow_history_tests {
             crate::revision_processor::reject_revisions_document(dom, copy)
         };
         for n in dom.descendants(copy, Some(&W::r_pr())) {
-            if dom.elements(n, None).is_empty() && !dom.has_attributes(n) {
+            if dom.elements(n, None).is_empty() && dom.attributes(n).is_empty() {
                 dom.remove(n);
             }
         }
@@ -28707,7 +28607,8 @@ mod demo_title_pilcrow_history_tests {
     fn effect_projection(dom: &mut Dom, root: NodeId, accept: bool) -> Vec<(String, String)> {
         fn canonical(dom: &Dom, n: NodeId) -> String {
             let mut attrs = dom
-                .attributes_iter(n)
+                .attributes(n)
+                .into_iter()
                 .filter(|(name, _)| !dom.is_namespace_declaration(name))
                 .map(|(name, value)| {
                     (
@@ -28942,13 +28843,14 @@ mod demo_title_pilcrow_history_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod paired_row_mark_ownership_tests {
     use super::*;
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(n, _)| !dom.is_namespace_declaration(n))
             .map(|(n, v)| {
                 (
@@ -29225,7 +29127,7 @@ mod paired_row_mark_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod closing_authored_section_boundary_tests {
     use super::*;
 
@@ -29247,7 +29149,8 @@ mod closing_authored_section_boundary_tests {
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attributes = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attributes.sort_by(|a, b| {
@@ -29522,7 +29425,7 @@ mod closing_authored_section_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_distinct_boundary_contract_tests {
     use super::*;
 
@@ -29547,7 +29450,8 @@ mod finalizer_distinct_boundary_contract_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -30762,7 +30666,7 @@ mod finalizer_distinct_boundary_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_remaining_source_boundary_tests {
     use super::*;
 
@@ -30787,7 +30691,8 @@ mod finalizer_remaining_source_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31508,7 +31413,7 @@ mod finalizer_remaining_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_merge_source_guard_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31528,7 +31433,8 @@ mod finalizer_merge_source_guard_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -31940,7 +31846,7 @@ mod finalizer_merge_source_guard_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod finalizer_reached_predicate_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -31964,7 +31870,8 @@ mod finalizer_reached_predicate_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32306,7 +32213,7 @@ mod finalizer_reached_predicate_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_body_heuristic_story_scope_tests {
     use super::*;
 
@@ -32315,7 +32222,8 @@ mod public_body_heuristic_story_scope_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -32336,12 +32244,13 @@ mod public_body_heuristic_story_scope_tests {
         )
     }
 
-    type BodyHeuristic = fn(&mut Dom, NodeId);
-    type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
-
-    /// The public body passes that take only the DOM and a root.
-    fn body_heuristics() -> Vec<(&'static str, BodyHeuristic)> {
-        vec![
+    // These are valid header/footer part roots accepted by the public DOM
+    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
+    // heuristics must not reinterpret their independent story boundaries.
+    #[test]
+    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
+        type BodyHeuristic = fn(&mut Dom, NodeId);
+        let simple: &[(&str, BodyHeuristic)] = &[
             (
                 "unwrap_content_controls_in_pure_revisions",
                 unwrap_content_controls_in_pure_revisions,
@@ -32470,12 +32379,9 @@ mod public_body_heuristic_story_scope_tests {
                 "peel_trailing_for_word_onto_next_mix",
                 peel_trailing_for_word_onto_next_mix,
             ),
-        ]
-    }
-
-    /// The public body passes that also take settings and an id counter.
-    fn configured_heuristics() -> Vec<(&'static str, Configured)> {
-        vec![
+        ];
+        type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
+        let configured: &[(&str, Configured)] = &[
             ("trailing_empty_spacing_to_pprchange", |d, r, s, id| {
                 trailing_empty_spacing_to_pprchange(d, r, None, s, id);
             }),
@@ -32538,15 +32444,7 @@ mod public_body_heuristic_story_scope_tests {
             ),
             (
                 "park_jc_on_first_short_title_mix_from_body",
-                |d, r, s, id| {
-                    park_jc_on_first_short_title_mix_from_body(
-                        d,
-                        r,
-                        &ParagraphPropertySources::default(),
-                        s,
-                        id,
-                    );
-                },
+                park_jc_on_first_short_title_mix_from_body,
             ),
             (
                 "ensure_empty_pprchange_on_live_heading_spacing",
@@ -32558,16 +32456,7 @@ mod public_body_heuristic_story_scope_tests {
                     ensure_empty_pprchange_on_eq_with_live_jc(d, r, &HashSet::new(), s, id);
                 },
             ),
-        ]
-    }
-
-    // These are valid header/footer part roots accepted by the public DOM
-    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
-    // heuristics must not reinterpret their independent story boundaries.
-    #[test]
-    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
-        let simple = body_heuristics();
-        let configured = configured_heuristics();
+        ];
         const FORMAT: &str = "<w:rPr><w:rFonts w:ascii='Georgia' w:hAnsi='Georgia'/><w:b/><w:color w:val='123456'/><w:sz w:val='20'/><w:lang w:val='en-US'/></w:rPr>";
         for story in ["hdr", "ftr"] {
             for tracked_formats in [false, true] {
@@ -32606,7 +32495,7 @@ mod public_body_heuristic_story_scope_tests {
                 let root = dom.root(document).unwrap();
                 let before = canonical(&dom, root);
                 let count = dom.node_count();
-                for (name, operation) in &simple {
+                for (name, operation) in simple {
                     operation(&mut dom, root);
                     assert_eq!(
                         canonical(&dom, root),
@@ -32626,7 +32515,7 @@ mod public_body_heuristic_story_scope_tests {
                     ..WmlComparerSettings::default()
                 };
                 let mut id = 100;
-                for (name, operation) in &configured {
+                for (name, operation) in configured {
                     operation(&mut dom, root, &settings, &mut id);
                     assert_eq!(
                         canonical(&dom, root),
@@ -32646,188 +32535,10 @@ mod public_body_heuristic_story_scope_tests {
             }
         }
     }
-
-    /// One element or text node per line, indented by depth, attributes
-    /// sorted: the form the pass snapshots diff.
-    fn outline(dom: &Dom, node: NodeId, depth: usize, out: &mut String) {
-        let indent = "  ".repeat(depth);
-        if !dom.is_element(node) {
-            out.push_str(&format!("{indent}{:?}\n", dom.text_value(node)));
-            return;
-        }
-        let short = |name: &XName| {
-            if name.namespace_name() == W::URI {
-                format!("w:{}", name.local_name())
-            } else if name.namespace_name().is_empty() {
-                name.local_name().to_string()
-            } else {
-                format!("{{{}}}{}", name.namespace_name(), name.local_name())
-            }
-        };
-        let mut attrs = dom
-            .attributes_iter(node)
-            .filter(|(name, _)| !dom.is_namespace_declaration(name))
-            .map(|(name, value)| format!("{}={value:?}", short(name)))
-            .collect::<Vec<_>>();
-        attrs.sort();
-        let name = dom.name(node).map(|n| short(&n)).unwrap_or_default();
-        out.push_str(&format!("{indent}{name} {}\n", attrs.join(" ")));
-        for child in dom.nodes(node) {
-            outline(dom, child, depth + 1, out);
-        }
-    }
-
-    /// A body with the revision shapes the passes look for: pure inserted and
-    /// pure deleted titles, a mixed paragraph with a recorded property change,
-    /// a field, a table and trailing empty paragraphs.
-    fn synthetic_body() -> String {
-        let date = "2026-01-02T03:04:05Z";
-        let run = |kind: &str, text: &str, id: u32| {
-            let tag = if kind == "del" { "delText" } else { "t" };
-            format!(
-                "<w:{kind} w:id='{id}' w:author='Editor' w:date='{date}'><w:r><w:rPr><w:b/></w:rPr><w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r></w:{kind}>"
-            )
-        };
-        let props = "<w:pStyle w:val='Heading1'/><w:spacing w:before='240' w:after='120' w:line='276'/><w:jc w:val='left'/>";
-        format!(
-            "<w:document xmlns:w='{}'><w:body>\
-             <w:p><w:pPr>{props}<w:rPr><w:ins w:id='1' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
-             <w:p><w:pPr>{props}<w:rPr><w:del w:id='2' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
-             <w:p><w:pPr><w:spacing w:after='200'/><w:pPrChange w:id='3' w:author='Prior' w:date='{date}'><w:pPr><w:spacing w:after='200'/><w:jc w:val='center'/></w:pPr></w:pPrChange></w:pPr><w:r><w:t xml:space='preserve'>Kept text, </w:t></w:r>{}{}</w:p>\
-             <w:p><w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr><w:r><w:t>List item</w:t></w:r>{}</w:p>\
-             <w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>\
-             <w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl>\
-             <w:p><w:pPr><w:spacing w:after='240'/><w:rPr><w:ins w:id='9' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr></w:p>\
-             <w:p><w:pPr><w:rPr><w:del w:id='10' w:author='Editor' w:date='{date}'/></w:rPr></w:pPr>{}</w:p>\
-             <w:p/><w:sectPr><w:pgSz w:w='11906' w:h='16838'/></w:sectPr>\
-             </w:body></w:document>",
-            W::URI,
-            run("ins", "Revised title", 4),
-            run("del", "Original title", 5),
-            run("ins", "added words", 6),
-            run("del", "removed words", 7),
-            run("ins", " grows", 8),
-            run("del", "Cell text", 11),
-            run("del", "Closing words", 12),
-        )
-    }
-
-    /// The main document part of a fixture package, as XML text.
-    fn document_xml(docx: &[u8]) -> String {
-        let pkg = crate::opc::PartFs::open(docx).expect("fixture opens");
-        let main = pkg.main_document_part().expect("fixture has a main part");
-        pkg.part_string(&main).expect("main part is text")
-    }
-
-    /// What every public body pass does to `xml`: `unchanged`, or a unified
-    /// diff of the outline before and after it (and the ids it took).
-    fn pass_report(xml: &str) -> String {
-        let settings = WmlComparerSettings {
-            author_for_revisions: "Snapshot".to_string(),
-            date_time_for_revisions: "2026-01-02T03:04:05Z".to_string(),
-            ..WmlComparerSettings::default()
-        };
-        let parsed = || {
-            let mut dom = Dom::new();
-            let document = dom.parse_xdocument(xml);
-            let root = dom.root(document).expect("document element");
-            (dom, root)
-        };
-        let before = {
-            let (dom, root) = parsed();
-            let mut out = String::new();
-            outline(&dom, root, 0, &mut out);
-            out
-        };
-        let mut report = String::new();
-        let mut record = |name: &str, dom: &Dom, root: NodeId, ids: Option<(u32, u32)>| {
-            let mut after = String::new();
-            outline(dom, root, 0, &mut after);
-            report.push_str(&format!("## {name}\n"));
-            if let Some((from, to)) = ids.filter(|(from, to)| from != to) {
-                report.push_str(&format!("ids {from} -> {to}\n"));
-            }
-            if after == before {
-                report.push_str("unchanged\n");
-            } else {
-                let diff = similar::TextDiff::from_lines(&before, &after);
-                report.push_str(
-                    &diff
-                        .unified_diff()
-                        .context_radius(1)
-                        .header("before", "after")
-                        .to_string(),
-                );
-            }
-        };
-        for (name, pass) in body_heuristics() {
-            let (mut dom, root) = parsed();
-            pass(&mut dom, root);
-            record(name, &dom, root, None);
-        }
-        for (name, pass) in configured_heuristics() {
-            let (mut dom, root) = parsed();
-            let mut id = 1000;
-            pass(&mut dom, root, &settings, &mut id);
-            record(name, &dom, root, Some((1000, id)));
-        }
-        report
-    }
-
-    /// Snapshot of every public body pass on a small corpus: two of Word's
-    /// own redlines and a synthetic body. A pass whose output changes fails
-    /// here until the new snapshot is reviewed and blessed with
-    /// `JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'`.
-    #[test]
-    fn finalize_pass_snapshots() {
-        let corpus = [
-            (
-                "f1-word-redline",
-                document_xml(include_bytes!("../../tests/fixtures/f1/word-redline.docx")),
-            ),
-            (
-                "f4-word-redline",
-                document_xml(include_bytes!("../../tests/fixtures/f4/word-redline.docx")),
-            ),
-            ("synthetic-body", synthetic_body()),
-        ];
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/finalize-snapshots");
-        let bless = std::env::var_os("JUBARTE_BLESS").is_some();
-        for (name, xml) in corpus {
-            let actual = format!(
-                "# Every public comparer::finalize body pass on {name}: `unchanged`, or the\n\
-                 # outline diff it makes. Regenerate after review with\n\
-                 # JUBARTE_BLESS=1 cargo nextest run -E 'test(finalize_pass_snapshots)'\n{}",
-                pass_report(&xml)
-            );
-            let path = dir.join(format!("{name}.txt"));
-            if bless {
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(&path, &actual).unwrap();
-                continue;
-            }
-            let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-                panic!("{} is missing; run with JUBARTE_BLESS=1", path.display())
-            });
-            if expected != actual {
-                let diff = similar::TextDiff::from_lines(&expected, &actual)
-                    .unified_diff()
-                    .context_radius(2)
-                    .header("blessed", "now")
-                    .to_string();
-                let shown: String = diff.chars().take(6000).collect();
-                panic!(
-                    "{name}: a finalize pass changed its output. Review, then bless with \
-                     JUBARTE_BLESS=1.\n{shown}"
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod default_source_property_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -32850,7 +32561,8 @@ mod default_source_property_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33009,7 +32721,7 @@ mod default_source_property_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod existing_mark_layout_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33032,7 +32744,8 @@ mod existing_mark_layout_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33339,7 +33052,7 @@ mod existing_mark_layout_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod interleave_terminal_source_ownership_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33359,7 +33072,8 @@ mod interleave_terminal_source_ownership_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33557,7 +33271,7 @@ mod interleave_terminal_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod whitespace_source_mark_carrier_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33577,7 +33291,8 @@ mod whitespace_source_mark_carrier_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -33720,7 +33435,7 @@ mod whitespace_source_mark_carrier_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod fragmented_source_label_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -33746,7 +33461,8 @@ mod fragmented_source_label_boundary_tests {
             return format!("text:{:?}", dom.text_value(node));
         }
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -34227,7 +33943,7 @@ mod fragmented_source_label_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod nested_deleted_text_source_ownership_tests {
     use super::*;
 
@@ -34340,7 +34056,7 @@ mod nested_deleted_text_source_ownership_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod ladder_suffix_source_boundary_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34478,7 +34194,7 @@ mod ladder_suffix_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod reached_word_document_policy_tests {
     use super::*;
     struct PolicyCase {
@@ -34671,7 +34387,7 @@ mod reached_word_document_policy_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod mid_list_optional_source_property_tests {
     use super::*;
     const DATE: &str = "2026-01-02T03:04:05Z";
@@ -34767,7 +34483,7 @@ mod mid_list_optional_source_property_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod live_opaque_row_source_boundary_tests {
     use super::*;
 
@@ -34855,7 +34571,7 @@ mod live_opaque_row_source_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deleted_carrier_echo_source_owner_tests {
     use super::*;
     const DATE: &str = "1970-01-01T00:00:00Z";
@@ -34875,14 +34591,15 @@ mod deleted_carrier_echo_source_owner_tests {
     }
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .collect::<Vec<_>>();
         attrs.sort_by_key(|(name, value)| {
             (
                 name.namespace_name().to_owned(),
                 name.local_name().to_owned(),
-                *value,
+                value.clone(),
             )
         });
         if attrs.is_empty()

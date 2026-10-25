@@ -96,24 +96,15 @@ fn keep_leaves_their_changes_and_adds_mine() {
 }
 
 #[test]
-fn an_edit_inside_their_insertion_keeps_the_revision_pending() {
+fn an_edit_inside_their_insertion_is_still_refused() {
     let plan = EditPlan::from_json(
         r#"{"schema_version":1,"author":"Me","existing_revisions":"keep","operations":[
         {"kind":"replace","paragraph":"p0","find":"45","replacement":"60"}]}"#,
     )
     .unwrap();
-    let out = apply_plan(&source(), &plan);
-    assert!(out.is_ok(), "edit must succeed: {:?}", out.err());
-    let out = out.unwrap();
-    assert_word_valid_package(&out.redline);
-    assert_eq!(
-        texts(&accept_changes(&out.redline, &mine()).unwrap()),
-        texts(&out.clean)
-    );
-    assert_eq!(
-        texts(&reject_changes(&out.redline, &mine()).unwrap()),
-        texts(&source())
-    );
+    let e = apply_plan(&source(), &plan).unwrap_err();
+    assert_eq!(e.code, "UNSUPPORTED_STRUCTURE");
+    assert!(e.message.contains("revision"));
 }
 
 #[test]
@@ -226,11 +217,10 @@ fn text_edits_carry_comments_and_formatting() {
             (ChangeKind::Insertion, "New York")
         ]
     );
-    // "Delaware" → "New York" is one replacement (plan 11).
     let r = &out.report.revisions;
     assert_eq!(
-        (r.inserted, r.deleted, r.replaced, r.total),
-        (1, 1, 1, 3),
+        (r.inserted, r.deleted, r.total),
+        (2, 2, 4),
         "the report counts my changes only"
     );
     let red = part_string(&out.redline, "word/document.xml").unwrap();
@@ -327,6 +317,7 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     let reformatted = r#"<w:p><w:pPr><w:jc w:val="right"/><w:pPrChange w:id="4" w:author="Other" w:date="2026-09-01T00:00:00Z"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Moved right.</w:t></w:r></w:p>"#;
     let source = docx(&(OTHER.to_string() + tracked_mark + reformatted + &para("Last.")));
     for operations in [
+        r#"[{"kind":"delete_paragraph","paragraph":"p0"}]"#,
         r#"[{"kind":"merge_paragraphs","paragraph":"p1"}]"#,
         r#"[{"kind":"format_paragraph","paragraph":"p2","alignment":"left"}]"#,
         r#"[{"kind":"list","paragraphs":["p2"]}]"#,
@@ -347,19 +338,6 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
     )
     .unwrap();
     invariants(&source, &out);
-    // Deleting a paragraph that holds another author's insertion lands
-    // (#1136): the deletion nests in their insertion.
-    let out = apply_plan(
-        &source,
-        &keep(r#"[{"kind":"delete_paragraph","paragraph":"p0"}]"#),
-    )
-    .unwrap();
-    invariants(&source, &out);
-    let red = part_string(&out.redline, "word/document.xml").unwrap();
-    assert!(
-        red.contains(r#"w:author="Other""#) && red.contains("<w:delText>45</w:delText>"),
-        "{red}"
-    );
 }
 
 #[test]

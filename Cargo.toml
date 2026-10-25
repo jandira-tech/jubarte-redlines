@@ -26,7 +26,6 @@ categories = ["text-processing", "parser-implementations", "command-line-utiliti
 # jubarte-app/…/node_modules etc.
 include = [
   "/src/**",
-  "/schemas/**",
   "/assets/fonts/**",
   "/benches/**",
   "/Cargo.toml",
@@ -99,10 +98,10 @@ perf-profile = []
 self-update = ["cli", "dep:self_update"]
 
 [dependencies]
-# Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
-# its duplicate-repair and canonical-writing policy; optional crypto stays off.
-oxml-opc = { version = "0.14.2", default-features = false } # OPC types; encryption/signatures stay disabled
-zip = { version = "9.0.5", default-features = false, features = ["deflate"] } # deterministic package writer and direct ZIP access; pure-Rust Deflate; >= 9.0.5 closes GHSA-m665-v7pm-7grj (zip cloaking, SECURITY.md)
+# 0.2 keeps the OPC parsing semantics and requires patched quick-xml >=0.41.
+# This also protects callers of our public Relationships::from_xml re-export.
+rdocx-opc = "0.2" # OPC/zip package layer
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
@@ -110,17 +109,10 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
-# `OpcError::Xml`/`XmlAttr` (oxml-opc 0.14.2) carry quick-xml 0.41's error types,
-# and 0.42's (`QName` now wraps `&str`, new error paths) do not convert to them.
-# The OPC record scanner reads with the same 0.41 the payload uses, so a syntax
-# error surfaces as `OpcError::Xml` instead of an I/O refusal (#524, #1069).
-quick-xml-041 = { package = "quick-xml", version = "0.41", default-features = false }
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
-schemars = "1.2.2" # Legacy edit discovery derives field facts from the Serde model.
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
 serde_json = "1"
 base64 = "0.23" # `drawing:` payloads embed their dependent parts (already in the tree transitively)
-regex = "1" # `read --for-edit --regex` search (already in the tree for tests)
 tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
 pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
 similar = { version = "3", default-features = false, features = ["text"] } # Markdown and Git/GitHub unified text diffs
@@ -138,19 +130,14 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 # signature check (`signatures`, enforced once a release key is committed:
 # docs/SELF_UPDATE.md), archive extraction and binary replacement. Only the
 # command contacts the network.
-self_update = { version = "1.3.1", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums", "signatures"], optional = true }
+self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums", "signatures"], optional = true }
 
 # Windows releases are .zip. Zip support stays off elsewhere: it turns on the
 # zip crate's `time` feature, which stamps wall-clock times into our own
 # archives unless every entry sets its time (986c526). `archive-zip` also
 # turns on zipsign's zip verifier when `signatures` is on (above).
 [target.'cfg(windows)'.dependencies]
-self_update = { version = "1.3.1", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
-
-# Host filesystem publication is unavailable to browser/WASM byte APIs.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cap-std = "4"
-uuid = { version = "1", features = ["v4"] }
+self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 
 # wasm32-unknown-unknown has no clock in std: `SystemTime::now` panics. The
 # host's `Date` dates new comments and DATE/TIME fields there instead.
@@ -167,18 +154,14 @@ name = "cli_flags"
 required-features = ["cli"]
 
 [dev-dependencies]
-# Dev-only JSON Schema validator. `parse_expectations` (src/expect.rs)
-# enforces the same constraints in plain Rust so the WASM and Python
-# lockfiles do not pull this crate in at runtime. The tests load the
-# bundled schema from disk and use this validator only to confirm
-# parse_expectations and the bundled schema agree on accept/reject.
-jsonschema = { version = "0.59", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.13.2", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.13.1", default-features = false, features = ["parts"] }
+# tests/agent_text_view.rs: read revision ids back out of the agent view.
+regex = "1"
 # tests/agent_text_view.rs: the agent view's header must parse as YAML.
-saphyr = "0.2"
+saphyr = "0.1"
 tempfile = "3"
 # tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
 # `zipsign sign tar` does in release.yml, then check it with the updater's
@@ -189,10 +172,3 @@ tar = { version = "0.4", default-features = false }
 [[bench]]
 name = "redline"
 harness = false
-
-# Use zip 9 for RUSTSEC-2026-0367, -0368 and -0369 (jandira-tech/ooxmlsdk#1),
-# and zip >= 9.0.5 for GHSA-m665-v7pm-7grj (zip cloaking; recorded in
-# SECURITY.md; admission refuses disagreeing headers, ZIP_HEADER_MISMATCH).
-# Remove this patch when an ooxmlsdk release requires zip >= 9 (#1092).
-[patch.crates-io]
-ooxmlsdk = { git = "https://github.com/jandira-tech/ooxmlsdk", rev = "d7c3ae016da8ef661d9a04e12c47003d8fe51eff" }

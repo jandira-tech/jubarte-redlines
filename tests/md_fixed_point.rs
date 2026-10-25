@@ -5,12 +5,8 @@
 //! 2026-10-13-ids-and-markdown-roundtrip.md §0: nothing with a short id is
 //! lost). Every `.md` in `tests/fixtures/md-roundtrip` must come back
 //! exactly after md → docx → md, and every docx listed in its `docx.txt`
-//! must print the same Markdown after docx → md → docx → md. A manuscript,
-//! Markdown as its author wrote it with no id lines ([`MANUSCRIPTS`]), is
-//! gated as the docx it imports to, since its view adds the header and id
-//! lines it never had. Only the
-//! `source:`/`sha256:` lines, which name the file, and `latest` becoming
-//! a shared timestamp after reconstruction are normalized. Arthur,
+//! must print the same Markdown after docx → md → docx → md. Only the
+//! `source:`/`sha256:` lines, which name the file, are left out. Arthur,
 //! 2026-10-13: "Start strict! Fail fail fail until we fix": there is no list
 //! of known failures.
 //!
@@ -28,26 +24,15 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-mod common;
-
 const FIXTURES: &str = "tests/fixtures/md-roundtrip";
 
 /// The page count and its source at the end of the `body:` line.
 static PAGES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r", \d+ pages?\s+#.*$").unwrap());
 
-/// The Markdown fixtures written by hand in the view's dialect: they must
-/// come back as written. Every other fixture is a manuscript
-/// ([`MANUSCRIPTS`]) or a view of a docx listed in `views.txt`.
-const HAND_WRITTEN: &[&str] = &["kitchen-sink.md"];
-
-/// Markdown as its authors wrote it, outside the view's dialect: no id
-/// lines, no YAML header, so the view of the docx it imports to can never
-/// be it. Each is gated as the idless plan's item 6 says
-/// (docs/superpowers/plans/2026-10-14-idless-fixed-point.md): it converts
-/// to B, B reads as C, C converts to D; C must equal read(D) (G1) and D
-/// must render as B (G2: `debug B D --check render`, page count included),
-/// as every docx case is gated (#532).
-const MANUSCRIPTS: &[&str] = &[
+/// The Markdown fixtures written by hand, in the view's dialect; every other
+/// one is a view of a docx listed in `views.txt`.
+const HAND_WRITTEN: &[&str] = &[
+    "kitchen-sink.md",
     // Pandoc manuscripts, as their authors wrote them (2026-10-14).
     "dolphins.md",
     "eLife.00047.md",
@@ -129,227 +114,6 @@ fn to_docx(dir: &Path, markdown: &str, name: &str) -> Result<String, String> {
     Ok(docx)
 }
 
-/// Each author's raw mark and comment dates: the revision UTC attribute
-/// when present, otherwise the stored wall clock.
-fn author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
-    use jubarte::namespaces::W;
-    let date_utc = jubarte::xmllinq::XName::get(
-        "dateUtc",
-        "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
-    );
-    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
-    let Ok(mut zip) = zip::ZipArchive::new(std::io::Cursor::new(docx)) else {
-        return dates;
-    };
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).unwrap();
-        let name = entry.name().expect("a package part name");
-        if !name.starts_with("word/") || !name.ends_with(".xml") {
-            continue;
-        }
-        let mut xml = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut xml).unwrap();
-        let mut dom = jubarte::xmllinq::Dom::new();
-        let doc = dom.parse_xdocument(&xml);
-        let root = dom.root(doc).expect("a part root");
-        for node in dom.descendants_and_self(root, None) {
-            if let Some(author) = dom.attribute(node, &W::author()) {
-                dates.entry(author.to_string()).or_default().push(
-                    dom.attribute(node, &date_utc)
-                        .or_else(|| dom.attribute(node, &W::date()))
-                        .map(str::to_string),
-                );
-            }
-        }
-    }
-    dates
-}
-
-/// Public reports resolve revision pairs and linked comment UTC dates, keeping
-/// the author's offset. Use these as well as the original raw-instant guard.
-fn reported_author_dates(docx: &[u8]) -> HashMap<String, Vec<Option<String>>> {
-    let (Ok(changes), Ok(comments)) = (
-        jubarte::changes::list_changes(docx),
-        jubarte::comments::list_comments(docx),
-    ) else {
-        return HashMap::new();
-    };
-    let mut dates: HashMap<String, Vec<Option<String>>> = HashMap::new();
-    for (author, date) in changes
-        .into_iter()
-        .filter_map(|c| c.author.map(|author| (author, c.date)))
-        .chain(comments.into_iter().map(|c| (c.author, c.date)))
-    {
-        dates.entry(author).or_default().push(date);
-    }
-    dates
-}
-
-fn author_has_date(line: &str, date: &str, dates: &HashMap<String, Vec<Option<String>>>) -> bool {
-    use saphyr::LoadableYamlNode;
-    let Ok(yaml) = saphyr::Yaml::load_from_str(line) else {
-        return false;
-    };
-    let author = yaml
-        .first()
-        .and_then(|yaml| yaml.as_mapping())
-        .and_then(|map| map.values().next())
-        .and_then(saphyr::Yaml::as_str);
-    author
-        .and_then(|author| dates.get(author))
-        .is_some_and(|dates| {
-            !dates.is_empty() && dates.iter().all(|value| value.as_deref() == Some(date))
-        })
-}
-
-// Undated marks take the latest timestamp, which can become shared.
-fn round_trip_comparable(markdown: &str, docx: &[u8]) -> String {
-    let dates = author_dates(docx);
-    let reported_dates = reported_author_dates(docx);
-    let mut front_matter = false;
-    let mut authors = false;
-    let mut out = String::new();
-    for (i, line) in comparable(markdown).lines().enumerate() {
-        if line == "---" {
-            front_matter = i == 0;
-        }
-        if front_matter && !line.starts_with(' ') {
-            authors = line == "authors:";
-        }
-        if front_matter
-            && authors
-            && line.starts_with(' ')
-            && let Some((before, date)) = line.rsplit_once(", latest ")
-            && (author_has_date(before, date, &dates)
-                || author_has_date(before, date, &reported_dates))
-        {
-            out.push_str(before);
-            out.push_str(", ");
-            out.push_str(date);
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    out
-}
-
-fn dated_marks(date: &str) -> Vec<u8> {
-    jubarte::markdown::markdown_to_docx(
-        &format!("---\nauthors:\n  AL: Ann Lee  # 2 revisions, {date}\nbody: p0\n---\n\n<!-- p0 -->\n{{++one++}}{{r1 @AL}} and {{++two++}}{{r2 @AL}}.\n"),
-        &jubarte::markdown::DocxOptions::default(),
-    )
-    .unwrap()
-    .docx
-}
-
-#[test]
-fn latest_and_shared_headers_compare_after_undated_marks_take_latest() {
-    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\nbody: p0\n---\n\n  AL: body, latest 2026-10-17T16:59:00Z\n";
-    let shared = latest.replacen(
-        "# 2 revisions, latest 2026-10-17T16:59:00Z",
-        "# 2 revisions, 2026-10-17T16:59:00Z",
-        1,
-    );
-    let docx = dated_marks("2026-10-17T16:59:00Z");
-    assert_eq!(
-        round_trip_comparable(latest, &docx),
-        round_trip_comparable(&shared, &docx)
-    );
-    assert!(
-        round_trip_comparable(latest, &docx).contains("  AL: body, latest 2026-10-17T16:59:00Z")
-    );
-    assert_ne!(
-        round_trip_comparable(latest, &docx),
-        round_trip_comparable(&shared.replace("16:59:00Z", "16:58:00Z"), &docx)
-    );
-}
-
-#[test]
-fn latest_and_shared_offset_headers_compare_only_when_all_dates_agree() {
-    let latest =
-        "---\nauthors:\n  AL: Ann Lee # 2 revisions, latest 2026-09-25T20:04:00-04:00\n---\n";
-    let shared = latest.replace(", latest ", ", ");
-    let docx = dated_marks("2026-09-25T20:04:00-04:00");
-    assert_eq!(
-        round_trip_comparable(latest, &docx),
-        round_trip_comparable(&shared, &docx)
-    );
-    let wrong_offset = dated_marks("2026-09-25T20:04:00-03:00");
-    assert_ne!(
-        round_trip_comparable(latest, &wrong_offset),
-        round_trip_comparable(&shared, &wrong_offset)
-    );
-}
-
-#[test]
-fn latest_and_shared_headers_differ_when_docx_dates_disagree() {
-    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
-    let shared = latest.replace(", latest ", ", ");
-    for date in ["2026-10-17T16:58:00Z", "latest 2026-10-17T16:58:00Z"] {
-        let docx = dated_marks(date);
-        assert_ne!(
-            round_trip_comparable(latest, &docx),
-            round_trip_comparable(&shared, &docx),
-            "the docx has {date}"
-        );
-    }
-}
-
-#[test]
-fn latest_collapse_requires_every_mark_and_comment_of_the_named_author() {
-    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T16:59:00Z\n---\n";
-    let shared = latest.replace(", latest ", ", ");
-    for body in [
-        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {++two++}{r2 @AL 2026-10-17T16:58:00Z}.",
-        "{++one++}{r1 @AL 2026-10-17T16:59:00Z} and {==two==}{>>c0 @AL 2026-10-17T16:58:00Z: note<<}.",
-        "{++one++}{r1 @BO 2026-10-17T16:59:00Z}.",
-        "Plain text.",
-    ] {
-        let markdown = format!("{latest}\n<!-- p0 -->\n{body}\n");
-        let docx = jubarte::markdown::markdown_to_docx(
-            &markdown,
-            &jubarte::markdown::DocxOptions::default(),
-        )
-        .unwrap()
-        .docx;
-        assert_ne!(
-            round_trip_comparable(latest, &docx),
-            round_trip_comparable(&shared, &docx),
-            "{body}"
-        );
-    }
-}
-
-#[test]
-fn latest_collapse_reads_the_utc_instant_the_reader_reports() {
-    // Word for Mac writes local wall-clock time in `w:date` and the instant
-    // in `w16du:dateUtc`; the reader reports the instant (#1118), so the
-    // guard compares the instant too.
-    let latest = "---\nauthors:\n  AL: Ann Lee  # 2 revisions, latest 2026-10-17T20:59:00Z\n---\n";
-    let shared = latest.replace(", latest ", ", ");
-    let utc = r#" xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du" w16du:dateUtc="2026-10-17T20:59:00Z""#;
-    let docx = common::docx::docx(&format!(
-        r#"<w:p><w:ins w:id="1" w:author="Ann Lee" w:date="2026-10-17T16:59:00Z"{utc}><w:r><w:t>one</w:t></w:r></w:ins><w:ins w:id="2" w:author="Ann Lee" w:date="2026-10-17T20:59:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
-    ));
-    assert_eq!(
-        round_trip_comparable(latest, &docx),
-        round_trip_comparable(&shared, &docx)
-    );
-    let local = docx_without_utc(&docx);
-    assert_ne!(
-        round_trip_comparable(latest, &local),
-        round_trip_comparable(&shared, &local),
-        "without dateUtc the local w:date counts"
-    );
-}
-
-fn docx_without_utc(docx: &[u8]) -> Vec<u8> {
-    let xml = common::docx::part_string(docx, "word/document.xml").unwrap();
-    let xml = xml.replace(r#" w16du:dateUtc="2026-10-17T20:59:00Z""#, "");
-    common::docx::replace_entry(docx, "word/document.xml", xml.as_bytes())
-}
-
 /// The first lines that differ, numbered, for the failure report.
 fn difference(want: &str, got: &str) -> String {
     let (a, b): (Vec<&str>, Vec<&str>) = (want.lines().collect(), got.lines().collect());
@@ -386,21 +150,8 @@ struct Case {
 /// `jubarte debug A B --check render` lists it (highlights, colours, fonts,
 /// styles, tables, sections, parts). The Markdown fixed point cannot see a
 /// loss in the first docx → md step: both views lose it alike. This can.
-/// Lines come whole (`--full-lines`): a clipped line keeps a window around
-/// its first difference, so one that differs only in what `in_dialect`
-/// drops would still differ in its window.
 fn docx_verdicts(dir: &Path, source: &str, written: &str) -> Vec<String> {
-    let out = match jubarte(
-        dir,
-        &[
-            "debug",
-            source,
-            written,
-            "--check",
-            "render",
-            "--full-lines",
-        ],
-    ) {
+    let out = match jubarte(dir, &["debug", source, written, "--check", "render"]) {
         Ok(out) => out,
         Err(e) => return vec![format!("  ✗ docx not compared: {e}")],
     };
@@ -559,35 +310,14 @@ fn in_dialect(part: &str, rest: &str) -> Option<String> {
     Some(CELLS_SHD.replace_all(rest, "").into_owned())
 }
 
-/// A `views.txt` entry's last word when the committed view is the second
-/// read: the view of the docx `convert` writes from the docx's first view.
-const SECOND_READ: &str = " second-read";
-
-/// The `views.txt` entries: each view's file name, the docx it was read
-/// from, and whether it is that docx's second read.
-fn view_entries() -> Vec<(String, PathBuf, bool)> {
+/// The docx a committed view was read from (`views.txt`), by file name.
+fn view_sources() -> HashMap<String, PathBuf> {
     std::fs::read_to_string(Path::new(FIXTURES).join("views.txt"))
         .unwrap()
         .lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.split_once(' '))
-        .map(|(md, rest)| {
-            let rest = rest.trim();
-            let docx = rest.strip_suffix(SECOND_READ);
-            (
-                md.to_string(),
-                PathBuf::from(docx.unwrap_or(rest).trim()),
-                docx.is_some(),
-            )
-        })
-        .collect()
-}
-
-/// The docx a committed view was read from (`views.txt`), by file name.
-fn view_sources() -> HashMap<String, PathBuf> {
-    view_entries()
-        .into_iter()
-        .map(|(md, docx, _)| (md, docx))
+        .map(|(md, docx)| (md.to_string(), PathBuf::from(docx.trim())))
         .collect()
 }
 
@@ -607,15 +337,7 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
         }
     };
     let written = to_docx(dir, &source, "md");
-    let bytes = written
-        .as_ref()
-        .ok()
-        .and_then(|name| std::fs::read(dir.join(name)).ok())
-        .unwrap_or_default();
-    let got = written
-        .clone()
-        .and_then(|docx| view(dir, &docx))
-        .map(|view| round_trip_comparable(&view, &bytes));
+    let got = written.clone().and_then(|docx| view(dir, &docx));
     let docx = match (docx_source, &written) {
         (Some(original), Ok(written)) => match std::fs::copy(original, dir.join("original.docx")) {
             Ok(_) => docx_verdicts(dir, "original.docx", written),
@@ -628,35 +350,9 @@ fn markdown_case(dir: &Path, path: &Path, docx_source: Option<&Path>) -> Case {
     };
     Case {
         name,
-        want: round_trip_comparable(&source, &bytes),
+        want: comparable(&source),
         got,
         docx,
-    }
-}
-
-/// A manuscript (A) imports to a docx (B), which is then gated as a docx
-/// case: B's view (C) must come back from the docx it writes (D), and D
-/// must render as B.
-fn manuscript_case(dir: &Path, path: &Path) -> Case {
-    let name = format!("md -> docx -> md -> docx -> md   {}", path.display());
-    // B is written apart from the docx case's own files.
-    let imported = std::fs::read_to_string(path)
-        .map_err(|e| format!("{}: {e}", path.display()))
-        .and_then(|source| {
-            std::fs::create_dir_all(dir.join("import")).map_err(|e| e.to_string())?;
-            to_docx(&dir.join("import"), &source, "imported")
-        });
-    match imported {
-        Ok(docx) => Case {
-            name,
-            ..docx_case(dir, &dir.join("import").join(docx))
-        },
-        Err(e) => Case {
-            name,
-            want: String::new(),
-            got: Err(e),
-            docx: Vec::new(),
-        },
     }
 }
 
@@ -673,21 +369,14 @@ fn docx_case(dir: &Path, path: &Path) -> Case {
     match first {
         Ok(first) => {
             let written = to_docx(dir, &first, "back");
-            let bytes = written
-                .as_ref()
-                .ok()
-                .and_then(|name| std::fs::read(dir.join(name)).ok())
-                .unwrap_or_default();
             let docx = match &written {
                 Ok(written) => docx_verdicts(dir, "source/source.docx", written),
                 Err(_) => Vec::new(),
             };
-            let got = written
-                .and_then(|docx| view(dir, &docx))
-                .map(|view| round_trip_comparable(&view, &bytes));
+            let got = written.and_then(|docx| view(dir, &docx));
             Case {
                 name,
-                want: round_trip_comparable(&first, &bytes),
+                want: first,
                 got,
                 docx,
             }
@@ -701,10 +390,8 @@ fn docx_case(dir: &Path, path: &Path) -> Case {
     }
 }
 
-/// A note: `{r1+2 @AL}`, `{>>c5 @AL: text<<}`, `{footer2.r7 @LW}`.
-static NOTE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)\{(?:>>)?((?:(?:[a-z0-9_.]+\.)?(?:r[0-9]+(?:\+[0-9]+)*|c[0-9]+|noid)|[A-Za-z_][A-Za-z0-9_]*:rev:[0-9]+)\b)([^{}]*?)(?:<<)?\}").unwrap()
-});
+/// A note: `{>>r1+2 @AL<<}`, `{>>c5 @AL: text<<}`, `{>>footer2.r7 @LW<<}`.
+static NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{>>([^\s<]+)(.*?)<<\}").unwrap());
 
 /// What a view says under each short id, in the order it says it:
 /// id-line blocks (`p3`, `t0`, `p10-p11`, `footnotes.p0`) up to the next id
@@ -807,14 +494,13 @@ fn ids(view: &str) -> Vec<(String, String)> {
 }
 
 /// The CriticMarkup span a note at `at` belongs to: skip the notes chained
-/// before it (`{~~a~>b~~}{r0}{r1}`), then take the span ending there.
+/// before it (`{~~a~>b~~}{>>r0<<}{>>r1<<}`), then take the span ending there.
 fn span_before(text: &str, mut at: usize) -> &str {
-    while let Some(note) = NOTE
-        .find_iter(&text[..at])
-        .last()
-        .filter(|note| note.end() == at)
-    {
-        at = note.start();
+    while text[..at].ends_with("<<}") {
+        match text[..at].rfind("{>>") {
+            Some(i) => at = i,
+            None => break,
+        }
     }
     for (open, close) in [
         ("{++", "++}"),
@@ -922,15 +608,11 @@ fn markdown_and_docx_round_trip_exactly() {
     let unlisted: Vec<String> = markdown
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-        .filter(|f| {
-            !sources.contains_key(f)
-                && !HAND_WRITTEN.contains(&f.as_str())
-                && !MANUSCRIPTS.contains(&f.as_str())
-        })
+        .filter(|f| !sources.contains_key(f) && !HAND_WRITTEN.contains(&f.as_str()))
         .collect();
     assert!(
         unlisted.is_empty(),
-        "every Markdown fixture is a view listed in views.txt, hand-written (HAND_WRITTEN) or a manuscript (MANUSCRIPTS): {unlisted:?}"
+        "every Markdown fixture is a view listed in views.txt or hand-written (HAND_WRITTEN): {unlisted:?}"
     );
     // `MD_FIXED_POINT_ONLY=ids-tables` replays only the fixtures whose path
     // holds that text, for a quick loop on one document; the gate itself
@@ -943,11 +625,11 @@ fn markdown_and_docx_round_trip_exactly() {
     for path in markdown.iter().filter(|p| picked(p)) {
         let dir = tempfile::tempdir().unwrap();
         let file = path.file_name().unwrap().to_string_lossy().to_string();
-        cases.push(if MANUSCRIPTS.contains(&file.as_str()) {
-            manuscript_case(dir.path(), path)
-        } else {
-            markdown_case(dir.path(), path, sources.get(&file).map(PathBuf::as_path))
-        });
+        cases.push(markdown_case(
+            dir.path(),
+            path,
+            sources.get(&file).map(PathBuf::as_path),
+        ));
     }
     let docx = docx_list();
     assert!(!docx.is_empty(), "no docx fixtures in {FIXTURES}/docx.txt");
@@ -1006,87 +688,30 @@ fn markdown_and_docx_round_trip_exactly() {
     );
 }
 
-#[test]
-fn ids_fields_markdown_round_trip_is_exact() {
-    let dir = tempfile::tempdir().unwrap();
-    let case = markdown_case(
-        dir.path(),
-        Path::new(FIXTURES).join("ids-fields.md").as_path(),
-        None,
-    );
-    assert_eq!(case.got.unwrap(), case.want);
-}
-
-#[test]
-fn offset_namespace_declaration_preserves_opaque_drawing_bytes() {
-    let dir = tempfile::tempdir().unwrap();
-    let case = docx_case(
-        dir.path(),
-        Path::new(
-            "tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/ac6cd8d92f.docx",
-        ),
-    );
-    assert_eq!(case.got.unwrap(), case.want);
-    assert!(case.docx.is_empty(), "{:?}", case.docx);
-}
-
 /// A committed view of a docx fixture is what `jubarte read` prints for it
 /// today: the Markdown fixtures stay in the dialect the view writes.
 /// (`views.txt` names them.)
 #[test]
 fn committed_views_match_the_view() {
-    let bless = std::env::var_os("JUBARTE_BLESS").is_some();
     let mut stale = Vec::new();
-    let mut sources = view_entries();
+    let mut sources: Vec<(String, PathBuf)> = view_sources().into_iter().collect();
     sources.sort();
-    for (md, docx, second_read) in &sources {
+    for (md, docx) in &sources {
         let dir = tempfile::tempdir().unwrap();
         std::fs::copy(docx, dir.path().join("source.docx")).unwrap();
-        let mut raw = jubarte(dir.path(), &["read", "source.docx", "--no-page-markers"]).unwrap();
-        if *second_read {
-            // The source gives one revision id to marks that `convert`
-            // must number apart (#1137), so its first view is no fixed
-            // point: the committed view is the docx `convert` writes from
-            // it, read back (#1414).
-            let back = to_docx(dir.path(), &comparable(&raw), "first").unwrap();
-            raw = jubarte(dir.path(), &["read", &back, "--no-page-markers"]).unwrap();
-        }
-        let got = comparable(&raw);
-        if bless {
-            // Keep measured page facts; only source identity is fixture-local.
-            let mut header = false;
-            let fixture = raw
-                .lines()
-                .enumerate()
-                .filter_map(|(i, line)| {
-                    if line == "---" {
-                        header = i == 0;
-                    }
-                    (!header || !(line.starts_with("source: ") || line.starts_with("sha256: ")))
-                        .then_some(line)
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n";
-            std::fs::write(Path::new(FIXTURES).join(md), fixture).unwrap();
-            continue;
-        }
+        let got = view(dir.path(), "source.docx").unwrap();
         let want = comparable(&std::fs::read_to_string(Path::new(FIXTURES).join(md)).unwrap());
         if want != got {
             stale.push(format!("{md}: {}", difference(&want, &got)));
         }
     }
-    assert!(
-        stale.is_empty(),
-        "stale views (regenerate with JUBARTE_BLESS=1 and committed_views_match_the_view):\n{}",
-        stale.join("\n")
-    );
+    assert!(stale.is_empty(), "stale views:\n{}", stale.join("\n"));
 }
 
 #[test]
 fn ids_name_blocks_notes_and_yaml_entries() {
     let view = "---\nview: tracked  # c\nauthors:\n  AL: Ana Lima  # 1\n---\n\n<!-- p0 left -->\n\
-                a {~~x~>y~~}{r0 @AL}{r1 @AL} b{== c==}{>>c2 @AL: hi<<}\n\n<!-- p1-p2 empty -->\n";
+                a {~~x~>y~~}{>>r0 @AL<<}{>>r1 @AL<<} b{== c==}{>>c2 @AL: hi<<}\n\n<!-- p1-p2 empty -->\n";
     let keys: Vec<String> = ids(view).into_iter().map(|(k, _)| k).collect();
     assert_eq!(
         keys,
@@ -1101,11 +726,11 @@ fn ids_name_blocks_notes_and_yaml_entries() {
         ]
     );
     let notes: HashMap<String, String> = ids(view).into_iter().collect();
-    assert_eq!(notes["r1"], "{~~x~>y~~}{r1 @AL}");
+    assert_eq!(notes["r1"], "{~~x~>y~~}{>>r1 @AL<<}");
     assert_eq!(notes["c2"], "{== c==}{>>c2 @AL: hi<<}");
     let r = verdicts(
         view,
-        &view.replace("hi<<}", "ho<<}").replace("{r1 @AL}", ""),
+        &view.replace("hi<<}", "ho<<}").replace("{>>r1 @AL<<}", ""),
     );
     assert_eq!(
         (r.correct, r.wrong, r.lost, r.new),
@@ -1113,26 +738,4 @@ fn ids_name_blocks_notes_and_yaml_entries() {
         "{:#?}",
         r.lines
     );
-}
-
-/// A manuscript is gated on what it imports to, not on its own bytes: the
-/// view of its docx comes back (G1) and the docx written from that view
-/// renders as the imported one (G2). `list_of_figures.md` imports with its
-/// text unchanged, so it passes both.
-#[test]
-fn a_manuscript_is_gated_on_what_it_imports_to() {
-    let dir = tempfile::tempdir().unwrap();
-    let case = manuscript_case(
-        dir.path(),
-        Path::new(FIXTURES).join("list_of_figures.md").as_path(),
-    );
-    assert!(case.name.contains("list_of_figures.md"), "{}", case.name);
-    let got = case.got.expect("a view back");
-    assert_eq!(got, case.want);
-    assert!(
-        case.want.starts_with("---\n"),
-        "the view, not the manuscript: {}",
-        case.want
-    );
-    assert!(case.docx.is_empty(), "{:?}", case.docx);
 }

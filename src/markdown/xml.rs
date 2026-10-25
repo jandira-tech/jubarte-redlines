@@ -8,8 +8,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
-use super::view_styles::TableBorders;
-
 /// An inserted or a deleted tracked change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -88,11 +86,6 @@ pub(super) struct Paragraph {
     /// The indents an id line names, in twips (`first-line 0.5in`); its
     /// `left` wins over `indent`.
     pub ind: Indent,
-    /// The spacing an id line names (`before 6pt, line 1.5`).
-    pub spacing: Spacing,
-    /// The text size an id line names (`size 9pt`), in half-points: every
-    /// run's and the mark's `w:sz` (#1474).
-    pub size: Option<u32>,
     pub align: Option<&'static str>,
     /// A heading level (`w:outlineLvl`, 0 for `#`) the paragraph carries
     /// itself, when its style is one an id line names.
@@ -184,149 +177,6 @@ pub(super) struct Indent {
     pub right: Option<i64>,
 }
 
-/// `9pt`, `10.5pt`: a paragraph's text size (#1474) in the half-points
-/// `w:sz` stores, Word's nearest; `None` past `ST_HpsMeasure`'s 1 to 3276
-/// (1638pt).
-pub(super) fn size_half_points(value: &str) -> Option<u32> {
-    let points: f64 = value.strip_suffix("pt")?.parse().ok()?;
-    let half = (points * 2.0).round();
-    // `as` cannot truncate: the range is checked first.
-    (half.is_finite() && (1.0..=3276.0).contains(&half)).then_some(half as u32)
-}
-
-/// A paragraph's own `w:spacing` (#1473): the space before and after it in
-/// twips, Word's automatic space in their place (`w:beforeAutospacing`,
-/// `w:afterAutospacing`, which HTML paste writes), and its line as Word
-/// stores it, a height in 240ths of a line for `auto` or in twips for
-/// `exact` and `atLeast`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct Spacing {
-    pub before: Option<u32>,
-    pub after: Option<u32>,
-    pub before_auto: bool,
-    pub after_auto: bool,
-    pub line: Option<(u32, &'static str)>,
-}
-
-/// A table's geometry from its line (#1472): its grid's column widths, its
-/// preferred width, its indent and a fixed layout. `None` and `false` are
-/// what the writer writes by itself: an even split of the text width over
-/// 100% of it, no indent, an autofit layout.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct TableGeometry {
-    /// Each grid column's width (`w:gridCol`), in twips.
-    pub widths: Option<Vec<u32>>,
-    /// The table's preferred width (`w:tblW`).
-    pub width: Option<TableWidth>,
-    /// `w:tblInd`, in twips.
-    pub indent: Option<i64>,
-    /// `w:tblLayout w:type="fixed"`.
-    pub fixed: bool,
-}
-
-/// A table's preferred width, as `w:tblW` types it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TableWidth {
-    Auto,
-    /// `dxa`, in twips.
-    Twips(u32),
-    /// `pct`, in fiftieths of a percent: 5000 is the whole text width.
-    Fiftieths(u32),
-}
-
-/// Word keeps a column, a table's width and its indent within 22in.
-const MOST_TABLE_TWIPS: f64 = 31_680.0;
-
-/// The widest preferred width in percent Word takes: 600%.
-const MOST_TABLE_PERCENT: f64 = 600.0;
-
-impl TableGeometry {
-    /// One `widths 2.14in 1in`, `width auto|6.5in|50%`, `indent 0.25in` or
-    /// `layout fixed` clause into `self`; `None` when it is none of these
-    /// or a value is out of Word's range.
-    pub(super) fn clause(&mut self, clause: &str) -> Option<()> {
-        let (word, value) = clause.split_once(' ')?;
-        let twips = |value: &str| -> Option<u32> {
-            let n: f64 = value.strip_suffix("in")?.parse().ok()?;
-            let twips = (n * 1440.0).round();
-            // `as` cannot overflow: the bound is checked first.
-            (n.is_finite() && (0.0..=MOST_TABLE_TWIPS).contains(&twips)).then_some(twips as u32)
-        };
-        match word {
-            "widths" => {
-                let widths = value.split(' ').map(twips).collect::<Option<Vec<_>>>()?;
-                self.widths = Some(widths).filter(|w| !w.is_empty());
-            }
-            "width" => {
-                self.width = Some(if value == "auto" {
-                    TableWidth::Auto
-                } else if let Some(percent) = value.strip_suffix('%') {
-                    let n: f64 = percent.parse().ok()?;
-                    let fiftieths = (n * 50.0).round();
-                    if !(n.is_finite() && (0.0..=MOST_TABLE_PERCENT * 50.0).contains(&fiftieths)) {
-                        return None;
-                    }
-                    // `as` cannot overflow: the bound is checked first.
-                    TableWidth::Fiftieths(fiftieths as u32)
-                } else {
-                    TableWidth::Twips(twips(value)?)
-                });
-            }
-            "indent" => self.indent = Some(super::view_styles::twips_in(value)?),
-            "layout" if value == "fixed" => self.fixed = true,
-            _ => return None,
-        }
-        Some(())
-    }
-}
-
-impl Spacing {
-    pub(super) fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// One `before 6pt`, `before auto`, `after 0pt`, `line 1.5` or `line
-    /// 8.65pt exact` clause into `self`; `None` when it is none of these or
-    /// its value is negative or past what a twip count holds. Word's dialogs
-    /// stop at 1584pt, but a file may say more, and the view prints what the
-    /// file says (#1479 review).
-    pub(super) fn clause(&mut self, word: &str, value: &str) -> Option<()> {
-        let most = f64::from(u32::MAX);
-        let points = |value: &str| -> Option<u32> {
-            let n: f64 = value.strip_suffix("pt")?.parse().ok()?;
-            let twips = (n * 20.0).round();
-            // `as` cannot overflow: the bound is checked first.
-            (n.is_finite() && (0.0..=most).contains(&twips)).then_some(twips as u32)
-        };
-        // Word puts `w:beforeAutospacing` in place of `w:before`, so a side
-        // keeps one of the two: the clause said last (#1479 review).
-        match (word, value) {
-            ("before", "auto") => (self.before, self.before_auto) = (None, true),
-            ("after", "auto") => (self.after, self.after_auto) = (None, true),
-            ("before", _) => (self.before, self.before_auto) = (Some(points(value)?), false),
-            ("after", _) => (self.after, self.after_auto) = (Some(points(value)?), false),
-            ("line", _) => {
-                self.line = Some(match value.split_once(' ') {
-                    Some((height, "exact")) => (points(height)?, "exact"),
-                    Some((height, "atLeast")) => (points(height)?, "atLeast"),
-                    Some(_) => return None,
-                    None => {
-                        let ratio: f64 = value.parse().ok()?;
-                        let line = (ratio * 240.0).round();
-                        if !(ratio.is_finite() && (0.0..=most).contains(&line)) {
-                            return None;
-                        }
-                        // `as` cannot overflow: the bound is checked first.
-                        (line as u32, "auto")
-                    }
-                });
-            }
-            _ => return None,
-        }
-        Some(())
-    }
-}
-
 /// A hyperlink's target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Link {
@@ -357,8 +207,6 @@ pub(super) enum Item {
         /// Its style (`tblStyle`); none is Word's Normal Table.
         style: Option<String>,
         formats: TableFormats,
-        /// Its grid's widths, preferred width, indent and layout (#1472).
-        geometry: TableGeometry,
     },
     Row {
         header: bool,
@@ -465,11 +313,6 @@ pub(super) struct Document {
     pub pictures: Vec<Picture>,
     /// `drawing:` payloads to splice back, in the order the runs name them.
     pub drawings: Vec<super::from_docx::drawing::Drawing>,
-    /// A box region whose ownership cannot be determined safely.
-    pub box_error: Option<String>,
-    /// Each drawing's visible box stories: their Markdown and parsed
-    /// items refill the text-free templates when the view is written back.
-    pub box_stories: HashMap<usize, Vec<(String, Vec<Item>)>>,
     /// The view's drawing reference definitions, by name: a `dN` maps to
     /// its `drawing:` destination, an `imageK` to its `data:` one. The
     /// stories' `![…][dN]` and `![…][imageK]` tokens resolve through them.
@@ -485,36 +328,30 @@ pub(super) struct Document {
     pub author: Option<String>,
     /// `authors: document_owner:`, the core properties' owner.
     pub owner: Option<super::view_notes::Owner>,
-    /// The legend's `table:` style and its borders, with the name the view gives the style when it differs from the
+    /// The legend's `table:` style and its border, eighths of a point,
+    /// with the name the view gives the style when it differs from the
     /// writer's own (`named …`).
-    pub table_style: Option<(String, Option<TableBorders>, Option<String>)>,
+    pub table_style: Option<(String, Option<u32>, Option<String>)>,
     /// The `tables:` legend's entries, keyed by style id: a document
     /// whose tables differ, each with the border and the name its entry
     /// states.
-    pub table_legend: BTreeMap<String, (Option<TableBorders>, Option<String>)>,
+    pub table_legend: BTreeMap<String, (Option<u32>, Option<String>)>,
     /// Table styles Word has no definition of here, each with the border
     /// the legend gives it and the name the view says, when it does:
     /// defined by name.
-    pub table_styles: BTreeMap<String, (Option<TableBorders>, Option<String>)>,
+    pub table_styles: BTreeMap<String, (Option<u32>, Option<String>)>,
     /// The `track_changes:` key: Word's Track Changes switch.
     pub tracking: Option<bool>,
     pub warnings: Vec<String>,
-    /// A substitution's unsupported nested revision note, if any.
-    pub revision_note_error: Option<String>,
     /// Author and date of changes that name theirs, by serial.
     pub attributions: HashMap<u32, (String, String)>,
     /// The `w:id`s of the marks of changes the view numbers, by serial, in
-    /// order (`{r5+6 @AB}` on a change of two runs).
+    /// order (`{>>r5+6 @AB<<}` on a change of two runs).
     pub revision_ids: HashMap<u32, Vec<u32>>,
-    /// Source line of each explicitly numbered change, for rename warnings.
-    pub revision_lines: HashMap<u32, usize>,
     /// A change that was another change's only content, by the serial of
-    /// the note's own change: the change it sits inside (`{--x--}{r3 @BO
-    /// re r1 @AL}` is a deletion inside an insertion), innermost first.
+    /// the note's own change: the change it sits inside (`{--x--}{>>r3 @BO
+    /// on r1 @AL<<}` is a deletion inside an insertion), innermost first.
     pub wraps: HashMap<u32, Change>,
-    /// Named parents indexed by revision ids, then inner serial. Built after
-    /// parsing, so rendering can find another piece without scanning wraps.
-    pub(super) wrapping_parents: HashMap<Vec<u32>, BTreeMap<u32, Change>>,
     /// The date the last mark of a change takes, when its author's view
     /// dates them with a range (`2026-03-02..2026-03-04`).
     pub range_ends: HashMap<u32, String>,
@@ -544,18 +381,6 @@ pub(super) struct Document {
 }
 
 impl Document {
-    pub(super) fn index_wrapping_parents(&mut self) {
-        self.wrapping_parents.clear();
-        for (&inner, &outer) in &self.wraps {
-            if let Some(ids) = self.revision_ids.get(&inner).filter(|ids| !ids.is_empty()) {
-                self.wrapping_parents
-                    .entry(ids.clone())
-                    .or_default()
-                    .insert(inner, outer);
-            }
-        }
-    }
-
     /// The `w:sectPr` of section `number` (from 1) as the view names its
     /// page: its own, else the first section's, else `fallback`.
     pub(super) fn section(&self, number: usize, fallback: &str) -> String {
@@ -633,14 +458,8 @@ pub(super) trait Relate {
     fn picture(&mut self, index: usize) -> String;
     /// The XML of drawing `index` written into the package beside this
     /// story's part: its relationships and dependent parts too. `None`
-    /// when the payload's parts could not be written. `story` is a text
-    /// box's, spliced into the frame's empty `w:txbxContent`.
-    fn drawing(
-        &mut self,
-        index: usize,
-        next_doc_pr: &mut u32,
-        story: Option<&[(String, String)]>,
-    ) -> Option<String>;
+    /// when the payload's parts could not be written.
+    fn drawing(&mut self, index: usize, next_doc_pr: &mut u32) -> Option<String>;
 }
 
 /// Numbers shared by every story of one document.
@@ -652,21 +471,16 @@ pub(super) struct Context<'d> {
     pub next_revision: u32,
     /// How many marks of each numbered change are written, by serial.
     pub cursors: HashMap<u32, usize>,
-    /// Every revision `w:id` written so far: named ids and fresh ids
-    /// both respect uniqueness. Contiguous pieces reuse an open element.
+    /// Every revision `w:id` written so far: none is written twice by the
+    /// fresh counter, though one the view names twice (`r43+43`) is, as
+    /// Word's own files repeat it (a mark split around a `w:hyperlink`).
     pub used_revisions: HashSet<u32>,
-    pub warnings: &'d mut Vec<String>,
-    /// The owning part's short-id prefix; empty for body revisions.
-    pub revision_prefix: &'static str,
     /// Each open paragraph's mark whose numbered change its runs share:
     /// its kind, its change and where in the output its `w:rPr` takes it.
     /// The mark is written at the paragraph's end, so its id follows the
-    /// runs' as the view reads them (`{--A\n\nB--}{r8+9+10}`: `A` 8,
+    /// runs' as the view reads them (`{--A\n\nB--}{>>r8+9+10<<}`: `A` 8,
     /// the mark 9, `B` 10), though Word's `w:pPr` comes first.
     pub pending_marks: Vec<Option<(Kind, Option<u32>, usize)>>,
-    /// Each open paragraph's text size (`size 9pt`), in half-points: its
-    /// runs take it. A text box's paragraphs open inside their anchor's.
-    pub run_sizes: Vec<Option<u32>>,
     /// `w:numId` of each numbering instance.
     pub num_ids: Vec<u32>,
     /// `w:numId` of each label use, by its index in `Document::label_uses`.
@@ -702,21 +516,8 @@ impl Context<'_> {
             let at = self.cursors.entry(serial).or_insert(0);
             if let Some(&id) = ids.get(*at) {
                 *at += 1;
-                if self.used_revisions.insert(id) {
-                    return id;
-                }
-                let fresh = self.revision_id(None);
-                let line = self
-                    .document
-                    .revision_lines
-                    .get(&serial)
-                    .copied()
-                    .unwrap_or(1);
-                let prefix = self.revision_prefix;
-                self.warnings.push(format!(
-                    "{prefix}r{id} names two separate changes on line {line}; the second is written as {prefix}r{fresh}"
-                ));
-                return fresh;
+                self.used_revisions.insert(id);
+                return id;
             }
         }
         // Fresh ids stay within the `int` Word reads, past the view's own.
@@ -808,13 +609,9 @@ pub(super) fn story(
     let mut run_formats: Vec<FormatMark> = Vec::new();
     // The open tables' formatting changes, and the row and cell each is in.
     let mut tables: Vec<(TableFormats, usize, usize)> = Vec::new();
-    // Each open table's grid column widths in twips, the grid column the
-    // next cell of its current row starts at, and the even split a cell
-    // past the grid takes per column.
-    let mut grids: Vec<(Vec<u32>, usize, u32)> = Vec::new();
     // The marks each change still opens on its own; a change the view
     // gives more ids splits at run edges until the counts agree
-    // (`{--plain _italic_--}{r43+44 @AL}` is two marks).
+    // (`{--plain _italic_--}{>>r43+44 @AL<<}` is two marks).
     let mut natural = natural_marks(context.document, items);
     // The open row's own change: its mark carries the text the view tags
     // with the row's id alone.
@@ -827,13 +624,14 @@ pub(super) fn story(
     let mut cell_change: Option<(Kind, u32)> = None;
     let mut row_own: Option<(Kind, u32)> = None;
     for (at, item) in items.iter().enumerate() {
-        // A range covering an insertion before a deletion starts inside
-        // the insertion when it ends there (`ends_inserted_side`).
+        // A range on just a substitution's inserted side starts inside the
+        // insertion as it ends there (`ends_inserted_side`): Word's shape,
+        // which keeps the two sides together.
         if let Item::RangeStart(_) = item
             && row_change.is_none()
             && cell_change.is_none()
             && row_own.is_none()
-            && let Some(side) = starts_inserted_side(context.document, &items[at + 1..])
+            && let Some(side) = starts_inserted_side(&items[at + 1..])
             && open != Some(side)
         {
             close_mark(context, &natural, &mut out, &mut open);
@@ -846,8 +644,9 @@ pub(super) fn story(
         // A bookmark, a comment's range marks and its reference sit inside
         // a `w:ins`/`w:del` when the change goes on after them
         // (`{--cut {==by a==}{>>c0<<} comment--}`); between two changes
-        // they are in neither. A range that ends at an insertion before
-        // a deletion stays inside that insertion.
+        // they are in neither. A range that ends a substitution's inserted
+        // side, its deleted side next, ends inside the insertion, as Word
+        // writes it: between the two it would part them.
         let field = match item {
             Item::LinkStart(..) => field_link(&items[at + 1..], context.document),
             Item::LinkEnd => fields.last().copied().flatten(),
@@ -866,9 +665,7 @@ pub(super) fn story(
             Item::Run(_) => true,
             _ if in_note.is_some() => true,
             Item::LinkStart(..) | Item::LinkEnd if field.is_some() => true,
-            Item::RangeEnd(_) if ends_inserted_side(context.document, &items[at + 1..], open) => {
-                true
-            }
+            Item::RangeEnd(_) if ends_inserted_side(&items[at + 1..], open) => true,
             // Inside a tracked link's field they stay in its mark, which
             // goes on to the field's end.
             Item::Bookmark(_)
@@ -1019,7 +816,6 @@ pub(super) fn story(
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
-                context.run_sizes.pop();
                 out.push_str("</w:p>");
             }
             Item::Run(Run {
@@ -1044,7 +840,7 @@ pub(super) fn story(
                 // row's mark is the change, and the text has none of its
                 // own. A change the view names no ids for is Word's shape,
                 // the row's mark and the text's.
-                // Each cell's text is its own change (`{++x1++}{r108}`
+                // Each cell's text is its own change (`{++x1++}{>>r108<<}`
                 // twice): one that names only the row's ids is carried too.
                 let carried = match (row_change, run.change) {
                     (Some((row_kind, row_by)), Some((kind, by))) if row_kind == kind => {
@@ -1075,22 +871,7 @@ pub(super) fn story(
                 });
                 if carried {
                     close_mark(context, &natural, &mut out, &mut open);
-                } else if open != run.change
-                    && !open.zip(run.change).is_some_and(|(outer, change)| {
-                        // Formatting belongs to the runs, not to another
-                        // copy of the same revision element.
-                        context
-                            .document
-                            .revision_ids
-                            .get(&outer.1)
-                            .is_some_and(|ids| ids.len() == 1)
-                            && continues_change(context.document, change, outer)
-                    })
-                {
-                    let chain = run
-                        .change
-                        .map(|change| wrapping_chain(context.document, change))
-                        .unwrap_or_default();
+                } else if open != run.change {
                     if let Some(change) = run.change
                         && let Some(depth) = marks
                             .iter()
@@ -1105,46 +886,25 @@ pub(super) fn story(
                             close_mark(context, &natural, &mut out, &mut open);
                         }
                         open = marks.pop();
-                        write_run(
-                            context,
-                            run,
-                            relate,
-                            &mut out,
-                            marks.iter().any(|mark| mark.0 == Kind::Delete),
-                        );
+                        write_run(context, run, relate, &mut out);
                         // The resumed mark ends here unless the change it
                         // holds another of resumes later: a piece of it is
                         // still ahead, past the inner change, and its mark
                         // stays open around that one as around this piece.
                         if open.is_none_or(|outer| {
                             !resumes_later(context.document, &items[at + 1..], outer)
-                                && !continues(context.document, &items[at + 1..], open, &marks)
                         }) {
                             close_mark(context, &natural, &mut out, &mut open);
                         }
                         continue;
                     }
-                    // A change whose note names the open mark, or whose
-                    // outer resumes after it, sits inside that open mark.
+                    // A change of the other kind the open mark resumes after
+                    // sits inside it; the open one stays open around it.
                     if let (Some(outer), Some(change)) = (open, run.change)
-                        && (chain.iter().any(|wrap| {
-                            *wrap == outer || continues_change(context.document, *wrap, outer)
-                        }) || (change.0 != outer.0
-                            && resumes_after(context.document, &items[at + 1..], change, outer)))
+                        && change.0 != outer.0
+                        && resumes_after(context.document, &items[at + 1..], change, outer)
                     {
-                        let depth = chain
-                            .iter()
-                            .position(|wrap| {
-                                *wrap == outer || continues_change(context.document, *wrap, outer)
-                            })
-                            .unwrap_or(0);
                         marks.push(outer);
-                        for wrap in chain[..depth].iter().rev() {
-                            spend(&mut natural, wrap.1);
-                            let revision = context.revision(wrap.0, Some(wrap.1));
-                            let _ = write!(out, "<{revision}>");
-                            marks.push(*wrap);
-                        }
                         spend(&mut natural, change.1);
                         let wrap = context.revision(change.0, Some(change.1));
                         let _ = write!(out, "<{wrap}>");
@@ -1156,7 +916,7 @@ pub(super) fn story(
                             .iter()
                             .any(|outer| continues_change(context.document, (kind, by), *outer))
                     {
-                        // A change whose note names, after ` re `, a change
+                        // A change whose note names, after ` on `, a change
                         // whose mark sits suspended in `marks` opens inside
                         // it: the outer holds several changes, and its mark
                         // stays open around each of them.
@@ -1168,13 +928,18 @@ pub(super) fn story(
                     } else {
                         close_marks(context, &natural, &mut out, &mut open, &mut marks);
                         // A change that was another's only content sits
-                        // inside it again: the note names it after ` re `
-                        // (`{--x--}{r3 @BO re r1 @AL}`), so the outer
+                        // inside it again: the note names it after ` on `
+                        // (`{--x--}{>>r3 @BO on r1 @AL<<}`), so the outer
                         // mark wraps the inner one, with nothing else in
-                        // it. Deeper notes chain (`r5 @CD re r3 @BO re
+                        // it. Deeper notes chain (`r5 @CD on r3 @BO on
                         // r1 @AL`), outermost last.
-                        if let Some(change) = run.change {
-                            let chain = wrapping_chain(context.document, change);
+                        if let Some((_, by)) = run.change {
+                            let mut chain = Vec::new();
+                            let mut at = by;
+                            while let Some(&outer) = context.document.wraps.get(&at) {
+                                chain.push(outer);
+                                at = outer.1;
+                            }
                             for outer in chain.iter().rev() {
                                 spend(&mut natural, outer.1);
                                 let wrap = context.revision(outer.0, Some(outer.1));
@@ -1209,21 +974,9 @@ pub(super) fn story(
                         change: None,
                         ..run.clone()
                     };
-                    write_run(
-                        context,
-                        &plain,
-                        relate,
-                        &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
-                    );
+                    write_run(context, &plain, relate, &mut out);
                 } else {
-                    write_run(
-                        context,
-                        run,
-                        relate,
-                        &mut out,
-                        marks.iter().any(|mark| mark.0 == Kind::Delete),
-                    );
+                    write_run(context, run, relate, &mut out);
                 }
             }
             Item::RangeStart(slot) => {
@@ -1249,16 +1002,7 @@ pub(super) fn story(
                 let Some((kind, by)) = field else {
                     continue;
                 };
-                if open != field
-                    && !open.is_some_and(|outer| {
-                        context
-                            .document
-                            .revision_ids
-                            .get(&outer.1)
-                            .is_some_and(|ids| ids.len() == 1)
-                            && continues_change(context.document, (kind, by), outer)
-                    })
-                {
+                if open != field {
                     close_mark(context, &natural, &mut out, &mut open);
                     spend(&mut natural, by);
                     let wrap = context.revision(kind, Some(by));
@@ -1274,12 +1018,10 @@ pub(super) fn story(
                 if let Some(title) = title {
                     let _ = write!(instruction, " \\o \"{}\"", field_argument(title));
                 }
-                let element =
-                    if kind == Kind::Delete || marks.iter().any(|mark| mark.0 == Kind::Delete) {
-                        "delInstrText"
-                    } else {
-                        "instrText"
-                    };
+                let element = match kind {
+                    Kind::Insert => "instrText",
+                    Kind::Delete => "delInstrText",
+                };
                 let _ = write!(
                     out,
                     "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
@@ -1321,36 +1063,16 @@ pub(super) fn story(
                 align,
                 style,
                 formats,
-                geometry,
             } => {
                 columns.clone_from(these);
                 let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
-                // The line's widths when they count the grid's columns
-                // (the plan checked), else an even split of the text width.
-                let widths = geometry
-                    .widths
-                    .clone()
-                    .filter(|w| w.len() == columns.len().max(1))
-                    .unwrap_or_else(|| vec![context.text_width / count; columns.len().max(1)]);
                 let mut properties = String::new();
                 if let Some(style) = style {
                     let _ = write!(properties, "<w:tblStyle w:val=\"{}\"/>", escape(style));
                 }
-                // CT_TblPr's order: tblStyle, tblW, jc, tblInd, tblBorders,
-                // tblLayout, tblLook.
-                properties.push_str(&match geometry.width {
-                    None => "<w:tblW w:w=\"5000\" w:type=\"pct\"/>".to_string(),
-                    Some(TableWidth::Auto) => "<w:tblW w:w=\"0\" w:type=\"auto\"/>".to_string(),
-                    Some(TableWidth::Twips(w)) => format!("<w:tblW w:w=\"{w}\" w:type=\"dxa\"/>"),
-                    Some(TableWidth::Fiftieths(w)) => {
-                        format!("<w:tblW w:w=\"{w}\" w:type=\"pct\"/>")
-                    }
-                });
+                properties.push_str("<w:tblW w:w=\"5000\" w:type=\"pct\"/>");
                 if let Some(align) = align {
                     let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");
-                }
-                if let Some(indent) = geometry.indent {
-                    let _ = write!(properties, "<w:tblInd w:w=\"{indent}\" w:type=\"dxa\"/>");
                 }
                 if let Some(borders) = &formats.borders {
                     let _ = write!(
@@ -1358,9 +1080,6 @@ pub(super) fn story(
                         "<w:tblBorders>{}</w:tblBorders>",
                         super::borders::xml(borders)
                     );
-                }
-                if geometry.fixed {
-                    properties.push_str("<w:tblLayout w:type=\"fixed\"/>");
                 }
                 properties.push_str(
                     "<w:tblLook w:val=\"04A0\" w:firstRow=\"1\" w:lastRow=\"0\" \
@@ -1377,10 +1096,9 @@ pub(super) fn story(
                 out.push_str("</w:tblPr><w:tblGrid>");
                 tables.push((formats.clone(), 0, 0));
                 let mut grid = String::new();
-                for width in &widths {
-                    let _ = write!(grid, "<w:gridCol w:w=\"{width}\"/>");
+                for _ in 0..count {
+                    let _ = write!(grid, "<w:gridCol w:w=\"{}\"/>", context.text_width / count);
                 }
-                grids.push((widths, 0, context.text_width / count));
                 out.push_str(&grid);
                 // The grid's change keeps the grid as it is, and names no
                 // author: Word's `w:tblGridChange` has none.
@@ -1401,10 +1119,6 @@ pub(super) fn story(
                 gaps: (before, after),
             } => {
                 out.push_str("<w:tr>");
-                // The row's first cell starts past its `before` gap.
-                if let Some((_, at, _)) = grids.last_mut() {
-                    *at = *before;
-                }
                 row_change = *change;
                 let (format, own) = tables
                     .last_mut()
@@ -1435,11 +1149,9 @@ pub(super) fn story(
                 if *header || change.is_some() || own.is_some() || format.is_some() || gapped {
                     // What the row has, which its formatting change keeps.
                     let mut base = String::new();
-                    // The grid columns a gap leaves out, at the row's start
-                    // or its end.
-                    let widths = grids.last().map(|(w, ..)| w.as_slice()).unwrap_or_default();
-                    let before_width: u32 = widths.iter().take(*before).sum();
-                    let after_width: u32 = widths.iter().rev().take(*after).sum();
+                    let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
+                    let width =
+                        |n: usize| context.text_width / count * u32::try_from(n).unwrap_or(0);
                     if *before > 0 {
                         let _ = write!(base, "<w:gridBefore w:val=\"{before}\"/>");
                     }
@@ -1447,10 +1159,15 @@ pub(super) fn story(
                         let _ = write!(base, "<w:gridAfter w:val=\"{after}\"/>");
                     }
                     if *before > 0 {
-                        let _ = write!(base, "<w:wBefore w:w=\"{before_width}\" w:type=\"dxa\"/>");
+                        let _ = write!(
+                            base,
+                            "<w:wBefore w:w=\"{}\" w:type=\"dxa\"/>",
+                            width(*before)
+                        );
                     }
                     if *after > 0 {
-                        let _ = write!(base, "<w:wAfter w:w=\"{after_width}\" w:type=\"dxa\"/>");
+                        let _ =
+                            write!(base, "<w:wAfter w:w=\"{}\" w:type=\"dxa\"/>", width(*after));
                     }
                     if *header {
                         base.push_str("<w:tblHeader/>");
@@ -1477,21 +1194,13 @@ pub(super) fn story(
                 }
             }
             Item::Cell { across, merge, .. } => {
-                // The cell is as wide as the grid columns it spans, from
-                // where the row's cells so far end.
-                let spans = (*across).max(1);
-                let width: u32 = grids
-                    .last_mut()
-                    .map(|(widths, at, even)| {
-                        let width = (*at..*at + spans)
-                            .map(|column| widths.get(column).copied().unwrap_or(*even))
-                            .sum();
-                        *at += spans;
-                        width
-                    })
-                    .unwrap_or_default();
-                let across = u32::try_from(spans).unwrap_or(1);
-                let _ = write!(out, "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/>");
+                let count = u32::try_from(columns.len().max(1)).unwrap_or(1);
+                let across = u32::try_from(*across).unwrap_or(1).max(1);
+                let _ = write!(
+                    out,
+                    "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/>",
+                    context.text_width / count * across
+                );
                 if across > 1 {
                     let _ = write!(out, "<w:gridSpan w:val=\"{across}\"/>");
                 }
@@ -1557,7 +1266,6 @@ pub(super) fn story(
             }
             Item::TableEnd => {
                 tables.pop();
-                grids.pop();
                 out.push_str("</w:tbl>");
             }
         }
@@ -1635,14 +1343,10 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
     }) else {
         return false;
     };
-    let change = match rest.get(at) {
-        Some(Item::Run(run)) => run.change,
-        // An unprinted anchor before a separately tagged link must not
-        // close the same revision that holds all of the link's runs.
-        Some(Item::LinkStart(..)) => field_link(&rest[at + 1..], document),
-        _ => None,
+    let Some(Item::Run(run)) = rest.get(at) else {
+        return false;
     };
-    let Some(change) = change else {
+    let Some(change) = run.change else {
         return false;
     };
     if Some(change) == open
@@ -1650,14 +1354,14 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
             .into_iter()
             .chain(marks.iter().copied())
             .any(|outer| continues_change(document, change, outer))
-        // Or its note names the open mark or a suspended one as its parent.
-        || open
-            .into_iter()
-            .chain(marks.iter().copied())
-            .any(|outer| {
-                wrapping_chain(document, change).iter()
-                    .any(|wrap| *wrap == outer || continues_change(document, *wrap, outer))
-            })
+        // Or it names, after ` on `, a change whose mark sits suspended:
+        // it opens inside that one, as a piece of it does.
+        || marks.iter().any(|outer| {
+            document
+                .wraps
+                .get(&change.1)
+                .is_some_and(|&wrap| continues_change(document, wrap, *outer))
+        })
     {
         return true;
     }
@@ -1666,50 +1370,13 @@ fn continues(document: &Document, rest: &[Item], open: Option<Change>, marks: &[
     })
 }
 
-/// The named parents, including those another piece of the same revision names.
-/// An explicit parent wins; otherwise use the nearest preceding inner serial
-/// with the same ids, or the smallest serial if no piece precedes this one.
-fn wrapping_chain(document: &Document, change: Change) -> Vec<Change> {
-    let mut chain = Vec::new();
-    let mut serial = change.1;
-    loop {
-        let outer = document.wraps.get(&serial).or_else(|| {
-            let ids = document.revision_ids.get(&serial)?;
-            let pieces = document.wrapping_parents.get(ids)?;
-            pieces
-                .range(..serial)
-                .next_back()
-                .or_else(|| pieces.first_key_value())
-                .map(|(_, outer)| outer)
-        });
-        let Some(&outer) = outer else {
-            break;
-        };
-        if outer == change || chain.contains(&outer) {
-            break;
-        }
-        chain.push(outer);
-        serial = outer.1;
-    }
-    chain
-}
-
 /// Whether `inner` is another piece of `outer`'s change: the view names
-/// its `rN` ids (`{++a++}{r1 @AL}…{++b++}{r1 @AL}`), which `outer`
+/// its `rN` ids (`{++a++}{>>r1 @AL<<}…{++b++}{>>r1 @AL<<}`), which `outer`
 /// shares. Word marks a nested change inside the mark it splits, so the
 /// pieces are the only same-kind changes that can name spent ids.
 fn continues_change(document: &Document, inner: Change, outer: Change) -> bool {
-    // A date range can replace the tag's first day with its last day.
-    // Compare the attribution the element actually writes.
-    let attribution = |serial| {
-        document
-            .attributions
-            .get(&serial)
-            .map(|(author, date)| (author, document.range_ends.get(&serial).unwrap_or(date)))
-    };
     inner.0 == outer.0
         && inner.1 != outer.1
-        && attribution(inner.1) == attribution(outer.1)
         && document.revision_ids.get(&inner.1).is_some_and(|inner| {
             !inner.is_empty()
                 && document
@@ -1781,11 +1448,11 @@ fn resumes_later(document: &Document, rest: &[Item], outer: Change) -> bool {
 }
 
 /// Ends the open mark. A change the view gives more ids than it has pieces
-/// left writes the rest as empty marks after it: `{++a++}{r4+5+6 @AL}`
+/// left writes the rest as empty marks after it: `{++a++}{>>r4+5+6 @AL<<}`
 /// is `a` in mark 4, then empty marks 5 and 6.
 /// The insertion `rest` starts with, when its runs are all a comment range
 /// holds before it ends (`ends_inserted_side`) and a deleted run follows.
-fn starts_inserted_side(document: &Document, rest: &[Item]) -> Option<Change> {
+fn starts_inserted_side(rest: &[Item]) -> Option<Change> {
     let Some(Item::Run(Run {
         change: Some(side @ (Kind::Insert, _)),
         ..
@@ -1798,7 +1465,7 @@ fn starts_inserted_side(document: &Document, rest: &[Item]) -> Option<Change> {
         .take_while(|item| matches!(item, Item::Run(run) if run.change == Some(*side)))
         .count();
     (matches!(rest.get(runs), Some(Item::RangeEnd(_)))
-        && ends_inserted_side(document, &rest[runs + 1..], Some(*side)))
+        && ends_inserted_side(&rest[runs + 1..], Some(*side)))
     .then_some(*side)
 }
 
@@ -1809,17 +1476,10 @@ fn field_argument(text: &str) -> String {
 }
 
 /// Whether `open` is an insertion and the next item a deleted run.
-fn ends_inserted_side(document: &Document, rest: &[Item], open: Option<Change>) -> bool {
-    // A separately tagged revision keeps an unused anchor slot before its
-    // first run. It emits no XML and does not separate these two sides.
-    let next = rest.iter().find(|item| {
-        !matches!(item, Item::RangeStart(slot)
-            if document.slots.get(*slot).is_none_or(Option::is_none)
-                && !document.shared.contains_key(slot))
-    });
+fn ends_inserted_side(rest: &[Item], open: Option<Change>) -> bool {
     matches!(open, Some((Kind::Insert, _)))
         && matches!(
-            next,
+            rest.first(),
             Some(Item::Run(Run {
                 change: Some((Kind::Delete, _)),
                 ..
@@ -1942,7 +1602,7 @@ fn natural_marks(document: &Document, items: &[Item]) -> HashMap<u32, usize> {
 }
 
 /// `items` with text runs split until each change has a piece for every id
-/// the view names it: `{++one two++}{r70+71 @AL}` is two marks, `one `
+/// the view names it: `{++one two++}{>>r70+71 @AL<<}` is two marks, `one `
 /// and `two`. A piece is a run, a paragraph mark or a row; a run splits
 /// after its last inner space, else before its last character.
 fn split_for_ids<'i>(context: &Context<'_>, items: &'i [Item]) -> Cow<'i, [Item]> {
@@ -2064,26 +1724,6 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
             "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
         );
     }
-    // Before `w:ind`, as the schema orders `w:pPr`.
-    let spacing = paragraph.spacing;
-    if !spacing.is_empty() {
-        properties.push_str("<w:spacing");
-        for (name, value, auto) in [
-            ("before", spacing.before, spacing.before_auto),
-            ("after", spacing.after, spacing.after_auto),
-        ] {
-            if let Some(value) = value {
-                let _ = write!(properties, " w:{name}=\"{value}\"");
-            }
-            if auto {
-                let _ = write!(properties, " w:{name}Autospacing=\"1\"");
-            }
-        }
-        if let Some((line, rule)) = spacing.line {
-            let _ = write!(properties, " w:line=\"{line}\" w:lineRule=\"{rule}\"");
-        }
-        properties.push_str("/>");
-    }
     let ind = paragraph.ind;
     let left = ind.left.or(paragraph.indent.map(i64::from));
     if left.is_some() || ind.right.is_some() || ind.first_line.is_some() || ind.hanging.is_some() {
@@ -2125,14 +1765,6 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
             let _ = write!(mark_properties, "<{mark}/>");
         }
     }
-    // CT_ParaRPr: the mark's change, then its size, then its formatting
-    // change.
-    if let Some(size) = paragraph.size {
-        let _ = write!(
-            mark_properties,
-            "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
-        );
-    }
     if let Some(format) = mark_format {
         let change = context.format_mark("w:rPrChange", format);
         let _ = write!(mark_properties, "<{change}><w:rPr/></w:rPrChange>");
@@ -2160,7 +1792,6 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
     context
         .pending_marks
         .push(mark_at.map(|(kind, at)| (kind, paragraph.mark_by, start + at)));
-    context.run_sizes.push(paragraph.size);
 }
 
 /// Whether the note a reference at `position` (1-based) points to is an
@@ -2201,10 +1832,6 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     if format.strike {
         out.push_str("<w:strike/>");
     }
-    // After `w:strike`, before `w:highlight`, as CT_RPr orders them.
-    if let Some(size) = context.run_sizes.last().copied().flatten() {
-        let _ = write!(out, "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>");
-    }
     if format.mark || context.highlighted(run) {
         let colour = format.mark_color.unwrap_or("yellow");
         out.push_str(&format!("<w:highlight w:val=\"{colour}\"/>"));
@@ -2224,15 +1851,9 @@ fn run_properties(context: &Context<'_>, run: &Run) -> String {
     }
 }
 
-fn write_run(
-    context: &mut Context<'_>,
-    run: &Run,
-    relate: &mut dyn Relate,
-    out: &mut String,
-    parent_deleted: bool,
-) {
+fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out: &mut String) {
     let properties = run_properties(context, run);
-    let deleted = parent_deleted || matches!(run.change, Some((Kind::Delete, _)));
+    let deleted = matches!(run.change, Some((Kind::Delete, _)));
     let _ = write!(out, "<w:r>{properties}");
     match &run.content {
         Content::Text(text) => {
@@ -2287,28 +1908,7 @@ fn write_run(
                 .drawings
                 .get(*index)
                 .is_some_and(|drawing| drawing.wraps_run());
-            // A text box's payload holds its frame only: the story the
-            // view printed as the blocks after the anchor refills it.
-            let story = context.document.box_stories.get(index).map(|boxes| {
-                boxes
-                    .iter()
-                    .map(|(markdown, items)| {
-                        let items = outside_anchor(context.document, items, run.change);
-                        let xml = story(context, &items, relate, None);
-                        (
-                            markdown.clone(),
-                            if xml.is_empty() {
-                                "<w:p/>".to_string()
-                            } else {
-                                xml
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            });
-            if let Some(drawing) =
-                relate.drawing(*index, &mut context.next_drawing, story.as_deref())
-            {
+            if let Some(drawing) = relate.drawing(*index, &mut context.next_drawing) {
                 if wraps_run {
                     out.push_str(&drawing);
                 } else {
@@ -2321,49 +1921,6 @@ fn write_run(
         }
     }
     out.push_str("</w:r>");
-}
-
-/// A text box's `items` without the copies of `anchor`, the change of the
-/// run that holds the box. The view prints a box with no change of its own
-/// with its anchor's tag; when that tag names one id, the anchor's mark
-/// holds the box already, so the copy writes no mark (and takes no id) of
-/// its own. A joined tag's copy keeps its piece (`r12+17+11`).
-fn outside_anchor<'i>(
-    document: &Document,
-    items: &'i [Item],
-    anchor: Option<Change>,
-) -> Cow<'i, [Item]> {
-    let Some((kind, serial)) = anchor else {
-        return Cow::Borrowed(items);
-    };
-    let single = |serial: u32| {
-        document
-            .revision_ids
-            .get(&serial)
-            .filter(|ids| ids.len() == 1)
-    };
-    let Some(ids) = single(serial) else {
-        return Cow::Borrowed(items);
-    };
-    let copy = |item: &Item| {
-        matches!(item, Item::Run(Run { change: Some((k, s)), .. })
-            if *k == kind && single(*s) == Some(ids))
-    };
-    if !items.iter().any(copy) {
-        return Cow::Borrowed(items);
-    }
-    Cow::Owned(
-        items
-            .iter()
-            .map(|item| match item {
-                Item::Run(run) if copy(item) => Item::Run(Run {
-                    change: None,
-                    ..run.clone()
-                }),
-                item => item.clone(),
-            })
-            .collect(),
-    )
 }
 
 /// The `w:drawing` of a minimal anchored text box `boxed`: a rectangle the
@@ -2408,7 +1965,7 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                         open = Some(change);
                     }
                 }
-                write_run(context, run, relate, out, false);
+                write_run(context, run, relate, out);
             }
             Item::ParagraphEnd => {
                 // The mark `paragraph_properties` deferred until the
@@ -2417,7 +1974,6 @@ fn box_xml(context: &mut Context<'_>, items: &[Item], relate: &mut dyn Relate, o
                     let mark = context.revision(kind, by);
                     out.insert_str(at, &format!("<{mark}/>"));
                 }
-                context.run_sizes.pop();
                 if let Some((kind, _)) = open.take() {
                     out.push_str(close_tag(kind));
                 }
@@ -2491,7 +2047,7 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
                     "<w:comment w:id=\"{}\" w:author=\"{}\"{} w:initials=\"{}\">",
                     comment.id,
                     escape(author),
-                    legacy_date_attribute(date),
+                    date_attribute(date),
                     escape(&initials)
                 );
             }
@@ -2905,46 +2461,16 @@ fn with_section_change(section: &str, mark: &FormatMark) -> String {
     )
 }
 
-/// A view's offset records an instant; Word stores its wall clock with Z.
-pub(super) fn word_date(date: &str) -> std::borrow::Cow<'_, str> {
-    let zone = date.len().saturating_sub(6);
-    if matches!(date.as_bytes().get(zone), Some(b'+' | b'-'))
-        && crate::util::datetime::parse_datetime(date).is_ok()
-    {
-        std::borrow::Cow::Owned(format!("{}Z", &date[..zone]))
-    } else {
-        std::borrow::Cow::Borrowed(date)
-    }
-}
-
-/// A revision keeps Word's wall clock and, for an explicit offset, its instant.
-pub(super) fn date_attribute(date: &str) -> String {
-    let mut attributes = legacy_date_attribute(date);
-    if let Some(utc) = offset_date_utc(date) {
-        let _ = write!(attributes, " w16du:dateUtc=\"{utc}\"");
-    }
-    attributes
-}
-
-/// The instant of an explicit offset view date; `Z` keeps the legacy path.
-pub(super) fn offset_date_utc(date: &str) -> Option<String> {
-    if !matches!(word_date(date), Cow::Owned(_)) {
-        return None;
-    }
-    let (seconds, fraction) = crate::convert::timestamp_order_key(date)?;
-    Some(crate::convert::timestamp_with_offset(seconds, fraction, 0))
-}
-
-fn legacy_date_attribute(date: &str) -> String {
+fn date_attribute(date: &str) -> String {
     if date.is_empty() {
         String::new()
     } else {
-        format!(" w:date=\"{}\"", escape(&word_date(date)))
+        format!(" w:date=\"{}\"", escape(date))
     }
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -23,6 +23,9 @@ ignore = [
     # off it is plan Step 2e / PR5 (FaceKey registry), not a CI ignore-forever.
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; migrate with FaceKey/harfbuzz in plan 2e" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained: direct dep (glyph metrics, TTF embed) and via rustybuzz 0.20; same 2e migration" },
+    { id = "RUSTSEC-2026-0367", reason = "zip 9.x causes extensive breakages; needs dedicated PR" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 9.x causes extensive breakages; needs dedicated PR" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 9.x causes extensive breakages; needs dedicated PR" },
 ]
 
 [licenses]
@@ -63,4 +66,3 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/jandira-tech/ooxmlsdk"]

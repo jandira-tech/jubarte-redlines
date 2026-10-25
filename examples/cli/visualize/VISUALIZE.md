@@ -18,15 +18,6 @@ An agent has three kinds of eyes:
 - **Machine views** (`--json` everywhere, `--report`, `visual-diff --json`):
   for checking a result instead of reading it.
 
-Attribution uses braces after the change closer: `{++new++}{r1 @AL}`.
-`{>>c5 @AC: note<<}` remains a comment. A deletion inside another author's
-insertion names its parent with `{r3 @BO re r1 @AL}`. Distinct revision ids
-stay separate; only a deletion directly followed in the rendered stream by
-a live insertion from the same author forms `{~~old~>new~~}{r4+5 @AL}`.
-Different inline dates keep the two marks separate. An inserted paragraph
-mark is `¶{r7 @AL}`. To write literal attribution-shaped text after a closer,
-escape the opening brace: `{++new++}\{r1 @AL}`; write literal `¶\{` likewise.
-
 The document is a consulting agreement that Ann Counsel already redlined:
 nine tracked changes (insertions, deletions, a table cell change) and two
 comments, built from CriticMarkup:
@@ -48,10 +39,10 @@ The agent view: a YAML header (the file's `sha256:`, counts, authors and their h
 $ jubarte read out/received.docx
 ---
 source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
+sha256: 86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
+revisions: 9                       # 9 marks shown as 6 changes: 2 insertions, 1 deletion, 3 substitutions
 comments: 2 threads open           # 2 comments: c0, c1
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -76,13 +67,13 @@ This Consulting Agreement (the "Agreement") is made between Harbor Point Analyti
 ## 1. Services
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} route-cost reports and a {~~weekly~>monthly~~}{>>r3+2 @AC<<} review call.
 
 <!-- p4 -->
 ## 2. Fees
 
 <!-- p5 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r5+4 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
 
 <!-- p6 -->
 ## 3. Term
@@ -95,10 +86,10 @@ Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of 
 $ jubarte read out/received.docx --track-changes accept
 ---
 source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
+sha256: 86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432
 view: accept-all                   # 9 revisions by AC shown as accepted; file unchanged
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks: 5 insertions, 4 deletions
+revisions: 9                       # 9 marks shown as 6 changes: 2 insertions, 1 deletion, 3 substitutions
 comments: 2 threads open           # 2 comments: c0, c1
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -122,13 +113,13 @@ This Consulting Agreement (the "Agreement") is made between Harbor Point Analyti
 <!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev r1 @AC; r2+3 @AC -->
+<!-- p3 rev r1 @AC; r3+2 @AC -->
 Consultant will deliver the services in each Statement of Work, including quarterly route-cost reports and a monthly review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev r4+5 @AC -->
+<!-- p5 rev r5+4 @AC -->
 Client shall pay each invoice within forty-five days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
 
 <!-- p6 -->
@@ -142,10 +133,10 @@ Client shall pay each invoice within forty-five days of receipt. {==Late amounts
 $ jubarte read out/received.docx --track-changes reject
 ---
 source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
+sha256: 86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432
 view: reject-all                   # 9 revisions by AC shown as rejected; file unchanged
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks: 5 insertions, 4 deletions
+revisions: 9                       # 9 marks shown as 6 changes: 2 insertions, 1 deletion, 3 substitutions
 comments: 2 threads open           # 2 comments: c0, c1
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -169,13 +160,13 @@ This Consulting Agreement (the "Agreement") is made between Harbor Point Analyti
 <!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev r1 @AC; r2+3 @AC -->
+<!-- p3 rev r1 @AC; r3+2 @AC -->
 Consultant will deliver the services in each Statement of Work, including  route-cost reports and a weekly review call.
 
 <!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev r4+5 @AC -->
+<!-- p5 rev r5+4 @AC -->
 Client shall pay each invoice within thirty days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
 
 <!-- p6 -->
@@ -189,10 +180,10 @@ Client shall pay each invoice within thirty days of receipt. {==Late amounts acc
 $ jubarte read out/received.docx -p p5\,t0 --comments none
 ---
 source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
+sha256: 86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432
 view: tracked, comments hidden     # 2 threads open (2 comments); carrying paragraphs are marked
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 2 changes: 2 substitutions
+revisions: 9                       # 9 marks shown as 6 changes: 2 insertions, 1 deletion, 3 substitutions
 comments: 2 threads open           # 2 comments: c0, c1
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
@@ -209,12 +200,12 @@ styles:
 <!-- page 1 of 1 -->
 
 <!-- p5 comments c0 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. Late amounts accrue interest at one percent per month.
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r5+4 @AC<<} days of receipt. Late amounts accrue interest at one percent per month.
 
 <!-- t0 3x3, cells p8-p16 by row, header row repeats -->
 |Deliverable|Due|Owner|
 |-|-|-|
-|Route-cost report|{~~Day 10~>Day 15~~}{r8+9 @AC}|Consultant|
+|Route-cost report|{~~Day 10~>Day 15~~}{>>r9+8 @AC<<}|Consultant|
 |Review call|Monthly|Both|
 ```
 
@@ -224,94 +215,62 @@ Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of 
 
 ```console
 $ jubarte convert out/received.docx -t md
----
-source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-view: tracked                      # revisions as CriticMarkup, comments inline
-track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
-comments: 2 threads open           # 2 comments: c0, c1
-authors:
-  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-body: p0-p18, 1 table, 1 page      # pages from layout
-page: Letter portrait, margins 1in, header/footer 0.5in
-styles:
-  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
----
-
 <!-- page 1 of 1 -->
 
-<!-- p0 -->
 # Consulting Agreement
 
-<!-- p1 -->
 This Consulting Agreement (the "Agreement") is made between Harbor Point Analytics LLC ("Consultant") and Juniper Freight Co. ("Client").
 
-<!-- p2 -->
 ## 1. Services
 
-<!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<} route-cost reports and a {~~weekly~>monthly~~}{>>Ann Counsel (2026-10-01T09:00:00Z)<<} review call.
 
-<!-- p4 -->
 ## 2. Fees
 
-<!-- p5 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>Ann Counsel (2026-10-01T09:00:00Z)<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>Ann Counsel (2026-10-01T09:00:00Z): Is one percent the statutory cap in Delaware?<<}
 
-<!-- p6 -->
 ## 3. Term
-… (15 more lines)
+
+This Agreement begins on March 1, 2026 and continues until either party ends it with {--ninety days--}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}{++sixty days++}{>>Ann Counsel (2026-10-01T09:00:00Z)<<} written notice.
+
+|Deliverable|Due|Owner|
+|-|-|-|
+|Route-cost report|{~~Day 10~>Day 15~~}{>>Ann Counsel (2026-10-01T09:00:00Z)<<}|Consultant|
+|Review call|Monthly|Both|
+
+## 4. Confidentiality
+
+Each party shall keep the other's Confidential Information secret{>>Ann Counsel (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
 ```
 
 `--no-page-markers` skips the layout pass; `--track-changes accept|reject` resolves the changes in the Markdown itself.
 
 ```console
 $ jubarte convert out/received.docx -t md --no-page-markers --track-changes accept
----
-source: received.docx
-sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-view: accept-all                   # 9 revisions by AC shown as accepted; file unchanged
-track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 9                       # 9 marks: 5 insertions, 4 deletions
-comments: 2 threads open           # 2 comments: c0, c1
-authors:
-  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-body: p0-p18, 1 table, 1 page      # pages from layout
-page: Letter portrait, margins 1in, header/footer 0.5in
-styles:
-  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
-  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
----
-
-<!-- p0 -->
 # Consulting Agreement
 
-<!-- p1 -->
 This Consulting Agreement (the "Agreement") is made between Harbor Point Analytics LLC ("Consultant") and Juniper Freight Co. ("Client").
 
-<!-- p2 -->
 ## 1. Services
 
-<!-- p3 rev r1 @AC; r2+3 @AC -->
 Consultant will deliver the services in each Statement of Work, including quarterly route-cost reports and a monthly review call.
 
-<!-- p4 -->
 ## 2. Fees
 
-<!-- p5 rev r4+5 @AC -->
-Client shall pay each invoice within forty-five days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
+Client shall pay each invoice within forty-five days of receipt. Late amounts accrue interest at one percent per month.
 
-<!-- p6 -->
 ## 3. Term
 
-<!-- p7 rev r6+7 @AC -->
-… (13 more lines)
+This Agreement begins on March 1, 2026 and continues until either party ends it with sixty days written notice.
+
+|Deliverable|Due|Owner|
+|-|-|-|
+|Route-cost report|Day 15|Consultant|
+|Review call|Monthly|Both|
+
+## 4. Confidentiality
+
+Each party shall keep the other's Confidential Information secret.
 ```
 
 ### 1.3 List what changed and who said what
@@ -321,14 +280,14 @@ Client shall pay each invoice within forty-five days of receipt. {==Late amounts
 ```console
 $ jubarte changes out/received.docx
 r1	insertion	text	Ann Counsel	p3	"quarterly"
-r2	deletion	text	Ann Counsel	p3	"weekly"
-r3	insertion	text	Ann Counsel	p3	"monthly"
-r4	deletion	text	Ann Counsel	p5	"thirty"
-r5	insertion	text	Ann Counsel	p5	"forty-five"
+r2	insertion	text	Ann Counsel	p3	"monthly"
+r3	deletion	text	Ann Counsel	p3	"weekly"
+r4	insertion	text	Ann Counsel	p5	"forty-five"
+r5	deletion	text	Ann Counsel	p5	"thirty"
 r6	deletion	text	Ann Counsel	p7	"ninety days"
 r7	insertion	text	Ann Counsel	p7	"sixty days"
-r8	deletion	text	Ann Counsel	p12	"Day 10"
-r9	insertion	text	Ann Counsel	p12	"Day 15"
+r8	insertion	text	Ann Counsel	p12	"Day 15"
+r9	deletion	text	Ann Counsel	p12	"Day 10"
 9 change(s)
 ```
 
@@ -336,15 +295,15 @@ r9	insertion	text	Ann Counsel	p12	"Day 15"
 
 ```console
 $ jubarte changes out/received.docx --json
-{"id":"r1","ref":"r1","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"quarterly","paragraph":"p3"}
-{"id":"r2","ref":"r2","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"weekly","paragraph":"p3"}
-{"id":"r3","ref":"r3","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"monthly","paragraph":"p3"}
-{"id":"r4","ref":"r4","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"thirty","paragraph":"p5"}
-{"id":"r5","ref":"r5","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"forty-five","paragraph":"p5"}
-{"id":"r6","ref":"r6","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"ninety days","paragraph":"p7"}
-{"id":"r7","ref":"r7","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"sixty days","paragraph":"p7"}
-{"id":"r8","ref":"r8","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"Day 10","paragraph":"p12"}
-{"id":"r9","ref":"r9","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"Day 15","paragraph":"p12"}
+{"id":"body:rev:1","ref":"r1","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"quarterly","paragraph":"body:p:3"}
+{"id":"body:rev:2","ref":"r2","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"monthly","paragraph":"body:p:3"}
+{"id":"body:rev:3","ref":"r3","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"weekly","paragraph":"body:p:3"}
+{"id":"body:rev:4","ref":"r4","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"forty-five","paragraph":"body:p:5"}
+{"id":"body:rev:5","ref":"r5","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"thirty","paragraph":"body:p:5"}
+{"id":"body:rev:6","ref":"r6","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"ninety days","paragraph":"body:p:7"}
+{"id":"body:rev:7","ref":"r7","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"sixty days","paragraph":"body:p:7"}
+{"id":"body:rev:8","ref":"r8","kind":"insertion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"Day 15","paragraph":"body:p:12"}
+{"id":"body:rev:9","ref":"r9","kind":"deletion","target":"text","author":"Ann Counsel","date":"2026-10-01T09:00:00Z","text":"Day 10","paragraph":"body:p:12"}
 ```
 
 `comments`: comments, their anchors, replies and resolved state. `--json`, `--author NAME` and `--latest` (newest per thread) narrow it.
@@ -360,8 +319,8 @@ c1	p18	Ann Counsel	"Add a three-year survival period?"	on ""
 
 ```console
 $ jubarte comments out/received.docx --json --author Ann\ Counsel
-{"id":0,"ref":"c0","author":"Ann Counsel","initials":"AC","date":"2026-10-01T09:00:00Z","text":"Is one percent the statutory cap in Delaware?","done":false,"paragraph":"p5","anchor_text":"Late amounts accrue interest at one percent per month.","before":"Client shall pay each invoice within forty-five days of receipt. ","after":""}
-{"id":1,"ref":"c1","author":"Ann Counsel","initials":"AC","date":"2026-10-01T09:00:00Z","text":"Add a three-year survival period?","done":false,"paragraph":"p18","anchor_text":"","before":"Each party shall keep the other's Confidential Information secret","after":"."}
+{"id":0,"ref":"c0","author":"Ann Counsel","initials":"AC","date":"2026-10-01T09:00:00Z","text":"Is one percent the statutory cap in Delaware?","done":false,"paragraph":"body:p:5","anchor_text":"Late amounts accrue interest at one percent per month.","before":"Client shall pay each invoice within forty-five days of receipt. ","after":""}
+{"id":1,"ref":"c1","author":"Ann Counsel","initials":"AC","date":"2026-10-01T09:00:00Z","text":"Add a three-year survival period?","done":false,"paragraph":"body:p:18","anchor_text":"","before":"Each party shall keep the other's Confidential Information secret","after":"."}
 ```
 
 ### 1.4 Read the structure as data
@@ -391,11 +350,12 @@ $ jubarte debug out/received.docx --check render
 word/comments.xml: 2 paragraphs
   pstyle "annotation text" ×2
 word/document.xml: 19 paragraphs
-  table 1 3x3 style="Table Grid" "Deliverable | Due | Owner"
+  table 1 3x3 "Deliverable | Due | Owner"
   section 1 page=12240x15840 margins=1440,1440,1440,1440 header=720 footer=720
   pstyle "heading 1" ×1
   pstyle "heading 2" ×4
-  revisions del→ins ×4 "Consultant will deliver the services in …"
+  revisions del→ins ×1 "This Agreement begins on March 1, 2026 a…"
+  revisions ins→del ×3 "Consultant will deliver the services in …"
 ```
 
 ### 1.5 See the pages
@@ -444,7 +404,7 @@ wrote out/received-endnotes-page-NN.png (png, 2 pages, 60 dpi)
 
 ```console
 $ jubarte convert out/received.docx --compress -o out/received-compressed.pdf --force
-wrote out/received-compressed.pdf (pdf, 55032 bytes, 1 page)
+wrote out/received-compressed.pdf (pdf, 55297 bytes, 1 page)
 ```
 
 
@@ -478,60 +438,52 @@ The agent answers Ann's comments and makes two edits of its own with an edit pla
 
 ```console
 $ jubarte edit out/received.docx --plan out/plan.json --out-dir out/edited --dry-run
-{"author":"Agent","base_sha256":"7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e","date":"2026-10-02T15:00:00Z","ev":"load","existing_revisions":"keep","guarded":true,"paras":19,"sha256":"7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e"}
-{"at":"p7","ctx":"Agreement begins on {March 1, 2026→April 1, 2026} and continues until","ev":"op","i":1,"id":"start-date","matches":1,"op":"replace","status":"ok"}
-{"at":"p18","ctx":"l Information secret{+ for three years after this Agreement ends}.","ev":"op","i":2,"id":"survival","matches":1,"op":"insert","status":"ok"}
-{"at":"p5","comment_id":2,"ctx":"comment 0","ev":"op","i":3,"id":"answer-cap","matches":1,"op":"reply_comment","status":"ok"}
-{"at":"p18","comment_id":1,"ctx":"comment 1","ev":"op","i":4,"id":"resolve-survival","matches":1,"op":"resolve_comment","status":"ok"}
-{"at":"p3","comment_id":3,"ctx":"including quarterly {#route-cost reports} and a monthly revie","ev":"op","i":5,"id":"ask-scope","matches":1,"op":"comment","status":"ok"}
-{"comments":{"added":2},"ev":"summary","kept_comments":[],"ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"removed_comments":[],"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
+{"author":"Agent","base_sha256":"86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432","date":"2026-10-02T15:00:00Z","ev":"load","existing_revisions":"keep","guarded":true,"paras":19,"sha256":"86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432"}
+{"at":"body:p:7","ctx":"Agreement begins on {March 1, 2026→April 1, 2026} and continues until","ev":"op","i":1,"id":"start-date","matches":1,"op":"replace","status":"ok"}
+{"at":"body:p:18","ctx":"l Information secret{+ for three years after this Agreement ends}.","ev":"op","i":2,"id":"survival","matches":1,"op":"insert","status":"ok"}
+{"at":"body:p:5","ctx":"comment 0","ev":"op","i":3,"id":"answer-cap","matches":1,"op":"reply_comment","status":"ok"}
+{"at":"body:p:18","comment_id":1,"ctx":"comment 1","ev":"op","i":4,"id":"resolve-survival","matches":1,"op":"resolve_comment","status":"ok"}
+{"at":"body:p:3","ctx":"including quarterly {#route-cost reports} and a monthly revie","ev":"op","i":5,"id":"ask-scope","matches":1,"op":"comment","status":"ok"}
+{"comments":{"added":0},"ev":"summary","ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"revs":{"deleted":0,"format_changed":0,"inserted":0,"moved":0,"total":0},"status":"ok"}
 ```
 
 `edit --pdf --png`: write `clean.docx` (every change accepted), `redline.docx` (Ann's changes plus the agent's), `patch.diff`, `report.jsonl`, and both as PDF and PNG.
 
 ```console
 $ jubarte edit out/received.docx --plan out/plan.json --out-dir out/edited --pdf --png --dpi 60
-{"comments":{"added":2},"ev":"summary","kept_comments":[],"ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"removed_comments":[],"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
+{"comments":{"added":2},"ev":"summary","ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
 wrote out/edited (8 files: clean.docx, redline.docx, patch.diff, redline.pdf, redline-page-01.png, clean.pdf, clean-page-01.png, report.jsonl)
-SUCCESS:
-~~~~diff
---- before out/received.docx
-+++ after out/edited/clean.docx
-@@ -1,13 +1,14 @@
- ---
--source: received.docx
--sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-+source: clean.docx
-+sha256: f8cce6ea882fad188b5646f0fa9da470bfbf9795f1c6dfd0f298c3367f00544a
- view: tracked                      # revisions as CriticMarkup, comments inline
- track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
- revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
--comments: 2 threads open           # 2 comments: c0, c1
-+comments: 2 threads open, 1 resolved, c2 style Normal, c3 style Normal  # 4 comments: c0 (+ reply c2), c1, c3
- authors:
-   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-+  A: Agent                         # 2 comments, 2026-10-02T15:00:00Z
- body: p0-p18, 1 table, 1 page      # pages from layout
- page: Letter portrait, margins 1in, header/footer 0.5in
- styles:
-@@ -28,19 +29,19 @@
- ## 1. Services
- 
- <!-- p3 -->
--Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
-+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
- 
- <!-- p4 -->
- ## 2. Fees
- 
- <!-- p5 -->
--Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
-+Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
- 
- <!-- p6 -->
- ## 3. Term
-… (67 more lines)
+---
+source: out/edited/redline.docx
+sha256: ab5e5b861dcedb28f5d15f4fca582fd6ea45dcfbcfeaa3d587a56c0fa189a6ff
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 12                      # 12 marks shown as 9 changes: 4 insertions, 2 deletions, 3 substitutions
+comments: 2 threads open, 1 resolved  # 4 comments: c0 (+ reply c2), c1, c3
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
+  A: Agent                         # 3 revisions, 2 comments, 2026-10-02T15:00:00Z
+body: p0-p18, 1 table, 1 page      # pages from layout
+range: changed by @A (p3, p5, p7, p18) of p0-p18
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
+---
+
+<!-- p3 -->
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{>>r3+2 @AC<<} review call.
+
+<!-- p5 -->
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r5+4 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
+
+<!-- p7 -->
+This Agreement begins on {--March 1, 2026--}{>>r10 @A<<}{++April 1, 2026++}{>>r11 @A<<} and continues until either party ends it with {--ninety days--}{>>r6 @AC<<}{++sixty days++}{>>r7 @AC<<} written notice.
+
+<!-- p18 -->
+Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}{>>r12 @A<<}{>>c1 @AC resolved: Add a three-year survival period?<<}.
 ```
 
 ![redline.docx: both authors' changes, the reply and the resolved comment](out/edited/redline-page-01.png)
@@ -545,24 +497,24 @@ SUCCESS:
 ```diff
 --- a/received.docx
 +++ b/received.docx	Agent	2026-10-02T15:00:00Z
-@@ [p3] @@
+@@ [body:p:3] @@
 Consultant will deliver the services in each Statement of Work,
 including quarterly {==route-cost reports==}{>>Agent
 (2026-10-02T15:00:00Z): Do the reports cover cross-border lanes?<<} and
 a monthly review call.
 
-@@ [p5] @@
+@@ [body:p:5] @@
 Client shall pay each invoice within forty-five days of receipt. {==Late
 amounts accrue interest at one percent per month.==}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Is one percent the statutory cap in
 Delaware?<<}{>>Agent (2026-10-02T15:00:00Z): Delaware has no cap for
 commercial contracts; one percent stands.<<}
 
-@@ [p7] @@
+@@ [body:p:7] @@
 This Agreement begins on [-March 1, 2026-]{+April 1, 2026+} and
 continues until either party ends it with sixty days written notice.
 
-@@ [p18] @@
+@@ [body:p:18] @@
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
@@ -571,15 +523,15 @@ three years after this Agreement ends+}{>>Ann Counsel
 `report.jsonl`: one line per operation, then a summary (`status`, operations ok/failed, revisions and comments added):
 
 ```json
-{"author":"Agent","base_sha256":"7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e","date":"2026-10-02T15:00:00Z","ev":"load","existing_revisions":"keep","guarded":true,"paras":19,"sha256":"7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e"}
-{"at":"p7","ctx":"Agreement begins on {March 1, 2026→April 1, 2026} and continues until","ev":"op","i":1,"id":"start-date","matches":1,"op":"replace","status":"ok"}
-{"at":"p18","ctx":"l Information secret{+ for three years after this Agreement ends}.","ev":"op","i":2,"id":"survival","matches":1,"op":"insert","status":"ok"}
-{"at":"p5","comment_id":2,"ctx":"comment 0","ev":"op","i":3,"id":"answer-cap","matches":1,"op":"reply_comment","status":"ok"}
-{"at":"p18","comment_id":1,"ctx":"comment 1","ev":"op","i":4,"id":"resolve-survival","matches":1,"op":"resolve_comment","status":"ok"}
-{"at":"p3","comment_id":3,"ctx":"including quarterly {#route-cost reports} and a monthly revie","ev":"op","i":5,"id":"ask-scope","matches":1,"op":"comment","status":"ok"}
+{"author":"Agent","base_sha256":"86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432","date":"2026-10-02T15:00:00Z","ev":"load","existing_revisions":"keep","guarded":true,"paras":19,"sha256":"86e57bfaf2d3eb31415d89892c1402913e15850dd35ff95b5c9555fd56a62432"}
+{"at":"body:p:7","ctx":"Agreement begins on {March 1, 2026→April 1, 2026} and continues until","ev":"op","i":1,"id":"start-date","matches":1,"op":"replace","status":"ok"}
+{"at":"body:p:18","ctx":"l Information secret{+ for three years after this Agreement ends}.","ev":"op","i":2,"id":"survival","matches":1,"op":"insert","status":"ok"}
+{"at":"body:p:5","comment_id":2,"ctx":"comment 0","ev":"op","i":3,"id":"answer-cap","matches":1,"op":"reply_comment","status":"ok"}
+{"at":"body:p:18","comment_id":1,"ctx":"comment 1","ev":"op","i":4,"id":"resolve-survival","matches":1,"op":"resolve_comment","status":"ok"}
+{"at":"body:p:3","comment_id":3,"ctx":"including quarterly {#route-cost reports} and a monthly revie","ev":"op","i":5,"id":"ask-scope","matches":1,"op":"comment","status":"ok"}
 {"engine":"jubarte 0.12.0","ev":"render","page_starts":{"clean":["Consulting Agreement"],"redline":["Consulting Agreement"]},"pages":{"clean":1,"redline":1}}
-{"dir":"out/edited","ev":"save","outputs":[{"bytes":7525,"f":"clean.docx","sha256":"f8cce6ea882fad188b5646f0fa9da470bfbf9795f1c6dfd0f298c3367f00544a"},{"bytes":7598,"f":"redline.docx","sha256":"c70a0285a060fdf3b513d65036d4b6bf07978a7a3433dc8d366ccdaad7270cd5"},{"bytes":962,"f":"patch.diff","sha256":"45517b9d904d8a0724a05c1920abd9ba29a533bcdedd122cdfe224b03764cee5"},{"bytes":59751,"f":"redline.pdf","sha256":"fdfa2c730bf48ed855f6138f0fbb7d0dd27e876b589f7565f66bd004a06ebf12"},{"bytes":24756,"f":"redline-page-01.png","sha256":"ae41d6ef957a2ce133685bbbe91a5c95d5e1301afcb5e5d992d69aac21f43f52"},{"bytes":59557,"f":"clean.pdf","sha256":"3aeb0e68cb86e039fd7239ae729c6db3e74a5986700795711afaa65401913db3"},{"bytes":24388,"f":"clean-page-01.png","sha256":"7b38ba42069ddd0e973c074c211fc324b4977952c56d5343879f005ba6026718"}]}
-{"comments":{"added":2},"ev":"summary","kept_comments":[],"ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"removed_comments":[],"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
+{"dir":"out/edited","ev":"save","outputs":[{"bytes":7362,"f":"clean.docx","sha256":"35ffde1c4b6f99bcfa25cb08be4cdf6b35129a453a5bb917f8db91f086b6d0ab"},{"bytes":7449,"f":"redline.docx","sha256":"ab5e5b861dcedb28f5d15f4fca582fd6ea45dcfbcfeaa3d587a56c0fa189a6ff"},{"bytes":986,"f":"patch.diff","sha256":"e840d511381828672456fdc6432fbeca784f7756103af5839241d1f735e3374f"},{"bytes":60499,"f":"redline.pdf","sha256":"10037b1f89750af8ed4511aa0b886223759bbd5e8d6de7510e43fe48b391dfc7"},{"bytes":24585,"f":"redline-page-01.png","sha256":"cceb37c4df9bd5b43877fee1757ec68d47bb897bc427e813e23b2e073d2241eb"},{"bytes":60305,"f":"clean.pdf","sha256":"683076396e27e5579b82a5da14047a685f02fe9a2e11b1c3425f919de0145244"},{"bytes":24164,"f":"clean-page-01.png","sha256":"a8803bfc206929bdaac809f437b88578cfe7adcf09438544c660a9ef0bd2983d"}]}
+{"comments":{"added":2},"ev":"summary","ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
 ```
 
 `changes` on the redline: the agent's revisions sit beside Ann's, each with its author.
@@ -587,16 +539,16 @@ three years after this Agreement ends+}{>>Ann Counsel
 ```console
 $ jubarte changes out/edited/redline.docx
 r1	insertion	text	Ann Counsel	p3	"quarterly"
-r2	deletion	text	Ann Counsel	p3	"weekly"
-r3	insertion	text	Ann Counsel	p3	"monthly"
-r4	deletion	text	Ann Counsel	p5	"thirty"
-r5	insertion	text	Ann Counsel	p5	"forty-five"
+r2	insertion	text	Ann Counsel	p3	"monthly"
+r3	deletion	text	Ann Counsel	p3	"weekly"
+r4	insertion	text	Ann Counsel	p5	"forty-five"
+r5	deletion	text	Ann Counsel	p5	"thirty"
 r10	deletion	text	Agent	p7	"March 1, 2026"
 r11	insertion	text	Agent	p7	"April 1, 2026"
 r6	deletion	text	Ann Counsel	p7	"ninety days"
 r7	insertion	text	Ann Counsel	p7	"sixty days"
-r8	deletion	text	Ann Counsel	p12	"Day 10"
-r9	insertion	text	Ann Counsel	p12	"Day 15"
+r8	insertion	text	Ann Counsel	p12	"Day 15"
+r9	deletion	text	Ann Counsel	p12	"Day 10"
 r12	insertion	text	Agent	p18	" for three years after this Agreement ends"
 12 change(s)
 ```
@@ -628,11 +580,11 @@ c3	p3	Agent	"Do the reports cover cross-border lanes?"	on "route-cost reports"
 $ jubarte read out/edited/redline.docx --changed --by Agent
 ---
 source: redline.docx
-sha256: c70a0285a060fdf3b513d65036d4b6bf07978a7a3433dc8d366ccdaad7270cd5
+sha256: ab5e5b861dcedb28f5d15f4fca582fd6ea45dcfbcfeaa3d587a56c0fa189a6ff
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 12                      # 12 marks shown as 6 changes: 2 insertions, 4 substitutions
-comments: 2 threads open, 1 resolved, c2 style Normal, c3 style Normal  # 4 comments: c0 (+ reply c2), c1, c3
+revisions: 12                      # 12 marks shown as 9 changes: 4 insertions, 2 deletions, 3 substitutions
+comments: 2 threads open, 1 resolved  # 4 comments: c0 (+ reply c2), c1, c3
 authors:
   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
@@ -649,16 +601,16 @@ styles:
 <!-- page 1 of 1 -->
 
 <!-- p3 -->
-Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{>>r3+2 @AC<<} review call.
 
 <!-- p5 -->
-Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r5+4 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
 
 <!-- p7 -->
-This Agreement begins on {~~March 1, 2026~>April 1, 2026~~}{r10+11 @A} and continues until either party ends it with {~~ninety days~>sixty days~~}{r6+7 @AC} written notice.
+This Agreement begins on {--March 1, 2026--}{>>r10 @A<<}{++April 1, 2026++}{>>r11 @A<<} and continues until either party ends it with {--ninety days--}{>>r6 @AC<<}{++sixty days++}{>>r7 @AC<<} written notice.
 
 <!-- p18 -->
-Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}{r12 @A}{>>c1 @AC resolved: Add a three-year survival period?<<}.
+Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}{>>r12 @A<<}{>>c1 @AC resolved: Add a three-year survival period?<<}.
 ```
 
 ### 2.2 What the edit did, as pages
@@ -667,7 +619,7 @@ Each party shall keep the other's Confidential Information secret{++ for three y
 
 ```console
 $ jubarte visual-diff out/received.docx out/edited/redline.docx --out-dir out/visual-diff --dpi 60 --force
-page 1: 3.10% of pixels changed, box [23, 190, 501, 360]
+page 1: 3.12% of pixels changed, box [23, 190, 501, 375]
 1 of 1 page differ (wrote out/visual-diff)
 [exit 5]
 ```
@@ -678,7 +630,7 @@ page 1: 3.10% of pixels changed, box [23, 190, 501, 360]
 
 ```console
 $ jubarte visual-diff out/received.docx out/edited/redline.docx --json --dpi 60
-{"a":"out/received.docx","b":"out/edited/redline.docx","dpi":60.0,"a_pages":1,"b_pages":1,"changed":1,"pages":[{"index":0,"changed_ratio":0.03097742,"bbox":[23,190,501,360]}]}
+{"a":"out/received.docx","b":"out/edited/redline.docx","dpi":60.0,"a_pages":1,"b_pages":1,"changed":1,"pages":[{"index":0,"changed_ratio":0.03120618,"bbox":[23,190,501,375]}]}
 [exit 5]
 ```
 
@@ -686,47 +638,39 @@ $ jubarte visual-diff out/received.docx out/edited/redline.docx --json --dpi 60
 
 ```console
 $ jubarte edit out/received.docx --plan out/plan.json --out-dir out/edited-word --png --dpi 60 --revisions word
-{"comments":{"added":2},"ev":"summary","kept_comments":[],"ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"removed_comments":[],"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
+{"comments":{"added":2},"ev":"summary","ops":{"failed":0,"ok":5},"paras":{"d":0,"from":19,"to":19},"revs":{"deleted":1,"format_changed":0,"inserted":2,"moved":0,"total":3},"status":"ok"}
 wrote out/edited-word (6 files: clean.docx, redline.docx, patch.diff, redline-page-01.png, clean-page-01.png, report.jsonl)
-SUCCESS:
-~~~~diff
---- before out/received.docx
-+++ after out/edited-word/clean.docx
-@@ -1,13 +1,14 @@
- ---
--source: received.docx
--sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-+source: clean.docx
-+sha256: f8cce6ea882fad188b5646f0fa9da470bfbf9795f1c6dfd0f298c3367f00544a
- view: tracked                      # revisions as CriticMarkup, comments inline
- track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
- revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
--comments: 2 threads open           # 2 comments: c0, c1
-+comments: 2 threads open, 1 resolved, c2 style Normal, c3 style Normal  # 4 comments: c0 (+ reply c2), c1, c3
- authors:
-   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
-   AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-+  A: Agent                         # 2 comments, 2026-10-02T15:00:00Z
- body: p0-p18, 1 table, 1 page      # pages from layout
- page: Letter portrait, margins 1in, header/footer 0.5in
- styles:
-@@ -28,19 +29,19 @@
- ## 1. Services
- 
- <!-- p3 -->
--Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
-+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
- 
- <!-- p4 -->
- ## 2. Fees
- 
- <!-- p5 -->
--Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}
-+Client shall pay each invoice within {~~thirty~>forty-five~~}{r4+5 @AC} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
- 
- <!-- p6 -->
- ## 3. Term
-… (67 more lines)
+---
+source: out/edited-word/redline.docx
+sha256: ab5e5b861dcedb28f5d15f4fca582fd6ea45dcfbcfeaa3d587a56c0fa189a6ff
+view: tracked                      # revisions as CriticMarkup, comments inline
+track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
+revisions: 12                      # 12 marks shown as 9 changes: 4 insertions, 2 deletions, 3 substitutions
+comments: 2 threads open, 1 resolved  # 4 comments: c0 (+ reply c2), c1, c3
+authors:
+  document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
+  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
+  A: Agent                         # 3 revisions, 2 comments, 2026-10-02T15:00:00Z
+body: p0-p18, 1 table, 1 page      # pages from layout
+range: changed by @A (p3, p5, p7, p18) of p0-p18
+page: Letter portrait, margins 1in, header/footer 0.5in
+styles:
+  Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
+  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
+  "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
+---
+
+<!-- p3 -->
+Consultant will deliver the services in each Statement of Work, including {++quarterly++}{>>r1 @AC<<} {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a {~~weekly~>monthly~~}{>>r3+2 @AC<<} review call.
+
+<!-- p5 -->
+Client shall pay each invoice within {~~thirty~>forty-five~~}{>>r5+4 @AC<<} days of receipt. {==Late amounts accrue interest at one percent per month.==}{>>c0 @AC: Is one percent the statutory cap in Delaware?<<}{>>c2 @A re c0: Delaware has no cap for commercial contracts; one percent stands.<<}
+
+<!-- p7 -->
+This Agreement begins on {--March 1, 2026--}{>>r10 @A<<}{++April 1, 2026++}{>>r11 @A<<} and continues until either party ends it with {--ninety days--}{>>r6 @AC<<}{++sixty days++}{>>r7 @AC<<} written notice.
+
+<!-- p18 -->
+Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}{>>r12 @A<<}{>>c1 @AC resolved: Add a three-year survival period?<<}.
 ```
 
 ![redline.docx, Word marks](out/edited-word/redline-page-01.png)
@@ -743,24 +687,24 @@ Old is `received.docx`, new is the agent's `redline.docx`. Each view keeps both 
 $ jubarte diff out/received.docx out/edited/redline.docx -a Agent -d 2026-10-02T15:00:00Z
 --- a/out/received.docx
 +++ b/out/edited/redline.docx	Agent	2026-10-02T15:00:00Z
-@@ [p3] @@
+@@ [body:p:3] @@
 Consultant will deliver the services in each Statement of Work,
 including quarterly {==route-cost reports==}{>>Agent
 (2026-10-02T15:00:00Z): Do the reports cover cross-border lanes?<<} and
 a monthly review call.
 
-@@ [p5] @@
+@@ [body:p:5] @@
 Client shall pay each invoice within forty-five days of receipt. {==Late
 amounts accrue interest at one percent per month.==}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Is one percent the statutory cap in
 Delaware?<<}{>>Agent (2026-10-02T15:00:00Z): Delaware has no cap for
 commercial contracts; one percent stands.<<}
 
-@@ [p7] @@
-This Agreement begins on {+April+}[-March-] 1, 2026 and continues until
+@@ [body:p:7] @@
+This Agreement begins on [-March-]{+April+} 1, 2026 and continues until
 either party ends it with sixty days written notice.
 
-@@ [p18] @@
+@@ [body:p:18] @@
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
@@ -777,8 +721,8 @@ diff --git a/out/received.docx b/out/edited/redline.docx
    ¶  Consulting Agreement
    ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
    ¶  1. Services
--… {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re…
-+… {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
+-… {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} re…
++… {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--…
    ¶  2. Fees
 -…erest at one percent per month.[c0]
 +…erest at one percent per month.[c0][c2]
@@ -809,8 +753,8 @@ diff --git a/out/received.docx b/out/edited/redline.docx
 --- a/out/received.docx
 +++ b/out/edited/redline.docx
 @@ -5 +5 @@
--… {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re…
-+… {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
+-… {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} re…
++… {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--…
 @@ -7 +7 @@
 -…erest at one percent per month.[c0]
 +…erest at one percent per month.[c0][c2]
@@ -878,9 +822,9 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format word
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx --format normal
 5c5
-< … {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re…
+< … {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} re…
 ---
-> … {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
+> … {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--…
 7c7
 < …erest at one percent per month.[c0]
 ---
@@ -910,7 +854,7 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format context
     ¶  Consulting Agreement
     ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
     ¶  1. Services
-! … {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re…
+! … {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} re…
     ¶  2. Fees
 ! …erest at one percent per month.[c0]
     ¶  3. Term
@@ -922,7 +866,7 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format context
     ¶  Consulting Agreement
     ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
     ¶  1. Services
-! … {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
+! … {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--…
     ¶  2. Fees
 ! …erest at one percent per month.[c0][c2]
     ¶  3. Term
@@ -953,7 +897,7 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side
   ¶  Consulting Agreement                                                    ¶  Consulting Agreement
   ¶  This Consulting Agreement (the "Agreement") is made between Harbo…      ¶  This Consulting Agreement (the "Agreement") is made between Harbo…
   ¶  1. Services                                                             ¶  1. Services
-… {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} re… | … {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++…
+… {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} re… | … {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--…
   ¶  2. Fees                                                                 ¶  2. Fees
 …erest at one percent per month.[c0]                                     | …erest at one percent per month.[c0][c2]
   ¶  3. Term                                                                 ¶  3. Term
@@ -976,8 +920,8 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side --full-lines -U0
-  ¶  Consultant will deliver the services in each Statement of Work, including {++quarterly++} route-cost reports and a {--weekly--}{++monthly++} review call. |   ¶  Consultant will deliver the services in each Statement of Work, including {++quarterly++} route-cost reports[c3] and a {--weekly--}{++monthly++} review call.
-  ¶  Client shall pay each invoice within {--thirty--}{++forty-five++} days of receipt. Late amounts accrue interest at one percent per month.[c0] |   ¶  Client shall pay each invoice within {--thirty--}{++forty-five++} days of receipt. Late amounts accrue interest at one percent per month.[c0][c2]
+  ¶  Consultant will deliver the services in each Statement of Work, including {++quarterly++} route-cost reports and a {++monthly++}{--weekly--} review call. |   ¶  Consultant will deliver the services in each Statement of Work, including {++quarterly++} route-cost reports[c3] and a {++monthly++}{--weekly--} review call.
+  ¶  Client shall pay each invoice within {++forty-five++}{--thirty--} days of receipt. Late amounts accrue interest at one percent per month.[c0] |   ¶  Client shall pay each invoice within {++forty-five++}{--thirty--} days of receipt. Late amounts accrue interest at one percent per month.[c0][c2]
   ¶  This Agreement begins on March 1, 2026 and continues until either party ends it with {--ninety days--}{++sixty days++} written notice. |   ¶  This Agreement begins on {--March 1, 2026--}{++April 1, 2026++} and continues until either party ends it with {--ninety days--}{++sixty days++} written notice.
   ¶  Each party shall keep the other's Confidential Information secret[c1]. |   ¶  Each party shall keep the other's Confidential Information secret{++ for three years after this Agreement ends++}[c1].
                                                                          >   ¶  Delaware has no cap for commercial contracts; one percent stands.
@@ -990,94 +934,14 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side -
 
 ```console
 $ jubarte compare out/received.docx out/edited/redline.docx -o out/compare.docx --force -a Agent -d 2026-10-02T15:00:00Z
-wrote out/compare.docx (docx, 11651 bytes)
-SUCCESS:
-~~~~diff
---- before out/received.docx
-+++ after out/compare.docx
-@@ -1,19 +1,21 @@
- ---
--source: received.docx
--sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-+source: compare.docx
-+sha256: d6a067bd9b57de4904cec5e7a0f2245996d9d51d20d01832d47c9b87dbb4958f
- view: tracked                      # revisions as CriticMarkup, comments inline
- track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
--revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
--comments: 2 threads open           # 2 comments: c0, c1
-+revisions: 3                       # 3 marks shown as 3 changes: 2 insertions, 1 deletion
-+comments: 2 threads open, 1 resolved, c2 style Normal, c3 style Normal  # 4 comments: c0 (+ reply c2), c1, c3
- authors:
-   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
--  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-+  A: Agent                         # 3 revisions, 2 comments, 2026-10-02T15:00:00Z
-+  AC: Ann Counsel                  # 2 comments, 2026-10-01T09:00:00Z
- body: p0-p18, 1 table, 1 page      # pages from layout
- page: Letter portrait, margins 1in, header/footer 0.5in
- styles:
-   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
-   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
-+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
- ---
- 
- <!-- page 1 of 1 -->
-@@ -28,28 +30,28 @@
- ## 1. Services
- 
- <!-- p3 -->
--Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
-+Consultant will deliver the services in each Statement of Work, including quarterly {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a monthly review call.
- 
- <!-- p4 -->
-… (27 more lines)
+wrote out/compare.docx (docx, 11482 bytes)
 ```
 
 `compare --mode powertools`: Open-Xml-PowerTools' coarser paragraph-level redline instead of Word's.
 
 ```console
 $ jubarte compare out/received.docx out/edited/redline.docx -o out/compare-powertools.docx --mode powertools --force -a Agent -d 2026-10-02T15:00:00Z
-wrote out/compare-powertools.docx (docx, 8366 bytes)
-SUCCESS:
-~~~~diff
---- before out/received.docx
-+++ after out/compare-powertools.docx
-@@ -1,19 +1,21 @@
- ---
--source: received.docx
--sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-+source: compare-powertools.docx
-+sha256: 6195b9bef31b33f21fc7fbb61d901c86de1cc627fc79b72ae306a47c31acc9dc
- view: tracked                      # revisions as CriticMarkup, comments inline
- track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
--revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
--comments: 2 threads open           # 2 comments: c0, c1
-+revisions: 3                       # 3 marks shown as 3 changes: 2 insertions, 1 deletion
-+comments: 2 threads open, 1 resolved, c2 style Normal, c3 style Normal  # 4 comments: c0 (+ reply c2), c1, c3
- authors:
-   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
--  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-+  A: Agent                         # 3 revisions, 2 comments, 2026-10-02T15:00:00Z
-+  AC: Ann Counsel                  # 2 comments, 2026-10-01T09:00:00Z
- body: p0-p18, 1 table, 1 page      # pages from layout
- page: Letter portrait, margins 1in, header/footer 0.5in
- styles:
-   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
-   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
-+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
- ---
- 
- <!-- page 1 of 1 -->
-@@ -28,28 +30,28 @@
- ## 1. Services
- 
- <!-- p3 -->
--Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
-+Consultant will deliver the services in each Statement of Work, including quarterly {==route-cost reports==}{>>c3 @A: Do the reports cover cross-border lanes?<<} and a monthly review call.
- 
- <!-- p4 -->
-… (27 more lines)
+wrote out/compare-powertools.docx (docx, 8198 bytes)
 ```
 
 `changes` on the comparison: what Compare marked.
@@ -1103,7 +967,7 @@ wrote out/compare-page-NN.png (png, 2 pages, 96 dpi)
 
 ```console
 $ jubarte compare out/received.docx out/edited/redline.docx -o out/compare-changed.pdf --force --changed-pages -a Agent -d 2026-10-02T15:00:00Z
-wrote out/compare-changed.pdf (pdf, 168976 bytes, 1 page)
+wrote out/compare-changed.pdf (pdf, 168026 bytes, 1 page)
 ```
 
 `debug A B --check text`: the two packages' paragraphs, only the lines that differ, with `{+inserted+}` and `[-deleted-]` runs.
@@ -1115,11 +979,11 @@ word/comments.xml: 2 lines differ
   ~
 +B   ¶  Do the reports cover cross-border lanes?
 word/document.xml: 4 lines differ
--A   ¶  Consultant will deliver the services in each Statement of Work, including {+quarterly+} route-cost reports and a [-weekly-]{+monthly+} review call.
-+B   ¶  Consultant will deliver the services in each Statement of Work, including {+quarterly+} route-cost reports[c3] and a [-weekly-]{+monthly+} review call.
+-A   ¶  Consultant will deliver the services in each Statement of Work, including {+quarterly+} route-cost reports and a {+monthly+}[-weekly-] review call.
++B   ¶  Consultant will deliver the services in each Statement of Work, including {+quarterly+} route-cost reports[c3] and a {+monthly+}[-weekly-] review call.
   ~
--A   ¶  Client shall pay each invoice within [-thirty-]{+forty-five+} days of receipt. Late amounts accrue interest at one percent per month.[c0]
-+B   ¶  Client shall pay each invoice within [-thirty-]{+forty-five+} days of receipt. Late amounts accrue interest at one percent per month.[c0][c2]
+-A   ¶  Client shall pay each invoice within {+forty-five+}[-thirty-] days of receipt. Late amounts accrue interest at one percent per month.[c0]
++B   ¶  Client shall pay each invoice within {+forty-five+}[-thirty-] days of receipt. Late amounts accrue interest at one percent per month.[c0][c2]
   ~
 -A   ¶  This Agreement begins on March 1, 2026 and continues until either party ends it with [-ninety days-]{+sixty days+} written notice.
 +B   ¶  This Agreement begins on [-March 1, 2026-]{+April 1, 2026+} and continues until either party ends it with [-ninety days-]{+sixty days+} written notice.
@@ -1196,47 +1060,7 @@ Each party shall keep the other's Confidential Information secret{~~\{>>Add a~> 
 
 ```console
 $ jubarte compare out/received.docx out/agent.md -o out/from-markdown.docx --force -a Agent -d 2026-10-02T15:00:00Z
-wrote out/from-markdown.docx (docx, 10250 bytes)
-SUCCESS:
-~~~~diff
---- before out/received.docx
-+++ after out/from-markdown.docx
-@@ -1,19 +1,21 @@
- ---
--source: received.docx
--sha256: 7b5e9e6dd0bf5c21ec2df3f03575e412636979883b115e6255921b44cbe5a31e
-+source: from-markdown.docx
-+sha256: 50c8f952b7b335deb62dc41a928952eb997b1d96dc103a127b68cada6ac9d2f1
- view: tracked                      # revisions as CriticMarkup, comments inline
- track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
--revisions: 9                       # 9 marks shown as 5 changes: 1 insertion, 4 substitutions
-+revisions: 17                      # 17 marks shown as 17 changes: 15 insertions, 2 deletions
- comments: 2 threads open           # 2 comments: c0, c1
- authors:
-   document_owner: none             # docProps/core.xml names no dc:creator or cp:lastModifiedBy
--  AC: Ann Counsel                  # 9 revisions, 2 comments, 2026-10-01T09:00:00Z
-+  A: Agent                         # 17 revisions, 2026-10-02T15:00:00Z
-+  AC: Ann Counsel                  # 2 comments, 2026-10-01T09:00:00Z
- body: p0-p18, 1 table, 1 page      # pages from layout
- page: Letter portrait, margins 1in, header/footer 0.5in
- styles:
-   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-   "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines
-   "##": Heading2, Calibri bold 14pt, before 12pt, after 4pt, keep-next, keep-lines
-+notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
- ---
- 
- <!-- page 1 of 1 -->
-@@ -28,28 +30,28 @@
- ## 1. Services
- 
- <!-- p3 -->
--Consultant will deliver the services in each Statement of Work, including {++quarterly++}{r1 @AC} route-cost reports and a {~~weekly~>monthly~~}{r2+3 @AC} review call.
-+Consultant will deliver the services in each Statement of Work, including {++{\++++}{r2 @A}quarterly{++++\}++}{r3 @A} route-cost reports and a {++{\~\~weekly\~\>++}{r4 @A}monthly{++\~\~}++}{r5 @A} review call.
- 
- <!-- p4 -->
- ## 2. Fees
-… (26 more lines)
+wrote out/from-markdown.docx (docx, 10074 bytes)
 ```
 
 ## 4. Every visualization and its options

@@ -9,9 +9,7 @@ ids-comments.md tests/fixtures/from-docx/critic/synthetic/all.docx
 ids-footnotes.md tests/corpus/broken_ones_two/sources/file_170.docx
 ids-endnotes.md tests/corpus/broken_ones_two/sources/file_77.docx
 ids-fields.md tests/corpus/_to_improve_accepted_changes/_original_unaccepted_docx/791ca61933.docx
-# An entry ending `second-read` is the view of the docx `convert` writes from the docx's first view. ids-spacing-threads's
-# docx gives one w:id to marks that live text separates, which `convert` numbers apart (#1137): its first view cannot come back (#1414).
-ids-spacing-threads.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/5331b981b7_redline_cicerodo_v_plate_30.docx second-read
+ids-spacing-threads.md tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/5331b981b7_redline_cicerodo_v_plate_30.docx
 ids-sections.md tests/corpus/neurotic_docx_bench/grok_run/wr0928/rejected_tracking/docx/3c920d5996_rejected_tracking.docx
 ids-first-page.md tests/corpus/broken_ones_two/sources/file_202.docx
 ids-header-footer.md tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source/super_editor__h_f_normal_odd_even_firstpg_9b210d9a.docx

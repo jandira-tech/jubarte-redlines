@@ -153,7 +153,7 @@ pub fn word_layout(docx: &[u8]) -> Result<RenderReport, AuditError> {
 }
 
 /// True when `rule` is one of the audit's rule sets or codes.
-pub(crate) fn is_rule(rule: &str) -> bool {
+pub fn is_rule(rule: &str) -> bool {
     RULE_SETS.contains(&rule) || RULES.iter().any(|known| known.0 == rule)
 }
 
@@ -956,7 +956,7 @@ fn under_fallback(dom: &Dom, node: NodeId) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_memory_spacer_ownership_tests {
     use super::*;
     use crate::opc::PartFs;

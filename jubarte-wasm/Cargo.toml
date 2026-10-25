@@ -34,8 +34,8 @@ pdf = []
 # It is absent from the shipped default build.
 memory-metrics = []
 
-# oxml-opc has encryption/signatures disabled; zip 9 uses pure-Rust zlib-rs
-# Deflate. No WASM-only source patch or native crypto backend is needed.
+# rdocx-opc 0.2 uses pure-Rust deflate and patched quick-xml upstream, so the
+# old WASM-only source patch is no longer needed.
 
 # Runtime-speed profile for wasm-pack: -O3 (not -Oz size). Requires binaryen on PATH.
 [package.metadata.wasm-pack.profile.release]

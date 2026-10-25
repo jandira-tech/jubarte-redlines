@@ -29,29 +29,10 @@ pub use group_adjacent::group_adjacent;
 pub use sha1::{fnv1a_64, fnv1a_128, sha1_hex, sha1_hex_bytes, sha1_hex_parts};
 pub use words::word_tokens;
 
-/// `arg` as a POSIX shell reads it back: bare when it holds only safe
-/// characters, else single-quoted. Library code (validate's next steps)
-/// and the CLI both word commands with it, so it lives outside `cli`.
-pub fn shell_word(arg: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c);
-    if !arg.is_empty() && arg.chars().all(safe) {
-        return arg.to_string();
-    }
-    format!("'{}'", arg.replace('\'', r"'\''"))
-}
-
-/// `text` with each run of whitespace (`char::is_whitespace`) written as
-/// one space and none at either end, built in one pass without collecting
-/// the words first.
-pub(crate) fn collapse_whitespace(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for word in text.split_whitespace() {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    out
+/// Former name of [`sha1::fnv1a_64`] at this path. It never computed SHA-1.
+#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
+pub fn sha1_fingerprint(s: &str) -> u64 {
+    sha1::fnv1a_64(s)
 }
 
 /// A universal measure (`"612pt"`, `"1in"`, `"2.54cm"`, `"1mm"`, `"6pc"`) as
@@ -109,16 +90,7 @@ fn schema_number(s: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_whitespace, universal_measure_half_points, universal_measure_twips};
-
-    #[test]
-    fn collapse_whitespace_writes_one_space_between_words() {
-        assert_eq!(collapse_whitespace(""), "");
-        assert_eq!(collapse_whitespace(" \t\n "), "");
-        assert_eq!(collapse_whitespace("  a \t b\n\nc  "), "a b c");
-        assert_eq!(collapse_whitespace("one"), "one");
-        assert_eq!(collapse_whitespace("a\u{A0}b"), "a b");
-    }
+    use super::{universal_measure_half_points, universal_measure_twips};
 
     /// Every suffix, signed, with the rounding the callers do: `12.95pt`
     /// is 259 twips once rounded.

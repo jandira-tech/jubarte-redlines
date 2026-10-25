@@ -161,10 +161,9 @@ export function applyEditPlan(docx: Uint8Array, plan_json: string, name?: string
 export function auditDocument(docx: Uint8Array, rules?: string | null): string;
 
 /**
- * Check that every text change from `original` to `edited` is a revision
- * by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
- * and `PERMISSION_RANGE_DROPPED` for a permission endpoint of `original`
- * that `edited` lost) as a JSON array.
+ * Every text change from `original` to `edited` must be a revision by
+ * `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
+ * array.
  *
  * Mirrors `jubarte::validate::audit_tracked`.
  */
@@ -188,20 +187,9 @@ export function capabilities(): string;
 export function capabilitiesText(manifest_json?: string | null): string;
 
 /**
- * Focused edit discovery; no filters returns this runtime's edit support matrix.
- */
-export function capabilityQuery(operation?: string | null, field?: string | null): string;
-
-/**
- * Render a focused query in the same text form as the native CLI.
- */
-export function capabilityQueryText(operation?: string | null, field?: string | null): string;
-
-/**
  * `filterJson` (as [`acceptChanges`](accept_changes) takes it) with each id
- * in its settled spelling (`r1+2` → `r1`, `r2`). An id that is no change
- * id, the expired `body:rev:1` among them, throws `jubarte-wasm: c5:
- * expected a change id …` (naming `r1` for `body:rev:1`), which the
+ * in its long form (`r1+2` → `body:rev:1`, `body:rev:2`). An id that is no
+ * change id throws `jubarte-wasm: c5: expected a change id …`, which the
  * binary reports as a usage error before reading the document.
  *
  * Mirrors `jubarte::changes::ChangeFilter::normalized`.
@@ -220,8 +208,7 @@ export function changedView(docx: Uint8Array, author: string, accepted: boolean,
 
 /**
  * The listing `jubarte changes` prints: a line per change with its short
- * id (`r0`), kind, target, author, paragraph and text (then `(N elements)`
- * for a change Word wrote as several marks), then `N change(s)`.
+ * id (`r0`), kind, target, author, paragraph and text, then `N change(s)`.
  *
  * Mirrors `jubarte::changes::changes_text`.
  */
@@ -265,9 +252,7 @@ export function convertMarkdown(docx: Uint8Array, track_changes: string, page_ma
  * The changes from `old` to `next` as a patch, JSON `{"text", "hunks":
  * [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
  * with `[-old-]{+new+}` changes and CriticMarkup comments, at its
- * `pN` id in a Word document or `line:N` in Markdown. When a side is a
- * Word document, a replacement inside a paragraph reads insertion first,
- * `{+new+}[-old-]`, as Word Compare writes it.
+ * `body:p:N` id in a Word document or `line:N` in Markdown.
  *
  * Each side is a `.docx` package or UTF-8 Markdown
  * (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
@@ -293,7 +278,7 @@ export function diffDocumentsCritic(old: Uint8Array, next: Uint8Array, author?: 
 export function diffDocumentsView(old: Uint8Array, next: Uint8Array, options_json?: string | null): string;
 
 /**
- * Body paragraphs as Markdown, each preceded by its `[pN]` id: the
+ * Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
  * coordinates an edit plan uses.
  *
  * Mirrors `jubarte::inspect::markdown`.
@@ -333,8 +318,7 @@ export function editReportJsonl(report_json: string): string;
 
 /**
  * Why `--editing-mode` cannot apply `plan` to `docx`: the tracked changes
- * it keeps and does not itself accept or reject, or a reply to a comment
- * on a paragraph it deletes; `undefined` when neither.
+ * it keeps and does not itself accept or reject; `undefined` when none.
  *
  * Mirrors `jubarte::edit::flags::editing_mode_conflict`.
  */
@@ -370,51 +354,21 @@ export function getRevisions(docx: Uint8Array, input_limits_json?: string | null
 export function initPanicHook(): void;
 
 /**
- * The one stderr line `read` and `changes` give an input with validity
- * findings (`input has 2 validity warnings; jubarte validate FILE lists
- * them`), or `undefined` when there is none or the package cannot be
- * validated; `file` is the path as the command line spells it.
- *
- * Mirrors `jubarte::validate::input_notice`.
- */
-export function inputNotice(docx: Uint8Array, file: string): string | undefined;
-
-/**
- * The last line `changes --json` and `comments --json` print, the input's
- * validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
- * "next":"jubarte validate FILE"}}`); `file` is the path as the command
- * line spells it. A package that cannot be validated counts none.
- *
- * Mirrors `jubarte::validate::input_validity_line`.
- */
-export function inputValidityLine(docx: Uint8Array, file: string): string;
-
-/**
  * The inspection snapshot as JSON: `schema_version`, `source_sha256`,
- * `summary`, `paragraphs` (ids, text, style, formatting spans,
- * limitations) and top-level `tables` with recursive `nested` entries.
- * Snapshot schema 3 lists logical changes (one entry, with `members`, for
- * a change Word wrote as several marks), counts top-level tables, and gives
- * nested entries `parent` cell paths and no `index`. Oversized or malformed packages are refused before parsing.
+ * `summary` and `paragraphs` (ids, text, style, formatting spans,
+ * limitations). Oversized or malformed packages are refused before parsing.
  *
  * Mirrors `jubarte::inspect::inspect_json`.
  */
 export function inspectDocument(docx: Uint8Array): string;
 
 /**
- * List the tracked changes as a JSON array string, one object per
- * logical change: a change Word wrote as several marks is one object
- * with a composite id (`r1+2`) and its `members`, and an author's
- * deletion followed by their insertion is one `replacement`. Each `id`
- * is one `acceptChanges` / `rejectChanges` select by. The objects are
- * the ones `jubarte changes --json` prints: `id`, `ref` (the same id),
- * `kind` (`insertion`, `deletion`, `move`, `formatting` or
- * `replacement`), `target`, `author`, `date`, `text`, `paragraph`,
- * `move_name`, `move_side`, `inside`, `holds_comments` when the change
- * holds comment marks, and `members` (each mark's `id`, `kind`,
- * `target`, `date` and `text`) for a change of several marks.
+ * List the tracked changes one by one as a JSON array string, each with the
+ * id `acceptChanges` / `rejectChanges` select by (the same objects as
+ * `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
+ * `text`, `move_name`, `move_side`, `inside`).
  *
- * Mirrors `jubarte::changes::list_logical_changes`.
+ * Mirrors `jubarte::changes::list_changes`.
  */
 export function listChanges(docx: Uint8Array): string;
 
@@ -491,11 +445,8 @@ export function previewEditPlan(docx: Uint8Array, plan_json: string): EditOutput
  * The snapshot `jubarte read --json` prints, with its `changes` and
  * `comments`. Options (JSON, all optional) select as in
  * [`readView`](read_view): `paragraphs`, `head`, `tail`, `changed`, `by`;
- * `source` names the document; `trackChanges` `accept` or `reject`
- * settles the text and names the choice in `track_changes`;
- * `validityFile`, the path as the command line spells it, adds
- * `summary.input_validity`, the input's validity findings counted. The
- * snapshot keeps the selected paragraphs and their changes and comments.
+ * `source` names the document. The snapshot keeps the selected paragraphs
+ * and their changes and comments.
  *
  * Mirrors `jubarte::markdown::read_snapshot`.
  */
@@ -523,7 +474,7 @@ export function readView(docx: Uint8Array, options_json?: string | null): string
  * On failure `{ok: false, usage, message}`: a usage error (exit 2), or
  * `held` is not a plan (exit 3). Options (JSON): `author`, `date`,
  * `existingRevisions`, `file`, `plan`, `defaultPlan` (a bare `--plan`),
- * `dryRun`, `rewriteOthersComments`.
+ * `dryRun`.
  *
  * Mirrors `jubarte::edit::record::record`.
  */
@@ -577,24 +528,6 @@ export function renderPdf(docx: Uint8Array, revisions?: string | null, revision_
 export function repairDocument(docx: Uint8Array): RepairOutput;
 
 /**
- * The lines `edit -p rN --accept/--reject` prints for a pure resolution:
- * one per resolved change from `source` (the bytes before resolution) and
- * `resolvedJson` (`{"accepted": [...], "rejected": [...]}` short ids).
- *
- * Mirrors `jubarte::edit::resolution::resolution_text`.
- */
-export function resolutionText(docx: Uint8Array, resolved_json: string): string;
-
-/**
- * The line an error prints on stdout under `--json`:
- * `{"error":{"code":…,"message":…}}`, its code the message's leading
- * `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
- *
- * Mirrors `jubarte::cli::runtime_json_error`.
- */
-export function runtimeJsonError(message: string, exit: number): string;
-
-/**
  * Remove who touched a document: author names (as one alias), rsids, the
  * people and dates in the document properties, and comments.
  * `optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
@@ -615,29 +548,12 @@ export function sourceSha256(docx: Uint8Array): string;
 
 /**
  * The grids `jubarte read --tables` prints: a `table N: RxC …` line per
- * top-level body table, then a line per row of `ids=text` cells; nested
- * tables follow their cell row, indented two spaces per level and labelled
- * `nested in CELL_PATH`. `no tables` prints when there are none. Options (JSON, all optional): `trackChanges` (`reject`
- * reads the rejected text).
+ * body table, then a line per row of `ids=text` cells; `no tables` when
+ * there are none.
  *
- * Mirrors `jubarte::markdown::read_tables` without a selection.
+ * Mirrors `jubarte::inspect::tables_text`.
  */
-export function tablesText(docx: Uint8Array, options_json?: string | null): string;
-
-/**
- * What `jubarte read --tables` prints, as JSON `{markdown, warnings}`:
- * the grids (`tablesText`), or with `paragraphs` (`"t0"`, `"p11"`,
- * `"p3-p20"`) the grids of the tables the view's selection reaches (a
- * `pN` inside a table, that table), each with the tables nested in it,
- * then an empty line and the view `readView` prints of that selection.
- * Options (JSON, all optional): `trackChanges`, `comments`, `dates`,
- * `pageMarkers`, `paragraphs`, `source`, as `readView` reads them. A pick
- * that reaches no table throws `jubarte-wasm: USAGE: …`, as the CLI
- * exits 2.
- *
- * Mirrors `jubarte::markdown::read_tables`.
- */
-export function tablesView(docx: Uint8Array, options_json?: string | null): string;
+export function tablesText(docx: Uint8Array): string;
 
 /**
  * Refresh the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
@@ -657,16 +573,6 @@ export function updateFields(docx: Uint8Array): FieldsOutput;
  * Mirrors `jubarte::validate::validate`.
  */
 export function validateDocument(docx: Uint8Array): string;
-
-/**
- * Whether a command line (without the program name) asks for JSON: a
- * real `--json` flag before any `--`, read as the binary reads it (the
- * `--json` in `--text --json` is a value). An error then prints its
- * [`runtime_json_error`] line on stdout too.
- *
- * Mirrors `jubarte::cli::wants_json`.
- */
-export function wantsJson(_arguments: string[]): boolean;
 
 /**
  * The line a writing task prints on stderr for the file it wrote:

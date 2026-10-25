@@ -797,7 +797,7 @@ fn the_cli_refuses_revision_and_reply_flags_on_the_wrong_location() {
         ),
         (
             &["-p", "r0"][..],
-            "-p r0: a revision takes --accept, --reject, --strike or --restore",
+            "-p r0: a revision takes --accept or --reject",
         ),
         (
             &["-p", "r0", "--accept", "--reject"][..],

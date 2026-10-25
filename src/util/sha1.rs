@@ -176,150 +176,17 @@ pub fn fnv1a_128(s: &str) -> u128 {
     hash
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Former name of [`fnv1a_64`]. It never computed SHA-1.
+#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
+pub fn sha1_fingerprint(s: &str) -> u64 {
+    fnv1a_64(s)
+}
 
-    #[test]
-    fn test_hex_string_from_bytes() {
-        assert_eq!(hex_string_from_bytes(b"hello"), "68656c6c6f");
-        assert_eq!(hex_string_from_bytes(b""), "");
-    }
-
-    #[test]
-    fn test_sha1_hex() {
-        // sha1("hello") = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
-        assert_eq!(
-            sha1_hex("hello"),
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        );
-        assert_eq!(sha1_hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-    }
-
-    #[test]
-    fn test_sha1_digest() {
-        let digest_hello = sha1_digest(b"hello");
-        assert_eq!(
-            hex_encode_20(&digest_hello).as_slice(),
-            b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        );
-
-        let digest_empty = sha1_digest(b"");
-        assert_eq!(
-            hex_encode_20(&digest_empty).as_slice(),
-            b"da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
-    }
-
-    #[test]
-    fn test_hex_encode_20() {
-        let digest = sha1_digest(b"hello");
-        let encoded = hex_encode_20(&digest);
-        assert_eq!(encoded, *b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
-    }
-
-    #[test]
-    fn test_hex_decode_20() {
-        let valid_hex = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
-        let digest = hex_decode_20(valid_hex).unwrap();
-        assert_eq!(digest, sha1_digest(b"hello"));
-
-        let upper_hex = "AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D";
-        let digest_upper = hex_decode_20(upper_hex).unwrap();
-        assert_eq!(digest_upper, sha1_digest(b"hello"));
-
-        // Invalid cases
-        assert!(hex_decode_20("").is_none());
-        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434").is_none()); // 39 chars
-        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434dg").is_none()); // 41 chars
-        assert!(hex_decode_20("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434z").is_none()); // non-hex
-    }
-
-    #[test]
-    fn test_sha1_hex_of_digest_hexes() {
-        let d1 = sha1_digest(b"hello");
-        let d2 = sha1_digest(b"world");
-        let hexes = [d1, d2];
-
-        let expected = sha1_hex(
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d7c211433f02071597741e6ff5a8ea34789abbf43",
-        );
-        assert_eq!(sha1_hex_of_digest_hexes(&hexes), expected);
-
-        assert_eq!(
-            sha1_hex_of_digest_hexes(std::iter::empty::<&[u8; 20]>()),
-            sha1_hex("")
-        );
-    }
-
-    #[test]
-    fn test_sha1_hex_bytes() {
-        assert_eq!(
-            sha1_hex_bytes(b"hello"),
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        );
-        assert_eq!(
-            sha1_hex_bytes(b""),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
-    }
-
-    #[test]
-    fn test_sha1_hex_parts() {
-        let parts = ["he", "ll", "o"];
-        assert_eq!(
-            sha1_hex_parts(parts),
-            "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
-        );
-
-        let empty_parts: [&str; 0] = [];
-        assert_eq!(
-            sha1_hex_parts(empty_parts),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
-    }
-
-    #[test]
-    fn test_fnv1a_64() {
-        // Published FNV-1a 64-bit vectors (offset basis, "a", "foobar").
-        assert_eq!(fnv1a_64(""), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(fnv1a_64("a"), 0xaf63_dc4c_8601_ec8c);
-        assert_eq!(fnv1a_64("foobar"), 0x8594_4171_f739_67e8);
-    }
-
-    #[test]
-    fn test_fnv1a_128() {
-        // Published FNV-1a 128-bit vectors (offset basis, "a", "foobar").
-        assert_eq!(fnv1a_128(""), 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d);
-        assert_eq!(fnv1a_128("a"), 0xd228_cb69_6f1a_8caf_7891_2b70_4e4a_8964);
-        assert_eq!(
-            fnv1a_128("foobar"),
-            0x343e_1662_793c_64bf_6f0d_3597_ba44_6f18
-        );
-    }
-
-    #[test]
-    fn sha1_of_multibyte_text_hashes_its_utf8_bytes() {
-        assert_eq!(
-            sha1_hex("\u{fc}n\u{ef}c\u{f6}d\u{e9}"),
-            "bf5f8ac304f8a364c02e108151c3a18c4c6eb4ce"
-        );
-        assert_eq!(
-            hex_encode_20(&sha1_digest(b"hello world")),
-            *b"2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"
-        );
-    }
-
-    #[test]
-    fn hex_encode_20_writes_every_nibble() {
-        let digest: [u8; 20] = [
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
-            0x32, 0x10, 0x0f, 0xf0, 0x5a, 0xa5,
-        ];
-        assert_eq!(
-            hex_encode_20(&digest),
-            *b"0123456789abcdeffedcba98765432100ff05aa5"
-        );
-        assert_eq!(hex_encode_20(&[0xff; 20]), [b'f'; 40]);
-    }
+/// Former name of [`fnv1a_128`]. It never computed SHA-1.
+#[deprecated(
+    since = "0.10.2",
+    note = "renamed to `fnv1a_128`; this was never SHA-1"
+)]
+pub fn sha1_fingerprint128(s: &str) -> u128 {
+    fnv1a_128(s)
 }

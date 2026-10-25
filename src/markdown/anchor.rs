@@ -74,9 +74,6 @@ enum Keep {
     Inner,
     Nothing,
     NewSide,
-    /// A substitution's old side, then its new one: the order the
-    /// document holds them in.
-    BothSides,
 }
 
 /// `open … close` spans replaced by what `keep` says; an unclosed `open`
@@ -97,11 +94,6 @@ fn strip_between(text: &str, open: &str, close: &str, keep: Keep) -> String {
             Keep::Inner => out.push_str(inner),
             Keep::Nothing => {}
             Keep::NewSide => out.push_str(inner.rsplit_once("~>").map_or(inner, |(_, new)| new)),
-            Keep::BothSides => {
-                let (old, new) = inner.rsplit_once("~>").unwrap_or((inner, ""));
-                out.push_str(old);
-                out.push_str(new);
-            }
         }
         rest = &rest[inner_start + len + close.len()..];
     }
@@ -242,7 +234,7 @@ fn without_emphasis(text: &str) -> String {
 
 /// The document text an agent-view fragment stands for:
 ///
-/// - attribution notes and comment text dropped (`{r0 @AC}` etc.);
+/// - attribution notes and comment text dropped (`{>>r0 @AC<<}` etc.);
 /// - insertions unwrapped (`{++x++}` → `x`) and comment scopes too
 ///   (`{==x==}`);
 /// - deletions removed (`{--x--}`);
@@ -257,57 +249,6 @@ fn without_emphasis(text: &str) -> String {
 /// text and stays, as does an escaped mark (`\*\*`). Reads the way
 /// pulldown-cmark reads the same source.
 pub fn plain_anchor(text: &str) -> String {
-    read_anchor(text, Keep::Nothing, Keep::NewSide)
-}
-
-/// [`plain_anchor`] with the removed text kept: a deletion unwrapped
-/// (`{--x--}` → `x`) and a substitution as both sides
-/// (`{~~old~>new~~}` → `oldnew`), the text a refusal looks for in another
-/// author's deletion.
-pub(crate) fn plain_anchor_with_removed(text: &str) -> String {
-    read_anchor(text, Keep::Inner, Keep::BothSides)
-}
-
-/// [`plain_anchor`]'s reading, a deletion read as `deleted` says and a
-/// substitution as `substituted` says.
-fn read_anchor(text: &str, deleted: Keep, substituted: Keep) -> String {
-    // Read code's padding and newlines as CommonMark does, then hide its
-    // literal ASCII so the change and emphasis scanners cannot strip it.
-    let mut literal = String::with_capacity(text.len());
-    let mut at = 0;
-    for (event, range) in
-        pulldown_cmark::Parser::new_ext(text, super::write::parser_options()).into_offset_iter()
-    {
-        match event {
-            pulldown_cmark::Event::Code(code) => {
-                literal.push_str(&text[at..range.start]);
-                literal.extend(code.chars().map(|c| if c.is_ascii() { hide(c) } else { c }));
-                at = range.end;
-            }
-            pulldown_cmark::Event::InlineMath(math) | pulldown_cmark::Event::DisplayMath(math) => {
-                literal.push_str(&text[at..range.start]);
-                // Math keeps its backticks as text, and its CriticMarkup
-                // still reaches the change scanner below.
-                literal.push_str(&math);
-                at = range.end;
-            }
-            pulldown_cmark::Event::Start(
-                pulldown_cmark::Tag::Superscript | pulldown_cmark::Tag::Subscript,
-            ) => {
-                literal.push_str(&text[at..range.start]);
-                at = range.start + 1;
-            }
-            pulldown_cmark::Event::End(
-                pulldown_cmark::TagEnd::Superscript | pulldown_cmark::TagEnd::Subscript,
-            ) => {
-                literal.push_str(&text[at..range.end - 1]);
-                at = range.end;
-            }
-            _ => {}
-        }
-    }
-    literal.push_str(&text[at..]);
-    let text = literal.as_str();
     let mut hidden = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -346,14 +287,9 @@ fn read_anchor(text: &str, deleted: Keep, substituted: Keep) -> String {
     // (The plain critic view escapes nothing: a literal `1. ` at the start
     // of a line copied from it is read as a mark.)
     let blocks: Vec<&str> = hidden.split('\n').map(without_block_mark).collect();
-    let mut text = strip_between(
-        &super::critic::without_attributions(&blocks.join("\n")),
-        "{>>",
-        "<<}",
-        Keep::Nothing,
-    );
-    text = strip_between(&text, "{--", "--}", deleted);
-    text = strip_between(&text, "{~~", "~~}", substituted);
+    let mut text = strip_between(&blocks.join("\n"), "{>>", "<<}", Keep::Nothing);
+    text = strip_between(&text, "{--", "--}", Keep::Nothing);
+    text = strip_between(&text, "{~~", "~~}", Keep::NewSide);
     text = strip_between(&text, "{++", "++}", Keep::Inner);
     text = strip_between(&text, "{==", "==}", Keep::Inner);
     // A newline left at either end separates this paragraph from the one
@@ -365,20 +301,6 @@ fn read_anchor(text: &str, deleted: Keep, substituted: Keep) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_removed_reading_keeps_deletions_and_both_sides() {
-        assert_eq!(
-            plain_anchor_with_removed("pay {--bankers--} now"),
-            "pay bankers now"
-        );
-        assert_eq!(
-            plain_anchor_with_removed("{~~old~>new~~} end"),
-            "oldnew end"
-        );
-        assert_eq!(plain_anchor_with_removed("{++in++}{>>note<<}"), "in");
-        assert_eq!(plain_anchor("pay {--bankers--} now"), "pay  now");
-    }
 
     #[test]
     fn plain_anchor_drops_the_marks_the_agent_view_adds() {
@@ -394,20 +316,20 @@ mod tests {
             ("A <mark class=\"hl-cyan\">-</mark> B", "A - B"),
             ("<s>secret</s>", "secret"),
             ("{==keep it secret.==}{>>c5 @AC: Cap?<<}", "keep it secret."),
-            ("keep {++it++}{r0 @AC} secret", "keep it secret"),
-            ("keep {~~that~>it~~}{r0 @AC} secret", "keep it secret"),
-            ("keep it {--very --}{r1 @AC}secret", "keep it secret"),
+            ("keep {++it++}{>>r0 @AC<<} secret", "keep it secret"),
+            ("keep {~~that~>it~~}{>>#0 @AC<<} secret", "keep it secret"),
+            ("keep it {--very --}{>>r1 @AC<<}secret", "keep it secret"),
             ("\\*\\*stars\\*\\*", "**stars**"),
             ("1. one", "one"),
             // A block mark leads the line, outside the change marks: typed
             // `1. ` an insertion wraps is text (bench 1aff6b41d6).
-            ("{++1. one++}{r0 @AC}", "1. one"),
-            ("1. {++one++}{r0 @AC}", "one"),
-            ("{++\n\n1. item two++}{r0 @AC}", "item two"),
-            ("one{++\n\n## Two++}{r0 @AC}", "one\n\nTwo"),
+            ("{++1. one++}{>>r0 @AC<<}", "1. one"),
+            ("1. {++one++}{>>r0 @AC<<}", "one"),
+            ("{++\n\n1. item two++}{>>r0 @AC<<}", "item two"),
+            ("one{++\n\n## Two++}{>>r0 @AC<<}", "one\n\nTwo"),
             ("a\\\n1\\. b", "a\n1. b"),
             ("a\\\n", "a\n"),
-            ("# {~~Old~>New~~}{r1 @AC}", "New"),
+            ("# {~~Old~>New~~}{>>#1 @AC<<}", "New"),
             ("- item", "item"),
             ("a_b", "a_b"),
             ("*x*", "x"),
@@ -458,12 +380,9 @@ mod tests {
 
     /// The text pulldown-cmark, the crate's Markdown reader, keeps of `s`.
     fn reader_text(s: &str) -> String {
-        pulldown_cmark::Parser::new_ext(s, super::super::write::parser_options())
+        pulldown_cmark::Parser::new(s)
             .filter_map(|event| match event {
-                pulldown_cmark::Event::Text(text)
-                | pulldown_cmark::Event::Code(text)
-                | pulldown_cmark::Event::InlineMath(text)
-                | pulldown_cmark::Event::DisplayMath(text) => Some(text.into_string()),
+                pulldown_cmark::Event::Text(text) => Some(text.into_string()),
                 _ => None,
             })
             .collect()
@@ -499,41 +418,6 @@ mod tests {
             "a _b_ c",
         ] {
             assert_eq!(plain_anchor(s), reader_text(s), "{s}");
-        }
-    }
-
-    #[test]
-    fn plain_anchor_keeps_mark_shaped_code_literal() {
-        assert_eq!(plain_anchor("`{++x++}`"), "{++x++}");
-    }
-
-    #[test]
-    fn extension_anchors_match_the_reader() {
-        for source in ["$a`b`c$", "~~x~~", "^x^", "~x~"] {
-            assert_eq!(plain_anchor(source), reader_text(source), "{source}");
-        }
-    }
-
-    #[test]
-    fn plain_anchor_keeps_code_span_contents_literal() {
-        assert_eq!(
-            plain_anchor("`a*b _c_ {++literal++}{r0 @A}` {++`new`++}{r1 @A}"),
-            "a*b _c_ {++literal++}{r0 @A} new"
-        );
-    }
-
-    #[test]
-    fn plain_anchor_keeps_all_code_span_spaces() {
-        assert_eq!(
-            plain_anchor("Before `        ` after"),
-            "Before          after"
-        );
-    }
-
-    #[test]
-    fn plain_anchor_reads_code_span_padding() {
-        for (source, text) in [("`  x  `", " x "), ("`` `x` ``", "`x`"), ("`a\nb`", "a b")] {
-            assert_eq!(plain_anchor(source), text, "{source}");
         }
     }
 

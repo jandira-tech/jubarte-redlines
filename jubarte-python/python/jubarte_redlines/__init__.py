@@ -71,7 +71,6 @@ from .document import (
 from .models import (
     AuditFinding,
     Change,
-    ChangeMember,
     Comment,
     CompareOptions,
     ContentControl,
@@ -113,7 +112,6 @@ __all__ += [
     "Hunk",
     "capabilities",
     "Change",
-    "ChangeMember",
     "Comment",
     "CompareOptions",
     "FormatChange",

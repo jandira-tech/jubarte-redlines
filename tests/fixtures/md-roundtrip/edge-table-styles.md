@@ -9,27 +9,27 @@ body: p0-p12, 3 tables, 1 page     # pages from layout
 page: Letter portrait, margins 1in, header/footer 0.5in
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left  # default; unannotated paragraphs use it
-  tables: TableNormal, Ledger, borders bottom double 0.75pt
+  tables: TableNormal, Ledger, borders vary
 ---
 
 <!-- p0 -->
 No style:
 
-<!-- t0 1x3, cells p1-p3 by row, widths 1.667in 1.667in 1.667in, width auto, style TableNormal -->
+<!-- t0 1x3, cells p1-p3 by row, style TableNormal -->
 |x|y|z|
 |-|-|-|
 
 <!-- p4 -->
 Table Grid:
 
-<!-- t1 1x3, cells p5-p7 by row, widths 1.667in 1.667in 1.667in, width auto -->
+<!-- t1 1x3, cells p5-p7 by row -->
 |x|y|z|
 |-|-|-|
 
 <!-- p8 -->
 Custom:
 
-<!-- t2 1x3, cells p9-p11 by row, widths 1.667in 1.667in 1.667in, width auto, style Ledger -->
+<!-- t2 1x3, cells p9-p11 by row, style Ledger -->
 |x|y|z|
 |-|-|-|
 

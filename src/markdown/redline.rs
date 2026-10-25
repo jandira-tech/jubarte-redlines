@@ -38,8 +38,7 @@ pub enum Source<'a> {
 /// How [`redline`] reads and compares two [`Source`] documents.
 ///
 /// Defaults: [`WmlComparerSettings::default`] (author
-/// `"Open-Xml-PowerTools"`; the CLI passes `Jubarte` and the Python and
-/// WebAssembly bindings their own `Redline`,
+/// `"Open-Xml-PowerTools"`; the CLI and bindings pass `Redline`,
 /// `DATE "1970-01-01T00:00:00Z"` for reproducible output, Word's own
 /// detail threshold); no reference document, no CriticMarkup recognition,
 /// no image loader.

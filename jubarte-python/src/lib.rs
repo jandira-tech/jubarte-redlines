@@ -138,15 +138,13 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &out).unbind())
 }
 
-/// List the tracked changes as a JSON array string, one object per
-/// logical change, each with the id `accept_changes` / `reject_changes`
-/// select by (the same objects as `jubarte changes --json`): a change Word wrote as several marks is one
-/// object with `members`.
+/// List the tracked changes one by one as a JSON array string, each with the
+/// id `accept_changes` / `reject_changes` select by (the same objects as
+/// `jubarte changes --json`).
 #[pyfunction]
 fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
-        let changes =
-            jubarte::changes::list_logical_changes(docx).map_err(|e| e.to_string())?;
+        let changes = jubarte::changes::list_changes(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -178,7 +176,7 @@ fn list_comments_json(
 #[pyfunction]
 fn changes_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     py.detach(|| {
-        jubarte::changes::list_logical_changes(docx)
+        jubarte::changes::list_changes(docx)
             .map(|changes| jubarte::changes::changes_text(&changes))
             .map_err(|e| e.to_string())
     })
@@ -206,99 +204,31 @@ fn comments_text(
 
 /// The grids `jubarte read --tables` prints: a `table N: RxC …` line per
 /// body table, then a line per row of `ids=text` cells; `no tables` when
-/// there are none. `track_changes` `reject` reads the rejected text.
+/// there are none.
 #[pyfunction]
-#[pyo3(signature = (docx, *, track_changes = None))]
-fn tables_text(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResult<String> {
-    let options = jubarte::markdown::ReadOptions {
-        track_changes: track_changes_of(track_changes)?,
-        ..jubarte::markdown::ReadOptions::default()
-    };
-    py.detach(|| jubarte::markdown::read_tables(docx, &options).map(|view| view.markdown))
-        .map_err(err)
-}
-
-/// What `jubarte read --tables` prints, and the view's warnings: the
-/// grids ([`tables_text`]), or with `paragraphs` (`t0`, `p11`, `p3-p20`)
-/// the grids of the tables the view's selection reaches (a `pN` inside a
-/// table, that table), each with the tables nested in it, then an empty
-/// line and the view [`read_view`] prints of that selection with the same
-/// options. A pick that reaches no table raises `JubarteError` with
-/// `USAGE: ` before its message, as the CLI exits 2.
-#[pyfunction]
-#[pyo3(signature = (
-    docx,
-    *,
-    track_changes = None,
-    comments = true,
-    dates = false,
-    page_markers = true,
-    paragraphs = None,
-    source = None,
-))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
-)]
-fn tables_view(
-    py: Python<'_>,
-    docx: &[u8],
-    track_changes: Option<&str>,
-    comments: bool,
-    dates: bool,
-    page_markers: bool,
-    paragraphs: Option<&str>,
-    source: Option<String>,
-) -> PyResult<(String, Vec<String>)> {
-    let options = jubarte::markdown::ReadOptions {
-        track_changes: track_changes_of(track_changes)?,
-        comments,
-        dates,
-        page_markers,
-        select: jubarte::markdown::Select::from_flags(paragraphs, None, None, false, None)
-            .map_err(err)?,
-        source,
-    };
-    let view = py
-        .detach(|| jubarte::markdown::read_tables(docx, &options))
-        .map_err(|e| match e {
-            jubarte::markdown::TablesError::Usage(message) => {
-                JubarteError::new_err(format!("USAGE: {message}"))
-            }
-            jubarte::markdown::TablesError::Read(e) => err(e),
-        })?;
-    Ok((view.markdown, view.warnings))
-}
-
-/// `track_changes` as the view reads it: `all` (the default), `accept` or
-/// `reject`, with their `accepted` and `rejected` spellings.
-fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::TrackChanges> {
-    match track_changes {
-        None => Ok(jubarte::markdown::TrackChanges::All),
-        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
-            .ok_or_else(|| err("track_changes must be all, accept or reject")),
-    }
+fn tables_text(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        jubarte::inspect::tables(docx)
+            .map(|tables| jubarte::inspect::tables_text(&tables))
+            .map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
 }
 
 /// The snapshot `jubarte read --json` prints, with its `changes` and
 /// `comments`. `paragraphs`, `head`, `tail`, `changed` and `by` select as in
 /// [`read_view`]; the snapshot keeps the selected paragraphs and their
-/// changes and comments. `track_changes` `accept` or `reject` settles the
-/// text and names the choice in `track_changes`. `validity_file`, the path
-/// as the command line spells it, adds `summary.input_validity`: the
-/// input's validity findings counted, as the binary reports them.
+/// changes and comments.
 #[pyfunction]
 #[pyo3(signature = (
     docx,
     *,
-    track_changes = None,
     paragraphs = None,
     head = None,
     tail = None,
     changed = false,
     by = None,
     source = None,
-    validity_file = None,
 ))]
 #[expect(
     clippy::too_many_arguments,
@@ -307,29 +237,23 @@ fn track_changes_of(track_changes: Option<&str>) -> PyResult<jubarte::markdown::
 fn read_json(
     py: Python<'_>,
     docx: &[u8],
-    track_changes: Option<&str>,
     paragraphs: Option<&str>,
     head: Option<usize>,
     tail: Option<usize>,
     changed: bool,
     by: Option<&str>,
     source: Option<String>,
-    validity_file: Option<&str>,
 ) -> PyResult<String> {
-    let track_changes = track_changes_of(track_changes)?;
     let select =
         jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
     let options = jubarte::markdown::ReadOptions {
-        track_changes,
         select,
         source,
         ..jubarte::markdown::ReadOptions::default()
     };
     py.detach(|| {
-        let mut snapshot =
+        let snapshot =
             jubarte::markdown::read_snapshot(docx, &options).map_err(|e| e.to_string())?;
-        snapshot.summary.input_validity =
-            validity_file.map(|file| jubarte::validate::input_validity_of(docx, file));
         serde_json::to_string(&snapshot).map_err(|e| e.to_string())
     })
     .map_err(|e: String| err(e))
@@ -373,15 +297,13 @@ fn wrote_png_line(pattern: std::path::PathBuf, pages: usize, dpi: f32) -> String
     jubarte::cli::wrote_png_line(&pattern, pages, dpi)
 }
 
-/// A resolution's error: an id that is no change id, names two changes, or
-/// names part of one, is a bad argument (`ValueError`, the binary's exit
-/// 2); the rest are `JubarteError`.
+/// A resolution's error: an id that is no change id, or names two changes,
+/// is a bad argument (`ValueError`, the binary's exit 2); the rest are
+/// `JubarteError`.
 fn change_err(e: jubarte::changes::ChangeError) -> PyErr {
     use jubarte::changes::ChangeError;
     match e {
-        ChangeError::InvalidId(_)
-        | ChangeError::Ambiguous { .. }
-        | ChangeError::PartOfChange { .. } => {
+        ChangeError::InvalidId(_) | ChangeError::Ambiguous { .. } => {
             pyo3::exceptions::PyValueError::new_err(e.to_string())
         }
         e => err(e),
@@ -737,23 +659,6 @@ fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<S
     jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
 }
 
-/// Whether a command line (arguments exclude argv0) asks for JSON: a real
-/// `--json` flag before any `--`, read as the binary reads it (the `--json`
-/// in `--text --json` is a value). An error then prints its
-/// [`runtime_json_error`] line on stdout too.
-#[pyfunction]
-fn wants_json(arguments: Vec<String>) -> bool {
-    jubarte::cli::wants_json(&arguments)
-}
-
-/// The line an error prints on stdout under `--json`:
-/// `{"error":{"code":…,"message":…}}`, its code the message's leading
-/// `CODE:`, else `USAGE` for an exit 2 and `ERROR` for any other.
-#[pyfunction]
-fn runtime_json_error(message: &str, exit: u8) -> String {
-    jubarte::cli::runtime_json_error(message, exit)
-}
-
 /// Word or Markdown sides as a Word tracked-changes document.
 #[pyfunction]
 #[pyo3(signature = (old, new, *, author, date))]
@@ -862,10 +767,7 @@ fn diff_json(
             _ => jubarte::markdown::redline(old, new, &redline()).and_then(|docx| {
                 jubarte::markdown::docx_to_markdown(
                     &docx,
-                    &jubarte::markdown::MarkdownOptions {
-                        input_limits: settings.input_limits,
-                        ..Default::default()
-                    },
+                    &jubarte::markdown::MarkdownOptions::default(),
                 )
                 .map(|read| read.markdown)
             }),
@@ -976,7 +878,11 @@ fn read_view(
     by: Option<&str>,
     source: Option<String>,
 ) -> PyResult<(String, Vec<String>)> {
-    let track_changes = track_changes_of(track_changes)?;
+    let track_changes = match track_changes {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(choice) => jubarte::markdown::TrackChanges::parse(choice)
+            .ok_or_else(|| err("track_changes must be all, accept or reject"))?,
+    };
     let select =
         jubarte::markdown::Select::from_flags(paragraphs, head, tail, changed, by).map_err(err)?;
     let options = jubarte::markdown::ReadOptions {
@@ -994,10 +900,9 @@ fn read_view(
 }
 
 /// Why `--editing-mode` cannot apply `plan_json` to `docx`: the tracked
-/// changes it keeps and does not itself accept or reject, or a reply to a
-/// comment on a paragraph it deletes; `None` when neither.
+/// changes it keeps and does not itself accept or reject, or `None`.
 #[pyfunction]
-fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option<String> {
+fn editing_mode_conflict(py: Python<'_>, plan_json: &str, docx: &[u8]) -> Option<&'static str> {
     py.detach(|| jubarte::edit::flags::editing_mode_conflict_json(plan_json, docx))
 }
 
@@ -1024,8 +929,7 @@ fn flag_plan(
 /// `edit`/`add --plan PLAN.json` with operation flags: the operations
 /// recorded into `held` (PLAN.json's text, `None` before the first
 /// recording). `options` is JSON: `author`, `date`, `existingRevisions`,
-/// `file`, `plan`, `defaultPlan` (a bare `--plan`), `dryRun`,
-/// `rewriteOthersComments`. Returns `{plan, json, notes, summary}` as
+/// `file`, `plan`, `defaultPlan` (a bare `--plan`), `dryRun`. Returns `{plan, json, notes, summary}` as
 /// JSON. A `ValueError` is a usage error; a `JubarteError` means `held` is
 /// not a plan.
 #[pyfunction]
@@ -1100,11 +1004,8 @@ fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutco
 #[pyfunction]
 fn preview_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<(bool, String)> {
     let result = py.detach(|| {
-        let (plan, notes) = jubarte::edit::EditPlan::from_json_with_notes(plan_json)?;
-        jubarte::edit::preview_plan(docx, &plan).map(|mut report| {
-            report.notes = notes;
-            report
-        })
+        let plan = jubarte::edit::EditPlan::from_json(plan_json)?;
+        jubarte::edit::preview_plan(docx, &plan)
     });
     Ok(match result {
         Ok(report) => (true, serde_json::to_string(&report).map_err(err)?),
@@ -1157,14 +1058,10 @@ type ValidateRun = (String, String, bool);
 
 /// `jubarte validate` on bytes: `rules` are rule sets or audit codes
 /// (`None`: `word`, plus `edits` with `original`), `original` and `author`
-/// check tracked edits, `strict` fails on warnings too. With `baseline`
-/// (the document the edits started from) only the findings it lacks fail
-/// the run, the JSON Lines and text are `validate --baseline`'s, and it is
-/// the edits rule's original when `original` is not given. Mirrors
-/// `jubarte::validate::validate_with`, `findings_text`, `baseline` and
-/// `fails`.
+/// check tracked edits, `strict` fails on warnings too. Mirrors
+/// `jubarte::validate::validate_with`, `findings_text` and `fails`.
 #[pyfunction]
-#[pyo3(signature = (docx, *, rules=None, original=None, author=None, strict=false, baseline=None))]
+#[pyo3(signature = (docx, *, rules=None, original=None, author=None, strict=false))]
 fn validate_run(
     py: Python<'_>,
     docx: &[u8],
@@ -1172,28 +1069,10 @@ fn validate_run(
     original: Option<&[u8]>,
     author: Option<&str>,
     strict: bool,
-    baseline: Option<&[u8]>,
 ) -> PyResult<ValidateRun> {
     let rules = rules.unwrap_or_default();
     py.detach(|| {
-        use jubarte::validate::{baselined_json, baselined_text, fails, validate_baselined};
         let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
-        if let Some(base) = baseline {
-            let split = validate_baselined(
-                docx,
-                base,
-                &rules,
-                original,
-                author,
-                Some(&mut jubarte::audit::word_layout),
-            )
-            .map_err(|e| e.to_string())?;
-            return Ok((
-                baselined_json(&split).map_err(|e| e.to_string())?,
-                baselined_text(&split),
-                fails(&split.new, strict),
-            ));
-        }
         let findings = jubarte::validate::validate_with(
             docx,
             &rules,
@@ -1213,32 +1092,6 @@ fn validate_run(
         ))
     })
     .map_err(|e: String| err(e))
-}
-
-/// The one stderr line `read`, `changes` and `comments` give an input with
-/// validity findings (`input has 2 validity warnings; jubarte validate FILE
-/// lists them`), or `None`; `file` is the path as the command line spells
-/// it. Mirrors `jubarte::validate::input_notice`; a package that cannot be
-/// validated has nothing to say.
-#[pyfunction]
-fn input_notice(py: Python<'_>, docx: &[u8], file: &str) -> Option<String> {
-    py.detach(|| {
-        jubarte::validate::validate(docx)
-            .ok()
-            .and_then(|findings| jubarte::validate::input_notice(&findings, file))
-    })
-}
-
-/// The last line `changes --json` and `comments --json` print, the input's
-/// validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
-/// "next":"jubarte validate FILE"}}`); `file` is the path as the command
-/// line spells it. Mirrors `jubarte::validate::input_validity_line`.
-#[pyfunction]
-fn input_validity_line(py: Python<'_>, docx: &[u8], file: &str) -> PyResult<String> {
-    py.detach(|| {
-        jubarte::validate::input_validity_line(&jubarte::validate::input_validity_of(docx, file))
-    })
-    .map_err(|e| err(e.to_string()))
 }
 
 /// `repair_json`'s result: the repaired package and `{"repaired": [...],
@@ -1263,8 +1116,7 @@ fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
 /// Every text change from `original` to `edited` must be a revision by
 /// `author`: the residue after rejecting that author's changes is an
 /// `UNTRACKED_EDIT` finding per paragraph, and another author's change a
-/// `FOREIGN_AUTHOR` one, and a permission endpoint of `original` that
-/// `edited` lost a `PERMISSION_RANGE_DROPPED` one, as a JSON array. Mirrors
+/// `FOREIGN_AUTHOR` one, as a JSON array. Mirrors
 /// `jubarte::validate::audit_tracked`.
 #[pyfunction]
 fn audit_tracked_json(
@@ -1308,36 +1160,16 @@ fn scrub_json(py: Python<'_>, docx: &[u8], options_json: &str) -> PyResult<Py<Py
     Ok(PyBytes::new(py, &out).unbind())
 }
 
-/// This build's manifest (`runtime: "python"`): an edit plan here takes
-/// no `--skip-failed`, as the shared manifest says.
-fn manifest() -> jubarte::capabilities::Capabilities {
-    jubarte::capabilities::capabilities("python")
-}
-
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
-    serde_json::to_string_pretty(&manifest()).expect("manifest serializes")
-}
-
-/// Focused edit discovery, or the edit support matrix when both filters are absent.
-#[pyfunction]
-#[pyo3(signature = (operation=None, field=None))]
-fn capability_query(operation: Option<&str>, field: Option<&str>) -> String {
-    jubarte::capabilities::discovery("python", operation, field).to_string()
+    jubarte::capabilities::capabilities_json("python")
 }
 
 /// [`capabilities_json`] as the text summary `jubarte capabilities` prints.
 #[pyfunction]
-#[pyo3(signature = (operation=None, field=None, matrix=false))]
-fn capabilities_text(operation: Option<&str>, field: Option<&str>, matrix: bool) -> String {
-    if matrix || operation.is_some() || field.is_some() {
-        jubarte::capabilities::discovery_text(&jubarte::capabilities::discovery(
-            "python", operation, field,
-        ))
-    } else {
-        jubarte::capabilities::capabilities_text(&manifest())
-    }
+fn capabilities_text() -> String {
+    jubarte::capabilities::capabilities_text(&jubarte::capabilities::capabilities("python"))
 }
 
 /// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
@@ -1364,8 +1196,10 @@ fn markdown_to_docx(
         .detach(|| {
             // Built here: `DocxOptions` can hold an image loader, which is
             // not `Send`, so it cannot cross into the detached call.
-            let options =
-                jubarte::markdown::docx_options_from_json(options_json.unwrap_or("{}"), reference)?;
+            let options = jubarte::markdown::docx_options_from_json(
+                options_json.unwrap_or("{}"),
+                reference,
+            )?;
             jubarte::markdown::markdown_to_docx(text, &options).map_err(|e| e.to_string())
         })
         .map_err(JubarteError::new_err)?;
@@ -1392,81 +1226,9 @@ fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResu
     serde_json::to_string(&report).map_err(err)
 }
 
-/// Persistent filesystem authority for the hosted MCP adapter. The root is
-/// opened once, not re-resolved by pathname for every write.
-#[pyclass(name = "_OutputRoot")]
-struct PyOutputRoot {
-    root: jubarte::publication::OutputRoot,
-}
-
-#[pymethods]
-impl PyOutputRoot {
-    #[new]
-    fn new(root: &str) -> PyResult<Self> {
-        Ok(Self {
-            root: jubarte::publication::OutputRoot::open(std::path::Path::new(root))?,
-        })
-    }
-
-    fn read<'py>(&self, py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = py.detach(|| self.root.read(std::path::Path::new(path)))?;
-        Ok(PyBytes::new(py, &bytes))
-    }
-
-    fn publish(
-        &self,
-        py: Python<'_>,
-        files: Vec<(String, Vec<u8>)>,
-        overwrite: bool,
-    ) -> PyResult<()> {
-        let result = py.detach(|| {
-            let files: Vec<_> = files
-                .iter()
-                .map(|(path, bytes)| (std::path::PathBuf::from(path), bytes.as_slice()))
-                .collect();
-            self.root.publish(&files, overwrite)
-        });
-        publish_result(py, result)
-    }
-}
-
-fn publish_result(
-    py: Python<'_>,
-    result: Result<jubarte::publication::PublishReport, jubarte::publication::PublishError>,
-) -> PyResult<()> {
-    let (warnings, result) = match result {
-        Ok(report) => (report.warnings, Ok(())),
-        Err(error) => {
-            // PublishError's Display preserves the primary error and committed
-            // state, but does not include its cleanup warnings.
-            let mut message = error.to_string();
-            for warning in &error.warnings {
-                message.push_str(&format!("\nwarning: {warning}"));
-            }
-            (
-                error.warnings,
-                Err(pyo3::exceptions::PyOSError::new_err(message)),
-            )
-        }
-    };
-    let category = py.get_type::<pyo3::exceptions::PyRuntimeWarning>();
-    for warning in warnings {
-        let emitted = std::ffi::CString::new(warning)
-            .map_err(err)
-            .and_then(|message| PyErr::warn(py, &category, &message, 1));
-        // Warning filters may raise. Preserve the original publication error
-        // when there is one; its message already contains every warning.
-        if result.is_ok() {
-            emitted?;
-        }
-    }
-    result
-}
-
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    m.add_class::<PyOutputRoot>()?;
     m.add("JubarteError", m.py().get_type::<JubarteError>())?;
     m.add_function(wrap_pyfunction!(compare_documents, m)?)?;
     m.add_function(wrap_pyfunction!(read_view, m)?)?;
@@ -1492,21 +1254,17 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
-    m.add_function(wrap_pyfunction!(capability_query, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_text, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
     m.add_function(wrap_pyfunction!(diff_view, m)?)?;
     m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
-    m.add_function(wrap_pyfunction!(wants_json, m)?)?;
-    m.add_function(wrap_pyfunction!(runtime_json_error, m)?)?;
     m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(changes_text, m)?)?;
     m.add_function(wrap_pyfunction!(comments_text, m)?)?;
     m.add_function(wrap_pyfunction!(tables_text, m)?)?;
-    m.add_function(wrap_pyfunction!(tables_view, m)?)?;
     m.add_function(wrap_pyfunction!(read_json, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_line, m)?)?;
     m.add_function(wrap_pyfunction!(wrote_png_line, m)?)?;
@@ -1514,8 +1272,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(validate_run, m)?)?;
-    m.add_function(wrap_pyfunction!(input_notice, m)?)?;
-    m.add_function(wrap_pyfunction!(input_validity_line, m)?)?;
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
@@ -1524,150 +1280,4 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod publication_tests {
-    use super::*;
-    use jubarte::publication::{PublishError, PublishReport};
-    use pyo3::exceptions::{PyOSError, PyRuntimeWarning};
-
-    #[test]
-    fn publication_report_emits_each_runtime_warning_and_keeps_unit() {
-        Python::initialize();
-        Python::attach(|py| {
-            let warnings = py.import("warnings").unwrap();
-            let context = warnings
-                .call_method(
-                    "catch_warnings",
-                    (),
-                    Some(&{
-                        let kwargs = pyo3::types::PyDict::new(py);
-                        kwargs.set_item("record", true).unwrap();
-                        kwargs
-                    }),
-                )
-                .unwrap();
-            let caught = context.call_method0("__enter__").unwrap();
-            warnings.call_method1("simplefilter", ("always",)).unwrap();
-            let report = PublishReport {
-                warnings: vec![
-                    "cleaning staging: first".into(),
-                    "cleaning staging: second".into(),
-                ],
-            };
-            let result = publish_result(py, Ok(report));
-            assert!(result.is_ok(), "{result:?}");
-            assert_eq!(caught.len().unwrap(), 2);
-            for (index, message) in ["cleaning staging: first", "cleaning staging: second"]
-                .iter()
-                .enumerate()
-            {
-                let warning = caught.get_item(index).unwrap();
-                assert!(
-                    warning
-                        .getattr("category")
-                        .unwrap()
-                        .is(py.get_type::<PyRuntimeWarning>())
-                );
-                assert_eq!(
-                    warning
-                        .getattr("message")
-                        .unwrap()
-                        .str()
-                        .unwrap()
-                        .to_str()
-                        .unwrap(),
-                    *message
-                );
-            }
-            context
-                .call_method1("__exit__", (py.None(), py.None(), py.None()))
-                .unwrap();
-        });
-    }
-
-    #[test]
-    fn publication_error_preserves_primary_state_and_all_cleanup_warnings() {
-        Python::initialize();
-        Python::attach(|py| {
-            let warnings = py.import("warnings").unwrap();
-            let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("record", true).unwrap();
-            let context = warnings
-                .call_method("catch_warnings", (), Some(&kwargs))
-                .unwrap();
-            let caught = context.call_method0("__enter__").unwrap();
-            warnings.call_method1("simplefilter", ("always",)).unwrap();
-            let error = PublishError {
-                committed: vec!["a.txt".into()],
-                durability_uncertain: true,
-                source: std::io::Error::other("primary failure"),
-                warnings: vec![
-                    "cleaning staging: first".into(),
-                    "cleaning staging: second".into(),
-                ],
-            };
-            let raised = publish_result(py, Err(error)).unwrap_err();
-            assert_eq!(caught.len().unwrap(), 2);
-            for index in 0..2 {
-                assert!(
-                    caught
-                        .get_item(index)
-                        .unwrap()
-                        .getattr("category")
-                        .unwrap()
-                        .is(py.get_type::<PyRuntimeWarning>())
-                );
-            }
-            context
-                .call_method1("__exit__", (py.None(), py.None(), py.None()))
-                .unwrap();
-            assert!(raised.is_instance_of::<PyOSError>(py));
-            let message = raised.value(py).str().unwrap().to_str().unwrap().to_owned();
-            for expected in [
-                "primary failure",
-                "a.txt",
-                "durability uncertain",
-                "cleaning staging: first",
-                "cleaning staging: second",
-            ] {
-                assert!(message.contains(expected), "missing {expected}: {message}");
-            }
-        });
-    }
-    #[test]
-    fn publication_success_obeys_warnings_as_errors() {
-        Python::initialize();
-        Python::attach(|py| {
-            let warnings = py.import("warnings").unwrap();
-            let context = warnings.call_method0("catch_warnings").unwrap();
-            context.call_method0("__enter__").unwrap();
-            warnings.call_method1("simplefilter", ("error",)).unwrap();
-            assert!(publish_result(py, Ok(PublishReport::default())).is_ok());
-            let raised = publish_result(
-                py,
-                Ok(PublishReport {
-                    warnings: vec!["cleaning staging: first".into()],
-                }),
-            )
-            .unwrap_err();
-            assert!(raised.is_instance_of::<PyRuntimeWarning>(py));
-            let raised = publish_result(
-                py,
-                Err(PublishError {
-                    committed: vec![],
-                    durability_uncertain: false,
-                    source: std::io::Error::other("primary failure"),
-                    warnings: vec!["cleaning staging: first".into()],
-                }),
-            )
-            .unwrap_err();
-            assert!(raised.is_instance_of::<PyOSError>(py));
-            assert!(raised.to_string().contains("cleaning staging: first"));
-            context
-                .call_method1("__exit__", (py.None(), py.None(), py.None()))
-                .unwrap();
-        });
-    }
 }

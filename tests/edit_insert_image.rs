@@ -11,7 +11,7 @@ mod common;
 
 use std::io::Cursor;
 
-use common::docx::{Part, docx, docx_with, para, part_string, replace_entry};
+use common::docx::{docx, para, part_string};
 use common::validity::assert_word_valid_package;
 use jubarte::changes::{ChangeKind, list_changes};
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
@@ -207,75 +207,6 @@ fn insert_image_sizes_from_pixels_and_caps_the_width() {
         "{types}"
     );
     assert_eq!(summary(&result.clean).unwrap().images, 2);
-    assert_word_valid_package(&result.clean);
-    assert_word_valid_package(&result.redline);
-}
-
-/// The value a Word-side reader reconstructs from `attr` on `element`:
-/// XML 1.0 §3.3.3 attribute-value normalization, as quick-xml applies it
-/// (a literal TAB/CR/LF becomes a space; character references survive).
-fn normalized_attr(xml: &str, element: &str, attr: &str) -> String {
-    use quick_xml::NsReader;
-    use quick_xml::events::Event;
-    let mut reader = NsReader::from_str(xml);
-    loop {
-        match reader.read_event().unwrap() {
-            Event::Start(tag) | Event::Empty(tag) if tag.name().as_ref() == element => {
-                for attribute in tag.attributes() {
-                    let attribute = attribute.unwrap();
-                    if attribute.key.as_ref() == attr {
-                        return attribute
-                            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
-                            .unwrap()
-                            .into_owned();
-                    }
-                }
-                panic!("{attr} not found on {element}");
-            }
-            Event::Eof => panic!("{element} not found in {xml}"),
-            _ => {}
-        }
-    }
-}
-
-/// One inline picture whose alt text holds a line break (`&#xA;`, how Word
-/// writes multi-line alt text). An edit of another paragraph re-serializes
-/// `word/document.xml`; the line break must survive it instead of becoming
-/// the space every reader makes of a literal LF in an attribute value.
-#[test]
-fn edit_of_another_paragraph_keeps_the_alt_texts_line_breaks() {
-    let drawing = r#"<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Pic" descr="line one&#xA;line two"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="dot.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdX0"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#;
-    let source = replace_entry(
-        &docx_with(
-            &(para("The parties agree to the first term.")
-                + drawing
-                + &para("The second term follows.")),
-            &[Part {
-                name: "word/media/dot.png",
-                content_type: "image/png",
-                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-                xml: "",
-            }],
-        ),
-        "word/media/dot.png",
-        &png(4, 4),
-    );
-    let result = apply_plan(
-        &source,
-        &plan(
-            &source,
-            r#"[{"kind":"replace","paragraph":"p0","find":"first","replacement":"second"}]"#,
-        ),
-    )
-    .unwrap();
-    for bytes in [&result.clean, &result.redline] {
-        let body = part_string(bytes, "word/document.xml").unwrap();
-        assert_eq!(
-            normalized_attr(&body, "wp:docPr", "descr"),
-            "line one\nline two",
-            "{body}"
-        );
-    }
     assert_word_valid_package(&result.clean);
     assert_word_valid_package(&result.redline);
 }

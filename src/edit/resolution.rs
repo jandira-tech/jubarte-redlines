@@ -87,8 +87,7 @@ fn text_from_to(kind: ChangeKind, move_from: bool, text: &str, accepted: bool) -
         ChangeKind::Insertion => true,
         ChangeKind::Deletion => false,
         ChangeKind::Move => !move_from,
-        // No element is a replacement: that is a logical change's kind.
-        ChangeKind::Formatting | ChangeKind::Replacement => {
+        ChangeKind::Formatting => {
             return (text.to_string(), text.to_string());
         }
     };
@@ -189,8 +188,7 @@ fn adjacent_changes(source: &[u8]) -> Result<HashSet<(String, String)>, ChangeEr
         }
     }
 
-    let normalized = crate::strict_translation::strict_to_transitional_docx(source)
-        .map_err(|e| ChangeError::Package(e.to_string()))?;
+    let normalized = crate::strict_translation::strict_to_transitional_docx(source);
     let package =
         crate::opc::PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))?;
     let main = package
@@ -325,7 +323,7 @@ fn single_line(change: &Change, accepted: bool) -> String {
                 ChangeKind::Deletion => false,
                 // A moved mark prints with its side, like text.
                 ChangeKind::Move => change.move_side != Some(crate::changes::MoveSide::From),
-                ChangeKind::Formatting | ChangeKind::Replacement => false,
+                ChangeKind::Formatting => false,
             };
             if change.kind == ChangeKind::Formatting {
                 (change.text.clone(), change.text.clone())

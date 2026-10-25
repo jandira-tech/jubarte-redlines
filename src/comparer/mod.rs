@@ -32,9 +32,6 @@ pub mod atoms;
 pub mod bookmarks;
 pub mod comments;
 pub mod cross_para;
-// Word-parity passes, public for the tests that run one at a time; outside
-// the version promise (docs/VERSIONING.md).
-#[doc(hidden)]
 pub mod finalize;
 pub mod fixups;
 pub mod footnotes;
@@ -48,9 +45,6 @@ pub mod parts;
 pub mod preprocess;
 pub mod produce;
 pub mod revisions;
-// Constant tables ported from the C# `WmlComparer`; outside the version
-// promise (docs/VERSIONING.md).
-#[doc(hidden)]
 pub mod tables;
 pub mod textbox;
 pub mod units;
@@ -620,13 +614,6 @@ pub fn try_compare_bodies_faithful_with_notes(
     // M392 restores only the revised source's uniquely identified two-blank
     // pretable layout; capture it before atomization consumes the body.
     let revised_two_blank_table_titles = finalize::revised_two_blank_table_titles(dom, body2);
-    // M452 must compare the candidate's own source properties, before any
-    // layout peel can turn a text-only edit into apparent formatting history.
-    let paragraph_property_sources = if settings.merge_replaced_paragraphs {
-        finalize::ParagraphPropertySources::capture(dom, body1, body2)
-    } else {
-        finalize::ParagraphPropertySources::default()
-    };
 
     // M122: re-stamp CorrelatedSHA1Hash on the **post-accept** trees. Accept
     // rebuilds elements and was leaving ComparisonUnits with correlated=None
@@ -1070,15 +1057,10 @@ pub fn try_compare_bodies_faithful_with_notes(
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
         finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root, &revised_unaligned);
-        // M452: restore a short title MIX's own earlier properties only when
-        // they changed; never borrow a different paragraph's alignment.
-        finalize::park_jc_on_first_short_title_mix_from_body(
-            dom,
-            root,
-            &paragraph_property_sources,
-            settings,
-            &mut id,
-        );
+        // M452: short title MIX has no pPr; Word parks body live jc into
+        // pPrChange only (right_aligned_italic×right_alignment_2 residual).
+        // Park-only — live title jc thrash'd (abandoned M451 title attempt).
+        finalize::park_jc_on_first_short_title_mix_from_body(dom, root, settings, &mut id);
         // M450: last MIX parks Heading residual spacing; Word keeps live + empty
         // pPrChange (calibri×heading_2_right).
         finalize::promote_heading_spacing_from_pprchange_on_last_mix(dom, root);
@@ -1679,7 +1661,7 @@ fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) 
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod body_section_source_ownership_tests {
     use super::*;
     use crate::namespaces::{PT, W};

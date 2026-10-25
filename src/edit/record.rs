@@ -128,7 +128,7 @@ impl Recorded {
 
 /// Where a recording is written: the file a symbolic link names (the link
 /// stays a link), else `plan` itself.
-pub(crate) fn plan_target(plan: &Path) -> PathBuf {
+pub fn plan_target(plan: &Path) -> PathBuf {
     if let Ok(real) = std::fs::canonicalize(plan) {
         return real;
     }
@@ -139,9 +139,10 @@ pub(crate) fn plan_target(plan: &Path) -> PathBuf {
     }
 }
 
-/// Legacy temporary-name helper, retained for API compatibility. Recordings
-/// no longer open this predictable path; publication creates exclusive staging.
-/// Concurrent recordings remain last-writer-wins, not a serialized append.
+/// The temporary file a recording is written to before it replaces
+/// `target`: hidden, beside it, and named for this process, so it names no
+/// other plan or document. Two recordings into one plan at once are not
+/// serialized: the later rename wins.
 pub fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
@@ -150,31 +151,20 @@ pub fn partial_path(target: &Path) -> PathBuf {
 }
 
 /// Write `json` (a [`Recorded::json`]) to PLAN.json at `plan`, atomically:
-/// a precommit error leaves the plan as it was. Returns staging cleanup warnings
-/// after successful installation; publication errors retain their warning payload.
+/// a failed write leaves the plan as it was and no partial file behind.
 ///
 /// # Errors
 ///
 /// The I/O error when the partial file cannot be written beside the plan or
-/// renamed into place (a missing directory, no permission). After a successful
-/// commit, a durability error explicitly reports the committed plan.
-pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<Vec<String>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let target = plan_target(plan);
-        crate::publication::publish_paths(&[(target, json.as_bytes())], true)
-            .map(|report| report.warnings)
-            .map_err(|error| std::io::Error::new(error.source.kind(), error))
-    }
-    #[cfg(target_arch = "wasm32")]
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        format!(
-            "cannot publish {} ({} bytes): filesystem publication is unavailable in WASM",
-            plan.display(),
-            json.len()
-        ),
-    ))
+/// renamed into place (a missing directory, no permission).
+pub fn write_plan(plan: &Path, json: &str) -> std::io::Result<()> {
+    let target = plan_target(plan);
+    let partial = partial_path(&target);
+    std::fs::write(&partial, json)
+        .and_then(|()| std::fs::rename(&partial, &target))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&partial);
+        })
 }
 
 /// The operations `ops` recorded into `held` (PLAN.json's text, `None`
@@ -234,8 +224,8 @@ pub fn record(
 /// options, as the Python and npm CLIs parse them.
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct RecordOptions {
-    /// `--author` (default `Jubarte`).
+pub struct RecordOptions {
+    /// `--author` (default `Redline`).
     pub author: Option<String>,
     /// `--datetime`.
     pub date: Option<String>,
@@ -250,14 +240,11 @@ pub(crate) struct RecordOptions {
     pub default_plan: bool,
     /// `--dry-run`: the summary says "would record".
     pub dry_run: bool,
-    /// `--rewrite-others-comments`: the plan may edit another author's
-    /// comment.
-    pub rewrite_others_comments: bool,
 }
 
 /// [`record`] over JSON, for the Python and npm CLIs: `verb` is `edit` or
 /// `add`, `operations` the parsed command's `operations` array, `held`
-/// PLAN.json's text, `options` a `RecordOptions` object. Returns `{plan,
+/// PLAN.json's text, `options` a [`RecordOptions`] object. Returns `{plan,
 /// json, notes, summary}`: `plan` to preview, `json` to write, `notes` and
 /// `summary` to print.
 ///
@@ -303,9 +290,8 @@ pub fn record_json(
             )));
         }
     };
-    let author = options.author.as_deref().unwrap_or("Jubarte");
-    let mut recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
-    recorded.plan.rewrite_others_comments |= options.rewrite_others_comments;
+    let author = options.author.as_deref().unwrap_or("Redline");
+    let recorded = record(verb, &ops, author, date.as_deref(), existing, source, held)?;
     Ok(serde_json::json!({
         "plan": serde_json::to_string(&recorded.plan).expect("a plan serializes"),
         "json": recorded.json(),

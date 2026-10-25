@@ -341,10 +341,7 @@ fn relocated(docx: &[u8]) -> Vec<u8> {
         let mut file = archive.by_index(i).unwrap();
         let mut data = Vec::new();
         file.read_to_end(&mut data).unwrap();
-        let name = file
-            .name()
-            .expect("decode ZIP fixture name")
-            .replacen("word/", "doc/", 1);
+        let name = file.name().replacen("word/", "doc/", 1);
         let data = match name.as_str() {
             "[Content_Types].xml" | "_rels/.rels" => String::from_utf8(data)
                 .unwrap()

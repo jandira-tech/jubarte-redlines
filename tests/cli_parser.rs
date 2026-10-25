@@ -204,7 +204,7 @@ fn explicit_compare_alias_and_shorthand_preserve_overrides() {
         assert_eq!(result["command"], "compare");
         assert_eq!(result["args"]["original"], "real.docx");
         assert_eq!(result["args"]["modified"], "b.docx");
-        assert_eq!(result["args"]["author"], "Jubarte");
+        assert_eq!(result["args"]["author"], "Redline");
         assert_eq!(result["args"]["mode"], "word");
     }
     assert_eq!(
@@ -1679,6 +1679,10 @@ fn every_writing_task_takes_the_formats_its_output_names() {
             "--json writes the snapshot",
         ),
         (
+            vec!["read", "a.docx", "-o", "v.json", "--dates"],
+            "--dates shapes the view",
+        ),
+        (
             vec!["read", "a.docx", "-o", "v.md", "--tables"],
             "--tables prints the grids",
         ),
@@ -2253,21 +2257,23 @@ fn writer_render_options_survive_shared_parser_serialization() {
 #[test]
 fn read_output_conflicts_apply_to_alias_and_shorthand_too() {
     for prefix in [&["read", "a.docx"][..], &["text", "a.docx"], &["a.docx"]] {
-        // A .json snapshot is --json's (#1255): --track-changes settles its
-        // text, and the view's other options change nothing in it.
-        for flags in [
-            vec!["--track-changes", "all"],
-            vec!["--track-changes", "rejected"],
-            vec!["--comments", "inline"],
-            vec!["--dates"],
-            vec!["--no-page-markers"],
-        ] {
-            let args = [prefix, &["-o", "v.json"], &flags].concat();
-            let result = parse(&args, &[]);
-            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
-            assert_eq!(result["args"]["output_format"], "json", "{args:?}");
-        }
         for (output, flags, message) in [
+            (
+                "v.json",
+                vec!["--track-changes", "all"],
+                "--track-changes shapes the view",
+            ),
+            (
+                "v.json",
+                vec!["--comments", "inline"],
+                "--comments shapes the view",
+            ),
+            ("v.json", vec!["--dates"], "--dates shapes the view"),
+            (
+                "v.json",
+                vec!["--no-page-markers"],
+                "--no-page-markers shapes the view",
+            ),
             ("v.json", vec!["--tables"], "--tables prints the grids"),
             ("v.md", vec!["--tables"], "--tables prints the grids"),
             ("v.unknown", vec!["--json"], "--json writes the snapshot"),
@@ -2336,419 +2342,4 @@ fn a_task_the_host_lacks_is_one_usage_error_whatever_follows() {
     // A host with the task parses it as before.
     let result = parse(&["validate", "a.docx"], &[]);
     assert_eq!(result["command"], "validate", "{result}");
-}
-
-#[test]
-fn typed_edit_actions_have_one_order_independent_grammar() {
-    for args in [
-        vec!["replace", "f.docx", "--find", "old", "--text", "new"],
-        vec![
-            "replace",
-            "--text",
-            "new",
-            "--occurrence",
-            "2",
-            "f.docx",
-            "--find",
-            "old",
-            "--at",
-            "p0",
-        ],
-        vec!["rewrite", "f.docx", "--at", "p0", "--text", ""],
-        vec![
-            "insert",
-            "f.docx",
-            "--kind",
-            "text",
-            "--at",
-            "p0",
-            "--edge",
-            "end",
-            "--text-file",
-            "exact.txt",
-        ],
-        vec![
-            "insert",
-            "f.docx",
-            "--kind",
-            "paragraph",
-            "--at",
-            "p0",
-            "--position",
-            "after",
-            "--text",
-            "",
-        ],
-        vec!["delete", "f.docx", "--at", "p0", "--find", "old"],
-        vec!["delete", "f.docx", "--at", "p0", "--whole-block"],
-        vec!["apply", "f.docx", "--plan", "p.json"],
-    ] {
-        let argv = [vec!["jubarte", "edit"], args, vec!["--dry-run"]].concat();
-        assert!(Cli::try_parse_from(&argv).is_ok(), "{argv:?}");
-    }
-}
-
-#[test]
-fn typed_edit_scope_and_plan_ownership_are_explicit() {
-    for args in [
-        vec!["replace", "f", "--text", "new"],
-        vec![
-            "replace",
-            "f",
-            "--find",
-            "old",
-            "--text",
-            "new",
-            "--text-file",
-            "t",
-        ],
-        vec!["rewrite", "f", "--text", "new"],
-        vec![
-            "rewrite",
-            "f",
-            "--at",
-            "p0",
-            "--text",
-            "new",
-            "--occurrence",
-            "1",
-        ],
-        vec!["delete", "f", "--at", "p0"],
-        vec!["delete", "f", "--at", "p0", "--find", "x", "--whole-block"],
-        vec![
-            "delete",
-            "f",
-            "--at",
-            "p0",
-            "--whole-block",
-            "--occurrence",
-            "1",
-        ],
-        vec!["insert", "f", "--at", "p0", "--text", "x", "--edge", "end"],
-        vec!["insert", "f", "--kind", "text", "--at", "p0", "--text", "x"],
-        vec![
-            "replace",
-            "f",
-            "--find",
-            "x",
-            "--text",
-            "y",
-            "--occurrence",
-            "0",
-        ],
-        vec!["apply", "f", "--plan", "p", "--consume"],
-        vec!["apply", "f", "--plan", "p", "--author", "override"],
-        vec![
-            "apply",
-            "f",
-            "--plan",
-            "p",
-            "--datetime",
-            "2026-10-17T00:00:00Z",
-        ],
-        vec!["apply", "f", "--plan", "p", "--track", "off"],
-        vec![
-            "apply",
-            "f",
-            "--plan",
-            "p",
-            "--existing-revisions",
-            "accept",
-        ],
-        vec!["apply", "f", "--plan", "p", "--accept-change", "r0"],
-        vec!["apply", "f", "--plan", "p", "--reject-change", "r0"],
-        vec!["apply", "f", "--plan", "p", "--save-plan", "q"],
-    ] {
-        assert!(
-            Cli::try_parse_from(
-                [vec!["jubarte", "edit"], args.clone(), vec!["--dry-run"]].concat()
-            )
-            .is_err(),
-            "{args:?}"
-        );
-    }
-    for extra in [
-        vec!["-o", "out"],
-        vec!["--out-dir", "out"],
-        vec!["--report", "r"],
-        vec!["--emit", "document"],
-        vec!["--expect", "e"],
-        vec!["--dry-run"],
-    ] {
-        let args = [
-            vec![
-                "jubarte",
-                "edit",
-                "rewrite",
-                "f",
-                "--at",
-                "p0",
-                "--text",
-                "x",
-                "--save-plan",
-                "p",
-            ],
-            extra,
-        ]
-        .concat();
-        assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
-    }
-}
-
-#[test]
-fn action_names_remain_legacy_filenames_with_v1_flags() {
-    for name in ["replace", "rewrite", "insert", "delete", "apply"] {
-        let cli =
-            Cli::try_parse_from(["jubarte", "edit", name, "-p", "p0", "--content", "new"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Edit { file, .. }) if file == Path::new(name)));
-        let result = parse(&["edit", name, "-p", "p0", "--content", "new"], &["edit"]);
-        assert_eq!(result["exit_code"], 0, "{result}");
-    }
-    let help = Cli::try_parse_from(["jubarte", "edit", "--help"])
-        .unwrap_err()
-        .to_string();
-    assert!(help.contains("./replace"), "{help}");
-}
-
-#[test]
-fn replace_help_explains_all_matches_overlap_refusal() {
-    let error = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"]).unwrap_err();
-    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
-    let help = error.to_string();
-    let text = help.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        text.contains(
-            "--all-matches Replace every candidate; refuses when any two candidates overlap. Requires --expect-count"
-        ),
-        "{help}"
-    );
-    assert!(!help.contains("nonoverlapping"), "{help}");
-}
-
-#[test]
-fn apply_help_names_only_the_ways_apply_publishes() {
-    let flat = |action: &str| {
-        let help = Cli::try_parse_from(["jubarte", "edit", action, "--help"])
-            .unwrap_err()
-            .to_string();
-        help.split_whitespace().collect::<Vec<_>>().join(" ")
-    };
-    // apply has no --save-plan: its output is required unless it bundles
-    // or dry-runs.
-    let apply = flat("apply");
-    assert!(
-        apply.contains("Primary edited DOCX; required unless bundling or dry-running"),
-        "{apply}"
-    );
-    assert!(!apply.contains("saving"), "{apply}");
-    // An inline action saves a plan instead.
-    let replace = flat("replace");
-    assert!(
-        replace.contains("Primary edited DOCX; required unless saving, bundling or dry-running"),
-        "{replace}"
-    );
-}
-
-#[test]
-fn typed_edit_help_and_facade_use_the_public_route() {
-    let help = Cli::try_parse_from(["jubarte", "edit", "replace", "--help"])
-        .unwrap_err()
-        .to_string();
-    assert!(help.contains("jubarte edit replace"), "{help}");
-    assert!(!help.contains("__edit-v2"), "{help}");
-    let value = parse(
-        &[
-            "edit",
-            "replace",
-            "f.docx",
-            "--find",
-            "x",
-            "--text",
-            "y",
-            "--dry-run",
-        ],
-        &["edit"],
-    );
-    assert_eq!(value["exit_code"], 0, "{value}");
-    assert_eq!(value["command"], "edit");
-    assert_eq!(value["args"]["action"], "replace");
-    assert!(
-        Cli::try_parse_from([
-            "jubarte",
-            "-qq",
-            "edit",
-            "replace",
-            "f.docx",
-            "--find",
-            "x",
-            "--text",
-            "y",
-            "--dry-run"
-        ])
-        .is_ok()
-    );
-}
-
-#[test]
-fn review_09_no_file_action_plan_spelling_keeps_valid_legacy_grammar() {
-    for action in ["apply", "replace"] {
-        let cli = Cli::try_parse_from(["jubarte", "edit", action, "--plan", "p.json"]).unwrap();
-        let Some(Command::Edit { file, plan, .. }) = cli.command else {
-            panic!("valid legacy grammar wins");
-        };
-        assert_eq!(file, Path::new(action));
-        assert_eq!(plan.as_deref(), Some(Path::new("p.json")));
-    }
-}
-
-#[test]
-fn edit_template_help_names_the_public_route_and_preserves_legacy_filenames() {
-    let help = Cli::try_parse_from(["jubarte", "edit", "template", "--help"])
-        .unwrap_err()
-        .to_string();
-    assert!(help.contains("jubarte edit template"), "{help}");
-    assert!(!help.contains("__edit-template"), "{help}");
-    for forbidden in ["--runs", "run_operation", "--scaffold"] {
-        assert!(!help.contains(forbidden), "{help}");
-    }
-    assert!(
-        Cli::try_parse_from([
-            "jubarte",
-            "edit",
-            "template",
-            "-p",
-            "p0",
-            "--content",
-            "legacy"
-        ])
-        .is_ok()
-    );
-    assert!(
-        Cli::try_parse_from([
-            "jubarte",
-            "edit",
-            "./template",
-            "-p",
-            "p0",
-            "--content",
-            "legacy"
-        ])
-        .is_ok()
-    );
-}
-
-#[test]
-fn read_no_page_markers_accepts_structured_outputs_in_the_shared_parser() {
-    for prefix in [
-        &["read", "source.docx"][..],
-        &["text", "source.docx"],
-        &["source.docx"],
-    ] {
-        for output in [
-            vec!["--json"],
-            vec!["--tables"],
-            vec!["--for-edit"],
-            vec!["-o", "snap.json"],
-        ] {
-            let args = [prefix, &output, &["--no-page-markers"]].concat();
-            let result = parse(&args, &[]);
-            assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
-            assert_eq!(
-                result["args"]["no_page_markers"], true,
-                "{args:?}: {result}"
-            );
-            assert!(Cli::try_parse_from([vec!["jubarte"], args].concat()).is_ok());
-        }
-    }
-}
-
-#[test]
-fn read_view_conflict_usage_is_shared_with_bindings() {
-    let result = parse(
-        &["source.docx", "--track-changes=all", "--for-edit"],
-        &["compare"],
-    );
-    assert_eq!(result["exit_code"], 2, "{result}");
-    assert_eq!(result["stream"], "stderr", "{result}");
-    for prefix in [
-        &["read", "source.docx"][..],
-        &["text", "source.docx"],
-        &["source.docx"],
-    ] {
-        for flags in [
-            vec!["--comments=inline"],
-            vec!["--track-changes=all"],
-            vec!["--dates"],
-        ] {
-            for output in [
-                vec!["--json"],
-                vec!["--tables"],
-                vec!["--for-edit"],
-                vec!["-o", "snap.json"],
-            ] {
-                // Both argument orders, including flags before FILE for shorthand.
-                for args in [
-                    [prefix, &flags, &output].concat(),
-                    [&flags, &output, prefix].concat(),
-                ] {
-                    if args.last() == Some(&"source.docx") && prefix.len() > 1 {
-                        continue;
-                    }
-                    let result = parse(&args, &[]);
-                    // Only --for-edit, which settles through its own
-                    // --accept-change, refuses a view option (#1255).
-                    if flags[0] != "--track-changes=all" || output[0] != "--for-edit" {
-                        assert_eq!(result["exit_code"], 0, "{args:?}: {result}");
-                        continue;
-                    }
-                    assert_eq!(result["exit_code"], 2, "{args:?}: {result}");
-                    assert_eq!(result["stream"], "stderr", "{result}");
-                    let text = result["text"].as_str().unwrap();
-                    assert!(
-                        text.contains("shapes the Markdown view"),
-                        "{args:?}: {text}"
-                    );
-                    assert!(text.contains("has no view; drop"), "{args:?}: {text}");
-                    assert_eq!(
-                        text.lines().find(|line| line.starts_with("Usage:")),
-                        Some("Usage: jubarte-python read [OPTIONS] <FILE>")
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn edit_takes_skip_failed_and_add_does_not() {
-    let result = parse(
-        &[
-            "edit",
-            "a.docx",
-            "--plan",
-            "p.json",
-            "--skip-failed",
-            "-o",
-            "b.docx",
-        ],
-        &[],
-    );
-    assert_eq!(result["exit_code"], 0, "{result}");
-    assert_eq!(result["args"]["skip_failed"], true, "{result}");
-    let result = parse(&["edit", "a.docx", "--plan", "p.json"], &[]);
-    assert_eq!(result["args"]["skip_failed"], false, "{result}");
-    // `add` writes one paragraph or comment: nothing to skip.
-    let result = parse(
-        &[
-            "add",
-            "a.docx",
-            "-p",
-            "p0",
-            "--content",
-            "x",
-            "--skip-failed",
-        ],
-        &[],
-    );
-    assert_ne!(result["exit_code"], 0, "{result}");
 }

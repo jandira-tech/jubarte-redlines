@@ -953,7 +953,7 @@ impl<'a> Face<'a> {
 
     /// The slot's bundled face, whatever this machine has installed.
     #[cfg(test)]
-    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn bundled(id: FaceId) -> Self {
         Self::load(id)
     }
@@ -1695,7 +1695,7 @@ impl<'a> Fonts<'a> {
 
     /// The unremembered lookup `catalogue_slot` must agree with.
     #[cfg(test)]
-    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn get_key(&self, key: &FaceKey) -> &Face<'a> {
         if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
             return self
@@ -1789,7 +1789,7 @@ impl<'a> Fonts<'a> {
     /// then the entry's generic. Unknown names use the evidence table's
     /// Cambria row (plan Step 2d).
     #[cfg(test)]
-    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn resolve_in(
         &self,
         family: &str,
@@ -1801,7 +1801,7 @@ impl<'a> Fonts<'a> {
     }
 
     #[cfg(test)]
-    #[cfg_attr(all(coverage_nightly, test), coverage(off))]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn resolve_in_step(
         &self,
         family: &str,
@@ -3675,7 +3675,7 @@ fn sanitize_pdf_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -5477,7 +5477,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod pure_font_boundary_tests {
     use super::*;
 
@@ -5723,7 +5723,7 @@ mod pure_font_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deeper_boundary_tests {
     use super::*;
 
@@ -6578,7 +6578,7 @@ mod deeper_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_embedded_style_contract_tests {
     use super::*;
 
@@ -6701,7 +6701,7 @@ mod residual_embedded_style_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod memory_discovery_policy_contract_tests {
     use super::*;
     use std::cell::RefCell;
@@ -7089,7 +7089,7 @@ mod memory_discovery_policy_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod cloud_font_memory_owner_tests {
     use super::*;
     use std::cell::RefCell;
@@ -7273,7 +7273,7 @@ mod cloud_font_memory_owner_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod cjk_memory_discovery_source_contract_tests {
     use super::*;
 

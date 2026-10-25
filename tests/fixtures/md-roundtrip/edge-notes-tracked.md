@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 11                      # 3 marks shown as 3 changes: 2 insertions, 1 deletion; 4 in footnotes (8 marks)
+revisions: 11                      # 3 marks shown as 3 changes: 2 insertions, 1 deletion; 8 in footnotes
 comments: 0
 authors:
   document_owner: none             # no docProps/core.xml
@@ -13,14 +13,14 @@ styles:
 ---
 
 <!-- p0 -->
-Added{++[^1]++}{r10 @AL} and cut{--[^2]--}{r20 @AL}.
+Added{++[^1]++}{>>r10 @AL<<} and cut{--[^2]--}{>>r20 @AL<<}.
 
 <!-- p1 -->
-Long{++[^3]++}{r30 @AL}.
+Long{++[^3]++}{>>r30 @AL<<}.
 
 <!-- footnotes.p0 -->
-{++[^1]: An inserted note.++}{r10 @AL} <!-- rev footnotes.r12+11 @AL -->
+{++[^1]: An inserted note.++}{>>r10 @AL<<} <!-- rev footnotes.r11 @AL; footnotes.r12 @AL -->
 <!-- footnotes.p1 -->
-{--[^2]: A deleted note.--}{r20 @AL} <!-- rev-del footnotes.r22+21 @AL -->
+{--[^2]: A deleted note.--}{>>r20 @AL<<} <!-- rev-del footnotes.r21 @AL; footnotes.r22 @AL -->
 <!-- footnotes.p2-p3 -->
-{++[^3]: Two paragraphs,<br>inserted.++}{r30 @AL} <!-- rev footnotes.r32+31 @AL; footnotes.r34+33 @AL -->
+{++[^3]: Two paragraphs,<br>inserted.++}{>>r30 @AL<<} <!-- rev footnotes.r31 @AL; footnotes.r32 @AL; footnotes.r33 @AL; footnotes.r34 @AL -->

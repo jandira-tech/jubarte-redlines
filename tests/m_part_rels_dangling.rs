@@ -105,7 +105,7 @@ fn dangling_refs(docx: &[u8]) -> Vec<String> {
         let mut f = zip.by_index(i).unwrap();
         let mut s = String::new();
         if f.read_to_string(&mut s).is_ok() {
-            parts.insert(f.name().expect("decode ZIP fixture name").into_owned(), s);
+            parts.insert(f.name().to_string(), s);
         }
     }
     let mut out = Vec::new();
@@ -235,13 +235,7 @@ fn footnotes_from_the_revised_document_keep_their_hyperlink_rels() {
 fn unresolved_targets(docx: &[u8]) -> Vec<String> {
     let mut zip = zip::ZipArchive::new(Cursor::new(docx.to_vec())).unwrap();
     let names: HashSet<String> = (0..zip.len())
-        .map(|i| {
-            zip.by_index(i)
-                .unwrap()
-                .name()
-                .expect("decode ZIP fixture name")
-                .into_owned()
-        })
+        .map(|i| zip.by_index(i).unwrap().name().to_string())
         .collect();
     let mut out = Vec::new();
     let mut rels: Vec<&String> = names.iter().filter(|n| n.ends_with(".rels")).collect();

@@ -15,7 +15,7 @@ const MAX_SIDE: usize = 384;
 const WHITE: [u8; 3] = [255, 255, 255];
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn rasterize(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     render(bytes).map(|(w, h, rgb, _)| (w, h, rgb))
 }
@@ -1083,7 +1083,7 @@ fn read_emf_points(data: &[u8], off: usize, size: usize, pts16: bool) -> Option<
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod hostile_input_tests {
     //! CR PR#4 review: crafted WMF/EMF must terminate quickly without
     //! panicking — coordinate spans and record sizes are attacker-chosen.
@@ -1171,7 +1171,7 @@ mod hostile_input_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod emf_text_tests {
     //! Strict01 OLE previews (image2.emf / image3.emf) store the Excel
     //! grid as EMR_EXTTEXTOUTW digits. Skipping those records leaves
@@ -1249,7 +1249,7 @@ mod emf_text_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod emf_path_tests {
     //! fixtures_500 000ebd12: the Riksdag header logo is an EMF of filled
     //! Bézier paths (BEGINPATH … POLYBEZIERTO16 … FILLPATH) under a
@@ -1538,7 +1538,7 @@ mod emf_path_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod wmf_object_tests {
     //! English corpus b88ac900: the kennel logo's clipart is a placeable
     //! WMF of META_POLYPOLYGON records selecting brushes by 0-based
@@ -1903,7 +1903,7 @@ mod wmf_object_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod coverage_boundary_tests {
     use super::*;
 
@@ -2111,7 +2111,7 @@ mod coverage_boundary_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod residual_current_point_contract_tests {
     use super::*;
 

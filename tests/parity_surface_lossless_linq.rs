@@ -198,7 +198,7 @@ fn wml_opc_strict_surface() {
     let pkg = PartFs::open(ORIGINAL).expect("PartFs::open");
     assert!(pkg.main_document_part().is_some() || pkg.part_string("word/document.xml").is_some());
 
-    let transitional = strict_translation::strict_to_transitional_docx(ORIGINAL).unwrap();
+    let transitional = strict_translation::strict_to_transitional_docx(ORIGINAL);
     assert!(!transitional.is_empty());
     PartFs::open(&transitional).expect("strict output still a package");
 }

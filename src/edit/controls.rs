@@ -14,7 +14,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::tracked::{COMMENT_RANGE_END, RANGE_ENDS, RANGE_STARTS};
 use super::{
     EditError, EditOutcome, ExistingRevisions, Resolution, Resolved, Transaction, check_text, err,
     excerpt,
@@ -23,7 +22,7 @@ use crate::namespaces::{W, W14};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 /// Which content control to fill; every form must match exactly one.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum ControlSelector {
     /// `"p3.cc0"` or `"cc1"`, the same as `{"id": "p3.cc0"}`.
@@ -87,7 +86,6 @@ impl Transaction<'_> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -223,9 +221,6 @@ impl Transaction<'_> {
         };
         let (what, hits): (String, Vec<usize>) = match selector {
             ControlSelector::Name(given) | ControlSelector::Id { id: given } => {
-                if let Some(refused) = super::origin::source_only(given) {
-                    return Err(("ANCHOR_NOT_FOUND", refused, 0));
-                }
                 // The spec's cell spelling `t0.row1.cell2.cc0` names a
                 // control of the cell's first paragraph, `p40.cc0`.
                 let spelled = self.cell_control(given);
@@ -559,10 +554,13 @@ fn fill(dom: &mut Dom, sdt: NodeId, block: bool, value: &FillValue) {
     write_content(dom, content, block, rpr, &text);
 }
 
+/// Range markers a fill carries over: starts go before the new run, ends
+/// after it, so bookmarks, comment ranges and permissions keep both halves.
+const RANGE_STARTS: &[&str] = &["bookmarkStart", "commentRangeStart", "permStart"];
+const RANGE_ENDS: &[&str] = &["bookmarkEnd", "commentRangeEnd", "permEnd"];
+
 /// The range markers under `content`, detached: `(starts, ends)` in
-/// document order. A fill puts the starts before its new run and the ends
-/// after it, so bookmarks, comment ranges, permissions and move ranges keep
-/// both halves: the markers an insertion beside them reads (#1156).
+/// document order.
 fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeId>) {
     let (mut starts, mut ends) = (Vec::new(), Vec::new());
     for node in dom.descendants(content, None) {
@@ -572,8 +570,7 @@ fn take_range_markers(dom: &mut Dom, content: NodeId) -> (Vec<NodeId>, Vec<NodeI
         }
         if RANGE_STARTS.contains(&name.local_name()) {
             starts.push(node);
-        } else if RANGE_ENDS.contains(&name.local_name()) || name.local_name() == COMMENT_RANGE_END
-        {
+        } else if RANGE_ENDS.contains(&name.local_name()) {
             ends.push(node);
         }
     }
@@ -765,7 +762,7 @@ fn format_date(pattern: &str, y: i32, m: u32, d: u32) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -801,7 +798,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod control_source_boundary_tests {
     use super::*;
     use crate::edit::{EditPlan, apply_plan, preview_plan};

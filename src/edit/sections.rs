@@ -22,9 +22,7 @@ use crate::xmllinq::{Dom, NodeId};
 use super::{EditError, EditOutcome, Transaction, err};
 
 /// Which sections a [`super::OperationKind::PageSetup`] changes.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SectionScope {
     /// The document's last section (the body's final `w:sectPr`).
@@ -35,7 +33,7 @@ pub enum SectionScope {
 }
 
 /// A paper size, by name or in twentieths of a point.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PageSize {
     /// A named paper size; the orientation orders its sides.
@@ -45,7 +43,7 @@ pub enum PageSize {
 }
 
 /// Named paper sizes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Paper {
     /// US Letter, 8.5 x 11 inches.
@@ -55,19 +53,17 @@ pub enum Paper {
 }
 
 /// A custom page size in twentieths of a point (1440 per inch).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomPage {
     /// Page width in twentieths of a point, 1 to 31_680 (22 inches).
-    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub width_dxa: u32,
     /// Page height in twentieths of a point, 1 to 31_680 (22 inches).
-    #[schemars(range(min = 1, max = MAX_SIDE))]
     pub height_dxa: u32,
 }
 
 /// Page orientation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Orientation {
     /// Taller than wide.
@@ -79,33 +75,25 @@ pub enum Orientation {
 /// Page margins in twentieths of a point; fields not given keep the
 /// section's. Top and bottom may be negative, as in Word: text then ignores
 /// the header or footer.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Margins {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = -31_680, max = MAX_SIDE))]
     /// Top margin in twentieths of a point.
     pub top: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Right margin in twentieths of a point.
     pub right: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = -31_680, max = MAX_SIDE))]
     /// Bottom margin in twentieths of a point.
     pub bottom: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Left margin in twentieths of a point.
     pub left: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Distance from the page top to the header, in twentieths of a point.
     pub header: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(range(min = 0, max = MAX_SIDE))]
     /// Distance from the page bottom to the footer, in twentieths of a
     /// point.
     pub footer: Option<u32>,
@@ -527,7 +515,7 @@ pub(super) fn targets_overlap(a: &Targets, b: &Targets) -> bool {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -639,7 +627,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod mid_section_authored_history_boundary_tests {
     use super::*;
     use crate::opc::PartFs;

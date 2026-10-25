@@ -10,8 +10,8 @@ mod common;
 use common::docx::{Part, docx, docx_with_sect, part_string};
 use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::changes::{
-    Change, ChangeError, ChangeFilter, ChangeKind, MoveSide, accept_changes, accept_elements,
-    list_changes, list_logical_changes, reject_changes, reject_elements,
+    Change, ChangeError, ChangeFilter, ChangeKind, MoveSide, accept_changes, list_changes,
+    reject_changes,
 };
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use std::collections::HashSet;
@@ -164,11 +164,9 @@ fn a_move_resolves_both_sides() {
     assert_eq!(ids(&out), ["r14"]);
 }
 
-/// A paragraph mark's own insertion is an element of its own, and one
-/// change with the paragraph's inserted text (plan 11): settling the text
-/// alone takes the element API.
+/// A paragraph mark's own insertion is a change of its own.
 #[test]
-fn an_inserted_paragraph_mark_is_its_own_element_of_its_paragraphs_change() {
+fn an_inserted_paragraph_mark_is_its_own_change() {
     let pkg = docx(&format!(
         r#"<w:p><w:pPr><w:rPr><w:ins w:id="5" {A}/></w:rPr></w:pPr><w:ins w:id="6" {A}><w:r><w:t>First</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>Second</w:t></w:r></w:p>"#
     ));
@@ -176,19 +174,9 @@ fn an_inserted_paragraph_mark_is_its_own_element_of_its_paragraphs_change() {
     assert_eq!(listed.len(), 2);
     assert_eq!(listed[0].target, "paragraph_mark");
     assert_eq!(listed[1].target, "text");
-    let logical = list_logical_changes(&pkg).unwrap();
-    assert_eq!(logical.len(), 1, "{logical:#?}");
-    assert_eq!(logical[0].id, "r6+5");
-    assert!(matches!(
-        reject_changes(&pkg, &filter_ids(&["r6"])),
-        Err(ChangeError::PartOfChange { ref whole, .. }) if whole == "r6+5"
-    ));
-    let out = reject_elements(&pkg, &filter_ids(&["r6"])).unwrap();
+    let out = reject_changes(&pkg, &filter_ids(&["r6"])).unwrap();
     assert_word_valid_package(&out);
     assert_eq!(ids(&out), ["r5"]);
-    let whole = reject_changes(&pkg, &filter_ids(&["r6+5"])).unwrap();
-    assert_word_valid_package(&whole);
-    assert!(ids(&whole).is_empty());
 }
 
 #[test]
@@ -244,257 +232,6 @@ fn bench() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
 }
 
-/// Owner, record type, id and payload (without id), in stylesheet order.
-fn style_histories(pkg: &[u8]) -> Vec<(String, String, String, String)> {
-    use jubarte::namespaces::W;
-    use jubarte::xmllinq::Dom;
-    let Some(xml) = part_string(pkg, "word/styles.xml") else {
-        return Vec::new();
-    };
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let mut out = Vec::new();
-    for style in dom.elements(root, Some(&W::name("style"))) {
-        let owner = dom
-            .attribute(style, &W::name("styleId"))
-            .unwrap()
-            .to_string();
-        for node in dom.descendants(style, None) {
-            let Some(name) = dom.name(node) else { continue };
-            if name.namespace_name() != W::URI
-                || !matches!(name.local_name(), "rPrChange" | "pPrChange")
-            {
-                continue;
-            }
-            let id = dom.attribute(node, &W::id()).unwrap().to_string();
-            let copy = dom.clone_subtree(node);
-            dom.set_attribute_value(copy, &W::id(), None);
-            out.push((
-                owner.clone(),
-                name.local_name().to_string(),
-                id,
-                dom.serialize_element(copy),
-            ));
-        }
-    }
-    out
-}
-
-/// A copied history is a new change; it must be fresh, preserve a retained
-/// source history's payload, and leave that source history's id intact.
-fn fresh_style_copies(before: &[u8], after: &[u8], selected: &ChangeFilter) -> HashSet<String> {
-    let old = style_histories(before);
-    let new = style_histories(after);
-    let max_id = list_changes(before)
-        .unwrap()
-        .iter()
-        .map(|c| c.id.rsplit('r').next().unwrap().parse::<u64>().unwrap())
-        .max()
-        .unwrap_or(0);
-    let selected_ids: HashSet<String> = list_changes(before)
-        .unwrap()
-        .into_iter()
-        .filter(|c| selected.matches(c))
-        .map(|c| c.id)
-        .collect();
-    let mut copies = HashSet::new();
-    for (owner, kind, id, payload) in &new {
-        if old
-            .iter()
-            .any(|r| &r.0 == owner && &r.1 == kind && &r.2 == id)
-        {
-            continue;
-        }
-        assert!(
-            id.parse::<u64>().unwrap() > max_id,
-            "copied {owner}/{kind}:{id} must be package-fresh (> {max_id})"
-        );
-        assert!(
-            old.iter().any(|source| {
-                &source.1 == kind
-                    && &source.3 == payload
-                    && !selected_ids.contains(&format!("styles.r{}", source.2))
-                    && new.contains(source)
-            }),
-            "copied {owner}/{kind}:{id} must keep a retained source history intact"
-        );
-        copies.insert(format!("styles.r{id}"));
-    }
-    copies
-}
-
-#[test]
-fn rejecting_alternate_changes_allocates_fresh_style_history_ids() {
-    // Smallest of the 11 failing redlines in the 200-input selection: 23,013 bytes.
-    let redline = std::fs::read(bench().join("corpus/word/tracking_without_comments/docx/83799a0610__vs__333bfe069a_redline_2a068b16e5.docx")).unwrap();
-    let assert_unique = |pkg: &[u8]| {
-        let records = style_histories(pkg);
-        let mut seen = HashSet::new();
-        for (owner, kind, id, _) in records {
-            assert!(
-                seen.insert((kind.clone(), id.clone())),
-                "duplicate {kind}:{id} in word/styles.xml at {owner}"
-            );
-        }
-    };
-    assert_unique(&redline);
-    let listed = list_changes(&redline).unwrap();
-    let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
-    let partial = reject_elements(&redline, &half).unwrap();
-    assert_unique(&partial);
-    let copies = fresh_style_copies(&redline, &partial, &half);
-    assert_eq!(
-        copies.len(),
-        1,
-        "Heading7Char inherits Normal's kept run history"
-    );
-    let after = style_histories(&partial);
-    for record in style_histories(&redline) {
-        if !half.matches(
-            listed
-                .iter()
-                .find(|c| c.id == format!("styles.r{}", record.2))
-                .unwrap(),
-        ) {
-            assert!(
-                after.contains(&record),
-                "untouched history changed: {record:?}"
-            );
-        }
-    }
-    assert_word_valid_package(&partial);
-    let finished = reject_changes(&partial, &ChangeFilter::default()).unwrap();
-    assert!(list_changes(&finished).unwrap().is_empty());
-    let texts = |pkg: &[u8]| {
-        jubarte::inspect::paragraphs(pkg)
-            .unwrap()
-            .into_iter()
-            .map(|p| p.text)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        texts(&finished),
-        texts(&reject_revisions(&redline).unwrap())
-    );
-}
-
-#[test]
-fn half_way_style_reject_ignores_div_and_bookmark_ids() {
-    use jubarte::opc::PartFs;
-    let redline = std::fs::read(bench().join("corpus/word/tracking_without_comments/docx/83799a0610__vs__333bfe069a_redline_2a068b16e5.docx")).unwrap();
-    let mut pkg = PartFs::open(&redline).unwrap();
-    pkg.set_part("word/webSettings.xml", br#"<w:webSettings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:divs><w:div w:id="2147483647"/></w:divs></w:webSettings>"#.to_vec());
-    let mut xml = pkg.part_string("word/document.xml").unwrap();
-    let first_p = xml.find("<w:p ").or_else(|| xml.find("<w:p>")).unwrap();
-    let at = first_p + xml[first_p..].find('>').unwrap() + 1;
-    xml.insert_str(
-        at,
-        r#"<w:bookmarkStart w:id="900000" w:name="Alice"/><w:bookmarkEnd w:id="900000"/>"#,
-    );
-    pkg.set_part("word/document.xml", xml.into_bytes());
-    let redline = pkg.to_zip().unwrap();
-    let listed = list_changes(&redline).unwrap();
-    let max_id = listed
-        .iter()
-        .map(|c| c.id.rsplit('r').next().unwrap().parse::<u64>().unwrap())
-        .max()
-        .unwrap();
-    let half = ChangeFilter::ids(listed.iter().step_by(2).map(|c| c.id.clone()));
-    let partial = reject_elements(&redline, &half).unwrap();
-    let old = style_histories(&redline);
-    let after = style_histories(&partial);
-    let copies: Vec<_> = after.iter().filter(|r| !old.contains(r)).collect();
-    assert_eq!(copies.len(), 1, "Heading7Char inherits Normal's history");
-    let bound = max_id + copies.len() as u64;
-    for (_, _, id, _) in &after {
-        let id = id.parse::<u64>().unwrap();
-        assert!(
-            id <= bound && id <= 2147483647,
-            "style revision id {id} exceeds input revision max {max_id} + {} new records (bound {bound}) or signed 32-bit range",
-            copies.len()
-        );
-    }
-    assert_eq!(fresh_style_copies(&redline, &partial, &half).len(), 1);
-    assert_word_valid_package(&partial);
-}
-
-/// The last signed id can be allocated once; subsequent copies use the
-/// lowest unused revision ids, reserving records in other parts as well.
-#[test]
-fn style_history_id_overflow_uses_lowest_unused_package_ids() {
-    check_style_history_id_limit(2147483647);
-}
-
-#[test]
-fn style_history_id_allocation_crosses_signed_limit_safely() {
-    check_style_history_id_limit(2147483646);
-}
-
-fn check_style_history_id_limit(max_id: u64) {
-    let styles = format!(
-        r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:b/><w:rPrChange w:id="{max_id}" w:author="Alice" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Heading7"><w:name w:val="heading 7"/><w:basedOn w:val="Normal"/><w:link w:val="AliceChar"/><w:rPr><w:i/><w:rPrChange w:id="1" w:author="Bob" w:date="2026-01-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:style>
-<w:style w:type="character" w:styleId="AliceChar"><w:name w:val="Alice"/><w:link w:val="Heading7"/></w:style>
-<w:style w:type="paragraph" w:styleId="CarolPara"><w:name w:val="Carol Diaz"/><w:basedOn w:val="Heading7"/><w:link w:val="CarolChar"/></w:style>
-<w:style w:type="character" w:styleId="CarolChar"><w:name w:val="Carol Diaz Char"/><w:basedOn w:val="AliceChar"/><w:link w:val="CarolPara"/></w:style>
-</w:styles>"#
-    );
-    let source = docx_with_sect(
-        r#"<w:p><w:pPr><w:pStyle w:val="Heading7"/></w:pPr><w:r><w:t>Alice and Bob</w:t></w:r></w:p>"#,
-        &[
-            Part {
-                name: "word/styles.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
-                xml: &styles,
-            },
-            Part {
-                name: "word/header1.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
-                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
-                xml: r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:ins w:id="0" w:author="Carol Diaz" w:date="2026-01-01T00:00:00Z"><w:r><w:t>Header</w:t></w:r></w:ins></w:p></w:hdr>"#,
-            },
-        ],
-        r#"<w:headerReference w:type="default" r:id="rIdX1"/>"#,
-    );
-    let partial = reject_changes(&source, &filter_ids(&["styles.r1"])).unwrap();
-    let before = style_histories(&source);
-    let after = style_histories(&partial);
-    let mut copies: Vec<_> = after
-        .iter()
-        .filter(|r| !before.contains(r))
-        .map(|r| r.2.parse::<u64>().unwrap())
-        .collect();
-    copies.sort_unstable();
-    assert!(
-        copies.iter().all(|&id| id <= 2147483647),
-        "copied revision ids {copies:?} exceed signed 32-bit range with input max {max_id}"
-    );
-    let expected = if max_id == 2147483647 {
-        vec![2, 3]
-    } else {
-        vec![2, 2147483647]
-    };
-    assert_eq!(
-        copies, expected,
-        "use max + 1 until exhausted, then the lowest unused ids"
-    );
-    assert!(
-        after
-            .iter()
-            .any(|r| r.0 == "Normal" && r.2 == max_id.to_string()),
-        "retained history id must not change"
-    );
-    assert!(
-        part_string(&partial, "word/header1.xml")
-            .unwrap()
-            .contains(r#"w:id="0""#)
-    );
-    assert_word_valid_package(&partial);
-}
-
 /// On Word's own redlines (the bench's `rejected_tracking` set): resolving every other change first and the rest after ends
 /// where resolving them all at once does, and the half-way document is
 /// Word-valid with every unselected id still listed.
@@ -534,10 +271,10 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
         for (name, one, all) in [
             (
                 "accept",
-                accept_elements as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
+                accept_changes as fn(&[u8], &ChangeFilter) -> Result<Vec<u8>, ChangeError>,
                 accept_revisions as fn(&[u8]) -> Result<Vec<u8>, _>,
             ),
-            ("reject", reject_elements, reject_revisions),
+            ("reject", reject_changes, reject_revisions),
         ] {
             pairs += 1;
             let partial = one(&redline, &first).unwrap();
@@ -584,7 +321,6 @@ fn resolving_in_two_halves_ends_where_resolving_all_does() {
                 .iter()
                 .filter(|c| !selected(c) && !swept(c))
                 .map(|c| c.id.clone())
-                .chain(fresh_style_copies(&redline, &partial, &first))
                 .collect();
             // A note goes with a reference its resolved change removed, a
             // header or footer with the section a resolved mark ended.
@@ -1121,111 +857,4 @@ fn nested_alternate_content_copies_join_one_change() {
     let xml = part_string(&accepted, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:ins "), "every copy resolves: {xml}");
     assert_eq!(xml.matches(">Grouped<").count(), 3, "{xml}");
-}
-
-// ───────────────────────── #1223: revisions inside comment bodies ──────────
-
-#[path = "common/comment_revisions.rs"]
-mod comment_revisions;
-
-/// One body insertion by Ann, and one comment holding an insertion and a
-/// deletion by Bob.
-fn commented_body() -> Vec<u8> {
-    let body = format!(
-        r#"<w:p>{}<w:ins w:id="1" {A}><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#,
-        comment_revisions::anchor(0, "anchor")
-    );
-    let comment = comment_revisions::comment(
-        0,
-        "Alice",
-        r#"<w:p w14:paraId="00000001"><w:ins w:id="20" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:t xml:space="preserve">in </w:t></w:r></w:ins><w:del w:id="21" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText xml:space="preserve">out </w:delText></w:r></w:del><w:r><w:t>rest</w:t></w:r></w:p>"#,
-    );
-    comment_revisions::docx(&body, &[comment])
-}
-
-/// `word/comments.xml` as text (panics when the part is gone).
-fn comments_xml(pkg: &[u8]) -> String {
-    part_string(pkg, "word/comments.xml").unwrap()
-}
-
-/// #1223: `jubarte changes` (and the view) still names no revision inside a
-/// comment body; accept/reject all settles them anyway.
-#[test]
-fn comment_body_changes_stay_unlisted() {
-    assert_eq!(ids(&commented_body()), ["r1"]);
-    let accepted = accept_changes(&commented_body(), &ChangeFilter::default()).unwrap();
-    let xml = comments_xml(&accepted);
-    assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
-}
-
-/// #1223: `--id` cannot name a comment-body revision; selecting a body
-/// change leaves the comment's revisions tracked.
-#[test]
-fn an_id_selection_leaves_comment_body_changes() {
-    let accepted = accept_changes(&commented_body(), &filter_ids(&["r1"])).unwrap();
-    assert_word_valid_package(&accepted);
-    let xml = comments_xml(&accepted);
-    assert!(
-        xml.contains(r#"<w:ins w:id="20""#) && xml.contains(r#"<w:del w:id="21""#),
-        "comment revisions left tracked: {xml}"
-    );
-    // A comment-story id names no listed change.
-    let err = accept_changes(&commented_body(), &filter_ids(&["comments.r20"])).unwrap_err();
-    assert!(
-        matches!(&err, ChangeError::UnknownChange(id) if id == "comments.r20"),
-        "{err:?}"
-    );
-}
-
-/// #1223: an author or kind filter reaches comment bodies — "every change
-/// by Bob" includes the ones inside his comments.
-#[test]
-fn author_and_kind_filters_resolve_comment_body_changes() {
-    let bob = ChangeFilter {
-        authors: Some(vec!["Bob".into()]),
-        ..Default::default()
-    };
-    let accepted = accept_changes(&commented_body(), &bob).unwrap();
-    assert_word_valid_package(&accepted);
-    let xml = comments_xml(&accepted);
-    assert_eq!(xml.matches("<w:ins ").count(), 0, "{xml}");
-    assert_eq!(xml.matches("<w:del ").count(), 0, "{xml}");
-    assert!(xml.contains(">in ") && !xml.contains("out"), "{xml}");
-    // Ann's body insertion was not selected.
-    let doc = part_string(&accepted, "word/document.xml").unwrap();
-    assert!(doc.contains(r#"<w:ins w:id="1""#), "{doc}");
-
-    let deletions = ChangeFilter {
-        kinds: Some(vec![ChangeKind::Deletion]),
-        ..Default::default()
-    };
-    let rejected = reject_changes(&commented_body(), &deletions).unwrap();
-    let xml = comments_xml(&rejected);
-    assert!(
-        !xml.contains(r#"<w:del w:id="21""#) && xml.contains(">out "),
-        "comment deletion restored: {xml}"
-    );
-    assert!(xml.contains(r#"<w:ins w:id="20""#), "insertion kept: {xml}");
-}
-
-/// #1223: the CLI says how many comment-body revisions a selection left.
-#[test]
-fn cli_id_selection_reports_comment_body_changes_left() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("input.docx"), commented_body()).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .current_dir(dir.path())
-        .args(["accept", "input.docx", "--id", "r1", "-o", "settled.docx"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("2 tracked changes inside comments were left"),
-        "{stderr}"
-    );
 }

@@ -10,6 +10,6 @@ Start {==of a long range.==}
 
 {>>Dev Patel (2026-10-01T00:25:00Z): A point comment at the start<<}Point at start, {==an empty comment==}{>>Émile Zola-Ng (2026-10-01T00:20:00Z)<<}, and at the end.{>>Dev Patel (2026-10-01T00:30:00Z): Last word<<}
 
-A comment on {--deleted text--}{r0 Bo Chen (2026-10-01T00:35:00Z)}{>>Carla Duarte (2026-10-01T00:40:00Z): Why delete?<<} and on {++{==inserted text==}++}{r1 Ana Lima (2026-10-01T00:45:00Z)}{>>Carla Duarte (2026-10-01T00:50:00Z): Good.<<}.
+A comment on {--deleted text--}{>>r0 Bo Chen (2026-10-01T00:35:00Z)<<}{>>Carla Duarte (2026-10-01T00:40:00Z): Why delete?<<} and on {++{==inserted text==}++}{>>r1 Ana Lima (2026-10-01T00:45:00Z)<<}{>>Carla Duarte (2026-10-01T00:50:00Z): Good.<<}.
 
 {==A whole paragraph under one comment.==}{>>Carla Duarte (2026-10-01T00:55:00Z): Whole paragraph<<}

@@ -19,13 +19,13 @@ from .models import (
     AuditFinding,
     Change,
     Comment,
+    ChangeKind,
     CompareOptions,
     Diff,
     EditOutcome,
     EditPlan,
     EditReport,
     FieldUpdate,
-    FilterKind,
     Finding,
     PdfOptions,
     RenderDiff,
@@ -185,7 +185,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[FilterKind] | None = None,
+        kinds: Sequence[ChangeKind] | None = None,
     ) -> Document:
         """Return a new document accepting tracked changes, as Word does.
 
@@ -230,7 +230,7 @@ class Document:
         *,
         ids: Sequence[str] | None = None,
         authors: Sequence[str] | None = None,
-        kinds: Sequence[FilterKind] | None = None,
+        kinds: Sequence[ChangeKind] | None = None,
     ) -> Document:
         """Return a new document rejecting tracked changes (selection as in
         ``accept``; none rejects every change)."""
@@ -429,23 +429,9 @@ class Document:
         """Every text change against ``original`` must be a revision by ``author``.
 
         Rejecting that author's changes must give ``original``'s text back;
-        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding.
-        A foreign revision added, changed or removed against ``original`` is a
-        ``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
-        paragraphs align by full text, including deleted text, within each story.
-        An untracked paragraph merge or split around another author's revisions
-        reports those revisions as new and gone alongside ``UNTRACKED_EDIT``.
-        Groups with the same author, kind, target, date and move side are compared
-        in document order within the aligned paragraph or non-paragraph owner
-        (for example, a style id). Revision ids do not define identity. Split
-        carriers combine only when they touch, with no visible content or
-        still-present revision between them. A boundary explained solely by a
-        missing separator revision adds no finding beyond that separator. Changed
-        revisions say ``differs from the original``; new revisions say ``is new``.
-        These messages name ids and authors, never revision text. A permission
-        endpoint of ``original`` that the edit lost, in any story, is a
-        ``PERMISSION_RANGE_DROPPED`` finding.
-        An empty tuple means every edit is tracked.
+        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
+        another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
+        means every edit is tracked.
         """
         before = original.to_bytes() if isinstance(original, Document) else original
         return _decode_findings_json(_native.audit_tracked_json(before, self._data, author))
@@ -591,9 +577,7 @@ def diff(
 ) -> Diff:
     """The changes from ``old`` to ``new``: the changed paragraphs, each at
     its ``pN`` id in a Word document or ``line:N`` in Markdown, with
-    ``[-old-]{+new+}`` changes and CriticMarkup comments. When a side is a
-    Word document, a replacement inside a paragraph reads insertion first,
-    ``{+new+}[-old-]``, as Word Compare writes it.
+    ``[-old-]{+new+}`` changes and CriticMarkup comments.
 
     Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
     or a path (``.md``/``.markdown`` read as Markdown, anything else as
@@ -650,14 +634,10 @@ def _side(side: object, default: str) -> tuple[bytes | str, str]:
     raise TypeError("each side must be a Document, bytes, Markdown text or a path")
 
 
-def capabilities(
-    *, operation: str | None = None, field: str | None = None, matrix: bool = False
-) -> dict[str, object]:
-    """Task manifest, focused edit syntax, or support matrix for this Python build."""
+def capabilities() -> dict[str, object]:
+    """What this build can do (``runtime: "python"``), as a plain dict."""
     import json
 
-    if matrix or operation is not None or field is not None:
-        return json.loads(_native.capability_query(operation, field))
     return json.loads(_native.capabilities_json())
 
 

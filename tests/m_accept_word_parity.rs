@@ -240,11 +240,10 @@ fn count(xml: &str, needle: &str) -> usize {
 
 /// R1: a comment whose reference is deleted goes with it — its anchors, its
 /// comments.xml entry and its commentsExtended/Ids/Extensible entries
-/// (29e3872eed, 145b9e67e2, 92075b7449, 01f3deda92). The comments left keep
-/// their ids, where Word numbers them 0, 1, … in document order (R5; #1264,
-/// `docs/WORD_DIFFERENCES.md`).
+/// (29e3872eed, 145b9e67e2, 92075b7449, 01f3deda92). The comments left are
+/// numbered 0, 1, … in document order (R5).
 #[test]
-fn accept_drops_comments_in_deleted_text_and_keeps_the_rest() {
+fn accept_drops_comments_in_deleted_text_and_renumbers_the_rest() {
     let body = format!(
         "<w:p>{}<w:r><w:t> and </w:t></w:r>{}</w:p><w:p>{}</w:p>",
         commented(7, "kept"),
@@ -270,16 +269,16 @@ fn accept_drops_comments_in_deleted_text_and_keeps_the_rest() {
     ] {
         assert_eq!(count(&doc, &format!("<w:{tag} ")), n, "{tag} in {doc}");
     }
-    // Document order is 7 then 5, and both keep their ids (Word: 0, 1).
+    // Document order is 7 then 5: old 7 → 0, old 5 → 1.
     let first = doc
-        .find(r#"w:commentReference w:id="7""#)
-        .expect("7 stays 7");
+        .find(r#"w:commentReference w:id="0""#)
+        .expect("7 renumbered to 0");
     let second = doc
-        .find(r#"w:commentReference w:id="5""#)
-        .expect("5 stays 5");
+        .find(r#"w:commentReference w:id="1""#)
+        .expect("5 renumbered to 1");
     assert!(first < second, "{doc}");
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
-    assert!(comments.contains(r#"w:id="7" w:author="Cy""#), "{comments}");
+    assert!(comments.contains(r#"w:id="0" w:author="Cy""#), "{comments}");
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
     assert_eq!(count(&comments, "<w:comment "), 2, "{comments}");
     assert!(
@@ -337,7 +336,7 @@ fn accept_drops_the_comment_parts_when_no_comment_is_left() {
 }
 
 /// Reject All mirrors R1: a comment whose reference sits in rejected
-/// (inserted) text goes, and the rest keep their ids.
+/// (inserted) text goes, and the rest are renumbered.
 #[test]
 fn reject_drops_comments_in_inserted_text() {
     let inserted = r#"<w:commentRangeStart w:id="4"/><w:ins w:id="94" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r><w:r><w:commentReference w:id="4"/></w:r></w:ins><w:commentRangeEnd w:id="4"/>"#;
@@ -355,8 +354,8 @@ fn reject_drops_comments_in_inserted_text() {
     let doc = part_string(&rejected, "word/document.xml").unwrap();
     assert_eq!(count(&doc, "<w:commentReference "), 1, "{doc}");
     assert!(
-        doc.contains(r#"w:commentReference w:id="9""#),
-        "9 stays 9: {doc}"
+        doc.contains(r#"w:commentReference w:id="0""#),
+        "9 renumbered to 0: {doc}"
     );
     let comments = part_string(&rejected, "word/comments.xml").unwrap();
     assert!(
@@ -402,7 +401,7 @@ fn an_empty_bookmark_inside_deleted_text_survives_accept() {
     assert_word_valid_package(&accepted);
     assert_eq!(
         bookmarks(&accepted),
-        [("Anchor".to_string(), "40".to_string())]
+        [("Anchor".to_string(), "0".to_string())]
     );
     let doc = part_string(&accepted, "word/document.xml").unwrap();
     let (b, a) = (
@@ -445,17 +444,15 @@ fn a_partly_deleted_bookmark_keeps_both_markers() {
     assert_word_valid_package(&accepted);
     assert_eq!(
         bookmarks(&accepted),
-        [("Part".to_string(), "9".to_string())]
+        [("Part".to_string(), "0".to_string())]
     );
 }
 
-/// R5: after Accept All, Word numbers bookmarks and comments from one
-/// counter, dense and in document order (2288f27be1: comments 0 1,
-/// bookmarks 2–6, comments 7 8; d6b1d609c1 interleaves them). jubarte keeps
-/// every id instead, in the same order (#1264, `docs/WORD_DIFFERENCES.md`):
-/// Word would write First 1, Second 2, and the comments 0 and 3.
+/// R5: after Accept All, bookmarks and comments share one id counter, dense
+/// and in document order (2288f27be1: comments 0 1, bookmarks 2–6, comments
+/// 7 8; d6b1d609c1 interleaves them).
 #[test]
-fn accept_keeps_bookmark_and_comment_ids_where_word_renumbers() {
+fn accept_numbers_bookmarks_and_comments_in_one_document_order_counter() {
     let body = format!(
         r#"<w:p>{}<w:bookmarkStart w:id="84" w:name="First"/><w:r><w:t>x</w:t></w:r><w:bookmarkEnd w:id="84"/><w:ins w:id="1" {REV}><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:p><w:bookmarkStart w:id="12" w:name="Second"/><w:bookmarkEnd w:id="12"/>{}</w:p>"#,
         commented(38, "a"),
@@ -474,12 +471,12 @@ fn accept_keeps_bookmark_and_comment_ids_where_word_renumbers() {
     assert_eq!(
         bookmarks(&accepted),
         [
-            ("First".to_string(), "84".to_string()),
-            ("Second".to_string(), "12".to_string())
+            ("First".to_string(), "1".to_string()),
+            ("Second".to_string(), "2".to_string())
         ]
     );
     let doc = part_string(&accepted, "word/document.xml").unwrap();
-    for (old, new) in [("a", "38"), ("b", "2")] {
+    for (old, new) in [("a", "0"), ("b", "3")] {
         let at = doc.find(&format!("<w:t>{old}</w:t>")).unwrap();
         let start = doc[..at].rfind("commentRangeStart").unwrap();
         assert!(
@@ -489,8 +486,8 @@ fn accept_keeps_bookmark_and_comment_ids_where_word_renumbers() {
     }
     let comments = part_string(&accepted, "word/comments.xml").unwrap();
     assert!(
-        comments.contains(r#"w:id="38" w:author="Cy""#)
-            && comments.contains(r#"w:id="2" w:author="Bo""#),
+        comments.contains(r#"w:id="0" w:author="Cy""#)
+            && comments.contains(r#"w:id="3" w:author="Bo""#),
         "{comments}"
     );
 }
@@ -506,7 +503,7 @@ fn reject_drops_a_bookmark_over_wholly_inserted_text() {
     assert_word_valid_package(&rejected);
     assert_eq!(
         bookmarks(&rejected),
-        [("Empty".to_string(), "6".to_string())]
+        [("Empty".to_string(), "0".to_string())]
     );
 }
 
@@ -595,629 +592,5 @@ fn accept_of_a_deleted_section_break_carries_its_header_on() {
     assert!(
         part_string(&accepted, "word/header1.xml").is_some(),
         "header lost"
-    );
-}
-
-#[path = "common/dead_comments.rs"]
-mod dead_comments;
-
-#[path = "common/comment_revisions.rs"]
-mod comment_revisions;
-
-/// #1141(a): accepting a surrounding insertion must not keep a comment
-/// whose entire range disappears in a nested deletion.
-#[test]
-fn accept_dead_comment_probe_a_nested_deletion() {
-    let source = dead_comments::probe('a');
-    let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, false, &[]);
-    assert_eq!(paragraphs(&accepted), ["alpha NEW gamma"]);
-    let rejected = reject_revisions(&source).unwrap();
-    dead_comments::assert_state(&rejected, false, &[]);
-    assert_eq!(paragraphs(&rejected), [""]);
-}
-
-#[test]
-fn accept_dead_comment_probe_b_deleted_reference() {
-    let source = dead_comments::probe('b');
-    let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, false, &[]);
-    assert_eq!(paragraphs(&accepted), [""]);
-    let rejected = reject_revisions(&source).unwrap();
-    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
-    assert_eq!(paragraphs(&rejected), ["beta"]);
-}
-
-#[test]
-fn accept_dead_comment_probe_c_kept_character() {
-    let source = dead_comments::probe('c');
-    let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, false, &[(0, "Existing range", None)]);
-    assert_eq!(paragraphs(&accepted), ["x"]);
-    let rejected = reject_revisions(&source).unwrap();
-    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
-    assert_eq!(paragraphs(&rejected), ["betax"]);
-}
-
-#[test]
-fn accept_dead_comment_probe_e_removes_thread_metadata() {
-    let source = dead_comments::probe('e');
-    let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, true, &[(2, "Kept range", None)]);
-    assert_eq!(paragraphs(&accepted), ["", "kept"]);
-}
-
-#[test]
-fn accept_dead_comment_probe_f_deleted_paragraph_mark() {
-    let source = dead_comments::probe('f');
-    let accepted = accept_revisions(&source).unwrap();
-    dead_comments::assert_state(&accepted, false, &[]);
-    assert_eq!(paragraphs(&accepted), [""]);
-    let rejected = reject_revisions(&source).unwrap();
-    dead_comments::assert_state(&rejected, false, &[(0, "Existing range", None)]);
-    assert_eq!(paragraphs(&rejected), ["beta", "gamma"]);
-}
-
-/// Existing point comments have no characters to lose. Real inline content
-/// and an undeleted paragraph mark keep a nonempty range alive.
-#[test]
-fn accept_dead_comment_controls_keep_empty_and_nontext_ranges() {
-    for atom in [
-        "",
-        "<w:r><w:tab/></w:r>",
-        "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r>",
-        "</w:p><w:p>",
-    ] {
-        let deleted = if atom.is_empty() {
-            String::new()
-        } else {
-            dead_comments::deleted("gone", 7)
-        };
-        let body = format!(
-            "<w:p>{}{deleted}{atom}{}{}</w:p>",
-            dead_comments::start(0),
-            dead_comments::end(0),
-            dead_comments::reference(0)
-        );
-        let source = dead_comments::package(&body, false);
-        let accepted = accept_revisions(&source).unwrap();
-        dead_comments::assert_state(&accepted, false, &[(0, "Existing range", None)]);
-    }
-}
-
-/// #1155: the issue's two paragraphs, optionally with a comment spanning A to B.
-fn inserted_final_mark_source(with_comment: bool) -> Vec<u8> {
-    let (start, end) = if with_comment {
-        (
-            dead_comments::start(0),
-            format!("{}{}", dead_comments::end(0), dead_comments::reference(0)),
-        )
-    } else {
-        (String::new(), String::new())
-    };
-    let body = format!(
-        r#"<w:p>{start}<w:r><w:t>A</w:t></w:r></w:p>
-<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r>{end}</w:p>"#
-    );
-    if with_comment {
-        dead_comments::package(&body, false)
-    } else {
-        docx(&body)
-    }
-}
-
-fn assert_inserted_final_mark_resolved(settled: &[u8], with_comment: bool) {
-    assert_eq!(paragraphs(settled), ["A", "B"]);
-    let xml = part_string(settled, "word/document.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    assert!(
-        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
-        "#1155: final paragraph mark must be resolved"
-    );
-    if with_comment {
-        dead_comments::assert_state(settled, false, &[(0, "Existing range", None)]);
-    } else {
-        assert_word_valid_package(settled);
-    }
-}
-
-fn accept_inserted_final_mark_with_cli(with_comment: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("input.docx"),
-        inserted_final_mark_source(with_comment),
-    )
-    .unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .current_dir(dir.path())
-        .args(["accept", "input.docx", "-o", "settled.docx"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let settled = std::fs::read(dir.path().join("settled.docx")).unwrap();
-    assert_inserted_final_mark_resolved(&settled, with_comment);
-}
-
-/// A16 (#1155): differs from Word on purpose; resolve the final inserted mark.
-#[test]
-fn accept_resolves_inserted_final_mark() {
-    let settled = accept_revisions(&inserted_final_mark_source(false)).unwrap();
-    assert_inserted_final_mark_resolved(&settled, false);
-}
-
-/// A16 (#1155): differs from Word on purpose, also with a comment ending on B.
-#[test]
-fn accept_resolves_inserted_final_mark_with_comment() {
-    let settled = accept_revisions(&inserted_final_mark_source(true)).unwrap();
-    assert_inserted_final_mark_resolved(&settled, true);
-}
-
-/// A16 (#1155): CLI differs from Word on purpose; leave no final-mark revision.
-#[test]
-fn cli_accept_resolves_inserted_final_mark() {
-    accept_inserted_final_mark_with_cli(false);
-}
-
-/// A16 (#1155): CLI differs from Word on purpose, also with a comment ending on B.
-#[test]
-fn cli_accept_resolves_inserted_final_mark_with_comment() {
-    accept_inserted_final_mark_with_cli(true);
-}
-
-/// #1223: Word's Accept All settles revisions inside comment bodies too
-/// (its probe keeps `ZEBRAQUOKKA `, drops `OKAPIWOMBAT `, and leaves no
-/// `w:ins`/`w:del` in `comments.xml`).
-fn comment_body_probe() -> Vec<u8> {
-    let body = format!(
-        "<w:p>{}<w:r><w:t xml:space=\"preserve\"> tail</w:t></w:r><w:ins w:id=\"10\" w:author=\"Alice\" w:date=\"2026-10-18T00:00:00Z\"><w:r><w:t>new</w:t></w:r></w:ins></w:p>",
-        comment_revisions::anchor(0, "anchor")
-    );
-    let comment = comment_revisions::comment(
-        0,
-        "Alice",
-        r#"<w:p w14:paraId="00000001"><w:ins w:id="20" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:t xml:space="preserve">ZEBRAQUOKKA </w:t></w:r></w:ins><w:del w:id="21" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText xml:space="preserve">OKAPIWOMBAT </w:delText></w:r></w:del><w:r><w:annotationRef/></w:r><w:r><w:t xml:space="preserve">Just like that!</w:t></w:r></w:p>"#,
-    );
-    comment_revisions::docx(&body, &[comment])
-}
-
-/// The text of comment `id` in `word/comments.xml` (w:t runs only).
-fn comment_text(pkg: &[u8], id: u32) -> String {
-    let xml = part_string(pkg, "word/comments.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let id = id.to_string();
-    let comment = dom
-        .descendants(root, Some(&W::name("comment")))
-        .into_iter()
-        .find(|&c| dom.attribute(c, &W::id()) == Some(id.as_str()))
-        .unwrap_or_else(|| panic!("no comment {id}: {xml}"));
-    dom.descendants(comment, Some(&W::t()))
-        .into_iter()
-        .map(|t| dom.value(t))
-        .collect()
-}
-
-/// #1223: Accept All resolves a comment body's insertion and deletion.
-#[test]
-fn accept_resolves_comment_body_revisions() {
-    let accepted = accept_revisions(&comment_body_probe()).unwrap();
-    assert_word_valid_package(&accepted);
-    let xml = part_string(&accepted, "word/comments.xml").unwrap();
-    for mark in ["<w:ins", "<w:del", "delText"] {
-        assert!(!xml.contains(mark), "{mark} left in comments.xml: {xml}");
-    }
-    assert_eq!(comment_text(&accepted, 0), "ZEBRAQUOKKA Just like that!");
-    // The body revision resolved too, and the comment kept its anchor.
-    let doc = part_string(&accepted, "word/document.xml").unwrap();
-    assert!(doc.contains(r#"<w:commentReference w:id="0""#), "{doc}");
-}
-
-/// #1223: a deleted paragraph mark merges inside its own comment, never
-/// across `w:comment` boundaries; a comment whose whole content went keeps
-/// one empty paragraph (a `w:comment` without one is not Word-valid).
-#[test]
-fn accept_comment_revisions_never_cross_the_comment_boundary() {
-    let body = format!(
-        "<w:p>{}{}</w:p>",
-        comment_revisions::anchor(0, "first"),
-        comment_revisions::anchor(1, "second")
-    );
-    let first = comment_revisions::comment(
-        0,
-        "Alice",
-        r#"<w:p w14:paraId="00000001"><w:pPr><w:rPr><w:del w:id="30" w:author="Bob" w:date="2026-10-18T00:00:00Z"/></w:rPr></w:pPr><w:del w:id="31" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText>gone </w:delText></w:r></w:del></w:p><w:p w14:paraId="00000002"><w:r><w:t>rest</w:t></w:r></w:p>"#,
-    );
-    let second = comment_revisions::comment(
-        1,
-        "Alice",
-        r#"<w:p w14:paraId="00000003"><w:r><w:t>neighbour</w:t></w:r></w:p>"#,
-    );
-    let source = comment_revisions::docx(&body, &[first, second]);
-    let accepted = accept_revisions(&source).unwrap();
-    assert_word_valid_package(&accepted);
-    // The deletion merged the comment's second paragraph into its first.
-    assert_eq!(comment_text(&accepted, 0), "rest");
-    assert_eq!(comment_text(&accepted, 1), "neighbour");
-    let xml = part_string(&accepted, "word/comments.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let comments = dom.descendants(root, Some(&W::name("comment")));
-    assert_eq!(comments.len(), 2, "{xml}");
-    // Comment 0's merge dropped the emptied first paragraph: one `w:p`
-    // holds "rest"; the neighbouring comment keeps its own.
-    assert_eq!(
-        dom.descendants(comments[0], Some(&W::p())).len(),
-        1,
-        "{xml}"
-    );
-    assert_eq!(
-        dom.descendants(comments[1], Some(&W::p())).len(),
-        1,
-        "{xml}"
-    );
-}
-
-/// #1223: accepting a deletion that empties a comment's only paragraph
-/// leaves a valid `w:comment` — Word writes an empty `w:p` there.
-#[test]
-fn accept_an_emptied_comment_keeps_a_paragraph() {
-    let body = format!("<w:p>{}</w:p>", comment_revisions::anchor(0, "anchor"));
-    let comment = comment_revisions::comment(
-        0,
-        "Alice",
-        r#"<w:p w14:paraId="00000001"><w:del w:id="40" w:author="Bob" w:date="2026-10-18T00:00:00Z"><w:r><w:delText>whole</w:delText></w:r></w:del></w:p>"#,
-    );
-    let source = comment_revisions::docx(&body, &[comment]);
-    let accepted = accept_revisions(&source).unwrap();
-    assert_word_valid_package(&accepted);
-    let xml = part_string(&accepted, "word/comments.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    let comment = dom
-        .descendants(root, Some(&W::name("comment")))
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| panic!("no comment: {xml}"));
-    assert_eq!(
-        dom.descendants(comment, Some(&W::p())).len(),
-        1,
-        "emptied comment keeps one paragraph: {xml}"
-    );
-    assert_eq!(comment_text(&accepted, 0), "");
-}
-
-// =========================================================================
-// #1224: inserted final paragraph mark across stories and shapes.
-// =========================================================================
-
-/// Paragraphs of `part` in `pkg`, each as its visible text.
-fn part_paragraphs(pkg: &[u8], part: &str) -> Vec<String> {
-    let xml = part_string(pkg, part).unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    dom.descendants(root, Some(&W::p()))
-        .into_iter()
-        .map(|p| {
-            dom.descendants(p, Some(&W::t()))
-                .into_iter()
-                .map(|t| dom.value(t))
-                .collect::<String>()
-        })
-        .collect()
-}
-
-/// Resolves the inserted final mark in `part`: paragraphs read `expected`,
-/// no tracked revision left, package is Word-valid.
-fn assert_part_resolved(pkg: &[u8], part: &str, expected: &[&str]) {
-    assert_eq!(part_paragraphs(pkg, part), expected);
-    let xml = part_string(pkg, part).unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    assert!(
-        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
-        "{part} still has tracked revisions"
-    );
-    assert_word_valid_package(pkg);
-}
-
-fn header_part(xml: &str) -> Part<'_> {
-    Part {
-        name: "word/header1.xml",
-        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
-        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
-        xml,
-    }
-}
-
-fn footer_part(xml: &str) -> Part<'_> {
-    Part {
-        name: "word/footer1.xml",
-        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
-        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
-        xml,
-    }
-}
-
-fn footnotes_part(xml: &str) -> Part<'_> {
-    Part {
-        name: "word/footnotes.xml",
-        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
-        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
-        xml,
-    }
-}
-
-/// A header with two paragraphs (`XA` plain, `XB` with an inserted mark).
-fn inserted_final_mark_header(ins_id: u32) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:hdr>"#
-    )
-}
-
-/// A footer with two paragraphs (`XA` plain, `XB` with an inserted mark).
-fn inserted_final_mark_footer(ins_id: u32) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:ftr>"#
-    )
-}
-
-/// A footnotes part with two separators and a footnote whose final
-/// paragraph carries an inserted mark.
-fn inserted_final_mark_footnotes(ins_id: u32) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:t>XA</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:ins w:id="{ins_id}" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>XB</w:t></w:r></w:p></w:footnote></w:footnotes>"#
-    )
-}
-
-/// #1224 (A16): an inserted final mark inside a header. Word resolves
-/// the mark, as jubarte does. Accept All keeps `XA | XB`.
-#[test]
-fn accept_resolves_inserted_final_mark_in_header() {
-    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p>"#;
-    let pkg = docx_with_sect(
-        body,
-        &[header_part(&inserted_final_mark_header(11))],
-        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
-    );
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/header1.xml", &["XA", "XB"]);
-    assert_eq!(paragraphs(&settled), ["Body"]);
-}
-
-/// #1224 (A16): an inserted final mark inside a footer. Word resolves
-/// the mark, as jubarte does. Accept All keeps `XA | XB`.
-#[test]
-fn accept_resolves_inserted_final_mark_in_footer() {
-    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p>"#;
-    let pkg = docx_with_sect(
-        body,
-        &[footer_part(&inserted_final_mark_footer(12))],
-        r#"<w:footerReference w:type="default" r:id="rIdX0"/>"#,
-    );
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/footer1.xml", &["XA", "XB"]);
-    assert_eq!(paragraphs(&settled), ["Body"]);
-}
-
-/// #1224 (A16): an inserted final mark inside a footnote. Word resolves
-/// the mark, as jubarte does. Accept All keeps `XA | XB`.
-#[test]
-fn accept_resolves_inserted_final_mark_in_footnote() {
-    let body = r#"<w:p><w:r><w:t>Body</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>"#;
-    let pkg = docx_with(body, &[footnotes_part(&inserted_final_mark_footnotes(13))]);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/footnotes.xml", &["", "", "XA", "XB"]);
-    assert_eq!(paragraphs(&settled), ["Body"]);
-}
-
-/// #1224: a document whose ONLY paragraph carries the inserted mark.
-/// The transform resolves the mark without needing a predecessor.
-#[test]
-fn accept_resolves_inserted_final_mark_when_only_paragraph() {
-    let body = r#"<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["B"]);
-}
-
-/// #1224: a section-break paragraph (its `w:pPr` holds a `w:sectPr`)
-/// whose mark is inserted. Accept resolves the mark, keeps the section
-/// break.
-#[test]
-fn accept_resolves_inserted_final_mark_on_section_break_paragraph() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
-    let xml = part_string(&settled, "word/document.xml").unwrap();
-    assert!(
-        xml.contains(r#"<w:sectPr><w:pgSz w:w="12240""#),
-        "section break lost: {xml}"
-    );
-}
-
-/// #1224: `B` moved from the first paragraph to the last, so the final
-/// mark is a `w:moveTo` with its `w:moveFrom` source. Word's Accept All
-/// gives `Keep | B` with no mark left; so does jubarte.
-#[test]
-fn accept_resolves_move_to_final_mark() {
-    let body = r#"<w:moveFromRangeStart w:id="3" w:name="m1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/>
-<w:p><w:pPr><w:rPr><w:moveFrom w:id="4" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:moveFrom w:id="5" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:moveFrom></w:p>
-<w:moveFromRangeEnd w:id="3"/>
-<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:moveToRangeStart w:id="6" w:name="m1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/>
-<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:moveTo w:id="7" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:moveTo></w:p>
-<w:moveToRangeEnd w:id="6"/>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
-}
-
-/// #1224: a `w:pPrChange` on the same final paragraph as the inserted
-/// mark. Accept drops both: the property history and the inserted mark.
-#[test]
-fn accept_resolves_inserted_final_mark_alongside_p_pr_change() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:p><w:pPr><w:pPrChange w:id="3" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:pPr/></w:pPrChange><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
-}
-
-/// #1224: an inserted final mark inside `w:tc` (last paragraph of a
-/// cell). Accept resolves the mark.
-#[test]
-fn accept_resolves_inserted_final_mark_inside_tc() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:tbl><w:tblPr><w:tblW w:type="auto" w:w="0"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>
-<w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4000"/></w:tcPr><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    let xml = part_string(&settled, "word/document.xml").unwrap();
-    assert_eq!(paragraphs(&settled), ["Keep", "B"]);
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    assert!(
-        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
-        "{xml}"
-    );
-    assert_word_valid_package(&settled);
-}
-
-/// #1224: an inserted final mark inside a VML text box's `w:txbxContent`.
-/// Accept resolves the mark, as Word's Accept All does on this
-/// body (a bare `wps:wsp` box is one Word cannot open).
-#[test]
-fn accept_resolves_inserted_final_mark_inside_txbx_content() {
-    let body = r##"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:p><w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype><v:shape id="Box1" o:spid="_x0000_s1026" type="#_x0000_t202" style="width:100pt;height:50pt"><v:textbox><w:txbxContent><w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"##;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    let xml = part_string(&settled, "word/document.xml").unwrap();
-    assert!(
-        paragraphs(&settled).contains(&"B".to_string()),
-        "the text-box paragraph carries B: {xml}"
-    );
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    assert!(
-        !jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
-        "{xml}"
-    );
-    assert!(!xml.contains("<w:ins"), "the inserted mark survived: {xml}");
-    assert_word_valid_package(&settled);
-}
-
-/// #1224 finding 4: `A` plain, `B` inside `w:ins`, its mark inserted.
-/// Accept keeps the inserted B; the marks resolve.
-#[test]
-fn accept_resolves_finding_4_inserted_content_and_mark() {
-    let body = r#"<w:p><w:r><w:t>A</w:t></w:r></w:p>
-<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:ins w:id="10" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>B</w:t></w:r></w:ins></w:p>"#;
-    let pkg = docx(body);
-    let settled = accept_revisions(&pkg).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["A", "B"]);
-}
-
-/// #1224 (finding 3): selective CLI case. Accept only `r7` (a body run
-/// insertion); the inserted final mark `r9` stays tracked.
-#[test]
-fn cli_accept_selects_one_revision_and_leaves_inserted_final_mark() {
-    let body = r#"<w:p><w:r><w:t>A</w:t></w:r><w:ins w:id="7" w:author="Alice" w:date="2026-10-18T11:40:32Z"><w:r><w:t>extra</w:t></w:r></w:ins></w:p>
-<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>"#;
-    let pkg = docx(body);
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("input.docx"), &pkg).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_jubarte"))
-        .current_dir(dir.path())
-        .args(["accept", "input.docx", "--id", "r7", "-o", "settled.docx"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let settled = std::fs::read(dir.path().join("settled.docx")).unwrap();
-    assert_word_valid_package(&settled);
-    assert_eq!(paragraphs(&settled), ["Aextra", "B"]);
-    let xml = part_string(&settled, "word/document.xml").unwrap();
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let root = dom.root(doc).unwrap();
-    assert!(
-        jubarte::revision_processor::element_has_tracked_revisions(&dom, root),
-        "r9 should still be tracked: {xml}"
-    );
-    assert!(xml.contains(r#"<w:ins w:id="9""#), "r9 lost: {xml}");
-    assert!(
-        !xml.contains(r#"<w:ins w:id="7""#),
-        "r7 was resolved: {xml}"
-    );
-}
-
-/// #1235: an orphan `w:moveTo` paragraph mark — its `w:name` range has no
-/// `w:moveFrom` counterpart — accepts like an inserted mark: the untracked
-/// run `B` inside the `moveToRange` survives.
-#[test]
-fn accept_keeps_untracked_text_under_an_orphan_move_to_mark() {
-    let body = r#"<w:p><w:r><w:t>Keep</w:t></w:r></w:p>
-<w:moveToRangeStart w:id="2" w:name="m1"/>
-<w:p><w:pPr><w:rPr><w:moveTo w:id="1" w:author="Alice" w:date="2026-10-18T11:40:32Z"/></w:rPr></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
-<w:moveToRangeEnd w:id="2"/>"#;
-    let settled = accept_revisions(&docx(body)).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["Keep", "B"]);
-}
-
-/// #1243: an orphan `moveFromRangeStart`/`End` pair — no `moveToRange` of
-/// the same `w:name` — deletes its unwrapped paragraph on Accept All, like
-/// any moveFrom range. Word's Accept All of the `orphan_from_acc` probe
-/// (`normal`, a range around an untracked paragraph, `second`; the bench
-/// drove Word through `word_pdf.py --accept-all`, 2026-10-18) reads
-/// `normal | second`: the range's paragraph is gone.
-#[test]
-fn accept_deletes_an_orphan_move_from_range_s_unwrapped_paragraph() {
-    let body = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
-<w:moveFromRangeStart w:id="1" w:name="m1" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
-<w:p><w:r><w:t>movedaway</w:t></w:r></w:p>
-<w:moveFromRangeEnd w:id="1"/>
-<w:p><w:r><w:t>second</w:t></w:r></w:p>"#;
-    let settled = accept_revisions(&docx(body)).unwrap();
-    assert_part_resolved(&settled, "word/document.xml", &["normal", "second"]);
-}
-
-/// #1243: the mirror — an orphan `moveToRange` keeps its unwrapped
-/// paragraph on Accept All. Word's Accept All of the `orphan_to_acc` probe
-/// (`normal`, a moveTo range around an untracked paragraph, `second`;
-/// `word_pdf.py --accept-all`, 2026-10-18) reads `normal | arrived | second`.
-#[test]
-fn accept_keeps_an_orphan_move_to_range_s_unwrapped_paragraph() {
-    let body = r#"<w:p><w:r><w:t>normal</w:t></w:r></w:p>
-<w:moveToRangeStart w:id="1" w:name="m9" w:author="Alice" w:date="2026-01-01T00:00:00Z"/>
-<w:p><w:r><w:t>arrived</w:t></w:r></w:p>
-<w:moveToRangeEnd w:id="1"/>
-<w:p><w:r><w:t>second</w:t></w:r></w:p>"#;
-    let settled = accept_revisions(&docx(body)).unwrap();
-    assert_part_resolved(
-        &settled,
-        "word/document.xml",
-        &["normal", "arrived", "second"],
     );
 }

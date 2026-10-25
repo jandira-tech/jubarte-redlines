@@ -15,7 +15,7 @@ styles:
 <!-- p0 -->
 Cells:
 
-<!-- t0 5x4, cells t0.row0 p1-p4 t0.row1 p5-p7 t0.row2 p8-p10 t0.row3 p11-p14 t0.row4 p15-p17, widths 1.667in 1.667in 1.667in 1.667in, width auto, merged t0.row3.cell0 across 2; t0.row3.cell1 down 2; t0.row4.cell0 across 2, gaps t0.row1 before 1; t0.row2 after 1 -->
+<!-- t0 5x4, cells t0.row0 p1-p4 t0.row1 p5-p7 t0.row2 p8-p10 t0.row3 p11-p14 t0.row4 p15-p17, merged t0.row3.cell0 across 2; t0.row3.cell1 down 2; t0.row4.cell0 across 2, gaps t0.row1 before 1; t0.row2 after 1 -->
 |h1|h2|h3|h4|
 |-|-|-|-|
 ||starts late|x|y|

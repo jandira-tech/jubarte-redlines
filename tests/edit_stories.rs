@@ -196,13 +196,8 @@ fn edits_in_header_footer_and_footnote_are_tracked_in_their_parts() {
         .map(|o| o.paragraph.clone().unwrap())
         .collect();
     assert_eq!(at, ["header1", "footer1", "footnotes", "p1"]);
-    // One insertion or replacement per story; header and footer revisions
-    // count too.
-    assert!(
-        report.revisions.inserted + report.revisions.replaced >= 4,
-        "{:?}",
-        report.revisions
-    );
+    // One insertion per story; header and footer revisions count too.
+    assert!(report.revisions.inserted >= 4, "{:?}", report.revisions);
     assert!(
         report.operations.iter().all(|o| o.message.is_none()),
         "{:?}",

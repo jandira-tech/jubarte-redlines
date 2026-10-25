@@ -26,29 +26,6 @@ if [ -n "$(git status --porcelain --untracked-files=all -- . ..)" ]; then
 fi
 
 # Bare invocations only: RUSTFLAGS must come from .cargo/config.toml (see README).
-# A RUSTFLAGS in the environment would replace that recipe, and the remap below.
-if [ -n "${RUSTFLAGS:-}${CARGO_ENCODED_RUSTFLAGS:-}" ]; then
-  echo "ERROR: RUSTFLAGS or CARGO_ENCODED_RUSTFLAGS is set; it would replace the" >&2
-  echo "       .cargo/config.toml recipe. Unset it and rerun." >&2
-  exit 1
-fi
-
-# Every panic location keeps its source path: the engine crate's (a path
-# dependency outside this workspace), each registry crate's and the
-# toolchain's. Remap the home directory and this checkout away so the package
-# names neither (#1480). The target's own variable merges with the config
-# file's rustflags instead of replacing them; rustc applies the last prefix
-# that matches, so the checkout, inside the home, comes after it.
-repo_logical=$(cd .. && pwd -L)
-repo_physical=$(cd .. && pwd -P)
-case "$HOME$repo_logical$repo_physical" in
-  *[[:space:]]*)
-    echo "ERROR: whitespace in \$HOME or the checkout path; cargo splits the rustflags list on it." >&2
-    exit 1
-    ;;
-esac
-export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS="--remap-path-prefix=$HOME=~ --remap-path-prefix=$repo_logical=jubarte-redlines --remap-path-prefix=$repo_physical=jubarte-redlines"
-
 # Full builds (default features: compare + PDF), then slim builds (no `pdf`
 # feature — everything except the PDF renderer, ~4x smaller wasm).
 wasm-pack build --target nodejs --release
@@ -64,7 +41,6 @@ for f in jubarte_wasm.js jubarte_wasm.d.ts jubarte_wasm_bg.wasm jubarte_wasm_bg.
   cp "pkg-web-slim/$f" npm/web-slim/
 done
 cp ../LICENSE npm/LICENSE
-python3 ../scripts/check_npm_paths.py npm
 git rev-parse HEAD > npm/ENGINE_COMMIT.txt
 
 echo "assembled npm/ at engine $(cat npm/ENGINE_COMMIT.txt)"

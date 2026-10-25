@@ -12,6 +12,7 @@
 //! properties are not read.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
 
 mod agent;
 mod critic;
@@ -19,12 +20,12 @@ pub(crate) mod drawing;
 mod header;
 mod media;
 mod mermaid;
-pub(crate) mod ooxml;
+mod ooxml;
 mod revise;
 
 use critic::{Change, Critic, Mark};
 use ooxml::{Blocks, ListIndent, Marks, Media, Package, Rels};
-pub(crate) use ooxml::{Element, element_from, parse_xml};
+pub(crate) use ooxml::{Element, parse_xml};
 
 /// How tracked changes and comments come out.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -40,7 +41,6 @@ pub(crate) enum Revisions {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Options {
-    pub(crate) input_limits: crate::admission::InputLimits,
     pub(crate) revisions: Revisions,
     /// Collect raster pictures and name them under this directory. `None`
     /// writes pictures as their alt text.
@@ -94,21 +94,7 @@ fn part_stem(path: &str) -> String {
 }
 
 pub(crate) fn convert(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
-    // The marks Word wrote for one edit print the whole change's id, as
-    // `changes` lists it (#1261). A package the listing cannot read prints
-    // each mark's own.
-    let logical = crate::changes::list_logical_changes_tolerant(bytes).ok();
-    let wholes = logical.as_deref().map(agent::wholes_of).unwrap_or_default();
-    agent::with_wholes(wholes, || {
-        agent::with_logical(logical, || convert_marks(bytes, options))
-    })
-}
-
-/// [`convert`], its tags naming the changes [`agent::with_wholes`] set.
-fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertError> {
     let mut package = Package::open(bytes, "DOCX")?;
-    package.input_limits = options.input_limits;
-    package.check_tag_policy()?;
     let main = package.main_part("word/document.xml")?;
     let mut document = package
         .xml(&main)?
@@ -124,28 +110,10 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             .map(|r| r.target.clone())
             .unwrap_or_else(|| fallback.to_string())
     };
-    let mut comments_root = package
+    let comments_root = package
         .xml(&part("/comments", "word/comments.xml"))
         .ok()
         .flatten();
-    // Reuse the comment family's durable-id linkage. This private stamp is
-    // only for reporting; the source attributes and write paths stay separate.
-    if let Some(root) = &mut comments_root
-        && let Ok(pkg) = crate::opc::PartFs::open(bytes)
-        && let Ok(family) = crate::comments::CommentFamily::load(&pkg, &main)
-    {
-        for child in &mut root.children {
-            if let ooxml::Node::Element(comment) = child
-                && comment.is("comment")
-                && let Some(id) = comment.attr("id").and_then(|id| id.parse().ok())
-                && let Some(date) = family.reported_date(id)
-            {
-                comment
-                    .attrs
-                    .push((Element::COMMENT_DATE.to_string(), date));
-            }
-        }
-    }
     let extended = if options.ids {
         package
             .xml(&part("/commentsExtended", "word/commentsExtended.xml"))
@@ -283,7 +251,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     let default_style = styles_root.as_ref().and_then(|root| {
         root.children_named("style")
             .find(|s| {
-                header::is_paragraph_style(s)
+                s.attr("type") == Some("paragraph")
                     && s.attr("default").is_some_and(|d| d == "1" || d == "true")
             })
             .and_then(|s| s.attr("styleId"))
@@ -401,8 +369,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             styles.len() > 1 || (!styles.is_empty() && unstyled)
         },
         custom_grid: custom_table_grid(styles_root.as_ref()),
-        text_width: header::text_width(document.child("body").and_then(|b| b.child("sectPr"))),
-        style_sizes: header::paragraph_style_sizes(styles_root.as_ref(), default_style.as_deref()),
         bookmarks: bookmark_targets(
             std::iter::once(&document)
                 .chain(note_roots.iter().map(|(_, root)| root))
@@ -417,7 +383,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         comments: HashMap::new(),
         notes: HashMap::new(),
         referenced: HashSet::new(),
-        held_marks: HashMap::new(),
         noted_at_end: HashSet::new(),
         noted_at_reference: HashSet::new(),
         open_comments: Vec::new(),
@@ -425,8 +390,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         pending_notes: Vec::new(),
         in_comment: false,
         in_box: false,
-        nested_editable: true,
-        box_regions: Vec::new(),
         agent: options.ids,
         comments_inline: options.comments,
         resolved: accept.is_some(),
@@ -462,9 +425,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         .filter_map(|r| r.attr("id"))
         .map(str::to_string)
         .collect();
-    if writer.agent {
-        writer.held_marks = held_marks(&document);
-    }
     let body = document.child("body").unwrap_or(&document);
     let mut blocks = Blocks::new();
     let mut list = ListIndent::default();
@@ -486,9 +446,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     // The style of each note whose first paragraph is not in Word's own
     // (`footnote text`, `endnote text`), by label: its id line names it.
     let mut note_styles: HashMap<String, Vec<String>> = HashMap::new();
-    // A silent line still needs the legend when the built-in name's spelling
-    // differs from the writer's: canonical output id -> source definition id.
-    let mut note_style_sources: HashMap<String, String> = HashMap::new();
     // The notes a definition line shows.
     let mut defined: HashSet<(bool, String)> = HashSet::new();
     while index < writer.note_refs.len() {
@@ -540,22 +497,16 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                         .filter(|id| Some(*id) != default_style.as_deref());
                     match id {
                         None => Some(default_style.as_deref().unwrap_or("Normal").to_string()),
-                        // Like builtin_styles::is_built_in, compare names
-                        // ignoring ASCII case, with spaces significant,
-                        // under any id (including localized ids).
+                        // Word's own, under any id (`a5` in a localized
+                        // document), spelled as Word spells it.
                         Some(id)
-                            if writer.styles.by_id.get(id).map_or(
-                                id.eq_ignore_ascii_case(own),
-                                |s| {
-                                    let own_style = s.name == own_name;
-                                    if own_style && s.exact_name != own_name {
-                                        note_style_sources
-                                            .entry(own.to_string())
-                                            .or_insert_with(|| id.to_string());
-                                    }
-                                    own_style
-                                },
-                            ) =>
+                            if writer
+                                .styles
+                                .by_id
+                                .get(id)
+                                .map_or(id.eq_ignore_ascii_case(own), |s| {
+                                    s.exact_name == own_name
+                                }) =>
                         {
                             None
                         }
@@ -726,13 +677,7 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
     }
     if let Some(original) = &original {
         let body = original.child("body").unwrap_or(original);
-        // Resolved views name original revisions with `rev` labels, but
-        // print no tracked changes. Count only what this view shows.
-        let tags = if accept.is_none() {
-            agent::shown_changes(&markdown, range.is_none())
-        } else {
-            Vec::new()
-        };
+        let tags = agent::collect_revisions(body, &handles);
         let (rendered, hard) = agent::page_counts(body);
         let settings = package.xml("word/settings.xml").ok().flatten();
         let core = package.xml("docProps/core.xml").ok().flatten();
@@ -866,25 +811,13 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             // Every other paragraph style the body uses, in the order it
             // first does (the stories' follow): the legend describes each,
             // so the docx the view writes defines it as the original did.
-            // A text box's paragraphs count too (#1423): the writer gives
-            // them their styles back, so the docx must define those; a
-            // style only a box uses counts when the styles part defines it.
-            let outside: HashSet<*const Element> =
-                ps.iter().map(|p| std::ptr::from_ref(*p)).collect();
-            for p in agent::paragraphs_and_boxes(body) {
+            for p in &ps {
                 let Some(style) = p.path(&["pPr", "pStyle"]).and_then(|s| s.attr("val")) else {
                     continue;
                 };
-                let in_box = !outside.contains(&std::ptr::from_ref(p));
                 if style != default_style.as_deref().unwrap_or("Normal")
                     && !heading_styles.iter().any(|(_, h)| h == style)
                     && !other_styles.iter().any(|o| o == style)
-                    && (!in_box
-                        || styles_root.as_ref().is_some_and(|root| {
-                            root.children_named("style").any(|s| {
-                                header::is_paragraph_style(s) && s.attr("styleId") == Some(style)
-                            })
-                        }))
                 {
                     other_styles.push(style.to_string());
                 }
@@ -892,17 +825,11 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
         }
         // The comments' and notes' paragraph styles too, as the stories'
         // below.
-        // Mixed notes name Word's own style explicitly. A silent note also
-        // contributes it when its exact name needs the legend. Keep the
-        // existing id order and describe the source definition under the
-        // canonical id the writer uses for a silent line.
-        let mut note_list: Vec<&String> = note_styles
-            .values()
-            .flatten()
-            .chain(note_style_sources.keys())
-            .collect();
+        // A note's list names Word's own style under its English id only
+        // in a mixed note; the source's definition of it is kept like any
+        // other (a footnote can be in `EndnoteText`).
+        let mut note_list: Vec<&String> = note_styles.values().flatten().collect();
         note_list.sort();
-        note_list.dedup();
         // CommentText is the comments' own, not a note's.
         for style in comment_facts
             .iter()
@@ -910,11 +837,11 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             .filter(|s| *s != "CommentText")
             .chain(note_list.into_iter().map(String::as_str))
         {
-            let source = note_style_sources.get(style).map_or(style, String::as_str);
             if style != default_style.as_deref().unwrap_or("Normal")
                 && styles_root.as_ref().is_some_and(|root| {
-                    root.children_named("style")
-                        .any(|s| header::is_paragraph_style(s) && s.attr("styleId") == Some(source))
+                    root.children_named("style").any(|s| {
+                        s.attr("type") == Some("paragraph") && s.attr("styleId") == Some(style)
+                    })
                 })
                 && !heading_styles.iter().any(|(_, h)| h == style)
                 && !other_styles.iter().any(|o| o == style)
@@ -1019,15 +946,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                         &crate::markdown::borders::PARAGRAPH_SIDES,
                                     )
                                 }),
-                                frame: story_frame(
-                                    p,
-                                    styles_root.as_ref(),
-                                    default_style.as_deref(),
-                                ),
-                                indent: p
-                                    .path(&["pPr", "ind"])
-                                    .map(agent::indent_clauses)
-                                    .unwrap_or_default(),
                             };
                             (
                                 i,
@@ -1038,7 +956,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
                                         &path,
                                         story_scopes.scope(element),
                                         wrap,
-                                        Vec::new(),
                                     ))
                                 }),
                                 own,
@@ -1293,7 +1210,6 @@ fn convert_marks(bytes: &[u8], options: &Options) -> Result<Converted, ConvertEr
             default_style: default_style.as_deref(),
             heading_styles,
             other_styles,
-            note_style_sources,
             table_styles,
             tables_differ: writer.tables_differ,
             sections,
@@ -1779,8 +1695,9 @@ fn markdown_table(rows: &[Vec<String>], aligns: &[Option<&str>], escaped: bool) 
 #[derive(Default, Clone)]
 struct Style {
     name: String,
-    /// The name as the document writes it. Built-in identity ignores ASCII
-    /// case, while the legend preserves this exact spelling.
+    /// The name as the document writes it: Word's own are lower case
+    /// (`footnote text`), and a style that spells one differently is the
+    /// document's own (#528).
     exact_name: String,
     based_on: Option<String>,
     outline: Option<usize>,
@@ -1853,7 +1770,7 @@ impl Styles {
             .and_then(font_of);
         let default_paragraph = root
             .children_named("style")
-            .find(|s| header::is_paragraph_style(s) && s.attr("default") == Some("1"))
+            .find(|s| s.attr("type") == Some("paragraph") && s.attr("default") == Some("1"))
             .and_then(|s| s.attr("styleId"))
             .map(str::to_string);
         Self {
@@ -2263,63 +2180,6 @@ fn printed_code(instruction: &str) -> Option<String> {
 /// A revision element (`w:ins`, `w:del`, `w:moveTo`, `w:moveFrom`) as a tracked
 /// change. Insertions and move destinations are insertions; deletions and move
 /// sources are deletions (the representation pandiff uses too).
-/// Comment id → the `w:id` of the one insertion or deletion in the body
-/// that holds the comment's reference mark: settling it settles the
-/// thread. A mark outside any change, inside a move, or inside two nested
-/// changes names none; so does an id the view would not print as is.
-fn held_marks(document: &Element) -> HashMap<String, u32> {
-    fn walk(
-        element: &Element,
-        open: &mut Vec<Option<u32>>,
-        found: &mut HashMap<String, Option<u32>>,
-    ) {
-        for child in element.elements() {
-            match child.local() {
-                "ins" | "del" | "moveFrom" | "moveTo" => {
-                    let id = matches!(child.local(), "ins" | "del")
-                        .then(|| child.attr("id"))
-                        .flatten()
-                        .and_then(|id| id.parse::<u32>().ok().filter(|n| n.to_string() == id))
-                        .filter(|&id| id <= crate::markdown::view_notes::MOST_ID);
-                    open.push(id);
-                    walk(child, open, found);
-                    open.pop();
-                }
-                "commentReference" => {
-                    if let Some(id) = child.attr("id") {
-                        let holder = match open.as_slice() {
-                            [one] => *one,
-                            _ => None,
-                        };
-                        // A reference twice (an `mc:Fallback` twin) names its
-                        // holder only when both agree.
-                        found
-                            .entry(id.to_string())
-                            .and_modify(|seen| {
-                                if *seen != holder {
-                                    *seen = None;
-                                }
-                            })
-                            .or_insert(holder);
-                    }
-                }
-                "rPr" | "pPr" => {}
-                _ => walk(child, open, found),
-            }
-        }
-    }
-    let mut found = HashMap::new();
-    walk(
-        document.child("body").unwrap_or(document),
-        &mut Vec::new(),
-        &mut found,
-    );
-    found
-        .into_iter()
-        .filter_map(|(id, holder)| holder.map(|holder| (id, holder)))
-        .collect()
-}
-
 fn change_of(element: &Element, story: Option<&str>) -> Change {
     let mark = if matches!(element.local(), "ins" | "moveTo") {
         Mark::Insertion
@@ -2331,7 +2191,7 @@ fn change_of(element: &Element, story: Option<&str>) -> Change {
 
 /// Which change it is, and who made it when: a plain-view tag
 /// ([`critic::PLAIN`]) of the change's `w:id` in `story` and its note,
-/// `w:author` and the preferred revision date, in the same form as a
+/// `w:author` and `w:date` exactly as stored, in the same form as a
 /// comment's. It prints `r5 Ana Lima (2026-09-29T14:05:00Z)`: the number
 /// tells the writer the note names the change's author, not a comment.
 fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
@@ -2339,7 +2199,7 @@ fn attribution(element: &Element, story: Option<&str>) -> Option<String> {
     let author = element
         .attr("author")
         .map(|a| a.trim_start_matches(['\u{E000}', '\u{E001}']));
-    let note = comment_note(author, element.revision_date().as_deref(), "");
+    let note = comment_note(author, element.attr("date"), "");
     // A mark with no id, author or date (only a malformed file has one)
     // names nothing.
     if note.is_empty() && element.attr("id").is_none() {
@@ -2424,13 +2284,6 @@ struct Writer<'a> {
     /// The source defines Table Grid with borders of its own
     /// ([`custom_table_grid`]), so the view names it.
     custom_grid: bool,
-    /// Each paragraph style's text size and a paragraph's with no
-    /// `w:pStyle`, in half-points: a paragraph's own `size` is measured
-    /// against them (#1474).
-    style_sizes: (HashMap<String, u32>, u32),
-    /// The body's text width in twips: a table's grid that splits it
-    /// evenly is the writer's own and prints no widths (#1472).
-    text_width: u32,
     /// In a heading: the name a Markdown link names it by, whose bookmark
     /// the writer makes again and so prints no `<a id>`.
     heading_slug: Option<String>,
@@ -2459,9 +2312,6 @@ struct Writer<'a> {
     /// Comments with a `commentReference`, where their note goes. Others get
     /// their note where their range ends.
     referenced: HashSet<String>,
-    /// Agent view: comment id → the `w:id` of the one insertion or
-    /// deletion holding its reference ([`held_marks`]).
-    held_marks: HashMap<String, u32>,
     /// Comments whose note followed their range's end, inside a paragraph
     /// and outside any change: there Word puts the reference, and the
     /// writer takes the note back as the range's own comment. Their
@@ -2481,12 +2331,10 @@ struct Writer<'a> {
     /// changes keep their marks but not their author, and comment anchors are
     /// ignored.
     in_comment: bool,
-    /// A text-box story: its paragraphs consume no body paragraph ids.
+    /// Writing a drawn text box's content for its comment lines: a drawing
+    /// inside it prints no payload token (the captured drawing already holds
+    /// it) and a box nested inside it is walked through, not printed twice.
     in_box: bool,
-    /// The enclosing drawing's branch copies correspond, permitting transfer.
-    nested_editable: bool,
-    /// Recursive regions, deferred until the enclosing region closes.
-    box_regions: Vec<String>,
     /// Agent view (`Options::ids`).
     agent: bool,
     /// Agent view: comments inline, or hidden and listed on id lines.
@@ -2568,13 +2416,7 @@ impl Writer<'_> {
                             self.tables_differ
                                 .then(|| view_table_style(child, self.custom_grid))
                                 .flatten(),
-                            &[
-                                self.column_alignments(child).1,
-                                self.cell_styles(child),
-                                self.cell_spacings(child),
-                                agent::geometry_clauses(child, self.text_width),
-                            ]
-                            .concat(),
+                            &[self.column_alignments(child).1, self.cell_styles(child)].concat(),
                             self.resolved,
                             (!self.comments_inline).then_some(&self.comments),
                             &spans,
@@ -2685,9 +2527,7 @@ impl Writer<'_> {
                             !self.referenced.contains(id)
                         };
                         if unprinted && let Some(note) = self.note(id) {
-                            // Outside any change: the one that holds the
-                            // reference is named (`in r13`).
-                            out.comment(&self.held_note(id, note));
+                            out.comment(&note);
                             self.noted_at_end.insert(id.to_string());
                         }
                     }
@@ -2723,29 +2563,7 @@ impl Writer<'_> {
         if code_block {
             inline.set_code_block();
         }
-        // An inserted paragraph mark is visible metadata at the end of
-        // its paragraph; a deleted mark remains an id-line clause.
-        let mut paragraph_insertion = String::new();
-        if !self.resolved {
-            for (mark, by) in p
-                .path(&["pPr", "rPr"])
-                .map(|pr| self.revision_marks(pr))
-                .unwrap_or_default()
-            {
-                if mark == Mark::Insertion
-                    && let Some(by) = by
-                {
-                    paragraph_insertion.push_str(&format!(
-                        "¶{}",
-                        critic::attribution_note(&critic::display(&by))
-                    ));
-                }
-            }
-        }
-        if !code_block {
-            inline.raw(&paragraph_insertion);
-        }
-        let written = !inline.is_blank() || !paragraph_insertion.is_empty();
+        let written = !inline.is_blank();
         let inline = inline.into_inline();
         // Comment threads whose range runs past this paragraph, for its id
         // line: their highlight repeats here with the note elsewhere.
@@ -2822,19 +2640,10 @@ impl Writer<'_> {
                         .map(|l| l + 1)
                 })
                 .flatten();
-            // An empty paragraph's own spacing is a line of the page
-            // (#1473): it keeps an id line of its own to say it.
-            let spaced = ppr
-                .and_then(|pr| pr.child("spacing"))
-                .is_some_and(|sp| !agent::spacing_clauses(sp).is_empty());
-            // So is its mark's own size (#1474): the line's height.
-            let size = self.own_size(p);
             if empty
                 && !numbered
                 && style.is_none()
                 && own_outline.is_none()
-                && !spaced
-                && size.is_none()
                 && comments.is_empty()
                 && unshown.is_empty()
                 && !agent::holds_revision_facts(p, self.resolved, &self.handles)
@@ -2894,7 +2703,6 @@ impl Writer<'_> {
                 spans: &spans,
                 empty,
                 unshown: &unshown,
-                size,
             };
             blocks.push_line(&format!(
                 "{}{}",
@@ -2921,16 +2729,12 @@ impl Writer<'_> {
                 blocks.push_paragraph(&item[..prefix], &item[prefix..], true, edges);
             } else if code_block {
                 list.reset();
-                let mut code = inline.render_code();
-                code.push_str(&paragraph_insertion);
-                blocks.push_paragraph("", &fenced(&code), false, edges);
+                blocks.push_paragraph("", &fenced(&inline.render_code()), false, edges);
             } else {
                 list.reset();
                 let text = self.block_text(&inline.render(true));
                 blocks.push_paragraph("", &hard_breaks(&text), false, edges);
             }
-        } else if !self.agent {
-            blocks.empty_paragraph();
         }
         // A text box between this paragraph and the next one takes the break.
         let boxed = !extra.is_empty();
@@ -2941,8 +2745,7 @@ impl Writer<'_> {
         let mark = if self.agent {
             None
         } else {
-            self.paragraph_mark(p)
-                .filter(|(kind, _)| *kind == Mark::Deletion && written && !boxed)
+            self.paragraph_mark(p).filter(|_| written && !boxed)
         };
         // Without id lines, a page break is its own line after the
         // paragraph that holds it, in the view's words; not when the
@@ -3257,11 +3060,7 @@ impl Writer<'_> {
                 }
                 "ins" | "moveTo" | "del" | "moveFrom" => {
                     let (mark, by) = self.change_of(child);
-                    if self.dates {
-                        out.open_dated(mark, by.as_deref(), child.revision_date());
-                    } else {
-                        out.open(mark, by.as_deref());
-                    }
+                    out.open(mark, by.as_deref());
                     self.revised((mark, by), |w| {
                         w.inline(child, link, base, fields, out, extra);
                     });
@@ -3305,11 +3104,7 @@ impl Writer<'_> {
                     match whole_math_change(child) {
                         Some(change) => {
                             let (mark, by) = self.change_of(change);
-                            if self.dates {
-                                out.open_dated(mark, by.as_deref(), change.revision_date());
-                            } else {
-                                out.open(mark, by.as_deref());
-                            }
+                            out.open(mark, by.as_deref());
                             self.revised((mark, by), |_| out.raw(&strip_math_changes(&latex)));
                             out.close(mark);
                         }
@@ -3565,10 +3360,9 @@ impl Writer<'_> {
     /// Drawings as Markdown: `![alt](name)` for a plain inline image whose
     /// raster extracts to a file, a `drawing:` payload (its element, parts
     /// and relationships verbatim) for everything else — anchors, shapes,
-    /// text boxes, VML, AlternateContent and unextracted images. A text
-    /// box's words print as the blocks after the anchor, its payload
-    /// carrying the frame only. Inside a comment the writer cannot
-    /// restore a payload, so the drawing prints its text instead.
+    /// text boxes, VML, AlternateContent and unextracted images. Inside a
+    /// comment the writer cannot restore a payload, so the drawing prints
+    /// its text instead.
     fn drawing(
         &mut self,
         element: &Element,
@@ -3576,12 +3370,19 @@ impl Writer<'_> {
         out: &mut Critic,
         extra: &mut Vec<String>,
     ) {
-        if self.in_comment || (self.in_box && !self.nested_editable) {
+        if self.in_box {
+            // Inside a drawn box's content: the capturing drawing already
+            // holds this one; print only what the layer can say in words.
             self.drawing_text(element, out, extra);
             return;
         }
-        if !self.in_box
-            && drawing::is_plain_inline(element)
+        if self.in_comment {
+            self.drawing_text(element, out, extra);
+            return;
+        }
+        self.box_comments(element, extra);
+        let mut plain_image = false;
+        if drawing::is_plain_inline(element)
             && let Some(doc_pr) = element.find("docPr")
         {
             let alt = doc_pr
@@ -3596,79 +3397,87 @@ impl Writer<'_> {
                 .map(|r| r.target.clone());
             if let Some(image) = self.media.extracted_markdown(alt, target.as_deref()) {
                 out.raw(&image);
-                return;
+                plain_image = true;
             }
         }
-        let Some((index, token)) = drawing::Pending::reserve(
-            &mut self.pendings,
-            element,
-            &self.part,
-            self.scopes.scope(element),
-            wrap,
-        ) else {
-            self.drawing_text(element, out, extra);
-            return;
-        };
-        let enclosing = std::mem::take(&mut self.box_regions);
-        let mut stories = Vec::new();
-        self.box_blocks(element, &mut stories);
-        let nested = std::mem::replace(&mut self.box_regions, enclosing);
-        let name = format!("d{}", index + 1);
-        let mut regions = stories
-            .iter()
-            .enumerate()
-            .map(|(ordinal, block)| {
-                format!("<!-- text-box {name}.{ordinal} -->\n\n{block}\n\n<!-- /text-box -->")
-            })
-            .collect::<Vec<_>>();
-        regions.extend(nested);
-        drawing::Pending::attach(&mut self.pendings, index, element, stories);
-        out.raw(&token);
-        if self.in_box {
-            self.box_regions.extend(regions);
-        } else {
-            extra.extend(regions);
+        if !plain_image {
+            let scope = self.scopes.scope(element);
+            let part = self.part.clone();
+            out.raw(&drawing::Pending::push(
+                &mut self.pendings,
+                element,
+                &part,
+                scope,
+                wrap,
+            ));
         }
     }
 
-    /// Only the nearest-owned stories in the shown branch. Recursive drawings
-    /// enqueue their own flat regions, preserving their position as tokens.
-    fn box_blocks(&mut self, element: &Element, extra: &mut Vec<String>) {
+    /// The `txbxContent` Word renders of `element` — under an
+    /// `mc:AlternateContent`, only the shown branch's, never the
+    /// `mc:Fallback` copy — each rendered as a block of `<!-- -->` comment
+    /// lines pushed to `extra`. The drawing's `dN` payload already carries
+    /// the text, so printing it as a real paragraph would write it twice;
+    /// the comment keeps the view readable without cost to the write.
+    fn box_comments(&mut self, element: &Element, extra: &mut Vec<String>) {
         let mut boxes = Vec::new();
-        let root = element
+        let root = match element
             .child("Choice")
             .or_else(|| element.child("Fallback"))
-            .unwrap_or(element);
+        {
+            Some(branch) => branch,
+            None => element,
+        };
         root.find_all("txbxContent", &mut boxes);
-        let editable = (!self.in_box || self.nested_editable) && drawing::nested_editable(element);
+        if boxes.is_empty() {
+            return;
+        }
+        let open_comments = std::mem::take(&mut self.open_comments);
+        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
+        let in_box = std::mem::replace(&mut self.in_box, true);
         for content in boxes {
-            let open_comments = std::mem::take(&mut self.open_comments);
-            let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
-            let open_fields = std::mem::take(&mut self.open_fields);
-            let closing_fields = std::mem::take(&mut self.closing_fields);
-            let heading_slug = self.heading_slug.take();
-            let monospace = self.monospace_paragraph;
-            let in_box = std::mem::replace(&mut self.in_box, true);
-            let nested_editable = std::mem::replace(&mut self.nested_editable, editable);
+            let mut blocks = Blocks::new();
+            let mut list = ListIndent::default();
+            self.blocks(content, &mut blocks, &mut list);
+            let block = blocks.finish();
+            let mut comment = String::new();
+            for line in block.lines() {
+                // A line ending `-->` would close the comment early.
+                let line = line.replace("-->", "-- >");
+                if line.is_empty() {
+                    comment.push('\n');
+                } else {
+                    let _ = writeln!(comment, "<!-- {line} -->");
+                }
+            }
+            extra.push(comment.trim_end_matches('\n').to_string());
+        }
+        self.in_box = in_box;
+        self.open_comments = open_comments;
+        self.hidden_ranges = hidden_ranges;
+    }
+
+    /// A drawing's printable content inside a comment or a drawn text box:
+    /// its text boxes as extra blocks (a text box is a story of its own, so
+    /// comment ranges around its anchor do not cover it) and its image's
+    /// alt text.
+    fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
+        let mut boxes = Vec::new();
+        // Inside a drawn box's content, `blocks` already walked a nested
+        // box through: printing it again as a block would show it twice.
+        if !self.in_box {
+            drawing.find_all("txbxContent", &mut boxes);
+        }
+        let open_comments = std::mem::take(&mut self.open_comments);
+        let hidden_ranges = std::mem::take(&mut self.hidden_ranges);
+        for content in boxes {
             let mut blocks = Blocks::new();
             let mut list = ListIndent::default();
             self.blocks(content, &mut blocks, &mut list);
             extra.push(blocks.finish());
-            self.in_box = in_box;
-            self.nested_editable = nested_editable;
-            self.open_comments = open_comments;
-            self.hidden_ranges = hidden_ranges;
-            self.open_fields = open_fields;
-            self.closing_fields = closing_fields;
-            self.heading_slug = heading_slug;
-            self.monospace_paragraph = monospace;
         }
-    }
-
-    /// Rejected nested drawings remain readable, with no independent editable
-    /// token. The enclosing opaque template preserves them on an unchanged write.
-    fn drawing_text(&mut self, drawing: &Element, out: &mut Critic, extra: &mut Vec<String>) {
-        self.box_blocks(drawing, extra);
+        self.open_comments = open_comments;
+        self.hidden_ranges = hidden_ranges;
         if let Some(doc_pr) = drawing.find("docPr") {
             let alt = doc_pr
                 .attr("descr")
@@ -3783,64 +3592,6 @@ impl Writer<'_> {
                     format!("p{first} {style}")
                 } else {
                     format!("p{first}-p{last} {style}")
-                }
-            })
-            .collect()
-    }
-
-    /// The text size paragraph `p` states and its style does not give
-    /// (`size 9pt`), in half-points (#1474). A style the styles part does
-    /// not define is the default paragraph style, as Word reads it.
-    fn own_size(&self, p: &Element) -> Option<u32> {
-        let (sizes, default) = &self.style_sizes;
-        let given = p
-            .path(&["pPr", "pStyle"])
-            .and_then(|s| s.attr("val"))
-            .and_then(|id| sizes.get(id))
-            .unwrap_or(default);
-        agent::own_size(p, &self.hidden_styles).filter(|size| size != given)
-    }
-
-    /// `p8-p38 line 8.65pt exact size 9pt`: the cell paragraphs' own
-    /// spacing (#1473) and text size (#1474), consecutive ones that say
-    /// the same as one range.
-    fn cell_spacings(&self, table: &Element) -> Vec<String> {
-        let mut runs: Vec<(usize, usize, String)> = Vec::new();
-        for tr in table_rows(table) {
-            for tc in row_cells(tr) {
-                // As the cells range numbers them: a nested table's too.
-                let mut ps = Vec::new();
-                tc.find_all("p", &mut ps);
-                for p in ps {
-                    let Some(index) = p.attr(agent::INDEX).and_then(|i| i.parse::<usize>().ok())
-                    else {
-                        continue;
-                    };
-                    let mut said = p
-                        .path(&["pPr", "spacing"])
-                        .map(agent::spacing_clauses)
-                        .unwrap_or_default();
-                    // Its own text size too (#1474).
-                    said.extend(self.own_size(p).map(agent::size_clause));
-                    let said = said.join(" ");
-                    if said.is_empty() {
-                        continue;
-                    }
-                    match runs.last_mut() {
-                        Some((_, last, same)) if *last + 1 == index && *same == said => {
-                            *last = index;
-                        }
-                        _ => runs.push((index, index, said)),
-                    }
-                }
-            }
-        }
-        runs.into_iter()
-            .map(|(first, last, said)| {
-                if first == last {
-                    format!("p{first} {said}")
-                } else {
-                    format!("p{first}-p{last} {said}")
                 }
             })
             .collect()
@@ -4013,7 +3764,7 @@ impl Writer<'_> {
     }
 
     /// The agent tag of a revision element, with its timestamp when
-    /// the author has undated marks, or `--dates` asks for differing dates.
+    /// `--dates` asks for one and the author has several.
     fn agent_tag(&self, element: &Element) -> String {
         let story = self
             .story
@@ -4024,11 +3775,12 @@ impl Writer<'_> {
             critic::TAG,
             agent::tag_of(element, &self.handles)
         );
-        if self.handles.needs_date(element.attr("author"), self.dates)
-            && let Some(date) = element.revision_date()
+        if self.dates
+            && self.handles.needs_date(element.attr("author"))
+            && let Some(date) = element.attr("date")
         {
             tagged.push(' ');
-            tagged.push_str(&date);
+            tagged.push_str(date);
         }
         tagged
     }
@@ -4080,54 +3832,32 @@ impl Writer<'_> {
         self.revisions = revisions;
         self.open_comments = open_comments;
         let note = if self.agent {
-            let head = |text: String| self.agent_head(id, &comment, None) + &text;
+            let date = (self.dates && self.handles.needs_date(comment.attr("author")))
+                .then(|| comment.attr("date"))
+                .flatten();
+            let head = |text: String| {
+                let mut inner = agent::comment_head(
+                    id,
+                    comment.attr("author"),
+                    date,
+                    &self.handles,
+                    &self.threads,
+                );
+                inner.push_str(&text);
+                inner
+            };
             critic::Note {
                 prose: head(prose),
                 code: head(code),
             }
         } else {
             critic::Note {
-                prose: comment_note(comment.attr("author"), comment.comment_date(), &prose),
-                code: comment_note(comment.attr("author"), comment.comment_date(), &code),
+                prose: comment_note(comment.attr("author"), comment.attr("date"), &prose),
+                code: comment_note(comment.attr("author"), comment.attr("date"), &code),
             }
         };
         self.notes.insert(id.to_string(), note.clone());
         Some(note)
-    }
-
-    /// The agent view's head of comment `id`'s note ([`agent::comment_head`]).
-    fn agent_head(&self, id: &str, comment: &Element, held: Option<u32>) -> String {
-        let date = self
-            .handles
-            .needs_date(comment.attr("author"), self.dates)
-            .then(|| comment.comment_date())
-            .flatten();
-        agent::comment_head(
-            id,
-            comment.attr("author"),
-            date,
-            &self.handles,
-            &self.threads,
-            held,
-        )
-    }
-
-    /// `note`, its head naming the change that holds comment `id`'s
-    /// reference (`c0 @B in r13: `), when one does.
-    fn held_note(&self, id: &str, note: critic::Note) -> critic::Note {
-        let (Some(&held), Some(comment)) = (self.held_marks.get(id), self.comments.get(id)) else {
-            return note;
-        };
-        let plain = self.agent_head(id, comment, None);
-        let named = self.agent_head(id, comment, Some(held));
-        let swap = |text: String| match text.strip_prefix(&plain) {
-            Some(rest) => format!("{named}{rest}"),
-            None => text,
-        };
-        critic::Note {
-            prose: swap(note.prose),
-            code: swap(note.code),
-        }
     }
 
     /// The note's paragraphs as one line of text. `code` renders them as
@@ -4681,11 +4411,10 @@ fn view_table_style(t: &Element, custom_grid: bool) -> Option<&str> {
     }
 }
 
-/// Whether `styles` defines Table Grid with borders other than Word's thin
-/// grid (one single 0.5pt line on every side): a grid the legend names
-/// (`TableGrid, all borders 1.5pt`, `TableGrid, borders top double 3pt`)
-/// and the writer would otherwise replace with the thin one. A Table Grid
-/// that sets no border keeps Word's grid.
+/// Whether `styles` defines Table Grid with one single border all round
+/// that is not Word's 0.5pt: a grid the legend can name (`TableGrid, all
+/// borders 1.5pt`) and the writer would otherwise replace with the thin
+/// one. Borders that vary, or none, keep Word's grid.
 fn custom_table_grid(styles: Option<&Element>) -> bool {
     let Some(borders) = styles
         .and_then(|s| {
@@ -4696,23 +4425,16 @@ fn custom_table_grid(styles: Option<&Element>) -> bool {
     else {
         return false;
     };
-    // The strict `start`/`end` elements name the `left`/`right` borders.
-    let sides = [
-        &["top"][..],
-        &["left", "start"][..],
-        &["bottom"][..],
-        &["right", "end"][..],
-        &["insideH"][..],
-        &["insideV"][..],
-    ];
-    let side = |names: &[&str]| names.iter().find_map(|name| borders.child(name));
-    // Word's thin grid is one single 0.5pt line on every side; any other
-    // border the style sets is the document's own, which the legend says
-    // (#1419).
-    let thin = sides.iter().all(|names| {
-        side(names).is_some_and(|b| b.attr("val") == Some("single") && b.attr("sz") == Some("4"))
-    });
-    !thin && sides.iter().any(|names| side(names).is_some())
+    let sizes: Option<Vec<&str>> = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| {
+            borders
+                .child(side)
+                .filter(|b| b.attr("val") == Some("single"))
+                .and_then(|b| b.attr("sz"))
+        })
+        .collect();
+    sizes.is_some_and(|sizes| sizes.iter().all(|&sz| sz == sizes[0]) && sizes[0] != "4")
 }
 
 /// The table styles of `body`'s tables the view names, in the order they
@@ -4874,43 +4596,6 @@ fn bookmark_targets<'e>(
 
 /// The colour every text run of a header or footer paragraph `p` sets
 /// itself (`w:rPr/w:color`), when they all set the same one.
-/// The frame story paragraph `p` lays out in: the `w:framePr` of its
-/// style chain (`default` when it names no style), base first, under its
-/// own, as the view prints it.
-fn story_frame(p: &Element, styles: Option<&Element>, default: Option<&str>) -> Option<String> {
-    let mut chain: Vec<&[(String, String)]> = Vec::new();
-    if let Some(styles) = styles {
-        let mut id = p
-            .path(&["pPr", "pStyle"])
-            .and_then(|s| s.attr("val"))
-            .or(default)
-            .map(str::to_string);
-        let mut seen = HashSet::new();
-        while let Some(sid) = id.take() {
-            if !seen.insert(sid.clone()) {
-                break;
-            }
-            let Some(style) = styles
-                .children_named("style")
-                .find(|s| s.attr("styleId") == Some(sid.as_str()) && header::is_paragraph_style(s))
-            else {
-                break;
-            };
-            if let Some(frame) = style.path(&["pPr", "framePr"]) {
-                chain.push(frame.attrs.as_slice());
-            }
-            id = style
-                .child("basedOn")
-                .and_then(|b| b.attr("val"))
-                .map(str::to_string);
-        }
-        chain.reverse();
-    }
-    let own = p.path(&["pPr", "framePr"]).map(|f| f.attrs.as_slice());
-    crate::markdown::frames::merged(chain, own)
-        .map(|frame| crate::markdown::frames::describe(&frame))
-}
-
 fn story_color(p: &Element) -> Option<String> {
     let mut runs = Vec::new();
     p.find_all("r", &mut runs);
@@ -4923,7 +4608,7 @@ fn story_color(p: &Element) -> Option<String> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -4999,30 +4684,6 @@ mod tests {
 
     fn md(bytes: &[u8]) -> String {
         convert(bytes, &Options::default()).unwrap().markdown
-    }
-
-    /// `markdown` with each drawing definition's payload elided: the
-    /// expectation names the reference (`[d1]: drawing:…`) without quoting
-    /// the base64 the payload is. The payload's own correctness is what
-    /// the round-trip tests gate.
-    fn payloads_elided(markdown: &str) -> String {
-        let mut elided = markdown
-            .lines()
-            .map(|line| match line.split_once("]: ") {
-                Some((name, dest)) if dest.starts_with("drawing:") => {
-                    format!("{name}]: drawing:…")
-                }
-                Some((name, dest)) if dest.starts_with("<data:") => {
-                    format!("{name}]: <data:…>")
-                }
-                _ => line.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if markdown.ends_with('\n') {
-            elided.push('\n');
-        }
-        elided
     }
 
     fn p(style: &str, runs: &str) -> String {
@@ -5449,15 +5110,9 @@ mod tests {
                 ),
             ],
         );
-        // The image's part is missing from the package, so no `data:`
-        // definition can hold its bytes: the `dN` payload form keeps the
-        // relationship's target exactly, where the old link form invented
-        // a file name. The empty inline prints its reference too — a
-        // drawing the readable forms cannot say (#1101 A).
         assert_eq!(
-            payloads_elided(&md(&bytes)),
-            "Claim[^1]\n\n[field link](https://f.example)\n\n![A chart of sales][d1]\n\n\
-             ![Picture 2][d2]\n\n[^1]: Source: survey.\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
+            md(&bytes),
+            "Claim[^1]\n\n[field link](https://f.example)\n\n![A chart of sales](image1.png)\n\n[^1]: Source: survey.\n"
         );
     }
 
@@ -5527,21 +5182,8 @@ mod tests {
             )],
         );
         // `{`, `}`, `<` and `>` may not appear in a URI; encoded, they cannot form a
-        // delimiter, so the destination reaches the Markdown unchanged. The
-        // part is missing from the package, so the reference is the `dN`
-        // payload form: the target travels inside it, base64, where no
-        // delimiter can form (#1101 A).
-        assert_eq!(
-            payloads_elided(&md(&bytes)),
-            "{--![x][d1]--}\n\n[d1]: drawing:…\n"
-        );
-        let view = md(&bytes);
-        let dest = view
-            .lines()
-            .find_map(|line| line.strip_prefix("[d1]: "))
-            .unwrap();
-        let payload = serde_json::to_value(drawing::decode(dest).unwrap()).unwrap();
-        assert_eq!(payload["rels"][0]["raw"], "word/media/a--}~>{b}<.png");
+        // delimiter, so the destination reaches the Markdown unchanged.
+        assert_eq!(md(&bytes), "{--![x](a--%7D~%3E%7Bb%7D%3C.png)--}\n");
     }
 
     #[test]
@@ -5558,11 +5200,11 @@ mod tests {
         ]
         .concat();
 
-        // An insertion before a deletion preserves that source order as
-        // separate changes.
+        // An insertion then a deletion is a replacement, as Word Compare
+        // writes it: CriticMarkup's substitution, as pandiff writes it.
         assert_eq!(
             md(&docx(&body, &[])),
-            "Keep {++**new**++}{r2}{--_old_--}{r1}.\n\n{++destination++}{r3} / {--source--}{r3}\n"
+            "Keep {~~_old_~>**new**~~}{>>r1+2<<}.\n\n{++destination++}{>>r3<<} / {--source--}{>>r3<<}\n"
         );
     }
 
@@ -5576,7 +5218,7 @@ mod tests {
 
         assert_eq!(
             md(&docx(&body, &[])),
-            "## {++Added heading++}{r1}\n\n{--Deleted paragraph--}{r2}\n"
+            "## {++Added heading++}{>>r1<<}\n\n{--Deleted paragraph--}{>>r2<<}\n"
         );
     }
 
@@ -5646,7 +5288,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|Head|\n|-|\n|{--old--}{r1 Ana (2026-01-02T03:04:00Z)}|\n"
+            "|Head|\n|-|\n|{--old--}{>>r1 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -5660,12 +5302,10 @@ mod tests {
             ),
         ]
         .concat();
-        // The deleted box leaves no empty `{----}` paragraph behind: its
-        // anchor prints the token in the deletion's mark, and its words
-        // print as the block after it, in the same mark.
+        // The deleted box leaves no empty `{----}` paragraph behind.
         assert_eq!(
-            payloads_elided(&md(&docx(&body, &[]))),
-            "{--![Text Box 7][d1]--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n<!-- text-box d1.0 -->\n\n{--Deleted box--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n<!-- /text-box -->\n\nKeep{++![Text Box 7][d2]++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n<!-- text-box d2.0 -->\n\n{++Added box++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n[d2]: drawing:…\n"
+            md(&docx(&body, &[])),
+            "{--Deleted box--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nKeep\n\n{++Added box++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
     }
 
@@ -5674,15 +5314,15 @@ mod tests {
         let deleted = [pm("", &["del"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&deleted, &[])),
-            "A{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}B\n"
+            "A{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
         );
         let inserted = [pm("", &["ins"], &r("A")), p("", &r("B"))].concat();
         assert_eq!(
             md(&docx(&inserted, &[])),
-            "A¶{r92 Ana (2026-01-02T03:04:00Z)}\n\nB\n"
+            "A{++\n\n++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n"
         );
-        // A whole deleted paragraph keeps the text and paragraph mark
-        // as separate deletions because their revision ids differ.
+        // A whole deleted paragraph: its text and its break are one
+        // deletion, whose note names both marks.
         let whole = [
             pm("", &["del"], &del(&dr("Deleted paragraph"))),
             p("", &r("Next")),
@@ -5690,7 +5330,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&whole, &[])),
-            "{--Deleted paragraph--}{r91 Ana (2026-01-02T03:04:00Z)}{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}Next\n"
+            "{--Deleted paragraph\n\n--}{>>r91+92 Ana (2026-01-02T03:04:00Z)<<}Next\n"
         );
     }
 
@@ -5711,7 +5351,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[("word/footnotes.xml", &footnotes)])),
-            "Claim[^1]\n\n[^1]: Source{++ updated++}{footnotes.r90 Ana (2026-01-02T03:04:00Z)}{-- --}{footnotes.r92 Ana (2026-01-02T03:04:00Z)}page 4\n"
+            "Claim[^1]\n\n[^1]: Source{++ updated++}{>>footnotes.r90 Ana (2026-01-02T03:04:00Z)<<}{-- --}{>>footnotes.r92 Ana (2026-01-02T03:04:00Z)<<}page 4\n"
         );
     }
 
@@ -6013,11 +5653,11 @@ mod tests {
         assert_eq!(with_comments(&tracked, &xml), "{==text==}{>>Ana: n<<}\n");
         assert_eq!(
             with_comments(&deleted, &xml),
-            "{=={--old--}{r91 Ana (2026-01-02T03:04:00Z)}==}{>>Ana: n<<}\n"
+            "{=={--old--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}==}{>>Ana: n<<}\n"
         );
         assert_eq!(
             with_comments(&crossing, &xml),
-            "{==a{++b++}{r90 Ana (2026-01-02T03:04:00Z)}==}{++c++}{r90 Ana (2026-01-02T03:04:00Z)}{>>Ana: n<<}\n"
+            "{==a{++b++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}==}{++c++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: n<<}\n"
         );
     }
 
@@ -6035,12 +5675,9 @@ mod tests {
             ),
         );
         let xml = comments(&[("1", "Ana", "", &p("", &r("n")))]);
-        // The token is the anchor's own content, so the range covers it;
-        // the box is a story of its own, so its words do not join the
-        // range: they print as the block after it.
         assert_eq!(
-            payloads_elided(&with_comments(&body, &xml)),
-            "{==anchor![Text Box 7][d1]==}{>>Ana: n<<}\n\n<!-- text-box d1.0 -->\n\ninside\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n"
+            with_comments(&body, &xml),
+            "{==anchor==}{>>Ana: n<<}\n\ninside\n"
         );
     }
 
@@ -6102,22 +5739,23 @@ mod tests {
     #[test]
     fn substitutions_merges_and_empty_changes() {
         let body = [
-            // An insertion before a deletion stays two changes in source order.
+            // Replacement written insertion first still reads old ~> new.
             p("", &format!("{}{}{}", r("I really love "), ins(&r("font-styles")), del(&dr("fonts")))),
             // Word splits one insertion over several w:ins; they join.
             p("", &format!("{}{}{}", ins(&r("one ")), ins(&r("insertion")), r("."))),
             // Empty change elements vanish; an inserted space stays.
             p("", &format!("{}{}{}{}", r("a"), ins(""), del(&r("")), ins(&r(" ")))),
             // Inserted by one author and deleted by another: the insertion
-            // held nothing else, so the note names it after ` re `.
+            // held nothing else, so the note names it after ` on `.
             p("", &format!("{}{}", r("x"), ins(&del(&dr("y"))))),
-            // Moves retain their source order as an insertion and a deletion.
+            // Moves are an insertion and a deletion; the inserted side then
+            // the deleted one read as a substitution.
             p("", r#"<w:moveTo w:id="4"><w:r><w:t>there</w:t></w:r></w:moveTo><w:moveFrom w:id="3"><w:r><w:delText>here</w:delText></w:r></w:moveFrom>"#),
         ]
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "I really love {++font-styles++}{r90 Ana (2026-01-02T03:04:00Z)}{--fonts--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n{++one ++}{r90 Ana (2026-01-02T03:04:00Z)}{++insertion++}{r90 Ana (2026-01-02T03:04:00Z)}.\n\na{++ ++}{r90 Ana (2026-01-02T03:04:00Z)}\n\nx{--y--}{r91 Ana (2026-01-02T03:04:00Z) re r90 Ana (2026-01-02T03:04:00Z)}\n\n{++there++}{r4}{--here--}{r3}\n"
+            "I really love {~~fonts~>font-styles~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++one insertion++}{>>r90+90 Ana (2026-01-02T03:04:00Z)<<}.\n\na{++ ++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\nx{--y--}{>>r91 Ana (2026-01-02T03:04:00Z) on r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{~~here~>there~~}{>>r3+4<<}\n"
         );
     }
 
@@ -6127,7 +5765,7 @@ mod tests {
         let body = p("", &r("x {++ y ++} ~> z")) + &p("", &ins(&r("new")));
         assert_eq!(
             md(&docx(&body, &[])),
-            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{r90 Ana (2026-01-02T03:04:00Z)}\n"
+            "x {\\++ y ++\\} \\~\\> z\n\n{++new++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
         // Without one the text is escaped all the same (#519): a later
         // convert cannot read it as changes.
@@ -6149,7 +5787,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[("word/_rels/document.xml.rels", rels)])),
-            "[keep](https://x.test) {++[new](https://x.test)++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{++[added link](https://x.test)++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{--[old link](https://f.test)--}{r91 Ana (2026-01-02T03:04:00Z)}\n\nseen\n"
+            "[keep](https://x.test) {++[new](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++[added link](https://x.test)++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{--[old link](https://f.test)--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n\nseen\n"
         );
     }
 
@@ -6165,10 +5803,11 @@ mod tests {
             )
         };
         let body = [
-            // The inserted mark precedes the separator and the next heading.
+            // Before a heading the break closes after `## `.
             pm("", &["ins"], &r("A")),
             p("Heading2", &r("B")),
-            // A deleted list item keeps its number, as Word shows it.
+            // Before a list item it closes after the marker; a deleted item keeps
+            // its number, as Word shows it.
             item(&["moveFrom"], &r("one")),
             item(&[], &del(&dr("two"))),
             item(&["moveTo"], &r("three")),
@@ -6195,8 +5834,8 @@ mod tests {
         ]
         .concat();
         assert_eq!(
-            payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
-            "A¶{r92 Ana (2026-01-02T03:04:00Z)}\n\n## B\n\n1. one{--\n2. two--}{r91 Ana (2026-01-02T03:04:00Z)}\n3. three\n4. four\n\nC\n\nD¶{r92 Ana (2026-01-02T03:04:00Z)}{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}E\n\nF\n\n|G|\n|-|\n\nH![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nbox\n\n<!-- /text-box -->\n\nI\n\nJ\n\n[d1]: drawing:…\n"
+            md(&docx(&body, &[("word/numbering.xml", &numbering)])),
+            "A{++\n\n## ++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}B\n\n1. one{--\n2. two--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}\n3. three{++\n4. ++}four\n\nC\n\nD{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}E\n\nF\n\n|G|\n|-|\n\nH\n\nbox\n\nI\n\nJ\n"
         );
     }
 
@@ -6215,7 +5854,7 @@ mod tests {
         );
         assert_eq!(
             md(&docx(&body, &[])),
-            "|a{--<br>--}{r92 Ana (2026-01-02T03:04:00Z)}b{++<br>++}{r92 Ana (2026-01-02T03:04:00Z)}c|{++block ins++}{r90 Ana (2026-01-02T03:04:00Z)}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{r91 Ana (2026-01-02T03:04:00Z)}|\n"
+            "|a{--<br>--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}b{++<br>++}{>>r92 Ana (2026-01-02T03:04:00Z)<<}c|{++block ins++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}|\n|-|-|\n|{--n1; n2--}|{--wrapped--}{>>r91 Ana (2026-01-02T03:04:00Z)<<}|\n"
         );
     }
 
@@ -6228,7 +5867,7 @@ mod tests {
         ));
         assert_eq!(
             md(&docx(&body, &[])),
-            "{++in control++}{r90 Ana (2026-01-02T03:04:00Z)}\n\n{++in custom xml++}{r90 Ana (2026-01-02T03:04:00Z)}\n"
+            "{++in control++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n\n{++in custom xml++}{>>r90 Ana (2026-01-02T03:04:00Z)<<}\n"
         );
     }
 
@@ -6256,7 +5895,7 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{++tagged++}{r90 Ana (2026-01-02T03:04:00Z)}{-- boxed--}{r91 Ana (2026-01-02T03:04:00Z)}\n\n# Title{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}Body\n\nx\n"
+            "{~~ boxed~>tagged~~}{>>r91+90 Ana (2026-01-02T03:04:00Z)<<}\n\n# Title{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}Body\n\nx\n"
         );
     }
 
@@ -6283,8 +5922,8 @@ mod tests {
             p("", &r("control")),
         );
         assert_eq!(
-            payloads_elided(&md(&docx(&body, &[]))),
-            "|{--cell![Text Box 7][d1]<br>--}<!-- text-box d1.0 --><br><br>{--box--}<br><br><!-- /text-box -->|{--control--}|\n|-|-|\n\n[d1]: drawing:…\n"
+            md(&docx(&body, &[])),
+            "|{--cell<br>box--}|{--control--}|\n|-|-|\n"
         );
     }
 
@@ -6293,7 +5932,10 @@ mod tests {
         let body = r#"<w:p><w:pPr><w:rPr><w:del w:id="1"/></w:rPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p>
 <w:p><w:r><w:t>Second</w:t></w:r></w:p>
 <w:p><w:r><w:t>Third</w:t></w:r></w:p>"#;
-        assert_eq!(md(&docx(body, &[])), "First{--\n\n--}{r1}Second\n\nThird\n");
+        assert_eq!(
+            md(&docx(body, &[])),
+            "First{--\n\n--}{>>r1<<}Second\n\nThird\n"
+        );
     }
 
     #[test]
@@ -6306,7 +5948,7 @@ mod tests {
         let numbering = format!(
             r#"<w:numbering {W}><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num></w:numbering>"#
         );
-        let expected = "{--![][d1]--}\n\n<!-- text-box d1.0 -->\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n<!-- /text-box -->\n\n[d1]: drawing:…\n";
+        let expected = "## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n";
         for drawing in ["drawing", "pict", "object"] {
             let run = format!("<w:r><w:{drawing}>{content}</w:{drawing}></w:r>");
             for body in [
@@ -6320,7 +5962,7 @@ mod tests {
                 ),
             ] {
                 assert_eq!(
-                    payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
+                    md(&docx(&body, &[("word/numbering.xml", &numbering)])),
                     expected
                 );
             }
@@ -6332,12 +5974,9 @@ mod tests {
                 r("Keep ")
             ),
         );
-        // The box rides inside the deletion that holds the text before it,
-        // so the token joins that mark instead of opening its own line.
         assert_eq!(
-            payloads_elided(&md(&docx(&body, &[("word/numbering.xml", &numbering)]))),
-            "Keep {--Old![][d1]--}\n\n<!-- text-box d1.0 -->\n\n## {--Heading--}\n\n- {--Item--}\n\n|{--Cell--}|\n|-|\n\n<!-- /text-box -->\n\n\
-             [d1]: drawing:…\n"
+            md(&docx(&body, &[("word/numbering.xml", &numbering)])),
+            format!("Keep {{--Old--}}\n\n{expected}")
         );
     }
 
@@ -6352,7 +5991,7 @@ mod tests {
 </w:p></w:tc></w:tr></w:tbl>"#;
         assert_eq!(
             md(&docx(body, &[])),
-            "|Header|\n|-|\n|{--Before **old** after--}{r1}|\n"
+            "|Header|\n|-|\n|{--Before **old** after--}{>>r1<<}|\n"
         );
     }
 
@@ -6377,7 +6016,7 @@ mod tests {
         let t1 = "2026-09-29T14:05:00Z";
         let t2 = "2026-09-29T15:10:00Z";
         let body = [
-            // An insertion before a deletion keeps both marks and attributions.
+            // One person's replacement: one note after the substitution.
             p(
                 "",
                 &format!(
@@ -6386,7 +6025,7 @@ mod tests {
                     by("del", "Ana Lima", t1, &dr("fonts"))
                 ),
             ),
-            // Different authors keep both marks in their original order.
+            // Two people's: both notes, old side first.
             p(
                 "",
                 &format!(
@@ -6421,11 +6060,11 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{++styles++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--fonts--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
-             {++new++}{r7 Bo Chen (2026-09-29T15:10:00Z)}{--old--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
-             {++a++}{r7 Ana Lima (2026-09-29T14:05:00Z)}{++b++}{r7 Ana Lima (2026-09-29T15:10:00Z)}\n\n\
-             {++moved here++}{r7 Bo Chen (2026-09-29T15:10:00Z)}\n\n\
-             {++w++}{r7 Ana Lima}{--x--}{r7 (2026-09-29T14:05:00Z)}{++y++}{r7}{++z++}{r7 A <<\\} B (2026-09-29T14:05:00Z)}\n"
+            "{~~fonts~>styles~~}{>>r7+7 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
+             {~~old~>new~~}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
+             {++a++}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{++b++}{>>r7 Ana Lima (2026-09-29T15:10:00Z)<<}\n\n\
+             {++moved here++}{>>r7 Bo Chen (2026-09-29T15:10:00Z)<<}\n\n\
+             {~~x~>w~~}{>>r7 (2026-09-29T14:05:00Z)<<}{>>r7 Ana Lima<<}{++y++}{>>r7<<}{++z++}{>>r7 A <<\\} B (2026-09-29T14:05:00Z)<<}\n"
         );
     }
 
@@ -6454,9 +6093,9 @@ mod tests {
         .concat();
         assert_eq!(
             md(&docx(&body, &[])),
-            "{--A--}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--\n\n--}{r8 Bo Chen (2026-09-29T15:10:00Z)}Next\n\n\
-             {--B--}{r7 Ana Lima (2026-09-29T14:05:00Z)}{--\n\n--}{r8 Ana Lima (2026-09-29T14:05:00Z)}{--C--}{r7 Ana Lima (2026-09-29T14:05:00Z)}\n\n\
-             |{++row++}{r9 Bo Chen (2026-09-29T15:10:00Z)}|{--cell--}{r10 Ana Lima (2026-09-29T14:05:00Z)}|\n|-|-|\n"
+            "{--A--}{>>r7 Ana Lima (2026-09-29T14:05:00Z)<<}{--\n\n--}{>>r8 Bo Chen (2026-09-29T15:10:00Z)<<}Next\n\n\
+             {--B\n\nC--}{>>r7+8 Ana Lima (2026-09-29T14:05:00Z)<<}\n\n\
+             |{++row++}{>>r9 Bo Chen (2026-09-29T15:10:00Z)<<}|{--cell--}{>>r10 Ana Lima (2026-09-29T14:05:00Z)<<}|\n|-|-|\n"
         );
     }
 
@@ -6539,7 +6178,7 @@ mod tests {
         .concat();
         assert_eq!(
             with_comments(&body, &xml),
-            "{==a==}{--\n\n--}{r92 Ana (2026-01-02T03:04:00Z)}{>>Ana: first<<}\n\n|cell|\n|-|\n"
+            "{==a==}{--\n\n--}{>>r92 Ana (2026-01-02T03:04:00Z)<<}{>>Ana: first<<}\n\n|cell|\n|-|\n"
         );
     }
 
@@ -6725,13 +6364,12 @@ mod tests {
         );
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
         assert_eq!(
-            payloads_elided(&resolved(&bytes, Revisions::Accept)),
-            "Keep![Text Box 7][d1][^1]\n\n<!-- text-box d1.0 -->\n\nAdded box\n\n<!-- /text-box -->\n\n[^1]: Source updatedpage 4\n\n[d1]: drawing:…\n"
+            resolved(&bytes, Revisions::Accept),
+            "Keep[^1]\n\nAdded box\n\n[^1]: Source updatedpage 4\n"
         );
         assert_eq!(
-            payloads_elided(&resolved(&bytes, Revisions::Reject)),
-            "![Text Box 7][d1]\n\n<!-- text-box d1.0 -->\n\nDeleted box\n\n<!-- /text-box -->\n\nKeep[^1]\n\n[^1]: Source page 4\n\n\
-             [d1]: drawing:…\n"
+            resolved(&bytes, Revisions::Reject),
+            "Deleted box\n\nKeep[^1]\n\n[^1]: Source page 4\n"
         );
     }
 
@@ -6780,7 +6418,7 @@ mod tests {
             p("", &format!("{}{}", r("Gone "), ins(&r("note")))),
         );
         let bytes = docx(&body, &[("word/footnotes.xml", &footnotes)]);
-        let by = |id: &str| format!("{{{id} Ana (2026-01-02T03:04:00Z)}}");
+        let by = |id: &str| format!("{{>>{id} Ana (2026-01-02T03:04:00Z)<<}}");
         let (added, gone) = (by("r90"), by("r91"));
         assert_eq!(
             md(&bytes),
@@ -6814,7 +6452,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod markdown_source_owner_boundary_tests {
     use super::*;
 

@@ -45,7 +45,7 @@ fn no_flag_aliases_every_author_as_author_and_refuses_to_overwrite() {
         "-o",
         out.to_str().unwrap(),
     ]);
-    assert_eq!(code, 2);
+    assert_eq!(code, 1);
     assert!(stderr.contains("already exists"), "{stderr}");
 }
 

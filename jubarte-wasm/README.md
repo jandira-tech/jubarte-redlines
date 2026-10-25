@@ -37,10 +37,7 @@ and the 8 MB shadow stack `-zstack-size=8388608`) is pinned in `.cargo/config.to
 and an env-var `RUSTFLAGS` would REPLACE — not merge — those flags. A bare
 `wasm-pack build` is the only invocation that guarantees both land. wasm-opt flags
 (`-O3`, SIMD, bulk-memory, …) live in `Cargo.toml [package.metadata.wasm-pack.profile.*]`;
-together those two files are the complete, pinnable recipe for the code. The
-published npm bytes also take `build-npm.sh`'s path remaps (below), which change
-only the paths in panic locations, so a rebuild from the two files alone differs
-in those strings. This applies to every
+together those two files are the complete, pinnable recipe. This applies to every
 `wasm-pack` invocation below, which all pass only the documented flags.
 
 ### Publish flow (`build-npm.sh`)
@@ -53,17 +50,9 @@ deliberately):
 
 - `wasm-pack build` four targets: `node` (default features), `web`
   (`--out-dir pkg-web`), `node-slim` and `web-slim`
-  (`--no-default-features --features console-panic`, no PDF renderer),
-  with `--remap-path-prefix` for the home directory and the checkout in
-  `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS`: the target's own variable
-  merges with the `.cargo/config.toml` recipe instead of replacing it, and
-  the panic locations no longer name the builder's home (it refuses to run
-  with `RUSTFLAGS` set);
+  (`--no-default-features --features console-panic`, no PDF renderer);
 - copy the four artifact sets into `npm/node`, `npm/web`, `npm/node-slim`,
   `npm/web-slim`;
-- refuse the package if any artifact still names a home directory
-  (`scripts/check_npm_paths.py`, which CI also runs on the committed
-  package);
 - copy the engine `LICENSE` into `npm/` and stamp `git rev-parse HEAD` into
   `npm/ENGINE_COMMIT.txt`.
 

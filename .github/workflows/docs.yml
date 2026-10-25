@@ -86,7 +86,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
       - uses: ./.github/actions/mbx
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
       # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
       # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's

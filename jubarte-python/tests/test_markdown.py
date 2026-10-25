@@ -220,7 +220,7 @@ def test_cli_convert_writes_markdown_as_the_snapshot_of_its_docx(tmp_path: Path,
     assert main(["convert", str(source), "-o", str(out)]) == 0
     assert capsys.readouterr().err.startswith(f"wrote {out} (json, ")
     snapshot = json.loads(out.read_text(encoding="utf-8"))
-    assert snapshot["schema_version"] == 3 and snapshot["summary"]["paragraphs"] > 0
+    assert snapshot["schema_version"] == 1 and snapshot["summary"]["paragraphs"] > 0
 
 
 STAMP_REFERENCE = Path(__file__).resolve().parents[2] / "tests/fixtures/md-roundtrip/review/ref-stamp.docx"

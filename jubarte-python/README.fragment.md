@@ -119,20 +119,6 @@ doc.accept(ids=["r12"])           # or reject(...): resolve a selection,
 result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
 ```
 
-The snapshot uses `schema_version: 3`. `changes` lists logical changes:
-a change Word wrote as several marks is one entry with its `members`,
-and a deletion and an insertion by one author that touch, in either
-order, are one `replacement`.
-`summary.tables` and `tables[]`
-count top-level body tables only; each `index` is the view's `tN`.
-Every table has a `nested` array (empty for a leaf), containing its cell tables.
-A nested entry has `parent` (for example `t0.row2.cell0`) and no `index`.
-A deeper parent includes the cell-local table ordinal, for example
-`t0.row2.cell0.t0.row0.cell1`. Paragraph ids and edit-plan schemas are unchanged.
-
-Python nested grids are `Table(index=None, parent=CELL_PATH, nested=(...))`;
-top-level grids retain integer indices.
-
 `doc.compare(other, author=...)` is `compare_documents`; `doc.to_pdf()` and
 `doc.to_png(dpi=...)` are the one-shot renderers.
 
@@ -164,9 +150,7 @@ tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` shows the
 changed paragraphs between two documents — or a document and Markdown text —
-as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup). When a side
-is a Word document, the comparer writes the changes, and a replacement inside
-a paragraph keeps Word Compare's order, the insertion first: `{+new+}[-old-]`.
+as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup):
 
 ```python
 print(diff(read("v1.docx"), read("v2.docx")))

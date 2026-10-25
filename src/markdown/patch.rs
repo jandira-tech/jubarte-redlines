@@ -178,12 +178,10 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             author: "jubarte".to_string(),
             date: None,
             initials: None,
-            removed_anchor_comments: Default::default(),
             existing_revisions: ExistingRevisions::Accept,
             resolve_revisions: None,
             operations,
             update_fields: false,
-            rewrite_others_comments: false,
         };
         match apply_plan(docx, &plan) {
             Ok(result) => {
@@ -262,11 +260,7 @@ fn paragraph_styles(docx: &[u8]) -> HashSet<String> {
     use crate::namespaces::W;
     dom.elements(root, Some(&W::name("style")))
         .into_iter()
-        // No `w:type` is a paragraph style (ECMA-376 `w:style`).
-        .filter(|&style| {
-            dom.attribute(style, &W::name("type"))
-                .is_none_or(|t| t == "paragraph")
-        })
+        .filter(|&style| dom.attribute(style, &W::name("type")) == Some("paragraph"))
         .filter_map(|style| {
             let name = dom.element(style, &W::name("name"))?;
             Some(dom.attribute(name, &W::val())?.to_lowercase())
@@ -315,7 +309,7 @@ fn describe(edit: &Edit, paragraphs: &[Paragraph], blocks: &[Block]) -> String {
 /// typed numbering left out.
 fn key(text: &str) -> String {
     let spaced = text.replace('\u{FFFC}', " ");
-    let collapsed = crate::util::collapse_whitespace(&spaced);
+    let collapsed = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed[enumerator_len(&collapsed)..].to_string()
 }
 
@@ -582,11 +576,9 @@ fn operations(
                 if !whole.contains(&entry) {
                     operations.push(Operation {
                         id,
-                        group: None,
                         kind: OperationKind::Rewrite {
                             paragraph: at(p),
                             text: rewritten(paragraph, block),
-                            comment: None,
                         },
                     });
                     continue;
@@ -604,12 +596,10 @@ fn operations(
                 };
                 operations.push(Operation {
                     id: Some(format!("edit:{entry}:new")),
-                    group: None,
                     kind,
                 });
                 operations.push(Operation {
                     id,
-                    group: None,
                     kind: OperationKind::DeleteParagraph {
                         paragraph: at(p),
                         comment: None,
@@ -622,7 +612,6 @@ fn operations(
                     OperationKind::Rewrite {
                         paragraph: at(p),
                         text: String::new(),
-                        comment: None,
                     }
                 } else {
                     OperationKind::DeleteParagraph {
@@ -630,11 +619,7 @@ fn operations(
                         comment: None,
                     }
                 };
-                operations.push(Operation {
-                    id,
-                    group: None,
-                    kind,
-                });
+                operations.push(Operation { id, kind });
             }
             Edit::Insert(b, after) => {
                 let block = &blocks[b];
@@ -646,11 +631,7 @@ fn operations(
                     Edit::Insert(..) => None,
                 });
                 if let Some(kind) = insert(block, after, next) {
-                    operations.push(Operation {
-                        id,
-                        group: None,
-                        kind,
-                    });
+                    operations.push(Operation { id, kind });
                 }
             }
         }
@@ -827,7 +808,7 @@ fn push_run(block: &mut Block, text: &str, bold: bool, italic: bool) {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -905,7 +886,7 @@ mod tests {
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod markdown_pairing_boundary_tests {
     use super::*;
 

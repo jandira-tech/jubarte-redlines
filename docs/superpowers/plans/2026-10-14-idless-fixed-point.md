@@ -21,12 +21,6 @@ SPDX-License-Identifier: AGPL-3.0-only
 > `visual-diff` page equality (item 6) is not a suite test — the landed gates
 > are per-fixture chain assertions, not the 75/75 sweep; L3's nested-bullet
 > glyph cycle and K4's re-measure are unverified remnants.
->
-> **Item 6, 2026-10-20 (#532):** `tests/md_fixed_point.rs` gates the five
-> manuscripts (`MANUSCRIPTS`) this way: A converts to B, then B runs as a
-> docx case, C == read(D) (G1) and `debug B D --check render` (G2, with
-> jubarte's page count) instead of pixel `visual-diff`, the check every
-> docx case of the gate uses. All five pass both.
 
 Arthur's chain, measured on the 75 test Markdown files that carry no id line:
 

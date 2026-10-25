@@ -59,13 +59,10 @@ fn comments_lists_json_lines_and_filters() {
 
     let (code, stdout, stderr) = run(&["comments", file, "--json"]);
     assert_eq!(code, 0, "{stderr}");
-    let mut rows: Vec<serde_json::Value> = stdout
+    let rows: Vec<serde_json::Value> = stdout
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    // The last line is the input's validity, never a comment (#1309).
-    let validity = rows.pop().unwrap();
-    assert!(validity.get("input_validity").is_some(), "{validity}");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0]["text"], "Too low");
     assert_eq!(rows[0]["anchor_text"], "cap");
@@ -76,12 +73,8 @@ fn comments_lists_json_lines_and_filters() {
 
     let (code, stdout, _) = run(&["comments", file, "--json", "--author", "Bob"]);
     assert_eq!(code, 0);
-    // One comment, then the input's validity.
-    assert_eq!(stdout.lines().count(), 2);
-    assert!(
-        stdout.lines().next().unwrap().contains("Agreed"),
-        "{stdout}"
-    );
+    assert_eq!(stdout.lines().count(), 1);
+    assert!(stdout.contains("Agreed"), "{stdout}");
 
     let (code, stdout, _) = run(&["comments", file, "--json", "--latest"]);
     assert_eq!(code, 0);
@@ -89,7 +82,7 @@ fn comments_lists_json_lines_and_filters() {
         .lines()
         .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["text"].to_string())
         .collect();
-    assert_eq!(texts, ["\"Agreed\"", "\"Fine\"", "null"]);
+    assert_eq!(texts, ["\"Agreed\"", "\"Fine\""]);
 
     let (code, stdout, _) = run(&["comments", file]);
     assert_eq!(code, 0);
@@ -111,75 +104,4 @@ fn comments_refuses_a_file_that_is_not_a_document() {
     let (code, _, stderr) = run(&["comments", path.to_str().unwrap()]);
     assert_ne!(code, 0);
     assert!(!stderr.is_empty());
-}
-
-#[path = "common/dead_comments.rs"]
-mod dead_comments;
-
-fn resolve_probe(case: char, what: &str) -> (Vec<u8>, String) {
-    let dir = tempfile::tempdir().unwrap();
-    let input = dir.path().join("source.docx");
-    let output = dir.path().join("resolved.docx");
-    std::fs::write(&input, dead_comments::probe(case)).unwrap();
-    let (code, stdout, stderr) = run(&[
-        what,
-        input.to_str().unwrap(),
-        "-o",
-        output.to_str().unwrap(),
-        "--quiet",
-    ]);
-    assert_eq!(code, 0, "{stderr}");
-    assert_eq!(stdout, "");
-    (std::fs::read(&output).unwrap(), stderr)
-}
-
-#[test]
-fn accept_warns_for_a_dead_range_with_a_surviving_reference() {
-    let (output, stderr) = resolve_probe('a', "accept");
-    assert_eq!(
-        stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting the changes that held all its text\n"
-    );
-    dead_comments::assert_state(&output, false, &[]);
-}
-
-#[test]
-fn accept_warns_when_the_reference_is_deleted_too() {
-    let (output, stderr) = resolve_probe('b', "accept");
-    // The deletion r7 held the mark itself.
-    assert_eq!(
-        stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting r7\n"
-    );
-    dead_comments::assert_state(&output, false, &[]);
-}
-
-#[test]
-fn reject_warns_for_a_dead_inserted_range() {
-    let (output, stderr) = resolve_probe('d', "reject");
-    assert_eq!(
-        stderr,
-        "warning: reject removed comment c0 (Alice: \"Existing range\"): anchor removed by rejecting the changes that held all its text\n"
-    );
-    dead_comments::assert_state(&output, false, &[]);
-}
-
-#[test]
-fn accept_warns_once_per_thread_member_using_original_ids() {
-    let (output, stderr) = resolve_probe('e', "accept");
-    assert_eq!(
-        stderr,
-        "warning: accept removed comment c0 (Alice: \"Existing range\"): anchor removed by accepting the changes that held all its text\nwarning: accept removed comment c1 (Bob: \"Reply to range\"): anchor removed by accepting the changes that held all its text\n"
-    );
-    // The comment that stays keeps its id (#1264).
-    dead_comments::assert_state(&output, true, &[(2, "Kept range", None)]);
-}
-
-#[test]
-fn resolution_does_not_warn_about_surviving_comments() {
-    for (case, what) in [('c', "accept"), ('b', "reject")] {
-        let (output, stderr) = resolve_probe(case, what);
-        assert_eq!(stderr, "");
-        dead_comments::assert_state(&output, false, &[(0, "Existing range", None)]);
-    }
 }

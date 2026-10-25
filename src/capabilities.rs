@@ -11,13 +11,9 @@
 //! is no feature to derive `operations` from and each is reported `true`. A
 //! wrapper that compiles an operation out overrides that field in its own
 //! manifest, as jubarte-wasm does for `pdf` (its `pdf` feature) and `png`
-//! (never). The rest is read from the modules that implement it: the v1 plan
-//! version and the story kinds come from `crate::inspect`, and whether a
-//! runtime dispatches PlanV2 from its own surface, so the manifest cannot
-//! drift from what a host can actually run.
-
-mod discovery;
-pub use discovery::{discovery, discovery_text};
+//! (never). The rest is read from the modules that implement it: the edit
+//! plan schema version and the story kinds come from `crate::inspect`, so
+//! the manifest cannot drift from the parser.
 
 use std::collections::BTreeMap;
 
@@ -38,10 +34,7 @@ pub struct Capabilities {
     pub runtime: String,
     /// Operation name to availability in this build.
     pub operations: Operations,
-    /// Edit plan schema versions `runtime` dispatches: `1`, plus `2`
-    /// where the runtime routes plans through [`crate::edit::prepare_v2`]
-    /// (the CLI and a Rust embedder; the Python and WASM bindings have
-    /// no PlanV2 entry point yet).
+    /// Edit plan schema versions this build accepts (currently `1`).
     pub edit_plan_versions: Vec<u32>,
     /// Operation kinds an edit plan may contain
     /// ([`crate::edit::OperationKind`] variants, in a stable order).
@@ -54,7 +47,7 @@ pub struct Capabilities {
     #[serde(default)]
     pub audit_rules: Vec<String>,
     /// Rule sets `validate --rules` accepts, with `word` (the default)
-    /// first (`crate::validate::RULE_SETS`).
+    /// first ([`crate::validate::RULE_SETS`]).
     #[serde(default)]
     pub validate_rules: Vec<String>,
     /// The file extensions each task's `-o` writes, indexed by task name
@@ -196,12 +189,6 @@ pub struct Operations {
     /// a11y,style,structure`).
     #[serde(default)]
     pub audit: bool,
-    /// Edit plans run with `--skip-failed`
-    /// ([`crate::edit::PrepareOptions::skip_failed`]): the operations that
-    /// pass are applied, and the failed ones are written as a plan of
-    /// their own.
-    #[serde(default)]
-    pub edit_skip_failed: bool,
 }
 
 impl Operations {
@@ -234,7 +221,6 @@ impl Operations {
             fields,
             scrub,
             audit,
-            edit_skip_failed,
         } = self;
         vec![
             ("compare", *compare),
@@ -262,7 +248,6 @@ impl Operations {
             ("fields", *fields),
             ("scrub", *scrub),
             ("audit", *audit),
-            ("edit_skip_failed", *edit_skip_failed),
         ]
     }
 }
@@ -333,7 +318,7 @@ impl From<crate::admission::InputLimits> for InputBudget {
 
 /// The extensions each task's `-o` writes, by task name: Word, the agent
 /// view (`md`), a rendered PDF, PNG pages and the JSON snapshot. `diff -o`
-/// writes text under any of `DIFF_EXTENSIONS`. The CLI's `-o` rule reads this
+/// writes text under any of [`DIFF_EXTENSIONS`]. The CLI's `-o` rule reads this
 /// table, so its refusals and its help agree.
 pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
     ("compare", &["docx", "md", "pdf", "png", "json"]),
@@ -351,50 +336,18 @@ pub const OUTPUT_FORMATS: &[(&str, &[&str])] = &[
 /// File extensions `diff -o` writes as text output: Markdown, plain text,
 /// and the two patch file extensions (`patch` and `diff`). Replaces the
 /// `md` row of [`OUTPUT_FORMATS`] for the `diff` task.
-pub(crate) const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
+pub const DIFF_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "patch", "diff"];
 
 /// One-line note describing how ids print, used as [`Ids::note`] in the
 /// manifest. Records the body vs. story prefix and the shell-safety rule.
-pub(crate) const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
+pub const IDS_NOTE: &str = "body ids print without a story (r12); every other story prints \
      {story}.r{id} (header1.r1, footnotes.r3); rows and cells sit under their table \
      (t0.row1.cell2); every id is safe unquoted in bash, csh and zsh";
 
-/// Whether `runtime` dispatches PlanV2 end to end. The CLI runs `edit
-/// apply --plan` and inline edits through [`crate::edit::prepare_v2`];
-/// `edit template` generates a PlanV2 that `edit apply --plan` then runs.
-/// A Rust embedder calls `prepare_v2` directly. The Python and WASM bindings
-/// expose no PlanV2 entry point yet, so their hosts stay on plan version 1.
-///
-/// Runtime names form a closed set: `cli`, `rust`, `python`, `wasm`, used
-/// by `src/bin/jubarte.rs`, the library tests, `jubarte-python/src/lib.rs`
-/// and `jubarte-wasm/src/lib.rs`, respectively. Any other name gets plan
-/// version 1 only.
-fn dispatches_v2(runtime: &str) -> bool {
-    matches!(runtime, "cli" | "rust")
-}
-
-/// Whether `runtime` runs an edit plan with `--skip-failed`: the CLI and a
-/// Rust embedder ([`crate::edit::PrepareOptions::skip_failed`]). The Python
-/// and WASM bindings take no such option.
-fn skips_failed(runtime: &str) -> bool {
-    matches!(runtime, "cli" | "rust")
-}
-
-/// The plan versions `runtime` dispatches, ascending: the manifest's
-/// `edit_plan_versions` and the focused matrix agree on it.
-fn dispatched_plan_versions(runtime: &str) -> Vec<u32> {
-    if dispatches_v2(runtime) {
-        vec![crate::inspect::SCHEMA_VERSION, 2]
-    } else {
-        vec![crate::inspect::SCHEMA_VERSION]
-    }
-}
-
 /// Builds a [`Capabilities`] manifest for `runtime` (typically `cli`,
 /// `python`, `rust`, `wasm`). Every operation in the default build is
-/// `true`, but what a runtime has no entry point for (`edit_skip_failed`,
-/// the plan versions); a wrapper overrides fields in its own manifest when
-/// it compiles an operation out.
+/// `true`; a wrapper overrides fields in its own manifest when it
+/// compiles an operation out.
 #[must_use]
 pub fn capabilities(runtime: &str) -> Capabilities {
     Capabilities {
@@ -427,10 +380,37 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             fields: true,
             scrub: true,
             audit: true,
-            edit_skip_failed: skips_failed(runtime),
         },
-        edit_plan_versions: dispatched_plan_versions(runtime),
-        edit_operations: crate::edit::dispatched_operation_kinds(),
+        edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
+        edit_operations: [
+            "replace",
+            "insert",
+            "delete",
+            "comment",
+            "insert_paragraph",
+            "delete_paragraph",
+            "format_paragraph",
+            "merge_paragraphs",
+            "rewrite",
+            "reply_comment",
+            "resolve_comment",
+            "edit_comment",
+            "delete_comment",
+            "insert_table",
+            "list",
+            "watermark",
+            "fill_control",
+            "format_run",
+            "insert_footnote",
+            "insert_image",
+            "page_setup",
+            "insert_toc",
+            "redact",
+            "settings",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect(),
         limits: Limits {
             stories: std::iter::once(crate::inspect::BODY_STORY)
                 .chain(crate::inspect::STORY_KINDS.iter().copied())
@@ -553,7 +533,7 @@ pub fn capabilities_json(runtime: &str) -> String {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -562,10 +542,10 @@ mod tests {
         let c = capabilities("rust");
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
-        assert_eq!(c.edit_plan_versions, [1, 2]);
-        assert_eq!(c.edit_operations.len(), 26);
+        assert_eq!(c.edit_plan_versions, [1]);
+        assert_eq!(c.edit_operations.len(), 24);
         assert!(c.operations.fields);
-        for op in ["insert_toc", "redact", "settings", "strike", "restore"] {
+        for op in ["insert_toc", "redact", "settings"] {
             assert!(c.edit_operations.iter().any(|o| o == op), "{op}");
         }
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));

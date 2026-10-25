@@ -1,7 +1,7 @@
 ---
 view: tracked                      # revisions as CriticMarkup, comments inline
 track_changes: off                 # w:trackRevisions not set; new edits are not tracked unless edit sets it
-revisions: 714                     # 714 marks shown as 358 changes: 169 insertions, 177 deletions, 10 substitutions, 2 paragraph marks
+revisions: 714                     # 714 marks shown as 714 changes: 179 insertions, 187 deletions, 348 paragraph marks
 comments: 0
 authors:
   document_owner: Arthur Souza Rodrigues  # dc:creator
@@ -15,1114 +15,1114 @@ notes: {empty: [footnotes, endnotes]}  # notes parts that hold no note
 ---
 
 <!-- p0 -->
-Eu adoro {~~mamão~>mamaum~~}{r1+2 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r1 @TA<<}{++mamaum++}{>>r2 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p1 empty -->
 
-<!-- p2 break-del r3+4 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r3+4 @TA}
+<!-- p2 break-del r4 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r3 @TA<<}
 
-<!-- p3 break-del r5+6 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r5+6 @TA}
+<!-- p3 break-del r6 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r5 @TA<<}
 
-<!-- p4 break-del r7+8 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r7+8 @TA}
+<!-- p4 break-del r8 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r7 @TA<<}
 
-<!-- p5 break-del r9+10 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r9+10 @TA}
+<!-- p5 break-del r10 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r9 @TA<<}
 
-<!-- p6 break-del r11+12 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r11+12 @TA}
+<!-- p6 break-del r12 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r11 @TA<<}
 
-<!-- p7 break-del r13+14 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r13+14 @TA}
+<!-- p7 break-del r14 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r13 @TA<<}
 
-<!-- p8 break-del r15+16 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r15+16 @TA}
+<!-- p8 break-del r16 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r15 @TA<<}
 
-<!-- p9 break-del r17+18 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r17+18 @TA}
+<!-- p9 break-del r18 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r17 @TA<<}
 
-<!-- p10 break-del r19+20 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r19+20 @TA}
+<!-- p10 break-del r20 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r19 @TA<<}
 
-<!-- p11 break-del r21+22 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r21+22 @TA}
+<!-- p11 break-del r22 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r21 @TA<<}
 
-<!-- p12 break-del r23+24 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r23+24 @TA}
+<!-- p12 break-del r24 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r23 @TA<<}
 
-<!-- p13 break-del r25+26 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r25+26 @TA}
+<!-- p13 break-del r26 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r25 @TA<<}
 
-<!-- p14 break-del r27+28 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r27+28 @TA}
+<!-- p14 break-del r28 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r27 @TA<<}
 
-<!-- p15 break-del r29+30 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r29+30 @TA}
+<!-- p15 break-del r30 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r29 @TA<<}
 
-<!-- p16 break-del r31+32 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r31+32 @TA}
+<!-- p16 break-del r32 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r31 @TA<<}
 
-<!-- p17 break-del r33+34 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r33+34 @TA}
+<!-- p17 break-del r34 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r33 @TA<<}
 
-<!-- p18 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r35+36 @TA}¶{r35+36 @TA}
+<!-- p18 break-ins r36 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r35 @TA<<}
 
-<!-- p19 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r37+38 @TA}¶{r37+38 @TA}
+<!-- p19 break-ins r38 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r37 @TA<<}
 
-<!-- p20 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r39+40 @TA}¶{r39+40 @TA}
+<!-- p20 break-ins r40 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r39 @TA<<}
 
-<!-- p21 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r41+42 @TA}¶{r41+42 @TA}
+<!-- p21 break-ins r42 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r41 @TA<<}
 
-<!-- p22 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r43+44 @TA}¶{r43+44 @TA}
+<!-- p22 break-ins r44 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r43 @TA<<}
 
-<!-- p23 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r45+46 @TA}¶{r45+46 @TA}
+<!-- p23 break-ins r46 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r45 @TA<<}
 
-<!-- p24 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r47+48 @TA}¶{r47+48 @TA}
+<!-- p24 break-ins r48 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r47 @TA<<}
 
-<!-- p25 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r49+50 @TA}¶{r49+50 @TA}
+<!-- p25 break-ins r50 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r49 @TA<<}
 
-<!-- p26 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r51+52 @TA}¶{r51+52 @TA}
+<!-- p26 break-ins r52 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r51 @TA<<}
 
-<!-- p27 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r53+54 @TA}¶{r53+54 @TA}
+<!-- p27 break-ins r54 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r53 @TA<<}
 
-<!-- p28 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r55+56 @TA}¶{r55+56 @TA}
+<!-- p28 break-ins r56 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r55 @TA<<}
 
-<!-- p29 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r57+58 @TA}¶{r57+58 @TA}
+<!-- p29 break-ins r58 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r57 @TA<<}
 
-<!-- p30 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r59+60 @TA}¶{r59+60 @TA}
+<!-- p30 break-ins r60 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r59 @TA<<}
 
-<!-- p31 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r61+62 @TA}¶{r61+62 @TA}
+<!-- p31 break-ins r62 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r61 @TA<<}
 
-<!-- p32 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r63+64 @TA}¶{r63+64 @TA}
+<!-- p32 break-ins r64 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r63 @TA<<}
 
-<!-- p33 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r65+66 @TA}¶{r65+66 @TA}
+<!-- p33 break-ins r66 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r65 @TA<<}
 
 <!-- p34 ListParagraph empty, num "1." -->
 
 <!-- p35 -->
-Eu adoro {~~mamão~>mamaum~~}{r67+68 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r67 @TA<<}{++mamaum++}{>>r68 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p36 empty -->
 
-<!-- p37 break-del r69+70 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r69+70 @TA}
+<!-- p37 break-del r70 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r69 @TA<<}
 
-<!-- p38 break-del r71+72 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r71+72 @TA}
+<!-- p38 break-del r72 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r71 @TA<<}
 
-<!-- p39 break-del r73+74 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r73+74 @TA}
+<!-- p39 break-del r74 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r73 @TA<<}
 
-<!-- p40 break-del r75+76 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r75+76 @TA}
+<!-- p40 break-del r76 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r75 @TA<<}
 
-<!-- p41 break-del r77+78 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r77+78 @TA}
+<!-- p41 break-del r78 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r77 @TA<<}
 
-<!-- p42 break-del r79+80 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r79+80 @TA}
+<!-- p42 break-del r80 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r79 @TA<<}
 
-<!-- p43 break-del r81+82 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r81+82 @TA}
+<!-- p43 break-del r82 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r81 @TA<<}
 
-<!-- p44 break-del r83+84 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r83+84 @TA}
+<!-- p44 break-del r84 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r83 @TA<<}
 
-<!-- p45 break-del r85+86 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r85+86 @TA}
+<!-- p45 break-del r86 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r85 @TA<<}
 
-<!-- p46 break-del r87+88 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r87+88 @TA}
+<!-- p46 break-del r88 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r87 @TA<<}
 
-<!-- p47 break-del r89+90 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r89+90 @TA}
+<!-- p47 break-del r90 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r89 @TA<<}
 
-<!-- p48 break-del r91+92 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r91+92 @TA}
+<!-- p48 break-del r92 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r91 @TA<<}
 
-<!-- p49 break-del r93+94 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r93+94 @TA}
+<!-- p49 break-del r94 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r93 @TA<<}
 
-<!-- p50 break-del r95+96 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r95+96 @TA}
+<!-- p50 break-del r96 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r95 @TA<<}
 
-<!-- p51 break-del r97+98 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r97+98 @TA}
+<!-- p51 break-del r98 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r97 @TA<<}
 
-<!-- p52 break-del r99+100 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r99+100 @TA}
+<!-- p52 break-del r100 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r99 @TA<<}
 
-<!-- p53 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r101+102 @TA}¶{r101+102 @TA}
+<!-- p53 break-ins r102 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r101 @TA<<}
 
-<!-- p54 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r103+104 @TA}¶{r103+104 @TA}
+<!-- p54 break-ins r104 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r103 @TA<<}
 
-<!-- p55 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r105+106 @TA}¶{r105+106 @TA}
+<!-- p55 break-ins r106 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r105 @TA<<}
 
-<!-- p56 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r107+108 @TA}¶{r107+108 @TA}
+<!-- p56 break-ins r108 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r107 @TA<<}
 
-<!-- p57 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r109+110 @TA}¶{r109+110 @TA}
+<!-- p57 break-ins r110 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r109 @TA<<}
 
-<!-- p58 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r111+112 @TA}¶{r111+112 @TA}
+<!-- p58 break-ins r112 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r111 @TA<<}
 
-<!-- p59 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r113+114 @TA}¶{r113+114 @TA}
+<!-- p59 break-ins r114 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r113 @TA<<}
 
-<!-- p60 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r115+116 @TA}¶{r115+116 @TA}
+<!-- p60 break-ins r116 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r115 @TA<<}
 
-<!-- p61 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r117+118 @TA}¶{r117+118 @TA}
+<!-- p61 break-ins r118 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r117 @TA<<}
 
-<!-- p62 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r119+120 @TA}¶{r119+120 @TA}
+<!-- p62 break-ins r120 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r119 @TA<<}
 
-<!-- p63 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r121+122 @TA}¶{r121+122 @TA}
+<!-- p63 break-ins r122 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r121 @TA<<}
 
-<!-- p64 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r123+124 @TA}¶{r123+124 @TA}
+<!-- p64 break-ins r124 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r123 @TA<<}
 
-<!-- p65 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r125+126 @TA}¶{r125+126 @TA}
+<!-- p65 break-ins r126 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r125 @TA<<}
 
-<!-- p66 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r127+128 @TA}¶{r127+128 @TA}
+<!-- p66 break-ins r128 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r127 @TA<<}
 
-<!-- p67 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r129+130 @TA}¶{r129+130 @TA}
+<!-- p67 break-ins r130 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r129 @TA<<}
 
-<!-- p68 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r131+132 @TA}¶{r131+132 @TA}
+<!-- p68 break-ins r132 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r131 @TA<<}
 
 <!-- p69 ListParagraph empty, num "1." -->
 
 <!-- p70 -->
-Eu adoro {~~mamão~>mamaum~~}{r133+134 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r133 @TA<<}{++mamaum++}{>>r134 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p71 empty -->
 
-<!-- p72 break-del r135+136 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r135+136 @TA}
+<!-- p72 break-del r136 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r135 @TA<<}
 
-<!-- p73 break-del r137+138 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r137+138 @TA}
+<!-- p73 break-del r138 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r137 @TA<<}
 
-<!-- p74 break-del r139+140 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r139+140 @TA}
+<!-- p74 break-del r140 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r139 @TA<<}
 
-<!-- p75 break-del r141+142 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r141+142 @TA}
+<!-- p75 break-del r142 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r141 @TA<<}
 
-<!-- p76 break-del r143+144 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r143+144 @TA}
+<!-- p76 break-del r144 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r143 @TA<<}
 
-<!-- p77 break-del r145+146 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r145+146 @TA}
+<!-- p77 break-del r146 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r145 @TA<<}
 
-<!-- p78 break-del r147+148 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r147+148 @TA}
+<!-- p78 break-del r148 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r147 @TA<<}
 
-<!-- p79 break-del r149+150 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r149+150 @TA}
+<!-- p79 break-del r150 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r149 @TA<<}
 
-<!-- p80 break-del r151+152 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r151+152 @TA}
+<!-- p80 break-del r152 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r151 @TA<<}
 
-<!-- p81 break-del r153+154 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r153+154 @TA}
+<!-- p81 break-del r154 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r153 @TA<<}
 
-<!-- p82 break-del r155+156 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r155+156 @TA}
+<!-- p82 break-del r156 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r155 @TA<<}
 
-<!-- p83 break-del r157+158 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r157+158 @TA}
+<!-- p83 break-del r158 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r157 @TA<<}
 
-<!-- p84 break-del r159+160 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r159+160 @TA}
+<!-- p84 break-del r160 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r159 @TA<<}
 
-<!-- p85 break-del r161+162 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r161+162 @TA}
+<!-- p85 break-del r162 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r161 @TA<<}
 
-<!-- p86 break-del r163+164 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r163+164 @TA}
+<!-- p86 break-del r164 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r163 @TA<<}
 
-<!-- p87 break-del r165+166 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r165+166 @TA}
+<!-- p87 break-del r166 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r165 @TA<<}
 
-<!-- p88 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r167+168 @TA}¶{r167+168 @TA}
+<!-- p88 break-ins r168 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r167 @TA<<}
 
-<!-- p89 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r169+170 @TA}¶{r169+170 @TA}
+<!-- p89 break-ins r170 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r169 @TA<<}
 
-<!-- p90 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r171+172 @TA}¶{r171+172 @TA}
+<!-- p90 break-ins r172 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r171 @TA<<}
 
-<!-- p91 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r173+174 @TA}¶{r173+174 @TA}
+<!-- p91 break-ins r174 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r173 @TA<<}
 
-<!-- p92 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r175+176 @TA}¶{r175+176 @TA}
+<!-- p92 break-ins r176 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r175 @TA<<}
 
-<!-- p93 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r177+178 @TA}¶{r177+178 @TA}
+<!-- p93 break-ins r178 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r177 @TA<<}
 
-<!-- p94 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r179+180 @TA}¶{r179+180 @TA}
+<!-- p94 break-ins r180 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r179 @TA<<}
 
-<!-- p95 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r181+182 @TA}¶{r181+182 @TA}
+<!-- p95 break-ins r182 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r181 @TA<<}
 
-<!-- p96 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r183+184 @TA}¶{r183+184 @TA}
+<!-- p96 break-ins r184 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r183 @TA<<}
 
-<!-- p97 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r185+186 @TA}¶{r185+186 @TA}
+<!-- p97 break-ins r186 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r185 @TA<<}
 
-<!-- p98 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r187+188 @TA}¶{r187+188 @TA}
+<!-- p98 break-ins r188 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r187 @TA<<}
 
-<!-- p99 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r189+190 @TA}¶{r189+190 @TA}
+<!-- p99 break-ins r190 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r189 @TA<<}
 
-<!-- p100 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r191+192 @TA}¶{r191+192 @TA}
+<!-- p100 break-ins r192 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r191 @TA<<}
 
-<!-- p101 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r193+194 @TA}¶{r193+194 @TA}
+<!-- p101 break-ins r194 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r193 @TA<<}
 
-<!-- p102 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r195+196 @TA}¶{r195+196 @TA}
+<!-- p102 break-ins r196 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r195 @TA<<}
 
-<!-- p103 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r197+198 @TA}¶{r197+198 @TA}
+<!-- p103 break-ins r198 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r197 @TA<<}
 
 <!-- p104 ListParagraph empty, num "1." -->
 
 <!-- p105 -->
-Eu adoro {~~mamão~>mamaum~~}{r199+200 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r199 @TA<<}{++mamaum++}{>>r200 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p106 empty -->
 
-<!-- p107 break-del r201+202 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r201+202 @TA}
+<!-- p107 break-del r202 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r201 @TA<<}
 
-<!-- p108 break-del r203+204 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r203+204 @TA}
+<!-- p108 break-del r204 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r203 @TA<<}
 
-<!-- p109 break-del r205+206 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r205+206 @TA}
+<!-- p109 break-del r206 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r205 @TA<<}
 
-<!-- p110 break-del r207+208 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r207+208 @TA}
+<!-- p110 break-del r208 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r207 @TA<<}
 
-<!-- p111 break-del r209+210 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r209+210 @TA}
+<!-- p111 break-del r210 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r209 @TA<<}
 
-<!-- p112 break-del r211+212 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r211+212 @TA}
+<!-- p112 break-del r212 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r211 @TA<<}
 
-<!-- p113 break-del r213+214 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r213+214 @TA}
+<!-- p113 break-del r214 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r213 @TA<<}
 
-<!-- p114 break-del r215+216 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r215+216 @TA}
+<!-- p114 break-del r216 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r215 @TA<<}
 
-<!-- p115 break-del r217+218 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r217+218 @TA}
+<!-- p115 break-del r218 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r217 @TA<<}
 
-<!-- p116 break-del r219+220 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r219+220 @TA}
+<!-- p116 break-del r220 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r219 @TA<<}
 
-<!-- p117 break-del r221+222 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r221+222 @TA}
+<!-- p117 break-del r222 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r221 @TA<<}
 
-<!-- p118 break-del r223+224 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r223+224 @TA}
+<!-- p118 break-del r224 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r223 @TA<<}
 
-<!-- p119 break-del r225+226 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r225+226 @TA}
+<!-- p119 break-del r226 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r225 @TA<<}
 
-<!-- p120 break-del r227+228 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r227+228 @TA}
+<!-- p120 break-del r228 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r227 @TA<<}
 
-<!-- p121 break-del r229+230 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r229+230 @TA}
+<!-- p121 break-del r230 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r229 @TA<<}
 
-<!-- p122 break-del r231+232 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r231+232 @TA}
+<!-- p122 break-del r232 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r231 @TA<<}
 
-<!-- p123 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r233+234 @TA}¶{r233+234 @TA}
+<!-- p123 break-ins r234 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r233 @TA<<}
 
-<!-- p124 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r235+236 @TA}¶{r235+236 @TA}
+<!-- p124 break-ins r236 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r235 @TA<<}
 
-<!-- p125 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r237+238 @TA}¶{r237+238 @TA}
+<!-- p125 break-ins r238 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r237 @TA<<}
 
-<!-- p126 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r239+240 @TA}¶{r239+240 @TA}
+<!-- p126 break-ins r240 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r239 @TA<<}
 
-<!-- p127 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r241+242 @TA}¶{r241+242 @TA}
+<!-- p127 break-ins r242 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r241 @TA<<}
 
-<!-- p128 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r243+244 @TA}¶{r243+244 @TA}
+<!-- p128 break-ins r244 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r243 @TA<<}
 
-<!-- p129 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r245+246 @TA}¶{r245+246 @TA}
+<!-- p129 break-ins r246 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r245 @TA<<}
 
-<!-- p130 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r247+248 @TA}¶{r247+248 @TA}
+<!-- p130 break-ins r248 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r247 @TA<<}
 
-<!-- p131 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r249+250 @TA}¶{r249+250 @TA}
+<!-- p131 break-ins r250 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r249 @TA<<}
 
-<!-- p132 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r251+252 @TA}¶{r251+252 @TA}
+<!-- p132 break-ins r252 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r251 @TA<<}
 
-<!-- p133 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r253+254 @TA}¶{r253+254 @TA}
+<!-- p133 break-ins r254 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r253 @TA<<}
 
-<!-- p134 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r255+256 @TA}¶{r255+256 @TA}
+<!-- p134 break-ins r256 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r255 @TA<<}
 
-<!-- p135 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r257+258 @TA}¶{r257+258 @TA}
+<!-- p135 break-ins r258 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r257 @TA<<}
 
-<!-- p136 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r259+260 @TA}¶{r259+260 @TA}
+<!-- p136 break-ins r260 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r259 @TA<<}
 
-<!-- p137 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r261+262 @TA}¶{r261+262 @TA}
+<!-- p137 break-ins r262 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r261 @TA<<}
 
-<!-- p138 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r263+264 @TA}¶{r263+264 @TA}
+<!-- p138 break-ins r264 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r263 @TA<<}
 
 <!-- p139 ListParagraph empty, num "1." -->
 
 <!-- p140 -->
-Eu adoro {~~mamão~>mamaum~~}{r265+266 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r265 @TA<<}{++mamaum++}{>>r266 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p141 empty -->
 
-<!-- p142 break-del r267+268 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r267+268 @TA}
+<!-- p142 break-del r268 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r267 @TA<<}
 
-<!-- p143 break-del r269+270 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r269+270 @TA}
+<!-- p143 break-del r270 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r269 @TA<<}
 
-<!-- p144 break-del r271+272 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r271+272 @TA}
+<!-- p144 break-del r272 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r271 @TA<<}
 
-<!-- p145 break-del r273+274 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r273+274 @TA}
+<!-- p145 break-del r274 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r273 @TA<<}
 
-<!-- p146 break-del r275+276 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r275+276 @TA}
+<!-- p146 break-del r276 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r275 @TA<<}
 
-<!-- p147 break-del r277+278 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r277+278 @TA}
+<!-- p147 break-del r278 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r277 @TA<<}
 
-<!-- p148 break-del r279+280 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r279+280 @TA}
+<!-- p148 break-del r280 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r279 @TA<<}
 
-<!-- p149 break-del r281+282 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r281+282 @TA}
+<!-- p149 break-del r282 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r281 @TA<<}
 
-<!-- p150 break-del r283+284 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r283+284 @TA}
+<!-- p150 break-del r284 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r283 @TA<<}
 
-<!-- p151 break-del r285+286 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r285+286 @TA}
+<!-- p151 break-del r286 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r285 @TA<<}
 
-<!-- p152 break-del r287+288 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r287+288 @TA}
+<!-- p152 break-del r288 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r287 @TA<<}
 
-<!-- p153 break-del r289+290 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r289+290 @TA}
+<!-- p153 break-del r290 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r289 @TA<<}
 
-<!-- p154 break-del r291+292 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r291+292 @TA}
+<!-- p154 break-del r292 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r291 @TA<<}
 
-<!-- p155 break-del r293+294 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r293+294 @TA}
+<!-- p155 break-del r294 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r293 @TA<<}
 
-<!-- p156 break-del r295+296 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r295+296 @TA}
+<!-- p156 break-del r296 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r295 @TA<<}
 
-<!-- p157 break-del r297+298 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r297+298 @TA}
+<!-- p157 break-del r298 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r297 @TA<<}
 
-<!-- p158 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r299+300 @TA}¶{r299+300 @TA}
+<!-- p158 break-ins r300 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r299 @TA<<}
 
-<!-- p159 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r301+302 @TA}¶{r301+302 @TA}
+<!-- p159 break-ins r302 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r301 @TA<<}
 
-<!-- p160 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r303+304 @TA}¶{r303+304 @TA}
+<!-- p160 break-ins r304 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r303 @TA<<}
 
-<!-- p161 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r305+306 @TA}¶{r305+306 @TA}
+<!-- p161 break-ins r306 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r305 @TA<<}
 
-<!-- p162 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r307+308 @TA}¶{r307+308 @TA}
+<!-- p162 break-ins r308 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r307 @TA<<}
 
-<!-- p163 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r309+310 @TA}¶{r309+310 @TA}
+<!-- p163 break-ins r310 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r309 @TA<<}
 
-<!-- p164 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r311+312 @TA}¶{r311+312 @TA}
+<!-- p164 break-ins r312 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r311 @TA<<}
 
-<!-- p165 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r313+314 @TA}¶{r313+314 @TA}
+<!-- p165 break-ins r314 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r313 @TA<<}
 
-<!-- p166 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r315+316 @TA}¶{r315+316 @TA}
+<!-- p166 break-ins r316 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r315 @TA<<}
 
-<!-- p167 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r317+318 @TA}¶{r317+318 @TA}
+<!-- p167 break-ins r318 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r317 @TA<<}
 
-<!-- p168 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r319+320 @TA}¶{r319+320 @TA}
+<!-- p168 break-ins r320 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r319 @TA<<}
 
-<!-- p169 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r321+322 @TA}¶{r321+322 @TA}
+<!-- p169 break-ins r322 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r321 @TA<<}
 
-<!-- p170 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r323+324 @TA}¶{r323+324 @TA}
+<!-- p170 break-ins r324 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r323 @TA<<}
 
-<!-- p171 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r325+326 @TA}¶{r325+326 @TA}
+<!-- p171 break-ins r326 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r325 @TA<<}
 
-<!-- p172 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r327+328 @TA}¶{r327+328 @TA}
+<!-- p172 break-ins r328 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r327 @TA<<}
 
-<!-- p173 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r329+330 @TA}¶{r329+330 @TA}
+<!-- p173 break-ins r330 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r329 @TA<<}
 
 <!-- p174 ListParagraph empty, num "1." -->
 
 <!-- p175 -->
-Eu adoro {~~mamão~>mamaum~~}{r331+332 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r331 @TA<<}{++mamaum++}{>>r332 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p176 empty -->
 
-<!-- p177 break-del r333+334 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r333+334 @TA}
+<!-- p177 break-del r334 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r333 @TA<<}
 
-<!-- p178 break-del r335+336 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r335+336 @TA}
+<!-- p178 break-del r336 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r335 @TA<<}
 
-<!-- p179 break-del r337+338 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r337+338 @TA}
+<!-- p179 break-del r338 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r337 @TA<<}
 
-<!-- p180 break-del r339+340 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r339+340 @TA}
+<!-- p180 break-del r340 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r339 @TA<<}
 
-<!-- p181 break-del r341+342 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r341+342 @TA}
+<!-- p181 break-del r342 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r341 @TA<<}
 
-<!-- p182 break-del r343+344 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r343+344 @TA}
+<!-- p182 break-del r344 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r343 @TA<<}
 
-<!-- p183 break-del r345+346 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r345+346 @TA}
+<!-- p183 break-del r346 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r345 @TA<<}
 
-<!-- p184 break-del r347+348 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r347+348 @TA}
+<!-- p184 break-del r348 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r347 @TA<<}
 
-<!-- p185 break-del r349+350 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r349+350 @TA}
+<!-- p185 break-del r350 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r349 @TA<<}
 
-<!-- p186 break-del r351+352 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r351+352 @TA}
+<!-- p186 break-del r352 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r351 @TA<<}
 
-<!-- p187 break-del r353+354 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r353+354 @TA}
+<!-- p187 break-del r354 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r353 @TA<<}
 
-<!-- p188 break-del r355+356 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r355+356 @TA}
+<!-- p188 break-del r356 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r355 @TA<<}
 
-<!-- p189 break-del r357+358 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r357+358 @TA}
+<!-- p189 break-del r358 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r357 @TA<<}
 
-<!-- p190 break-del r359+360 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r359+360 @TA}
+<!-- p190 break-del r360 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r359 @TA<<}
 
-<!-- p191 break-del r361+362 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r361+362 @TA}
+<!-- p191 break-del r362 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r361 @TA<<}
 
-<!-- p192 break-del r363+364 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r363+364 @TA}
+<!-- p192 break-del r364 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r363 @TA<<}
 
-<!-- p193 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r365+366 @TA}¶{r365+366 @TA}
+<!-- p193 break-ins r366 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r365 @TA<<}
 
-<!-- p194 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r367+368 @TA}¶{r367+368 @TA}
+<!-- p194 break-ins r368 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r367 @TA<<}
 
-<!-- p195 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r369+370 @TA}¶{r369+370 @TA}
+<!-- p195 break-ins r370 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r369 @TA<<}
 
-<!-- p196 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r371+372 @TA}¶{r371+372 @TA}
+<!-- p196 break-ins r372 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r371 @TA<<}
 
-<!-- p197 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r373+374 @TA}¶{r373+374 @TA}
+<!-- p197 break-ins r374 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r373 @TA<<}
 
-<!-- p198 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r375+376 @TA}¶{r375+376 @TA}
+<!-- p198 break-ins r376 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r375 @TA<<}
 
-<!-- p199 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r377+378 @TA}¶{r377+378 @TA}
+<!-- p199 break-ins r378 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r377 @TA<<}
 
-<!-- p200 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r379+380 @TA}¶{r379+380 @TA}
+<!-- p200 break-ins r380 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r379 @TA<<}
 
-<!-- p201 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r381+382 @TA}¶{r381+382 @TA}
+<!-- p201 break-ins r382 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r381 @TA<<}
 
-<!-- p202 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r383+384 @TA}¶{r383+384 @TA}
+<!-- p202 break-ins r384 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r383 @TA<<}
 
-<!-- p203 -->
-{++Eu adoro ++}{r385+386 @TA}¶{r385+386 @TA}
+<!-- p203 break-ins r386 @TA -->
+{++Eu adoro ++}{>>r385 @TA<<}
 
-<!-- p204 -->
-{++direitinho!++}{r387+388 @TA}¶{r387+388 @TA}
+<!-- p204 break-ins r388 @TA -->
+{++direitinho!++}{>>r387 @TA<<}
 
-<!-- p205 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r389+390 @TA}¶{r389+390 @TA}
+<!-- p205 break-ins r390 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r389 @TA<<}
 
-<!-- p206 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r391+392 @TA}¶{r391+392 @TA}
+<!-- p206 break-ins r392 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r391 @TA<<}
 
-<!-- p207 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r393+394 @TA}¶{r393+394 @TA}
+<!-- p207 break-ins r394 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r393 @TA<<}
 
-<!-- p208 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r395+396 @TA}¶{r395+396 @TA}
+<!-- p208 break-ins r396 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r395 @TA<<}
 
-<!-- p209 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r397+398 @TA}¶{r397+398 @TA}
+<!-- p209 break-ins r398 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r397 @TA<<}
 
-<!-- p210 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r399+400 @TA}¶{r399+400 @TA}
+<!-- p210 break-ins r400 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r399 @TA<<}
 
-<!-- p211 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r401+402 @TA}¶{r401+402 @TA}
+<!-- p211 break-ins r402 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r401 @TA<<}
 
-<!-- p212 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r403+404 @TA}¶{r403+404 @TA}
+<!-- p212 break-ins r404 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r403 @TA<<}
 
-<!-- p213 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r405+406 @TA}¶{r405+406 @TA}
+<!-- p213 break-ins r406 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r405 @TA<<}
 
-<!-- p214 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r407+408 @TA}¶{r407+408 @TA}
+<!-- p214 break-ins r408 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r407 @TA<<}
 
-<!-- p215 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r409+410 @TA}¶{r409+410 @TA}
+<!-- p215 break-ins r410 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r409 @TA<<}
 
-<!-- p216 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r411+412 @TA}¶{r411+412 @TA}
+<!-- p216 break-ins r412 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r411 @TA<<}
 
-<!-- p217 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r413+414 @TA}¶{r413+414 @TA}
+<!-- p217 break-ins r414 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r413 @TA<<}
 
 <!-- p218 ListParagraph empty, num "1." -->
 
 <!-- p219 -->
-Eu adoro {~~mamão~>mamaum~~}{r415+416 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r415 @TA<<}{++mamaum++}{>>r416 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p220 empty -->
 
-<!-- p221 break-del r417+418 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r417+418 @TA}
+<!-- p221 break-del r418 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r417 @TA<<}
 
-<!-- p222 break-del r419+420 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r419+420 @TA}
+<!-- p222 break-del r420 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r419 @TA<<}
 
-<!-- p223 break-del r421+422 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r421+422 @TA}
+<!-- p223 break-del r422 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r421 @TA<<}
 
-<!-- p224 break-del r423+424 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r423+424 @TA}
+<!-- p224 break-del r424 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r423 @TA<<}
 
-<!-- p225 break-del r425+426 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r425+426 @TA}
+<!-- p225 break-del r426 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r425 @TA<<}
 
-<!-- p226 break-del r427+428 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r427+428 @TA}
+<!-- p226 break-del r428 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r427 @TA<<}
 
-<!-- p227 break-del r429+430 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r429+430 @TA}
+<!-- p227 break-del r430 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r429 @TA<<}
 
-<!-- p228 break-del r431+432 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r431+432 @TA}
+<!-- p228 break-del r432 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r431 @TA<<}
 
-<!-- p229 break-del r433+434 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r433+434 @TA}
+<!-- p229 break-del r434 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r433 @TA<<}
 
-<!-- p230 break-del r435+436 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r435+436 @TA}
+<!-- p230 break-del r436 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r435 @TA<<}
 
-<!-- p231 break-del r437+438 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r437+438 @TA}
+<!-- p231 break-del r438 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r437 @TA<<}
 
-<!-- p232 break-del r439+440 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r439+440 @TA}
+<!-- p232 break-del r440 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r439 @TA<<}
 
-<!-- p233 break-del r441+442 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r441+442 @TA}
+<!-- p233 break-del r442 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r441 @TA<<}
 
-<!-- p234 break-del r443+444 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r443+444 @TA}
+<!-- p234 break-del r444 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r443 @TA<<}
 
-<!-- p235 break-del r445+446 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r445+446 @TA}
+<!-- p235 break-del r446 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r445 @TA<<}
 
-<!-- p236 break-del r447+448 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r447+448 @TA}
+<!-- p236 break-del r448 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r447 @TA<<}
 
-<!-- p237 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r449+450 @TA}¶{r449+450 @TA}
+<!-- p237 break-ins r450 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r449 @TA<<}
 
-<!-- p238 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r451+452 @TA}¶{r451+452 @TA}
+<!-- p238 break-ins r452 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r451 @TA<<}
 
-<!-- p239 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r453+454 @TA}¶{r453+454 @TA}
+<!-- p239 break-ins r454 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r453 @TA<<}
 
-<!-- p240 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r455+456 @TA}¶{r455+456 @TA}
+<!-- p240 break-ins r456 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r455 @TA<<}
 
-<!-- p241 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r457+458 @TA}¶{r457+458 @TA}
+<!-- p241 break-ins r458 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r457 @TA<<}
 
-<!-- p242 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r459+460 @TA}¶{r459+460 @TA}
+<!-- p242 break-ins r460 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r459 @TA<<}
 
-<!-- p243 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r461+462 @TA}¶{r461+462 @TA}
+<!-- p243 break-ins r462 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r461 @TA<<}
 
-<!-- p244 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r463+464 @TA}¶{r463+464 @TA}
+<!-- p244 break-ins r464 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r463 @TA<<}
 
-<!-- p245 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r465+466 @TA}¶{r465+466 @TA}
+<!-- p245 break-ins r466 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r465 @TA<<}
 
-<!-- p246 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r467+468 @TA}¶{r467+468 @TA}
+<!-- p246 break-ins r468 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r467 @TA<<}
 
-<!-- p247 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r469+470 @TA}¶{r469+470 @TA}
+<!-- p247 break-ins r470 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r469 @TA<<}
 
-<!-- p248 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r471+472 @TA}¶{r471+472 @TA}
+<!-- p248 break-ins r472 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r471 @TA<<}
 
-<!-- p249 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r473+474 @TA}¶{r473+474 @TA}
+<!-- p249 break-ins r474 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r473 @TA<<}
 
-<!-- p250 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r475+476 @TA}¶{r475+476 @TA}
+<!-- p250 break-ins r476 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r475 @TA<<}
 
-<!-- p251 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r477+478 @TA}¶{r477+478 @TA}
+<!-- p251 break-ins r478 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r477 @TA<<}
 
-<!-- p252 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r479+480 @TA}¶{r479+480 @TA}
+<!-- p252 break-ins r480 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r479 @TA<<}
 
 <!-- p253 ListParagraph empty, num "1." -->
 
 <!-- p254 -->
-Eu adoro {~~mamão~>mamaum~~}{r481+482 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r481 @TA<<}{++mamaum++}{>>r482 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p255 empty -->
 
-<!-- p256 break-del r483+484 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r483+484 @TA}
+<!-- p256 break-del r484 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r483 @TA<<}
 
-<!-- p257 break-del r485+486 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r485+486 @TA}
+<!-- p257 break-del r486 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r485 @TA<<}
 
-<!-- p258 break-del r487+488 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r487+488 @TA}
+<!-- p258 break-del r488 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r487 @TA<<}
 
-<!-- p259 break-del r489+490 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r489+490 @TA}
+<!-- p259 break-del r490 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r489 @TA<<}
 
-<!-- p260 break-del r491+492 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r491+492 @TA}
+<!-- p260 break-del r492 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r491 @TA<<}
 
-<!-- p261 break-del r493+494 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r493+494 @TA}
+<!-- p261 break-del r494 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r493 @TA<<}
 
-<!-- p262 break-del r495+496 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r495+496 @TA}
+<!-- p262 break-del r496 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r495 @TA<<}
 
-<!-- p263 break-del r497+498 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r497+498 @TA}
+<!-- p263 break-del r498 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r497 @TA<<}
 
-<!-- p264 break-del r499+500 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r499+500 @TA}
+<!-- p264 break-del r500 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r499 @TA<<}
 
-<!-- p265 break-del r501+502 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r501+502 @TA}
+<!-- p265 break-del r502 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r501 @TA<<}
 
-<!-- p266 break-del r503+504 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r503+504 @TA}
+<!-- p266 break-del r504 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r503 @TA<<}
 
-<!-- p267 break-del r505+506 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r505+506 @TA}
+<!-- p267 break-del r506 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r505 @TA<<}
 
-<!-- p268 break-del r507+508 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r507+508 @TA}
+<!-- p268 break-del r508 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r507 @TA<<}
 
-<!-- p269 break-del r509+510 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r509+510 @TA}
+<!-- p269 break-del r510 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r509 @TA<<}
 
-<!-- p270 break-del r511+512 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r511+512 @TA}
+<!-- p270 break-del r512 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r511 @TA<<}
 
-<!-- p271 break-del r513+514 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r513+514 @TA}
+<!-- p271 break-del r514 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r513 @TA<<}
 
-<!-- p272 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r515+516 @TA}¶{r515+516 @TA}
+<!-- p272 break-ins r516 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r515 @TA<<}
 
-<!-- p273 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r517+518 @TA}¶{r517+518 @TA}
+<!-- p273 break-ins r518 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r517 @TA<<}
 
-<!-- p274 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r519+520 @TA}¶{r519+520 @TA}
+<!-- p274 break-ins r520 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r519 @TA<<}
 
-<!-- p275 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r521+522 @TA}¶{r521+522 @TA}
+<!-- p275 break-ins r522 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r521 @TA<<}
 
-<!-- p276 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r523+524 @TA}¶{r523+524 @TA}
+<!-- p276 break-ins r524 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r523 @TA<<}
 
-<!-- p277 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r525+526 @TA}¶{r525+526 @TA}
+<!-- p277 break-ins r526 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r525 @TA<<}
 
-<!-- p278 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r527+528 @TA}¶{r527+528 @TA}
+<!-- p278 break-ins r528 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r527 @TA<<}
 
-<!-- p279 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r529+530 @TA}¶{r529+530 @TA}
+<!-- p279 break-ins r530 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r529 @TA<<}
 
-<!-- p280 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r531+532 @TA}¶{r531+532 @TA}
+<!-- p280 break-ins r532 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r531 @TA<<}
 
-<!-- p281 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r533+534 @TA}¶{r533+534 @TA}
+<!-- p281 break-ins r534 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r533 @TA<<}
 
-<!-- p282 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r535+536 @TA}¶{r535+536 @TA}
+<!-- p282 break-ins r536 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r535 @TA<<}
 
-<!-- p283 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r537+538 @TA}¶{r537+538 @TA}
+<!-- p283 break-ins r538 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r537 @TA<<}
 
-<!-- p284 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r539+540 @TA}¶{r539+540 @TA}
+<!-- p284 break-ins r540 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r539 @TA<<}
 
-<!-- p285 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r541+542 @TA}¶{r541+542 @TA}
+<!-- p285 break-ins r542 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r541 @TA<<}
 
-<!-- p286 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r543+544 @TA}¶{r543+544 @TA}
+<!-- p286 break-ins r544 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r543 @TA<<}
 
-<!-- p287 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r545+546 @TA}¶{r545+546 @TA}
+<!-- p287 break-ins r546 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r545 @TA<<}
 
 <!-- p288 ListParagraph empty, num "1." -->
 
 <!-- p289 -->
-Eu adoro {~~mamão~>mamaum~~}{r547+548 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r547 @TA<<}{++mamaum++}{>>r548 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p290 empty -->
 
-<!-- p291 break-del r549+550 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r549+550 @TA}
+<!-- p291 break-del r550 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r549 @TA<<}
 
-<!-- p292 break-del r551+552 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r551+552 @TA}
+<!-- p292 break-del r552 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r551 @TA<<}
 
-<!-- p293 break-del r553+554 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r553+554 @TA}
+<!-- p293 break-del r554 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r553 @TA<<}
 
-<!-- p294 break-del r555+556 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r555+556 @TA}
+<!-- p294 break-del r556 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r555 @TA<<}
 
-<!-- p295 break-del r557+558 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r557+558 @TA}
+<!-- p295 break-del r558 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r557 @TA<<}
 
-<!-- p296 break-del r559+560 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r559+560 @TA}
+<!-- p296 break-del r560 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r559 @TA<<}
 
-<!-- p297 break-del r561+562 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r561+562 @TA}
+<!-- p297 break-del r562 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r561 @TA<<}
 
-<!-- p298 break-del r563+564 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r563+564 @TA}
+<!-- p298 break-del r564 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r563 @TA<<}
 
-<!-- p299 break-del r565+566 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r565+566 @TA}
+<!-- p299 break-del r566 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r565 @TA<<}
 
-<!-- p300 break-del r567+568 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r567+568 @TA}
+<!-- p300 break-del r568 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r567 @TA<<}
 
-<!-- p301 break-del r569+570 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r569+570 @TA}
+<!-- p301 break-del r570 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r569 @TA<<}
 
-<!-- p302 break-del r571+572 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r571+572 @TA}
+<!-- p302 break-del r572 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r571 @TA<<}
 
-<!-- p303 break-del r573+574 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r573+574 @TA}
+<!-- p303 break-del r574 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r573 @TA<<}
 
-<!-- p304 break-del r575+576 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r575+576 @TA}
+<!-- p304 break-del r576 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r575 @TA<<}
 
-<!-- p305 break-del r577+578 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r577+578 @TA}
+<!-- p305 break-del r578 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r577 @TA<<}
 
-<!-- p306 break-del r579+580 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r579+580 @TA}
+<!-- p306 break-del r580 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r579 @TA<<}
 
-<!-- p307 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r581+582 @TA}¶{r581+582 @TA}
+<!-- p307 break-ins r582 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r581 @TA<<}
 
-<!-- p308 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r583+584 @TA}¶{r583+584 @TA}
+<!-- p308 break-ins r584 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r583 @TA<<}
 
-<!-- p309 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r585+586 @TA}¶{r585+586 @TA}
+<!-- p309 break-ins r586 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r585 @TA<<}
 
-<!-- p310 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r587+588 @TA}¶{r587+588 @TA}
+<!-- p310 break-ins r588 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r587 @TA<<}
 
-<!-- p311 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r589+590 @TA}¶{r589+590 @TA}
+<!-- p311 break-ins r590 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r589 @TA<<}
 
-<!-- p312 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r591+592 @TA}¶{r591+592 @TA}
+<!-- p312 break-ins r592 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r591 @TA<<}
 
-<!-- p313 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r593+594 @TA}¶{r593+594 @TA}
+<!-- p313 break-ins r594 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r593 @TA<<}
 
-<!-- p314 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r595+596 @TA}¶{r595+596 @TA}
+<!-- p314 break-ins r596 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r595 @TA<<}
 
-<!-- p315 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r597+598 @TA}¶{r597+598 @TA}
+<!-- p315 break-ins r598 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r597 @TA<<}
 
-<!-- p316 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r599+600 @TA}¶{r599+600 @TA}
+<!-- p316 break-ins r600 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r599 @TA<<}
 
-<!-- p317 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r601+602 @TA}¶{r601+602 @TA}
+<!-- p317 break-ins r602 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r601 @TA<<}
 
-<!-- p318 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r603+604 @TA}¶{r603+604 @TA}
+<!-- p318 break-ins r604 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r603 @TA<<}
 
-<!-- p319 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r605+606 @TA}¶{r605+606 @TA}
+<!-- p319 break-ins r606 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r605 @TA<<}
 
-<!-- p320 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r607+608 @TA}¶{r607+608 @TA}
+<!-- p320 break-ins r608 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r607 @TA<<}
 
-<!-- p321 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r609+610 @TA}¶{r609+610 @TA}
+<!-- p321 break-ins r610 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r609 @TA<<}
 
-<!-- p322 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r611+612 @TA}¶{r611+612 @TA}
+<!-- p322 break-ins r612 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r611 @TA<<}
 
 <!-- p323 ListParagraph empty, num "1." -->
 
 <!-- p324 -->
-Eu adoro {~~mamão~>mamaum~~}{r613+614 @TA} com laranja todas as manhãs para poder ir ao banheiro direitinho!
+Eu adoro {--mamão--}{>>r613 @TA<<}{++mamaum++}{>>r614 @TA<<} com laranja todas as manhãs para poder ir ao banheiro direitinho!
 
 <!-- p325 empty -->
 
-<!-- p326 break-del r615+616 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r615+616 @TA}
+<!-- p326 break-del r616 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r615 @TA<<}
 
-<!-- p327 break-del r617+618 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r617+618 @TA}
+<!-- p327 break-del r618 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r617 @TA<<}
 
-<!-- p328 break-del r619+620 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r619+620 @TA}
+<!-- p328 break-del r620 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r619 @TA<<}
 
-<!-- p329 break-del r621+622 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r621+622 @TA}
+<!-- p329 break-del r622 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r621 @TA<<}
 
-<!-- p330 break-del r623+624 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r623+624 @TA}
+<!-- p330 break-del r624 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r623 @TA<<}
 
-<!-- p331 break-del r625+626 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r625+626 @TA}
+<!-- p331 break-del r626 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r625 @TA<<}
 
-<!-- p332 break-del r627+628 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r627+628 @TA}
+<!-- p332 break-del r628 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r627 @TA<<}
 
-<!-- p333 break-del r629+630 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r629+630 @TA}
+<!-- p333 break-del r630 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r629 @TA<<}
 
-<!-- p334 break-del r631+632 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r631+632 @TA}
+<!-- p334 break-del r632 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r631 @TA<<}
 
-<!-- p335 break-del r633+634 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r633+634 @TA}
+<!-- p335 break-del r634 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r633 @TA<<}
 
-<!-- p336 break-del r635+636 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r635+636 @TA}
+<!-- p336 break-del r636 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r635 @TA<<}
 
-<!-- p337 break-del r637+638 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r637+638 @TA}
+<!-- p337 break-del r638 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r637 @TA<<}
 
-<!-- p338 break-del r639+640 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r639+640 @TA}
+<!-- p338 break-del r640 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r639 @TA<<}
 
-<!-- p339 break-del r641+642 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r641+642 @TA}
+<!-- p339 break-del r642 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r641 @TA<<}
 
-<!-- p340 break-del r643+644 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r643+644 @TA}
+<!-- p340 break-del r644 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r643 @TA<<}
 
-<!-- p341 break-del r645+646 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r645+646 @TA}
+<!-- p341 break-del r646 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r645 @TA<<}
 
 <!-- p342 ListParagraph empty, num "2.", break-del r647 @TA -->
 
-<!-- p343 break-del r648+649 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r648+649 @TA}
+<!-- p343 break-del r649 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r648 @TA<<}
 
 <!-- p344 empty, break-del r650 @TA -->
 
-<!-- p345 break-del r651+652 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r651+652 @TA}
+<!-- p345 break-del r652 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r651 @TA<<}
 
-<!-- p346 break-del r653+654 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r653+654 @TA}
+<!-- p346 break-del r654 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r653 @TA<<}
 
-<!-- p347 break-del r655+656 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r655+656 @TA}
+<!-- p347 break-del r656 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r655 @TA<<}
 
-<!-- p348 break-del r657+658 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r657+658 @TA}
+<!-- p348 break-del r658 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r657 @TA<<}
 
-<!-- p349 break-del r659+660 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r659+660 @TA}
+<!-- p349 break-del r660 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r659 @TA<<}
 
-<!-- p350 break-del r661+662 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r661+662 @TA}
+<!-- p350 break-del r662 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r661 @TA<<}
 
-<!-- p351 break-del r663+664 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r663+664 @TA}
+<!-- p351 break-del r664 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r663 @TA<<}
 
-<!-- p352 break-del r665+666 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r665+666 @TA}
+<!-- p352 break-del r666 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r665 @TA<<}
 
-<!-- p353 break-del r667+668 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r667+668 @TA}
+<!-- p353 break-del r668 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r667 @TA<<}
 
-<!-- p354 break-del r669+670 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r669+670 @TA}
+<!-- p354 break-del r670 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r669 @TA<<}
 
-<!-- p355 break-del r671+672 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r671+672 @TA}
+<!-- p355 break-del r672 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r671 @TA<<}
 
-<!-- p356 break-del r673+674 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r673+674 @TA}
+<!-- p356 break-del r674 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r673 @TA<<}
 
-<!-- p357 break-del r675+676 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r675+676 @TA}
+<!-- p357 break-del r676 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r675 @TA<<}
 
-<!-- p358 break-del r677+678 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r677+678 @TA}
+<!-- p358 break-del r678 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r677 @TA<<}
 
-<!-- p359 break-del r679+680 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r679+680 @TA}
+<!-- p359 break-del r680 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r679 @TA<<}
 
-<!-- p360 break-del r681+682 @TA -->
-{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{r681+682 @TA}
+<!-- p360 break-del r682 @TA -->
+{--Eu adoro mamão com laranja todas as manhãs para poder ir ao banheiro direitinho!--}{>>r681 @TA<<}
 
-<!-- p361 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r683+684 @TA}¶{r683+684 @TA}
+<!-- p361 break-ins r684 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r683 @TA<<}
 
-<!-- p362 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r685+686 @TA}¶{r685+686 @TA}
+<!-- p362 break-ins r686 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r685 @TA<<}
 
-<!-- p363 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r687+688 @TA}¶{r687+688 @TA}
+<!-- p363 break-ins r688 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r687 @TA<<}
 
-<!-- p364 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r689+690 @TA}¶{r689+690 @TA}
+<!-- p364 break-ins r690 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r689 @TA<<}
 
-<!-- p365 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r691+692 @TA}¶{r691+692 @TA}
+<!-- p365 break-ins r692 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r691 @TA<<}
 
-<!-- p366 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r693+694 @TA}¶{r693+694 @TA}
+<!-- p366 break-ins r694 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r693 @TA<<}
 
-<!-- p367 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r695+696 @TA}¶{r695+696 @TA}
+<!-- p367 break-ins r696 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r695 @TA<<}
 
-<!-- p368 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r697+698 @TA}¶{r697+698 @TA}
+<!-- p368 break-ins r698 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r697 @TA<<}
 
-<!-- p369 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r699+700 @TA}¶{r699+700 @TA}
+<!-- p369 break-ins r700 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r699 @TA<<}
 
-<!-- p370 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r701+702 @TA}¶{r701+702 @TA}
+<!-- p370 break-ins r702 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r701 @TA<<}
 
-<!-- p371 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r703+704 @TA}¶{r703+704 @TA}
+<!-- p371 break-ins r704 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r703 @TA<<}
 
-<!-- p372 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r705+706 @TA}¶{r705+706 @TA}
+<!-- p372 break-ins r706 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r705 @TA<<}
 
-<!-- p373 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r707+708 @TA}¶{r707+708 @TA}
+<!-- p373 break-ins r708 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r707 @TA<<}
 
-<!-- p374 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r709+710 @TA}¶{r709+710 @TA}
+<!-- p374 break-ins r710 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r709 @TA<<}
 
-<!-- p375 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r711+712 @TA}¶{r711+712 @TA}
+<!-- p375 break-ins r712 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r711 @TA<<}
 
-<!-- p376 -->
-{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{r713+714 @TA}¶{r713+714 @TA}
+<!-- p376 break-ins r714 @TA -->
+{++Eu adoro mamaum com laranja todas as manhãs para poder ir ao banheiro direitinho!++}{>>r713 @TA<<}
 
 <!-- p377 ListParagraph empty, num "1." -->
 

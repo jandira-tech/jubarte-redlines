@@ -15,9 +15,9 @@ touch `word/document.xml`.
 | Task | Command |
 |---|---|
 | Read | `jubarte read file.docx`: header + Markdown with `<!-- pN -->` ids; ids are `p12`, `header1`, `footer2.p1`, `t0.row1.cell2`, `c5`, `r12`. `jubarte read file.docx --json` gives the same document as data |
-| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints SUCCESS and a fenced before/after diff of the full agent views), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
+| Edit (tracked changes + comments) | `jubarte edit file.docx -p p12 --anchor "thirty days" --content "forty-five days" --author "Name"` (several `-p` per command; writes `file_modified.docx` and prints the changed paragraphs, or the resolved lines for a pure `--accept`/`--reject`), or a plan: `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
 | Add a paragraph, comment or reply | `jubarte add file.docx -p p12 --content "New clause."` (`--before`), `-p p5 --anchor "fee" --content "Cap?"` (a comment), `-p c5 --reply "Agreed."` (a reply) |
-| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints SUCCESS and a fenced diff containing the resolved text) |
+| Resolve one change | `jubarte edit file.docx -p r12 --accept` (or `--reject`; `-p` repeats; prints `accepted r12 in p3: "from" > "to"`) |
 | Look at pages | `jubarte convert file.docx -o pages.png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx -o pages.png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx` prints the redline as the agent view; `-o redline.docx --author "Name"` writes it (`-o redline.pdf` renders it). `jubarte compare a.docx b.docx` is the same |
@@ -44,19 +44,12 @@ an id line:
 
 ```text
 <!-- p12 num "(a)" -->
-**Confidentiality.** You will {~~thirty~>forty-five~~}{r3+4 @AC} days ...
+**Confidentiality.** You will {~~thirty~>forty-five~~}{>>r3+4 @AC<<} days ...
 ```
 
 `p12` is the coordinate an edit uses. A bare `12` is refused, with
 the settled spelling named (`p12`, `r12` or `c12`, by what the option takes).
-Attribution follows the closer in braces. Distinct ids stay separate:
-`{++a++}{r1 @AC}{++b++}{r2 @AC}`. A same-author deletion then insertion
-pairs as `{~~old~>new~~}{r3+4 @AC re r1 @JD}`; `re` binds the old side only.
-An inserted paragraph mark ends the text as `¶{r5 @AC}`. Literal tag-like
-text after a closer or pilcrow escapes its brace: `\{r3 @C}`.
-See [Tags](../../docs/MARKDOWN.md#tags) for the complete grammar.
-
-A tracked change carries its id: `{++…++}{r12 @AC}` is `r12` for
+A tracked change carries its id: `{++…++}{>>r12 @AC<<}` is `r12` for
 `accept --id`, `reject --id` and `edit -p r12 --accept`, and `r3+4` is two
 Word marks of one change. A header's change reads `header1.r1`, a
 footnote's `footnotes.r3`. A comment reads `{==anchor==}{>>c5 @AC: text<<}`,
@@ -81,16 +74,11 @@ and `source_sha256`. `-p` and the other selection flags narrow it.
 (`parent`, `done`) and the anchored text with its surroundings
 (`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
 author's, `--latest` the newest of each thread.
-The schema-2 snapshot's `summary.tables` and `tables[]` count top-level
-body tables only, with `index` matching the view's `tN`. Every grid has a
-recursive `nested` array; nested entries have a `parent` cell path
-(`t0.row2.cell0`, then `t0.row2.cell0.t0.row0.cell1`) and no `index`.
-`tables` reads each top-level body table as a grid: `rows` of cells, each cell with
+`tables` reads each body table as a grid: `rows` of cells, each cell with
 its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
 cell through its paragraph id, or as `t0.row1.cell2`.
 `jubarte read contract.docx --tables` prints the same grids with the same
-short ids (`p8`). Top-level labels are `table N`; nested grids follow their
-cell row, indented two spaces per level and labelled `nested in CELL_PATH`.
+short ids (`p8`).
 `read --json` also lists the body's content controls under `controls`: `id`
 (`cc0` for a block control, `p3.cc0` for one inside paragraph `p3`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
 `combo_box`, `date`, `checkbox`, `picture`, ...), `text`, `paragraph_ids`,
@@ -169,7 +157,7 @@ matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `AMBIGUOUS_CHANGE`,
-`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `COMMENT_NOT_YOURS`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`PARAGRAPH_RESOLVED`, `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
 `INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
@@ -179,9 +167,7 @@ Operation kinds: `replace`, `insert` (one of `after`, `before`,
 paragraph; `through` instead of `find` covers every paragraph from
 `paragraph` to that one), `reply_comment` (`comment_id`, `text`),
 `resolve_comment` (`comment_id`, `done` default true; false reopens),
-`edit_comment` (`comment_id`, `text`; another author's comment is refused
-unless the plan sets `"rewrite_others_comments": true`, and it keeps their
-name: answer them with `reply_comment` instead), `delete_comment` (`comment_id`;
+`edit_comment` (`comment_id`, `text`), `delete_comment` (`comment_id`;
 replies and anchors go with it), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `highlight`; copies the anchor's paragraph properties, or those of the
 paragraph `like` selects), `delete_paragraph` (optional `comment`),
@@ -220,13 +206,6 @@ jubarte's results now). `replace` and
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
-Without `whole` or `format`, a `replace` writes only the words that differ:
-the words it keeps keep their formatting (a bold defined term stays bold),
-and a character the document has where `replacement` has a plain
-look-alike stays (a curly quote, a non-breaking space). Words that all
-change are one change; a kept word between two changes splits them. To
-change only a quote's style, use `"whole": true`; a replace that changes
-nothing reports a `message` saying so.
 Paragraph selectors: an id as `read` prints it (`"p12"`, `"header1.p0"`,
 `"footnotes.p2"`, `"t0.row1.cell2"`, `"c5.text"`; the expired `"body:p:12"` is refused),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
@@ -483,36 +462,6 @@ comments go. Text and tracked changes stay. `--author-alias NAME`,
 `scrubDocument(docx, '{"author_alias":"Counsel","rsids":true}')`.
 Scrub refuses to write a package with a validity finding the input did not
 have. Text to hide inside the document is a plan's `redact` (§2).
-
-
-With human-readable CLI output, every command that writes a DOCX from a
-document prints a confirmation after publication (unless `-q`):
-
-````text
-SUCCESS:
-~~~~diff
---- before in.docx
-+++ after out.docx
-@@ -1,3 +1,3 @@
- ---
--source: in.docx
-+source: out.docx
- sha256: …
-~~~~
-````
-
-The diff compares the full input and output agent views, including `source:`
-and `sha256:`. It uses three context lines; the output view comes from the
-published bytes. Markdown conversion uses the original Markdown text as its
-before-view; comparison uses its first input. Identical views print
-`no differences` inside the fence. The fence grows past any leading tilde
-run in the diff. Edit's former changed-range view and resolved-lines output
-are replaced by this block; an existing bundle summary stays before it,
-with one block per DOCX. The `wrote …` lines and notes remain on stderr.
-`-q` silences the block, summary and status; warnings and errors still print.
-Dry runs, saved plans and non-DOCX outputs retain their existing output.
-Template generation writes a JSON plan; applying it writes the DOCX.
-Typed `--json`/`--jsonl` delivery retains its machine-readable receipt.
 
 ## Dependencies
 

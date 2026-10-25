@@ -125,7 +125,7 @@ fn b_carries_same_comments_as_a(pkg1: &PartFs, pkg2: &PartFs) -> bool {
 }
 
 fn normalized_text(text: &str) -> String {
-    crate::util::collapse_whitespace(text)
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Build an id-independent identity from the comment body and its anchored
@@ -1067,11 +1067,11 @@ fn preserve_cloned_namespace_context(
             used_uris.insert(name.namespace_name().to_string());
         }
         let element_name = dom.name(element);
-        for (name, value) in dom.attributes_iter(element) {
-            if !dom.is_namespace_declaration(name) && !name.namespace_name().is_empty() {
+        for (name, value) in dom.attributes(element) {
+            if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
                 used_uris.insert(name.namespace_name().to_string());
             }
-            if is_namespace_qname_list(element_name.as_ref(), name) {
+            if is_namespace_qname_list(element_name.as_ref(), &name) {
                 required_prefixes.extend(
                     value
                         .split_whitespace()
@@ -1362,7 +1362,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
             d.elements(br, None)
                 .into_iter()
                 .filter_map(|e| {
-                    d.attributes_iter(e)
+                    d.attributes(e)
                         .into_iter()
                         .find(|(name, _)| name.local_name() == "durableId")
                         .map(|(_, value)| value.to_ascii_uppercase())
@@ -1442,7 +1442,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
     let mut dead_para_ids: HashSet<String> = HashSet::new();
     for &c in &orphan {
         for p in dom.descendants(c, Some(&W::p())) {
-            for (n, v) in dom.attributes_iter(p) {
+            for (n, v) in dom.attributes(p) {
                 if n.local_name() == "paraId" {
                     dead_para_ids.insert(v.to_ascii_uppercase());
                 }
@@ -1692,7 +1692,7 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1818,7 +1818,7 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod deeper_boundary_tests {
     use super::*;
 

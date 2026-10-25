@@ -2136,7 +2136,7 @@ fn emit_segment(
     }
 }
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod lexical_pairing_contract_tests {
     use super::*;
     use crate::comparer::atoms::ComparisonUnitWord;
@@ -2471,14 +2471,15 @@ mod lexical_pairing_contract_tests {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod public_option_source_ownership_tests {
     use super::*;
     use crate::xmllinq::NodeId;
 
     fn canonical(dom: &Dom, node: NodeId) -> String {
         let mut attrs = dom
-            .attributes_iter(node)
+            .attributes(node)
+            .into_iter()
             .filter(|(name, _)| !dom.is_namespace_declaration(name))
             .map(|(name, value)| {
                 (
@@ -2554,7 +2555,8 @@ mod public_option_source_ownership_tests {
                         walk(&notes, child, pkg, &mut note_events);
                     }
                     let mut owner_attrs = notes
-                        .attributes_iter(note)
+                        .attributes(note)
+                        .into_iter()
                         .filter(|(name, _)| !notes.is_namespace_declaration(name))
                         .map(|(name, value)| {
                             (
@@ -2588,7 +2590,8 @@ mod public_option_source_ownership_tests {
                 .any(|name| dom.name_is(node, name))
             {
                 let mut attrs = dom
-                    .attributes_iter(node)
+                    .attributes(node)
+                    .into_iter()
                     .filter(|(name, _)| !dom.is_namespace_declaration(name))
                     .map(|(name, value)| (format!("{name:?}"), value))
                     .collect::<Vec<_>>();

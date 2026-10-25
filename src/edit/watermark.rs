@@ -24,7 +24,7 @@ const W10_URI: &str = "urn:schemas-microsoft-com:office:word";
 /// Shape ids Word gives text and picture watermarks.
 const WATERMARK_IDS: [&str; 2] = ["PowerPlusWaterMarkObject", "WordPictureWatermark"];
 /// Longest watermark text the operation takes.
-pub(super) const MAX_TEXT: usize = 64;
+const MAX_TEXT: usize = 64;
 /// Word's shape size for a text watermark on a Letter page.
 const LETTER: (f64, f64) = (527.85, 131.95);
 
@@ -188,7 +188,6 @@ impl Transaction<'_> {
             message: None,
             anchor_given: None,
             anchor_read_as: None,
-            near: None,
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))
@@ -331,7 +330,7 @@ impl Transaction<'_> {
 }
 
 #[cfg(test)]
-#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

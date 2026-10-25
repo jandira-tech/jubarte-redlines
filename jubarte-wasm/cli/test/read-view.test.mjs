@@ -50,8 +50,8 @@ test("readView by resolves names, bare handles and prefixed handles for comment 
   assert.match(expected, /range: changed by @AS \(p5\)/);
   assert.match(body(expected), /c6 @AS re c5: Disagree/);
   // Filtering keeps the complete block, including other authors' marks: a
-  // deletion followed by its insertion by the same author is a substitution.
-  assert.match(body(expected), /\{~~thirty~>forty-five~~\}\{r3\+4 @AC\}/);
+  // deletion before its insertion is two changes (only ins then del pairs).
+  assert.match(body(expected), /\{--thirty--\}\{>>r3 @AC<<\}\{\+\+forty-five\+\+\}\{>>r4 @AC<<\}/);
   for (const by of ["AS", "@AS"]) {
     assert.equal(read(received, { changed: true, by }), expected);
   }
@@ -75,7 +75,7 @@ for (const trackChanges of ["accept", "reject"]) {
   test(`readView changed retains author metadata in the ${trackChanges} view`, () => {
     const view = read(received, { changed: true, by: "AC", trackChanges });
     assert.deepEqual(blockIds(view), ["p3", "p5", "p7", "t0", "p18"]);
-    assert.match(body(view), /<!-- p3 rev r0 @AC; r1\+2 @AC -->/);
+    assert.match(body(view), /<!-- p3 rev r0 @AC; r1 @AC; r2 @AC -->/);
     assert.doesNotMatch(body(view), /\{(?:\+\+|--|~~)/);
     assert.ok(body(view).includes(trackChanges === "accept" ? "Day 15" : "Day 10"));
   });
@@ -122,7 +122,7 @@ test("shared CLI parsing applies changed conflicts to read and text aliases", ()
   }
 });
 
-test("short selectors edit the intended body and table cells and report their short ids", () => {
+test("short selectors edit the intended body and table cells and report canonical ids", () => {
   const original = wasm.markdownToDocx("Intro\n\n| Item | Due |\n|---|---|\n| Report | Friday |\n\nTail\n");
   const result = wasm.applyEditPlan(original, plan([
     { kind: "replace", paragraph: "p0", find: "Intro", replacement: "Opening" },
@@ -131,7 +131,7 @@ test("short selectors edit the intended body and table cells and report their sh
   ]));
   try {
     assert.equal(result.ok, true, result.json);
-    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["p0", "p4", "p5"]);
+    assert.deepEqual(JSON.parse(result.json).operations.map((op) => op.paragraph), ["body:p:0", "body:p:4", "body:p:5"]);
     const clean = body(read(result.clean));
     assert.match(clean, /Opening/);
     assert.match(clean, /\|Report\|Monday\|/);
