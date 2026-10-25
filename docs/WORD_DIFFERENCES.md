@@ -329,6 +329,24 @@ for `fill_control`, the clean edit output also retains the control.
   spot, and writing one keeps a redline of a redline from growing a pair on
   every compare.
 
+### 14. New text that replaces a body of tables (Compare, #1826)
+
+- **What happens.** The original's body is `table, paragraph, table` and
+  the revision replaces it with new text. Word writes the new text first,
+  in a paragraph of its own with an inserted mark. The deleted tables
+  follow, with the original's middle paragraph between them, its mark
+  deleted (w06 `45c1c5abec_table_vmerge_colspan` → `a94f4c516b_text_box`,
+  Word 16's redline in the corpus).
+- **What we do.** The middle paragraph keeps its place between the tables,
+  its mark deleted, but the new text is inserted on that paragraph instead
+  of ahead of the first table. Before #1826, Word mode moved the paragraph
+  ahead of the first table, and rejecting fused the two tables into one.
+- **Which is better.** Word's, for page flow: the new text opens the page.
+  Both resolve correctly: rejecting gives the original's tables and the
+  paragraph between them, and accepting gives the revision. Matching Word
+  would mean splitting the paragraph into a new inserted paragraph and the
+  deleted mark; that is open.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
