@@ -122,15 +122,19 @@ FACTS_KEYS = ("engine.version", "engine.released", "release.history",
 # its comparator's in parentheses, each followed by its failure clause.
 MEAN = r"\d+(?:\.\d+)?"
 # The preamble may hold colons ("(see release_info: …)") but never ends a
-# sentence: it runs to the first ": redlines mean" without crossing ". " (#1773).
+# sentence: it runs to the first ": redlines mean" without crossing ". " (#1773),
+# or another "N-item samples", so the size held is the one nearest the means (#1775).
 SENTENCE = re.compile(
-    rf"(?P<n>\d+)-item samples\b(?:(?!\.\s).)*?:\s*"
+    rf"\b(?P<n>\d+)-item samples\b(?:(?!\.\s)(?!\d+-item samples\b).)*?:\s*"
     rf"redlines mean (?P<redline>{MEAN}) \((?P<redline_name>[^\s()]+) (?P<redline_other>{MEAN})\)(?P<redline_tail>.*?)"
     rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
     rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
 )
-COUNTED = re.compile(r"counting as 0 the (\d+)\b(?: (\w+))?")
-# "no failed …" anywhere in the text, in any case: a claim about the samples
+# the count, then the next two words, which name what was counted (#1777)
+COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+){0,2})")
+# "no failed …" in the measured sentence, in any case: a claim about the
+# samples. Another sentence's is not read: the checker cannot tell what it is
+# about ("No failed redlines are omitted …", a test suite's) (#1776).
 NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline)s?\b", re.I)
 # the nouns that speak for each sample ("item" speaks for both)
 NONE_WORDS = {"redline": ("redline", "item"), "conversion": ("document", "pdf", "item")}
@@ -394,9 +398,16 @@ def two(value: float) -> str:
     return str(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
-def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], claims: list[str]) -> list[str]:
-    """CLAIMS: every "no failed <noun>" in the text the sentence stands in."""
+def counted_kinds(words: str) -> set[str]:
+    """The samples the nouns of a counted phrase belong to ("document pairs":
+    both, so neither sample's clause refuses it)."""
+    return {kind for w in words.split() for kind, nouns in COUNTED_WORDS.items()
+            if w.lower().removesuffix("s") in nouns}
+
+
+def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict]) -> list[str]:
     out = []
+    claims = NO_FAILED.findall(m[0])
     for kind, noun, sample in (("redline", "redline", "redlines"), ("conversion", "PDF", "PDFs")):
         doc = docs[f"results_{kind}"]
         tools = doc.get("tools") or {}
@@ -420,9 +431,9 @@ def sentence_problems(m: re.Match[str], where: str, docs: dict[str, dict], claim
         out.extend(f'{where}: {sample} "counting as 0 the {c}" — the evidence counts {failed}'
                    for c, _ in counted if c != str(failures))
         other_kind = "conversion" if kind == "redline" else "redline"
-        out.extend(f'{where}: {sample} "counting as 0 the {c} {w}" — a {w} is the {other_kind} sample\'s, '
-                   f"not the {kind} sample's" for c, w in counted
-                   if w.lower().removesuffix("s") in COUNTED_WORDS[other_kind])
+        out.extend(f'{where}: {sample} "counting as 0 the {c} {w.split()[0]}" — a {w.split()[0]} is the '
+                   f"{other_kind} sample's, not the {kind} sample's" for c, w in counted
+                   if counted_kinds(w) == {other_kind})
         counted = [c for c, _ in counted]
         if said_none and failures:
             out.append(f'{where}: {sample} "no failed {said_none[0]}" — the evidence counts {failed}')
@@ -440,9 +451,8 @@ def measured_problems(text: str, where: str, six: dict[str, Path]) -> list[str]:
                 f"(Docxodus Y) …; PDFs mean X (LibreOffice Y) ….\")"]
     docs = {name: json.loads(six[name].read_text(encoding="utf-8"))
             for name in ("results_redline", "results_conversion")}
-    claims = NO_FAILED.findall(text)
     # each problem once, however many sentences repeat it
-    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs, claims)))
+    return list(dict.fromkeys(p for m in found for p in sentence_problems(m, where, docs)))
 
 
 def changelog_section(path: Path, version: str) -> str | None:

@@ -613,23 +613,56 @@ class MeasuredSentence(SixFiles):
         r = self.numbers("--summary", "We drew 600-item samples. " + self.SOUND)
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_a_no_failed_claim_anywhere_in_the_text_is_held(self) -> None:
+    def test_a_no_failed_claim_in_either_clause_is_held(self) -> None:
         # each one denies the conversion sample's 1 failure (#1773)
         for text in (
             self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), and no failed documents; PDFs"),
-            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), no failed PDFs; PDFs"),
-            self.SOUND + " no failed documents.",
-            self.SOUND + " No failed documents.",
+            self.SOUND.replace("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), No failed PDFs; PDFs"),
         ):
             with self.subTest(text=text[-60:]):
                 r = self.numbers("--summary", text)
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("1 failed PDF", r.stderr)
 
+    def test_a_no_failed_outside_the_measured_sentence_is_not_a_claim(self) -> None:
+        # codex on #1743 (#1776): the checker cannot tell what another
+        # sentence's "no failed" is about; the measured sentence still has
+        # to count every failure
+        for after in ("No failed redlines are omitted from these means.",
+                      "The document-validation regression suite has no failed redlines.",
+                      "The previous release had no failed documents.",
+                      "The Word oracle produced no failed PDFs on this corpus."):
+            with self.subTest(after=after):
+                r = self.numbers("--summary", self.SOUND + " " + after)
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_sample_size_nearest_the_means_is_held(self) -> None:
+        # codex on #1743 (#1775): the colon-tolerant preamble bound the first
+        # of two sizes
+        text = self.SOUND.replace("On two 3-item samples scored",
+                                  "We drew two 3-item samples: after filtering, results on two 2-item samples scored")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"2-item samples"', r.stderr)
+        # empryo on #1743: an earlier size before a colon is not the one held
+        text = self.SOUND.replace("On two 3-item samples scored",
+                                  "On two 400-item samples: an earlier draft, rescored; on two 3-item samples scored")
+        r = self.numbers("--summary", text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_a_counted_noun_of_the_other_sample_is_named(self) -> None:
         r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 document Word"))
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn('"counting as 0 the 1 document"', r.stderr)
+        r = self.numbers("--summary", self.SOUND.replace("the 1 document jubarte", "the 1 redline pair jubarte"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 redline"', r.stderr)
+
+    def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
+        # codex on #1743 (#1777): document pairs are the redline sample's
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening",
+                                                          "the 1 document pair whose redline Word cannot open"))
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_an_unreadable_changelog_is_named_as_unreadable(self) -> None:
         r = self.numbers("--changelog", str(self.tmp / "no-such-CHANGELOG.md"))
@@ -717,6 +750,8 @@ class ReleaseSh(unittest.TestCase):
         text = (HERE / "release.sh").read_text()
         row = next(line for line in text.splitlines() if line.startswith("3|auto|The measured NUMBERS sentence"))
         self.assertIn("a median or interval it states is not checked", row)
+        # codex on #1743 (#1776): a claim outside the sentence is not read
+        self.assertIn("another sentence's is not read", row)
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:

@@ -2686,7 +2686,10 @@ class Lessons0140(unittest.TestCase):
         phase, mark, _item, proof = row.split("|")
         self.assertEqual((phase, mark), ("before", "you"))
         self.assertIn("git worktree add", proof)
-        self.assertIn("scripts/api_snapshot.py", proof)
+        # codex on #1743 (#1778): the tag's own script may be the one #1769
+        # fixed, so this checkout's runs in the tag's worktree
+        self.assertLess(proof.index("cp scripts/api_snapshot.py <dir>/scripts/"),
+                        proof.index("python3 scripts/api_snapshot.py"))
 
     def test_step_6_names_a_missing_previous_snapshot(self) -> None:
         # 0.13.0 skipped step 6: "no previous-release snapshot — … is the
@@ -2694,6 +2697,8 @@ class Lessons0140(unittest.TestCase):
         s6 = ApiDocDrift.step6(self)
         self.assertIn("no snapshot of $PREV_TAG", s6)
         self.assertIn("backfill", s6)
+        self.assertLess(s6.index("cp scripts/api_snapshot.py <dir>/scripts/"),
+                        s6.index("python3 scripts/api_snapshot.py ${PREV_TAG#v}"))
 
     def test_hand_run_python_proofs_pin_3_12(self) -> None:
         # uv's default here was a free-threaded 3.15t; no abi3 wheel serves it
