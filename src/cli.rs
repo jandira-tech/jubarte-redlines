@@ -1500,7 +1500,7 @@ pub enum Command {
         /// Only parts whose name contains this (e.g. document.xml).
         #[arg(short = 'p', long, value_name = "NAME")]
         part: Option<String>,
-        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
+        /// Only what contains this: textbox stories; text/runs/xml/changes/tables/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
         #[arg(short = 'g', long, value_name = "TEXT")]
         grep: Option<String>,
         /// Examples per finding kind.
@@ -1825,6 +1825,12 @@ pub enum DebugCheck {
     /// where each sits and what the live properties add (+) and drop (-)
     /// against the recorded ones; with two files, the lines that differ.
     Changes,
+    /// Tables per story part: the grid (and a tblGridChange's old grid),
+    /// each row's mark, gridBefore/gridAfter and trPrChange, each cell's
+    /// mark (cellIns +, cellDel -, cellMerge ~), span, width and vMerge with
+    /// a tcPrChange's old ones, and its paragraphs as `text` shows them;
+    /// with two files, the lines that differ.
+    Tables,
     /// Style definitions by type and name (localized ids pair): docDefaults,
     /// then each style's default flag and basedOn/link by name, and a line
     /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
@@ -1859,6 +1865,7 @@ impl From<DebugCheck> for crate::debug::Check {
             DebugCheck::Xml => Check::Xml,
             DebugCheck::Runs => Check::Runs,
             DebugCheck::Changes => Check::Changes,
+            DebugCheck::Tables => Check::Tables,
             DebugCheck::Styledefs => Check::StyleDefs,
             DebugCheck::Numbering => Check::Numbering,
             DebugCheck::Render => Check::Render,

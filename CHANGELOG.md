@@ -15,6 +15,14 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Breaking
+
+- **`jubarte::debug::Check` gains `Tables`** (#1817). A Rust `match` on `Check` without a wildcard arm needs one for it.
+
+### Added
+
+- **`jubarte debug FILE -c tables` lists every table's grid, rows and cells** (#1817). Each cell shows its width, span and vertical merge, its revision marks and the old properties its `tcPrChange` records, then its text; nested tables are indented under their cell, and each table shows its old grid and `tblPrChange`. `debug` is the maintainer tool hidden from `jubarte --help`.
+
 ## [0.14.0] - 2026-10-24
 
 > **Summary.** Breaking: the Rust CLI's `ReadArgs::paragraphs` is a `Vec<String>`, one entry per `-p`, and `Command::Changes` gains `author` (#1690). New: `read -p` and `--select` repeat, `read --tables -o FILE` writes the grids, `changes --author NAME` filters, `validate` reports `CELL_FINAL_MARK_REVISION`. Tracked edits keep each author's formatting history apart and refuse a new duplicate revision id before writing; table redlines avoid the cell final-mark revision that hangs Word; `accept` and `reject` resolve rows, cells and section breaks as Word does. No build carries `block-buffer` 0.10.4 (GHSA-qwgh-2vcv-g2f7). On the release's two 600-item samples, scored against Word's own output: redlines mean 71.62 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening; PDFs mean 79.19 (LibreOffice 54.61) with no failed document. Word's own redline of the pair crashes Word on 20 of those 23 pairs; 3 crash only with jubarte's (#1802), which the owner waived for this release. One pair regresses (26ce1d6300, -15.06, #1759). The full Miri suite did not run for this release, and the speed comparison with 0.13.0 could not resolve a 5% change on the release machine, where one binary varied by up to 9.7% against itself (#1797). 0.13.0 never reached npm; this is the first npm release since 0.12.0.
