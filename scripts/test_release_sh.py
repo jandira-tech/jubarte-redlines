@@ -1709,7 +1709,13 @@ case "$1 $2" in
     done
     mkdir -p "$dir" && : > "$dir/$pat"
     exit 0 ;;
-  "attestation verify") exit "${ATTEST_RC:-0}" ;;
+  "attestation verify")
+    # the attestation names the ref and commit release.yml ran on
+    case " $* " in
+      *" --source-ref ${ATTESTED_REF:-refs/tags/v9.9.9} --source-digest ${ATTESTED_SHA:-$TAG_SHA} "*) ;;
+      *) exit 1 ;;
+    esac
+    exit "${ATTEST_RC:-0}" ;;
 esac
 exit 0
 """
@@ -1719,16 +1725,22 @@ class BuildProvenance(unittest.TestCase):
     """release.yml attests every asset (actions/attest); step 12 downloads one
     archive and verifies it against the release workflow that signed it."""
 
-    def run_attested(self, rc: int) -> tuple[subprocess.CompletedProcess, str]:
+    def run_attested(self, rc: int, **env: str) -> tuple[subprocess.CompletedProcess, str]:
         tmp = Path(tempfile.mkdtemp(prefix="attest-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "gh").write_text(GH_ATTEST_STUB)
         (tmp / "gh").chmod(0o755)
+        git = ["git", "-C", str(tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "release"], check=True)
+        subprocess.run([*git, "tag", "-a", "-m", "v9.9.9", "v9.9.9"], check=True)
+        self.sha = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
         calls = tmp / "calls"
         script = f'set -euo pipefail\nTAG=v9.9.9 VER=9.9.9\n{shell_functions("gh_attested")}\ngh_attested\n'
         r = subprocess.run(["bash", "-c", script], cwd=tmp,
                            env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
-                                    CALLS=str(calls), ATTEST_RC=str(rc)),
+                                    CALLS=str(calls), ATTEST_RC=str(rc), TAG_SHA=self.sha, **env),
                            capture_output=True, text=True, timeout=30)
         return r, calls.read_text() if calls.exists() else ""
 
@@ -1742,6 +1754,16 @@ class BuildProvenance(unittest.TestCase):
         self.assertIn("--signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml",
                       verify[0])
         self.assertIn("--deny-self-hosted-runners", verify[0])
+        self.assertIn("--source-ref refs/tags/v9.9.9", verify[0])
+        self.assertIn(f"--source-digest {self.sha}", verify[0])
+
+    def test_an_older_releases_archive_under_this_name_fails(self) -> None:
+        # Codex review of #1743 (#1749): the repository, workflow and runner
+        # alone pass an archive another tag's run attested.
+        r, _ = self.run_attested(0, ATTESTED_REF="refs/tags/v9.9.8")
+        self.assertNotEqual(r.returncode, 0)
+        r, _ = self.run_attested(0, ATTESTED_SHA="0" * 40)
+        self.assertNotEqual(r.returncode, 0)
 
     def test_an_unattested_archive_fails(self) -> None:
         r, _ = self.run_attested(1)
@@ -1753,6 +1775,66 @@ class BuildProvenance(unittest.TestCase):
         s12 = step(12)
         self.assertIn("gh_attested", s12)
         self.assertNotRegex(s12, r'check "[^"]*"\s+"?(eventually )?gh_attested')
+
+
+# stub gh for the fallback release: the run's artifacts, and the notes the
+# release is created with (copied to $NOTES_OUT).
+GH_FALLBACK_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$1 $2" in
+  "run download")
+    mkdir -p dist/release-art/x
+    for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
+             manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
+      : > "dist/release-art/x/jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+    done
+    : > dist/release-art/x/jubarte_redlines-9.9.9.tar.gz
+    for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64; do
+      : > "dist/release-art/x/jubarte-9.9.9-$a.tar.gz"
+    done
+    : > dist/release-art/x/jubarte-9.9.9-windows-x86_64.zip ;;
+  "release create")
+    while [ $# -gt 0 ]; do
+      [ "$1" = --notes-file ] && cp "$2" "$NOTES_OUT"
+      shift
+    done ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class FallbackProvenance(unittest.TestCase):
+    """Codex review of #1743 (#1749): a release made from run artifacts
+    (release.yml's release job did not run) has no attestation, and its
+    notes say so instead of the CHANGELOG's claim standing alone."""
+
+    def test_the_fallback_notes_disclose_no_attestation(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="fallback-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "bin").mkdir()
+        (tmp / "bin" / "gh").write_text(GH_FALLBACK_STUB)
+        (tmp / "bin" / "gh").chmod(0o755)
+        (tmp / "scripts").mkdir()
+        shutil.copy(HERE / "check_release_artifacts.py", tmp / "scripts")
+        (tmp / "CHANGELOG.md").write_text("## [9.9.9] - 2026-10-25\n\n- a fix\n")
+        notes = tmp / "notes.md"
+        script = (
+            "set -euo pipefail\nTAG=v9.9.9; VER=9.9.9; PREV_TAG=v9.9.8; GITHUB_SUMMARY='the summary'\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f'{shell_functions("release_from_artifacts")}\nrelease_from_artifacts 42\n'
+        )
+        r = subprocess.run(["bash", "-c", script], cwd=tmp,
+                           env=dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}",
+                                    NOTES_OUT=str(notes)),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = notes.read_text()
+        self.assertTrue(text.startswith("the summary"), text)
+        self.assertIn("no build-provenance attestation", text)
+        self.assertIn("- a fix", text)
+
+    def test_the_changelog_claims_provenance_for_the_release_job_only(self) -> None:
+        text = (HERE.parent / "CHANGELOG.md").read_text()
+        claim = next(line for line in text.splitlines() if line.startswith("- **Build provenance"))
+        self.assertIn("release job", claim)
 
 
 class AutomatedReview(unittest.TestCase):

@@ -1290,6 +1290,8 @@ release_from_artifacts() {
     if [ -n "$missing" ]; then
       printf '> Not attached:%s (release.yml run %s failed to build them).\n\n' "$missing" "$run_id"
     fi
+    # Only release.yml's release job attests; this path makes no attestation.
+    printf '> These assets carry no build-provenance attestation: they come from release.yml run %s, whose release job did not publish them.\n\n' "$run_id"
     awk -v ver="$VER" '
       index($0, "## [" ver "] - ") == 1 { on=1; next }
       on && /^## \[/ { exit }
@@ -1395,11 +1397,15 @@ gh_note() {
 # archive, verified against the workflow that signed it on a GitHub-hosted
 # runner, proves the attestation ran.
 gh_attested() {
-  local f="jubarte-$VER-linux-x86_64.tar.gz" rc=0
+  local f="jubarte-$VER-linux-x86_64.tar.gz" rc=0 sha
+  # bound to this tag and its commit: the repository, workflow and runner
+  # alone pass an archive another release's run attested (#1749)
+  sha=$(git rev-parse "$TAG^{commit}") || return 1
   rm -rf dist/attest
   gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte-redlines >/dev/null 2>&1 || return 1
   gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte-redlines \
     --signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml \
+    --source-ref "refs/tags/$TAG" --source-digest "$sha" \
     --deny-self-hosted-runners >/dev/null 2>&1 || rc=1
   rm -rf dist/attest
   return "$rc"
