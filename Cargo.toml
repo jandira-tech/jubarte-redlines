@@ -228,7 +228,7 @@ required-features = ["cli"]
 # lockfiles do not pull this crate in at runtime. The tests load the
 # bundled schema from disk and use this validator only to confirm
 # parse_expectations and the bundled schema agree on accept/reject.
-jsonschema = { version = "0.59", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
