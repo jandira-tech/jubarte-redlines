@@ -502,29 +502,52 @@ bump_gate() {
 # numbers (whole words: TODOS is no placeholder).
 changelog_placeholders() { changelog_section | grep -nwE '(TODO|TBD|FIXME|XXX)'; }
 # PRs merged since the release tag $1 that a user meets: a merge commit from
-# a fix/, feat/, perf/ or security/ branch, or a squashed commit whose subject
-# says so. Release, chore, docs, test and CI branches owe the notes nothing.
+# a fix/, feat/, perf/ or security/ branch, or whose PR title (the merge
+# commit's body) has one of those types, or a squashed commit whose subject
+# says so. Release, chore, docs, test and CI PRs owe the notes nothing. A
+# history git cannot read is a refusal, never an empty set.
 user_facing_prs() {
-  git log --format=%s "$1..HEAD" | sed -nE \
-    -e 's@^Merge pull request #([0-9]+) from [^/ ]+/(fix|feat|perf|security)[/-].*@\1@p' \
-    -e 's@^(fix|feat|perf|security)(\([^)]*\))?!?: .* \(#([0-9]+)\)$@\3@p' \
-    | sort -un
+  local log
+  log=$(git log --format='%s%x1f%b%x1e' "$1..HEAD") \
+    || { echo "  ! git cannot read the history since $1" >&2; return 1; }
+  printf '%s' "$log" | awk -v RS='\036' -F'\037' '
+    { sub(/^\n+/, "", $1); title = $2; sub(/^\n+/, "", title); sub(/\n.*/, "", title) }
+    $1 ~ /^Merge pull request #[0-9]+ from / {
+      match($1, /#[0-9]+/); n = substr($1, RSTART + 1, RLENGTH - 1)
+      branch = $1; sub(/^Merge pull request #[0-9]+ from [^\/ ]+\//, "", branch)
+      if (branch ~ /^(fix|feat|perf|security)[\/-]/ \
+          || title ~ /^(fix|feat|perf|security)([(][^)]*[)])?!?: /) print n
+      next
+    }
+    $1 ~ /^(fix|feat|perf|security)([(][^)]*[)])?!?: / && match($1, / [(]#[0-9]+[)]$/) {
+      print substr($1, RSTART + 3, RLENGTH - 4)
+    }
+  ' | sort -un
 }
 # The user-facing PRs since $1 that the CHANGELOG section cites nowhere: by
 # the PR's own number, an issue it closes, or an issue its title names. A
 # `<!-- changelog-skip: #N ... -->` line in the section cites one on purpose
-# (the release notes render it invisible).
+# (the release notes render it invisible). Step 2 calls it inside $(…),
+# where bash clears errexit: every failure returns on its own.
 unlisted_prs() {
-  local cited n r hit refs
-  cited=" $(changelog_section | grep -oE '#[0-9]+' | tr -d '#' | tr '\n' ' ') "
-  for n in $(user_facing_prs "$1"); do
+  local cited n r hit refs prs why
+  prs=$(user_facing_prs "$1") || return 1
+  cited=" $(changelog_section | { grep -oE '#[0-9]+' || true; } | tr -d '#' | tr '\n' ' ') "
+  for n in $prs; do
     case "$cited" in *" $n "*) continue ;; esac
     # A number that is no pull request (gh pr view fails) is the issue a
     # PR's own commit names ("fix(x): … (#1668)"), and it stays owed: a PR
     # merged inside another's atomic stack merge (#1670 in 0.14.0) has no
-    # merge commit, so the issue its commits fix is all that shows it.
-    refs=$(gh pr view "$n" --json closingIssuesReferences,title \
-             -q '(.closingIssuesReferences[].number), .title' </dev/null 2>/dev/null || true)
+    # merge commit, so the issue its commits fix is all that shows it. Any
+    # other failure is a refusal: it would hide a PR the notes owe.
+    if ! refs=$(gh pr view "$n" -R jandira-tech/jubarte-redlines --json closingIssuesReferences,title \
+                  -q '(.closingIssuesReferences[].number), .title' </dev/null 2>/dev/null); then
+      why=$(gh pr view "$n" -R jandira-tech/jubarte-redlines --json number </dev/null 2>&1 >/dev/null || true)
+      case "$why" in
+        *"Could not resolve to a PullRequest"*) refs="" ;;
+        *) echo "  ! gh cannot read #$n: $why" >&2; return 1 ;;
+      esac
+    fi
     hit=0
     for r in $(printf '%s\n' "$refs" | awk '
         /^[0-9]+$/ { print; next }
@@ -730,7 +753,8 @@ step "$VER section + link footer present"
 if changelog_placeholders >&2; then
   die "CHANGELOG.md's $VER section holds placeholder text (above) — it ships as the release notes"
 fi
-missing_prs=$(unlisted_prs "$PREV_RELEASE")
+missing_prs=$(unlisted_prs "$PREV_RELEASE") \
+  || die "cannot tell which PRs merged since $PREV_RELEASE the notes owe (above)"
 [ -z "$missing_prs" ] \
   || die "CHANGELOG.md's $VER section cites none of these user-facing PRs merged since $PREV_RELEASE, or issues their fix/feat commits name: $(echo $missing_prs) — cite each by its number or an issue it closes, or skip it with a \`<!-- changelog-skip: #N -->\` line"
 step "every user-facing PR merged since $PREV_RELEASE is cited"

@@ -1472,6 +1472,7 @@ case "$*" in
   "pr view 11 "*) printf '21\nfix(edit): a thing\n' ;;
   "pr view 13 "*) printf 'feat(cli): another (#23)\n' ;;
   "pr view 15 "*) printf '25\nperf(convert): faster\n' ;;
+  "pr view 31 "*) echo "GraphQL: Could not resolve to a PullRequest with the number of 31. (repository.pullRequest)" >&2; exit 1 ;;
   *) echo "unexpected gh $*" >&2; exit 9 ;;
 esac
 """
@@ -1555,6 +1556,99 @@ class ChangelogCompleteness(unittest.TestCase):
         s2 = step(2)
         self.assertIn("unlisted_prs", s2)
         self.assertIn("die", s2.split("unlisted_prs", 1)[1])
+
+
+# stub gh for the discovery cases: PR 41 is a feature merged from a topic
+# branch, PR 43 a fix from a chore branch; PR 45 cannot be read at all.
+GH_DISCOVERY_STUB = r"""#!/bin/bash
+echo "$*" >> "$CALLS"
+case "$*" in
+  "pr view 41 "*) printf 'feat(cli): a new thing\n' ;;
+  "pr view 43 "*) printf '53\nfix(edit): a thing\n' ;;
+  "pr view 45 "*) echo "error connecting to api.github.com" >&2; exit 1 ;;
+  *) echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1 ;;
+esac
+"""
+
+
+class ChangelogDiscovery(unittest.TestCase):
+    """Codex review of #1743 (#1745): a section that cites no number is an
+    empty citation set, not a silent exit; a PR is owed by its branch or by
+    its title (the merge commit's body), and a failed discovery is a named
+    refusal, never an empty set."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="cldiscover-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(GH_DISCOVERY_STUB)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        self.calls = self.tmp / "calls"
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*self.git, "init", "-q", "-b", "main"], check=True)
+        self.commit("base")
+        subprocess.run([*self.git, "tag", "v0.1.0"], check=True)
+
+    def commit(self, subject: str, body: str = "") -> None:
+        msg = ["-m", subject, *(["-m", body] if body else [])]
+        subprocess.run([*self.git, "commit", "-q", "--allow-empty", *msg], check=True)
+
+    def run_fn(self, call: str, section: str = "### Fixed\n\n- a fix\n") -> subprocess.CompletedProcess[str]:
+        (self.repo / "CHANGELOG.md").write_text(
+            f"## [0.1.1] - 2026-10-25\n\n{section}\n## [0.1.0] - 2026-10-01\n\n- old (#99)\n"
+        )
+        functions = shell_functions("changelog_section", "user_facing_prs", "unlisted_prs")
+        script = f"set -euo pipefail\nVER=0.1.1\n{functions}\n{call}\n"
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}", CALLS=str(self.calls))
+        return subprocess.run(["bash", "-c", script], cwd=self.repo, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_a_section_without_references_and_nothing_owed_passes(self) -> None:
+        # Called directly, under errexit: step 2 calls it inside $(…), where
+        # bash clears errexit, so the grep that finds no number only bites
+        # a direct call.
+        self.commit("docs: a page (#14)")
+        r = self.run_fn("unlisted_prs v0.1.0; echo done")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "done"), r.stderr)
+
+    def test_a_section_without_references_names_what_is_owed(self) -> None:
+        self.commit("feat(cli): a thing (#13)")
+        r = self.run_fn("unlisted_prs v0.1.0; echo done")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["13", "done"]), r.stderr)
+
+    def test_a_pr_is_owed_by_its_title_whatever_its_branch(self) -> None:
+        self.commit("Merge pull request #41 from o/topic/new-thing", "feat(cli): a new thing")
+        self.commit("Merge pull request #43 from o/chore/tidy", "fix(edit): a thing")
+        self.commit("Merge pull request #47 from o/fix/md-pages", "test(md): a page count")
+        self.commit("Merge pull request #48 from o/chore/untrack", "chore: untrack the scan")
+        self.commit("Merge pull request #49 from o/pre-release-0-1-1", "Pre-release 0.1.1")
+        r = self.run_fn("user_facing_prs v0.1.0")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["41", "43", "47"]), r.stderr)
+        r = self.run_fn("unlisted_prs v0.1.0", "### Fixed\n\n- a thing (#53)\n- pages (#47)\n")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["41"]), r.stderr)
+
+    def test_a_pr_gh_cannot_read_is_a_named_refusal(self) -> None:
+        self.commit("fix(edit): unreadable (#45)")
+        r = self.run_fn("unlisted_prs v0.1.0")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("#45", r.stderr)
+        self.assertIn("error connecting", r.stderr)
+
+    def test_a_history_git_cannot_read_is_a_named_refusal(self) -> None:
+        r = self.run_fn("unlisted_prs v9.9.9")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("v9.9.9", r.stderr)
+
+    def test_gh_reads_this_repository_whatever_GH_REPO_says(self) -> None:
+        self.commit("feat(cli): a new thing (#41)")
+        r = self.run_fn("unlisted_prs v0.1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("-R jandira-tech/jubarte-redlines", self.calls.read_text())
+
+    def test_step_2_dies_when_discovery_fails(self) -> None:
+        self.assertRegex(step(2), r'missing_prs=\$\(unlisted_prs "\$PREV_RELEASE"\) \\\n\s*\|\| die')
 
 
 # stub gh for the CI cancel: three runs in flight, one of them release.yml.
