@@ -207,6 +207,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
 11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --local-publish --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --local-publish --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
+12|auto|Each channel installs the way a user installs it: this machine's archive matches SHA256SUMS.txt and answers jubarte @V@; pip install jubarte-redlines==@V@ in a fresh uv environment reports engine @V@; npx -y jubarte-redlines@@V@ --version answers @V@; npm i jubarte-wasm@@V@ then require() loads — 0.13.0 never reached npm and no step said so; docs.rs only warns, since it lags|scripts/release.sh step 12 (archive_runs, pip_installs, npx_runs, npm_requires, docsrs_built)
 12|you|Read the v@V@ GitHub release page once, human eyes: five CLI archives (each signed once keys/ holds a public key), seven wheels, the sdist and SHA256SUMS.txt attached; the notes lead with the github summary, carry the CHANGELOG section and the Full Changelog link — a binary that missed the workflow run cannot join this tag, the next patch ships it|gh release view v@V@ --web
 13|auto|The app's part, in its checkout: the download page and demo engine move to @V@, the app's version files go on release/v@V@ with a pull request; the App Store upload and the benchmark flow are printed, never run|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD"
 13|auto|The site's own release ladder runs inside it: sync-release.ts moves the download page's Engine line, the archive and wheel tables and the release history off the GitHub release, the demo engine is repinned to jubarte-wasm@@V@, sync-bench.ts lands the sample figures proved against the results JSONs, and the built pages pass pnpm test, lint and typecheck before anything deploys|jubarte-app/jubarte-site/scripts/release.sh release @V@ --no-deploy (inside step 13's app script)
@@ -222,8 +223,7 @@ after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still 
 after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
 after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 scripts/identity.py <released binary> <candidate> <out dir> release_info/sample_*_@V@_*.csv --root ../neurotic_docx_bench
 after|you|self-update serves the release: jubarte self-update --version @V@ installs the archive, verifies it against the release's SHA256SUMS.txt (and its signature once keys/ holds a public key), and the replaced binary answers @V@ — the path every prebuilt user takes|jubarte self-update --version @V@ --yes; jubarte --version
-after|you|each library answers the way a user installs it: pip install jubarte-redlines==@V@ imports and capabilities() reports @V@, npm i jubarte-wasm@@V@ loads, npx -y jubarte-redlines@@V@ --version prints @V@|pip install jubarte-redlines==@V@; python3 -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])'; npx -y jubarte-redlines@@V@ --version
-after|you|the public pages of @V@ are read once, human eyes: docs.rs built the release's docs, and each registry page shows the README cut for v@V@ with its note where the channel accepts one|open https://docs.rs/jubarte-redlines/@V@ https://crates.io/crates/jubarte-redlines/@V@ https://pypi.org/project/jubarte-redlines/@V@/ https://www.npmjs.com/package/jubarte-wasm/v/@V@ https://www.npmjs.com/package/jubarte-redlines/v/@V@
+after|you|the public pages of @V@ are read once, human eyes: docs.rs built the release's docs (step 12 warns while it has not), and each registry page shows the README cut for v@V@ with its note where the channel accepts one|open https://docs.rs/jubarte-redlines/@V@ https://crates.io/crates/jubarte-redlines/@V@ https://pypi.org/project/jubarte-redlines/@V@/ https://www.npmjs.com/package/jubarte-wasm/v/@V@ https://www.npmjs.com/package/jubarte-redlines/v/@V@
 after|you|handoff: the release's running log and handoff notes are written down — nothing a releaser must remember lives only in a head or a chat|the release work folder's STATE.md, kept current to the end
 after|you|app_store facts: the Terms copy that says the store's current version "is a one-time purchase" flips when @V@ goes live — decide when to rewrite it (a facts-only app patch, or pre-emptively now)|grep app_store jubarte-app/data/facts.jsonl
 ITEMS
@@ -1543,6 +1543,63 @@ gh_attested() {
   return "$rc"
 }
 
+# Each channel installed the way a user installs it (#1756; checklist
+# after#9-#11): 0.13.0 never reached npm, and no step said so. The proofs
+# work under dist/install-proof and leave nothing behind.
+host_archive() {
+  local os arch
+  case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux ;; *) return 1 ;; esac
+  case "$(uname -m)" in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) return 1 ;; esac
+  printf 'jubarte-%s-%s-%s.tar.gz\n' "$VER" "$os" "$arch"
+}
+# This machine's archive from the GitHub release: its line in SHA256SUMS.txt
+# matches, and the binary inside answers `jubarte $VER`.
+archive_runs() {
+  local f dir=dist/install-proof/archive rc=0
+  f=$(host_archive) || return 1
+  rm -rf "$dir" && mkdir -p "$dir"
+  gh release download "$TAG" -p "$f" -p SHA256SUMS.txt -D "$dir" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 || rc=1
+  [ "$rc" = 0 ] && (cd "$dir" \
+    && awk -v f="$f" '$2 == f' SHA256SUMS.txt | grep . | shasum -a 256 -c - >/dev/null 2>&1 \
+    && tar xzf "$f" \
+    && [ "$("./${f%.tar.gz}/jubarte" --version 2>/dev/null)" = "jubarte $VER" ]) || rc=1
+  rm -rf dist/install-proof
+  return "$rc"
+}
+# A fresh environment installs the wheel PyPI serves this machine, and its
+# engine is $VER.
+pip_installs() {
+  local got
+  got=$(uv run -q --isolated --no-project --refresh-package jubarte-redlines --with "jubarte-redlines==$VER" \
+    python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])' 2>/dev/null) || return 1
+  [ "$got" = "$VER" ]
+}
+# The npm CLI answers in the engine's words, named by its argv[0].
+npx_runs() {
+  local got
+  got=$(npx -y --prefer-online "jubarte-redlines@$VER" --version 2>/dev/null) || return 1
+  case "$got" in "jubarte-redlines $VER" | "jubarte $VER") ;; *) return 1 ;; esac
+}
+# `npm i jubarte-wasm@$VER` into an empty project, then require() it.
+npm_requires() {
+  local dir=dist/install-proof/npm rc=0
+  rm -rf "$dir" && mkdir -p "$dir"
+  (cd "$dir" \
+    && npm init -y >/dev/null 2>&1 \
+    && npm i --prefer-online --no-audit --no-fund --silent "jubarte-wasm@$VER" >/dev/null 2>&1 \
+    && VER="$VER" node -e '
+      const w = require("jubarte-wasm");
+      const v = JSON.parse(require("fs").readFileSync("node_modules/jubarte-wasm/package.json")).version;
+      process.exit(v === process.env.VER && typeof w.compareDocuments === "function" ? 0 : 1)') || rc=1
+  rm -rf dist/install-proof
+  return "$rc"
+}
+# docs.rs builds after crates.io and lags, so step 12 only warns on it.
+docsrs_built() {
+  curl -fsS "https://docs.rs/crate/jubarte-redlines/$VER/status.json" 2>/dev/null \
+    | grep '"doc_status":true' >/dev/null
+}
+
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
 check "crates.io  jubarte-redlines $VER" "eventually crates_has"
@@ -1552,6 +1609,15 @@ check "npm        releaseNotes.$VER shipped" npm_note
 check "PyPI       jubarte-redlines $VER" "eventually pypi_has"
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
+check "GitHub     $(host_archive || echo "no archive for $(uname -sm)") matches SHA256SUMS.txt and answers jubarte $VER" archive_runs
+check "PyPI       pip install jubarte-redlines==$VER in a fresh environment: engine $VER" "eventually pip_installs"
+check "npm        npx jubarte-redlines@$VER --version answers $VER" "eventually npx_runs"
+check "npm        npm i jubarte-wasm@$VER, then require()" "eventually npm_requires"
+if docsrs_built; then
+  step "ok — docs.rs   built jubarte-redlines $VER"
+else
+  echo "  ! docs.rs   has not built jubarte-redlines $VER yet (it lags crates.io): https://docs.rs/crate/jubarte-redlines/$VER" >&2
+fi
 # A warning, not a failure: a release made here from run artifacts (step
 # 11, when release.yml's release job did not run) has no attestation.
 if gh_attested; then

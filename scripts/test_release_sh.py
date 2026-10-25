@@ -2370,5 +2370,112 @@ class TagShape(unittest.TestCase):
         self.assertLess(text.index("\ngh_note() "), text.index('say "8. '))
 
 
+
+class InstallProofs(unittest.TestCase):
+    """#1756 (checklist after#9, after#10, after#11): step 12 installs each
+    channel the way a user does. 0.13.0 never reached npm (both packages
+    stop at 0.12.0) and no step said so."""
+
+    FNS = ("host_archive", "archive_runs", "pip_installs", "npx_runs", "npm_requires", "docsrs_built")
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="install-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def run_fn(self, call: str, stubs: str = "", **env: str) -> subprocess.CompletedProcess[str]:
+        script = f"set -euo pipefail\n{shell_functions(*self.FNS)}\n{stubs}\n{call}\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60,
+                              env=dict(os.environ, VER="9.9.9", TAG="v9.9.9", ASSETS=str(self.tmp / "assets"), **env))
+
+    def test_the_host_archive_is_named_as_release_yml_names_it(self) -> None:
+        for system, machine, name in (("Darwin", "arm64", "macos-aarch64"), ("Linux", "x86_64", "linux-x86_64"),
+                                      ("Linux", "aarch64", "linux-aarch64"), ("Darwin", "x86_64", "macos-x86_64")):
+            r = self.run_fn("host_archive", f'uname() {{ [ "$1" = -s ] && echo {system} || echo {machine}; }}')
+            self.assertEqual(r.stdout.strip(), f"jubarte-9.9.9-{name}.tar.gz", r.stderr)
+        r = self.run_fn("host_archive", 'uname() { [ "$1" = -s ] && echo SunOS || echo sparc; }')
+        self.assertNotEqual(r.returncode, 0)
+
+    def archive(self, answers: str = "jubarte 9.9.9", listed: bool = True, corrupt: bool = False) -> None:
+        name = "jubarte-9.9.9-macos-aarch64"
+        root = self.tmp / "build" / name
+        root.mkdir(parents=True)
+        (root / "jubarte").write_text(f"#!/bin/sh\necho '{answers}'\n")
+        (root / "jubarte").chmod(0o755)
+        assets = self.tmp / "assets"
+        assets.mkdir()
+        subprocess.run(["tar", "czf", str(assets / f"{name}.tar.gz"), "-C", str(root.parent), name], check=True)
+        digest = subprocess.run(["shasum", "-a", "256", f"{name}.tar.gz"], cwd=assets,
+                                capture_output=True, text=True, check=True).stdout
+        if corrupt:
+            digest = "0" * 64 + digest[64:]
+        (assets / "SHA256SUMS.txt").write_text((digest if listed else "") + "1" * 64 + "  other.zip\n")
+
+    GH = ('uname() { [ "$1" = -s ] && echo Darwin || echo arm64; }\n'
+          'gh() { local d=""; while [ $# -gt 0 ]; do [ "$1" = -D ] && d=$2; shift; done; cp "$ASSETS"/* "$d"/; }')
+
+    def test_the_archive_matching_its_sum_and_answering_the_version_passes(self) -> None:
+        self.archive()
+        r = self.run_fn("archive_runs", self.GH)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists(), "the proof cleans up after itself")
+
+    def test_an_archive_whose_sum_differs_fails(self) -> None:
+        self.archive(corrupt=True)
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_an_archive_sha256sums_does_not_list_fails(self) -> None:
+        self.archive(listed=False)
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_an_archive_answering_another_version_fails(self) -> None:
+        self.archive(answers="jubarte 9.9.8")
+        self.assertNotEqual(self.run_fn("archive_runs", self.GH).returncode, 0)
+
+    def test_pip_installs_into_a_fresh_environment_and_reads_the_engine(self) -> None:
+        stub = 'uv() { echo "$*" > "$ASSETS.argv"; echo "${ENGINE:-9.9.9}"; }'
+        r = self.run_fn("pip_installs", stub)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        argv = Path(str(self.tmp / "assets") + ".argv").read_text()
+        for word in ("--isolated", "--no-project", "jubarte-redlines==9.9.9", "--refresh-package jubarte-redlines",
+                     'capabilities()["engine_version"]'):
+            self.assertIn(word, argv)
+        self.assertNotEqual(self.run_fn("pip_installs", stub, ENGINE="9.9.8").returncode, 0)
+        self.assertNotEqual(self.run_fn("pip_installs", "uv() { return 1; }").returncode, 0)
+
+    def test_npx_runs_the_published_cli(self) -> None:
+        for answer, rc in (("jubarte-redlines 9.9.9", 0), ("jubarte 9.9.9", 0), ("jubarte-redlines 9.9.8", 1), ("", 1)):
+            r = self.run_fn("npx_runs", f'npx() {{ echo "$*" > "$ASSETS.argv"; [ -n "{answer}" ] && echo "{answer}"; }}')
+            self.assertEqual(r.returncode != 0, bool(rc), answer)
+        self.assertIn("-y --prefer-online jubarte-redlines@9.9.9 --version", Path(str(self.tmp / "assets") + ".argv").read_text())
+
+    NPM = ('npm() { case "$1" in init) echo "{}" > package.json ;; i) mkdir -p node_modules/jubarte-wasm\n'
+           '  printf \'{"name":"jubarte-wasm","version":"%s","main":"index.js"}\' "${GOT:-9.9.9}" > node_modules/jubarte-wasm/package.json\n'
+           '  echo "module.exports = { compareDocuments: ${FN:-() => 1} };" > node_modules/jubarte-wasm/index.js ;; esac; }')
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_npm_installs_the_wasm_package_and_requires_it(self) -> None:
+        r = self.run_fn("npm_requires", self.NPM)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists())
+        self.assertNotEqual(self.run_fn("npm_requires", self.NPM, GOT="9.9.8").returncode, 0)
+        self.assertNotEqual(self.run_fn("npm_requires", self.NPM, FN="1").returncode, 0)
+        self.assertNotEqual(self.run_fn("npm_requires", "npm() { return 1; }").returncode, 0)
+
+    def test_docs_rs_status(self) -> None:
+        built = 'curl() { echo \'{"doc_status":true,"version":"9.9.9"}\'; }'
+        self.assertEqual(self.run_fn("docsrs_built", built).returncode, 0)
+        self.assertNotEqual(self.run_fn("docsrs_built", 'curl() { echo \'{"doc_status":false}\'; }').returncode, 0)
+        self.assertNotEqual(self.run_fn("docsrs_built", "curl() { return 22; }").returncode, 0)
+
+    def test_step_12_dies_on_the_installs_and_only_warns_on_docs_rs(self) -> None:
+        s12 = step(12)
+        for fn in ("archive_runs", "eventually pip_installs", "eventually npx_runs", "eventually npm_requires"):
+            line = next((l for l in s12.splitlines() if l.startswith("check ") and fn in l), None)
+            self.assertIsNotNone(line, fn)
+        self.assertNotIn("check ", "".join(l for l in s12.splitlines() if "docsrs_built" in l))
+        self.assertIn("docsrs_built", s12)
+        self.assertLess(s12.index("npm_requires"), s12.index('[ "$ok" = 1 ] || die'))
+
+
 if __name__ == "__main__":
     unittest.main()
