@@ -228,6 +228,12 @@ class Matrices(unittest.TestCase):
         self.assertEqual(readme_platforms(row.group(1)),
                          {wheel_platform(a) for a in matrix_artifacts(self.jobs["wheels"])})
 
+    def test_both_build_jobs_run_on_their_rows_runner(self) -> None:
+        # #1767: the row checks read row["os"]; a job that hard-codes its
+        # runner builds every row on it while they stay green
+        for job in ("binaries", "wheels"):
+            self.assertEqual(self.jobs[job]["runs-on"], "${{ matrix.os }}", job)
+
     def test_every_binary_row_builds_what_its_label_names(self) -> None:
         for row in self.jobs["binaries"]["strategy"]["matrix"]["include"]:
             with self.subTest(artifact=row["artifact"]):

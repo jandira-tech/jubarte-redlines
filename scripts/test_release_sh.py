@@ -1709,7 +1709,7 @@ case "$1 $2" in
       shift
     done
     mkdir -p "$dir" && : > "$dir/$pat"
-    exit 0 ;;
+    exit "${DOWNLOAD_RC:-0}" ;;
   "attestation verify")
     # the attestation names the ref and commit release.yml ran on
     case " $* " in
@@ -1729,6 +1729,7 @@ class BuildProvenance(unittest.TestCase):
     def run_attested(self, rc: int, **env: str) -> tuple[subprocess.CompletedProcess, str]:
         tmp = Path(tempfile.mkdtemp(prefix="attest-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        self.work = tmp
         (tmp / "gh").write_text(GH_ATTEST_STUB)
         (tmp / "gh").chmod(0o755)
         git = ["git", "-C", str(tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
@@ -1765,6 +1766,12 @@ class BuildProvenance(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         r, _ = self.run_attested(0, ATTESTED_SHA="0" * 40)
         self.assertNotEqual(r.returncode, 0)
+
+    def test_a_failed_download_fails_and_leaves_nothing_behind(self) -> None:
+        # #1768: the early return skipped the cleanup
+        r, _ = self.run_attested(0, DOWNLOAD_RC="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.work / "dist" / "attest").exists())
 
     def test_an_unattested_archive_fails(self) -> None:
         r, _ = self.run_attested(1)
@@ -1829,7 +1836,11 @@ class FallbackProvenance(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         text = notes.read_text()
         self.assertTrue(text.startswith("the summary"), text)
-        self.assertIn("no build-provenance attestation", text)
+        # #1768: the release job may have attested these bytes before it
+        # died, so the note says only what is known
+        self.assertIn("were not published by release.yml's release job", text)
+        self.assertIn("gh attestation verify", text)
+        self.assertNotIn("carry no build-provenance attestation", text)
         self.assertIn("- a fix", text)
 
     def test_the_changelog_claims_provenance_for_the_release_job_only(self) -> None:
@@ -1843,6 +1854,7 @@ class FallbackProvenance(unittest.TestCase):
 GH_SECURITY_STUB = r"""#!/bin/bash
 [ "$1" = api ] || { echo "unexpected gh $*" >&2; exit 9; }
 case "$2" in
+  repos/jandira-tech/jubarte-redlines) kind=repo ;;
   repos/jandira-tech/jubarte-redlines/security-advisories*) kind=advisories ;;
   repos/jandira-tech/jubarte-redlines/dependabot/alerts*) kind=dependabot ;;
   repos/jandira-tech/jubarte-redlines/code-scanning/alerts*) kind=code-scanning ;;
@@ -1862,12 +1874,13 @@ class SecurityGate(unittest.TestCase):
     advisory in triage (a private report) or an open medium+ Dependabot or
     code-scanning alert, and lists drafts and lower alerts."""
 
-    def gate(self, advisories=(), dependabot=(), code=(), **env: str) -> subprocess.CompletedProcess[str]:
+    def gate(self, advisories=(), dependabot=(), code=(), admin=True, **env: str) -> subprocess.CompletedProcess[str]:
         tmp = Path(tempfile.mkdtemp(prefix="secgate-"))
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         (tmp / "gh").write_text(GH_SECURITY_STUB)
         (tmp / "gh").chmod(0o755)
         import json
+        (tmp / "repo.json").write_text(json.dumps({"permissions": {"admin": admin, "push": True}}))
         (tmp / "advisories.json").write_text(json.dumps(list(advisories)))
         (tmp / "dependabot.json").write_text(json.dumps(list(dependabot)))
         (tmp / "code-scanning.json").write_text(json.dumps(list(code)))
@@ -1877,8 +1890,15 @@ class SecurityGate(unittest.TestCase):
             f'{shell_functions("security_findings", "security_blocking", "security_gate")}\nsecurity_gate\n'
         )
         return subprocess.run(["bash", "-c", script], cwd=tmp,
-                              env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", FIX=str(tmp), **env),
+                              env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", FIX=str(tmp),
+                                       **{"VER": "9.9.9", **env}),
                               capture_output=True, text=True, timeout=30)
+
+    @staticmethod
+    def draft(ghsa: str, severity: str | None, *patched: str | None) -> dict:
+        return {"ghsa_id": ghsa, "state": "draft", "severity": severity,
+                "vulnerabilities": [{"package": {"ecosystem": "rust", "name": "jubarte-redlines"},
+                                     "patched_versions": v} for v in patched]}
 
     @staticmethod
     def alert(n: int, severity: str | None) -> dict:
@@ -1902,10 +1922,42 @@ class SecurityGate(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("GHSA-tri1", r.stderr)
 
-    def test_a_draft_advisory_is_listed_not_blocking(self) -> None:
-        r = self.gate(advisories=[{"ghsa_id": "GHSA-drf1", "state": "draft", "severity": "high"}])
+    def test_a_low_draft_advisory_is_listed_not_blocking(self) -> None:
+        r = self.gate(advisories=[self.draft("GHSA-drf1", "low", None)])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("GHSA-drf1", r.stdout)
+
+    def test_an_unpatched_high_draft_stops_the_release(self) -> None:
+        # #1761: moving a report from triage to draft fixed nothing
+        r = self.gate(advisories=[self.draft("GHSA-drf2", "high", None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-drf2", r.stderr)
+        self.assertIn("patched version", r.stderr)
+
+    def test_an_unrated_draft_stops_the_release(self) -> None:
+        r = self.gate(advisories=[self.draft("GHSA-drf3", None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-drf3", r.stderr)
+
+    def test_a_draft_this_release_patches_is_listed_not_blocking(self) -> None:
+        # the release that is the fix ships before the advisory is published
+        for patched in ("9.9.9", ">= 9.9.9"):
+            r = self.gate(advisories=[self.draft("GHSA-drf4", "critical", None, patched)])
+            self.assertEqual(r.returncode, 0, (patched, r.stderr))
+            self.assertIn("GHSA-drf4", r.stdout)
+
+    def test_a_draft_another_version_patches_stops_the_release(self) -> None:
+        for patched in ("9.9.10", "19.9.9", "9.9.9-rc.1", "999"):
+            r = self.gate(advisories=[self.draft("GHSA-drf5", "medium", patched)])
+            self.assertEqual(r.returncode, 1, (patched, r.stdout))
+
+    def test_a_token_that_cannot_see_private_reports_is_refused(self) -> None:
+        # GitHub lists unpublished advisories only to admins and security
+        # managers; any other token gets the published ones, successfully
+        r = self.gate(admin=False)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("admin", r.stderr)
+        self.assertIn("unpublished", r.stderr)
 
     def test_an_open_medium_dependabot_alert_stops_the_release(self) -> None:
         r = self.gate(dependabot=[self.alert(7, "medium")])
@@ -1925,7 +1977,7 @@ class SecurityGate(unittest.TestCase):
         self.assertNotIn("#46", r.stderr.split("ERROR")[-1])
 
     def test_an_unreadable_api_is_a_refusal(self) -> None:
-        for kind in ("advisories", "dependabot", "code-scanning"):
+        for kind in ("repo", "advisories", "dependabot", "code-scanning"):
             r = self.gate(FAIL=kind)
             self.assertEqual(r.returncode, 1, (kind, r.stdout))
             self.assertIn("cannot read", r.stderr, kind)
@@ -2015,6 +2067,24 @@ class ReleaseTree(unittest.TestCase):
         r = self.ci([{"name": "clippy", "status": "completed", "conclusion": "success"}])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("every check run of HEAD passed", r.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_no_check_run_at_all_is_named_not_passed(self) -> None:
+        # #1763: a HEAD whose workflows never ran read as green
+        r = self.ci([])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("CHECK NOW  HEAD has no check run", r.stdout)
+        self.assertNotIn("passed", r.stdout.replace("nothing passed", ""))
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_only_skipped_check_runs_are_named_not_passed(self) -> None:
+        r = self.ci([{"name": "fuzz", "status": "completed", "conclusion": "skipped"},
+                     {"name": "lint", "status": "completed", "conclusion": "neutral"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("CHECK NOW  none of HEAD's 2 check runs succeeded", r.stdout)
+        self.assertNotIn("every check run of HEAD passed", r.stdout)
 
     def test_an_unreadable_ci_is_named_not_fatal(self) -> None:
         r = self.ci([], FAIL="1")
@@ -2205,6 +2275,13 @@ class AdoptionAndHeaders(unittest.TestCase):
         r = self.run_fn("adoption_main_rows")
         self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
 
+    def test_a_wrapped_main_label_is_listed(self) -> None:
+        # #1764: the label in code or bold slipped past a bare-word match
+        self.write("docs/adoption/a.md", "| x | y | `main` |\n| z | w | **main** |\n| v | u | released |\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([line.split(":")[1] for line in r.stdout.splitlines()], ["1", "2"])
+
     def test_no_adoption_pages_is_a_refusal_not_a_pass(self) -> None:
         self.assertEqual(self.run_fn("adoption_main_rows").returncode, 7)
 
@@ -2224,6 +2301,19 @@ class AdoptionAndHeaders(unittest.TestCase):
         r = self.run_fn("headerless_files")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sorted(r.stdout.split()), ["scripts/bare.py", "scripts/probe.zsh", "tests/late.rs"])
+
+    def test_commentable_config_files_are_asked_for_one(self) -> None:
+        # #1764: jubarte-wasm/Cargo.toml and a pyproject.toml carried none
+        self.write("ok/Cargo.toml", self.HEADER + "[package]\n")
+        for rel in ("jubarte-wasm/Cargo.toml", "eval/pyproject.toml", ".github/workflows/ci.yml",
+                    "action.yaml", "stubs/x.pyi", "setup.cfg", "tox.ini"):
+            self.write(rel, "x = 1\n")
+        self.git_repo()
+        r = self.run_fn("headerless_files")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(r.stdout.split()),
+                         sorted([".github/workflows/ci.yml", "action.yaml", "eval/pyproject.toml",
+                                 "jubarte-wasm/Cargo.toml", "setup.cfg", "stubs/x.pyi", "tox.ini"]))
 
     def test_generated_files_and_fixtures_are_not_asked_for_one(self) -> None:
         # wasm-bindgen writes npm/'s glue and docs/api snapshots it; REUSE.toml
@@ -2306,19 +2396,22 @@ class TagShape(unittest.TestCase):
         # a tag on origin is the one release.yml reads: it must be the local
         # one, and a wrong shape there dies unless the notes were put right
         self.assertIn("ls-remote", block)
-        self.assertIn("gh_note || die", block)
+        self.assertIn("gh_note || {", block)
         self.assertNotIn("release notes will lack it", s8)
         # step(8) ends at POINT OF NO RETURN, before main or the tag is pushed
         self.assertNotIn("push_main", s8)
 
-    def block(self, *, notes_ok: bool) -> subprocess.CompletedProcess[str]:
-        """Step 8's tag block, run as written against a bare origin."""
+    def block(self, *, notes_ok: bool, release: bool = True) -> subprocess.CompletedProcess[str]:
+        """Step 8's tag block, run as written against a bare origin; gh
+        answers `release view` as `release` says."""
         text = step(8)
         start = text.index("remote_tag=$(git ls-remote")
         body = text[start:text.index("# A resumed run keeps the npm build", start)]
         script = ("set -euo pipefail\n" + shell_functions("tag_shape_ok")
                   + 'die() { echo "DIE: $*"; exit 9; }\nstep() { echo "  - $*"; }\n'
-                  + f"gh_note() {{ {'true' if notes_ok else 'false'}; }}\n" + body + "echo survived\n")
+                  + f"gh_note() {{ {'true' if notes_ok else 'false'}; }}\n"
+                  + f'gh() {{ [ "$1 $2" = "release view" ] || exit 8; {"true" if release else "false"}; }}\n'
+                  + body + "echo survived\n")
         return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60,
                               env=dict(os.environ, TAG="v9.9.9", GITHUB_SUMMARY=self.SUMMARY,
                                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t"))
@@ -2355,6 +2448,17 @@ class TagShape(unittest.TestCase):
         r = self.block(notes_ok=True)
         self.assertIn("survived", r.stdout, r.stdout + r.stderr)
         self.assertIn("its GitHub notes carry it", r.stderr)
+
+    def test_a_pushed_tag_of_the_wrong_shape_without_a_release_names_the_tag_fix(self) -> None:
+        # #1766: `gh release edit` cannot fix notes of a release that does not exist
+        self.origin()
+        self.tag("-a", "v9.9.9", "-m", self.SUMMARY)
+        self.push_tag()
+        r = self.block(notes_ok=False, release=False)
+        self.assertIn("DIE:", r.stdout)
+        self.assertIn("no GitHub release", r.stdout)
+        self.assertIn("git push origin :refs/tags/v9.9.9", r.stdout)
+        self.assertNotIn("gh release edit", r.stdout)
 
     def test_a_pushed_tag_that_is_not_the_local_one_dies(self) -> None:
         self.origin()
@@ -2437,17 +2541,33 @@ class InstallProofs(unittest.TestCase):
         r = self.run_fn("pip_installs", stub)
         self.assertEqual(r.returncode, 0, r.stderr)
         argv = Path(str(self.tmp / "assets") + ".argv").read_text()
+        # --no-build-package: only a wheel install passes; a releaser's
+        # machine has Rust and would build the sdist (#1765)
         for word in ("--isolated", "--no-project", "jubarte-redlines==9.9.9", "--refresh-package jubarte-redlines",
-                     'capabilities()["engine_version"]'):
+                     "--no-build-package jubarte-redlines", "--python 3.12", 'capabilities()["engine_version"]'):
             self.assertIn(word, argv)
         self.assertNotEqual(self.run_fn("pip_installs", stub, ENGINE="9.9.8").returncode, 0)
         self.assertNotEqual(self.run_fn("pip_installs", "uv() { return 1; }").returncode, 0)
 
+    NPX = ('npm() { [ "$1" = init ] && echo "{}" > package.json; }\n'
+           'npx() { echo "$*" > "$ASSETS.argv"; { pwd -P; ls; } > "$ASSETS.cwd"; [ -n "$ANSWER" ] && echo "$ANSWER"; }')
+
     def test_npx_runs_the_published_cli(self) -> None:
         for answer, rc in (("jubarte-redlines 9.9.9", 0), ("jubarte 9.9.9", 0), ("jubarte-redlines 9.9.8", 1), ("", 1)):
-            r = self.run_fn("npx_runs", f'npx() {{ echo "$*" > "$ASSETS.argv"; [ -n "{answer}" ] && echo "{answer}"; }}')
-            self.assertEqual(r.returncode != 0, bool(rc), answer)
+            r = self.run_fn("npx_runs", self.NPX, ANSWER=answer)
+            self.assertEqual(r.returncode != 0, bool(rc), (answer, r.stderr))
         self.assertIn("-y --prefer-online jubarte-redlines@9.9.9 --version", Path(str(self.tmp / "assets") + ".argv").read_text())
+
+    def test_npx_runs_in_an_empty_project_of_its_own(self) -> None:
+        # #1765: npx answers from a node_modules it finds before the registry
+        # (a planted jubarte-redlines 9.9.9, a version npm never had, passed)
+        (self.tmp / "node_modules" / "jubarte-redlines").mkdir(parents=True)
+        r = self.run_fn("npx_runs", self.NPX, ANSWER="jubarte-redlines 9.9.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cwd, *listing = Path(str(self.tmp / "assets") + ".cwd").read_text().split()
+        self.assertEqual(cwd, str(self.tmp / "dist" / "install-proof" / "npx"))
+        self.assertEqual(listing, ["package.json"])
+        self.assertFalse((self.tmp / "dist" / "install-proof").exists(), "the proof cleans up after itself")
 
     NPM = ('npm() { case "$1" in init) echo "{}" > package.json ;; i) mkdir -p node_modules/jubarte-wasm\n'
            '  printf \'{"name":"jubarte-wasm","version":"%s","main":"index.js"}\' "${GOT:-9.9.9}" > node_modules/jubarte-wasm/package.json\n'
@@ -2475,7 +2595,9 @@ class InstallProofs(unittest.TestCase):
             self.assertIsNotNone(line, fn)
         self.assertNotIn("check ", "".join(l for l in s12.splitlines() if "docsrs_built" in l))
         self.assertIn("docsrs_built", s12)
-        self.assertLess(s12.index("npm_requires"), s12.index('[ "$ok" = 1 ] || die'))
+        # the call, not the definition above it (#1765)
+        call = next(m.start() for m in re.finditer(r"^check .*eventually npm_requires", s12, re.M))
+        self.assertLess(call, s12.index('[ "$ok" = 1 ] || die'))
 
 
 

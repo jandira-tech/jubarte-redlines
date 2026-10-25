@@ -70,6 +70,27 @@ class Audit(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("method_added (Minor, Allow)", r.stderr)
 
+    def test_a_table_lowering_a_deny_lint_is_named(self) -> None:
+        # #1762: cargo-semver-checks skips a lint the table sets to allow,
+        # whatever its own level; removing a public function then passes
+        r = self.audit('method_added = "deny"\nsealed_became_unsealed = "deny"\nfn_missing = "allow"\n',
+                       "--lints-dir", str(self.lints))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("fn_missing (Major, Deny) is set to allow by the table", r.stderr)
+
+    def test_a_table_restating_deny_passes(self) -> None:
+        r = self.audit('method_added = "deny"\nsealed_became_unsealed = "deny"\nfn_missing = { level = "deny" }\n',
+                       "--lints-dir", str(self.lints))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_lint_definitions_is_a_refusal(self) -> None:
+        # #1762: an empty definition set audited nothing and passed
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        r = self.audit('method_added = "deny"\n', "--lints-dir", str(empty))
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("no lint definitions", r.stderr)
+
     def test_no_lint_sources_is_its_own_refusal(self) -> None:
         r = self.audit('method_added = "deny"\n', "--lints-dir", str(self.tmp / "absent"))
         self.assertEqual(r.returncode, 2, r.stdout)

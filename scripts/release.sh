@@ -152,7 +152,7 @@ usage() { sed -n '/^# One-stop release/,/^set -euo pipefail$/p' "$0" | sed '$d' 
 # [you] lines inside a real run at the moment they matter; the closing
 # summary prints every [you] line still owed after the script ends.
 checklist_items() { cat <<'ITEMS'
-0|auto|Security findings on GitHub: no repository advisory in triage (a private report) and no open medium-or-higher Dependabot or code-scanning alert; drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte-redlines/{security-advisories,dependabot/alerts,code-scanning/alerts})
+0|auto|Security findings on GitHub, read with an admin's token (GitHub shows unpublished advisories to no other, #1761): no repository advisory in triage (a private report), no draft above low that this release does not patch (its patched versions name @V@), no open medium-or-higher Dependabot or code-scanning alert; low drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte-redlines/{security-advisories,dependabot/alerts,code-scanning/alerts})
 before|you|Security review, the half a script cannot do: record known CVE/GHSA fixes in the changelog, and run all four sanitizer fuzz targets plus native allocator runs (step 0 reads the advisories and alerts itself); confirmed exploitable medium/higher findings block release|SECURITY.md; fuzz/README.md; cargo +nightly fuzz run <target> -- -max_total_time=60 (admit, strict_to_transitional, compare, relationships); bash scripts/fuzz-native.sh <target> -max_total_time=60 (compare, relationships)
 before|you|Full suite once before the release: cargo miri nextest run over the whole crate — nightly with the miri component (.config/nextest.toml holds its default-miri profile); know its cost first, and read its CARGO_BIN_EXE and disk-fixture failures as Miri's isolation rule, not engine bugs|cargo +nightly miri nextest run (AGENTS.md; Miri cannot spawn processes and refuses the host's file system under its default isolation)
 before|you|The quality gate of docs/VERSIONING.md on the release binary: the parity ladder sweep shows no NEW fails, and the criterion bench holds its baseline — any case more than 5 percent worse blocks, a median generate-time regression past +10 percent triggers the speed review before the release|tools/parity_ladder.py sweep --bin target/release/jubarte; cargo bench --bench redline -- --baseline <baseline> (docs/SPEED_REVIEW.md)
@@ -186,7 +186,7 @@ before|you|Ring-3 Word open probe, the macOS release gate before any crates.io p
 before|you|lane validity: every validator error kind in the redlines the release ships already exists in one of its two sources; a kind of the redline's own is read, then fixed or shown to be Word's own writing|python3 scripts/lane_validity.py release_info/sample_redline_@V@_*.csv --root ../neurotic_docx_bench --redlines parity/_scratch/sweep_<date> (the Ring-3 sweep's folder)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|pgrep -fl '[w]ord_pdf.py'; pgrep -fl '[w]ord_redline.py'; pgrep -fl '[j]ubarte_release_info' (each empty before a scoring job starts)
 0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
-0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
+0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and so is a HEAD with no check run or none that succeeded (#1763); the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 1|auto|Version sync: every manifest, the 4 tracked Cargo.locks (., jubarte-python, jubarte-wasm, jubarte-rust-inproc; fuzz/ tracks none), the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer|grep -n "^## \[@V@\]" CHANGELOG.md
@@ -499,7 +499,7 @@ bump_gate() {
     die "$VER is a patch, but its CHANGELOG section has ### Added: new features take a minor bump (docs/VERSIONING.md) — release $minor instead"
   fi
   semver_lints_ok \
-    || die "Cargo.toml's [package.metadata.cargo-semver-checks.lints] leaves the lints above below deny — a patch would pass them; deny each (scripts/semver_lints.py)"
+    || die "the cargo-semver-checks lint audit failed (above): a lint left below deny, or set below it by Cargo.toml's [package.metadata.cargo-semver-checks.lints], lets a patch pass it — deny each; no lint definitions found means the installed tool's sources are missing (scripts/semver_lints.py)"
   cargo semver-checks check-release -p jubarte-redlines --baseline-rev "v$prev" \
       --release-type patch --default-features \
     || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
@@ -569,9 +569,20 @@ unlisted_prs() {
 # draft, and open Dependabot and code-scanning alerts. An API gh cannot read
 # is a refusal, never an empty list.
 security_findings() {
-  local api=repos/jandira-tech/jubarte-redlines out
+  local api=repos/jandira-tech/jubarte-redlines out admin ver_re
+  # GitHub lists a repository's unpublished advisories (private reports,
+  # drafts) only to its admins and security managers. Any other token gets
+  # the published ones, successfully, and an empty list proves nothing
+  # (#1761).
+  admin=$(gh api "$api" -q .permissions.admin </dev/null) \
+    || { echo "  ! gh cannot read the repository's permissions" >&2; return 1; }
+  [ "$admin" = true ] \
+    || { echo "  ! this gh token is no admin of $api, and GitHub shows it no unpublished advisory (a private report, a draft): an empty list would prove nothing — use an admin's token" >&2; return 1; }
+  # A draft is patched when one of its patched versions names this release,
+  # bare or after an operator (">= $VER"): the release that is the fix.
+  ver_re="(^|[ =<>,~^])$(printf '%s' "$VER" | sed 's/\./\\\\./g')(\$|[ ,])"
   out=$(gh api "$api/security-advisories?per_page=100" --paginate \
-          -q '.[] | select(.state == "triage" or .state == "draft") | "advisory-\(.state) \(.ghsa_id) \(.severity // "unrated") -"' </dev/null) \
+          -q '.[] | select(.state == "triage" or .state == "draft") | "advisory-\(.state) \(.ghsa_id) \(.severity // "unrated") \(if any(.vulnerabilities[]?; (.patched_versions // "") | test("'"$ver_re"'")) then "patched" else "unpatched" end)"' </dev/null) \
     || { echo "  ! gh cannot read the repository security advisories" >&2; return 1; }
   [ -z "$out" ] || printf '%s\n' "$out"
   out=$(gh api "$api/dependabot/alerts?state=open&per_page=100" --paginate \
@@ -585,9 +596,11 @@ security_findings() {
 }
 # The findings on stdin that block a release: SECURITY.md ships no confirmed
 # medium-or-higher finding, and a report still in triage is unconfirmed
-# either way until someone reads it.
+# either way until someone reads it. A draft is a confirmed report: it blocks
+# unless it is low or this release patches it, so moving a report from
+# triage to draft fixes nothing (#1761); an unrated draft is not yet judged.
 security_blocking() {
-  awk '$1 == "advisory-triage" || ($1 !~ /^advisory-/ && $3 ~ /^(medium|high|critical)$/)'
+  awk '$1 == "advisory-triage" || ($1 == "advisory-draft" && $3 != "low" && $4 == "unpatched") || ($1 !~ /^advisory-/ && $3 ~ /^(medium|high|critical)$/)'
 }
 security_gate() {
   local findings blocking
@@ -595,8 +608,8 @@ security_gate() {
   [ -z "$findings" ] || { step "open security findings:"; printf '%s\n' "$findings" | sed 's/^/        /'; }
   blocking=$(printf '%s\n' "$findings" | security_blocking)
   [ -z "$blocking" ] \
-    || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub, then rerun"
-  step "security: no advisory in triage, no open medium-or-higher Dependabot or code-scanning alert"
+    || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub (a draft this release fixes names $VER as its patched version), then rerun"
+  step "security: no advisory in triage, no unpatched draft above low, no open medium-or-higher Dependabot or code-scanning alert"
 }
 # The GitHub release notes carry the github summary (step 12; step 8 asks
 # it of a tag already on origin).
@@ -618,7 +631,7 @@ tag_shape_ok() {
 adoption_main_rows() {
   local rc=0
   [ -d docs/adoption ] || return 1
-  grep -rnE '^\|.*\|[[:space:]]*main[[:space:]]*\|[[:space:]]*$' --include='*.md' docs/adoption || rc=$?
+  grep -rnE "^\|.*\|[[:space:]]*(\`main\`|\*\*main\*\*|main)[[:space:]]*\|[[:space:]]*\$" --include='*.md' docs/adoption || rc=$?
   [ "$rc" -le 1 ]
 }
 # Each tracked file that can carry a comment and lacks SPDX-License-Identifier
@@ -629,6 +642,7 @@ adoption_main_rows() {
 headerless_files() {
   local f top
   git ls-files -z -- '*.rs' '*.py' '*.sh' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.zsh' '*.awk' \
+      '*.toml' '*.yml' '*.yaml' '*.pyi' '*.ini' '*.cfg' \
       ':(exclude)jubarte-wasm/npm/*/jubarte_wasm*' ':(exclude)docs/api/*' ':(exclude)tests/fixtures/*' \
     | while IFS= read -r -d '' f; do
         top=$(head -c 4096 -- "$f" 2>/dev/null) || top=""
@@ -644,19 +658,27 @@ canonical_checkout() {
 # HEAD's check runs that did not pass, put in front of the releaser (#1751).
 # A red run may be billing, quota or an offline runner, so the run goes on.
 head_ci_report() {
-  local sha reds
+  local sha runs reds total passed
   sha=$(git rev-parse HEAD)
-  if ! reds=$(gh api "repos/jandira-tech/jubarte-redlines/commits/$sha/check-runs?per_page=100" --paginate \
-                -q '.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | "\(.name) \(.conclusion // .status)"' </dev/null); then
+  if ! runs=$(gh api "repos/jandira-tech/jubarte-redlines/commits/$sha/check-runs?per_page=100" --paginate \
+                -q '.check_runs[] | if .conclusion == "success" then "ok" elif .conclusion == "skipped" or .conclusion == "neutral" then "skip" else "red \(.name) \(.conclusion // .status)" end' </dev/null); then
     echo "  CHECK NOW  gh cannot read HEAD's check runs — read them: gh run list -R jandira-tech/jubarte-redlines --commit $sha"
     return 0
   fi
-  if [ -z "$reds" ]; then
-    step "every check run of HEAD passed"
-    return 0
+  reds=$(printf '%s\n' "$runs" | sed -n 's/^red //p')
+  total=$(printf '%s' "$runs" | grep -c '' || true)
+  passed=$(printf '%s\n' "$runs" | grep -c '^ok$' || true)
+  if [ -n "$reds" ]; then
+    echo "  CHECK NOW  HEAD's check runs that did not pass — read each log; fix only genuine test or coverage failures:"
+    printf '%s\n' "$reds" | sed 's/^/             /'
+  elif [ "$total" = 0 ]; then
+    # no run at all is no evidence, not green (#1763)
+    echo "  CHECK NOW  HEAD has no check run: its workflows never ran — read gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+  elif [ "$passed" = 0 ]; then
+    echo "  CHECK NOW  none of HEAD's $total check runs succeeded (each was skipped or neutral), so nothing passed — read gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+  else
+    step "every check run of HEAD passed ($passed passed, $((total - passed)) skipped or neutral)"
   fi
-  echo "  CHECK NOW  HEAD's check runs that did not pass — read each log; fix only genuine test or coverage failures:"
-  printf '%s\n' "$reds" | sed 's/^/             /'
 }
 # Queued CI waits behind nothing once release.yml needs the runners: every
 # run still in flight but release.yml's own is cancelled right before the
@@ -1282,7 +1304,12 @@ if [ -n "$remote_tag" ]; then
   if tag_shape_ok; then
     step "tag $TAG on origin carries subject 'jubarte $TAG' and the github summary"
   else
-    gh_note || die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, so release.yml's notes lack the summary — put it into the notes (gh release edit $TAG -R jandira-tech/jubarte-redlines --notes-file <file>), then rerun"
+    gh_note || {
+      # notes can be edited only on a release that exists (#1766)
+      gh release view "$TAG" -R jandira-tech/jubarte-redlines >/dev/null 2>&1 \
+        || die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, and no GitHub release exists for it — read its release.yml run (gh run list -R jandira-tech/jubarte-redlines --workflow release.yml --branch $TAG): if it published nothing, replace the tag (git push origin :refs/tags/$TAG && git tag -d $TAG) and rerun, which writes it in shape; if it published, let it finish and put the summary into the notes it makes"
+      die "$TAG on origin is not subject 'jubarte $TAG' with the github summary in its body, so release.yml's notes lack the summary — put it into the notes (gh release edit $TAG -R jandira-tech/jubarte-redlines --notes-file <file>), then rerun"
+    }
     echo "  ! $TAG on origin lacks the summary in its body; its GitHub notes carry it" >&2
   fi
 else
@@ -1430,8 +1457,9 @@ release_from_artifacts() {
     if [ -n "$missing" ]; then
       printf '> Not attached:%s (release.yml run %s failed to build them).\n\n' "$missing" "$run_id"
     fi
-    # Only release.yml's release job attests; this path makes no attestation.
-    printf '> These assets carry no build-provenance attestation: they come from release.yml run %s, whose release job did not publish them.\n\n' "$run_id"
+    # Only release.yml's release job attests, and it may have attested these
+    # bytes before it died, so the note says only what is known (#1768).
+    printf '> These assets were not published by release.yml'"'"'s release job: they come from run %s'"'"'s artifacts. Whether a build-provenance attestation covers one, gh attestation verify FILE -R jandira-tech/jubarte-redlines says.\n\n' "$run_id"
     awk -v ver="$VER" '
       index($0, "## [" ver "] - ") == 1 { on=1; next }
       on && /^## \[/ { exit }
@@ -1538,7 +1566,8 @@ gh_attested() {
   # alone pass an archive another release's run attested (#1749)
   sha=$(git rev-parse "$TAG^{commit}") || return 1
   rm -rf dist/attest
-  gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte-redlines >/dev/null 2>&1 || return 1
+  gh release download "$TAG" -p "$f" -D dist/attest -R jandira-tech/jubarte-redlines >/dev/null 2>&1 \
+    || { rm -rf dist/attest; return 1; }
   gh attestation verify "dist/attest/$f" -R jandira-tech/jubarte-redlines \
     --signer-workflow jandira-tech/jubarte-redlines/.github/workflows/release.yml \
     --source-ref "refs/tags/$TAG" --source-digest "$sha" \
@@ -1574,14 +1603,26 @@ archive_runs() {
 # engine is $VER.
 pip_installs() {
   local got
-  got=$(uv run -q --isolated --no-project --refresh-package jubarte-redlines --with "jubarte-redlines==$VER" \
+  # --no-build-package: a wheel or nothing — this machine has Rust and
+  # would build the sdist, hiding a wheel PyPI does not serve it (#1765).
+  # --python 3.12, a standard CPython: uv's default here may be a
+  # free-threaded build, which no abi3 wheel serves (0.13.0's PASS was an
+  # sdist build on 3.15t).
+  got=$(uv run -q --isolated --no-project --python 3.12 --refresh-package jubarte-redlines \
+          --no-build-package jubarte-redlines --with "jubarte-redlines==$VER" \
     python -c 'import jubarte_redlines as j; print(j.capabilities()["engine_version"])' 2>/dev/null) || return 1
   [ "$got" = "$VER" ]
 }
-# The npm CLI answers in the engine's words, named by its argv[0].
+# The npm CLI answers in the engine's words, named by its argv[0]. It runs
+# in an empty project of its own: npx answers from a node_modules it finds
+# before it asks the registry (#1765).
 npx_runs() {
-  local got
-  got=$(npx -y --prefer-online "jubarte-redlines@$VER" --version 2>/dev/null) || return 1
+  local dir=dist/install-proof/npx got="" rc=0
+  rm -rf "$dir" && mkdir -p "$dir"
+  got=$(cd "$dir" && npm init -y >/dev/null 2>&1 \
+        && npx -y --prefer-online "jubarte-redlines@$VER" --version 2>/dev/null) || rc=1
+  rm -rf dist/install-proof
+  [ "$rc" = 0 ] || return 1
   case "$got" in "jubarte-redlines $VER" | "jubarte $VER") ;; *) return 1 ;; esac
 }
 # `npm i jubarte-wasm@$VER` into an empty project, then require() it.

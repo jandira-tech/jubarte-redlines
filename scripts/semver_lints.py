@@ -15,9 +15,12 @@ public API then passes the gate (codex review of #1743, #1744).
 Cargo.toml's `[package.metadata.cargo-semver-checks.lints]` raises each of
 them to deny. This script reads the installed tool's own lint definitions
 (`src/lints/*.ron` in the source cargo installed it from) and exits 1, naming
-each lint, when the table leaves one below deny; 2 when the definitions
-cannot be found. A new cargo-semver-checks release with new lints therefore
-stops the gate until the table names them. Plain Python 3, stdlib only.
+each lint, when a lint's effective level is below deny: its own level when
+the table does not name it, the table's when it does, so a table that sets
+a Deny lint to allow is caught too (#1762). It exits 2 when the definitions
+cannot be found or hold no lint at all. A new cargo-semver-checks release
+with new lints therefore stops the gate until the table names them. Plain
+Python 3, stdlib only.
 
 What cargo-semver-checks cannot see at all, at any level, is a new free
 function, trait, module, macro or type alias: it has no lint for them.
@@ -53,8 +56,8 @@ def lint_sources(version: str) -> Path | None:
     return None
 
 
-def skipped_lints(lints: Path) -> dict[str, tuple[str, str]]:
-    """Each lint whose own level is not Deny: name -> (required update, level)."""
+def lint_levels(lints: Path) -> dict[str, tuple[str, str]]:
+    """Every lint the tool defines: name -> (required update, its own level)."""
     out = {}
     for ron in sorted(lints.glob("*.ron")):
         text = ron.read_text()
@@ -62,20 +65,19 @@ def skipped_lints(lints: Path) -> dict[str, tuple[str, str]]:
         level = re.search(r"lint_level:\s*(\w+)", text)
         if required is None or level is None:
             raise SystemExit(f"semver_lints: {ron} names no required_update or lint_level")
-        if level.group(1) != "Deny":
-            out[ron.stem] = (required.group(1), level.group(1))
+        out[ron.stem] = (required.group(1), level.group(1))
     return out
 
 
-def denied(manifest: Path) -> set[str]:
+def overrides(manifest: Path) -> dict[str, str]:
+    """The table's level for each lint it names."""
     with manifest.open("rb") as f:
         package = tomllib.load(f).get("package", {})
     table = package.get("metadata", {}).get("cargo-semver-checks", {}).get("lints", {})
-    out = set()
+    out = {}
     for name, value in table.items():
         level = value.get("level") if isinstance(value, dict) else value
-        if level == "deny":
-            out.add(name)
+        out[name] = str(level)
     return out
 
 
@@ -99,10 +101,22 @@ def main() -> int:
               "`cargo install --locked cargo-semver-checks` keeps them there", file=sys.stderr)
         return 2
 
-    missing = {name: kind for name, kind in skipped_lints(lints).items() if name not in denied(args.manifest)}
-    for name, (required, level) in missing.items():
-        print(f"  ! {name} ({required}, {level}): add `{name} = \"deny\"` to {TABLE}", file=sys.stderr)
-    return 1 if missing else 0
+    levels = lint_levels(lints)
+    if not levels:
+        print(f"semver_lints: no lint definitions (*.ron) in {where} — the audit would check nothing",
+              file=sys.stderr)
+        return 2
+    table = overrides(args.manifest)
+    below = 0
+    for name, (required, level) in levels.items():
+        if name not in table and level != "Deny":
+            print(f"  ! {name} ({required}, {level}): add `{name} = \"deny\"` to {TABLE}", file=sys.stderr)
+            below += 1
+        elif name in table and table[name] != "deny":
+            print(f"  ! {name} ({required}, {level}) is set to {table[name]} by the table: "
+                  f"make it `{name} = \"deny\"` in {TABLE}", file=sys.stderr)
+            below += 1
+    return 1 if below else 0
 
 
 if __name__ == "__main__":
