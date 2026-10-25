@@ -152,7 +152,8 @@ usage() { sed -n '/^# One-stop release/,/^set -euo pipefail$/p' "$0" | sed '$d' 
 # [you] lines inside a real run at the moment they matter; the closing
 # summary prints every [you] line still owed after the script ends.
 checklist_items() { cat <<'ITEMS'
-before|you|Security review: inspect private reports and public advisories, record known CVE/GHSA fixes in the changelog, and run all four sanitizer fuzz targets plus native allocator runs; confirmed exploitable medium/higher findings block release|SECURITY.md; fuzz/README.md; cargo +nightly fuzz run <target> -- -max_total_time=60 (admit, strict_to_transitional, compare, relationships); bash scripts/fuzz-native.sh <target> -max_total_time=60 (compare, relationships)
+0|auto|Security findings on GitHub: no repository advisory in triage (a private report) and no open medium-or-higher Dependabot or code-scanning alert; drafts and lower alerts are listed (#1750)|scripts/release.sh step 0 (security_gate: gh api repos/jandira-tech/jubarte-redlines/{security-advisories,dependabot/alerts,code-scanning/alerts})
+before|you|Security review, the half a script cannot do: record known CVE/GHSA fixes in the changelog, and run all four sanitizer fuzz targets plus native allocator runs (step 0 reads the advisories and alerts itself); confirmed exploitable medium/higher findings block release|SECURITY.md; fuzz/README.md; cargo +nightly fuzz run <target> -- -max_total_time=60 (admit, strict_to_transitional, compare, relationships); bash scripts/fuzz-native.sh <target> -max_total_time=60 (compare, relationships)
 before|you|Full suite once before the release: cargo miri nextest run over the whole crate — nightly with the miri component (.config/nextest.toml holds its default-miri profile); know its cost first, and read its CARGO_BIN_EXE and disk-fixture failures as Miri's isolation rule, not engine bugs|cargo +nightly miri nextest run (AGENTS.md; Miri cannot spawn processes and refuses the host's file system under its default isolation)
 before|you|The quality gate of docs/VERSIONING.md on the release binary: the parity ladder sweep shows no NEW fails, and the criterion bench holds its baseline — any case more than 5 percent worse blocks, a median generate-time regression past +10 percent triggers the speed review before the release|tools/parity_ladder.py sweep --bin target/release/jubarte; cargo bench --bench redline -- --baseline <baseline> (docs/SPEED_REVIEW.md)
 before|you|Decide where the release runs: a clean worktree on main, release PR merged, main in sync with origin/main — the canonical checkout is the owner's and is never the release tree|git worktree add <dir> main; git -C <dir> status --porcelain (empty); git -C <dir> rev-parse HEAD == origin/main
@@ -562,6 +563,40 @@ unlisted_prs() {
     [ "$hit" = 1 ] || echo "$n"
   done
 }
+# GitHub's open security findings (#1750), one per line: "<kind> <id>
+# <severity> <what>". Repository advisories in triage (a private report) or
+# draft, and open Dependabot and code-scanning alerts. An API gh cannot read
+# is a refusal, never an empty list.
+security_findings() {
+  local api=repos/jandira-tech/jubarte-redlines out
+  out=$(gh api "$api/security-advisories?per_page=100" --paginate \
+          -q '.[] | select(.state == "triage" or .state == "draft") | "advisory-\(.state) \(.ghsa_id) \(.severity // "unrated") -"' </dev/null) \
+    || { echo "  ! gh cannot read the repository security advisories" >&2; return 1; }
+  [ -z "$out" ] || printf '%s\n' "$out"
+  out=$(gh api "$api/dependabot/alerts?state=open&per_page=100" --paginate \
+          -q '.[] | "dependabot #\(.number) \(.security_advisory.severity // "unrated") \(.security_advisory.ghsa_id)/\(.dependency.package.name)"' </dev/null) \
+    || { echo "  ! gh cannot read the open Dependabot alerts" >&2; return 1; }
+  [ -z "$out" ] || printf '%s\n' "$out"
+  out=$(gh api "$api/code-scanning/alerts?state=open&per_page=100" --paginate \
+          -q '.[] | "code-scanning #\(.number) \(.rule.security_severity_level // "unrated") \(.rule.id)@\(.most_recent_instance.location.path)"' </dev/null) \
+    || { echo "  ! gh cannot read the open code-scanning alerts" >&2; return 1; }
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+# The findings on stdin that block a release: SECURITY.md ships no confirmed
+# medium-or-higher finding, and a report still in triage is unconfirmed
+# either way until someone reads it.
+security_blocking() {
+  awk '$1 == "advisory-triage" || ($1 !~ /^advisory-/ && $3 ~ /^(medium|high|critical)$/)'
+}
+security_gate() {
+  local findings blocking
+  findings=$(security_findings) || die "cannot read GitHub's security findings (above) — check gh auth status, then rerun"
+  [ -z "$findings" ] || { step "open security findings:"; printf '%s\n' "$findings" | sed 's/^/        /'; }
+  blocking=$(printf '%s\n' "$findings" | security_blocking)
+  [ -z "$blocking" ] \
+    || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub, then rerun"
+  step "security: no advisory in triage, no open medium-or-higher Dependabot or code-scanning alert"
+}
 # Queued CI waits behind nothing once release.yml needs the runners: every
 # run still in flight but release.yml's own is cancelled right before the
 # tag goes up (the push to main has just started CI and Docs again).
@@ -653,6 +688,8 @@ if compgen -G 'keys/*.pub' >/dev/null; then
     || die "keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set — signed-era binaries would refuse this release"
 fi
 step "release.yml reviewed; the release environment and the signing secret are in place"
+
+security_gate
 
 # The bump kind, before step 1 writes it. A resumed run (the tag exists)
 # still gates against the release before this one.

@@ -1837,6 +1837,103 @@ class FallbackProvenance(unittest.TestCase):
         self.assertIn("release job", claim)
 
 
+# stub gh api for the security gate: each endpoint answers the JSON fixture
+# $FIX/<kind>.json through the real jq, so the -q filters themselves run.
+GH_SECURITY_STUB = r"""#!/bin/bash
+[ "$1" = api ] || { echo "unexpected gh $*" >&2; exit 9; }
+case "$2" in
+  repos/jandira-tech/jubarte-redlines/security-advisories*) kind=advisories ;;
+  repos/jandira-tech/jubarte-redlines/dependabot/alerts*) kind=dependabot ;;
+  repos/jandira-tech/jubarte-redlines/code-scanning/alerts*) kind=code-scanning ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+[ "${FAIL:-}" != "$kind" ] || { echo "HTTP 403: Resource not accessible" >&2; exit 1; }
+q=""
+while [ $# -gt 0 ]; do [ "$1" = -q ] && q=$2; shift; done
+jq -r "$q" "$FIX/$kind.json"
+"""
+
+
+@unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+class SecurityGate(unittest.TestCase):
+    """#1750 (checklist before#1, its automated half): SECURITY.md lets no
+    confirmed medium-or-higher finding ship. Step 0 stops on a repository
+    advisory in triage (a private report) or an open medium+ Dependabot or
+    code-scanning alert, and lists drafts and lower alerts."""
+
+    def gate(self, advisories=(), dependabot=(), code=(), **env: str) -> subprocess.CompletedProcess[str]:
+        tmp = Path(tempfile.mkdtemp(prefix="secgate-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "gh").write_text(GH_SECURITY_STUB)
+        (tmp / "gh").chmod(0o755)
+        import json
+        (tmp / "advisories.json").write_text(json.dumps(list(advisories)))
+        (tmp / "dependabot.json").write_text(json.dumps(list(dependabot)))
+        (tmp / "code-scanning.json").write_text(json.dumps(list(code)))
+        script = (
+            "set -euo pipefail\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f'{shell_functions("security_findings", "security_blocking", "security_gate")}\nsecurity_gate\n'
+        )
+        return subprocess.run(["bash", "-c", script], cwd=tmp,
+                              env=dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", FIX=str(tmp), **env),
+                              capture_output=True, text=True, timeout=30)
+
+    @staticmethod
+    def alert(n: int, severity: str | None) -> dict:
+        return {"number": n, "state": "open",
+                "security_advisory": {"severity": severity, "ghsa_id": f"GHSA-dep{n}"},
+                "dependency": {"package": {"name": "opentelemetry-api"}}}
+
+    @staticmethod
+    def scan(n: int, severity: str | None) -> dict:
+        return {"number": n, "state": "open",
+                "rule": {"id": "js/xss", "security_severity_level": severity},
+                "most_recent_instance": {"location": {"path": "src/x.rs"}}}
+
+    def test_nothing_open_passes(self) -> None:
+        r = self.gate(advisories=[{"ghsa_id": "GHSA-old", "state": "published", "severity": "high"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("GHSA-old", r.stdout)
+
+    def test_a_private_report_in_triage_stops_the_release(self) -> None:
+        r = self.gate(advisories=[{"ghsa_id": "GHSA-tri1", "state": "triage", "severity": None}])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("GHSA-tri1", r.stderr)
+
+    def test_a_draft_advisory_is_listed_not_blocking(self) -> None:
+        r = self.gate(advisories=[{"ghsa_id": "GHSA-drf1", "state": "draft", "severity": "high"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("GHSA-drf1", r.stdout)
+
+    def test_an_open_medium_dependabot_alert_stops_the_release(self) -> None:
+        r = self.gate(dependabot=[self.alert(7, "medium")])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("#7", r.stderr)
+        self.assertIn("opentelemetry-api", r.stderr)
+
+    def test_a_low_dependabot_alert_is_listed_not_blocking(self) -> None:
+        r = self.gate(dependabot=[self.alert(8, "low")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("#8", r.stdout)
+
+    def test_an_open_high_code_scanning_alert_stops_the_release(self) -> None:
+        r = self.gate(code=[self.scan(45, "high"), self.scan(46, None)])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("#45", r.stderr)
+        self.assertNotIn("#46", r.stderr.split("ERROR")[-1])
+
+    def test_an_unreadable_api_is_a_refusal(self) -> None:
+        for kind in ("advisories", "dependabot", "code-scanning"):
+            r = self.gate(FAIL=kind)
+            self.assertEqual(r.returncode, 1, (kind, r.stdout))
+            self.assertIn("cannot read", r.stderr, kind)
+
+    def test_step_0_runs_it_before_the_bump_gate(self) -> None:
+        s0 = step(0)
+        self.assertLess(s0.index("\nsecurity_gate\n"), s0.index("bump_gate \"$PREV_RELEASE\""))
+
+
 class AutomatedReview(unittest.TestCase):
     """#1742: checks a script can make are made by the script, not owed by a
     person: the release.yml review, the scripts' Python floor, the crate's
