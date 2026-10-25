@@ -178,10 +178,12 @@ def _replace(path: Path, data: bytes | str) -> int:
     raw = data.encode("utf-8") if isinstance(data, str) else data
     # A name nobody can guess, created only if it is not there: a link
     # planted beside the output is never followed (CodeRabbit on #1698).
+    # 0o644 before the umask: never world-writable, even under umask 0
+    # (#1805); the binary's 0o666 gives the same mode under 022 or 077.
     staged = path.with_name(f".{path.name}.jubarte-{uuid.uuid4().hex}.tmp")
     created = False
     try:
-        fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
         created = True
         with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
