@@ -1336,6 +1336,7 @@ class BumpGate(unittest.TestCase):
         script = (
             f"set -euo pipefail\nVER={ver}; TAG=v{ver}\n"
             'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            'semver_lints_ok() { return "${LINTS:-0}"; }\n'
             f"{functions}\nbump_gate v{prev}\n"
         )
         full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
@@ -1378,6 +1379,12 @@ class BumpGate(unittest.TestCase):
         self.assertIn("--baseline-rev v0.13.0", calls)
         self.assertIn("--release-type patch", calls)
         self.assertIn("--default-features", calls)
+
+    def test_a_lint_table_that_skips_a_lint_stops_the_patch_first(self) -> None:
+        r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n", LINTS="1")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("cargo-semver-checks.lints", r.stderr)
+        self.assertEqual(self.cargo_calls(), "", "no check runs with lints left out")
 
     def test_a_clean_patch_passes(self) -> None:
         r = self.gate("0.13.1", "0.13.0", "### Fixed\n\n- a fix\n")

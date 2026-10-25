@@ -477,6 +477,9 @@ changelog_section() {
     on { print }
   ' CHANGELOG.md
 }
+# cargo-semver-checks fails only on lints at deny, and ships some at allow or
+# warn (#1744); Cargo.toml's lint table must raise every one of them.
+semver_lints_ok() { python3 scripts/semver_lints.py; }
 # Pre-1.0 (docs/VERSIONING.md) a patch carries no new feature and no public
 # API change; a minor or a major may. Proven before step 1 writes anything
 # (#1742): a patch whose section has `### Added` ships features, and
@@ -493,6 +496,8 @@ bump_gate() {
   if changelog_section | grep -E '^### Added' >/dev/null; then
     die "$VER is a patch, but its CHANGELOG section has ### Added: new features take a minor bump (docs/VERSIONING.md) — release $minor instead"
   fi
+  semver_lints_ok \
+    || die "Cargo.toml's [package.metadata.cargo-semver-checks.lints] leaves the lints above below deny — a patch would pass them; deny each (scripts/semver_lints.py)"
   cargo semver-checks check-release -p jubarte-redlines --baseline-rev "v$prev" \
       --release-type patch --default-features \
     || die "cargo-semver-checks finds public API changes a patch cannot carry (above; docs/VERSIONING.md) — release $minor instead, or take the changes out"
@@ -939,6 +944,7 @@ if [ "$SKIP_GATES" = 0 ]; then
   py312=(uv run -q --no-project --python 3.12 python)
   "${py312[@]}" scripts/test_convert_sweep.py
   "${py312[@]}" scripts/test_release_sh.py
+  "${py312[@]}" scripts/test_semver_lints.py
   "${py312[@]}" scripts/test_check_engine_commit.py
   "${py312[@]}" scripts/test_check_release_info.py
   "${py312[@]}" scripts/test_library_readmes.py

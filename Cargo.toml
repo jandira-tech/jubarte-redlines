@@ -63,6 +63,57 @@ path = "src/lib.rs"
 [package.metadata.docs.rs]
 all-features = true
 
+# The patch gate (scripts/release.sh, step 0) fails only on lints at deny;
+# cargo-semver-checks ships these at allow (never run) or warn (only
+# reported), so a patch could grow the public API (#1744).
+# scripts/semver_lints.py checks this table against the installed tool.
+[package.metadata.cargo-semver-checks.lints]
+auto_trait_impl_added = "deny"
+enum_must_use_removed = "deny"
+enum_no_longer_non_exhaustive = "deny"
+enum_non_exhaustive_struct_variant_field_added = "deny"
+enum_non_exhaustive_tuple_variant_field_added = "deny"
+enum_repr_int_added = "deny"
+enum_variant_no_longer_non_exhaustive = "deny"
+exhaustive_enum_added = "deny"
+exhaustive_struct_added = "deny"
+exhaustive_struct_with_doc_hidden_fields_added = "deny"
+exhaustive_struct_with_private_fields_added = "deny"
+feature_newly_enables_feature = "deny"
+function_must_use_removed = "deny"
+function_no_longer_unsafe = "deny"
+function_now_const = "deny"
+inherent_associated_pub_const_added = "deny"
+inherent_method_added = "deny"
+inherent_method_must_use_removed = "deny"
+inherent_method_no_longer_unsafe = "deny"
+inherent_method_now_const = "deny"
+non_exhaustive_enum_added = "deny"
+non_exhaustive_struct_added = "deny"
+partial_ord_enum_struct_variant_fields_reordered = "deny"
+partial_ord_enum_variants_reordered = "deny"
+partial_ord_struct_fields_reordered = "deny"
+pub_api_sealed_trait_became_unconditionally_sealed = "deny"
+pub_api_sealed_trait_became_unsealed = "deny"
+pub_api_sealed_trait_method_receiver_added = "deny"
+pub_api_sealed_trait_method_receiver_mut_ref_became_ref = "deny"
+pub_api_sealed_trait_method_return_value_added = "deny"
+pub_api_sealed_trait_method_target_feature_removed = "deny"
+pub_const_added = "deny"
+pub_static_added = "deny"
+repr_c_added = "deny"
+repr_c_enum_struct_variant_fields_reordered = "deny"
+repr_c_plain_struct_fields_reordered = "deny"
+struct_must_use_removed = "deny"
+struct_no_longer_has_non_pub_fields = "deny"
+struct_no_longer_non_exhaustive = "deny"
+trait_must_use_removed = "deny"
+unconditionally_sealed_trait_became_pub_api_sealed = "deny"
+unconditionally_sealed_trait_became_unsealed = "deny"
+union_added = "deny"
+union_field_added_with_non_pub_fields = "deny"
+union_must_use_removed = "deny"
+
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
