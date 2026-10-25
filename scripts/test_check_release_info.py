@@ -788,10 +788,16 @@ class MeasuredSentence(SixFiles):
             with self.subTest(phrase=phrase):
                 r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
                 self.assertEqual(r.returncode, 0, r.stderr)
-        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening",
-                                                          "the 1 PDF Docxodus wrote for every redline"))
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn('"counting as 0 the 1 PDF" — a PDF is the conversion sample\'s', r.stderr)
+        # each refusal depends on one rule (#1795): read past "Docxodus",
+        # the phrase would reach "pairs"; taken for a head, the modifier
+        # "redline-producing" would end the phrase at "Word"
+        for phrase, named, noun in (("the 1 PDF Docxodus wrote comparing document pairs", "the 1 PDF", "PDF"),
+                                    ("the 1 redline-producing Word documents whose opening crashes Word",
+                                     "the 1 redline-producing Word documents", "document")):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(f'"counting as 0 {named}" — a {noun} is the conversion sample\'s', r.stderr)
 
     def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
         # codex on #1743 (#1777): document pairs are the redline sample's;
