@@ -66,12 +66,47 @@ class BaselineKeys(unittest.TestCase):
 
 
 
-# a stub jubarte: --version, or `BASE NEXT -d … -o DEST --force --quiet`
+# a stub jubarte: --version, or `BASE NEXT -d … -o DEST --force --quiet`; the
+# redline names its base, so a stub Word can tell the pairs apart
 STUB = """#!/bin/sh
 [ "$1" = --version ] && { echo "jubarte 9.9.9"; exit 0; }
 echo "$*" >> "$ARGV_LOG"
+base=$1
 while [ $# -gt 0 ]; do [ "$1" = -o ] && dest=$2; shift; done
-echo redline > "$dest"
+echo "redline of $base" > "$dest"
+"""
+# the bench's word_pdf.py, stubbed: a document whose text says "crash" gets
+# no PDF, one that says "neighbour" gets none beside another document, and
+# every other one gets <stem>_byword.pdf, as the real script names it
+WORD_PDF = """import argparse, pathlib, sys
+p = argparse.ArgumentParser()
+for flag in ("--src", "--out", "--timeout", "--log"):
+    p.add_argument(flag)
+a = p.parse_args()
+src = pathlib.Path(a.src)
+out = pathlib.Path(a.out or a.src)
+out.mkdir(parents=True, exist_ok=True)
+docs = sorted(src.glob("*.docx"))
+with open(a.log, "a") as log:
+    for d in docs:
+        text = d.read_text()
+        if "crash" in text or ("neighbour" in text and len(docs) > 1):
+            log.write(f"FAIL {d.name}: Word crashed on it in 2 passes\\n")
+            continue
+        (out / f"{d.stem}_byword.pdf").write_text("%PDF")
+        log.write(f"ok {d.name}\\n")
+sys.exit(0)
+"""
+# `uv run --script FILE ARGS…` runs FILE with python3; every call is logged
+UV = """#!/bin/sh
+echo "uv $* (cwd $(pwd))" >> "$WORD_CALLS"
+[ "$1" = run ] && [ "$2" = --script ] || exit 9
+shift 2
+exec python3 "$@"
+"""
+WATCHDOG = """#!/bin/sh
+echo "watchdog WD_MAX=$WD_MAX $*" >> "$WORD_CALLS"
+exec sleep 60
 """
 RELEASE_HEADER = ("key,base,base_sha256,next,next_sha256,docx,docx_sha256,pdf,pdf_sha256,state,id,sets,oracle,"
                   "oracle_pdf,oracle_pdf_sha256,docxodus_pdf,docxodus_pdf_sha256,jubarte_docx,jubarte_docx_sha256,"
@@ -146,6 +181,107 @@ class Sweep(unittest.TestCase):
         r = self.sweep("stem,docx\ns1,corpus/a.docx\n")
         self.assertEqual(r.returncode, 2, r.stdout)
         self.assertIn("sample.csv", r.stderr)
+
+
+@unittest.skipUnless(shutil.which("zsh"), "redline-sweep.sh is a zsh script")
+class Probe(unittest.TestCase):
+    """--probe opens every redline through the bench's word_pdf.py, with the
+    bench's watchdog on its log, and re-runs each failure alone under a fresh
+    name before counting it (#1794: it drove Word through a hand-rolled
+    osascript, against AGENTS.md)."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="probe-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.bench = self.tmp / "bench"
+        (self.bench / "corpus").mkdir(parents=True)
+        (self.bench / "scripts").mkdir()
+        for name in ("a", "b", "crash", "neighbour"):
+            (self.bench / "corpus" / f"{name}.docx").write_text(name)
+        (self.bench / "corpus" / "word_opens.docx").write_text("Word's redline")
+        (self.bench / "corpus" / "word_crash.docx").write_text("Word's redline, crash")
+        (self.bench / "scripts" / "word_pdf.py").write_text(WORD_PDF)
+        self.write_exe(self.bench / "scripts" / "word_watchdog.sh", WATCHDOG)
+        self.path = self.tmp / "path"
+        self.path.mkdir()
+        self.write_exe(self.path / "uv", UV)
+        self.write_exe(self.tmp / "jubarte", STUB)
+        self.out = self.tmp / "out"
+        self.calls = self.tmp / "word_calls.log"
+
+    @staticmethod
+    def write_exe(path: Path, text: str) -> None:
+        path.write_text(text)
+        path.chmod(0o755)
+
+    def row(self, key: str, base: str, word: str = "corpus/word_opens.docx") -> str:
+        return ",".join([key, f"corpus/{base}.docx", "0" * 64, "corpus/b.docx", "0" * 64, word] + [""] * 15)
+
+    def probe(self, *rows: str, **env: str) -> subprocess.CompletedProcess[str]:
+        csv_path = self.tmp / "sample.csv"
+        csv_path.write_text(RELEASE_HEADER + "\n" + "\n".join(rows) + "\n")
+        full = dict(os.environ, JUBARTE_BIN=str(self.tmp / "jubarte"), ARGV_LOG=str(self.tmp / "argv.log"),
+                    WORD_CALLS=str(self.calls), PATH=f"{self.path}:{os.environ['PATH']}")
+        full.pop("NEUROTIC_DOCX_BENCH", None)
+        full.update(env)
+        return subprocess.run(["zsh", str(HERE / "redline-sweep.sh"), str(csv_path), str(self.bench), str(self.out),
+                               "--probe"], env=full, capture_output=True, text=True, timeout=120)
+
+    def test_every_redline_goes_through_the_bench_word_pdf_and_its_watchdog(self) -> None:
+        r = self.probe(self.row("k1", "a"), self.row("k2", "b"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("word-open probe: opened=2 failed=0", r.stdout)
+        calls = self.calls.read_text()
+        self.assertIn(f"uv run --script scripts/word_pdf.py --src {self.out}/.probe/batch", calls)
+        self.assertIn("--timeout 300", calls)
+        self.assertIn(f"(cwd {self.bench})", calls)
+        self.assertIn("watchdog WD_MAX=300 ", calls)
+
+    def test_a_redline_that_fails_alone_too_is_a_probe_failure(self) -> None:
+        r = self.probe(self.row("k1", "a"), self.row("k2", "crash"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("word-open probe: opened=1 failed=1", r.stdout)
+        log = (self.out / "probe.log").read_text()
+        self.assertIn("PROBEFAIL k2", log)
+        self.assertNotIn("PROBEFAIL k1", log)
+        # the re-run is the file alone, under a short name of its own
+        self.assertIn(f"--src {self.out}/.probe/alone/r1 ", self.calls.read_text())
+
+    def test_a_redline_that_fails_only_beside_others_opens_alone(self) -> None:
+        r = self.probe(self.row("k1", "a"), self.row("k2", "neighbour"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("word-open probe: opened=2 failed=0", r.stdout)
+        self.assertIn("k2 opened alone", (self.out / "probe.log").read_text())
+
+    def test_a_failure_whose_word_redline_fails_too_says_so_and_still_fails(self) -> None:
+        r = self.probe(self.row("k1", "crash", "corpus/word_crash.docx"), self.row("k2", "crash"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("word-open probe: opened=0 failed=2 (Word's own redline fails too: 1)", r.stdout)
+        log = (self.out / "probe.log").read_text()
+        self.assertIn("PROBEFAIL k1 (Word's own redline of the pair fails too: corpus/word_crash.docx)", log)
+        self.assertIn("PROBEFAIL k2 (Word's own redline of the pair opens: corpus/word_opens.docx)", log)
+
+    def test_a_bench_without_word_pdf_is_refused_before_anything_is_generated(self) -> None:
+        (self.bench / "scripts" / "word_pdf.py").unlink()
+        r = self.probe(self.row("k1", "a"))
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("word_pdf.py", r.stderr)
+        self.assertFalse((self.tmp / "argv.log").exists())
+
+    def test_neurotic_docx_bench_names_the_bench_holding_the_scripts(self) -> None:
+        other = self.tmp / "other_bench"
+        shutil.copytree(self.bench / "scripts", other / "scripts")
+        (self.bench / "scripts" / "word_pdf.py").unlink()
+        r = self.probe(self.row("k1", "a"), NEUROTIC_DOCX_BENCH=str(other))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"(cwd {other})", self.calls.read_text())
+
+    def test_the_sweep_drives_no_word_of_its_own(self) -> None:
+        text = (HERE / "redline-sweep.sh").read_text()
+        self.assertNotIn("osascript", text)
+        self.assertNotIn("word-open-probe", text)
+        self.assertFalse((HERE / "word-open-probe.sh").exists())
+        self.assertFalse((HERE / "word-probe-sweep.sh").exists())
 
 
 if __name__ == "__main__":

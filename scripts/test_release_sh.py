@@ -2662,6 +2662,16 @@ class Lessons0140(unittest.TestCase):
         self.assertEqual(len(rows), 1, f"one checklist row names {needle!r}")
         return "|".join(rows[0])
 
+    def test_ring3_opens_word_through_the_bench_and_reads_word_own_failures(self) -> None:
+        # #1794: --probe drove Word through an osascript of its own. 0.14.0's
+        # 23 failures crash Word 16.115 on Word's own redlines of most of
+        # the pairs too: the row says how that is read, and who waives it.
+        row = self.one_row("Ring-3 Word open probe")
+        for needle in ("word_pdf.py", "word_watchdog.sh", "NEUROTIC_DOCX_BENCH", "alone",
+                       "Word's own redline", "only the owner waives"):
+            self.assertIn(needle, row)
+        self.assertNotIn("osascript", row)
+
     def test_a_skipped_miri_suite_is_disclosed(self) -> None:
         # 0.14.0: miri not installed; the owner released without it
         row = self.one_row("cargo +nightly miri nextest run")

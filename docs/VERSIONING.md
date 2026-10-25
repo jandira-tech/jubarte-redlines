@@ -69,8 +69,10 @@ shell needs a store build that embeds the new engine.
    - Optional: permanent ABBA matrix if the change claimed a wall win  
    - **Ring 2 (OpenXmlValidator):** `scripts/redline-sweep.sh … --validate` → no NEW keys vs `tools/validity_baseline.tsv` (local; requires `dotnet`)
    - **Ring 3 (real Word open probe, macOS release gate):** before any crates.io publish or bench-pin promotion, run
-     `scripts/redline-sweep.sh <both CSVs> <src> parity/_scratch/sweep_<date> --probe`
-     Required: `probe_fail=0`. Never use `/tmp` for Word probe paths (sandbox); use `parity/_scratch`.
+     `scripts/redline-sweep.sh release_info/sample_redline_<ver>_*.csv ../neurotic_docx_bench parity/_scratch/sweep_<date> --probe`
+     (Word only through the bench's `scripts/word_pdf.py` and `word_watchdog.sh`; `NEUROTIC_DOCX_BENCH` names the bench).
+     Required: `probe_fail=0`. A failure that Word's own redline of the pair shares (`probe.log` says so) is still a failure, and only the owner waives it.
+     Never use `/tmp` for Word probe paths (sandbox); use `parity/_scratch`.
    - **Criterion local gate (perf-affecting PRs):** `cargo bench --bench redline -- --baseline m233_head` — a **>5%** regression on any case blocks merge.
    - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline (see `docs/SPEED_REVIEW.md`) triggers a perf review before merge.
 

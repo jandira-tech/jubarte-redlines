@@ -5,8 +5,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 # Generate a redline for every pair in a bench mapping CSV with the jubarte
-# CLI, then optionally verify each output opens in REAL Microsoft Word
-# (scripts/word-open-probe.sh).
+# CLI, then optionally verify each output opens in REAL Microsoft Word.
 #
 # Usage:
 #   scripts/redline-sweep.sh <mapping.csv> <source-dir> <out-dir> [--probe] [--validate]
@@ -25,6 +24,18 @@
 # summaries; sweep.log opens with the binary's path, sha256 and version.
 # Exit 1 if any generation or probe failed, or if no pair was generated at
 # all: a sweep that checked nothing passes nothing (#1757).
+#
+# --probe (Ring 3): open every output in Word through the bench's
+# scripts/word_pdf.py (NEUROTIC_DOCX_BENCH names the bench, default
+# <source-dir>), never a Word driver of our own (AGENTS.md, #1794): one batch
+# with the bench's scripts/word_watchdog.sh on its log, then each document
+# without a PDF again alone under a short name (r1, r2, …), since one file
+# that hangs Word fails its neighbours too. A document that fails alone is a
+# probe failure. For a release sample, Word's own redline of that pair (the
+# sample's docx column) is opened alone as well, and probe.log says whether
+# it opens: a failure that Word's own redline shares is still a failure,
+# and only the owner waives it. --timeout 300 and WD_MAX=300, as every Word
+# job runs.
 #
 # --validate (Ring 2): after generation, run tools/validate-docx against every
 # output and ratchet findings against tools/validity_baseline.tsv on
@@ -55,6 +66,15 @@ VALIDATOR_DIR="$SCRIPT_DIR/../tools/validate-docx"
 [ -f "$CSV" ] || { echo "error: $CSV not found" >&2; exit 2; }
 [ -d "$SRC" ] || { echo "error: $SRC not found" >&2; exit 2; }
 [ -x "$BIN" ] || { echo "error: $BIN not built (cargo build --release)" >&2; exit 2; }
+BENCH="${NEUROTIC_DOCX_BENCH:-$SRC}"
+if [ "$PROBE" = "--probe" ]; then
+  # checked before generation: a probe that cannot run fails at once
+  [ -f "$BENCH/scripts/word_pdf.py" ] && [ -x "$BENCH/scripts/word_watchdog.sh" ] || {
+    echo "error: --probe opens Word only through the bench's scripts/word_pdf.py and scripts/word_watchdog.sh, and $BENCH has not both (NEUROTIC_DOCX_BENCH names the bench)" >&2
+    exit 2
+  }
+  command -v uv >/dev/null 2>&1 || { echo "error: --probe runs word_pdf.py with uv run --script, and uv is not on PATH" >&2; exit 2; }
+fi
 mkdir -p "$OUT"
 
 IFS= read -r header < "$CSV" || header=""
@@ -72,6 +92,8 @@ echo "$BIN_LINE" | tee -a "$OUT/sweep.log"
 # Manifest of artifacts produced by THIS sweep only (CR #3642397959).
 MANIFEST="$OUT/.sweep_manifest"
 : > "$MANIFEST"
+# a release sample's own Word redline of each pair (its docx column), for --probe
+typeset -A WORD_OWN
 
 first=1
 while IFS= read -r line || [ -n "$line" ]; do
@@ -81,6 +103,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   IFS=, read -r f1 f2 f3 f4 f5 f6 _rest <<< "$line"
   if [ "$LAYOUT" = release ]; then
     stem=$f1 src_base=$f2 src_next=$f4
+    [ -n "$f1" ] && [ -n "$f6" ] && WORD_OWN[$f1]=$f6
   else
     stem=$f1 src_base=$f5 src_next=$f6
   fi
@@ -111,20 +134,73 @@ if [ "$LAYOUT" = release ] && [ "$skipped" -gt 0 ]; then
   gen_fail=$((gen_fail+skipped))
 fi
 
-probe_ok=0 probe_fail=0
+# word_pdf DIR LOG: one word_pdf.py run over DIR, from the bench root, with the
+# bench's watchdog on LOG; the PDFs land beside the documents
+word_pdf() {
+  local dir=$1 log=$2 wd
+  : > "$log"
+  WD_MAX=300 "$BENCH/scripts/word_watchdog.sh" "$log" < /dev/null >> "$OUT/probe.log" 2>&1 &
+  wd=$!
+  (cd "$BENCH" && uv run --script scripts/word_pdf.py --src "$dir" --out "$dir" --timeout 300 --log "$log" < /dev/null) \
+    >> "$OUT/probe.log" 2>&1
+  kill $wd 2>/dev/null
+  wait $wd 2>/dev/null
+  return 0
+}
+# opened DIR STEM: Word wrote DIR/STEM_byword.pdf, as word_pdf.py names it
+opened() { [ -s "$1/$2_byword.pdf" ]; }
+
+probe_ok=0 probe_fail=0 probe_word_own=0
 if [ "$PROBE" = "--probe" ]; then
   : > "$OUT/probe.log"
+  rm -rf "$OUT/.probe"
+  mkdir -p "$OUT/.probe/batch"
+  stems=()
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -e "$f" ] || continue
-    if "$SCRIPT_DIR/word-open-probe.sh" "$f" 1 >> "$OUT/probe.log" 2>&1; then
-      probe_ok=$((probe_ok+1))
-    else
-      probe_fail=$((probe_fail+1))
-      echo "PROBEFAIL $(basename "$f")" >> "$OUT/probe.log"
-    fi
+    cp "$f" "$OUT/.probe/batch/"
+    stems+=("$(basename "$f" .docx)")
   done < "$MANIFEST"
-  echo "word-open probe: opened=$probe_ok failed=$probe_fail"
+  word_pdf "$OUT/.probe/batch" "$OUT/.probe/batch.log"
+  n=0
+  for stem in "${stems[@]}"; do
+    if opened "$OUT/.probe/batch" "$stem"; then
+      probe_ok=$((probe_ok+1))
+      continue
+    fi
+    n=$((n+1))
+    alone="$OUT/.probe/alone/r$n"
+    mkdir -p "$alone"
+    cp "$OUT/.probe/batch/$stem.docx" "$alone/r$n.docx"
+    word_pdf "$alone" "$alone/word.log"
+    if opened "$alone" "r$n"; then
+      probe_ok=$((probe_ok+1))
+      echo "$stem opened alone (as r$n): it failed only beside other documents" >> "$OUT/probe.log"
+      continue
+    fi
+    probe_fail=$((probe_fail+1))
+    own="${WORD_OWN[$stem]-}"
+    if [ -n "$own" ] && [ -f "$SRC/$own" ]; then
+      w="$OUT/.probe/word_own/w$n"
+      mkdir -p "$w"
+      cp "$SRC/$own" "$w/w$n.docx"
+      word_pdf "$w" "$w/word.log"
+      if opened "$w" "w$n"; then
+        echo "PROBEFAIL $stem (Word's own redline of the pair opens: $own)" >> "$OUT/probe.log"
+      else
+        probe_word_own=$((probe_word_own+1))
+        echo "PROBEFAIL $stem (Word's own redline of the pair fails too: $own)" >> "$OUT/probe.log"
+      fi
+    else
+      echo "PROBEFAIL $stem (alone as r$n)" >> "$OUT/probe.log"
+    fi
+  done
+  summary="word-open probe: opened=$probe_ok failed=$probe_fail"
+  if [ "$LAYOUT" = release ] && [ "$probe_fail" -gt 0 ]; then
+    summary="$summary (Word's own redline fails too: $probe_word_own)"
+  fi
+  echo "$summary" | tee -a "$OUT/probe.log"
 fi
 
 validate_fail=0
