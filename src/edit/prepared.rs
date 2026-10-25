@@ -783,7 +783,8 @@ fn check_candidates(source: &[u8], result: &EditResult) -> Result<CandidateCheck
         .map_err(|refusals| refusals[0].error.clone())
 }
 
-/// [`check_candidates`], with every defect the candidate gates meet, in
+/// The candidate gates, with every defect they meet (the test-only
+/// `check_candidates` keeps the first), in
 /// the order they meet them: the clean copy's, then the redline's; in each,
 /// the duplicate revision ids, then the introduced blocking findings. The
 /// first is the one the refusal reports, as when the gates stopped there;

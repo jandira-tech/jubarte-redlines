@@ -8,7 +8,8 @@
 //! The release lookup, SHA-256 check against `SHA256SUMS.txt`, archive
 //! extraction and binary swap are the
 //! [`self_update`](https://docs.rs/self_update) crate's; the zipsign
-//! signature check is [`verify_signature`] (`zipsign.rs`), which `self_update`
+//! signature check is [`verify_signature`](crate::update::verify_signature)
+//! (`zipsign.rs`), which `self_update`
 //! runs on the downloaded archive before extracting it. This module builds
 //! the call the binary makes: it picks the release archive for this platform
 //! (`asset_target`), decides whether the target is newer
