@@ -133,16 +133,21 @@ SENTENCE = re.compile(
     rf"PDFs mean (?P<conversion>{MEAN}) \((?P<conversion_name>[^\s()]+) (?P<conversion_other>{MEAN})\)"
     rf"(?P<conversion_tail>.*?)\.(?=\s|$)"
 )
-# the count, then the next four words, which name what was counted, an
-# adjective included ("the 23 failed document pairs") (#1777, #1784)
-COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+(?:-[A-Za-z]+)*){0,4})")
+# the count, then the next eight words, which name what was counted,
+# adjectives included ("the 23 failed large Word document pairs") (#1777,
+# #1784, #1793)
+COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+(?:-[A-Za-z]+)*){0,8})")
 # the words that end a counted noun phrase: what follows them is not what was
-# counted ("23 PDFs instead of redlines", "23 documents without redlines") (#1787)
+# counted ("23 PDFs instead of redlines", "23 documents without redlines")
+# (#1787), and the auxiliaries that open the clause after it ("23 redlines
+# jubarte cannot write documents for") (#1793)
 PHRASE_END = frozenset((
     "of", "instead", "without", "with", "from", "by", "for", "in", "on", "at", "to", "into", "than",
     "rather", "not", "no", "nor", "but", "and", "or", "that", "which", "whose", "who", "whom", "where",
     "when", "while", "because", "as", "the", "a", "an", "their", "its", "except", "excluding", "unlike",
-    "versus", "vs"))
+    "versus", "vs",
+    "cannot", "can", "could", "would", "will", "does", "did", "do", "is", "are", "was", "were", "has",
+    "have", "had", "should", "may", "might", "must"))
 # where a sentence ends: its stop, any closing quotes or brackets, then a
 # space (#1789); the measured sentence's claims are read from the boundary
 # before its match, not from "N-item samples" (#1783)
@@ -425,22 +430,32 @@ def two(value: float) -> str:
     return str(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def sample_of(word: str) -> str | None:
+    """The sample a noun belongs to, in any case or number ("PDFS": the
+    conversion sample's) (#1792)."""
+    one = word.lower().removesuffix("s")
+    return next((kind for kind, nouns in COUNTED_WORDS.items() if one in nouns), None)
+
+
 def counted_kind(words: str) -> tuple[str | None, list[str], str]:
     """The sample a counted phrase names, the phrase up to its noun, and the
     noun. A noun phrase ends with its head, so the last sample noun before a
     word that ends the phrase names it ("failed document pairs whose …": a
-    pair, the redline sample's; "PDFs instead of redlines": PDFs) (#1787)."""
+    pair, the redline sample's; "PDFs instead of redlines": PDFs) (#1787).
+    After a head, a name that is no sample noun opens a clause ("redlines
+    Word crashes opening"); a hyphenated modifier is no head
+    ("redline-producing Word document pairs": pairs) (#1793)."""
     phrase: list[str] = []
-    kind, upto, noun = None, 0, ""
+    kind, upto, noun, headed = None, 0, "", False
     for token in words.split():
-        if token.lower() in PHRASE_END:
+        parts = token.split("-")
+        if token.lower() in PHRASE_END or (headed and token[0].isupper() and not sample_of(parts[-1])):
             break
         phrase.append(token)
-        for part in token.split("-"):
-            one = part.removesuffix("s")
-            named = next((k for k, nouns in COUNTED_WORDS.items() if one.lower() in nouns), None)
-            if named:
-                kind, upto, noun = named, len(phrase), one
+        for part in parts:
+            if named := sample_of(part):
+                kind, upto, noun = named, len(phrase), part[:len(part.lower().removesuffix("s"))]
+        headed = headed or sample_of(parts[-1]) is not None
     return kind, phrase[:upto], noun
 
 

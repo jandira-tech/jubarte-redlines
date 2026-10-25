@@ -771,6 +771,28 @@ class MeasuredSentence(SixFiles):
                 r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
                 self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_an_uppercase_plural_names_its_sample(self) -> None:
+        # codex on #1743 (#1792): "PDFS" lost its plural before lowercasing
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word", "the 1 PDFS Word"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 PDFS" — a PDF is the conversion sample\'s', r.stderr)
+
+    def test_the_whole_counted_phrase_reaches_its_head_noun(self) -> None:
+        # codex on #1743 (#1793): four words cut a phrase before its head;
+        # an auxiliary, or a name after the head, opens the clause that
+        # follows it
+        for phrase in ("the 1 failed redline-producing Word document pair whose opening crashes Word",
+                       "the 1 failed large Word document pair Word cannot open",
+                       "the 1 redline Word cannot open as documents",
+                       "the 1 redline jubarte cannot write documents for"):
+            with self.subTest(phrase=phrase):
+                r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening", phrase))
+                self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.numbers("--summary", self.SOUND.replace("the 1 redline Word 16.115 crashes opening",
+                                                          "the 1 PDF Docxodus wrote for every redline"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('"counting as 0 the 1 PDF" — a PDF is the conversion sample\'s', r.stderr)
+
     def test_a_counted_phrase_holding_its_own_samples_noun_passes(self) -> None:
         # codex on #1743 (#1777): document pairs are the redline sample's;
         # an adjective does not push the noun out of reach (#1784)
