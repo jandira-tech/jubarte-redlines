@@ -305,6 +305,7 @@ jobs:
       - run: python3 scripts/test_release_sh.py
       - run: uv run --with pyyaml python3 scripts/test_release_workflow.py
       - run: uv run --with pyyaml python3 scripts/test_docs_workflow.py
+      - run: uv run --with pyyaml python3 scripts/test_jules_workflow.py
       - run: python3 scripts/test_check_engine_commit.py
       - run: python3 scripts/test_check_npm_paths.py
       - run: python3 scripts/test_table_styles_asset.py
