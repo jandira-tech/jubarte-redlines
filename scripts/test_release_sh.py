@@ -2649,5 +2649,66 @@ class ProofTools(unittest.TestCase):
             self.assertIn("release_info/sample_redline_@V@_*.csv", line)
 
 
+class Lessons0140(unittest.TestCase):
+    """What the 0.14.0 readiness run learned, kept in the checklist so the
+    next release does not learn it again."""
+
+    def rows(self, needle: str) -> list[list[str]]:
+        return [line.split("|") for line in checklist_block().splitlines()
+                if line.count("|") == 3 and needle in line]
+
+    def one_row(self, needle: str) -> str:
+        rows = self.rows(needle)
+        self.assertEqual(len(rows), 1, f"one checklist row names {needle!r}")
+        return "|".join(rows[0])
+
+    def test_a_skipped_miri_suite_is_disclosed(self) -> None:
+        # 0.14.0: miri not installed; the owner released without it
+        row = self.one_row("cargo +nightly miri nextest run")
+        self.assertIn("skips it", row)
+        self.assertIn("release notes", row)
+
+    def test_only_release_sh_tags_and_pushes(self) -> None:
+        # 0.13.0 pushed main and its tag by hand, and step 13 never ran:
+        # jubarte.pro and the app's facts stayed on 0.12.0
+        row = self.one_row("a run in flight owns its worktree")
+        self.assertIn("only release.sh pushes main and the tag", row)
+        self.assertIn("step 13 never ran", row)
+
+    def test_the_bench_flow_resumes_and_pins_libreoffice(self) -> None:
+        row = self.one_row("jubarte_release_info @V@ --engine-dir <engine> --binary")
+        self.assertIn("--only", row)
+        self.assertIn("SOFFICE=", row)
+        self.assertIn("26.8.0.3", row)
+
+    def test_a_missing_previous_snapshot_is_backfilled(self) -> None:
+        row = self.one_row("backfill")
+        phase, mark, _item, proof = row.split("|")
+        self.assertEqual((phase, mark), ("before", "you"))
+        self.assertIn("git worktree add", proof)
+        self.assertIn("scripts/api_snapshot.py", proof)
+
+    def test_step_6_names_a_missing_previous_snapshot(self) -> None:
+        # 0.13.0 skipped step 6: "no previous-release snapshot — … is the
+        # baseline" hid that v0.13.0 exists and its snapshot does not
+        s6 = ApiDocDrift.step6(self)
+        self.assertIn("no snapshot of $PREV_TAG", s6)
+        self.assertIn("backfill", s6)
+
+    def test_hand_run_python_proofs_pin_3_12(self) -> None:
+        # uv's default here was a free-threaded 3.15t; no abi3 wheel serves it
+        row = self.one_row("free-threaded")
+        self.assertIn("--python 3.12", row)
+
+    def test_no_message_folds_a_list_with_an_unquoted_echo(self) -> None:
+        # $(echo $list) globs each word (SC2086) and hides the separator
+        self.assertNotRegex(RELEASE_SH.read_text(), r"\$\(echo \$\w+\)")
+
+    def test_the_app_scripts_run_under_bash(self) -> None:
+        row = self.one_row("never sh or zsh")
+        for script in ("release-engine.sh", "build-release-app.sh", "notarize-direct.sh"):
+            self.assertIn(script, row)
+
+
 if __name__ == "__main__":
     unittest.main()
