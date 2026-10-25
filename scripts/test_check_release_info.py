@@ -624,6 +624,17 @@ class MeasuredSentence(SixFiles):
                 self.assertEqual(r.returncode, 1, r.stdout)
                 self.assertIn("1 failed PDF", r.stderr)
 
+    def test_a_no_failed_claim_reads_every_sample_noun(self) -> None:
+        # empryo on #1743 (#1779): conversions and pairs were never read
+        for right, wrong, named in (
+            ("jubarte fails.", "jubarte fails, and no failed conversions.", '"no failed conversion"'),
+            ("(KNOWN_ISSUES #8); PDFs", "(KNOWN_ISSUES #8), and no failed pairs; PDFs", '"no failed pair"'),
+        ):
+            with self.subTest(wrong=wrong):
+                r = self.numbers("--summary", self.SOUND.replace(right, wrong))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(named, r.stderr)
+
     def test_a_no_failed_outside_the_measured_sentence_is_not_a_claim(self) -> None:
         # codex on #1743 (#1776): the checker cannot tell what another
         # sentence's "no failed" is about; the measured sentence still has
@@ -752,6 +763,8 @@ class ReleaseSh(unittest.TestCase):
         self.assertIn("a median or interval it states is not checked", row)
         # codex on #1743 (#1776): a claim outside the sentence is not read
         self.assertIn("another sentence's is not read", row)
+        # empryo on #1743 (#1779): a counted phrase need not name a noun
+        self.assertIn("their noun when the phrase names one", row)
 
     @unittest.skipUnless((HERE / "release.sh").is_file(), "release.sh sits beside this test in the engine checkout")
     def test_the_release_commit_carries_the_evidence(self) -> None:

@@ -35,8 +35,8 @@ import sys
 import tomllib
 from pathlib import Path
 
-# the files the CLI embeds or is built from: Rust sources outside their
-# comments, every other file byte for byte
+# the files the CLI embeds or is built from: the Rust sources under src/
+# outside their comments, every other file (an .rs elsewhere too) byte for byte
 INPUTS = ("src", "assets", "schemas", "keys")
 # [package] fields cargo builds nothing from: the version, the metadata
 # tables and the crates.io listing and packaging
@@ -191,9 +191,10 @@ def main() -> int:
         return usage(f"git diff {commit} {args.rev} failed: {diff.stderr.strip()}")
     changed, comments = [], []
     for path in filter(None, diff.stdout.split("\0")):
-        # only Rust sources are read as text: any other changed input (the
-        # fonts under assets/ are binary) is a change as it stands (#1772)
-        if path.endswith(".rs"):
+        # only the Rust sources under src/ are read as text: any other
+        # changed input (the fonts under assets/ are binary, an .rs there is
+        # data) is a change as it stands (#1772, #1781)
+        if path.startswith("src/") and path.endswith(".rs"):
             before, after = text_at(commit, path), text_at(args.rev, path)
             if before is not None and after is not None and rust_tokens(before) == rust_tokens(after):
                 comments.append(path)

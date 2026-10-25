@@ -28,8 +28,9 @@ SCRIPT = HERE / "identity.py"
 # stub jubarte: --version, `convert SRC -o DEST …` and `BASE NEXT -o DEST …`;
 # writes its inputs (and $SALT on rows whose inputs contain $SALT_ON) to DEST;
 # no output at all on rows whose inputs contain $FAIL_ON; it hangs on rows
-# whose inputs contain $HANG_ON.
+# whose inputs contain $HANG_ON, and on --version when $HANG_VERSION is set.
 STUB = r"""#!/bin/bash
+[ "$1" = --version ] && [ -n "${HANG_VERSION:-}" ] && exec sleep 30
 [ "$1" = --version ] && { echo "jubarte 9.9.9 (${NAME})"; exit 0; }
 echo "$*" >> "$ARGV_LOG"
 dest=""; ins=""
@@ -112,6 +113,28 @@ class Identity(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertNotIn("Traceback", r.stderr)
         return r
+
+    def test_a_binary_that_cannot_run_is_refused(self) -> None:
+        # empryo on #1743 (#1780): execute permission alone let an Exec
+        # format error through as a traceback
+        junk = self.tmp / "jubarte-junk"
+        junk.write_bytes(b"\x00\x01 no program\n")
+        junk.chmod(0o755)
+        r = self.refused(self.redline_csv(1), a=junk)
+        self.assertIn("jubarte-junk cannot run", r.stderr)
+
+    def test_a_version_that_hangs_is_refused(self) -> None:
+        r = self.run_identity(self.stub("a", HANG_VERSION="1"), self.stub("b"), self.redline_csv(1),
+                              extra=("--timeout", "1"))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("--version did not answer", r.stderr)
+
+    def test_one_binary_on_both_sides_is_refused(self) -> None:
+        a = self.stub("a")
+        r = self.run_identity(a, a, self.redline_csv(1))
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("one file", r.stderr)
 
     def test_a_missing_binary_is_refused(self) -> None:
         r = self.refused(self.redline_csv(1), a=self.tmp / "no-such-jubarte")

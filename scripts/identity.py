@@ -29,9 +29,11 @@ no row writes anything proves nothing and fails.
 
 Exit 0 when every row agrees; 1 on a difference, a one-sided output, a
 timeout on either side, or a run with no output at all; 2 when a binary is
-no executable file, or a CSV cannot be read, is of neither sample kind, has
-a row short of a path, or names an input outside the bench root or missing
-from it. Plain Python 3, stdlib only.
+no executable file, cannot run or does not answer --version, when both
+sides name one file (a binary agrees with itself), or when a CSV cannot be
+read, is of neither sample kind, has a row short of a path, or names an
+input outside the bench root or missing from it. Plain Python 3, stdlib
+only.
 """
 
 from __future__ import annotations
@@ -118,9 +120,11 @@ def run(binary: Path, job: Job, dest: Path, timeout: float) -> Run:
     return Run(code, dest.read_bytes() if dest.is_file() else None)
 
 
-def described(binary: Path) -> str:
+def described(binary: Path, timeout: float) -> str:
+    """BINARY's sha256 and its --version; an OSError when it cannot run and
+    subprocess.TimeoutExpired when it does not answer (#1780)."""
     sha = hashlib.sha256(binary.read_bytes()).hexdigest()
-    shown = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=60)
+    shown = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=timeout)
     return f"{binary} sha256 {sha} ({(shown.stdout or shown.stderr).strip()})"
 
 
@@ -154,6 +158,21 @@ def main() -> int:
         if not (binary.is_file() and os.access(binary, os.X_OK)):
             print(f"identity: {binary} is no executable file", file=sys.stderr)
             return 2
+    if os.path.samefile(args.bin_a, args.bin_b):
+        print(f"identity: BIN_A and BIN_B are one file ({args.bin_a}): a binary agrees with itself", file=sys.stderr)
+        return 2
+    # --version gets the row timeout, at most a minute
+    version_timeout = min(60.0, args.timeout)
+    shown = []
+    for binary in (args.bin_a, args.bin_b):
+        try:
+            shown.append(described(binary, version_timeout))
+        except subprocess.TimeoutExpired:
+            print(f"identity: {binary} --version did not answer in {version_timeout:g} s", file=sys.stderr)
+            return 2
+        except OSError as e:
+            print(f"identity: {binary} cannot run ({e.strerror or e})", file=sys.stderr)
+            return 2
     jobs = jobs_of(args.csvs, args.root.resolve())
     if isinstance(jobs, str):
         print(f"identity: {jobs}", file=sys.stderr)
@@ -165,8 +184,8 @@ def main() -> int:
         print(line, flush=True)
         log.write(line + "\n")
 
-    say(f"A: {described(args.bin_a)}")
-    say(f"B: {described(args.bin_b)}")
+    say(f"A: {shown[0]}")
+    say(f"B: {shown[1]}")
 
     def one(job: Job) -> tuple[Job, str | None, bool]:
         paths = (args.out_dir / f"{job.name}-a{job.suffix}", args.out_dir / f"{job.name}-b{job.suffix}")

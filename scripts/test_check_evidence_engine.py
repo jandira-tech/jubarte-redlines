@@ -189,6 +189,18 @@ class EvidenceEngine(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("comment-only", r.stdout)
 
+    def test_a_comment_only_change_outside_src_is_named(self) -> None:
+        # empryo on #1743 (#1781): an .rs under assets/ is an input as it
+        # stands, compared byte for byte like every non-source input
+        self.write("assets/helper.rs", "// one\npub fn h() {}\n")
+        engine = self.commit("an asset that is Rust")
+        self.write("assets/helper.rs", "// two\npub fn h() {}\n")
+        self.results(engine)
+        self.commit("its comment changed")
+        r = self.check()
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("assets/helper.rs", r.stderr)
+
     def test_code_beside_a_comment_is_compared(self) -> None:
         r = self.changed_rs("pub fn f() -> u8 { 1 } // one\n", "pub fn f() -> u8 { 2 } // one\n")
         self.assertEqual(r.returncode, 1, r.stdout)

@@ -135,9 +135,10 @@ COUNTED = re.compile(r"counting as 0 the (\d+)\b((?: [A-Za-z]+){0,2})")
 # "no failed …" in the measured sentence, in any case: a claim about the
 # samples. Another sentence's is not read: the checker cannot tell what it is
 # about ("No failed redlines are omitted …", a test suite's) (#1776).
-NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline)s?\b", re.I)
-# the nouns that speak for each sample ("item" speaks for both)
-NONE_WORDS = {"redline": ("redline", "item"), "conversion": ("document", "pdf", "item")}
+NO_FAILED = re.compile(r"\bno failed (document|item|PDF|redline|conversion|pair)s?\b", re.I)
+# the nouns that speak for each sample: every one COUNTED_WORDS knows, and
+# "item", which speaks for both (#1779)
+NONE_WORDS = {"redline": ("redline", "pair", "item"), "conversion": ("document", "pdf", "conversion", "item")}
 COUNTED_WORDS = {"redline": ("redline", "pair"), "conversion": ("document", "pdf", "conversion")}
 # the results' tool keys as the sentence names them
 DISPLAY = {"docxodus": "Docxodus", "soffice": "LibreOffice"}
