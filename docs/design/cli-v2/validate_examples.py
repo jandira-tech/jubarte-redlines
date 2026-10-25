@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Validate design schemas and a deliberately limited, in-memory text model.
 
 This DOES NOT execute the proposed CLI or edit DOCX packages. It cannot establish

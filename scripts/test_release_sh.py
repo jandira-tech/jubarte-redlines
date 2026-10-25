@@ -2165,5 +2165,95 @@ class EngineRepoBinding(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "GH_REPO=unset"), r.stderr)
 
 
+
+class AdoptionAndHeaders(unittest.TestCase):
+    """#1754 (checklist 4#2 and 5#1): a docs/adoption row this release ships
+    is not still labelled main, and every tracked file that can carry a
+    comment carries its SPDX header — `reuse lint` cannot see a missing one,
+    because REUSE.toml's `path = "**"` covers every file."""
+
+    # REUSE-IgnoreStart (headers these tests write, not this file's)
+    HEADER = "# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n#\n# SPDX-License-Identifier: AGPL-3.0-only\n"
+    LATE = "//! docs\n" + "// filler\n" * 600 + "// SPDX-License-Identifier: AGPL-3.0-only\n"
+    # REUSE-IgnoreEnd
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="adoption-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def run_fn(self, name: str) -> subprocess.CompletedProcess[str]:
+        script = f"set -euo pipefail\n{shell_functions(name)}\nout=$({name}) || exit 7\nprintf '%s' \"$out\"\n"
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp, capture_output=True, text=True, timeout=60)
+
+    def write(self, rel: str, text: str) -> None:
+        (self.tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.tmp / rel).write_text(text)
+
+    def test_a_row_still_labelled_main_is_listed(self) -> None:
+        self.write("docs/adoption/a.md", "| Tool | jubarte | Status |\n|---|---|---|\n"
+                   "| pandoc | `jubarte read` | released |\n| soffice | `jubarte convert` |  main |\n")
+        self.write("docs/adoption/README.md", "- **main**: merged, not yet released, on `main`.\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("a.md:4:", r.stdout)
+        self.assertNotIn("pandoc", r.stdout)
+        self.assertNotIn("README", r.stdout)
+
+    def test_released_and_pending_rows_pass(self) -> None:
+        self.write("docs/adoption/a.md", "| x | y | released |\n| z | `main` branch | pending |\n")
+        r = self.run_fn("adoption_main_rows")
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+    def test_no_adoption_pages_is_a_refusal_not_a_pass(self) -> None:
+        self.assertEqual(self.run_fn("adoption_main_rows").returncode, 7)
+
+    def git_repo(self) -> None:
+        git = ["git", "-C", str(self.tmp), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "add", "-A"], check=True)
+
+    def test_a_tracked_file_without_its_header_is_listed(self) -> None:
+        self.write("scripts/ok.py", "#!/usr/bin/env python3\n" + self.HEADER + "print(1)\n")
+        self.write("scripts/bare.py", "#!/usr/bin/env python3\nprint(1)\n")
+        self.write("tests/late.rs", self.LATE)
+        self.write("scripts/probe.zsh", "#!/usr/bin/env zsh\necho hi\n")
+        self.write("docs/notes.md", "no header needed\n")
+        self.git_repo()
+        self.write("scripts/untracked.py", "print(1)\n")  # not in the release
+        r = self.run_fn("headerless_files")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(r.stdout.split()), ["scripts/bare.py", "scripts/probe.zsh", "tests/late.rs"])
+
+    def test_generated_files_and_fixtures_are_not_asked_for_one(self) -> None:
+        # wasm-bindgen writes npm/'s glue and docs/api snapshots it; REUSE.toml
+        # carries tests/fixtures/' provenance (anymd's copied scripts among them)
+        self.write("jubarte-wasm/npm/web/jubarte_wasm.js", "export {}\n")
+        self.write("jubarte-wasm/npm/node/jubarte_wasm_bg.wasm.d.ts", "export {}\n")
+        self.write("docs/api/jubarte-wasm-node-v0.13.0.d.ts", "export {}\n")
+        self.write("tests/fixtures/from-docx/critic/synthesize.py", "print(1)\n")
+        self.write("jubarte-wasm/npm/build.mjs", "export {}\n")  # hand-written beside them
+        self.git_repo()
+        r = self.run_fn("headerless_files")
+        self.assertEqual((r.returncode, r.stdout.split()), (0, ["jubarte-wasm/npm/build.mjs"]), r.stderr)
+
+    def test_this_tree_has_no_headerless_file(self) -> None:
+        script = f"set -euo pipefail\n{shell_functions('headerless_files')}\nheaderless_files\n"
+        r = subprocess.run(["bash", "-c", script], cwd=RELEASE_SH.parent.parent,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+    def test_steps_4_and_5_die_on_them(self) -> None:
+        # step 5's header check sits beside the security scan, above the
+        # gates block, so --skip-gates does not skip it
+        text = RELEASE_SH.read_text()
+        s4 = step(4)
+        s5 = text[text.index("\nbash scripts/security-check.sh\n"):text.index('if [ "$SKIP_GATES" = 0 ]; then\n  say "5.')]
+        self.assertIn("adoption_main_rows", s4)
+        self.assertIn("die", s4[s4.index("adoption_main_rows"):][:600])
+        self.assertIn("headerless_files", s5)
+        self.assertIn("die", s5[s5.index("headerless_files"):][:600])
+        self.assertIn("4|auto|docs/adoption", RELEASE_SH.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

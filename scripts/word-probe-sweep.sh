@@ -1,4 +1,8 @@
 #!/usr/bin/env zsh
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+#
 # Ring 3 sweep over a directory of .docx, resilient to Word's failure modes.
 #
 # Four traps a naive loop falls into, each of which silently corrupts the result:

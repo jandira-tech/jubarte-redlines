@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! WebAssembly bindings for the canonical **jubarte-redlines** Word-mode compare.
 //!
 //! Built with **wasm-pack** + **wasm-opt -O3** (Binaryen) — the standard

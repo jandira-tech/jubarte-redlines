@@ -194,8 +194,8 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 3|auto|The evidence was scored on this tree's CLI engine: the commit both results JSONs name differs from HEAD in no engine input (src/ token for token, so comments aside; assets, schemas, keys byte for byte; Cargo.toml and Cargo.lock beyond the version and crates.io listing) — 0.11.2's evidence missed two code changes|python3 scripts/check_evidence_engine.py @V@
 3|auto|The measured NUMBERS sentence of --changelog-summary and of the app's CHANGELOG section states the evidence's own figures at two decimals — sample size, both means, the comparator, the failures; it reaches the GitHub notes, the app's About window and jubarte.pro, so a mismatch ships a wrong claim three times|python3 scripts/check_release_info.py @V@ --summary "<changelog summary>" --changelog jubarte-app/CHANGELOG.md
 4|auto|The five summaries + the docs statement land in their channels; step 4 lists the docs files changed since the previous tag beside the statement|scripts/release.sh step 4 (it greps each landing)
-4|you|docs/adoption pages: a row this release ships still labelled main flips to released by hand (the README's labels name no moving version); the docs statement is checked against the diff, these pages are not|grep -rn ' main ' docs/adoption
-5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint — every new file needs its SPDX headers|uv tool run --from reuse[charset-normalizer] reuse lint
+4|auto|docs/adoption pages: no row this release ships is still labelled main — step 4 dies naming each, to be flipped to released (the README's labels name no moving version)|scripts/release.sh step 4 (adoption_main_rows)
+5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint; and, even under --skip-gates, every tracked file that can carry a comment (outside wasm-bindgen's npm/ glue, its docs/api snapshots and tests/fixtures/) carries SPDX-License-Identifier in its first 4 KiB, which reuse lint cannot see under REUSE.toml's **|uv tool run --from reuse[charset-normalizer] reuse lint; scripts/release.sh step 5 (headerless_files)
 5|auto|Security scan: cargo-deny advisories across the five workspace manifests and gitleaks over the whole reachable history plus every publishable file — it runs even under --skip-gates|bash scripts/security-check.sh (unconditionally, just above the gates block)
 6|auto|API drift: the private rustdoc builds with warnings denied and its drift from the previous release's snapshot is logged; the sign-off is step 0's cargo-semver-checks gate (--open-docs also opens the rendered docs)|scripts/release.sh step 6; scripts/api_snapshot.py --drift <previous tag> v@V@
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
@@ -598,6 +598,29 @@ security_gate() {
     || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub, then rerun"
   step "security: no advisory in triage, no open medium-or-higher Dependabot or code-scanning alert"
 }
+# docs/adoption labels each row released, main or pending; a release ships
+# everything merged, so a row still labelled main is stale once it is out
+# (#1754). Lists those rows; fails when the pages cannot be read.
+adoption_main_rows() {
+  local rc=0
+  [ -d docs/adoption ] || return 1
+  grep -rnE '^\|.*\|[[:space:]]*main[[:space:]]*\|[[:space:]]*$' --include='*.md' docs/adoption || rc=$?
+  [ "$rc" -le 1 ]
+}
+# Each tracked file that can carry a comment and lacks SPDX-License-Identifier
+# in its first 4 KiB. `reuse lint` cannot see one, since REUSE.toml's
+# `path = "**"` covers every file (the 0.13.0 audit found six by hand,
+# #1754). wasm-bindgen writes npm/'s glue and the docs/api snapshots of it;
+# REUSE.toml carries tests/fixtures/' provenance.
+headerless_files() {
+  local f top
+  git ls-files -z -- '*.rs' '*.py' '*.sh' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.zsh' '*.awk' \
+      ':(exclude)jubarte-wasm/npm/*/jubarte_wasm*' ':(exclude)docs/api/*' ':(exclude)tests/fixtures/*' \
+    | while IFS= read -r -d '' f; do
+        top=$(head -c 4096 -- "$f" 2>/dev/null) || top=""
+        case "$top" in *SPDX-License-Identifier*) ;; *) printf '%s\n' "$f" ;; esac
+      done
+}
 # The canonical checkout (AGENTS.md) is the owner's working tree, never the
 # release tree (#1751): true when this tree is it, through any link.
 canonical_checkout() {
@@ -904,6 +927,12 @@ if [ -n "$PREV_TAG" ]; then
     | sort -u | sed 's/^/        /'
 fi
 step "how they were updated: $DOCS_UPDATED"
+main_rows=$(adoption_main_rows) || die "cannot read docs/adoption's status labels"
+if [ -n "$main_rows" ]; then
+  printf '%s\n' "$main_rows" | sed 's/^/        /' >&2
+  die "docs/adoption still labels these rows main, and $VER ships them — flip each to released"
+fi
+step "docs/adoption: no row still labelled main"
 check_now 4
 
 # Escape a value for a TOML basic string.
@@ -1010,6 +1039,11 @@ step "all five summaries + docs statement staged"
 
 # =============================================================================
 bash scripts/security-check.sh
+headerless=$(headerless_files) || die "cannot list the tracked files (git ls-files)"
+if [ -n "$headerless" ]; then
+  printf '%s\n' "$headerless" | sed 's/^/        /' >&2
+  die "these files carry no SPDX-License-Identifier in their first 4 KiB, which reuse lint cannot see (REUSE.toml's ** covers them) — add the header (AGENTS.md, Licensing and provenance)"
+fi
 if [ "$SKIP_GATES" = 0 ]; then
   say "5. Gates (sequential cargo, per AGENTS.md)"
   cargo fmt --check

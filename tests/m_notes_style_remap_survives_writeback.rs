@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Style renames applied to note parts must survive B.4 notes writeback.
 //!
 //! Hidden gem (CR #5): style remap walks footnotes/endnotes on `out`, then

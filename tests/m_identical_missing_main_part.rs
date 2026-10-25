@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Identical-input / drawing-id fixup must not accept a package whose main
 //! document part is missing. Returning Ok(bytes) masks corrupt input that the
 //! normal compare path would reject with PartNotFound.
