@@ -51,10 +51,11 @@ RUN_SCRIPT: str = str(DIFF_STEP["run"])
 # The skill files the workflow inlines, keyed by output name.
 SKILLS_DIR = WORKFLOW.parent.parent.parent / "skills" / "jules-el-conejo"
 LOAD_SKILL = re.compile(r"load_skill (\w+) (\S+\.md)")
+SKILL_FILES: dict[str, str] = dict(LOAD_SKILL.findall(str(step_by_id("skills")["run"])))
 SKILL_TEXT: dict[str, str] = {
-    key: (SKILLS_DIR / file).read_text(encoding="utf-8")
-    for key, file in LOAD_SKILL.findall(str(step_by_id("skills")["run"]))
+    key: (SKILLS_DIR / file).read_text(encoding="utf-8") for key, file in SKILL_FILES.items()
 }
+SKILL_BYTES = sum(len(text.encode("utf-8")) for text in SKILL_TEXT.values())
 
 
 def sh(cwd: Path, *cmd: str) -> str:
@@ -81,10 +82,11 @@ def fixture(root: Path, files: dict[str, bytes | str]) -> Path:
         (work / name).write_bytes(data)
     git("add", ".")
     git("commit", "-q", "-m", "change")
-    # The skills the prompt inlines, sized like the real ones.
+    # The real skills, so the step budgets for the text the prompt inlines.
     skills = work / ".jules-el-conejo-skills" / "skills" / "jules-el-conejo"
     skills.mkdir(parents=True)
-    (skills / "a.md").write_text("s" * 44_600, encoding="utf-8")
+    for key, file in SKILL_FILES.items():
+        (skills / file).write_text(SKILL_TEXT[key], encoding="utf-8")
     return work
 
 
@@ -221,8 +223,8 @@ class ConejoDiffStep(unittest.TestCase):
             outputs = run_step(work)
         self.assertEqual(outputs["truncated"], "true")
         size = len(outputs["diff"].encode("utf-8"))
-        # Skills (44,600) + diff must leave room under 131,058 for the rest.
-        self.assertLess(size + 44_600, 120_000)
+        # Skills + diff must leave room under 131,058 for the rest.
+        self.assertLess(size + SKILL_BYTES, 120_000)
         self.assertGreater(size, 10_000)
         # Every kept line is whole: the last one is a complete "+line N xxx..." line.
         last = outputs["diff"].rstrip().split("\n")[-1]
