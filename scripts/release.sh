@@ -186,6 +186,7 @@ before|you|Ring-3 Word open probe, the macOS release gate before any crates.io p
 before|you|lane validity: every sampled lane output's error kinds already exist in its sources (or are Word's own writing)|python3 lane_validity_vs_sources.py (bench results dir; logs to lane_validity.log)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|the queue-script pattern of the release work folder (queue.sh: one scorer at a time)
 0|auto|Preflight: main branch, clean tree, tools, gh credentials; crates.io + npm credentials and UV_PUBLISH_TOKEN only with --local-publish|scripts/release.sh step 0 (its die lines)
+0|auto|The release tree is never the canonical checkout (~/T/jubarte-redlines through any link, or JUBARTE_CANONICAL_CHECKOUT); HEAD's check runs that did not pass are printed as a CHECK NOW for the releaser to triage, and the run goes on (#1751)|scripts/release.sh step 0 (canonical_checkout, head_ci_report)
 0|auto|The app's step can run: its checkout (jubarte-app/ or JUBARTE_APP_DIR) carries scripts/release-engine.sh, a CHANGELOG section naming jubarte-redlines @V@, and is on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|jubarte-app/scripts/release-engine.sh @V@ --engine-dir "$PWD" --preflight
 1|auto|Version sync: every manifest, the 5 Cargo.locks, the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer|grep -n "^## \[@V@\]" CHANGELOG.md
@@ -597,6 +598,29 @@ security_gate() {
     || die "these security findings block the release (SECURITY.md): $(echo $blocking) — fix them, or dismiss each with its reason on GitHub, then rerun"
   step "security: no advisory in triage, no open medium-or-higher Dependabot or code-scanning alert"
 }
+# The canonical checkout (AGENTS.md) is the owner's working tree, never the
+# release tree (#1751): true when this tree is it, through any link.
+canonical_checkout() {
+  local canon=${JUBARTE_CANONICAL_CHECKOUT:-$HOME/T/jubarte-redlines}
+  [ -d "$canon" ] && [ "$(cd "$canon" && pwd -P)" = "$(pwd -P)" ]
+}
+# HEAD's check runs that did not pass, put in front of the releaser (#1751).
+# A red run may be billing, quota or an offline runner, so the run goes on.
+head_ci_report() {
+  local sha reds
+  sha=$(git rev-parse HEAD)
+  if ! reds=$(gh api "repos/jandira-tech/jubarte-redlines/commits/$sha/check-runs?per_page=100" --paginate \
+                -q '.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | "\(.name) \(.conclusion // .status)"' </dev/null); then
+    echo "  CHECK NOW  gh cannot read HEAD's check runs — read them: gh run list -R jandira-tech/jubarte-redlines --commit $sha"
+    return 0
+  fi
+  if [ -z "$reds" ]; then
+    step "every check run of HEAD passed"
+    return 0
+  fi
+  echo "  CHECK NOW  HEAD's check runs that did not pass — read each log; fix only genuine test or coverage failures:"
+  printf '%s\n' "$reds" | sed 's/^/             /'
+}
 # Queued CI waits behind nothing once release.yml needs the runners: every
 # run still in flight but release.yml's own is cancelled right before the
 # tag goes up (the push to main has just started CI and Docs again).
@@ -636,6 +660,8 @@ PY
 say "0. Preflight"
 # =============================================================================
 
+! canonical_checkout \
+  || die "this is the canonical checkout ($(pwd -P)), the owner's working tree — release from a clean worktree of main: git worktree add <dir> main (AGENTS.md)"
 [ "$(git branch --show-current)" = "main" ] \
   || die "release from main only (current: $(git branch --show-current))"
 
@@ -646,6 +672,7 @@ git fetch --quiet origin main
 [ -z "$(git status --porcelain)" ] \
   || die "working tree is dirty — commit or stash first:
 $(git status --porcelain | sed 's/^/       /')"
+head_ci_report
 
 for t in cargo cargo-deny cargo-semver-checks gitleaks bun npm gh wasm-pack node uv uvx; do
   command -v "$t" >/dev/null || die "missing tool: $t"

@@ -1934,6 +1934,97 @@ class SecurityGate(unittest.TestCase):
         self.assertLess(s0.index("\nsecurity_gate\n"), s0.index("bump_gate \"$PREV_RELEASE\""))
 
 
+# stub gh api for HEAD's check runs: the JSON fixture $FIX/runs.json through
+# the real jq, or an unreadable API when $FAIL is set.
+GH_CHECKS_STUB = r"""#!/bin/bash
+case "$1 $2" in
+  "api repos/jandira-tech/jubarte-redlines/commits/"*/check-runs*) ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+[ -z "${FAIL:-}" ] || { echo "HTTP 502" >&2; exit 1; }
+q=""
+while [ $# -gt 0 ]; do [ "$1" = -q ] && q=$2; shift; done
+jq -r "$q" "$FIX/runs.json"
+"""
+
+
+class ReleaseTree(unittest.TestCase):
+    """#1751 (checklist before#4 and before#9): the canonical checkout is the
+    owner's, never the release tree; and HEAD's CI that did not pass is put
+    in front of the releaser before anything is written."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="reltree-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def canonical(self, cwd: Path, canon: str) -> int:
+        script = f'set -euo pipefail\n{shell_functions("canonical_checkout")}\ncanonical_checkout\n'
+        return subprocess.run(["bash", "-c", script], cwd=cwd,
+                              env=dict(os.environ, JUBARTE_CANONICAL_CHECKOUT=canon),
+                              capture_output=True, text=True, timeout=30).returncode
+
+    def test_the_canonical_checkout_is_recognised_through_a_link(self) -> None:
+        real = self.tmp / "temp" / "jubarte-redlines"
+        real.mkdir(parents=True)
+        (self.tmp / "T").symlink_to(self.tmp / "temp")
+        self.assertEqual(self.canonical(real, str(self.tmp / "T" / "jubarte-redlines")), 0)
+        self.assertEqual(self.canonical(self.tmp / "T" / "jubarte-redlines", str(real)), 0)
+
+    def test_a_worktree_elsewhere_is_no_canonical_checkout(self) -> None:
+        (self.tmp / "canon").mkdir()
+        (self.tmp / "release-wt").mkdir()
+        self.assertNotEqual(self.canonical(self.tmp / "release-wt", str(self.tmp / "canon")), 0)
+        self.assertNotEqual(self.canonical(self.tmp / "release-wt", str(self.tmp / "absent")), 0)
+
+    def test_step_0_refuses_it_first(self) -> None:
+        s0 = step(0)
+        first = s0.index("canonical_checkout")
+        self.assertLess(first, s0.index("git fetch"))
+        self.assertIn("die", s0[first:first + 300])
+        self.assertIn("worktree", s0[first:first + 300])
+
+    def ci(self, runs: list[dict], **env: str) -> subprocess.CompletedProcess[str]:
+        import json
+        (self.tmp / "gh").write_text(GH_CHECKS_STUB)
+        (self.tmp / "gh").chmod(0o755)
+        (self.tmp / "runs.json").write_text(json.dumps({"check_runs": runs}))
+        script = (f'set -euo pipefail\nstep() {{ echo "  - $*"; }}\n'
+                  f'git() {{ echo 0123456789abcdef0123456789abcdef01234567; }}\n'
+                  f'{shell_functions("head_ci_report")}\nhead_ci_report\necho survived\n')
+        return subprocess.run(["bash", "-c", script], cwd=self.tmp,
+                              env=dict(os.environ, PATH=f"{self.tmp}:{os.environ['PATH']}", FIX=str(self.tmp), **env),
+                              capture_output=True, text=True, timeout=30)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_heads_red_checks_are_shown_and_the_run_goes_on(self) -> None:
+        r = self.ci([{"name": "test (ubuntu)", "status": "completed", "conclusion": "failure"},
+                     {"name": "clippy", "status": "completed", "conclusion": "success"},
+                     {"name": "coverage", "status": "completed", "conclusion": "cancelled"},
+                     {"name": "docs", "status": "in_progress", "conclusion": None},
+                     {"name": "fuzz", "status": "completed", "conclusion": "skipped"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        for name in ("test (ubuntu) failure", "coverage cancelled", "docs in_progress"):
+            self.assertIn(name, r.stdout)
+        for name in ("clippy", "fuzz"):
+            self.assertNotIn(name, r.stdout)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_all_green_says_so(self) -> None:
+        r = self.ci([{"name": "clippy", "status": "completed", "conclusion": "success"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("every check run of HEAD passed", r.stdout)
+
+    def test_an_unreadable_ci_is_named_not_fatal(self) -> None:
+        r = self.ci([], FAIL="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("survived", r.stdout)
+        self.assertIn("cannot read", r.stdout + r.stderr)
+
+    def test_step_0_reports_it(self) -> None:
+        self.assertIn("\nhead_ci_report\n", step(0))
+
+
 class AutomatedReview(unittest.TestCase):
     """#1742: checks a script can make are made by the script, not owed by a
     person: the release.yml review, the scripts' Python floor, the crate's
