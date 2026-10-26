@@ -2842,3 +2842,154 @@ fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
     ]);
     assert_eq!(cell_final_marks(&bytes).len(), 1);
 }
+
+/// The header and footer references of [`deleted_section_package`]
+/// (`rIdX0` is the header, `rIdX1` the footer).
+const HEADER_FOOTER_REFS: &str = r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#;
+
+/// A redline whose first section break is deleted, the header's and the
+/// footer's runs all deleted. `field` is the footer's field code; each
+/// `*_deleted` deletes that story's closing mark; `break_refs` opens the
+/// deleted break's `w:sectPr` and `final_refs` the body's own.
+fn deleted_section_package(
+    field: &str,
+    header_deleted: bool,
+    footer_deleted: bool,
+    break_refs: &str,
+    final_refs: &str,
+) -> Vec<u8> {
+    use common::docx::{Part, W_NS};
+    let by = r#"w:author="Ana" w:date="2026-10-25T00:00:00Z""#;
+    let mark = |deleted: bool, id: u32| {
+        if deleted {
+            format!(r#"<w:rPr><w:del w:id="{id}" {by}/></w:rPr>"#)
+        } else {
+            String::new()
+        }
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:pPr><w:pStyle w:val="Header"/>{}</w:pPr><w:del w:id="10" {by}><w:r><w:delText>Confidential</w:delText></w:r></w:del></w:p></w:hdr>"#,
+        mark(header_deleted, 11)
+    );
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p><w:pPr><w:jc w:val="right"/>{}</w:pPr><w:del w:id="20" {by}><w:r><w:delText xml:space="preserve">Page </w:delText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> {field} </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p></w:ftr>"#,
+        mark(footer_deleted, 21)
+    );
+    let body = format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {by}/></w:rPr><w:sectPr>{break_refs}</w:sectPr></w:pPr><w:del w:id="2" {by}><w:r><w:delText>Old section.</w:delText></w:r></w:del></w:p><w:p><w:r><w:t>Kept.</w:t></w:r></w:p>"#
+    );
+    let rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+    let ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
+    common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: &format!("{ct}header+xml"),
+                rel_type: &format!("{rel}header"),
+                xml: &header,
+            },
+            Part {
+                name: "word/footer1.xml",
+                content_type: &format!("{ct}footer+xml"),
+                rel_type: &format!("{rel}footer"),
+                xml: &footer,
+            },
+        ],
+        final_refs,
+    )
+}
+
+fn deleted_section_page_fields(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DELETED_SECTION_PAGE_FIELD")
+        .collect()
+}
+
+/// #1833: Word's own redline of the file_N family. A deleted break
+/// references a footer whose closing paragraph holds PAGE or NUMPAGES.
+/// Word 16.115 crashed opening it whatever the stories' marks: both live,
+/// either one deleted (probes n0, n23, n24), both deleted (s176, s472,
+/// round 18), and with a live section referencing the footer as well (n17,
+/// g1, g3), all 2026-10-25. It opened 8441c4ae21 and 82348eef4b: a lead,
+/// not Word-fatal, not repairable.
+#[test]
+fn probe_a_page_footer_a_deleted_break_references_is_a_lead() {
+    let footer_ref = r#"<w:footerReference w:type="default" r:id="rIdX1"/>"#;
+    for (field, header_deleted, footer_deleted, final_refs) in [
+        ("PAGE", false, false, ""),
+        ("NUMPAGES", false, false, ""),
+        ("PAGE", true, false, ""),
+        ("PAGE", false, true, ""),
+        ("PAGE", true, true, ""),
+        ("PAGE", true, true, footer_ref),
+    ] {
+        let bytes = deleted_section_package(
+            field,
+            header_deleted,
+            footer_deleted,
+            HEADER_FOOTER_REFS,
+            final_refs,
+        );
+        let found = deleted_section_page_fields(&bytes);
+        let case = format!(
+            "{field} header_deleted={header_deleted} footer_deleted={footer_deleted} final_refs={final_refs}"
+        );
+        assert_eq!(found.len(), 1, "{case}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.part, "word/footer1.xml", "{case}");
+        assert_eq!(finding.location, "w:p[0]", "{case}");
+        assert_eq!(finding.severity, "warning", "{case}: {finding:?}");
+        assert!(
+            !finding.word_fatal && !finding.repairable,
+            "{case}: {finding:?}"
+        );
+    }
+}
+
+/// #1833: what Word opens passes. The references moved from the deleted
+/// break to the live final section (g2, g4 and all ten flagged redlines,
+/// round 18), or a field that is no page number (a30c48b63b's DOCPROPERTY).
+#[test]
+fn a_page_footer_no_deleted_break_references_passes() {
+    for (field, break_refs, final_refs, case) in [
+        (
+            "PAGE",
+            "",
+            HEADER_FOOTER_REFS,
+            "references on the live section",
+        ),
+        ("DOCPROPERTY Title", HEADER_FOOTER_REFS, "", "no page field"),
+    ] {
+        let bytes = deleted_section_package(field, true, true, break_refs, final_refs);
+        assert_eq!(deleted_section_page_fields(&bytes), [], "{case}");
+        assert_word_valid_package(&bytes);
+    }
+    // The field in the last paragraph of a content control that ends the
+    // story, every mark live: Word opened both such footers of the sample
+    // (25e6d4b508, 7c98e8f2b6).
+    let mut pkg = PartFs::open(&deleted_section_package(
+        "PAGE",
+        false,
+        false,
+        HEADER_FOOTER_REFS,
+        "",
+    ))
+    .unwrap();
+    let footer = pkg.part_string("word/footer1.xml").unwrap();
+    let (start, end) = (
+        footer.find("<w:p>").unwrap(),
+        footer.rfind("</w:p>").unwrap() + 6,
+    );
+    let wrapped = format!(
+        "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        &footer[..start],
+        &footer[start..end],
+        &footer[end..]
+    );
+    pkg.set_part("word/footer1.xml", wrapped.into_bytes());
+    let bytes = pkg.to_zip().unwrap();
+    assert_eq!(deleted_section_page_fields(&bytes), [], "content control");
+    assert_word_valid_package(&bytes);
+}

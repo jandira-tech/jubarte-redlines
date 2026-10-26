@@ -51,6 +51,7 @@
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
+//! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -206,7 +207,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 30] = [
+const RING1_CODES: [&str; 31] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
@@ -237,6 +238,7 @@ const RING1_CODES: [&str; 30] = [
     "COMMENT_METADATA_MISMATCH",
     "STYLE_NAME_COMMA",
     "CELL_FINAL_MARK_REVISION",
+    "DELETED_SECTION_PAGE_FIELD",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1243,7 +1245,89 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_move_range_counts(pkg, &mut out);
     check_data_bindings_have_stores(pkg, &mut out);
     check_cell_final_marks(pkg, &mut out);
+    check_deleted_section_page_fields(pkg, &mut out);
     out
+}
+
+/// A deleted section break that references a header or footer whose
+/// closing paragraph holds a PAGE or NUMPAGES field. Word's own Compare
+/// writes it when the revision drops the original's sections and
+/// page-number footer. Word 16.115 crashed opening 9 of the 11 such
+/// redlines in the 0.14.0 release sample, so it is a lead (#1833). Whether
+/// Word crashes depends on the layout, not on the story's marks: the
+/// story's text live, deleted, or deleted with every mark crashed alike
+/// (s176, s472), and so did a live section referencing the story as well.
+/// Word opened each of them once no deleted break referenced the story. A
+/// story that ends in a content control has no closing paragraph here:
+/// Word opened both such footers (25e6d4b508, 7c98e8f2b6), the field in
+/// the control's last paragraph.
+fn check_deleted_section_page_fields(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    if !pkg
+        .part_bytes(&main)
+        .is_some_and(|bytes| bytes.windows(9).any(|w| w == b"Reference"))
+    {
+        return;
+    }
+    let Some((dom, root)) = parse_part(pkg, &main) else {
+        return;
+    };
+    let sections = crate::document_comparer::section_story_parts(&dom, root, pkg, &main);
+    let mut seen = HashSet::new();
+    for part in sections
+        .iter()
+        .filter(|(deleted, _)| *deleted)
+        .flat_map(|(_, parts)| parts)
+    {
+        if !seen.insert(part) {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, part) else {
+            continue;
+        };
+        let Some(last) = closing_paragraph(&dom, root).filter(|&p| holds_page_field(&dom, p))
+        else {
+            continue;
+        };
+        out.push(Finding::new(
+            "DELETED_SECTION_PAGE_FIELD",
+            part,
+            element_path(&dom, last),
+            "a deleted section break references this story, whose closing paragraph holds a PAGE or NUMPAGES field; Word 16.115 crashed opening such redlines whatever the story's marks (#1833). Word opened them once no deleted section break referenced the story".to_string(),
+        ));
+    }
+}
+
+/// A story's closing paragraph: its last block when that is a paragraph of
+/// its own, not one in a content control, a custom XML element or a table.
+fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
+    let blocks = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
+    dom.elements(story, None)
+        .into_iter()
+        .rev()
+        .find(|&child| blocks.iter().any(|name| dom.name_is(child, name)))
+        .filter(|&last| dom.name_is(last, &W::p()))
+}
+
+/// Whether paragraph `p` holds a PAGE or NUMPAGES field: a field code
+/// (`w:instrText`, `w:delInstrText`, a `w:fldSimple`'s `w:instr`) whose
+/// first word is one of them.
+fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
+    let page = |code: &str| {
+        code.split_whitespace().next().is_some_and(|word| {
+            word.eq_ignore_ascii_case("PAGE") || word.eq_ignore_ascii_case("NUMPAGES")
+        })
+    };
+    dom.descendants(p, None).into_iter().any(|n| {
+        if dom.name_is(n, &W::name("instrText")) || dom.name_is(n, &W::name("delInstrText")) {
+            page(&dom.value(n))
+        } else {
+            dom.name_is(n, &W::name("fldSimple"))
+                && dom.attribute(n, &W::name("instr")).is_some_and(page)
+        }
+    })
 }
 
 /// A table cell's final paragraph mark inserted or deleted while its row

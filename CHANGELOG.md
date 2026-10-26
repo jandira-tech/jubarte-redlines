@@ -22,6 +22,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 ### Added
 
 - **`jubarte debug FILE -c tables` lists every table's grid, rows and cells** (#1817). Each cell shows its width, span and vertical merge, its revision marks and the old properties its `tcPrChange` records, then its text; nested tables are indented under their cell, and each table shows its old grid and `tblPrChange`. `debug` is the maintainer tool hidden from `jubarte --help`.
+- **`jubarte validate` reports `DELETED_SECTION_PAGE_FIELD`** (#1833). This is a warning on a header or footer that a deleted section break references, whose closing paragraph holds a PAGE or NUMPAGES field. Word 16.115 crashed opening 9 of the 11 release-sample redlines with that shape, whatever the story's marks said. It is a warning rather than an error, because Word opened the other 2.
 
 ### Changed
 
@@ -29,6 +30,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- **Word opens 7 of the 9 redlines whose deleted section breaks carried a page-numbered footer** (#1833). When the revision drops a header or footer that only section breaks the redline deletes reference, Word mode now deletes the whole story, its closing paragraph mark included, and the paragraphs keep their own properties. Word's own redline keeps that mark live, and Word 16.115 crashed opening it, its own included, when the footer held a PAGE or NUMPAGES field: 9 of the 23 release-sample redlines (#1814). Word now opens 7 of them; 2 still crash, because the deleted break references the footer at all. Accepting gives an empty story and rejecting the original one. A story a live section also references keeps Word's shape (docs/WORD_DIFFERENCES.md).
 - **A paragraph between two deleted tables stays between them in Word mode** (#1826). When a revision replaced a body of `table, paragraph, table` with new text, the default mode moved the original's middle paragraph, carrying the new text, ahead of the first table. That left the two deleted tables adjacent, and `jubarte reject` fused them into one table. The paragraph now keeps its place between the tables, as in Word's redline, and rejecting gives the original's two tables back. The new text stays on that paragraph, where Word puts it in a paragraph of its own ahead of the first table (docs/WORD_DIFFERENCES.md).
 
 ## [0.14.0] - 2026-10-24

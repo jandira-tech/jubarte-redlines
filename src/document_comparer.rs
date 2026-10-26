@@ -164,22 +164,97 @@ fn header_footer_refs_by_section(pkg: &PartFs) -> (usize, Vec<SectionRef>) {
             if let Some(rid) = d.attribute(r, &R::name("id"))
                 && let Some(&tgt) = id_to_target.get(rid)
             {
-                let resolved = pkg.resolve_rel_target(&main, tgt);
-                // Prefer the actual OPC target. Historical generators also
-                // wrote package-root Word paths as relative targets; keep
-                // that fallback only when the resolved part is absent.
-                let part = if pkg.part_bytes(&resolved).is_some() {
-                    resolved
-                } else if tgt.starts_with("word/") && pkg.part_bytes(tgt).is_some() {
-                    tgt.to_string()
-                } else {
-                    resolved
-                };
-                out.push((section, kind.to_string(), ty, part));
+                out.push((
+                    section,
+                    kind.to_string(),
+                    ty,
+                    referenced_part(pkg, &main, tgt),
+                ));
             }
         }
     }
     (sections.len(), out)
+}
+
+/// The part a relationship target of `main` names. Prefer the actual OPC
+/// target. Historical generators also wrote package-root Word paths as
+/// relative targets; keep that fallback only when the resolved part is
+/// absent.
+fn referenced_part(pkg: &PartFs, main: &str, target: &str) -> String {
+    let resolved = pkg.resolve_rel_target(main, target);
+    if pkg.part_bytes(&resolved).is_some() {
+        resolved
+    } else if target.starts_with("word/") && pkg.part_bytes(target).is_some() {
+        target.to_string()
+    } else {
+        resolved
+    }
+}
+
+/// Each section of the redline `root` in order, as (its break is deleted,
+/// the header/footer parts it references). A paragraph's `w:sectPr` whose
+/// mark is deleted is a deleted break; any other paragraph's, and the
+/// body's own, is a live section.
+pub(crate) fn section_story_parts(
+    dom: &Dom,
+    root: NodeId,
+    pkg: &PartFs,
+    main: &str,
+) -> Vec<(bool, Vec<String>)> {
+    let Some(rels) = pkg.read_rels_for(main) else {
+        return Vec::new();
+    };
+    let targets: std::collections::HashMap<&str, &str> = rels
+        .items
+        .iter()
+        .map(|r| (r.id.as_str(), r.target.as_str()))
+        .collect();
+    section_props(dom, root)
+        .into_iter()
+        .map(|sect| {
+            let deleted = dom
+                .parent(sect)
+                .filter(|&p| dom.name_is(p, &W::p_pr()))
+                .and_then(|p| dom.element(p, &W::r_pr()))
+                .is_some_and(|r| dom.element(r, &W::del()).is_some());
+            let parts = dom
+                .elements(sect, None)
+                .into_iter()
+                .filter(|&r| {
+                    dom.name_is(r, &W::name("headerReference"))
+                        || dom.name_is(r, &W::name("footerReference"))
+                })
+                .filter_map(|r| targets.get(dom.attribute(r, &R::name("id"))?))
+                .map(|target| referenced_part(pkg, main, target))
+                .collect();
+            (deleted, parts)
+        })
+        .collect()
+}
+
+/// The header/footer parts that only deleted section breaks of the redline
+/// `root` reference: no live section references them (see
+/// [`section_story_parts`]). Nothing shows such a part once the breaks are
+/// accepted.
+fn parts_only_deleted_breaks_reference(
+    dom: &Dom,
+    root: NodeId,
+    pkg: &PartFs,
+    main: &str,
+) -> std::collections::HashSet<String> {
+    let sections = section_story_parts(dom, root, pkg, main);
+    let live: std::collections::HashSet<&String> = sections
+        .iter()
+        .filter(|(deleted, _)| !deleted)
+        .flat_map(|(_, parts)| parts)
+        .collect();
+    sections
+        .iter()
+        .filter(|(deleted, _)| *deleted)
+        .flat_map(|(_, parts)| parts)
+        .filter(|part| !live.contains(part))
+        .cloned()
+        .collect()
 }
 
 /// A document's sections in order: each paragraph mark's `w:sectPr`, then
@@ -5592,11 +5667,13 @@ fn mark_adopted_hf_content_as_inserted(
 /// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
 /// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378. The rule
 /// holds per kind: a revision that keeps its headers but has no footer drops
-/// the original's footers too (bc0135eaa1).
+/// the original's footers too (bc0135eaa1). A part in `dead_only` (only
+/// deleted section breaks reference it) goes as a whole story (#1833).
 fn mark_a_only_hf_content_as_deleted(
     out: &mut PartFs,
     pkg1: &PartFs,
     pkg2: &PartFs,
+    dead_only: &std::collections::HashSet<String>,
     settings: &WmlComparerSettings,
 ) {
     let b_refs = header_footer_refs(pkg2);
@@ -5607,7 +5684,8 @@ fn mark_a_only_hf_content_as_deleted(
             continue;
         }
         // Part may be stored under the same name in out (A-based package).
-        mark_hf_part_content_as_deleted(out, &part, settings);
+        let whole_story = dead_only.contains(&part);
+        mark_hf_part_content_as_deleted(out, &part, settings, whole_story);
     }
 }
 
@@ -5688,7 +5766,21 @@ fn delete_story_closing_mark(dom: &mut Dom, story: NodeId, settings: &WmlCompare
 /// content control keeps its mark as well. (Word also restyles that blank
 /// paragraph with a style it picks by index from the other document, e.g.
 /// `ListParagraph` for a footer; that is not copied.)
-fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlComparerSettings) {
+///
+/// A `whole_story` (one only deleted section breaks reference) loses its
+/// last mark too, the paragraph keeping its own properties: no revised
+/// paragraph stands in for it, as nothing shows the story once the breaks
+/// are accepted. This is Docxodus' shape, and Word's Accept All of it
+/// empties the story. Word 16.115 crashed opening Word's own shape of 9
+/// redlines whose footer holds a PAGE or NUMPAGES field. With every mark
+/// deleted it opened 7 of them; s176 and s472 still crash, because a
+/// deleted break references the footer at all (#1833).
+fn mark_hf_part_content_as_deleted(
+    out: &mut PartFs,
+    part: &str,
+    settings: &WmlComparerSettings,
+    whole_story: bool,
+) {
     let Some(xml) = out.part_string(part) else {
         return;
     };
@@ -5753,7 +5845,7 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
             dom.name(c) == Some(W::name("sdtContent"))
                 && dom.elements(c, Some(&W::p())).last() == Some(&p)
         });
-        if Some(p) == story_last {
+        if Some(p) == story_last && !whole_story {
             reset_to_blank_paragraph(&mut dom, p, own_style, &mut revision);
         } else if !ends_content_control {
             // Word's PAGE + label shape: the mark goes with the content.
@@ -6802,7 +6894,8 @@ fn compare_documents_impl(
             &final_header_footer_slots(&pkg2),
         );
         // M383: A-only HF (B has no headers/footers) → pure-D (Word).
-        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, settings);
+        let dead_only = parts_only_deleted_breaks_reference(&dom, result_root, &out, &main1);
+        mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, &dead_only, settings);
     }
 
     // M35: comments carryover is a package-validity invariant, not a
@@ -9553,11 +9646,59 @@ mod coverage_boundary_tests {
         assert_eq!(pkg.part_string("word/header.xml").unwrap(), before);
     }
 
+    /// #1833: a footer only deleted section breaks reference goes as a
+    /// whole story. Its closing mark is deleted with the rest and keeps its
+    /// own properties; no blank paragraph stands in for it. A content
+    /// control's last paragraph still keeps its mark.
+    #[test]
+    fn a_whole_story_footer_loses_its_closing_mark_too() {
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/footer.xml", xml("ftr", "<w:sdt><w:sdtContent><w:p><w:r><w:t>Control</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:pPr><w:pStyle w:val=\"Footer\"/><w:jc w:val=\"right\"/></w:pPr><w:r><w:t xml:space=\"preserve\">Page </w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>").into_bytes());
+        mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), true);
+        let (dom, r) = part_root(&pkg, "word/footer.xml");
+        let paras = dom.descendants(r, Some(&W::p()));
+        assert!(
+            dom.element(paras[0], &W::p_pr()).is_none(),
+            "the control's last paragraph keeps its mark"
+        );
+        let ppr = child(&dom, paras[1], "pPr");
+        assert_eq!(children(&dom, ppr), ["pStyle", "jc", "rPr"]);
+        assert_eq!(children(&dom, child(&dom, ppr, "rPr")), ["del"]);
+        assert_eq!(
+            dom.attribute(child(&dom, ppr, "jc"), &W::val()),
+            Some("right")
+        );
+        assert!(dom.descendants(r, Some(&W::t())).is_empty());
+        assert_eq!(dom.descendants(r, Some(&W::name("delText"))).len(), 2);
+    }
+
+    /// #1833: the parts only deleted section breaks reference. A part a
+    /// live break or the body's own section references too is not one.
+    #[test]
+    fn only_parts_no_live_section_references_are_dead_only() {
+        let mut pkg = package("<w:body/>");
+        let header = pkg.add_document_relationship(MAIN, &format!("{REL}header"), "header1.xml");
+        let shared = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer1.xml");
+        let last = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer2.xml");
+        let deleted = "<w:rPr><w:del w:id='1' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:rPr>";
+        let body = format!(
+            "<w:body>\
+             <w:p><w:pPr>{deleted}<w:sectPr><w:headerReference w:type='default' r:id='{header}'/><w:footerReference w:type='default' r:id='{shared}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:sectPr><w:footerReference w:type='default' r:id='{shared}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr><w:footerReference w:type='default' r:id='{last}'/><w:sectPrChange w:id='2'><w:sectPr/></w:sectPrChange></w:sectPr>\
+             </w:body>"
+        );
+        let mut dom = Dom::new();
+        let root = root(&mut dom, &xml("document", &body));
+        let dead = parts_only_deleted_breaks_reference(&dom, root, &pkg, MAIN);
+        assert_eq!(dead, HashSet::from(["word/header1.xml".to_string()]));
+    }
+
     #[test]
     fn deleted_footer_preserves_last_mark_and_records_original_properties() {
         let mut pkg = package("<w:body/>");
         pkg.set_part("word/footer.xml", xml("ftr", "<w:p><w:r><w:t>First</w:t></w:r></w:p><w:sdt><w:sdtContent><w:p><w:r><w:t>Control</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:pPr><w:pStyle w:val=\"Footer\"/><w:spacing w:after=\"300\"/><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr><w:sectPr/></w:pPr><w:r><w:t>Last</w:t></w:r></w:p>").into_bytes());
-        mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+        mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), false);
         let (dom, r) = part_root(&pkg, "word/footer.xml");
         let paras = dom.descendants(r, Some(&W::p()));
         let first = child(&dom, paras[0], "del");
@@ -9611,7 +9752,7 @@ mod coverage_boundary_tests {
             let mut pkg = package("<w:body/>");
             pkg.set_part("word/footer.xml", xml("ftr", rows).into_bytes());
             if deleted {
-                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), false);
             } else {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
@@ -9632,7 +9773,7 @@ mod coverage_boundary_tests {
             );
             let before = pkg.part_string("word/footer.xml").unwrap();
             if deleted {
-                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), false);
             } else {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
@@ -9649,7 +9790,7 @@ mod coverage_boundary_tests {
             let mut pkg = package("<w:body/>");
             pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
             if deleted {
-                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), false);
             } else {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
@@ -9677,7 +9818,7 @@ mod coverage_boundary_tests {
             let mut pkg = package("<w:body/>");
             pkg.set_part("word/footer.xml", xml("ftr", story).into_bytes());
             if deleted {
-                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+                mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings(), false);
             } else {
                 mark_adopted_hf_content_as_inserted(&mut pkg, "word/footer.xml", &settings());
             }
@@ -9703,7 +9844,7 @@ mod coverage_boundary_tests {
     fn deletion_skips_inbound_changes_and_preserves_existing_blank_history() {
         let mut pkg = package("<w:body/>");
         pkg.set_part("word/header.xml", xml("hdr", "<w:p><w:ins w:id=\"90\"><w:r><w:t>pending</w:t></w:r></w:ins></w:p><w:p><w:pPr><w:rPr><w:i/><w:rPrChange w:id=\"91\"><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr><w:jc w:val=\"right\"/><w:pPrChange w:id=\"92\"><w:pPr/></w:pPrChange></w:pPr><w:bookmarkStart w:id=\"2\"/></w:p>").into_bytes());
-        mark_hf_part_content_as_deleted(&mut pkg, "word/header.xml", &settings());
+        mark_hf_part_content_as_deleted(&mut pkg, "word/header.xml", &settings(), false);
         let (dom, r) = part_root(&pkg, "word/header.xml");
         assert_eq!(dom.descendants(r, Some(&W::ins())).len(), 1);
         assert!(dom.descendants(r, Some(&W::del())).is_empty());
@@ -10220,7 +10361,7 @@ mod coverage_boundary_tests {
                 pkg.set_part(part, Vec::new());
             }
             mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings());
-            mark_hf_part_content_as_deleted(&mut pkg, part, &settings());
+            mark_hf_part_content_as_deleted(&mut pkg, part, &settings(), false);
             assert_eq!(
                 pkg.part_bytes(part),
                 if part.ends_with("empty.xml") {
@@ -10905,7 +11046,7 @@ mod coverage_boundary_tests {
             .into_bytes(),
         );
         let mut out = PartFs::open(&a.to_zip().unwrap()).unwrap();
-        mark_a_only_hf_content_as_deleted(&mut out, &a, &b, &settings());
+        mark_a_only_hf_content_as_deleted(&mut out, &a, &b, &HashSet::new(), &settings());
         assert_eq!(
             out.part_string("word/header.xml"),
             a.part_string("word/header.xml")
@@ -12537,7 +12678,7 @@ mod isolated_header_container_revision_boundary_tests {
                         };
                         let main = pkg.part_bytes("word/document.xml").unwrap().to_vec();
                         if deleting {
-                            mark_hf_part_content_as_deleted(&mut pkg, part, &settings);
+                            mark_hf_part_content_as_deleted(&mut pkg, part, &settings, false);
                         } else {
                             mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings);
                         }

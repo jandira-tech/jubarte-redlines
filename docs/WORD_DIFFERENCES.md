@@ -347,6 +347,33 @@ for `fill_control`, the clean edit output also retains the control.
   would mean splitting the paragraph into a new inserted paragraph and the
   deleted mark; that is open.
 
+### 15. A header or footer only deleted section breaks reference (Compare, #1833)
+
+- **What happens.** The revision drops a header or footer, and the only
+  section breaks that reference it are breaks the redline deletes. Word
+  deletes every run of the story but keeps its closing paragraph mark
+  live, reset to a blank paragraph whose `pPrChange` holds the old
+  properties. When that footer holds a PAGE or NUMPAGES field, Word 16.115
+  crashes opening the redline, its own included (the `file_N` family, 9 of
+  the 23 release-sample redlines of #1814; s548 is `df9ffe9a8c_file_16` →
+  `ec900bd182_file_17`).
+- **What we do.** In Word mode, such a story is deleted whole: every
+  paragraph mark goes, the closing one included, and each paragraph keeps
+  its own properties (no `pPrChange`). A content control's last paragraph
+  keeps its mark, as before. Its Accept All gives an empty story and its
+  Reject All the original one, and `jubarte accept`/`reject` do the same.
+  A story a live section also references keeps Word's shape (s016).
+- **Which is better.** Ours, but it is not enough. Word opens 7 of the 9
+  with every mark deleted. s176 (`file_9` → `file_10`) and s472
+  (`file_27` → `file_28`) still crash, because the crash depends on the
+  layout, not the marks: a deleted break that references a footer with a
+  PAGE or NUMPAGES field crashed Word whether the story's text was live,
+  deleted, or deleted with every mark, and with a live section
+  referencing the footer too (round 18, 2026-10-25). Word opened all of
+  them once no deleted break referenced the footer. `jubarte validate`
+  reports that shape as the `DELETED_SECTION_PAGE_FIELD` lead, a warning,
+  because Word opened 2 of the 11 such redlines in the release sample.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
