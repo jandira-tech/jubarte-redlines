@@ -48,7 +48,7 @@ jobs:
     # twice) + 15 min for session start-up, checkout and posting.
     timeout-minutes: 180
     concurrency:
-      group: jules-review-${{ github.event.pull_request.number }}
+      group: jules-api
       # Queue instead of cancel: a cancelled run still spends the Jules session it started.
       cancel-in-progress: false
     permissions:
@@ -107,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: jules-el-conejo-${{ github.event.pull_request.number || inputs.pr_number }}
+      group: jules-api
       # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
       cancel-in-progress: false
     permissions:
