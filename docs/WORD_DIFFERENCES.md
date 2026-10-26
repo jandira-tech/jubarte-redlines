@@ -374,18 +374,44 @@ for `fill_control`, the clean edit output also retains the control.
   breaks moves to the final section: the final section references it, and
   no deleted break does. A header without a page field stays on its
   break. Word opens all 9 that way.
+
+  Six of the full corpus's 16 such crashers crash with every mark deleted
+  (s176, s472, 703530e684, 6bd2deb635, 8568ca15a1, aed2c1780a), and Word's
+  own redline of each of the six crashes Word too (round 23). Word's log
+  names its table cache: `TchtCorruption_MissingTtp` at the end of a
+  deleted row whose next paragraph's mark is deleted. Where that happens
+  depends on the layout. No shape that keeps the reference on the break
+  opened them. We tried ghost paragraphs (mark inserted and deleted) after
+  or between the deleted tables, the field in a page-number content
+  control, `w:fldSimple`, PAGE alone, NUMPAGES alone, and a transplant of
+  Word's own body.
+- **When it moves.** Two conditions hold the move back, so it never costs
+  more than a blank:
+  - The redline must delete a table row. Word's crash is in its table
+    cache, and none of the 10 corpus redlines with the shape and no
+    deleted row crashed.
+  - No section before the story's first break may set the slot. Otherwise
+    Reject All would show that section's footer on the moved break's pages:
+    four 21-section trusts (e.g. 2fe0dc77f9, `24b9811b05_file_22` →
+    `7226967373_file_23`) labelled exhibit G-2's pages "G-1". Word opens
+    all four with the reference left on its break.
+
+  Of the full corpus's 53 redlines with the shape, the move applies to 18:
+  the 16 that crashed in 0.14.0, and two that delete rows.
 - **Accept and reject.** Word's Accept All gives the revision: nothing
   shows the emptied story. Word's Reject All gives the original's text,
-  and its header on every page. But the page-number footer shows on the
-  last section only: s548's pages 7–11, where the original shows it on all
-  11. A `sectPrChange` cannot record header or footer references, so no
-  redline can give them back to the deleted breaks. `jubarte accept` and
-  `reject` give the same result.
+  and its header on every page. Where the footer moved, the page-number
+  footer shows on the last section only: s548's pages 7–11, where the
+  original shows it on all 11. The pages before carry no footer, never
+  another section's. A `sectPrChange` cannot record header or footer
+  references, so no redline can give them back to the deleted breaks.
+  `jubarte accept` and `reject` give the same result.
 - **Which is better.** Ours. Word crashes on its own shape, and a redline
-  Word cannot open shows nothing. The cost is that rejected footer on the
-  earlier sections. Stories the final section does not inherit stay on
-  their breaks. s356 has 19 deleted breaks, each with its own page-number
-  footer, and Word opens it. `jubarte validate` reports those breaks as the
+  Word cannot open shows nothing. The cost is the blank rejected footer on
+  the earlier sections of the redlines that moved. Stories the final
+  section does not inherit, and stories held back, stay on their breaks.
+  s356 has 19 deleted breaks, each with its own page-number footer, and
+  Word opens it. `jubarte validate` reports those breaks as the
   `DELETED_SECTION_PAGE_FIELD` lead, a warning: Word crashed on 9 of the 11
   release-sample redlines with that shape.
 

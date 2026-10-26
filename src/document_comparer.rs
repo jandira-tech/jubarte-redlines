@@ -263,14 +263,19 @@ fn parts_only_deleted_breaks_reference(
 /// the story it inherits from the nearest earlier section moves when that
 /// section is a deleted break, no live section references the story, and
 /// the story's closing paragraph holds a PAGE or NUMPAGES field. The final
-/// section then references it, and no deleted break does.
+/// section then references it, and no deleted break does. Two more
+/// conditions: the redline deletes a table row, and no section before the
+/// story's first break sets the slot.
 ///
 /// A deleted break that references such a footer crashed Word 16.115
-/// whatever the story's marks (s176, s472, #1833), and Word opened every
-/// one once the reference moved. Accepted, nothing shows the story, as in
-/// Word's Accept All; rejected, only the last section shows it, since a
-/// `sectPrChange` cannot record references. Other stories keep their
-/// breaks, and `jubarte validate` reports them
+/// whatever the story's marks (s176, s472, #1833), Word's own redline
+/// included, and Word opened every one once the reference moved. Word logs
+/// the crash in its table cache, at the end of a deleted row. Accepted,
+/// nothing shows the story, as in Word's Accept All; rejected, the breaks
+/// that lost the reference show no footer, since a `sectPrChange` cannot
+/// record references. Where an earlier section sets the slot, they would
+/// show that section's footer instead, so the reference stays. Stories
+/// that stay keep their breaks, and `jubarte validate` reports them
 /// (`DELETED_SECTION_PAGE_FIELD`).
 fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, main: &str) {
     let Some(rels) = pkg.read_rels_for(main) else {
@@ -286,6 +291,15 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
         return;
     };
     if !dom.parent(last).is_some_and(|p| dom.name_is(p, &W::body())) {
+        return;
+    }
+    // Word's crash is in its table cache, at the end of a deleted row: no
+    // deleted row, no move (0 of the 10 such corpus redlines crashed).
+    let deletes_a_row = dom
+        .descendants(root, Some(&W::tr_pr()))
+        .into_iter()
+        .any(|pr| dom.element(pr, &W::del()).is_some());
+    if !deletes_a_row {
         return;
     }
     let deleted = |dom: &Dom, sect: NodeId| {
@@ -330,7 +344,16 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
         }
     }
     for (slot, (sect, reference, part)) in inherited {
+        // Rejected, the breaks that lose the reference show the slot of the
+        // section before them: another section's story when one sets it
+        // (the trusts' exhibit labels). Only an unset slot, a blank, moves.
+        let shadowed = earlier
+            .iter()
+            .map(|&s| references(dom, s))
+            .take_while(|refs| !refs.iter().any(|(_, s, p)| *s == slot && *p == part))
+            .any(|refs| refs.iter().any(|(_, s, _)| *s == slot));
         if set.contains(&slot)
+            || shadowed
             || !deleted(dom, sect)
             || live.contains(&part)
             || !story_closes_with_page_field(pkg, &part)
@@ -9800,9 +9823,11 @@ mod coverage_boundary_tests {
     }
 
     /// #1833: the page-number footer the final section inherits through a
-    /// deleted break moves to the final section. A header without a page
-    /// field, a slot the final section sets itself, and a story a live
-    /// break hands down stay where they are.
+    /// deleted break moves to the final section when the redline deletes a
+    /// table row. A header without a page field, a slot the final section
+    /// sets itself, a story a live break hands down, a slot an earlier
+    /// section sets (Reject All would show that section's footer there),
+    /// and a redline that deletes no row stay where they are.
     #[test]
     fn the_inherited_page_footer_moves_to_the_final_section() {
         let page = xml(
@@ -9810,6 +9835,8 @@ mod coverage_boundary_tests {
             "<w:p><w:r><w:instrText> PAGE </w:instrText></w:r></w:p>",
         );
         let deleted = "<w:rPr><w:del w:id='1' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:rPr>";
+        // Word's crash is in its table cache: the move needs a deleted row.
+        let row = "<w:tbl><w:tr><w:trPr><w:del w:id='2' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl>";
         // Each section's references, as (local name, w:type, r:id).
         let references = |dom: &Dom, root: NodeId| -> Vec<Vec<(String, String, String)>> {
             section_props(dom, root)
@@ -9847,15 +9874,33 @@ mod coverage_boundary_tests {
         let footer = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer1.xml");
         let first = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer2.xml");
         let own = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer3.xml");
-        let body = format!(
-            "<w:body>\
-             <w:p><w:pPr>{deleted}<w:sectPr><w:headerReference w:type='default' r:id='{header}'/><w:footerReference w:type='default' r:id='{footer}'/><w:footerReference w:type='first' r:id='{first}'/></w:sectPr></w:pPr></w:p>\
-             <w:p><w:pPr>{deleted}<w:sectPr/></w:pPr></w:p>\
-             <w:sectPr><w:footerReference w:type='first' r:id='{own}'/><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>\
-             </w:body>"
-        );
+        let shape = |row: &str| {
+            format!(
+                "<w:body>{row}\
+                 <w:p><w:pPr>{deleted}<w:sectPr><w:headerReference w:type='default' r:id='{header}'/><w:footerReference w:type='default' r:id='{footer}'/><w:footerReference w:type='first' r:id='{first}'/></w:sectPr></w:pPr></w:p>\
+                 <w:p><w:pPr>{deleted}<w:sectPr/></w:pPr></w:p>\
+                 <w:sectPr><w:footerReference w:type='first' r:id='{own}'/><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>\
+                 </w:body>"
+            )
+        };
+        let unmoved = [
+            vec![
+                reference("headerReference", "default", &header),
+                reference("footerReference", "default", &footer),
+                reference("footerReference", "first", &first),
+            ],
+            vec![],
+            vec![reference("footerReference", "first", &own)],
+        ];
+
+        // No deleted row: the references stay on the deleted break.
         let mut dom = Dom::new();
-        let top = root(&mut dom, &xml("document", &body));
+        let top = root(&mut dom, &xml("document", &shape("")));
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        assert_eq!(references(&dom, top), unmoved);
+
+        let mut dom = Dom::new();
+        let top = root(&mut dom, &xml("document", &shape(row)));
         move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
         assert_eq!(
             references(&dom, top),
@@ -9879,7 +9924,7 @@ mod coverage_boundary_tests {
 
         // A live break between hands the final section its own footer.
         let body = format!(
-            "<w:body>\
+            "<w:body>{row}\
              <w:p><w:pPr>{deleted}<w:sectPr><w:footerReference w:type='default' r:id='{footer}'/></w:sectPr></w:pPr></w:p>\
              <w:p><w:pPr><w:sectPr><w:footerReference w:type='default' r:id='{own}'/></w:sectPr></w:pPr></w:p>\
              <w:sectPr/>\
@@ -9896,6 +9941,47 @@ mod coverage_boundary_tests {
                 vec![],
             ]
         );
+
+        // An earlier section sets the slot itself (the trusts' exhibit
+        // footers): moved, Reject All would show that section's footer on
+        // the deleted break's pages, so the reference stays.
+        let body = format!(
+            "<w:body>{row}\
+             <w:p><w:pPr>{deleted}<w:sectPr><w:footerReference w:type='default' r:id='{own}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{deleted}<w:sectPr><w:footerReference w:type='default' r:id='{footer}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        let mut dom = Dom::new();
+        let top = root(&mut dom, &xml("document", &body));
+        move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+        assert_eq!(
+            references(&dom, top),
+            [
+                vec![reference("footerReference", "default", &own)],
+                vec![reference("footerReference", "default", &footer)],
+                vec![],
+            ]
+        );
+
+        // Nothing to move from: a part without relationships, a body
+        // without sections, a body whose last section is a paragraph's.
+        let mut dom = Dom::new();
+        let top = root(&mut dom, &xml("document", &shape(row)));
+        move_page_story_to_final_section(&mut dom, top, &pkg, "word/other.xml");
+        assert_eq!(references(&dom, top), unmoved);
+        for body in [
+            format!("<w:body>{row}<w:p/></w:body>"),
+            format!(
+                "<w:body>{row}<w:p><w:pPr>{deleted}<w:sectPr><w:footerReference w:type='default' r:id='{footer}'/></w:sectPr></w:pPr></w:p></w:body>"
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let top = root(&mut dom, &xml("document", &body));
+            let before = references(&dom, top);
+            move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
+            assert_eq!(references(&dom, top), before, "{body}");
+        }
     }
 
     #[test]

@@ -16,6 +16,13 @@
 //!   final section, and no deleted break references it any more. Word
 //!   opened all 9 that way. Its Accept All shows nothing; its Reject All
 //!   shows the footer on the last section only (docs/WORD_DIFFERENCES.md).
+//!   Word's own redlines of the six pairs that crash with every mark
+//!   deleted crash too (round 23).
+//! - The move needs a deleted table row (Word logs the crash in its table
+//!   cache, at a deleted row's end), and no earlier section setting the
+//!   slot: otherwise Reject All would show that section's footer on the
+//!   moved break's pages. The trust (`24b9811b05_file_22` →
+//!   `7226967373_file_23`) keeps its exhibit footers where they are.
 //!
 //! - s548: `df9ffe9a8c_file_16` → `ec900bd182_file_17`. Three sections;
 //!   the first break references header1 and footer1 ("Page PAGE of
@@ -234,6 +241,76 @@ fn s548_accepts_to_nothing_and_rejects_to_the_original_stories() {
             (false, vec!["word/footer1.xml".to_string()]),
         ]
     );
+}
+
+/// The trust `24b9811b05_file_22` → `7226967373_file_23` (full corpus
+/// 2fe0dc77f9): 21 sections, each exhibit with its own page-number footer
+/// ("Smith Family Trust G-2 - PAGE"). The final section inherits the last
+/// deleted break's footer, but an earlier break sets that slot too: moved,
+/// Reject All would label G-2's pages "G-1". The reference stays, and the
+/// rejected sections reference what the original's do. Word opens it, and
+/// Ring-1 reports the 19 breaks as the `DELETED_SECTION_PAGE_FIELD` lead.
+#[test]
+fn the_trust_s_exhibit_footer_stays_on_its_deleted_break() {
+    let a = fixture("clean/docx/24b9811b05_file_22.docx");
+    let redline = compare_documents_with_settings(
+        &a,
+        &fixture("clean/docx/7226967373_file_23.docx"),
+        &WmlComparerSettings::default(),
+    )
+    .expect("compare");
+    let lead = |f: &&jubarte::validate::Finding| f.code == "DELETED_SECTION_PAGE_FIELD";
+    let mut inherited = check_word_valid_package(&a).errors;
+    let report = check_word_valid_package(&redline);
+    let mut actual: Vec<&String> = report
+        .errors
+        .iter()
+        .zip(&report.findings)
+        .filter(|(_, f)| !lead(f))
+        .map(|(e, _)| e)
+        .collect();
+    inherited.sort();
+    actual.sort();
+    assert_eq!(actual, inherited.iter().collect::<Vec<_>>());
+    let mut leads: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(lead)
+        .map(|f| f.part.as_str())
+        .collect();
+    leads.sort_unstable();
+    leads.dedup();
+    assert_eq!(leads.len(), 19, "{leads:?}");
+    assert!(leads.contains(&"word/footer19.xml"), "{leads:?}");
+    let ours = sections(&PartFs::open(&redline).unwrap());
+    let (last, earlier) = ours.split_last().unwrap();
+    assert!(
+        last.1.is_empty(),
+        "the final section sets nothing: {last:?}"
+    );
+    assert!(
+        earlier
+            .iter()
+            .filter(|(_, parts)| parts.iter().any(|p| p.contains("footer")))
+            .count()
+            > 2,
+        "earlier sections set footers of their own: {ours:?}"
+    );
+    let parts = |pkg: &PartFs| -> Vec<Vec<String>> {
+        sections(pkg).into_iter().map(|(_, parts)| parts).collect()
+    };
+    let rejected = parts(&PartFs::open(&reject_revisions(&redline).unwrap()).unwrap());
+    let base = parts(&PartFs::open(&a).unwrap());
+    assert_eq!(
+        rejected[..rejected.len() - 1],
+        base[..base.len() - 1],
+        "rejected, every break references the original's stories"
+    );
+    // The final section is the revision's, which has no footer, and a
+    // `sectPrChange` records no references: rejected, it does not get the
+    // original's own footer back (before #1833 as well).
+    assert_eq!(rejected.last().unwrap(), &Vec::<String>::new());
+    assert_eq!(base.last().unwrap(), &vec!["word/footer20.xml".to_string()]);
 }
 
 #[test]
