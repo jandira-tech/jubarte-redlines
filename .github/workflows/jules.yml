@@ -415,6 +415,84 @@ jobs:
               });
             }
 
+      # 🐇 Jules clones the PR branch with --depth 1, where `git diff base...head`
+      # fails with "no merge base" (arthrod/jules-el-conejo#20, cell S11). This
+      # checkout has the history, so the runner computes the diff and sends it.
+      - name: 🐇 Fit the diff, file list and report into Jules's prompt
+        id: diff
+        env:
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          CHANGED_FILES: ${{ steps.skills.outputs.changed_files }}
+          STATIC_REPORT: ${{ steps.static_analysis.outputs.report }}
+        run: |
+          # 🥕 The prompt reaches the action as one environment variable, which
+          # Linux caps at 131,058 bytes of value. Every part that grows with the
+          # PR is capped here and the prompt reads these copies: the file list
+          # at 16,000 bytes, the report at 30,000, and the diff gets what is left
+          # of 120,000 after them, the skills and 8,000 bytes of instructions.
+
+          # fit FILE LIMIT: cut FILE to at most LIMIT bytes at a line boundary.
+          # Prints true when it cut.
+          fit() {
+            local size
+            size=$(wc -c < "$1")
+            if [ "$size" -le "$2" ]; then echo false; return; fi
+            if [ "$2" -gt 0 ]; then
+              head -c "$2" "$1" | sed '$d' > "$1.cut"
+            else
+              : > "$1.cut"
+            fi
+            mv "$1.cut" "$1"
+            echo true
+          }
+          # 🐇 Valid UTF-8 only: the runner decodes outputs as UTF-8 and turns each
+          # invalid byte into a 3-byte U+FFFD, which would break the budget.
+          # iconv -c drops those bytes. glibc's iconv still writes the output
+          # but exits 1 when the input ends in a truncated sequence; any other
+          # failure (127: no iconv) must stop the step, not send an empty diff.
+          utf8() { iconv -c -f UTF-8 -t UTF-8 < "$1" > "$2" || [ $? -eq 1 ]; }
+
+          raw="$(mktemp)"
+          files="$(mktemp)"
+          report="$(mktemp)"
+          diff="$(mktemp)"
+          printf '%s\n' "$CHANGED_FILES" > "$raw" && utf8 "$raw" "$files"
+          printf '%s\n' "$STATIC_REPORT" > "$raw" && utf8 "$raw" "$report"
+          git diff --no-color "origin/${BASE_REF}...HEAD" > "$raw"
+          utf8 "$raw" "$diff"
+          size=$(wc -c < "$diff")
+
+          if [ "$(fit "$files" 16000)" = true ]; then
+            echo "(list cut at 16,000 bytes: run git diff --name-only for the rest)" >> "$files"
+          fi
+          if [ "$(fit "$report" 30000)" = true ]; then
+            echo "(report cut at 30,000 bytes: the run log has the rest)" >> "$report"
+          fi
+          used=$(( $(cat .jules-el-conejo-skills/skills/jules-el-conejo/*.md | wc -c) \
+            + $(wc -c < "$files") + $(wc -c < "$report") + 8000 ))
+          budget=$(( 120000 - used ))
+          [ "$budget" -gt 0 ] || budget=0
+          truncated=$(fit "$diff" "$budget")
+          # 🐇 The base branch, single-quoted for sh: the prompt puts it in a
+          # command. Git refs hold no newline, so it fits one output line.
+          base_q="'$(printf '%s' "$BASE_REF" | sed "s/'/'\\\\''/g")'"
+
+          # 🥕 A random delimiter: these outputs carry PR content, and a line equal
+          # to a fixed delimiter would end an output early and write others.
+          delim="JULES_FIT_$(openssl rand -hex 16)"
+          {
+            echo "truncated=${truncated}"
+            echo "base_q=${base_q}"
+            echo "size=${size// /}"
+            for name in files report diff; do
+              echo "${name}<<${delim}"
+              cat "${!name}"
+              echo
+              echo "${delim}"
+            done
+          } >> "$GITHUB_OUTPUT"
+          rm -f "$raw" "$files" "$report" "$diff"
+
       # 🥕 Stage 4: Jules opens a companion fix PR. Only for a trusted author or
       # dispatcher, and only when a PR opens, reopens, leaves draft, gets the
       # jules-conejo label, or is dispatched; a plain push does not start one.
@@ -430,8 +508,9 @@ jobs:
               (github.event.action == 'labeled' && github.event.label.name == env.FIX_LABEL)
             )
           )
-        # 🥕 Pinned to arthrod/jules-el-conejo main after the hardened stack merged (2026-10-20).
-        uses: arthrod/jules-el-conejo@4c78bd18b3d5352824eb0f195a2af951d7b4a314 # main 2026-10-20
+        # 🥕 Pinned to the v1.1.0 release: it waits out the account's concurrency
+        # cap (429 or 400 FAILED_PRECONDITION) at 5, 10, 15 and 30 minutes.
+        uses: arthrod/jules-el-conejo@72c9075a45a522697e4cfa61f460cbd14e69ac91 # v1.1.0
         with:
           prompt: |
             You are a principal reviewer and remediation agent for jandira-tech/jubarte-redlines,
@@ -448,14 +527,29 @@ jobs:
             A finding that claims Word behaviour must say how it was established.
 
             ## Changed files
-            ${{ steps.skills.outputs.changed_files }}
+            ${{ steps.diff.outputs.files }}
 
             ## Static analysis results (same flags as ci.yml)
-            ${{ steps.static_analysis.outputs.report }}
+            ${{ steps.diff.outputs.report }}
+
+            ## The diff (base `${{ steps.pr.outputs.base_ref }}`...head `${{ steps.pr.outputs.head_sha }}`)
+            Computed on the runner. Your checkout is a depth-1 clone, so a `git diff` against the
+            base fails there with "no merge base" until you fetch more history. Run these one at a
+            time; if one fails, go on to the next:
+            `git fetch --deepen=200 origin ${{ steps.diff.outputs.base_q }}`,
+            `git fetch --deepen=200 origin ${{ steps.pr.outputs.head_sha }}`,
+            then `git diff origin/${{ steps.diff.outputs.base_q }}...${{ steps.pr.outputs.head_sha }}`.
+            Review that commit, not your clone's HEAD, which moves if the branch does. If the diff
+            still reports "no merge base", run `git fetch --unshallow origin` and diff again.
+            ${{ steps.diff.outputs.truncated == 'true' && format('This diff is cut at a line boundary; the whole diff is {0} bytes. Fetch as above and read the rest yourself.', steps.diff.outputs.size) || 'This diff is complete.' }}
+
+            ```diff
+            ${{ steps.diff.outputs.diff }}
+            ```
 
             ## Your mission
             1. Fix every finding reported above.
-            2. Review the full base...head diff for correctness, Word fidelity regressions,
+            2. Review the diff above for correctness, Word fidelity regressions,
                security, performance and architecture, using the skills below.
             3. Add regression tests for every fix (cargo nextest, existing fixtures).
             4. Open ONE companion PR against `${{ steps.pr.outputs.head_ref }}`. Its body follows
