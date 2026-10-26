@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Added
+
+- **`validate --original --author NAME` checks comments too** (#1846). It read only revisions, so a counterparty comment you deleted or resolved, or one `add` signed "Jubarte" because `--author` was left out, passed with "no findings". Each is now a `FOREIGN_COMMENT` error in the `edits` set: another author's comment (or reply) that is gone, reworded, resolved or reopened, and a new comment or reply not signed NAME. Every message says what to do instead (`c0 by "Counterparty Counsel" was resolved: reply to their comment instead of resolving it`). Comments pair by id, then by author, date and text, so a file whose comment ids another tool renumbered still pairs. NAME's own comments change freely, and resolving NAME's own thread does not count against the replies in it. The Python (`Document.audit_tracked`) and WASM (`auditTracked`) audits report the same findings.
+
 ### Changed
 
 - **`edit` refuses to delete, resolve or reopen another author's comment** (#1846). Rewording one was already refused (`COMMENT_NOT_YOURS`), but `-p c5 --delete` / `--resolve` (`delete_comment`, `resolve_comment`) went through on anyone's comment. Deleting your own comment also deleted another author's replies in its thread without a word. All of these are now refused with `COMMENT_NOT_YOURS`. The refusal says what to do instead (reply to their comment, or resolve your own thread), and `--rewrite-others-comments` (`"rewrite_others_comments": true`) still lets the operation through, with one report note per comment it changed. A plan that resolved or deleted another author's comment on purpose now needs that opt-in. `capabilities` names it on the `delete_comment` and `resolve_comment` rows.
