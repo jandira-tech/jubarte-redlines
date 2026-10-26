@@ -286,8 +286,10 @@ mod requires_selection {
         let ac = d.new_element(MC::name("AlternateContent"));
         d.add(body, ac);
         let ch = d.new_element(MC::name("Choice"));
-        // declare the required prefix locally on the Choice (not on the root)
-        d.set_attribute_value(ch, &XNamespace::xmlns().name("wlocal"), Some("urn:x-local"));
+        // declare the required prefix locally on the Choice (not on the root),
+        // bound to a namespace Word knows: Word passes over one it does not
+        // know, declared or not (#1876)
+        d.set_attribute_value(ch, &XNamespace::xmlns().name("wlocal"), Some(W14_NS));
         d.set_attribute_value(ch, &XNamespace::none().name("Requires"), Some("wlocal"));
         let r = d.new_element(W::r());
         let t = d.new_element(W::t());

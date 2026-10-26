@@ -774,7 +774,7 @@ fn with_layout<T>(
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
-    let pkg =
+    let mut pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
     let main = pkg
         .main_document_part()
@@ -783,6 +783,7 @@ fn with_layout<T>(
                 .map(|_| "word/document.xml".to_string())
         })
         .ok_or(ConvertError::MissingDocument)?;
+    resolve_text_alternates(&mut pkg, &main);
     let xml = pkg
         .part_string(&main)
         .ok_or(ConvertError::MissingDocument)?;
@@ -18291,13 +18292,22 @@ fn shape_roots_rec(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
     }
 }
 
+/// The branch of a drawing `mc:AlternateContent` the renderer draws: the
+/// first `mc:Choice` whose `Requires` it understands
+/// ([`renderer_understands_namespace`]), else the `mc:Fallback`.
 fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
     let choice = MC::name("Choice");
     let fallback = MC::name("Fallback");
     let mut fb = None;
     for i in 0..dom.child_count(node) {
         let child = dom.child_at(node, i);
-        if dom.name_is(child, &choice) {
+        if dom.name_is(child, &choice)
+            && crate::comparer::finalize::choice_requires_understood(
+                dom,
+                child,
+                renderer_understands_namespace,
+            )
+        {
             return Some(child);
         }
         if dom.name_is(child, &fallback) {
@@ -21529,9 +21539,9 @@ fn para_shown_text(dom: &Dom, para: NodeId) -> String {
     out
 }
 
-/// The main document's other story parts (headers, footers, footnotes,
-/// endnotes, comments), found by relationship type.
-fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+/// The names of the main document's other story parts (headers, footers,
+/// footnotes, endnotes, comments), found by relationship type.
+fn story_part_names(pkg: &PartFs, main: &str) -> Vec<String> {
     let Some(rels) = pkg.read_rels_for(main) else {
         return Vec::new();
     };
@@ -21543,8 +21553,63 @@ fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
                     .iter()
                     .any(|k| r.rel_type.ends_with(k))
         })
-        .filter_map(|r| pkg.part_string(&pkg.resolve_rel_target(main, &r.target)))
+        .map(|r| pkg.resolve_rel_target(main, &r.target))
         .collect()
+}
+
+/// The main document's other story parts' xml ([`story_part_names`]).
+fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+    story_part_names(pkg, main)
+        .iter()
+        .filter_map(|part| pkg.part_string(part))
+        .collect()
+}
+
+/// `w16se`, Word's emoji symbols (`w16se:symEx`, a font and a character).
+const W16SE: &str = "http://schemas.microsoft.com/office/word/2015/wordml/symex";
+
+/// A namespace whose Choice the renderer draws: Word's
+/// ([`crate::comparer::finalize::word_understands_namespace`]) but `w16se`.
+/// The renderer draws no `w16se:symEx`, so it takes the Fallback, which
+/// holds the same character as text in the same font (#1876: `a1cfa10c32`'s
+/// emoji).
+fn renderer_understands_namespace(uri: &str) -> bool {
+    uri != W16SE && crate::comparer::finalize::word_understands_namespace(uri)
+}
+
+/// Put in place of each `mc:AlternateContent` that holds no drawing, in the
+/// main part and its story parts, the branch the renderer draws: the first
+/// `mc:Choice` whose `Requires` it understands
+/// ([`renderer_understands_namespace`]), else the `mc:Fallback` (#1876). The walks that follow know nothing of the wrapper: they drew
+/// both branches of a run-level one and nothing of a block-level one.
+/// Drawing wrappers stay for [`alternate_choice`]. A part is rewritten only
+/// when a wrapper went.
+fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
+    let wrapper = MC::name("AlternateContent");
+    let mut parts = vec![main.to_string()];
+    parts.extend(story_part_names(pkg, main));
+    for part in parts {
+        let Some(xml) = pkg.part_string(&part) else {
+            continue;
+        };
+        if !xml.contains("AlternateContent") {
+            continue;
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let before = dom.descendants(root, Some(&wrapper)).len();
+        crate::comparer::finalize::resolve_alternate_content_with(
+            &mut dom,
+            root,
+            renderer_understands_namespace,
+        );
+        if dom.descendants(root, Some(&wrapper)).len() != before {
+            pkg.set_part(&part, dom.serialize_document(doc).into_bytes());
+        }
+    }
 }
 
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
@@ -39366,9 +39431,12 @@ mod drawing_tests {
         assert_eq!(text, "Datum plane");
     }
 
+    // `wps` is declared: a Choice on an undeclared prefix is passed over
+    // for the Fallback, and Word cannot read such a file at all (#1876).
     const TXBX_XML: &str = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
 <w:body><w:p>
 <w:r>
