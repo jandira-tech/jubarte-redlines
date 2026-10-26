@@ -51,8 +51,18 @@ INSTRUCTIONS = (
     "docx_comments and docx_audit (available when the engine build has them)."
 )
 
-_READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
-_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
+_READ = ToolAnnotations(
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
+)
+_WRITE = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
+)
 
 
 def _plain(value: Any) -> Any:
@@ -101,7 +111,13 @@ def build_server(*, root: Path) -> MCPServer:
     def publish(files: list[tuple[Path, bytes | str]], overwrite: bool) -> None:
         try:
             authority.publish(
-                [(path.relative_to(root).as_posix(), data.encode("utf-8") if isinstance(data, str) else data) for path, data in files],
+                [
+                    (
+                        path.relative_to(root).as_posix(),
+                        data.encode("utf-8") if isinstance(data, str) else data,
+                    )
+                    for path, data in files
+                ],
                 overwrite,
             )
         except (OSError, ValueError) as e:
@@ -140,7 +156,9 @@ def build_server(*, root: Path) -> MCPServer:
         from . import _native
 
         doc = load(path)
-        markdown, warnings = engine(lambda: _native.read_view(doc.to_bytes(), source=Path(path).name))
+        markdown, warnings = engine(
+            lambda: _native.read_view(doc.to_bytes(), source=Path(path).name)
+        )
         return markdown + "".join(f"warning: {w}\n" for w in warnings)
 
     @mcp.tool(annotations=_READ)
@@ -167,6 +185,9 @@ def build_server(*, root: Path) -> MCPServer:
         pdf or png_dpi the redline is also rendered to redline.pdf and
         redline-page-NN.png. Existing files are kept unless overwrite is true.
         """
+        if len(json.dumps(plan)) > 1024 * 1024:
+            raise ToolError("Edit plan exceeds 1MB limit")
+
         doc = load(path)
         out = contained(out_dir)
         try:
@@ -188,10 +209,16 @@ def build_server(*, root: Path) -> MCPServer:
             rendered = engine(lambda: result.redline.render(pdf=pdf, png_dpi=png_dpi))
             if rendered.pdf is not None:
                 names.append("redline.pdf")
-            names += [f"redline-page-{i:02d}.png" for i in range(1, len(rendered.pngs) + 1)]
+            names += [
+                f"redline-page-{i:02d}.png" for i in range(1, len(rendered.pngs) + 1)
+            ]
         for name in names:  # check every output before writing any
             fresh(out / name, overwrite)
-        report = json.loads(result.report._json) if result.report._json else _plain(result.report)
+        report = (
+            json.loads(result.report._json)
+            if result.report._json
+            else _plain(result.report)
+        )
         files: list[tuple[Path, bytes | str]] = [
             (out / "clean.docx", result.clean.to_bytes()),
             (out / "redline.docx", result.redline.to_bytes()),
@@ -235,7 +262,9 @@ def build_server(*, root: Path) -> MCPServer:
         out = contained(out_dir)
         rendered = engine(lambda: doc.render(pdf=pdf, png_dpi=dpi))
         wanted = [
-            (i, png) for i, png in enumerate(rendered.pngs, start=1) if pages is None or i in pages
+            (i, png)
+            for i, png in enumerate(rendered.pngs, start=1)
+            if pages is None or i in pages
         ]
         targets = [out / f"page-{i:02d}.png" for i, _ in wanted]
         if rendered.pdf is not None:
@@ -271,10 +300,17 @@ def build_server(*, root: Path) -> MCPServer:
         """
         a, b = load(original), load(modified)
         target = fresh(contained(out), overwrite)
-        when = date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        when = (
+            date
+            if date is not None
+            else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        )
         options = engine(lambda: CompareOptions(date=when))
         redline = engine(lambda: a.compare(b, author=author, options=options))
-        return {"out": write(target, redline.to_bytes(), overwrite), "changes": _plain(engine(redline.changes))}
+        return {
+            "out": write(target, redline.to_bytes(), overwrite),
+            "changes": _plain(engine(redline.changes)),
+        }
 
     @mcp.tool(annotations=_READ)
     def docx_changes(path: str) -> list[dict[str, Any]]:
@@ -291,11 +327,16 @@ def build_server(*, root: Path) -> MCPServer:
         kinds: Sequence[str] | None,
         overwrite: bool,
     ) -> dict[str, Any]:
+        if action not in ("accept", "reject"):
+            raise ToolError(f"invalid action {action!r}")
         doc = load(path)
         target = fresh(contained(out), overwrite)
         method = getattr(doc, action)
         result = engine(lambda: method(ids=ids, authors=authors, kinds=kinds))
-        return {"out": write(target, result.to_bytes(), overwrite), "remaining": len(engine(result.changes))}
+        return {
+            "out": write(target, result.to_bytes(), overwrite),
+            "remaining": len(engine(result.changes)),
+        }
 
     @mcp.tool(annotations=_WRITE)
     def docx_accept(
@@ -328,7 +369,10 @@ def build_server(*, root: Path) -> MCPServer:
 
     @mcp.tool(annotations=_READ)
     def docx_validate(
-        path: str, original: str | None = None, author: str | None = None, rules: list[str] | None = None
+        path: str,
+        original: str | None = None,
+        author: str | None = None,
+        rules: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Findings in one shape (code, set, severity, part, location, ref, message, word_fatal, repairable; ref is the short id the CLI prints for location). By default the Word-validity set: what would make Word refuse or repair path. With original and author, also the edits set: every edit against original must be a tracked change by author. rules picks sets (word, edits, a11y, style, structure) or audit codes."""
         doc = load(path)
@@ -346,7 +390,10 @@ def build_server(*, root: Path) -> MCPServer:
 
         jsonl, _text, _failed = engine(
             lambda: _native.validate_run(
-                doc.to_bytes(), rules=rules, original=None if base is None else base.to_bytes(), author=author
+                doc.to_bytes(),
+                rules=rules,
+                original=None if base is None else base.to_bytes(),
+                author=author,
             )
         )
         return [json.loads(line) for line in jsonl.splitlines()]
@@ -372,8 +419,15 @@ def build_server(*, root: Path) -> MCPServer:
 
 def main(argv: list[str] | None = None) -> int:
     """Serve the tools over stdio until the client closes the stream."""
-    parser = argparse.ArgumentParser(prog="jubarte-mcp", description=__doc__.splitlines()[0])
-    parser.add_argument("--root", type=Path, default=Path.cwd(), help="directory every path must sit under")
+    parser = argparse.ArgumentParser(
+        prog="jubarte-mcp", description=__doc__.splitlines()[0]
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path.cwd(),
+        help="directory every path must sit under",
+    )
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     if not root.is_dir():

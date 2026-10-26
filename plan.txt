@@ -1,0 +1,5 @@
+1. Implement input validation in `jubarte-python/python/jubarte_redlines/mcp_server.py`.
+   - Add size and length limits for `docx_edit`'s `plan` dictionary to protect against DoS attacks via excessively large payloads.
+   - For `resolve()`, add an assertion or validation to ensure `action` is strictly bounded to `"accept"` or `"reject"` to prevent execution of arbitrary `getattr(doc, action)` methods.
+2. Run format/linting on the modified Python file.
+3. Complete pre-commit steps and submit the pull request.

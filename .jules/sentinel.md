@@ -1,0 +1,4 @@
+## 2026-10-22 - [Add input constraints and bounds check to MCP operations]
+**Vulnerability:** The MCP server (`docx_edit`) accepted arbitrarily large JSON edit plans, posing a resource exhaustion and DoS risk. The `resolve` method used `getattr` with a dynamic `action` string, risking execution of arbitrary methods on the `Document` object if improperly exposed.
+**Learning:** Even internal helper methods triggered by external data flow must sanitize parameters before they reach runtime introspection methods like `getattr()`. Also, input bounding needs to be handled explicitly at the tool interface boundary.
+**Prevention:** Always validate `action` values against a hardcoded allowlist when mapping strings to method names, and add length constraints (e.g. 1MB limit on JSON sizes) for untrusted data input payloads at the API level.
