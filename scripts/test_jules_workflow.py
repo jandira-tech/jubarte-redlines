@@ -60,7 +60,10 @@ SKILL_BYTES = sum(len(text.encode("utf-8")) for text in SKILL_TEXT.values())
 
 
 def sh(cwd: Path, *cmd: str) -> str:
-    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True).stdout
+    # Drop GIT_DIR, GIT_INDEX_FILE and friends: a git hook exports them, and
+    # inherited they would aim every fixture command at the enclosing repo.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(cmd, cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout
 
 
 def fixture(root: Path, files: dict[str, bytes | str]) -> Path:
@@ -284,6 +287,34 @@ class ConejoDiffStep(unittest.TestCase):
             work = fixture(Path(tmp), {"lib.rs": "fn main() {}\n"})
             with self.assertRaises(subprocess.CalledProcessError):
                 run_step_raw(work, {"PATH": f"{shim}:{os.environ['PATH']}"})
+
+
+class FixtureIsolation(unittest.TestCase):
+    def test_never_touches_the_enclosing_repository_when_git_dir_is_set(self) -> None:
+        # A git hook exports GIT_DIR and GIT_INDEX_FILE for the repository being
+        # committed to; fixture git commands must not follow them there.
+        with tempfile.TemporaryDirectory(prefix="conejo-sentinel-") as tmp:
+            sentinel = Path(tmp) / "sentinel"
+            sh(Path(tmp), "git", "init", "-q", "-b", "trunk", str(sentinel))
+            config = (sentinel / ".git" / "config").read_text(encoding="utf-8")
+            saved = {k: os.environ.get(k) for k in ("GIT_DIR", "GIT_INDEX_FILE")}
+            os.environ["GIT_DIR"] = str(sentinel / ".git")
+            os.environ["GIT_INDEX_FILE"] = str(sentinel / ".git" / "index")
+            try:
+                try:
+                    fx = Path(tmp) / "fx"
+                    fx.mkdir()
+                    fixture(fx, {"lib.rs": "fn main() {}\n"})
+                except subprocess.CalledProcessError:
+                    pass  # a leaking fixture can fail midway; the sentinel decides
+            finally:
+                for key, value in saved.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertEqual((sentinel / ".git" / "config").read_text(encoding="utf-8"), config)
+            self.assertEqual(list((sentinel / ".git" / "refs" / "heads").iterdir()), [])
 
 
 if __name__ == "__main__":
