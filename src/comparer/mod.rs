@@ -936,9 +936,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // group. `fixups::fix_up_group_ids` is intentionally omitted here: the oracle
     // only calls FixUpGroupIds in the consolidate path (:1524), never in
     // compare/produce, so wiring it in would diverge from upstream.
-    fixups::fix_up_doc_pr_ids(dom, root);
-    fixups::fix_up_shape_ids(dom, root);
-    fixups::fix_up_shape_type_ids(dom, root);
+    fixups::fix_up_drawing_ids(dom, root, settings.preserve_untouched);
     // B's stamped pre-deletions → pending w:del (must run BEFORE the pt
     // scratch strip removes the stamps).
     if settings.merge_replaced_paragraphs {
@@ -1325,9 +1323,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // clone drawings (S-dup-docpr-id on strict01_sdt_controls×strict01: mid-path
     // FixUpDocPrIds left a collision introduced later). Same sequential 1..n
     // contract as the mid-path call.
-    fixups::fix_up_doc_pr_ids(dom, root);
-    fixups::fix_up_shape_ids(dom, root);
-    fixups::fix_up_shape_type_ids(dom, root);
+    fixups::fix_up_drawing_ids(dom, root, settings.preserve_untouched);
     Ok(root)
 }
 

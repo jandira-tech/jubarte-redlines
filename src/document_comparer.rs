@@ -6586,6 +6586,7 @@ fn compare_documents_impl(
         owned = crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
             &owned,
             settings.input_limits,
+            settings.preserve_untouched,
         )?;
         return Ok(owned);
     }
@@ -6640,6 +6641,7 @@ fn compare_documents_impl(
         return crate::comparer::fixups::fix_up_drawing_ids_in_package_within(
             &original_owned,
             settings.input_limits,
+            settings.preserve_untouched,
         );
     }
 
@@ -6887,9 +6889,7 @@ fn compare_documents_impl(
     // Final drawing/shape id renumber immediately before serialize — package
     // post-steps (reconcile, header/footer adopt, comments) can clone/graft
     // drawings after the mid-produce FixUpDocPrIds pass (S-dup-docpr-id).
-    crate::comparer::fixups::fix_up_doc_pr_ids(&mut dom, result_root);
-    crate::comparer::fixups::fix_up_shape_ids(&mut dom, result_root);
-    crate::comparer::fixups::fix_up_shape_type_ids(&mut dom, result_root);
+    crate::comparer::fixups::fix_up_drawing_ids(&mut dom, result_root, settings.preserve_untouched);
 
     let result_xml = dom.serialize_element(result_root);
     out.set_part(&main1, result_xml.into_bytes());
