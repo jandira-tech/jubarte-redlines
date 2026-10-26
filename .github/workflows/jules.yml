@@ -6,7 +6,8 @@
 #
 # - `review` — the line-by-line LLM review (audited fork of
 #   thalesraymond/jules-pr-reviewer, pinned by commit; audit and rollout:
-#   https://github.com/arthrod/jules-pr-reviewer/issues/1). It reads
+#   https://github.com/arthrod/jules-pr-reviewer/issues/1; the current pin:
+#   https://github.com/arthrod/jules-pr-reviewer/issues/10). It reads
 #   .github/jules-review-rules.md: correctness and Word fidelity, security,
 #   performance and improvements, best practices and tests, syntax and style.
 # - `conejo` — 🐇🥕 Jules, el conejo: lint, syntax, security and workflow
@@ -42,7 +43,10 @@ jobs:
     # variable: gh variable set JULES_RUNNER -R <owner/repo> -b self-hosted
     # The runner must be recent enough to run node24 actions.
     runs-on: ${{ vars.JULES_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 60
+    # 30 min of concurrency-cap retries + 3 sessions of timeout_minutes each (an
+    # agentic session that times out falls back to prompt mode, which tries
+    # twice) + 15 min for session start-up, checkout and posting.
+    timeout-minutes: 180
     concurrency:
       group: jules-review-${{ github.event.pull_request.number }}
       # Queue instead of cancel: a cancelled run still spends the Jules session it started.
@@ -55,7 +59,7 @@ jobs:
       # No checkout: the action reads the diff and rules through the GitHub API,
       # so no token is persisted to disk in the workspace.
       - name: Jules review
-        uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
+        uses: arthrod/jules-pr-reviewer@3b132bdf377f463c33c13d121060de42d6b95e48
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
