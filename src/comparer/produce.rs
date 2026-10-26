@@ -1230,7 +1230,9 @@ pub fn coalesce_recurse(
         let props: &[&str] = if aname == W::tbl() {
             &["tblPr", "tblGrid"]
         } else if aname == W::tr() {
-            &["trPr"]
+            // CT_Row order. C# hoists trPr alone; a row's exceptions (the
+            // borders, margins or width it overrides) were lost (#1869).
+            &["tblPrEx", "trPr"]
         } else if aname == W::tc() {
             &["tcPr"]
         } else if aname == W::sdt() {
@@ -1509,6 +1511,20 @@ fn record_revised_row_cell_props(
         return;
     }
     let pr_name = W::name(pr_local);
+    // A row's exceptions are the revision's too (#1869).
+    if aname == W::tr() {
+        if ancestor != new {
+            let ex_name = W::name("tblPrEx");
+            for hoisted in dom.elements(ne, Some(&ex_name)) {
+                dom.remove(hoisted);
+            }
+            if let Some(ex) = dom.element(new, &ex_name) {
+                let c = dom.clone_subtree(ex);
+                dom.add_first(ne, c);
+            }
+        }
+        record_revised_row_exceptions(dom, ne, old, settings, id_gen);
+    }
     if ancestor != new {
         for hoisted in dom.elements(ne, Some(&pr_name)) {
             dom.remove(hoisted);
@@ -1567,6 +1583,58 @@ fn record_revised_row_cell_props(
     dom.set_attribute_value(change, &W::author(), Some(&settings.author_for_revisions));
     dom.set_attribute_value(change, &W::date(), Some(&settings.date_time_for_revisions));
     dom.add(change, old_pr);
+    dom.add(live, change);
+}
+
+/// A merged row whose exceptions changed records the original's in a
+/// `w:tblPrExChange`, the last child of the revision's `w:tblPrEx`, as
+/// Word's compare does (`60dfd517a9`'s Word redline in `tests/corpus`):
+/// Reject All gives them back (#1869).
+fn record_revised_row_exceptions(
+    dom: &mut Dom,
+    ne: NodeId,
+    old: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let ex_name = W::name("tblPrEx");
+    let signature = |dom: &Dom, ex: Option<NodeId>| {
+        ex.map_or_else(String::new, |ex| {
+            children_signature(dom, ex, "tblPrExChange")
+        })
+    };
+    let live = dom.element(ne, &ex_name);
+    let old_ex = dom.element(old, &ex_name);
+    if signature(dom, live) == signature(dom, old_ex) {
+        return;
+    }
+    let live = live.unwrap_or_else(|| {
+        let ex = dom.new_element(ex_name.clone());
+        dom.add_first(ne, ex);
+        ex
+    });
+    // One record per row (CT_TblPrEx): the source's own gives way.
+    for c in dom.elements(live, Some(&W::name("tblPrExChange"))) {
+        dom.remove(c);
+    }
+    let previous = dom.new_element(ex_name);
+    if let Some(old_ex) = old_ex {
+        for c in dom.elements(old_ex, None) {
+            if dom
+                .name(c)
+                .is_some_and(|n| n.local_name() != "tblPrExChange")
+            {
+                let copy = dom.clone_subtree(c);
+                dom.add(previous, copy);
+            }
+        }
+    }
+    let change = dom.new_element(W::name("tblPrExChange"));
+    dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(change, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(change, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(change, previous);
     dom.add(live, change);
 }
 
