@@ -11,7 +11,7 @@ mod common;
 
 use std::io::Read as _;
 
-use common::docx::{docx_with_sect_pr, para, part_string, replace_entry};
+use common::docx::{docx, docx_with_sect_pr, para, part_string, replace_entry};
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::accept_revisions;
 use jubarte::edit::{EditPlan, apply_plan};
@@ -172,4 +172,40 @@ fn a_new_paragraph_keeps_the_page_and_section_as_the_source_has_them() {
         part_string(&edited.redline, "word/numbering.xml").is_none(),
         "the redline made up a numbering part"
     );
+}
+
+/// Word Compare redraws a grid that declares fewer columns than its rows
+/// hold: equal columns over the page, the table width `0 auto` (M-TBL
+/// rule 4). The edit's clean copy keeps the table as the source has it, so
+/// the redline must too: `0b2a46481b`'s and `45c1c5abec`'s tables were
+/// drawn anew, a table the plan never touched.
+#[test]
+fn a_new_paragraph_keeps_a_table_grid_as_the_source_has_it() {
+    let table = concat!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/></w:tblPr>"#,
+        r#"<w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr>"#,
+        r#"<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Left</w:t></w:r></w:p></w:tc>"#,
+        r#"<w:tc><w:tcPr><w:tcW w:w="6000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Right</w:t></w:r></w:p></w:tc>"#,
+        "</w:tr></w:tbl>"
+    );
+    let source = docx(&format!("{}{table}{}", para("Alpha one."), para("Omega.")));
+    let edited = apply_plan(
+        &source,
+        &EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Probe","operations":[
+            {"kind":"insert_paragraph","paragraph":{"starts_with":"Alpha"},"runs":[{"text":"Probe paragraph."}]}]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let accepted = accept_revisions(&edited.redline).unwrap();
+    let xml = part_string(&accepted, "word/document.xml")
+        .unwrap()
+        .replace(" />", "/>");
+    for kept in [
+        r#"<w:tblW w:w="9000" w:type="dxa"/>"#,
+        r#"<w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid>"#,
+    ] {
+        assert!(xml.contains(kept), "{kept} lost: {xml}");
+    }
 }

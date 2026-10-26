@@ -1453,7 +1453,8 @@ fn reconstruct_element(
     // per-column gridCols (equal split of the page content width) plus
     // `tblW 0 auto`. GT table-vmerge-colspan_text-box: 1×4985 → 4675+4675;
     // GT nested-table-rowspan_numbered-list: 1×9970 → 4887+4905.
-    if settings.merge_replaced_paragraphs && aname == W::tbl() {
+    // An edit keeps the grid as the source has it (#1868).
+    if settings.merge_replaced_paragraphs && !settings.preserve_untouched && aname == W::tbl() {
         rebuild_degenerate_grid(dom, ne, ancestor);
     }
     ne
