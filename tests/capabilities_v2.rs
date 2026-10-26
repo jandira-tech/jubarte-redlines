@@ -1062,30 +1062,45 @@ fn v1_profiles_are_closed_and_unknown_keys_are_refused() {
     );
 }
 
-/// Both dialects refuse `edit_comment` on another author's comment, so
-/// every supported row of either version names the opt-in (#1264).
+/// Both dialects refuse `edit_comment`, `delete_comment` and
+/// `resolve_comment` on another author's comment, so every supported row
+/// of either version names the opt-in (#1264, #1846); a delete also names
+/// the thread that holds their reply.
 #[test]
-fn edit_comment_rows_name_the_ownership_opt_in_in_both_versions() {
+fn comment_rows_name_the_ownership_opt_in_in_both_versions() {
     let matrix = jubarte::capabilities::discovery("cli", None, None);
-    let mut versions = std::collections::BTreeSet::new();
-    for profile in matrix["profiles"].as_array().unwrap() {
-        if profile["operation"] != "edit_comment" {
-            continue;
-        }
-        versions.insert(profile["plan_version"].as_u64().unwrap());
-        for row in profile["support"].as_array().unwrap() {
-            if row["status"] == "unsupported" {
+    for operation in ["edit_comment", "delete_comment", "resolve_comment"] {
+        let mut versions = std::collections::BTreeSet::new();
+        for profile in matrix["profiles"].as_array().unwrap() {
+            if profile["operation"] != operation {
                 continue;
             }
-            let conditions = row["conditions"].as_str().unwrap();
-            assert!(
-                conditions.contains("; another author's comment requires rewrite_others_comments"),
-                "v{} {row}",
-                profile["plan_version"]
-            );
+            versions.insert(profile["plan_version"].as_u64().unwrap());
+            for row in profile["support"].as_array().unwrap() {
+                if row["status"] == "unsupported" {
+                    continue;
+                }
+                let conditions = row["conditions"].as_str().unwrap();
+                assert!(
+                    conditions
+                        .contains("; another author's comment requires rewrite_others_comments"),
+                    "{operation} v{} {row}",
+                    profile["plan_version"]
+                );
+                assert_eq!(
+                    conditions.contains(", as does deleting a thread that holds their reply"),
+                    operation == "delete_comment",
+                    "{operation} v{} {row}",
+                    profile["plan_version"]
+                );
+            }
         }
+        assert_eq!(
+            versions,
+            std::collections::BTreeSet::from([1, 2]),
+            "{operation}"
+        );
     }
-    assert_eq!(versions, std::collections::BTreeSet::from([1, 2]));
 }
 
 #[test]

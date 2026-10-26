@@ -46,10 +46,11 @@ fn reply_and_resolve_round_trip() {
     assert_eq!(root.after, " is 10.");
     assert_eq!(root.paragraph.as_deref(), Some("p0"));
 
+    // Bob resolves Ann's thread on purpose (#1846).
     let second = apply_plan(
         &first.clean,
         &plan(&format!(
-            r#"{{"schema_version":1,"author":"Bob","operations":[
+            r#"{{"schema_version":1,"author":"Bob","rewrite_others_comments":true,"operations":[
         {{"kind":"reply_comment","comment_id":{id},"text":"Agreed"}},
         {{"kind":"resolve_comment","comment_id":{id}}}]}}"#,
             id = root.id
@@ -355,10 +356,11 @@ fn replying_to_a_reply_threads_under_the_root_and_delete_takes_replies() {
             .all(|c| !c.done)
     );
 
+    // Bob's reply goes with Ann's thread on purpose (#1846).
     let deleted = apply_plan(
         &third.clean,
         &plan(&format!(
-            r#"{{"schema_version":1,"author":"Ann","operations":[
+            r#"{{"schema_version":1,"author":"Ann","rewrite_others_comments":true,"operations":[
         {{"kind":"delete_comment","comment_id":{root}}}]}}"#
         )),
     )
@@ -1323,8 +1325,9 @@ fn receipt_1193_kept_paragraph_after_ids_shift() {
     ).replace(r#"<w:commentReference w:id="2"/></w:r>"#, r#"<w:commentReference w:id="2"/></w:r></w:ins>"#);
     pkg.set_part("word/document.xml", xml.into_bytes());
     let source = pkg.to_zip().unwrap();
+    // Carol wrote c0; Alice deletes it on purpose (#1846).
     let plan = anchor_plan(
-        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","resolve_revisions":{"reject":{"ids":["r2"]}}}),
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","rewrite_others_comments":true,"resolve_revisions":{"reject":{"ids":["r2"]}}}),
         serde_json::json!([
             {"kind":"delete_comment","comment_id":"c0"}
         ]),
@@ -1428,8 +1431,9 @@ fn kept_receipt_after_a_deleted_paragraph(editing: bool) {
             1,
         );
     pkg.set_part("word/document.xml", xml.into_bytes());
+    // Carol wrote c0; Alice deletes it on purpose (#1846).
     let plan = anchor_plan(
-        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep"}),
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","rewrite_others_comments":true}),
         serde_json::json!([
             {"kind":"delete_comment","comment_id":"c0"},
             {"kind":"delete_paragraph","paragraph":"p0"}
@@ -1460,8 +1464,9 @@ fn receipt_1191_kept_paragraph_names_the_redline_in_suggesting_mode() {
 /// deletes is gone from the output: no receipt may call it kept.
 fn deleted_kept_comment_receipt(editing: bool) {
     let source = settlement_identity_source();
+    // Carol wrote c0; Alice deletes it on purpose (#1846).
     let plan = anchor_plan(
-        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep"}),
+        serde_json::json!({"existing_revisions":"reject","removed_anchor_comments":"keep","rewrite_others_comments":true}),
         serde_json::json!([{"kind":"delete_comment","comment_id":"c0"}]),
     );
     let (text, bytes) = run_thread_cli(&source, &plan, editing);
@@ -1489,6 +1494,7 @@ fn receipt_kept_then_deleted_comment_is_not_called_kept_in_editing_mode() {
 }
 
 // #1206: settlement's provisional rescue must agree with the plan's deletions.
+// Bob wrote c0; Alice deletes it on purpose (#1846).
 fn kept_deletion_plan(source: &[u8], id: u32, track: Option<&str>) -> serde_json::Value {
     if let Some(track) = track {
         serde_json::json!({
@@ -1498,6 +1504,7 @@ fn kept_deletion_plan(source: &[u8], id: u32, track: Option<&str>) -> serde_json
             "resolve_revisions": {"accept": [], "reject": []},
             "author": "Alice", "date": "2026-10-18T12:06:00Z",
             "scope": {"kind": "all"}, "removed_anchor_comments": "keep",
+            "rewrite_others_comments": true,
             "operations": [{"kind": "delete_comment", "include_replies": true,
                 "target": {"short_id": format!("c{id}"), "long_id": format!("comments.w:comment.w:id.{id}")}}]
         })
@@ -1505,6 +1512,7 @@ fn kept_deletion_plan(source: &[u8], id: u32, track: Option<&str>) -> serde_json
         serde_json::json!({
             "schema_version": 1, "author": "Alice", "date": "2026-10-18T12:06:00Z",
             "existing_revisions": "reject", "removed_anchor_comments": "keep",
+            "rewrite_others_comments": true,
             "operations": [{"kind": "delete_comment", "comment_id": format!("c{id}")}]
         })
     }

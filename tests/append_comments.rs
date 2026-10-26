@@ -103,9 +103,13 @@ fn a_thread_and_its_resolution_come_along() {
     let b = edited(
         &b,
         "Bob",
-        &format!(
-            r#"{{"kind":"reply_comment","comment_id":{root},"text":"Agreed"}},{{"kind":"resolve_comment","comment_id":{root}}}"#
-        ),
+        &format!(r#"{{"kind":"reply_comment","comment_id":{root},"text":"Agreed"}}"#),
+    );
+    // Ann resolves her own thread (#1846).
+    let b = edited(
+        &b,
+        "Ann",
+        &format!(r#"{{"kind":"resolve_comment","comment_id":{root}}}"#),
     );
     let a = commented("A.", "Cy", "Mine");
     let out = append_documents(&a, &b, &carry()).unwrap();

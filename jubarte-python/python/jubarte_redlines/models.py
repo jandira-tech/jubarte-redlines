@@ -766,9 +766,11 @@ class EditPlan:
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
     update_fields: bool = False
-    #: Let ``edit_comment`` change another author's comment; it keeps their
-    #: name. Without it that is refused (``COMMENT_NOT_YOURS``): one author
-    #: answers another with ``reply_comment``.
+    #: Let ``edit_comment``, ``delete_comment`` and ``resolve_comment``
+    #: change another author's comment (a reworded one keeps their name), and
+    #: a delete take another author's reply with its thread. Without it that
+    #: is refused (``COMMENT_NOT_YOURS``): one author answers another with
+    #: ``reply_comment``.
     rewrite_others_comments: bool = False
 
     def __post_init__(self) -> None:
@@ -1048,7 +1050,11 @@ class EditPlan:
         return self._with(_with_optional(op, id=id))
 
     def resolve_comment(self, comment_id: int, *, done: bool = True, id: str | None = None) -> EditPlan:
-        """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them."""
+        """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
+
+        Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+        plan sets ``rewrite_others_comments``.
+        """
         op: dict[str, object] = {"kind": "resolve_comment", "comment_id": comment_id, "done": done}
         return self._with(_with_optional(op, id=id))
 
@@ -1062,7 +1068,12 @@ class EditPlan:
         return self._with(_with_optional(op, id=id))
 
     def delete_comment(self, comment_id: int, *, id: str | None = None) -> EditPlan:
-        """Remove comment ``comment_id`` with its replies and anchors."""
+        """Remove comment ``comment_id`` with its replies and anchors.
+
+        Another author's comment, or one of yours whose thread holds another
+        author's reply, is refused (``COMMENT_NOT_YOURS``) unless the plan
+        sets ``rewrite_others_comments``.
+        """
         op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
         return self._with(_with_optional(op, id=id))
 

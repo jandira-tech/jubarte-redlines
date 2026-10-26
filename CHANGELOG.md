@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Changed
+
+- **`edit` refuses to delete, resolve or reopen another author's comment** (#1846). Rewording one was already refused (`COMMENT_NOT_YOURS`), but `-p c5 --delete` / `--resolve` (`delete_comment`, `resolve_comment`) went through on anyone's comment. Deleting your own comment also deleted another author's replies in its thread without a word. All of these are now refused with `COMMENT_NOT_YOURS`. The refusal says what to do instead (reply to their comment, or resolve your own thread), and `--rewrite-others-comments` (`"rewrite_others_comments": true`) still lets the operation through, with one report note per comment it changed. A plan that resolved or deleted another author's comment on purpose now needs that opt-in. `capabilities` names it on the `delete_comment` and `resolve_comment` rows.
+
 ### Fixed
 
 - **An edit dry run's `next:` line names the file it writes** (#1847). A dry run that named no output printed a `next:` command without one, so the command run as printed wrote `<stem>_modified.docx` beside the input, while the file the caller meant to update stayed as it was. The line now spells the default as `-o <stem>_modified.docx`, after a note that the input stays as it is. An `X_modified.docx` input, updated in place, gets no `-o` (naming the input as the output is refused), and its note says it is updated in place.

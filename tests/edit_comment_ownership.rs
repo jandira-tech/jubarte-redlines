@@ -5,8 +5,10 @@
 //! A comment id is an identifier, and a comment speaks for its author
 //! (#1264). Settling revisions never renumbers the comments that stay, so
 //! a reply written after a bare accept lands in the thread the agent read;
-//! `edit_comment` on another author's comment is refused unless the plan
-//! asks to rewrite it under their name.
+//! `edit_comment`, `delete_comment` and `resolve_comment` on another
+//! author's comment are refused unless the plan asks to change it under
+//! their name (#1846), and so is deleting your own comment whose thread
+//! holds another author's reply.
 
 mod common;
 
@@ -428,4 +430,196 @@ fn a_comment_that_names_no_author_is_not_yours_either() {
             assert_eq!(list_comments(bytes).unwrap()[0].text, "Reworded.");
         }
     }
+}
+
+/// A v1 plan by `author` of one thread operation `op`, `rewrite` as given.
+fn thread_plan(author: &str, op: &serde_json::Value, rewrite: Option<bool>) -> EditPlan {
+    let mut value = serde_json::json!({
+        "schema_version": 1,
+        "author": author,
+        "date": "2026-10-20T09:00:00Z",
+        "operations": [op],
+    });
+    if let Some(rewrite) = rewrite {
+        value["rewrite_others_comments"] = rewrite.into();
+    }
+    plan(&value)
+}
+
+/// Alice's c0 on p0 with Bob's reply c1, a thread as `edit` writes one.
+fn alices_thread_with_bobs_reply() -> Vec<u8> {
+    let reply = apply_plan(
+        &with_comments(
+            &format!("<w:p>{}</w:p>", commented(0, "The cap is 10.")),
+            &[(0, "Alice", "Too low.")],
+        ),
+        &thread_plan(
+            "Bob",
+            &serde_json::json!({"kind": "reply_comment", "comment_id": 0, "text": "Agreed."}),
+            None,
+        ),
+    )
+    .unwrap()
+    .redline;
+    let listed = list_comments(&reply).unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|c| (c.id, c.author.as_str(), c.parent))
+            .collect::<Vec<_>>(),
+        [(0, "Alice", None), (1, "Bob", Some(0))]
+    );
+    reply
+}
+
+#[test]
+fn deleting_or_resolving_another_authors_comment_is_refused() {
+    let cases = [
+        (
+            serde_json::json!({"kind": "delete_comment", "comment_id": 0}),
+            "delete their comment",
+            "their comment was deleted",
+        ),
+        (
+            serde_json::json!({"kind": "resolve_comment", "comment_id": 0}),
+            "resolve their comment",
+            "their comment was resolved",
+        ),
+        (
+            serde_json::json!({"kind": "resolve_comment", "comment_id": 0, "done": false}),
+            "reopen their comment",
+            "their comment was reopened",
+        ),
+    ];
+    for (op, refused_to, noted) in cases {
+        let error = apply_plan(&bobs_comment(), &thread_plan("Alice", &op, None)).unwrap_err();
+        assert_eq!(
+            (error.code.as_str(), error.message.as_str()),
+            (
+                "COMMENT_NOT_YOURS",
+                format!(
+                    r#"c0 is by "Bob"; reply instead (reply_comment), or pass "rewrite_others_comments": true to {refused_to}"#
+                )
+                .as_str()
+            ),
+            "{op}"
+        );
+        let out = apply_plan(&bobs_comment(), &thread_plan("Alice", &op, Some(true))).unwrap();
+        let kind = op["kind"].as_str().unwrap();
+        assert_eq!(
+            out.report.notes,
+            [format!(r#"op-1 ({kind}): c0 is by "Bob"; {noted}"#)],
+            "{op}"
+        );
+        for bytes in [&out.clean, &out.redline] {
+            assert_word_valid_package(bytes);
+        }
+    }
+}
+
+#[test]
+fn deleting_or_resolving_your_own_comment_needs_no_flag() {
+    for op in [
+        serde_json::json!({"kind": "delete_comment", "comment_id": 0}),
+        serde_json::json!({"kind": "resolve_comment", "comment_id": 0}),
+    ] {
+        let out = apply_plan(&bobs_comment(), &thread_plan("Bob", &op, None)).unwrap();
+        assert!(out.report.notes.is_empty(), "{op}: {:?}", out.report.notes);
+        let listed = list_comments(&out.redline).unwrap();
+        match op["kind"].as_str().unwrap() {
+            "delete_comment" => assert!(listed.is_empty(), "{listed:?}"),
+            _ => assert!(listed[0].done, "{listed:?}"),
+        }
+    }
+}
+
+#[test]
+fn deleting_your_own_thread_would_take_another_authors_reply() {
+    let source = alices_thread_with_bobs_reply();
+    let delete = serde_json::json!({"kind": "delete_comment", "comment_id": 0});
+    let error = apply_plan(&source, &thread_plan("Alice", &delete, None)).unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        (
+            "COMMENT_NOT_YOURS",
+            r#"deleting c0 deletes c1, a reply by "Bob"; resolve c0 instead (resolve_comment), or pass "rewrite_others_comments": true to delete their reply with it"#
+        )
+    );
+    let out = apply_plan(&source, &thread_plan("Alice", &delete, Some(true))).unwrap();
+    assert_eq!(
+        out.report.notes,
+        [r#"op-1 (delete_comment): c1 is by "Bob"; their reply was deleted with c0"#]
+    );
+    assert!(list_comments(&out.redline).unwrap().is_empty());
+    // Resolving her own thread is Alice's to do, Bob's reply and all.
+    let out = apply_plan(
+        &source,
+        &thread_plan(
+            "Alice",
+            &serde_json::json!({"kind": "resolve_comment", "comment_id": 0}),
+            None,
+        ),
+    )
+    .unwrap();
+    assert!(out.report.notes.is_empty(), "{:?}", out.report.notes);
+    // Bob may delete his own reply: it holds no one else's words.
+    apply_plan(
+        &source,
+        &thread_plan(
+            "Bob",
+            &serde_json::json!({"kind": "delete_comment", "comment_id": 1}),
+            None,
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_flags_refuse_delete_and_resolve_in_their_own_words() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), bobs_comment()).unwrap();
+    for (flag, refused_to) in [
+        ("--delete", "delete their comment"),
+        ("--resolve", "resolve their comment"),
+    ] {
+        let edit = |extra: &[&str], output: &str| {
+            let mut args = vec![
+                "edit", "in.docx", "-p", "c0", flag, "--author", "Alice", "--quiet", "-o", output,
+            ];
+            args.extend_from_slice(extra);
+            run(dir.path(), &args)
+        };
+        let refused = edit(&[], "refused.docx");
+        assert_eq!(refused.status.code(), Some(3), "{flag}: {refused:?}");
+        let stderr = String::from_utf8(refused.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!(r#"COMMENT_NOT_YOURS (op-1): c0 is by "Bob"; reply instead (-p c0 --reply TEXT), or pass --rewrite-others-comments to {refused_to}"#)),
+            "{flag}: {stderr}"
+        );
+        assert!(!dir.path().join("refused.docx").exists());
+        let allowed = edit(&["--rewrite-others-comments", "--force"], "allowed.docx");
+        assert_eq!(allowed.status.code(), Some(0), "{flag}: {allowed:?}");
+        assert_word_valid_package(&std::fs::read(dir.path().join("allowed.docx")).unwrap());
+    }
+}
+
+#[test]
+fn a_comment_that_names_no_author_is_not_yours_to_delete_either() {
+    let source = unnamed_comment("");
+    let error = apply_plan(
+        &source,
+        &thread_plan(
+            "Alice",
+            &serde_json::json!({"kind": "delete_comment", "comment_id": 0}),
+            None,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.message.as_str()),
+        (
+            "COMMENT_NOT_YOURS",
+            r#"c0 names no author; reply instead (reply_comment), or pass "rewrite_others_comments": true to delete it"#
+        )
+    );
 }

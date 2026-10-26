@@ -2755,7 +2755,8 @@ fn a_reply_and_a_resolution_by_a_second_author_thread_under_the_root() {
         dir.path().join("base.docx"),
     )
     .unwrap();
-    let second = r#"{"schema_version":1,"author":"Bob Lee","date":"2026-10-02T10:00:00Z","operations":[
+    // Bob resolves Ann's thread on purpose (#1846).
+    let second = r#"{"schema_version":1,"author":"Bob Lee","date":"2026-10-02T10:00:00Z","rewrite_others_comments":true,"operations":[
         {"kind":"reply_comment","comment_id":0,"text":"Yes, in Delaware."},
         {"kind":"resolve_comment","comment_id":0,"done":true}]}"#;
     let text = edited(dir.path(), second, "two");
@@ -3614,7 +3615,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
             "--resolve",
             "--author",
             "Cy Young",
-            // c1 is Bob's: Cy rewrites it under Bob's name only on request (#1264).
+            // c1 is Bob's and c0 Ann's: Cy rewrites one under Bob's name
+            // and resolves the other only on request (#1264, #1846).
             "--rewrite-others-comments",
             "--out-dir",
             "three",
@@ -3656,6 +3658,8 @@ fn add_and_edit_cover_a_comment_thread_from_the_command_line() {
             "-p",
             "c0",
             "--delete",
+            // Ann's thread, Bob's reply with it: deleted only on request (#1846).
+            "--rewrite-others-comments",
             "--out-dir",
             "five",
         ],
