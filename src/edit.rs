@@ -1567,6 +1567,10 @@ fn resolve_selected(
     Ok((Some(bytes), resolved, comments))
 }
 
+/// The prefix of a style's change id (`styles.r0`, as `changes` lists it):
+/// a style's recorded formatting does not make the text tracked (#1885).
+const STYLES_STORY: &str = "styles.";
+
 /// Whether `source` still carries a tracked change of its text (body,
 /// headers, footers, notes; a style's recorded formatting is not one) once
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
@@ -1581,7 +1585,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     .ok()
     .and_then(|(bytes, _, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
-        .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
+        .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with(STYLES_STORY)))
 }
 
 /// The replies `plan` makes to a comment on a paragraph it deletes, each
@@ -1632,7 +1636,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
     // recorded formatting does not make the text tracked.
     let has_revisions = crate::changes::changes_in(&probe.pkg)
         .iter()
-        .any(|c| !c.id.starts_with("styles:"));
+        .any(|c| !c.id.starts_with(STYLES_STORY));
     let (base, opened, flattened) = match (has_revisions, plan.existing_revisions) {
         (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe, false),
         (true, ExistingRevisions::Refuse) => {
