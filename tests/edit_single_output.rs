@@ -767,7 +767,6 @@ fn publication_hook(
     args: &[std::ffi::OsString],
     mut at: impl FnMut(&str, u32),
 ) -> std::process::Output {
-    use std::io::{BufRead, Write};
     use std::os::unix::net::UnixListener;
     let socket = dir.join("hook.sock");
     let listener = UnixListener::bind(&socket).unwrap();
@@ -785,18 +784,7 @@ fn publication_hook(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
-                stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-                    .unwrap();
-                let mut line = String::new();
-                std::io::BufReader::new(&mut stream)
-                    .read_line(&mut line)
-                    .unwrap();
-                let (phase, pid) = line.trim().split_once(' ').unwrap();
-                at(phase, pid.parse().unwrap());
-                stream.write_all(b"x").unwrap();
-            }
+            Ok((stream, _)) => serve_hook(stream, &mut at),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if child.try_wait().unwrap().is_some() {
                     break;
@@ -813,6 +801,64 @@ fn publication_hook(
     let output = child.wait_with_output().unwrap();
     std::fs::remove_file(socket).unwrap();
     output
+}
+
+/// One hook connection: the child's `PHASE PID` line, the callback, then
+/// the byte that releases the child. On macOS a stream accepted from the
+/// non-blocking listener is non-blocking too (BSD sockets inherit
+/// `O_NONBLOCK`; Linux's do not): a child that has connected but not yet
+/// written read as `WouldBlock` (#1859). The read blocks, bounded by its
+/// timeout.
+#[cfg(unix)]
+fn serve_hook(mut stream: std::os::unix::net::UnixStream, at: &mut impl FnMut(&str, u32)) {
+    use std::io::{BufRead, Write};
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(&mut stream)
+        .read_line(&mut line)
+        .unwrap();
+    let (phase, pid) = line.trim().split_once(' ').unwrap();
+    at(phase, pid.parse().unwrap());
+    stream.write_all(b"x").unwrap();
+}
+
+/// #1859: a child that connects before it writes its line is waited for.
+/// The listener polls without blocking; the connection must still block.
+#[cfg(unix)]
+#[test]
+fn the_hook_waits_for_a_line_written_after_connecting() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("late.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = std::thread::spawn(move || {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        stream.write_all(b"staged 42\n").unwrap();
+        let mut released = [0u8; 1];
+        stream.read_exact(&mut released).unwrap();
+        released[0]
+    });
+    let stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    };
+    let mut seen = Vec::new();
+    serve_hook(stream, &mut |phase, pid| {
+        seen.push((phase.to_string(), pid));
+    });
+    assert_eq!(seen, [("staged".to_string(), 42)]);
+    assert_eq!(client.join().unwrap(), b'x');
 }
 
 #[cfg(unix)]
