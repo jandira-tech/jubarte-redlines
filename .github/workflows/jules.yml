@@ -473,12 +473,16 @@ jobs:
           budget=$(( 120000 - used ))
           [ "$budget" -gt 0 ] || budget=0
           truncated=$(fit "$diff" "$budget")
+          # 🐇 The base branch, single-quoted for sh: the prompt puts it in a
+          # command. Git refs hold no newline, so it fits one output line.
+          base_q="'$(printf '%s' "$BASE_REF" | sed "s/'/'\\\\''/g")'"
 
           # 🥕 A random delimiter: these outputs carry PR content, and a line equal
           # to a fixed delimiter would end an output early and write others.
           delim="JULES_FIT_$(openssl rand -hex 16)"
           {
             echo "truncated=${truncated}"
+            echo "base_q=${base_q}"
             echo "size=${size// /}"
             for name in files report diff; do
               echo "${name}<<${delim}"
@@ -530,9 +534,13 @@ jobs:
 
             ## The diff (base `${{ steps.pr.outputs.base_ref }}`...head `${{ steps.pr.outputs.head_sha }}`)
             Computed on the runner. Your checkout is a depth-1 clone, so a `git diff` against the
-            base fails there with "no merge base" until you fetch more history:
-            `git fetch --deepen=200 origin ${{ steps.pr.outputs.base_ref }} ${{ steps.pr.outputs.head_ref }}`,
-            then `git diff origin/${{ steps.pr.outputs.base_ref }}...HEAD`.
+            base fails there with "no merge base" until you fetch more history. Run these one at a
+            time; if one fails, go on to the next:
+            `git fetch --deepen=200 origin ${{ steps.diff.outputs.base_q }}`,
+            `git fetch --deepen=200 origin ${{ steps.pr.outputs.head_sha }}`,
+            then `git diff origin/${{ steps.diff.outputs.base_q }}...${{ steps.pr.outputs.head_sha }}`.
+            Review that commit, not your clone's HEAD, which moves if the branch does. If the diff
+            still reports "no merge base", run `git fetch --unshallow origin` and diff again.
             ${{ steps.diff.outputs.truncated == 'true' && format('This diff is cut at a line boundary; the whole diff is {0} bytes. Fetch as above and read the rest yourself.', steps.diff.outputs.size) || 'This diff is complete.' }}
 
             ```diff

@@ -59,15 +59,18 @@ SKILL_TEXT: dict[str, str] = {
 SKILL_BYTES = sum(len(text.encode("utf-8")) for text in SKILL_TEXT.values())
 
 
-def sh(cwd: Path, *cmd: str) -> str:
+def hermetic_env() -> dict[str, str]:
     # Drop GIT_DIR, GIT_INDEX_FILE and friends: a git hook exports them, and
     # inherited they would aim every fixture command at the enclosing repo.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    return subprocess.run(cmd, cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
-def fixture(root: Path, files: dict[str, bytes | str]) -> Path:
-    """A repo whose origin/main is the base and HEAD adds `files` on a branch."""
+def sh(cwd: Path, *cmd: str) -> str:
+    return subprocess.run(cmd, cwd=cwd, env=hermetic_env(), check=True, capture_output=True, text=True).stdout
+
+
+def fixture(root: Path, files: dict[str, bytes | str], base: str = "main") -> Path:
+    """A repo whose origin/<base> is the base and HEAD adds `files` on a branch."""
     origin = root / "origin.git"
     work = root / "work"
     sh(root, "git", "init", "-q", "--bare", "-b", "main", str(origin))
@@ -76,10 +79,11 @@ def fixture(root: Path, files: dict[str, bytes | str]) -> Path:
     def git(*args: str) -> None:
         sh(work, "git", "-c", "user.name=t", "-c", "user.email=t@t", *args)
 
+    git("symbolic-ref", "HEAD", f"refs/heads/{base}")
     (work / "README.md").write_text("base\n", encoding="utf-8")
     git("add", ".")
     git("commit", "-q", "-m", "base")
-    git("push", "-q", "origin", "main")
+    git("push", "-q", "origin", base)
     git("checkout", "-q", "-b", "feature")
     for name, body in files.items():
         data = body if isinstance(body, bytes) else body.encode("utf-8")
@@ -206,6 +210,10 @@ def render(template: str, diff: dict[str, str], changed: str, report: str) -> st
     return out
 
 
+# The git commands the prompt tells Jules to run, in backticks.
+GIT_COMMAND = re.compile(r"`(git (?:fetch|diff) [^`]*)`")
+
+
 def step_index(step_id: str) -> int:
     return next(i for i, s in enumerate(STEPS) if s.get("id") == step_id)
 
@@ -220,6 +228,80 @@ class ConejoDiffStep(unittest.TestCase):
         # The step runs before Jules and after the skills and the report exist.
         self.assertGreater(step_index("diff"), step_index("static_analysis"))
         self.assertLess(step_index("diff"), step_index("jules"))
+
+    def test_tells_jules_to_fetch_the_base_and_the_head_sha_separately(self) -> None:
+        # One combined fetch aborts when either ref is missing; the head branch
+        # name is author-chosen and never goes into a command; the diff targets
+        # the reviewed commit, not the clone's HEAD.
+        prompt = str(JULES_STEP["with"]["prompt"])
+        self.assertEqual(
+            GIT_COMMAND.findall(prompt),
+            [
+                "git fetch --deepen=200 origin ${{ steps.diff.outputs.base_q }}",
+                "git fetch --deepen=200 origin ${{ steps.pr.outputs.head_sha }}",
+                "git diff origin/${{ steps.diff.outputs.base_q }}...${{ steps.pr.outputs.head_sha }}",
+                "git fetch --unshallow origin",
+            ],
+        )
+
+    def test_quotes_the_base_branch_for_the_shell(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="conejo-diff-") as tmp:
+            work = fixture(Path(tmp), {"lib.rs": "fn main() {}\n"}, base="rel'ease")
+            outputs = run_step(work, {"BASE_REF": "rel'ease"})
+            printed = sh(work, "sh", "-c", f"printf %s {outputs['base_q']}")
+        self.assertEqual(printed, "rel'ease")
+
+    def test_the_fetch_recipe_yields_the_diff_in_a_depth_1_clone(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="conejo-diff-") as tmp:
+            root = Path(tmp)
+            work = fixture(root, {"lib.rs": "fn main() {}\n"})
+            origin = root / "origin.git"
+            head = sh(work, "git", "rev-parse", "HEAD").strip()
+            # The base moves on after the branch point, as it does on a real PR.
+            sh(work, "git", "checkout", "-q", "main")
+            (work / "later.txt").write_text("later\n", encoding="utf-8")
+            sh(work, "git", "add", ".")
+            sh(work, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "later")
+            sh(work, "git", "push", "-q", "origin", "main")
+            sh(work, "git", "checkout", "-q", "feature")
+            sh(work, "git", "push", "-q", "origin", "feature")
+            # GitHub serves a commit by SHA; a local bare repo must be told to.
+            sh(origin, "git", "config", "uploadpack.allowReachableSHA1InWant", "true")
+            outputs = run_step(work)
+            clone = root / "clone"
+            sh(
+                root,
+                "git",
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                "--no-single-branch",
+                "-b",
+                "feature",
+                f"file://{origin}",
+                str(clone),
+            )
+            prompt = (
+                str(JULES_STEP["with"]["prompt"])
+                .replace("${{ steps.diff.outputs.base_q }}", outputs["base_q"])
+                .replace("${{ steps.pr.outputs.head_sha }}", head)
+            )
+            commands = [c for c in GIT_COMMAND.findall(prompt) if "--unshallow" not in c]
+            diff_command = commands[-1]
+
+            def run(command: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["sh", "-c", command], cwd=clone, env=hermetic_env(), capture_output=True, text=True
+                )
+
+            self.assertNotEqual(run(diff_command).returncode, 0, "a depth-1 clone should have no merge base")
+            for command in commands[:-1]:
+                run(command)
+            result = run(diff_command)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("+fn main() {}", result.stdout)
+        self.assertNotIn("later", result.stdout)
 
     def test_sends_a_small_diff_whole(self) -> None:
         with tempfile.TemporaryDirectory(prefix="conejo-diff-") as tmp:
