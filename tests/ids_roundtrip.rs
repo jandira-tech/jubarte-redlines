@@ -1169,7 +1169,7 @@ fn every_story_and_every_collision_round_trips() {
     report(&fails);
 }
 
-/// Word's own redlines: the bench's 100 rejected-tracking pairs, its 25
+/// Word's own redlines: the bench's 100 rejected-tracking pairs, its 27
 /// commented, tracked documents and its 88 tracked ones without comments.
 #[test]
 fn word_redlines_round_trip() {
@@ -1188,7 +1188,7 @@ fn word_redlines_round_trip() {
         here.sort();
         files.extend(here);
     }
-    assert_eq!(files.len(), 213, "the corpus is all here");
+    assert_eq!(files.len(), 215, "the corpus is all here");
     let mut fails = Vec::new();
     for file in &files {
         let name = file.file_name().unwrap().to_string_lossy().to_string();

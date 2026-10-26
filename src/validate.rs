@@ -1302,7 +1302,7 @@ fn check_deleted_section_page_fields(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// A story's closing paragraph: its last block when that is a paragraph of
 /// its own, not one in a content control, a custom XML element or a table.
-fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
+pub(crate) fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
     let blocks = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
     dom.elements(story, None)
         .into_iter()
@@ -1314,7 +1314,7 @@ fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
 /// Whether paragraph `p` holds a PAGE or NUMPAGES field: a field code
 /// (`w:instrText`, `w:delInstrText`, a `w:fldSimple`'s `w:instr`) whose
 /// first word is one of them.
-fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
+pub(crate) fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
     let page = |code: &str| {
         code.split_whitespace().next().is_some_and(|word| {
             word.eq_ignore_ascii_case("PAGE") || word.eq_ignore_ascii_case("NUMPAGES")

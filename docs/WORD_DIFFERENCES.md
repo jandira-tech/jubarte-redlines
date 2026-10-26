@@ -360,19 +360,34 @@ for `fill_control`, the clean edit output also retains the control.
 - **What we do.** In Word mode, such a story is deleted whole: every
   paragraph mark goes, the closing one included, and each paragraph keeps
   its own properties (no `pPrChange`). A content control's last paragraph
-  keeps its mark, as before. Its Accept All gives an empty story and its
-  Reject All the original one, and `jubarte accept`/`reject` do the same.
-  A story a live section also references keeps Word's shape (s016).
-- **Which is better.** Ours, but it is not enough. Word opens 7 of the 9
-  with every mark deleted. s176 (`file_9` → `file_10`) and s472
-  (`file_27` → `file_28`) still crash, because the crash depends on the
-  layout, not the marks: a deleted break that references a footer with a
-  PAGE or NUMPAGES field crashed Word whether the story's text was live,
-  deleted, or deleted with every mark, and with a live section
-  referencing the footer too (round 18, 2026-10-25). Word opened all of
-  them once no deleted break referenced the footer. `jubarte validate`
-  reports that shape as the `DELETED_SECTION_PAGE_FIELD` lead, a warning,
-  because Word opened 2 of the 11 such redlines in the release sample.
+  keeps its mark, as before. A story a live section also references keeps
+  Word's shape (s016).
+
+  Deleting the marks alone opened 7 of the 9. s176 (`file_9` → `file_10`)
+  and s472 (`file_27` → `file_28`) still crashed. A deleted break that
+  references a footer with a PAGE or NUMPAGES field crashed Word whatever
+  the story's text and marks were: live, deleted, or deleted with every
+  mark. It also crashed when a live section referenced the footer too. The
+  layout decides (round 18, 2026-10-25).
+
+  So the page-number story the final section inherits through deleted
+  breaks moves to the final section: the final section references it, and
+  no deleted break does. A header without a page field stays on its
+  break. Word opens all 9 that way.
+- **Accept and reject.** Word's Accept All gives the revision: nothing
+  shows the emptied story. Word's Reject All gives the original's text,
+  and its header on every page. But the page-number footer shows on the
+  last section only: s548's pages 7–11, where the original shows it on all
+  11. A `sectPrChange` cannot record header or footer references, so no
+  redline can give them back to the deleted breaks. `jubarte accept` and
+  `reject` give the same result.
+- **Which is better.** Ours. Word crashes on its own shape, and a redline
+  Word cannot open shows nothing. The cost is that rejected footer on the
+  earlier sections. Stories the final section does not inherit stay on
+  their breaks. s356 has 19 deleted breaks, each with its own page-number
+  footer, and Word opens it. `jubarte validate` reports those breaks as the
+  `DELETED_SECTION_PAGE_FIELD` lead, a warning: Word crashed on 9 of the 11
+  release-sample redlines with that shape.
 
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
