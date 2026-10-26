@@ -433,12 +433,13 @@ function runEdit(verb, file, o) {
   // was read, never a link to it or an output written over it.
   let consumed;
   if (o.consume && !o.dry_run) {
-    if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
-    }
     try {
       consumed = fs.readFileSync(o.plan);
+      if (fs.lstatSync(o.plan, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        throw new UsageError(`--consume deletes ${o.plan}, a symbolic link; pass the file it names`);
+      }
     } catch (e) {
+      if (e instanceof UsageError) throw e;
       throw new CliError(`reading ${o.plan}: ${osError(e)}`);
     }
   }

@@ -85,11 +85,11 @@ try {
   const readme = readFileSync(readmePath, "utf8");
   const readmeNext = readme
     .replace(
-      new RegExp(`jubarte\\s*=\\s*"${prev.replace(/\./g, "\\.")}"`, "g"),
+      new RegExp(`jubarte\\s*=\\s*"${prev.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&")}"`, "g"),
       `jubarte = "${next}"`,
     )
     .replace(
-      new RegExp(`jubarte@${prev.replace(/\./g, "\\.")}`, "g"),
+      new RegExp(`jubarte@${prev.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&")}`, "g"),
       `jubarte@${next}`,
     )
     // Socket badge: image and link both pin the version; a stale pin
