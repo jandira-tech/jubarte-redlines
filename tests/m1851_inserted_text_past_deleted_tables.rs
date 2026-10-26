@@ -21,7 +21,9 @@ mod common;
 
 use std::path::PathBuf;
 
+use common::docx::docx;
 use common::validity::check_word_valid_package;
+use jubarte::changes::{ChangeFilter, accept_elements, list_changes};
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::{
     accept_revisions, compare_documents_with_settings, reject_revisions,
@@ -146,4 +148,58 @@ fn the_revision_s_words_start_the_paragraph_after_the_deleted_tables() {
             "{id}: rejected, the original"
         );
     }
+}
+
+/// A selection can bring the words to the table. In Word's own redline of
+/// `4640e71ddd` → `1424386e9b` an empty paragraph, its mark deleted, sits
+/// between them, and Word opens it; accepting half its changes joined the
+/// words' paragraph to that one, and Word 16.115 crashed opening the
+/// result (fix23 half1851, h1). A selective accept moves the words as
+/// compare does.
+#[test]
+fn a_selection_that_brings_the_words_to_the_table_moves_them() {
+    let by = r#"w:author="Ana" w:date="2026-10-25T00:00:00Z""#;
+    let mark = |id: u32| format!(r#"<w:pPr><w:rPr><w:del w:id="{id}" {by}/></w:rPr></w:pPr>"#);
+    let row = |id: u32| {
+        format!(
+            r#"<w:tr><w:trPr><w:del w:id="{id}" {by}/></w:trPr><w:tc><w:p>{}<w:del w:id="{}" {by}><w:r><w:delText>Fee</w:delText></w:r></w:del></w:p></w:tc></w:tr>"#,
+            mark(id + 10),
+            id + 20
+        )
+    };
+    let source = docx(&format!(
+        r#"<w:p>{}<w:ins w:id="2" {by}><w:r><w:t>New words.</w:t></w:r></w:ins></w:p><w:p>{}</w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid>{}{}</w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        mark(1),
+        mark(3),
+        row(4),
+        row(5)
+    ));
+    assert_eq!(
+        check_word_valid_package(&source).errors,
+        Vec::<String>::new()
+    );
+    let joined = list_changes(&source)
+        .unwrap()
+        .into_iter()
+        .find(|c| c.target == "paragraph_mark" && c.paragraph.as_deref() == Some("p0"))
+        .unwrap()
+        .id;
+    let partial = accept_elements(&source, &ChangeFilter::ids([joined])).unwrap();
+    assert_eq!(
+        check_word_valid_package(&partial).errors,
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        blocks(&PartFs::open(&partial).unwrap()),
+        "pTS",
+        "the joined paragraph keeps its deleted mark, the words start the last"
+    );
+    assert_eq!(
+        paragraphs(&accept_revisions(&partial).unwrap()),
+        paragraphs(&accept_revisions(&source).unwrap())
+    );
+    assert_eq!(
+        paragraphs(&reject_revisions(&partial).unwrap()),
+        ["", "After."]
+    );
 }

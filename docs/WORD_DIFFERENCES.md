@@ -448,6 +448,16 @@ for `fill_control`, the clean edit output also retains the control.
   byte-identical to before. `jubarte accept` of w09 is now right: before,
   the revision's last paragraph took the original's mark properties (bold,
   16 pt) and an empty paragraph followed it.
+- **Selective accept and reject.** A selection can bring the words to the
+  table. Resolving the deleted mark of an empty paragraph between them
+  joins the two paragraphs, so the gapped shape becomes the adjacent one.
+  Word's own redline of `4640e71ddd` → `1424386e9b` opens. With every
+  other mark accepted, as `tests/m_selective_revisions.rs` does, Word
+  16.115 crashed opening the result. A selective `accept` or `reject`
+  (by id, author or kind, and an edit plan's) moves the words too,
+  whenever its result holds the shape. Word opened the three such
+  half-way documents of the bench's `rejected_tracking` set alone, all
+  CLEAN, the crasher included (fix23 half1851).
 - **What it costs.** The redline shows the new words after the deleted
   tables instead of before them, where Word's own redline shows them. In
   a long deleted region that is far down: s487's words move past 84
