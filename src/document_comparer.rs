@@ -6541,14 +6541,9 @@ fn docx_has_tracked_changes(docx: &[u8], limits: crate::admission::InputLimits) 
         let Some(xml) = pkg.part_string(&name) else {
             continue;
         };
-        // Coarse but cheap: real TC carriers in WordprocessingML.
-        if xml.contains("<w:ins")
-            || xml.contains("<w:del")
-            || xml.contains("<w:moveFrom")
-            || xml.contains("<w:moveTo")
-            || xml.contains("<w:rPrChange")
-            || xml.contains("<w:pPrChange")
-        {
+        // Whole element names: `<w:instrText>` and `<w:insideH>` are not
+        // revisions, and tidying a document with none rewrites it (#1870).
+        if crate::revision_processor::xml_has_tracked_revisions(&xml) {
             return true;
         }
     }
@@ -9094,6 +9089,45 @@ mod coverage_boundary_tests {
             author_for_revisions: "Boundary author".to_string(),
             date_time_for_revisions: "2001-02-03T04:05:06Z".to_string(),
             ..WmlComparerSettings::default()
+        }
+    }
+
+    /// #1870: the pre-accept probe matches whole element names. A field's
+    /// `w:instrText` and a table's `w:insideH`/`w:insideV` are not a
+    /// `w:ins`; every revision the accept path resolves is a revision.
+    #[test]
+    fn tracked_change_probe_matches_whole_names() {
+        let probe = |body: &str| {
+            let docx = package(&format!("<w:body>{body}</w:body>"))
+                .to_zip()
+                .unwrap();
+            docx_has_tracked_changes(&docx, crate::admission::InputLimits::compare())
+        };
+        let field = "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>";
+        let borders = "<w:tbl><w:tblPr><w:tblBorders><w:insideH w:val='single' w:sz='4'/><w:insideV w:val='single' w:sz='4'/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p/>";
+        assert!(!probe(field), "a field is not a revision");
+        assert!(!probe(borders), "inner borders are not a revision");
+        assert!(!probe("<w:p><w:r><w:t>&lt;w:ins&gt;</w:t></w:r></w:p>"));
+        let a = "w:id='1' w:author='A'";
+        for carrier in [
+            format!("<w:p><w:ins {a}><w:r><w:t>x</w:t></w:r></w:ins></w:p>"),
+            format!("<w:p><w:del {a}><w:r><w:delText>x</w:delText></w:r></w:del></w:p>"),
+            format!("<w:p><w:moveFrom {a}><w:r><w:delText>x</w:delText></w:r></w:moveFrom></w:p>"),
+            format!("<w:p><w:moveTo {a}><w:r><w:t>x</w:t></w:r></w:moveTo></w:p>"),
+            format!("<w:p><w:pPr><w:rPr><w:ins {a}/></w:rPr></w:pPr></w:p>"),
+            "<w:p><w:pPr><w:rPr><w:del/></w:rPr></w:pPr></w:p>".to_string(),
+            format!(
+                "<w:p><w:r><w:rPr><w:b/><w:rPrChange {a}><w:rPr/></w:rPrChange></w:rPr></w:r></w:p>"
+            ),
+            format!(
+                "<w:p><w:pPr><w:jc w:val='center'/><w:pPrChange {a}><w:pPr/></w:pPrChange></w:pPr></w:p>"
+            ),
+            format!(
+                "<w:tbl><w:tblPr><w:tblPrChange {a}><w:tblPr/></w:tblPrChange></w:tblPr><w:tblGrid/><w:tr><w:tc><w:tcPr><w:cellIns {a}/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>"
+            ),
+        ] {
+            assert!(probe(&carrier), "{carrier}");
+            assert!(probe(&format!("{field}{borders}{carrier}")), "{carrier}");
         }
     }
 
