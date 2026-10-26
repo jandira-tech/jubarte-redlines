@@ -100,12 +100,12 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
         return (Vec::new(), Vec::new());
     };
     let (start, end) = if permission {
-        (W::name("permStart"), W::name("permEnd"))
+        (W::perm_start(), W::perm_end())
     } else {
-        (W::name("bookmarkStart"), W::name("bookmarkEnd"))
+        (W::bookmark_start(), W::bookmark_end())
     };
     let t = W::t();
-    let (id_attr, name_attr) = (W::name("id"), W::name("name"));
+    let (id_attr, name_attr) = (W::id(), W::name("name"));
     let (col_first, col_last) = (W::name("colFirst"), W::name("colLast"));
     let mut text: Vec<char> = Vec::new();
     let mut with_text: HashSet<NodeId> = HashSet::new();
@@ -167,7 +167,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 start_in_body: dom.parent(n) == Some(body) && dom.name_is(body, &W::body()),
                 end_in_body: false,
                 cols,
-                in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
+                in_sdt: !dom.ancestors(n, Some(&W::sdt())).is_empty(),
             };
             *ordinal += 1;
             open.insert(id.to_string(), marker);
@@ -226,7 +226,7 @@ fn map_point(src: &[char], merged: &[char], o: usize, hint: usize, after: bool) 
 
 /// The outermost content control around `node`.
 fn outermost_sdt(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    dom.ancestors(node, Some(&W::name("sdt"))).last().copied()
+    dom.ancestors(node, Some(&W::sdt())).last().copied()
 }
 
 /// Move a placed pair out of the content controls its source bookmark was
@@ -263,9 +263,9 @@ fn leave_foreign_controls(dom: &mut Dom, m: &Marker, start: NodeId, end: NodeId,
 /// The `w:bookmarkStart`/`w:bookmarkEnd` pair for `m` under `id`.
 fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
     if let Some((start_attrs, end_attrs)) = &m.permission {
-        let start = dom.new_element(W::name("permStart"));
+        let start = dom.new_element(W::perm_start());
         dom.set_attributes(start, start_attrs.clone());
-        let end = dom.new_element(W::name("permEnd"));
+        let end = dom.new_element(W::perm_end());
         dom.set_attributes(end, end_attrs.clone());
         if end_attrs.is_empty() {
             dom.set_attribute_value(end, &W::id(), Some(&m.name));
@@ -273,22 +273,22 @@ fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
         return (start, end);
     }
     let id = id.to_string();
-    let start = dom.new_element(W::name("bookmarkStart"));
-    dom.set_attribute_value(start, &W::name("id"), Some(&id));
+    let start = dom.new_element(W::bookmark_start());
+    dom.set_attribute_value(start, &W::id(), Some(&id));
     dom.set_attribute_value(start, &W::name("name"), Some(&m.name));
     if let Some((first, last)) = &m.cols {
         dom.set_attribute_value(start, &W::name("colFirst"), Some(first));
         dom.set_attribute_value(start, &W::name("colLast"), Some(last));
     }
-    let end = dom.new_element(W::name("bookmarkEnd"));
-    dom.set_attribute_value(end, &W::name("id"), Some(&id));
+    let end = dom.new_element(W::bookmark_end());
+    dom.set_attribute_value(end, &W::id(), Some(&id));
     (start, end)
 }
 
 /// Keep a boundary endpoint beside the outermost inline revision containing
 /// its adjacent run, on the same side. Never climb past its paragraph.
 fn leave_inline_revision(dom: &mut Dom, endpoint: NodeId, after: bool) {
-    let revisions = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    let revisions = [W::ins(), W::del(), W::move_from(), W::move_to()];
     let outermost = dom
         .ancestors(endpoint, None)
         .into_iter()
@@ -405,8 +405,8 @@ fn inject_side(
 /// and renumber the others above every `w:id` in the body. Returns the names
 /// still present and the next free id.
 fn settle_present_bookmarks(dom: &mut Dom, result_root: NodeId) -> (HashSet<String>, u32) {
-    let id_attr = W::name("id");
-    let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
+    let id_attr = W::id();
+    let (start, end) = (W::bookmark_start(), W::bookmark_end());
     let mut present: HashSet<String> = HashSet::new();
     let mut markers: Vec<NodeId> = Vec::new();
     let mut go_back: HashSet<String> = HashSet::new();
@@ -554,7 +554,7 @@ fn leave_permission_revision_boundary(dom: &mut Dom, endpoint: NodeId, after: bo
         .into_iter()
         .take_while(|&n| !dom.name_is(n, &W::p()))
         .filter(|&n| {
-            [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")]
+            [W::ins(), W::del(), W::move_from(), W::move_to()]
                 .iter()
                 .any(|name| dom.name_is(n, name))
         })
@@ -626,7 +626,7 @@ pub(crate) fn carry_permission_union(
         }
         // Opaque content may already carry endpoints: rebuild exactly once
         // from both source projections, rather than duplicating those copies.
-        if [W::name("permStart"), W::name("permEnd")]
+        if [W::perm_start(), W::perm_end()]
             .iter()
             .any(|name| dom.name_is(n, name))
         {
@@ -767,7 +767,7 @@ pub(crate) fn carry_permissions(
     let mut existing = HashSet::new();
     for node in dom.descendants(root, None) {
         if let Some(name) = dom.name(node)
-            && [W::name("permStart"), W::name("permEnd")].contains(&name)
+            && [W::perm_start(), W::perm_end()].contains(&name)
             && let Some(id) = dom.attribute(node, &W::id())
         {
             *present.entry((name, id.to_string())).or_insert(0usize) += 1;

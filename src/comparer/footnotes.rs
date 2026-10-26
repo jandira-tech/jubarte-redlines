@@ -105,11 +105,11 @@ pub fn mandatory_separator_notes(dom: &mut Dom, is_footnote: bool) -> Vec<NodeId
     let sep_inner = "separator"; // both footnote and endnote parts use w:separator
     let mk = |dom: &mut Dom, ty: &str, id: &str, inner: &str| -> NodeId {
         let note = dom.new_element(note_name.clone());
-        dom.set_attribute_value(note, &W::name("type"), Some(ty));
+        dom.set_attribute_value(note, &W::type_(), Some(ty));
         dom.set_attribute_value(note, &W::id(), Some(id));
         let p = dom.new_element(W::p());
         let ppr = dom.new_element(W::p_pr());
-        let spacing = dom.new_element(W::name("spacing"));
+        let spacing = dom.new_element(W::spacing_el());
         dom.set_attribute_value(spacing, &W::name("after"), Some("0"));
         dom.set_attribute_value(spacing, &W::name("line"), Some("240"));
         dom.set_attribute_value(spacing, &W::name("lineRule"), Some("auto"));
@@ -153,7 +153,7 @@ pub fn fill_in_empty_footnotes_endnotes(dom: &mut Dom, notes_root: NodeId, is_fo
         }
         let p = dom.new_element(W::p());
         let ppr = dom.new_element(W::p_pr());
-        let pstyle = dom.new_element(W::name("pStyle"));
+        let pstyle = dom.new_element(W::p_style());
         dom.set_attribute_value(pstyle, &W::val(), Some(p_style));
         dom.add(ppr, pstyle);
         dom.add(p, ppr);
@@ -790,7 +790,7 @@ pub(crate) fn is_structural_note(dom: &Dom, note: NodeId) -> bool {
         _ => {}
     }
     matches!(
-        dom.attribute(note, &W::name("type")),
+        dom.attribute(note, &W::type_()),
         Some("separator") | Some("continuationSeparator") | Some("continuationNotice")
     )
 }
@@ -901,7 +901,7 @@ pub fn fix_up_footnotes_endnotes_with_custom_markers(dom: &mut Dom, root: NodeId
         }
         let gpn = dom.name(gp);
         let (is_del, leaf) = if gpn == Some(W::del()) {
-            (true, W::name("delText"))
+            (true, W::del_text())
         } else if gpn == Some(W::ins()) {
             (false, W::t())
         } else {
@@ -1341,11 +1341,11 @@ mod deterministic_note_boundary_tests {
                 } else {
                     "continuationSeparator"
                 };
-                assert_eq!(dom.attribute(note, &W::name("type")), Some(kind));
+                assert_eq!(dom.attribute(note, &W::type_()), Some(kind));
                 let paragraph = dom.element(note, &W::p()).unwrap();
                 let paragraph_properties = dom.element(paragraph, &W::p_pr()).unwrap();
                 let spacing = dom
-                    .element(paragraph_properties, &W::name("spacing"))
+                    .element(paragraph_properties, &W::spacing_el())
                     .unwrap();
                 assert_eq!(dom.attribute(spacing, &W::name("after")), Some("0"));
                 assert_eq!(dom.attribute(spacing, &W::name("line")), Some("240"));

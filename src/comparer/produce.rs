@@ -282,7 +282,7 @@ pub fn flatten_to_comparison_unit_atom_list(
 /// Word can regenerate ids without changing the authored tag. QName alone
 /// pairs the old inner control with the new outer one and discards its metadata.
 fn same_authored_control(dom: &Dom, a: NodeId, b: NodeId) -> bool {
-    let properties = W::name("sdtPr");
+    let properties = W::sdt_pr();
     let (Some(a), Some(b)) = (dom.element(a, &properties), dom.element(b, &properties)) else {
         return false;
     };
@@ -309,7 +309,7 @@ fn authored_control_match_strength(dom: &Dom, a: NodeId, b: NodeId) -> u8 {
         return 0;
     }
     let control_id = |node| {
-        dom.element(node, &W::name("sdtPr"))
+        dom.element(node, &W::sdt_pr())
             .and_then(|pr| dom.element(pr, &W::id()))
             .and_then(|id| dom.attribute(id, &W::val()))
             .filter(|id| !id.is_empty())
@@ -1104,7 +1104,7 @@ pub fn coalesce_recurse(
         // Empty w:fldSimple — its own atom (atomize), so clone + status like
         // a drawing. Reconstructed as a container it had no child to carry
         // the status and came out live (b15, 0.12.0 release sample).
-        if aname == W::name("fldSimple") && dom.elements(ancestor, None).is_empty() {
+        if aname == W::fld_simple() && dom.elements(ancestor, None).is_empty() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -1669,7 +1669,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let Some(grid) = dom.element(tbl, &W::name("tblGrid")) else {
         return;
     };
-    let grid_cols = dom.elements(grid, Some(&W::name("gridCol")));
+    let grid_cols = dom.elements(grid, Some(&W::grid_col()));
     // real column count: max over rows of Σ gridSpan (default 1) per cell
     let real_cols = dom
         .elements(tbl, Some(&W::tr()))
@@ -1701,7 +1701,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         .and_then(|sect| {
             let w: i64 = dom
                 .element(sect, &W::name("pgSz"))
-                .and_then(|e| dom.attribute(e, &W::name("w")))
+                .and_then(|e| dom.attribute(e, &W::w()))
                 .and_then(|v| v.parse().ok())?;
             let mar = dom.element(sect, &W::name("pgMar"))?;
             let l: i64 = dom
@@ -1716,7 +1716,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         .unwrap_or_else(|| {
             grid_cols
                 .iter()
-                .filter_map(|&c| dom.attribute(c, &W::name("w")))
+                .filter_map(|&c| dom.attribute(c, &W::w()))
                 .filter_map(|v| v.parse::<i64>().ok())
                 .sum()
         });
@@ -1734,8 +1734,8 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         } else {
             each
         };
-        let col = dom.new_element(W::name("gridCol"));
-        dom.set_attribute_value(col, &W::name("w"), Some(&w.to_string()));
+        let col = dom.new_element(W::grid_col());
+        dom.set_attribute_value(col, &W::w(), Some(&w.to_string()));
         new_cols.push(col);
     }
     // gridCols must precede any tblGridChange history in the grid
@@ -1756,8 +1756,8 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
                 e
             }
         };
-        dom.set_attribute_value(tblw, &W::name("w"), Some("0"));
-        dom.set_attribute_value(tblw, &W::name("type"), Some("auto"));
+        dom.set_attribute_value(tblw, &W::w(), Some("0"));
+        dom.set_attribute_value(tblw, &W::type_(), Some("auto"));
     }
 }
 
@@ -2014,7 +2014,7 @@ mod content_control_source_order_regressions {
                 1,
                 "aligned equal controls must not be flattened"
             );
-            let properties = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+            let properties = dom.element(controls[0], &W::sdt_pr()).unwrap();
             assert_eq!(
                 dom.attribute(
                     dom.element(properties, &W::name("alias")).unwrap(),
@@ -2247,7 +2247,7 @@ mod run_format_history_regressions {
                         Some("Clause")
                     );
                 } else {
-                    let properties = dom.element(containers[0], &W::name("sdtPr")).unwrap();
+                    let properties = dom.element(containers[0], &W::sdt_pr()).unwrap();
                     for (name, value) in [
                         ("id", "11"),
                         ("alias", "Clause"),
@@ -2392,7 +2392,7 @@ mod repeated_control_tag_regressions {
                             1,
                             "only the retained control is correlated; block={block}, reverse={reverse}"
                         );
-                        let props = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+                        let props = dom.element(controls[0], &W::sdt_pr()).unwrap();
                         for (name, expected) in
                             [("id", "11"), ("tag", "Clause"), ("alias", "Inner")]
                         {
@@ -2436,7 +2436,7 @@ mod reordered_retained_control_identity_regression {
             .copied()
             .filter(|&node| dom.name_is(node, &W::sdt()))
             .map(|sdt| {
-                let pr = dom.element(sdt, &W::name("sdtPr")).unwrap();
+                let pr = dom.element(sdt, &W::sdt_pr()).unwrap();
                 let id = dom.element(pr, &W::id()).unwrap();
                 dom.attribute(id, &W::val()).unwrap().to_string()
             })
@@ -2476,7 +2476,7 @@ mod reordered_retained_control_identity_regression {
                 .filter(|&node| dom.name_is(node, &W::sdt()))
                 .collect();
             for control in controls {
-                let pr = dom.element(control, &W::name("sdtPr")).unwrap();
+                let pr = dom.element(control, &W::sdt_pr()).unwrap();
                 let identifier = dom.element(pr, &W::id()).unwrap();
                 if dom.attribute(identifier, &W::val()) == Some(id) {
                     let tag = dom.element(pr, &W::name("tag")).unwrap();

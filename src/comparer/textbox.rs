@@ -35,7 +35,7 @@ pub fn diff_inside_replaced_text_boxes(
     root: NodeId,
     settings: &WmlComparerSettings,
 ) {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     let paragraphs: Vec<NodeId> = dom
         .descendants(root, Some(&W::p()))
         .into_iter()
@@ -167,7 +167,7 @@ fn lift_run(dom: &mut Dom, run: NodeId) {
 /// compare equal.
 pub(crate) fn shell(dom: &mut Dom, shape: NodeId) -> String {
     let copy = dom.clone_subtree(shape);
-    for b in dom.descendants(copy, Some(&W::name("txbxContent"))) {
+    for b in dom.descendants(copy, Some(&W::txbx_content())) {
         for c in dom.nodes(b) {
             dom.remove(c);
         }
@@ -187,7 +187,7 @@ pub(crate) fn shell(dom: &mut Dom, shape: NodeId) -> String {
 /// One text box's paragraphs as a story of their own, with its revisions
 /// accepted (the new box) or rejected (the old box).
 fn story(dom: &mut Dom, text_box: NodeId, accept: bool) -> NodeId {
-    let story = dom.new_element(W::name("hdr"));
+    let story = dom.new_element(W::hdr());
     for c in dom.elements(text_box, None) {
         let copy = dom.clone_subtree(c);
         dom.add(story, copy);
@@ -202,7 +202,7 @@ fn story(dom: &mut Dom, text_box: NodeId, accept: bool) -> NodeId {
 /// Fill each text box of `new` with a compare of `old`'s story against it.
 /// Leaves both untouched and returns false when the compare cannot be used.
 fn redline_boxes(dom: &mut Dom, old: NodeId, new: NodeId, settings: &WmlComparerSettings) -> bool {
-    let txbx = W::name("txbxContent");
+    let txbx = W::txbx_content();
     let old_boxes = dom.descendants(old, Some(&txbx));
     let new_boxes = dom.descendants(new, Some(&txbx));
     if old_boxes.len() != new_boxes.len() {

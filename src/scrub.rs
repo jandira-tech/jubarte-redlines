@@ -230,7 +230,7 @@ fn remove_comments(pkg: &mut PartFs) {
         };
         let references = part
             .dom
-            .descendants(part.root, Some(&W::name("commentReference")));
+            .descendants(part.root, Some(&W::comment_reference()));
         if references.is_empty() {
             continue;
         }
@@ -557,7 +557,7 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
         }
     }
     // A text split across runs shows only in the paragraph's joined text.
-    let texts = [W::t(), W::del_text(), W::name("instrText")];
+    let texts = [W::t(), W::del_text(), W::instr_text()];
     for p in dom.descendants_and_self(root, Some(&W::p())) {
         let joined: String = dom
             .descendants(p, None)

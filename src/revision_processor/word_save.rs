@@ -101,7 +101,7 @@ fn non_paragraph_styles(pkg: &PartFs) -> HashSet<String> {
     else {
         return HashSet::new();
     };
-    let (ty, id) = (W::name("type"), W::name("styleId"));
+    let (ty, id) = (W::type_(), W::name("styleId"));
     styles
         .w("style")
         .into_iter()

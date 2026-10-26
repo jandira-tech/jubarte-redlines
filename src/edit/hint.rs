@@ -189,7 +189,7 @@ fn run_text(dom: &Dom, node: NodeId) -> Option<String> {
         "tab" | "ptab" => '\t',
         "cr" => '\n',
         "br" if !matches!(
-            dom.attribute(node, &W::name("type")),
+            dom.attribute(node, &W::type_()),
             Some("page" | "column")
         ) =>
         {

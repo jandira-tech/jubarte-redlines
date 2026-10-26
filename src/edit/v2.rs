@@ -867,7 +867,7 @@ fn check_text_content(dom: &Dom, container: NodeId) -> Result<(), EditError> {
             (true, "t" | "tab") if !dom.has_elements(child) => {}
             (true, "br")
                 if matches!(
-                    dom.attribute(child, &W::name("type")),
+                    dom.attribute(child, &W::type_()),
                     None | Some("textWrapping")
                 ) && !dom.has_elements(child) => {}
             _ => return Err(codec_error(format!("unsupported text element {name:?}"))),

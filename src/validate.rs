@@ -1463,8 +1463,8 @@ fn check_nested_ppr(pkg: &PartFs, out: &mut Vec<Finding>) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
             continue;
         };
-        for ppr in dom.descendants(root, Some(&W::name("pPr"))) {
-            for inner in dom.elements(ppr, Some(&W::name("pPr"))) {
+        for ppr in dom.descendants(root, Some(&W::p_pr())) {
+            for inner in dom.elements(ppr, Some(&W::p_pr())) {
                 out.push(Finding::new(
                     "NESTED_PPR",
                     &part,
@@ -1505,7 +1505,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
             if let Some(&outer) = ancestors
                 .iter()
-                .find(|&&a| dom.name(a).is_some_and(|n| n == W::name("txbxContent")))
+                .find(|&&a| dom.name(a).is_some_and(|n| n == W::txbx_content()))
             {
                 out.push(Finding::new(
                     "NESTED_TEXT_BOX",
@@ -1525,7 +1525,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Prefer the shape's own name, with its stable element path as a fallback.
 fn text_box_name(dom: &Dom, node: NodeId) -> String {
     for ancestor in dom.ancestors(node, None) {
-        if dom.name(ancestor).is_some_and(|n| n == W::name("drawing")) {
+        if dom.name(ancestor).is_some_and(|n| n == W::drawing()) {
             if let Some(name) = dom
                 .descendants(ancestor, Some(&WP::name("docPr")))
                 .into_iter()
@@ -2203,9 +2203,9 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
                 }
             }
         }
-        let move_from = W::name("moveFrom");
+        let move_from = W::move_from();
         for mf in dom.descendants(root, Some(&move_from)) {
-            for dt in dom.descendants(mf, Some(&W::name("delText"))) {
+            for dt in dom.descendants(mf, Some(&W::del_text())) {
                 if ancestor_has(&dom, dt, mf, "del") {
                     continue;
                 }
@@ -2291,9 +2291,9 @@ fn bookmarks_in_single_value_controls(
     let mut found = Vec::new();
     for kind in ["bookmarkStart", "bookmarkEnd"] {
         for m in dom.descendants(root, Some(&W::name(kind))) {
-            for sdt in dom.ancestors(m, Some(&W::name("sdt"))) {
+            for sdt in dom.ancestors(m, Some(&W::sdt())) {
                 let control = dom
-                    .element(sdt, &W::name("sdtPr"))
+                    .element(sdt, &W::sdt_pr())
                     .into_iter()
                     .flat_map(|pr| dom.elements(pr, None))
                     .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
@@ -3100,8 +3100,8 @@ fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
             }
         }
     }
-    for mf in dom.descendants(root, Some(&W::name("moveFrom"))) {
-        for dt in dom.descendants(mf, Some(&W::name("delText"))) {
+    for mf in dom.descendants(root, Some(&W::move_from())) {
+        for dt in dom.descendants(mf, Some(&W::del_text())) {
             if !ancestor_has(dom, dt, mf, "del") {
                 renames.push((dt, W::t()));
             }
@@ -3319,7 +3319,7 @@ fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
 /// gets an empty one.
 fn end_cells_with_a_paragraph(dom: &mut Dom, root: NodeId) {
     let cells: Vec<NodeId> = dom
-        .descendants(root, Some(&W::name("tc")))
+        .descendants(root, Some(&W::tc()))
         .into_iter()
         .filter(|&tc| !crate::debug::cell_ends_in_paragraph(dom, tc))
         .collect();
@@ -3345,20 +3345,20 @@ fn drop_orphan_comment_anchors(dom: &mut Dom, root: NodeId, defined: &HashSet<St
         dom.remove(m);
     }
     let references: Vec<NodeId> = dom
-        .descendants(root, Some(&W::name("commentReference")))
+        .descendants(root, Some(&W::comment_reference()))
         .into_iter()
         .filter(|&r| orphan(dom, r))
         .collect();
     for reference in references {
         let run = dom
             .parent(reference)
-            .filter(|&p| dom.name_is(p, &W::name("r")));
+            .filter(|&p| dom.name_is(p, &W::r()));
         dom.remove(reference);
         if let Some(run) = run
             && dom
                 .elements(run, None)
                 .iter()
-                .all(|&c| dom.name_is(c, &W::name("rPr")))
+                .all(|&c| dom.name_is(c, &W::r_pr()))
         {
             dom.remove(run);
         }
@@ -4229,7 +4229,7 @@ mod validation_boundary_tests {
             &mut dom,
             "<w:p><w:del><w:r><w:t>deleted</w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins><w:r><w:txbxContent><w:p><w:r><w:delText>uncovered</w:delText></w:r></w:p></w:txbxContent></w:r></w:del></w:p><w:p><w:moveFrom><w:r><w:delText>moved</w:delText></w:r></w:moveFrom><w:r><w:delText>stranded</w:delText></w:r></w:p>",
         );
-        let texts = dom.descendants(root, Some(&W::name("delText")));
+        let texts = dom.descendants(root, Some(&W::del_text()));
         assert!(!covered_by_deletion(&dom, texts[0]));
         assert!(covered_by_deletion(&dom, texts[1]));
         assert!(!covered_by_deletion(&dom, texts[2]));
@@ -4241,7 +4241,7 @@ mod validation_boundary_tests {
             .collect::<Vec<_>>();
         assert_eq!(live, ["uncovered", "moved", "stranded"]);
         let deleted = dom
-            .descendants(root, Some(&W::name("delText")))
+            .descendants(root, Some(&W::del_text()))
             .into_iter()
             .map(|n| dom.value(n))
             .collect::<Vec<_>>();
@@ -4262,7 +4262,7 @@ mod validation_boundary_tests {
             assert_eq!(forbidden.len(), if control == "richText" { 0 } else { 2 });
             drop_bookmarks_in_single_value_controls(&mut dom, root);
             assert_eq!(
-                dom.descendants(root, Some(&W::name("bookmarkStart"))).len(),
+                dom.descendants(root, Some(&W::bookmark_start())).len(),
                 if control == "richText" { 2 } else { 1 }
             );
             assert_eq!(dom.value(root), "value");
@@ -4440,14 +4440,14 @@ mod validation_owner_boundary_tests {
             let root = dom.root(doc).unwrap();
             drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
             assert!(
-                dom.descendants(root, Some(&W::name("commentRangeStart")))
+                dom.descendants(root, Some(&W::comment_range_start()))
                     .is_empty()
             );
             assert!(
-                dom.descendants(root, Some(&W::name("commentRangeEnd")))
+                dom.descendants(root, Some(&W::comment_range_end()))
                     .is_empty()
             );
-            let refs = dom.descendants(root, Some(&W::name("commentReference")));
+            let refs = dom.descendants(root, Some(&W::comment_reference()));
             assert_eq!(refs.len(), 1);
             assert_eq!(dom.attribute(refs[0], &W::id()), Some("4"));
             assert_eq!(

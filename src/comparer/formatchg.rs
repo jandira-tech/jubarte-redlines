@@ -58,7 +58,7 @@ fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild> 
             .into_iter()
             .filter(|&c| {
                 let n = src.name(c).unwrap();
-                n != W::name("rPrChange") && n.namespace_name() != PT::URI
+                n != W::r_pr_change() && n.namespace_name() != PT::URI
             })
             .collect();
         // ALLOC-LEAN-01: sort_by (compare &str) not sort_by_key(to_string) — the
@@ -224,7 +224,7 @@ pub fn get_changed_property_names(
         if let Some(rpr) = rpr {
             for c in dom.elements(rpr, None) {
                 let n = dom.name(c).unwrap();
-                if n != W::name("rPrChange") {
+                if n != W::r_pr_change() {
                     m.insert(n.clark(), c);
                 }
             }
@@ -261,8 +261,8 @@ fn is_para_comparison_noise(dom: &Dom, child: NodeId) -> bool {
         return true;
     };
     n == W::r_pr()
-        || n == W::name("sectPr")
-        || n == W::name("pPrChange")
+        || n == W::sect_pr()
+        || n == W::p_pr_change()
         || n.namespace_name() == PT::URI
 }
 
@@ -272,7 +272,7 @@ fn projected_ppr_jc(dom: &Dom, ppr: NodeId) -> Option<NodeId> {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name_is(c, &W::name("jc")) {
+        if dom.name_is(c, &W::jc_el()) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val != "left" && val != "start" {
                 return Some(c);
@@ -316,7 +316,7 @@ fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name_is(c, &W::name("jc")) {
+        if dom.name_is(c, &W::jc_el()) {
             continue;
         }
         parts.push(para_property_signature(dom, c));
@@ -333,7 +333,7 @@ pub(crate) fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> 
             continue;
         }
         // Schema-implicit defaults: jc left/start restates the default.
-        if dom.name_is(c, &W::name("jc")) {
+        if dom.name_is(c, &W::jc_el()) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 continue;
@@ -352,7 +352,7 @@ pub(crate) fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String {
         if is_para_comparison_noise(dom, c) {
             continue;
         }
-        if dom.name_is(c, &W::name("jc")) {
+        if dom.name_is(c, &W::jc_el()) {
             let val = dom.attribute(c, &W::val()).unwrap_or("");
             if val == "left" || val == "start" {
                 continue;

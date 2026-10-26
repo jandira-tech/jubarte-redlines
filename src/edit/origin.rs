@@ -104,7 +104,7 @@ impl Ids<'_> {
         index: usize,
     ) -> Result<String, String> {
         let dom = self.dom;
-        let (tc, tr, tbl, p) = (W::tc(), W::name("tr"), W::tbl(), W::p());
+        let (tc, tr, tbl, p) = (W::tc(), W::tr(), W::tbl(), W::p());
         let nearest = |node: NodeId, name: &crate::xmllinq::XName| {
             dom.ancestors(node, Some(name)).first().copied()
         };
@@ -332,7 +332,7 @@ impl Origin {
             let tag = settled
                 .dom
                 .element(sdt, &W::sdt_pr())
-                .and_then(|pr| settled.dom.element(pr, &W::name("id")))
+                .and_then(|pr| settled.dom.element(pr, &W::id()))
                 .and_then(|id| settled.dom.attribute(id, &W::val()))
                 .and_then(|v| v.parse::<usize>().ok());
             if let Some(slot) = tag
@@ -612,7 +612,7 @@ impl Paragraphs {
     pub(super) fn control_count(&self, global: usize) -> usize {
         let dom = &self.opened.dom;
         let paragraph = self.paragraph_nodes[global];
-        dom.descendants(paragraph, Some(&W::name("sdt")))
+        dom.descendants(paragraph, Some(&W::sdt()))
             .into_iter()
             .filter(|&sdt| {
                 !crate::inspect::in_text_box(dom, sdt)
@@ -891,10 +891,10 @@ fn tag_control(dom: &mut Dom, sdt: NodeId, tag: usize) {
             pr
         }
     };
-    let id = match dom.element(pr, &W::name("id")) {
+    let id = match dom.element(pr, &W::id()) {
         Some(id) => id,
         None => {
-            let id = dom.new_element(W::name("id"));
+            let id = dom.new_element(W::id());
             dom.add_first(pr, id);
             id
         }
@@ -1102,7 +1102,7 @@ mod tests {
         let mut dom = Dom::new();
         for name in [
             W::r(),
-            W::name("fldSimple"),
+            W::fld_simple(),
             W::drawing(),
             W::sdt(),
             W::name("futureContent"),

@@ -561,7 +561,7 @@ impl CommentFamily {
     /// The `w:author` comment `id` is recorded under, when it names one.
     pub(crate) fn author(&self, id: u32) -> Option<&str> {
         let meta = self.meta.get(&id)?;
-        self.dom.attribute(meta.node, &W::name("author"))
+        self.dom.attribute(meta.node, &W::author())
     }
 
     /// Comment ids in `comments.xml` order.

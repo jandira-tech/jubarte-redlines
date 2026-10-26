@@ -2370,7 +2370,7 @@ fn is_inline_range_marker(name: &XName) -> bool {
 /// marks: discard both endpoints only when their nonempty span disappears.
 /// Originally empty ranges have nothing to lose and remain in place.
 fn drop_wholly_deleted_permissions(dom: &mut Dom, root: NodeId) {
-    let (start, end) = (W::name("permStart"), W::name("permEnd"));
+    let (start, end) = (W::perm_start(), W::perm_end());
     let dropped = bookmarks::wholly_deleted_endpoints(dom, root, &start, &end);
     for endpoint in dropped {
         dom.remove(endpoint);
@@ -2856,8 +2856,8 @@ fn add_content_controls_with_owners(
             .filter(|&e| {
                 let n = dom.name(e).unwrap();
                 n != W::p_pr()
-                    && n != W::name("commentRangeStart")
-                    && n != W::name("commentRangeEnd")
+                    && n != W::comment_range_start()
+                    && n != W::comment_range_end()
             })
             .collect();
         let foreign_pilcrow_owner = paragraph_owners
@@ -3319,9 +3319,9 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
     let grid_lines: Vec<i64> = dom
         .elements(tbl, Some(&W::name("tblGrid")))
         .into_iter()
-        .flat_map(|g| dom.elements(g, Some(&W::name("gridCol"))))
+        .flat_map(|g| dom.elements(g, Some(&W::grid_col())))
         .map(|gc| {
-            dom.attribute(gc, &W::name("w"))
+            dom.attribute(gc, &W::w())
                 .and_then(|v| v.parse().ok())
                 .expect("gridCol w:w must be an integer (C# casts)")
         })
@@ -3334,7 +3334,7 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
             let tc_w = dom
                 .element(tc, &W::tc_pr())
                 .and_then(|p| dom.element(p, &W::name("tcW")))
-                .filter(|&w| dom.attribute(w, &W::name("w")).is_some());
+                .filter(|&w| dom.attribute(w, &W::w()).is_some());
             let Some(tc_w) = tc_w else { continue };
             let grid_span: i64 = dom
                 .element(tc, &W::tc_pr())
@@ -3349,7 +3349,7 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
                 .filter(|(i, _)| (*i as i64) > last_used && (*i as i64) <= z)
                 .map(|(_, g)| g)
                 .sum();
-            dom.set_attribute_value(tc_w, &W::name("w"), Some(&w.to_string()));
+            dom.set_attribute_value(tc_w, &W::w(), Some(&w.to_string()));
             last_used += grid_span;
         }
     }
@@ -3552,9 +3552,9 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
         for &tbl in &group {
             let mut sum = 0i64;
             for g in dom.elements(tbl, Some(&W::name("tblGrid"))) {
-                for gc in dom.elements(g, Some(&W::name("gridCol"))) {
+                for gc in dom.elements(g, Some(&W::grid_col())) {
                     let v: i64 = dom
-                        .attribute(gc, &W::name("w"))
+                        .attribute(gc, &W::w())
                         .and_then(|v| v.parse().ok())
                         .expect("gridCol w:w must be an integer (C# casts)");
                     sum += v;
@@ -3573,8 +3573,8 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
         let new_grid = dom.new_element(W::name("tblGrid"));
         for (i, &r) in rolled.iter().enumerate() {
             let v = if i == 0 { r } else { r - rolled[i - 1] };
-            let gc = dom.new_element(W::name("gridCol"));
-            dom.set_attribute_value(gc, &W::name("w"), Some(&v.to_string()));
+            let gc = dom.new_element(W::grid_col());
+            dom.set_attribute_value(gc, &W::w(), Some(&v.to_string()));
             dom.add(new_grid, gc);
         }
         dom.add(new_table, new_grid);
@@ -3618,7 +3618,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
                         .and_then(|p| dom.element(p, &W::name("tcW")))
-                        .and_then(|t| dom.attribute(t, &W::name("w")))
+                        .and_then(|t| dom.attribute(t, &W::w()))
                         .and_then(|v| v.parse().ok());
                     let Some(w) = w else { continue };
                     let cell_start = width_to_left;
@@ -4329,9 +4329,9 @@ mod revision_boundary_coverage_tests {
 
     fn widths(dom: &Dom, table: NodeId) -> Vec<String> {
         let grid = dom.element(table, &W::name("tblGrid")).unwrap();
-        dom.elements(grid, Some(&W::name("gridCol")))
+        dom.elements(grid, Some(&W::grid_col()))
             .into_iter()
-            .map(|n| dom.attribute(n, &W::name("w")).unwrap().to_string())
+            .map(|n| dom.attribute(n, &W::w()).unwrap().to_string())
             .collect()
     }
 
@@ -4428,7 +4428,7 @@ mod revision_boundary_coverage_tests {
             .map(|&c| {
                 dom.element(c, &W::tc_pr())
                     .and_then(|p| dom.element(p, &W::name("tcW")))
-                    .and_then(|w| dom.attribute(w, &W::name("w")))
+                    .and_then(|w| dom.attribute(w, &W::w()))
                     .map(str::to_string)
             })
             .collect();
@@ -4444,7 +4444,7 @@ mod revision_boundary_coverage_tests {
         let width = dom
             .element(dom.element(cells[1], &W::tc_pr()).unwrap(), &W::name("tcW"))
             .unwrap();
-        assert_eq!(dom.attribute(width, &W::name("type")), Some("dxa"));
+        assert_eq!(dom.attribute(width, &W::type_()), Some("dxa"));
         assert_eq!(dom.value(fixed), "no-widthwidelastpast-grid");
         assert_eq!(dom.serialize_element(source), original);
     }
@@ -4499,11 +4499,11 @@ mod revision_boundary_coverage_tests {
             ["tblW", "shd", "tblLayout", "payload"]
         );
         assert_eq!(
-            dom.attribute(dom.element(ex, &W::name("tblW")).unwrap(), &W::name("w")),
+            dom.attribute(dom.element(ex, &W::name("tblW")).unwrap(), &W::w()),
             Some("200")
         );
         assert_eq!(
-            dom.attribute(dom.element(ex, &W::name("shd")).unwrap(), &W::name("fill")),
+            dom.attribute(dom.element(ex, &W::shd()).unwrap(), &W::fill()),
             Some("CCCCCC")
         );
         assert_eq!(dom.elements(rows[1], Some(&W::name("tblPrEx"))).len(), 1);
@@ -4667,7 +4667,7 @@ mod revision_boundary_coverage_tests {
             ]
         );
         assert_eq!(
-            dom.descendants(result, Some(&W::name("bookmarkStart")))
+            dom.descendants(result, Some(&W::bookmark_start()))
                 .len(),
             1
         );
@@ -4728,7 +4728,7 @@ mod revision_boundary_coverage_tests {
         assert_eq!(dom.value(result), "remaining");
         assert_eq!(dom.descendants(result, Some(&W::tbl())).len(), 1);
         assert_eq!(dom.descendants(result, Some(&W::name("tblStyle"))).len(), 1);
-        assert_eq!(dom.descendants(result, Some(&W::name("gridCol"))).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::grid_col())).len(), 1);
         assert_eq!(
             dom.descendants(result, Some(&W::name("cantSplit"))).len(),
             1
@@ -4828,7 +4828,7 @@ mod revision_boundary_coverage_tests {
                         }
                     );
                     let spacing =
-                        projection_dom.descendants(projection, Some(&W::name("spacing")))[0];
+                        projection_dom.descendants(projection, Some(&W::spacing_el()))[0];
                     assert_eq!(
                         projection_dom.attribute(spacing, &W::name("after")),
                         Some("240")
@@ -5195,11 +5195,11 @@ mod public_block_control_ownership_tests {
             assert_eq!(dom.value(tables[0]), "Owned cell");
             let cell = dom.descendants(tables[0], Some(&W::tc()))[0];
             let properties = dom.element(cell, &W::tc_pr()).unwrap();
-            let shade = dom.element(properties, &W::name("shd")).unwrap();
-            assert_eq!(dom.attribute(shade, &W::name("fill")), Some("123456"));
+            let shade = dom.element(properties, &W::shd()).unwrap();
+            assert_eq!(dom.attribute(shade, &W::fill()), Some("123456"));
             let grid = dom.element(tables[0], &W::name("tblGrid")).unwrap();
             let column = dom.elements(grid, None)[0];
-            assert_eq!(dom.attribute(column, &W::name("w")), Some("1800"));
+            assert_eq!(dom.attribute(column, &W::w()), Some("1800"));
         }
     }
     #[test]
@@ -5304,22 +5304,22 @@ mod public_block_control_ownership_tests {
             for (cell, width) in [(cells[0], "1800"), (cells[1], "900")] {
                 let props = dom.element(cell, &W::tc_pr()).unwrap();
                 assert_eq!(
-                    dom.attribute(dom.element(props, &W::name("tcW")).unwrap(), &W::name("w")),
+                    dom.attribute(dom.element(props, &W::name("tcW")).unwrap(), &W::w()),
                     Some(width)
                 );
             }
             let nested_props = dom.element(cells[1], &W::tc_pr()).unwrap();
             assert_eq!(
                 dom.attribute(
-                    dom.element(nested_props, &W::name("shd")).unwrap(),
-                    &W::name("fill")
+                    dom.element(nested_props, &W::shd()).unwrap(),
+                    &W::fill()
                 ),
                 Some("ABCDEF")
             );
             for (control, id) in [(controls[0], "42"), (controls[1], "43")] {
                 let props = dom.element(control, &W::sdt_pr()).unwrap();
                 assert_eq!(
-                    dom.attribute(dom.element(props, &W::name("id")).unwrap(), &W::val()),
+                    dom.attribute(dom.element(props, &W::id()).unwrap(), &W::val()),
                     Some(id)
                 );
             }

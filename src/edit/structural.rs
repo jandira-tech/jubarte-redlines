@@ -100,7 +100,7 @@ pub(super) fn table_styles(opened: &Opened) -> Vec<(String, String)> {
     };
     dom.elements(root, Some(&W::name("style")))
         .into_iter()
-        .filter(|&s| dom.attribute(s, &W::name("type")) == Some("table"))
+        .filter(|&s| dom.attribute(s, &W::type_()) == Some("table"))
         .filter_map(|s| {
             let id = dom.attribute(s, &W::name("styleId"))?.to_string();
             let name = dom
@@ -282,7 +282,7 @@ fn with_definitions(source: &str, wanted: &BTreeSet<String>) -> Option<String> {
     let root = dom.root(document)?;
     let style_name = W::name("style");
     let id_name = W::name("styleId");
-    let type_name = W::name("type");
+    let type_name = W::type_();
     let mut ids: BTreeSet<String> = dom
         .elements(root, Some(&style_name))
         .into_iter()
