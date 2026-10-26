@@ -372,17 +372,17 @@ pub fn try_compare_bodies_faithful_with_notes(
                     let Some(name) = dom.name(c) else {
                         continue;
                     };
-                    let local = name.local_name().to_string();
+                    let local = name.local_name();
                     if name.namespace_name() != W::URI
                         || dom.element(clean, &name).is_some()
                         || matches!(
-                            local.as_str(),
+                            local,
                             "headerReference" | "footerReference" | "sectPrChange"
                         )
                     {
                         continue;
                     }
-                    let rank = crate::edit::sections::sect_rank(&local);
+                    let rank = crate::edit::sections::sect_rank(local);
                     let later = dom.elements(clean, None).into_iter().find(|&n| {
                         dom.name(n).is_some_and(|nm| {
                             crate::edit::sections::sect_rank(nm.local_name()) > rank
@@ -830,7 +830,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // An edit keeps the edited document's page background; the rebuilt
     // document is otherwise its body alone.
     if settings.preserve_untouched
-        && let Some(background) = dom.element(source_root2, &W::name("background"))
+        && let Some(background) = dom.element(source_root2, &W::background())
     {
         let background = dom.clone_subtree(background);
         dom.add(document, background);

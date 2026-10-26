@@ -193,6 +193,7 @@ macro_rules! cached_xname {
 
 impl W {
     cached_xname!(W::URI, document, "document");
+    cached_xname!(W::URI, background, "background");
     cached_xname!(W::URI, body, "body");
     cached_xname!(W::URI, p, "p");
     cached_xname!(W::URI, r, "r");
