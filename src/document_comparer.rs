@@ -7703,7 +7703,8 @@ fn compare_documents_impl(
     // the document references a numId no w:num defines — dangling numbering
     // silently renders lists as plain paragraphs; Word repairs it on open, so
     // match it at compare time (evidence: nested-table-rowspan_numbered-list).
-    if settings.merge_replaced_paragraphs {
+    // An edit leaves the source's numbering as Word opens it.
+    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
         let num_id = W::name("numId");
         let mut referenced: Vec<String> = Vec::new();
         let mut seen = std::collections::HashSet::new();

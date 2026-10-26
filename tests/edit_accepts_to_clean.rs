@@ -7,8 +7,11 @@
 //! would, and changes nothing else: no style renamed or merged, no spacing
 //! stripped or written out, no hyperlink unwrapped.
 
+mod common;
+
 use std::io::Read as _;
 
+use common::docx::{docx_with_sect_pr, para, part_string, replace_entry};
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::accept_revisions;
 use jubarte::edit::{EditPlan, apply_plan};
@@ -117,4 +120,56 @@ fn a_replaced_word_accepts_to_the_clean_copy() {
     ] {
         assert_accepts_to_clean(name, op);
     }
+}
+
+/// The comparer rebuilds the document from its body and the section from
+/// its geometry: a page background, a vertically centred page, page borders,
+/// line numbers and the section's spelled-out defaults were lost, and a
+/// numbering part was made up for a list the source left undefined.
+#[test]
+fn a_new_paragraph_keeps_the_page_and_section_as_the_source_has_them() {
+    let sect_pr = concat!(
+        r#"<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="12240" w:h="15840"/>"#,
+        r#"<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#,
+        r#"<w:pgBorders><w:top w:val="single" w:sz="4" w:space="24" w:color="auto"/></w:pgBorders>"#,
+        r#"<w:lnNumType w:countBy="1"/><w:cols w:space="720" w:equalWidth="1"/>"#,
+        r#"<w:vAlign w:val="center"/></w:sectPr>"#
+    );
+    let body = format!(
+        r#"{}<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr></w:pPr><w:r><w:t>Listed.</w:t></w:r></w:p>{}"#,
+        para("Alpha one."),
+        para("Omega.")
+    );
+    let built = docx_with_sect_pr(&body, &[], sect_pr);
+    let document = part_string(&built, "word/document.xml")
+        .unwrap()
+        .replace("<w:body>", r#"<w:background w:color="FFFF00"/><w:body>"#);
+    let source = replace_entry(&built, "word/document.xml", document.as_bytes());
+    let edited = apply_plan(
+        &source,
+        &EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Probe","operations":[
+            {"kind":"insert_paragraph","paragraph":{"starts_with":"Alpha"},"runs":[{"text":"Probe paragraph."}]}]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let accepted = accept_revisions(&edited.redline).unwrap();
+    let xml = part_string(&accepted, "word/document.xml")
+        .unwrap()
+        .replace(" />", "/>");
+    for kept in [
+        r#"<w:background w:color="FFFF00"/>"#,
+        r#"<w:type w:val="nextPage"/>"#,
+        "<w:pgBorders>",
+        "<w:lnNumType ",
+        r#"w:equalWidth="1""#,
+        r#"<w:vAlign w:val="center"/>"#,
+    ] {
+        assert!(xml.contains(kept), "{kept} lost: {xml}");
+    }
+    assert!(
+        part_string(&edited.redline, "word/numbering.xml").is_none(),
+        "the redline made up a numbering part"
+    );
 }

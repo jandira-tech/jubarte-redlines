@@ -307,13 +307,19 @@ pub fn try_compare_bodies_faithful_with_notes(
                     // Word omits default section type `nextPage` on single-section
                     // redlines (format demos score ~87 with type kept vs Word
                     // without). Equal-width cols default is likewise omitted.
+                    // An edit keeps the section as the edited document
+                    // states it.
                     if child == "type"
                         && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
                         && dom.attribute(cc, &W::val()).unwrap_or("") == "nextPage"
                     {
                         continue;
                     }
-                    if child == "cols" && settings.merge_replaced_paragraphs {
+                    if child == "cols"
+                        && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
+                    {
                         let eq = W::name("equalWidth");
                         if matches!(
                             dom.attribute(cc, &eq),
@@ -356,6 +362,37 @@ pub fn try_compare_bodies_faithful_with_notes(
                 match later {
                     Some(l) => dom.add_before_self(l, cc),
                     None => dom.add(clean, cc),
+                }
+            }
+            // An edit keeps the rest of the edited document's section too:
+            // vertical alignment, page borders, line numbers, notes
+            // properties, text direction. Each goes to its schema position.
+            if settings.preserve_untouched {
+                for c in dom.elements(sp, None) {
+                    let Some(name) = dom.name(c) else {
+                        continue;
+                    };
+                    let local = name.local_name().to_string();
+                    if name.namespace_name() != W::URI
+                        || dom.element(clean, &name).is_some()
+                        || matches!(
+                            local.as_str(),
+                            "headerReference" | "footerReference" | "sectPrChange"
+                        )
+                    {
+                        continue;
+                    }
+                    let rank = crate::edit::sections::sect_rank(&local);
+                    let later = dom.elements(clean, None).into_iter().find(|&n| {
+                        dom.name(n).is_some_and(|nm| {
+                            crate::edit::sections::sect_rank(nm.local_name()) > rank
+                        })
+                    });
+                    let cc = dom.clone_subtree(c);
+                    match later {
+                        Some(l) => dom.add_before_self(l, cc),
+                        None => dom.add(clean, cc),
+                    }
                 }
             }
             // Word-mode change record: when the base's final-section geometry
@@ -789,6 +826,14 @@ pub fn try_compare_bodies_faithful_with_notes(
     if !ignorable.is_empty() {
         let merged: Vec<String> = ignorable.into_iter().collect();
         dom.set_attribute_value(document, &mc_ignorable, Some(&merged.join(" ")));
+    }
+    // An edit keeps the edited document's page background; the rebuilt
+    // document is otherwise its body alone.
+    if settings.preserve_untouched
+        && let Some(background) = dom.element(source_root2, &W::name("background"))
+    {
+        let background = dom.clone_subtree(background);
+        dom.add(document, background);
     }
     let body = dom.new_element(W::body());
     for c in body_children {
