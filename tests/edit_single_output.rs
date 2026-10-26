@@ -844,10 +844,14 @@ fn the_hook_waits_for_a_line_written_after_connecting() {
         stream.read_exact(&mut released).unwrap();
         released[0]
     });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let stream = loop {
         match listener.accept() {
             Ok((stream, _)) => break stream,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if std::time::Instant::now() > deadline {
+                    panic!("timeout waiting for connection");
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
             Err(e) => panic!("{e}"),
