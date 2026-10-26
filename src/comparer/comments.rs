@@ -171,7 +171,9 @@ fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String
             let unanchored = raw_start == usize::MAX;
             let start = raw_start.min(chars.len());
             let end = raw_end.min(chars.len()).max(start);
-            if has_nonempty && start == end {
+            // A comment with no anchor at all gives way to an anchored one
+            // that says the same; a point comment is a comment (#1898).
+            if has_nonempty && unanchored {
                 continue;
             }
             let anchor = if unanchored {
@@ -1501,11 +1503,13 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
 }
 
 /// Select comments using both their definition fingerprint and mapped anchor.
-/// Equal bodies on distinct non-empty ranges are independent comments, and so
-/// are equal bodies one document stacks on one range (Word keeps each). An
-/// A-side comment (`a_side`, the union's appended ids) whose body and range
-/// equal a B-side one is B's copy and collapses into it; a live non-empty
-/// anchor supersedes a stale zero-length revision copy of the same comment.
+/// Comments that say the same thing are independent comments: on distinct
+/// ranges, stacked on one range (Word keeps each), or one on a range and one
+/// on a point (#1898: `1672057675`'s c0 and c4). Only an A-side comment
+/// (`a_side`, the union's appended ids) is a copy, of a B-side one of the same
+/// body on the same range, and collapses into it. A point says nothing of
+/// copying: an A-side point beside a B-side range of the same body is a
+/// comment the revision removed, kept as any removed comment is.
 fn select_anchor_aware_comments(
     out: &PartFs,
     anchored: &AnchoredRanges,
@@ -1533,16 +1537,12 @@ fn select_anchor_aware_comments(
 
     let mut keep = HashSet::new();
     for candidates in groups.values() {
-        let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
         let b_ranges: HashSet<_> = candidates
             .iter()
             .filter(|(id, _)| !a_side.contains(id))
             .map(|(_, range)| *range)
             .collect();
         for (id, range) in candidates {
-            if has_nonempty && range.0 == range.1 {
-                continue;
-            }
             if a_side.contains(id) && b_ranges.contains(range) {
                 continue;
             }
@@ -1963,7 +1963,7 @@ mod deeper_boundary_tests {
     }
 
     #[test]
-    fn unanchored_identity_includes_id_and_live_ranges_supersede_points() {
+    fn unanchored_identity_includes_id_and_live_ranges_supersede_only_unanchored() {
         let defs = format!(
             "{}{}{}",
             comment("7", "same"),
@@ -1980,9 +1980,13 @@ mod deeper_boundary_tests {
         }
         let body = "<w:p><w:commentRangeStart w:id=\"7\"/><w:r><w:t>abc</w:t></w:r><w:commentRangeEnd w:id=\"7\"/><w:r><w:commentReference w:id=\"8\"/></w:r></w:p>";
         let pkg = package(Some(&defs), Some(body));
+        // 8 is a point comment after "abc": a comment of its own (#1898).
         assert_eq!(
             comment_anchor_identities(&pkg, MAIN),
-            HashMap::from([("7".into(), "same\0\0\0\0\0abc\0".into())])
+            HashMap::from([
+                ("7".into(), "same\0\0\0\0\0abc\0".into()),
+                ("8".into(), "same\0\0\0\0abc\0\0".into()),
+            ])
         );
         assert!(!b_covers_comment_identities_of_a(
             &package(Some(&comment("7", "same")), None),
@@ -2509,7 +2513,17 @@ mod deeper_boundary_tests {
         let pkg = package(Some(&defs), None);
         for (ranges, a_side, want) in [
             ([(0, 0), (0, 0), (0, 0)], set(&[]), set(&["7", "8", "9"])),
-            ([(0, 1), (0, 0), (2, 3)], set(&[]), set(&["7", "9"])),
+            // A point and a range that say the same are two comments (#1898).
+            ([(0, 1), (0, 0), (2, 3)], set(&[]), set(&["7", "8", "9"])),
+            (
+                [(0, 1), (0, 0), (2, 3)],
+                set(&["7", "8", "9"]),
+                set(&["7", "8", "9"]),
+            ),
+            // An A-side point beside a B-side range is the revision's removal.
+            ([(0, 1), (0, 0), (2, 3)], set(&["8"]), set(&["7", "8", "9"])),
+            // An A-side point on a B-side point of the same body is its copy.
+            ([(0, 0), (0, 0), (2, 3)], set(&["8"]), set(&["7", "9"])),
             ([(0, 1), (0, 1), (2, 3)], set(&["8", "9"]), set(&["7", "9"])),
             ([(0, 1), (0, 1), (0, 1)], set(&[]), set(&["7", "8", "9"])),
         ] {
