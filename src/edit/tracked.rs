@@ -699,7 +699,9 @@ fn emit(
         }
     }
     // 1c. Restores: their deletion stays, and our insertion of a copy of
-    // its runs follows it.
+    // its runs follows it. An operation's comment runs from its first copy
+    // to its last.
+    let mut spans: BTreeMap<usize, (NodeId, NodeId)> = BTreeMap::new();
     for (i, r) in &t.resolved {
         let Resolved::Restore { para, wid, .. } = r else {
             continue;
@@ -714,12 +716,15 @@ fn emit(
             dom.add(ours, copy);
         }
         let runs = dom.elements(ours, None);
-        if let (Some(&first), Some(&last), Some(&id)) =
-            (runs.first(), runs.last(), comment_ids.get(i))
-        {
-            visible::comment_around(dom, first, last, id);
+        if let (Some(&first), Some(&last)) = (runs.first(), runs.last()) {
+            spans.entry(*i).or_insert((first, last)).1 = last;
         }
         place_beside(dom, del, ours, stamp);
+    }
+    for (i, (first, last)) in spans {
+        if let Some(&id) = comment_ids.get(&i) {
+            visible::comment_around(&mut t.opened.dom, first, last, id);
+        }
     }
     // 2. Paragraph and table insertions: every run, row and paragraph mark
     // inserted.

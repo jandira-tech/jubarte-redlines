@@ -554,7 +554,9 @@ pub enum OperationKind {
     /// `keep`.
     #[schemars(extend("x-jubarte-keep-only" = true))]
     Strike {
-        /// The insertion, as `changes` lists it (`r366`, `header1.r3`).
+        /// The insertion, as `changes` lists it (`r366`, `header1.r3`): every
+        /// insertion mark of a change of several (`r10+11`), a replacement's
+        /// insertion only.
         revision: String,
         #[serde(
             default,
@@ -569,7 +571,9 @@ pub enum OperationKind {
     /// formatting included. Needs `existing_revisions` `keep`.
     #[schemars(extend("x-jubarte-keep-only" = true))]
     Restore {
-        /// The deletion, as `changes` lists it (`r12`, `header1.r3`).
+        /// The deletion, as `changes` lists it (`r12`, `header1.r3`): every
+        /// deletion mark of a change of several (`r12+13`), a replacement's
+        /// deletion only.
         revision: String,
         #[serde(
             default,
@@ -6477,13 +6481,19 @@ impl<'p> Transaction<'p> {
         }
         // 1a. Restores: plain copies of the deletion's runs after it, which
         // stays; found by `w:id`, so the text edits before do not move them.
+        // An operation's comment runs from its first copy to its last.
+        let mut spans: BTreeMap<usize, (NodeId, NodeId)> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let Resolved::Restore { para, wid, .. } = r else {
                 continue;
             };
             let node = self.paragraph_nodes[*para];
-            let placed = visible::restore_plain(&mut self.opened.dom, node, wid);
-            if let (Some((first, last)), Some(&id)) = (placed, ids.get(i)) {
+            if let Some((first, last)) = visible::restore_plain(&mut self.opened.dom, node, wid) {
+                spans.entry(*i).or_insert((first, last)).1 = last;
+            }
+        }
+        for (i, (first, last)) in spans {
+            if let Some(&id) = ids.get(&i) {
                 visible::comment_around(&mut self.opened.dom, first, last, id);
             }
         }

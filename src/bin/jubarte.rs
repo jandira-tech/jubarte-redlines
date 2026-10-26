@@ -2221,8 +2221,9 @@ fn settlement_notes(
 
 /// The `note:` lines of an applied edit: the flags' notes, the plan's (a
 /// field read as another), then each anchor that matched as the paragraph
-/// reads rather than as typed. A kept comment names its paragraph in
-/// `published`, the copy the mode writes.
+/// reads rather than as typed, and what a strike or a restore left (a
+/// mark already struck, a replacement's other half). A kept comment names
+/// its paragraph in `published`, the copy the mode writes.
 fn edit_notes(
     notes: &[String],
     result: &jubarte::edit::EditResult,
@@ -2257,6 +2258,9 @@ fn edit_notes(
                 "note: {}: anchor {given:?} read as {read_as:?} ({why})",
                 outcome.id
             ));
+        }
+        if let ("strike" | "restore", Some(message)) = (outcome.kind.as_str(), &outcome.message) {
+            lines.push(format!("note: {}: {message}", outcome.id));
         }
     }
     lines

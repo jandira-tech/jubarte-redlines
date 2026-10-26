@@ -131,25 +131,60 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
     Ok(Some(lowered))
 }
 
+/// Whether the visible reject of `revision` is a `restore`: of a deletion
+/// or of a move's source. An id `listed` lacks is struck (the strike then
+/// refuses it as unknown).
+fn restores(listed: &[Change], revision: &str) -> bool {
+    listed.iter().find(|c| c.id == revision).is_some_and(|c| {
+        matches!(
+            (c.kind, c.move_side),
+            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From))
+        )
+    })
+}
+
 /// The visible reject of `revision`: a `restore` of a deletion or of a
-/// move's source, a `strike` of anything else, an id `listed` lacks
-/// included (the strike then refuses it as unknown).
+/// move's source, a `strike` of anything else.
 pub(super) fn reject_kind(
     listed: &[Change],
     revision: String,
     comment: Option<String>,
 ) -> OperationKind {
-    let restores = listed.iter().find(|c| c.id == revision).is_some_and(|c| {
-        matches!(
-            (c.kind, c.move_side),
-            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From))
-        )
-    });
-    if restores {
+    if restores(listed, &revision) {
         OperationKind::Restore { revision, comment }
     } else {
         OperationKind::Strike { revision, comment }
     }
+}
+
+/// The visible reject of the change the marks `ids` make: one operation
+/// per kind ([`reject_kind`]), the kind of the first mark first, and
+/// `comment` on that one.
+pub(super) fn reject_kinds(
+    listed: &[Change],
+    ids: &[String],
+    comment: Option<String>,
+) -> Vec<OperationKind> {
+    let (back, out): (Vec<String>, Vec<String>) =
+        ids.iter().cloned().partition(|id| restores(listed, id));
+    let mut kinds = [(true, back), (false, out)];
+    if !ids.first().is_some_and(|id| restores(listed, id)) {
+        kinds.swap(0, 1);
+    }
+    let mut comment = comment;
+    kinds
+        .into_iter()
+        .filter(|(_, marks)| !marks.is_empty())
+        .map(|(restore, marks)| {
+            let revision = crate::changes::composite_id(&marks);
+            let comment = comment.take();
+            if restore {
+                OperationKind::Restore { revision, comment }
+            } else {
+                OperationKind::Strike { revision, comment }
+            }
+        })
+        .collect()
 }
 
 /// The run content a struck or restored run may hold: text and the
@@ -347,9 +382,9 @@ const BODY_ONLY: &str =
     "comments are supported in the body only: Word cannot anchor one in a header, footer or note";
 
 impl Transaction<'_> {
-    /// Resolve a `strike` or a `restore` of `revision`: the text deletions
-    /// that strike their insertion, or the copy that restores their
-    /// deletion.
+    /// Resolve a `strike` or a `restore` of `revision`, a change as
+    /// `changes` lists it: the text deletions that strike its insertion,
+    /// or the copy that restores its deletion.
     pub(super) fn resolve_visible(
         &mut self,
         id: &str,
@@ -357,7 +392,7 @@ impl Transaction<'_> {
         revision: &str,
         comment: Option<&str>,
     ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
-        let mut outcome = EditOutcome {
+        let outcome = EditOutcome {
             id: id.to_string(),
             kind: String::new(),
             status: String::new(),
@@ -371,25 +406,153 @@ impl Transaction<'_> {
             anchor_read_as: None,
             near: None,
         };
+        let fail =
+            |code: &str, message: String| Box::new((err(code, Some(id), message), outcome.clone()));
+        let verb = visible.verb();
+        let ids = crate::ids::parse_change_ids(revision.trim())
+            .map_err(|e| fail("INVALID_EDIT", format!("{verb}: {e}")))?;
+        if let Some(note) = comment {
+            check_comment(note).map_err(|m| fail("INVALID_EDIT", m))?;
+        }
+        let listed = crate::changes::list_changes(&self.base)
+            .map_err(|e| fail("INVALID_DOCUMENT", e.to_string()))?;
+        match ids.as_slice() {
+            [one] => self.resolve_mark(id, visible, one, &listed, comment, outcome),
+            marks => self.resolve_marks(id, visible, marks, &listed, comment, outcome),
+        }
+    }
+
+    /// The refusal of `change` when it is the plan author's own: the way to
+    /// undo it is theirs to take, not a strike or a restore.
+    fn own_revision(&self, visible: Visible, change: &Change) -> Option<String> {
+        let author = change
+            .author
+            .as_deref()
+            .filter(|&a| a == self.plan.author)?;
+        let instead = match (visible, change.kind) {
+            (Visible::Strike, ChangeKind::Insertion) => "delete the text instead",
+            _ => "reject it instead",
+        };
+        Some(format!("{} is by {author:?}; {instead}", change.id))
+    }
+
+    /// Resolve a `strike` or a `restore` of a change of several `marks`
+    /// (`r10+11`): each mark of the operation's kind as it would be alone,
+    /// in reading order, and one comment over the answer. The marks of the
+    /// other kind (a replacement's deletion under a strike) stay as they
+    /// are, and the outcome says so.
+    fn resolve_marks(
+        &mut self,
+        id: &str,
+        visible: Visible,
+        marks: &[crate::ids::ChangeId],
+        listed: &[Change],
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
+        let fail = |code: &str, message: String, outcome: &EditOutcome| {
+            Box::new((err(code, Some(id), message), outcome.clone()))
+        };
+        let shorts: Vec<String> = marks.iter().map(crate::ids::ChangeId::short).collect();
+        let revision = crate::changes::composite_id(&shorts);
+        let (noun, opposite, other, other_verb) = match visible {
+            Visible::Strike => ("insertion", ChangeKind::Deletion, "deletion", "restore"),
+            Visible::Restore => ("deletion", ChangeKind::Insertion, "insertion", "strike"),
+        };
+        // Every mark is known and none is ours, whichever its kind.
+        let mut answered = Vec::new();
+        let mut left = Vec::new();
+        for (mark, short) in marks.iter().zip(&shorts) {
+            let Some(at) = listed.iter().position(|c| &c.id == short) else {
+                return Err(fail(
+                    "UNKNOWN_CHANGE",
+                    format!("no tracked change {short}"),
+                    &outcome,
+                ));
+            };
+            if let Some(message) = self.own_revision(visible, &listed[at]) {
+                return Err(fail("OWN_REVISION", message, &outcome));
+            }
+            if listed[at].kind == opposite {
+                left.push(short.clone());
+            } else {
+                answered.push((at, mark));
+            }
+        }
+        if answered.is_empty() {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("{revision} holds no {noun}: {other_verb} it instead"),
+                &outcome,
+            ));
+        }
+        answered.sort_by_key(|&(at, _)| at);
+        let mut resolved = Vec::new();
+        let mut paragraphs: Vec<String> = Vec::new();
+        let mut contexts = Vec::new();
+        let mut done = Vec::new();
+        for (_, mark) in answered {
+            let (answer, said) =
+                self.resolve_mark(id, visible, mark, listed, comment, outcome.clone())?;
+            if let Some(paragraph) = said.paragraph
+                && !paragraphs.contains(&paragraph)
+            {
+                paragraphs.push(paragraph);
+            }
+            if !answer.is_empty() {
+                done.push(mark.short());
+                contexts.extend(said.context);
+            }
+            resolved.extend(answer);
+        }
+        outcome.paragraph = paragraphs.first().cloned();
+        if comment.is_some()
+            && let [first, .., last] = paragraphs.as_slice()
+        {
+            let between = &paragraphs[1..paragraphs.len() - 1];
+            let named = between
+                .iter()
+                .fold(first.clone(), |all, p| format!("{all}, {p}"));
+            return Err(fail(
+                "INVALID_EDIT",
+                format!(
+                    "{revision} has marks in {named} and {last}; a comment answers one paragraph's: give each paragraph's marks their own {}",
+                    visible.verb()
+                ),
+                &outcome,
+            ));
+        }
+        if resolved.is_empty() {
+            outcome.message = Some("already struck".into());
+            return Ok((Vec::new(), outcome));
+        }
+        outcome.matches = 1;
+        outcome.context = Some(contexts.join(" "));
+        if !left.is_empty() {
+            outcome.message = Some(format!(
+                "{} {}; {} is its {other}: {other_verb} it too to reject the whole change",
+                visible.past(),
+                crate::changes::composite_id(&done),
+                crate::changes::composite_id(&left),
+            ));
+        }
+        Ok((one_comment(resolved), outcome))
+    }
+
+    /// Resolve a `strike` or a `restore` of the single mark `one`.
+    fn resolve_mark(
+        &mut self,
+        id: &str,
+        visible: Visible,
+        one: &crate::ids::ChangeId,
+        listed: &[Change],
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
         let fail = |code: &str, message: String, outcome: &EditOutcome| {
             Box::new((err(code, Some(id), message), outcome.clone()))
         };
         let verb = visible.verb();
-        let ids = crate::ids::parse_change_ids(revision.trim())
-            .map_err(|e| fail("INVALID_EDIT", format!("{verb}: {e}"), &outcome))?;
-        let [one] = ids.as_slice() else {
-            let names: Vec<String> = ids.iter().map(crate::ids::ChangeId::short).collect();
-            return Err(fail(
-                "INVALID_EDIT",
-                format!(
-                    "{verb} takes one revision; {} names {} ({})",
-                    revision.trim(),
-                    names.len(),
-                    names.join(", ")
-                ),
-                &outcome,
-            ));
-        };
         let short = one.short();
         let settled = &self.resolved_revisions;
         if settled.accepted.contains(&short) || settled.rejected.contains(&short) {
@@ -402,27 +565,13 @@ impl Transaction<'_> {
                 &outcome,
             ));
         }
-        if let Some(note) = comment {
-            check_comment(note).map_err(|m| fail("INVALID_EDIT", m, &outcome))?;
-        }
         let unknown = || format!("no tracked change {short}");
-        let listed = crate::changes::list_changes(&self.base)
-            .map_err(|e| fail("INVALID_DOCUMENT", e.to_string(), &outcome))?;
-        let Some(change) = listed.into_iter().find(|c| c.id == short) else {
+        let Some(change) = listed.iter().find(|c| c.id == short) else {
             return Err(fail("UNKNOWN_CHANGE", unknown(), &outcome));
         };
-        // Our own revision first, whatever its kind: the way to undo it is
-        // ours to take, not a strike or a restore.
-        if let Some(author) = change.author.as_deref().filter(|&a| a == self.plan.author) {
-            let instead = match (visible, change.kind) {
-                (Visible::Strike, ChangeKind::Insertion) => "delete the text instead",
-                _ => "reject it instead",
-            };
-            return Err(fail(
-                "OWN_REVISION",
-                format!("{short} is by {author:?}; {instead}"),
-                &outcome,
-            ));
+        // Our own revision first, whatever its kind.
+        if let Some(message) = self.own_revision(visible, change) {
+            return Err(fail("OWN_REVISION", message, &outcome));
         }
         let wrong_kind = match (visible, change.kind, change.move_side) {
             (Visible::Strike, ChangeKind::Insertion, _)
@@ -796,4 +945,70 @@ impl Transaction<'_> {
         });
         Ok((std::iter::once(edit).chain(comment).collect(), outcome))
     }
+}
+
+/// `resolved`, the answers to the marks of one change, with one comment:
+/// the strikes' comments joined into one from the first struck word to the
+/// last, only the first restore's (the copies of all of them anchor it),
+/// and a paragraph mark's only when no words carry one.
+fn one_comment(resolved: Vec<Resolved>) -> Vec<Resolved> {
+    let words = resolved.iter().any(|r| {
+        matches!(
+            r,
+            Resolved::StrikeComment { .. }
+                | Resolved::Restore {
+                    comment: Some(_),
+                    ..
+                }
+        )
+    });
+    let mut out: Vec<Resolved> = Vec::with_capacity(resolved.len());
+    let mut struck: Option<usize> = None;
+    let mut restored = false;
+    let mut marked = false;
+    for r in resolved {
+        match r {
+            Resolved::StrikeComment { para, start, end } => match struck {
+                Some(at) => {
+                    if let Resolved::StrikeComment {
+                        start: first,
+                        end: last,
+                        ..
+                    } = &mut out[at]
+                    {
+                        *first = (*first).min(start);
+                        *last = (*last).max(end);
+                    }
+                }
+                None => {
+                    struck = Some(out.len());
+                    out.push(Resolved::StrikeComment { para, start, end });
+                }
+            },
+            Resolved::Restore {
+                para,
+                wid,
+                at,
+                text,
+                comment,
+            } => {
+                let comment = comment.filter(|_| !restored);
+                restored |= comment.is_some();
+                out.push(Resolved::Restore {
+                    para,
+                    wid,
+                    at,
+                    text,
+                    comment,
+                });
+            }
+            Resolved::CommentRange { .. } if words || marked => {}
+            r @ Resolved::CommentRange { .. } => {
+                marked = true;
+                out.push(r);
+            }
+            r => out.push(r),
+        }
+    }
+    out
 }

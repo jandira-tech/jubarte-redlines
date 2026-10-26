@@ -917,6 +917,15 @@ pub fn list_logical_changes(docx: &[u8]) -> Result<Vec<Change>, ChangeError> {
     Ok(logical_changes_in(&open(docx)?))
 }
 
+/// The id of the marks `ids` names together, in their order: `r7+8`,
+/// `header1.r1+2`. One mark keeps its own id, whatever its spelling.
+pub(crate) fn composite_id(ids: &[String]) -> String {
+    match ids {
+        [one] => one.clone(),
+        _ => logical::joined(ids.iter().map(String::as_str)),
+    }
+}
+
 /// The changes `authors` wrote, matched as [`ChangeFilter::authors`]
 /// matches them (exact names); every change when `authors` is empty. A
 /// logical change has one author, so it is kept or left whole: the filter

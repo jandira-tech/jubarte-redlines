@@ -1195,9 +1195,23 @@ Both take a paragraph mark as well.
   with their paragraph's properties and mark formatting. Accept All gives
   the words before the break their own paragraph again.
 
+Both take a change as `jubarte changes` lists it, several marks under one
+id included (`r10+11`, Word's two typing sessions; `r8+9`, words and their
+paragraph's mark). A strike strikes every insertion mark of it and a
+restore restores every deletion mark. A replacement's other half stays as
+it is, with the note `struck r12; r11 is its deletion: restore it too to
+reject the whole change`. A change with no mark of the kind is refused
+(`r12+13 holds no insertion: restore it instead`), and so is a change
+holding one of your own marks, naming that mark. `-p r11+12 --reject
+--visible` gives a replacement its restore and its strike, in reading
+order.
+
 `--content` (a plan's `comment`) adds a comment. On words, it covers the
 struck or restored words. On a paragraph mark, it covers the last word
-before the break. Accept All reads as their change rejected, Reject All as the
+before the break. A change of several marks takes one comment, from its
+first struck or restored word to its last; a visible reject puts it on the
+first of the restore and the strike. One comment covers one paragraph's
+marks, so a hand-made id naming marks in two paragraphs takes none. Accept All reads as their change rejected, Reject All as the
 document before both, and rejecting only your changes gives theirs back
 intact. Both need the file's revisions kept (`--existing-revisions keep`,
 the default for a file with tracked changes). Striking an insertion or a

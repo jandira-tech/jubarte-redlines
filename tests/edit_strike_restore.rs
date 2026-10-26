@@ -278,12 +278,381 @@ fn strike_and_restore_take_the_kind_they_name() {
     let e = refused(STEP1, &plan(&strike("r99")));
     assert_eq!(e.code, "UNKNOWN_CHANGE");
     assert_eq!(e.message, "no tracked change r99");
-    let e = refused(STEP2, &plan(&strike("r4+5")));
+}
+
+// ------------------------------------------------- changes of several marks
+
+/// Bob typed "new words" in two sessions: one change of two marks,
+/// r10+11, the second by `second`.
+fn typed_twice(second: &str) -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r><w:ins w:id="10" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t xml:space="preserve">new </w:t></w:r></w:ins><w:ins w:id="11" w:author="{second}" w:date="2026-10-17T09:30:00Z"><w:r><w:rPr><w:i/></w:rPr><w:t>words</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> end</w:t></w:r></w:p>"#
+    ))
+}
+
+/// Bob deleted "old words" in two sessions: one change of two marks,
+/// r12+13.
+fn deleted_twice() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r><w:del w:id="12" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:delText xml:space="preserve">old </w:delText></w:r></w:del><w:del w:id="13" w:author="Bob Lee" w:date="2026-10-17T09:30:00Z"><w:r><w:rPr><w:i/></w:rPr><w:delText>words</w:delText></w:r></w:del><w:r><w:t xml:space="preserve"> end</w:t></w:r></w:p>"#
+    ))
+}
+
+/// The struck words inside the body's comment ranges.
+fn commented_struck(bytes: &[u8]) -> String {
+    let (dom, body) = doc_body(bytes);
+    let mut inside = false;
+    let mut out = String::new();
+    for n in dom.descendants(body, None) {
+        if dom.name_is(n, &W::name("commentRangeStart")) {
+            inside = true;
+        } else if dom.name_is(n, &W::name("commentRangeEnd")) {
+            inside = false;
+        } else if inside && dom.name_is(n, &W::del_text()) {
+            out.push_str(&dom.value(n));
+        }
+    }
+    out
+}
+
+/// How many comment ranges the body holds.
+fn comment_count(bytes: &[u8]) -> usize {
+    let (dom, body) = doc_body(bytes);
+    dom.descendants(body, Some(&W::name("commentRangeStart")))
+        .len()
+}
+
+/// What rejecting `marks` of `source`, then accepting the rest, reads.
+fn rejected_only(source: &[u8], marks: &[&str]) -> String {
+    let settled = reject_elements(source, &ChangeFilter::ids(marks.to_vec())).unwrap();
+    text(&accept_changes(&settled, &all()).unwrap())
+}
+
+/// The ids `jubarte changes` lists.
+fn logical_ids(source: &[u8]) -> Vec<String> {
+    jubarte::changes::list_logical_changes(source)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.id)
+        .collect()
+}
+
+#[test]
+fn a_change_of_two_insertions_is_struck_with_one_comment() {
+    let source = typed_twice("Bob Lee");
+    assert_eq!(logical_ids(&source), ["r10+11"]);
+    let out = applied(
+        &source,
+        &plan(&json!([{"kind":"strike","revision":"r10+11","comment":"Not agreed."}])),
+    );
+    let outcome = &out.report.operations[0];
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(outcome.paragraph.as_deref(), Some("p0"));
+    assert_eq!(outcome.message, None);
+    let (dom, body) = doc_body(&out.redline);
+    for id in ["10", "11"] {
+        let theirs = element(&dom, body, "ins", id);
+        let ours = dom.elements(theirs, Some(&W::del()));
+        assert_eq!(ours.len(), 1, "{}", dom.serialize_element(theirs));
+        stamped(&dom, ours[0], CAROL, DATE);
+        assert!(dom.descendants(theirs, Some(&W::t())).is_empty());
+    }
+    // One comment, from the first struck word to the last.
+    assert_eq!(comment_count(&out.redline), 1);
+    assert_eq!(commented_struck(&out.redline), "new words");
+    let comments = part_string(&out.redline, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:comment ").count(), 1, "{comments}");
+    assert!(comments.contains("Not agreed."), "{comments}");
+    assert_eq!(
+        accepted(&out.redline),
+        rejected_only(&source, &["r10", "r11"])
+    );
+    assert_eq!(rejected(&out.redline), rejected(&source));
+}
+
+#[test]
+fn a_change_of_two_deletions_is_restored_with_one_comment() {
+    let source = deleted_twice();
+    assert_eq!(logical_ids(&source), ["r12+13"]);
+    let out = applied(
+        &source,
+        &plan(&json!([{"kind":"restore","revision":"r12+13","comment":"Keep these."}])),
+    );
+    assert_eq!(out.report.operations[0].status, "ok");
+    let (dom, body) = doc_body(&out.redline);
+    let restored: Vec<String> = dom
+        .descendants(body, Some(&W::ins()))
+        .into_iter()
+        .filter(|&n| dom.attribute(n, &W::author()) == Some(CAROL))
+        .map(|n| dom.value(n))
+        .collect();
+    assert_eq!(restored, ["old ", "words"]);
+    for bytes in [&out.redline, &out.clean] {
+        assert_eq!(comment_count(bytes), 1);
+        assert_eq!(commented_text(bytes), "old words");
+    }
+    assert_eq!(accepted(&out.redline), "keep old words end");
+    assert_eq!(
+        accepted(&out.redline),
+        rejected_only(&source, &["r12", "r13"])
+    );
+}
+
+#[test]
+fn a_replacement_is_struck_on_its_insertion_and_restored_on_its_deletion() {
+    // r4 deleted "bankers", r5 inserted "insurers": one replacement.
+    assert!(logical_ids(STEP2).iter().any(|id| id == "r4+5"));
+    let out = applied(
+        STEP2,
+        &plan(&json!([{"kind":"strike","revision":"r4+5","comment":"Not agreed."}])),
+    );
+    let outcome = &out.report.operations[0];
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(
+        outcome.message.as_deref(),
+        Some("struck r5; r4 is its deletion: restore it too to reject the whole change")
+    );
+    assert_eq!(commented_struck(&out.redline), "insurers");
+    assert_eq!(accepted(&out.redline), rejected_only(STEP2, &["r5"]));
+    let out = applied(
+        STEP2,
+        &plan(&json!([{"kind":"restore","revision":"r4+5","comment":"Keep it."}])),
+    );
+    assert_eq!(
+        out.report.operations[0].message.as_deref(),
+        Some("restored r4; r5 is its insertion: strike it too to reject the whole change")
+    );
+    assert_eq!(commented_text(&out.redline), "bankers");
+    assert_eq!(accepted(&out.redline), rejected_only(STEP2, &["r4"]));
+}
+
+#[test]
+fn a_change_with_nothing_of_the_kind_is_refused() {
+    let e = refused(&deleted_twice(), &plan(&strike("r12+13")));
+    assert_eq!(e.code, "INVALID_EDIT");
+    assert_eq!(e.message, "r12+13 holds no insertion: restore it instead");
+    let e = refused(&typed_twice("Bob Lee"), &plan(&restore("r10+11")));
+    assert_eq!(e.code, "INVALID_EDIT");
+    assert_eq!(e.message, "r10+11 holds no deletion: strike it instead");
+}
+
+#[test]
+fn a_change_holding_one_of_our_marks_is_refused_naming_it() {
+    let e = refused(&typed_twice(CAROL), &plan(&strike("r10+11")));
+    assert_eq!(e.code, "OWN_REVISION");
+    assert_eq!(
+        e.message,
+        r#"r11 is by "Carol Diaz"; delete the text instead"#
+    );
+    let e = refused(&typed_twice("Bob Lee"), &plan(&strike("r10+99")));
+    assert_eq!(e.code, "UNKNOWN_CHANGE");
+    assert_eq!(e.message, "no tracked change r99");
+}
+
+/// Bob typed "end" and a paragraph break after it: one change, r8+9, the
+/// words and their paragraph's mark.
+fn typed_with_break() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:ins w:id="9" w:author="Bob Lee" w:date="{OLD_DATE}"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">one </w:t></w:r><w:ins w:id="8" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>end</w:t></w:r></w:ins></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p>"#
+    ))
+}
+
+/// Bob deleted "end" and the paragraph break after it: r8+9.
+fn deleted_with_break() -> Vec<u8> {
+    docx(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Bob Lee" w:date="{OLD_DATE}"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">one </w:t></w:r><w:del w:id="8" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:delText>end</w:delText></w:r></w:del></w:p><w:p><w:r><w:t>two</w:t></w:r></w:p>"#
+    ))
+}
+
+#[test]
+fn a_change_with_its_paragraph_mark_is_answered_whole() {
+    for (source, verb) in [
+        (typed_with_break(), "strike"),
+        (deleted_with_break(), "restore"),
+    ] {
+        assert_eq!(logical_ids(&source), ["r8+9"], "{verb}");
+        let out = applied(
+            &source,
+            &plan(&json!([{"kind":verb,"revision":"r8+9","comment":"No."}])),
+        );
+        assert_eq!(out.report.operations[0].status, "ok", "{verb}");
+        assert_eq!(comment_count(&out.redline), 1, "{verb}");
+        let words = match verb {
+            "strike" => commented_struck(&out.redline),
+            _ => commented_text(&out.redline),
+        };
+        assert_eq!(words, "end", "{verb}");
+        assert_eq!(
+            accepted(&out.redline),
+            rejected_only(&source, &["r8", "r9"]),
+            "{verb}"
+        );
+        assert_eq!(rejected(&out.redline), rejected(&source), "{verb}");
+    }
+}
+
+#[test]
+fn a_change_already_struck_is_ok_with_a_note() {
+    let source = typed_twice("Bob Lee");
+    let once = applied(&source, &plan(&strike("r10+11"))).redline;
+    let twice = applied(&once, &plan(&strike("r10+11")));
+    let outcome = &twice.report.operations[0];
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(outcome.message.as_deref(), Some("already struck"));
+    assert_eq!(list_changes(&twice.redline), list_changes(&once));
+}
+
+/// Words struck before, their paragraph's mark not: the strike takes the
+/// mark, and its comment sits on the word before the break.
+#[test]
+fn a_change_whose_words_are_struck_comments_on_its_mark() {
+    let source = typed_with_break();
+    let words = applied(&source, &plan(&strike("r8"))).redline;
+    let out = applied(
+        &words,
+        &plan(&json!([{"kind":"strike","revision":"r8+9","comment":"No."}])),
+    );
+    assert_eq!(out.report.operations[0].status, "ok");
+    assert_eq!(comment_count(&out.redline), 1);
+    assert_eq!(commented_text(&out.redline), "one");
+    assert_eq!(
+        accepted(&out.redline),
+        rejected_only(&source, &["r8", "r9"])
+    );
+}
+
+/// A hand-made id may name marks in two paragraphs: answered whole, but a
+/// comment covers one paragraph's.
+#[test]
+fn a_comment_answers_the_marks_of_one_paragraph() {
+    let source = docx(&format!(
+        r#"<w:p><w:ins w:id="3" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>one</w:t></w:r></w:ins></w:p><w:p><w:ins w:id="7" w:author="Bob Lee" w:date="{OLD_DATE}"><w:r><w:t>two</w:t></w:r></w:ins></w:p>"#
+    ));
+    let out = applied(&source, &plan(&strike("r3+7")));
+    assert_eq!(
+        accepted(&out.redline),
+        rejected_only(&source, &["r3", "r7"])
+    );
+    let e = refused(
+        &source,
+        &plan(&json!([{"kind":"strike","revision":"r3+7","comment":"No."}])),
+    );
     assert_eq!(e.code, "INVALID_EDIT");
     assert_eq!(
         e.message,
-        "strike takes one revision; r4+5 names 2 (r4, r5)"
+        "r3+7 has marks in p0 and p1; a comment answers one paragraph's: give each paragraph's marks their own strike"
     );
+}
+
+#[test]
+fn flags_answer_a_change_of_several_marks_as_one_operation() {
+    use jubarte::edit::OperationKind;
+    use jubarte::edit::flags::{FlagOp, Verb, plan_from_flags};
+    let group = |set: fn(&mut FlagOp)| {
+        let mut op = FlagOp {
+            at: "r4+5".into(),
+            content: Some("No.".into()),
+            ..FlagOp::default()
+        };
+        set(&mut op);
+        op
+    };
+    let kinds = |op: FlagOp| -> Vec<OperationKind> {
+        plan_from_flags(Verb::Edit, &[op], CAROL, Some(DATE), None, STEP2)
+            .unwrap()
+            .plan
+            .operations
+            .into_iter()
+            .map(|o| o.kind)
+            .collect()
+    };
+    assert_eq!(
+        kinds(group(|o| o.strike = true)),
+        [OperationKind::Strike {
+            revision: "r4+5".into(),
+            comment: Some("No.".into()),
+        }]
+    );
+    assert_eq!(
+        kinds(group(|o| o.restore = true)),
+        [OperationKind::Restore {
+            revision: "r4+5".into(),
+            comment: Some("No.".into()),
+        }]
+    );
+    // A visible reject of a replacement: its restore and its strike, in
+    // reading order, the comment on the first.
+    assert_eq!(
+        kinds(group(|o| {
+            o.reject = true;
+            o.visible = true;
+        })),
+        [
+            OperationKind::Restore {
+                revision: "r4".into(),
+                comment: Some("No.".into()),
+            },
+            OperationKind::Strike {
+                revision: "r5".into(),
+                comment: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn the_cli_answers_a_replacement_with_one_comment() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.docx"), STEP2).unwrap();
+    for (out, flags, expect, note) in [
+        (
+            "struck.docx",
+            &["--strike"][..],
+            rejected_only(STEP2, &["r5"]),
+            Some(
+                "note: op-1: struck r5; r4 is its deletion: restore it too to reject the whole change",
+            ),
+        ),
+        (
+            "restored.docx",
+            &["--restore"][..],
+            rejected_only(STEP2, &["r4"]),
+            Some(
+                "note: op-1: restored r4; r5 is its insertion: strike it too to reject the whole change",
+            ),
+        ),
+        (
+            "visible.docx",
+            &["--reject", "--visible"][..],
+            rejected_only(STEP2, &["r4", "r5"]),
+            None,
+        ),
+    ] {
+        let mut args = vec!["edit", "in.docx", "-p", "r4+5"];
+        args.extend_from_slice(flags);
+        args.extend_from_slice(&[
+            "--content",
+            "Not agreed.",
+            "-a",
+            CAROL,
+            "-d",
+            DATE,
+            "-o",
+            out,
+        ]);
+        let says = cli(dir.path(), &args);
+        assert_eq!(
+            says.lines().find(|l| l.starts_with("note: op-")),
+            note,
+            "{out}: {says}"
+        );
+        let bytes = std::fs::read(dir.path().join(out)).unwrap();
+        validate_output(&bytes);
+        assert_eq!(accepted(&bytes), expect, "{out}");
+        assert_eq!(comment_count(&bytes), 1, "{out}");
+        let comments = part_string(&bytes, "word/comments.xml").unwrap();
+        assert!(comments.contains("Not agreed."), "{out}: {comments}");
+    }
 }
 
 // ------------------------------------------------------- paragraph marks
