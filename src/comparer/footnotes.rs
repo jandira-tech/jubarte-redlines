@@ -994,7 +994,18 @@ fn replace_nodes(dom: &mut Dom, target: NodeId, source: NodeId) {
 /// processing an endnote; only the inserted run is kind-correct.
 /// `direct_child_run` mirrors the Equal branch's `firstPara.Element(W.r)` vs
 /// the Inserted/Deleted branches' `Descendants(W.r).FirstOrDefault()`.
-fn ensure_reference_marker(dom: &mut Dom, temp: NodeId, is_footnote: bool, direct_child_run: bool) {
+/// The marker run never reaches the produced content (`w:footnoteRef` and
+/// `w:endnoteRef` yield no atom), so the run put back takes the run
+/// properties of `source`'s own marker, the definition the content comes
+/// from: a mark set in 8pt Arial stays so (#1871). C#'s bare
+/// `rStyle FootnoteReference` run is left for a definition with no marker.
+fn ensure_reference_marker(
+    dom: &mut Dom,
+    temp: NodeId,
+    is_footnote: bool,
+    direct_child_run: bool,
+    source: Option<NodeId>,
+) {
     let r_name = W::r();
     let has_marker = dom.descendants(temp, Some(&r_name)).into_iter().any(|run| {
         let style = dom
@@ -1027,11 +1038,26 @@ fn ensure_reference_marker(dom: &mut Dom, temp: NodeId, is_footnote: bool, direc
         ("EndnoteReference", "endnoteRef")
     };
     let marker = dom.new_element(W::r());
-    let rpr = dom.new_element(W::r_pr());
-    let rstyle = dom.new_element(W::name("rStyle"));
-    dom.set_attribute_value(rstyle, &W::val(), Some(style_val));
-    dom.add(rpr, rstyle);
-    dom.add(marker, rpr);
+    let own_run = source
+        .and_then(|def| {
+            dom.descendants(def, Some(&W::name(ref_el)))
+                .first()
+                .copied()
+        })
+        .and_then(|own| dom.parent(own))
+        .filter(|&run| dom.name_is(run, &r_name));
+    if let Some(run) = own_run {
+        if let Some(own_rpr) = dom.element(run, &W::r_pr()) {
+            let rpr = dom.clone_subtree(own_rpr);
+            dom.add(marker, rpr);
+        }
+    } else {
+        let rpr = dom.new_element(W::r_pr());
+        let rstyle = dom.new_element(W::name("rStyle"));
+        dom.set_attribute_value(rstyle, &W::val(), Some(style_val));
+        dom.add(rpr, rstyle);
+        dom.add(marker, rpr);
+    }
     let re = dom.new_element(W::name(ref_el));
     dom.add(marker, re);
     dom.add_before_self(first_run, marker);
@@ -1042,11 +1068,14 @@ fn ensure_reference_marker(dom: &mut Dom, temp: NodeId, is_footnote: bool, direc
 /// marker, order per standard (our port's produce-path equivalents:
 /// pPr-first + paragraph-mark revision order — `WmlOrderElementsPerStandard`
 /// has no direct port), and return the rebuilt `w:footnote`/`w:endnote`.
+/// `source` is the definition the content comes from, whose marker run the
+/// rebuilt note keeps.
 fn produce_note_redline(
     dom: &mut Dom,
     flat: &mut [super::atoms::ComparisonUnitAtom],
     is_footnote: bool,
     direct_child_run: bool,
+    source: NodeId,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) -> Option<NodeId> {
@@ -1058,7 +1087,7 @@ fn produce_note_redline(
     for c in children {
         dom.add(temp, c);
     }
-    ensure_reference_marker(dom, temp, is_footnote, direct_child_run);
+    ensure_reference_marker(dom, temp, is_footnote, direct_child_run, Some(source));
     super::finalize::move_paragraph_properties_first(dom, temp);
     super::finalize::fix_paragraph_mark_revision_order(dom, temp);
     let fn_name = W::footnote();
@@ -1237,11 +1266,18 @@ pub fn process_footnote_endnote(
                             dom, &mut flat, settings,
                         );
                     }
-                    let new_content =
-                        produce_note_redline(dom, &mut flat, is_footnote, true, settings, id_gen)
-                            .ok_or_else(|| RectifyError::MissingNoteDef {
-                            id: after_id.clone().unwrap_or_default(),
-                        })?;
+                    let new_content = produce_note_redline(
+                        dom,
+                        &mut flat,
+                        is_footnote,
+                        true,
+                        def_after,
+                        settings,
+                        id_gen,
+                    )
+                    .ok_or_else(|| RectifyError::MissingNoteDef {
+                        id: after_id.clone().unwrap_or_default(),
+                    })?;
                     replace_nodes(dom, def_after, new_content);
                 }
             }
@@ -1262,9 +1298,15 @@ pub fn process_footnote_endnote(
                 let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                 // C# tolerates a missing rebuilt definition here (the throw is
                 // commented out :3202) — unlike the Equal/Deleted branches.
-                if let Some(new_content) =
-                    produce_note_redline(dom, &mut flat, is_footnote, false, settings, id_gen)
-                {
+                if let Some(new_content) = produce_note_redline(
+                    dom,
+                    &mut flat,
+                    is_footnote,
+                    false,
+                    def_after,
+                    settings,
+                    id_gen,
+                ) {
                     replace_nodes(dom, def_after, new_content);
                 }
             }
@@ -1294,8 +1336,15 @@ pub fn process_footnote_endnote(
                 // ATOM-STACK path fix the note wrapper is present; keep soft fail
                 // so a future path bug does not panic the whole compare.
                 if !flat.is_empty()
-                    && let Some(new_content) =
-                        produce_note_redline(dom, &mut flat, is_footnote, false, settings, id_gen)
+                    && let Some(new_content) = produce_note_redline(
+                        dom,
+                        &mut flat,
+                        is_footnote,
+                        false,
+                        def_before,
+                        settings,
+                        id_gen,
+                    )
                 {
                     replace_nodes(dom, def_before, new_content);
                 }
@@ -1534,7 +1583,7 @@ mod deterministic_note_boundary_tests {
             let root = parse(&mut dom, &format!("<w:body>{body}</w:body>"));
             let before = properties(&dom, root);
             let marker_count = dom.descendants(root, Some(&W::name("footnoteRef"))).len();
-            ensure_reference_marker(&mut dom, root, true, direct);
+            ensure_reference_marker(&mut dom, root, true, direct, None);
             assert_eq!(
                 dom.descendants(root, Some(&W::name("footnoteRef"))).len(),
                 marker_count + usize::from(added)
@@ -1548,6 +1597,39 @@ mod deterministic_note_boundary_tests {
                     .map(|&text| dom.value(text))
                     .collect::<String>(),
                 "Payload"
+            );
+        }
+    }
+
+    /// The marker put back takes the source definition's own marker run
+    /// properties, none when its marker has none, and C#'s bare style only
+    /// when it has no marker (#1871).
+    #[test]
+    fn a_restored_marker_takes_the_source_markers_run_properties() {
+        let own = "<w:rPr><w:rFonts w:cs=\"Arial\"/><w:sz w:val=\"16\"/></w:rPr>";
+        for (source, kept) in [
+            (format!("<w:r>{own}<w:footnoteRef/></w:r>"), own),
+            ("<w:r><w:footnoteRef/></w:r>".to_string(), ""),
+            (
+                "<w:r><w:t>No marker</w:t></w:r>".to_string(),
+                "<w:rPr><w:rStyle w:val=\"FootnoteReference\"/></w:rPr>",
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let def = parse(
+                &mut dom,
+                &format!("<w:footnote w:id=\"1\"><w:p>{source}</w:p></w:footnote>"),
+            );
+            let root = parse(
+                &mut dom,
+                "<w:body><w:p><w:r><w:t>Payload</w:t></w:r></w:p></w:body>",
+            );
+            ensure_reference_marker(&mut dom, root, true, true, Some(def));
+            let marker = dom.descendants(root, Some(&W::r()))[0];
+            let xml = dom.serialize_element(marker).replace(" />", "/>");
+            assert!(
+                xml.ends_with(&format!(">{kept}<w:footnoteRef/></w:r>")),
+                "{source}: {xml}"
             );
         }
     }
