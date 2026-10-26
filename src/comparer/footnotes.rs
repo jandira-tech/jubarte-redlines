@@ -343,11 +343,32 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
     dom.serialize_element(c)
 }
 
+/// What a `w:num` in `numbering` draws: its definition's normalized content
+/// and its own level overrides. Two nums with one signature number their
+/// paragraphs alike.
+fn list_signature(dom: &mut Dom, num: NodeId, numbering: NodeId) -> Option<String> {
+    let reference = dom
+        .element(num, &W::name("abstractNumId"))
+        .and_then(|e| get_int_attribute(dom, e, &W::val()))?;
+    let definition = dom
+        .elements(numbering, Some(&W::name("abstractNum")))
+        .into_iter()
+        .find(|&e| get_int_attribute(dom, e, &W::name("abstractNumId")) == Some(reference))?;
+    let overrides: String = dom
+        .elements(num, Some(&W::name("lvlOverride")))
+        .into_iter()
+        .map(|o| dom.serialize_element(o))
+        .collect();
+    Some(normalized_abstract_num_signature(dom, definition) + &overrides)
+}
+
 /// E.1 — `CopyMissingNumberingFromOneDocToAnother` (WmlComparer.ts :2143):
 /// content-dedup (an `abstractNum` whose normalized content already exists
-/// is REUSED), id-remapped (colliding `abstractNumId` / `numId` get fresh
-/// ids past the destination maximum, with `num` references rewired), and
-/// inserted in schema order. Malformed elements (missing/unparseable ids)
+/// is REUSED, under its own id when that one matches), id-remapped
+/// (colliding `abstractNumId` / `numId` get fresh ids past the destination
+/// maximum, with `num` references rewired; a `numId` whose destination
+/// `num` draws the same list does not collide), and inserted in schema
+/// order. Malformed elements (missing/unparseable ids)
 /// are skipped like C#. Returns the `numId` remap for COLLIDING source
 /// ids (source `numId` → freshly allocated destination `numId`) plus the
 /// freshly copied `w:numPicBullet` elements so the caller can carry their
@@ -406,8 +427,11 @@ pub fn copy_missing_numbering(
             continue;
         };
         let normalized_from = normalized_abstract_num_signature(dom, an);
-        // content match against the CURRENT destination (grows as we copy)
-        let to_ans: Vec<NodeId> = dom.elements(to_root, Some(&abstract_num));
+        // content match against the CURRENT destination (grows as we copy),
+        // the same id first: identical definitions are separate lists, and
+        // one matched to another's id moves its nums to fresh ids (#1850)
+        let mut to_ans: Vec<NodeId> = dom.elements(to_root, Some(&abstract_num));
+        to_ans.sort_by_key(|&e| get_int_attribute(dom, e, &abstract_num_id) != Some(from_id));
         let mut matching: Option<NodeId> = None;
         for e in to_ans {
             if normalized_abstract_num_signature(dom, e) == normalized_from {
@@ -496,6 +520,12 @@ pub fn copy_missing_numbering(
                 .and_then(|e| get_int_attribute(dom, e, &W::val()));
             if existing_ref == Some(mapped) {
                 continue; // same num with the same (mapped) reference
+            }
+            // the same list under another definition id: B's paragraphs
+            // already number alike through A's num (#1850)
+            let same_list = list_signature(dom, existing, to_root);
+            if same_list.is_some() && same_list == list_signature(dom, n, from_root) {
+                continue;
             }
             max_num_id = max_num_id.saturating_add(1);
             let cloned = dom.clone_subtree(n);
@@ -1696,6 +1726,117 @@ mod deterministic_note_boundary_tests {
             ["numPicBullet", "numPicBullet", "numPicBullet"]
         );
         assert_eq!(names.last().unwrap(), "numIdMacAtCleanup");
+    }
+
+    /// A decimal list definition: its own `nsid`, the same levels.
+    fn decimal(id: u32) -> String {
+        format!(
+            "<w:abstractNum w:abstractNumId=\"{id}\"><w:nsid w:val=\"0000000{id}\"/><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/></w:lvl></w:abstractNum>"
+        )
+    }
+
+    fn num(id: u32, definition: u32) -> String {
+        format!("<w:num w:numId=\"{id}\"><w:abstractNumId w:val=\"{definition}\"/></w:num>")
+    }
+
+    /// #1850: three identical definitions are three lists, each with its
+    /// own counter. The same numbering on both sides keeps every list on
+    /// its own definition: matched to the first identical one, each `num`
+    /// looked like a collision and moved to a fresh id.
+    #[test]
+    fn identical_definitions_keep_their_own_ids() {
+        let numbering = format!(
+            "<w:numbering>{}{}{}{}{}{}</w:numbering>",
+            decimal(0),
+            decimal(1),
+            decimal(2),
+            num(1, 2),
+            num(2, 1),
+            num(3, 0)
+        );
+        let mut dom = Dom::new();
+        let before = parse(&mut dom, &numbering);
+        let after = parse(&mut dom, &numbering);
+        let before_xml = properties(&dom, before);
+        let (remap, copied) = copy_missing_numbering(&mut dom, before, after);
+        assert!(remap.is_empty(), "{remap:?}");
+        assert!(copied.is_empty());
+        assert_eq!(properties(&dom, before), before_xml, "nothing is copied");
+    }
+
+    /// #1850: a `num` whose definition has another id on the other side,
+    /// with the same levels, is the same list: B's paragraphs already
+    /// resolve to it.
+    #[test]
+    fn a_num_drawing_the_same_list_is_not_renumbered() {
+        let mut dom = Dom::new();
+        let before = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}{}{}</w:numbering>",
+                decimal(0),
+                decimal(1),
+                num(1, 1)
+            ),
+        );
+        let after = parse(
+            &mut dom,
+            &format!("<w:numbering>{}{}</w:numbering>", decimal(5), num(1, 5)),
+        );
+        let (remap, _) = copy_missing_numbering(&mut dom, before, after);
+        assert!(remap.is_empty(), "{remap:?}");
+        assert_eq!(dom.elements(before, Some(&W::name("num"))).len(), 1);
+    }
+
+    /// A `num` whose list differs (a start override) still moves to a
+    /// fresh id, so B's paragraphs keep B's numbering.
+    #[test]
+    fn a_num_drawing_another_list_is_renumbered() {
+        let mut dom = Dom::new();
+        let before = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}{}{}</w:numbering>",
+                decimal(0),
+                decimal(1),
+                num(1, 1)
+            ),
+        );
+        let after = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}<w:num w:numId=\"1\"><w:abstractNumId w:val=\"5\"/><w:lvlOverride w:ilvl=\"0\"><w:startOverride w:val=\"4\"/></w:lvlOverride></w:num></w:numbering>",
+                decimal(5)
+            ),
+        );
+        let (remap, _) = copy_missing_numbering(&mut dom, before, after);
+        assert_eq!(remap.get("1").map(String::as_str), Some("2"));
+    }
+
+    /// A destination `num` that names no definition, or one the part
+    /// lacks, draws no list: the source's `num` of its id still moves.
+    #[test]
+    fn a_num_without_a_list_is_renumbered() {
+        let mut dom = Dom::new();
+        let before = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}<w:num w:numId=\"2\"/></w:numbering>",
+                num(1, 7)
+            ),
+        );
+        let after = parse(
+            &mut dom,
+            &format!(
+                "<w:numbering>{}{}{}</w:numbering>",
+                decimal(5),
+                num(1, 5),
+                num(2, 5)
+            ),
+        );
+        let (remap, _) = copy_missing_numbering(&mut dom, before, after);
+        assert_eq!(remap.get("1").map(String::as_str), Some("3"));
+        assert_eq!(remap.get("2").map(String::as_str), Some("4"));
     }
 }
 

@@ -715,3 +715,45 @@ fn settled_note_numbering_ignores_references_removed_from_headers() {
         }
     }
 }
+
+/// #1850: a comment edits nothing, numbering included. The fixture keeps
+/// eleven identical list definitions; matched to the first one, nine of
+/// its lists moved to fresh `numId`s and each of their paragraphs carried
+/// a formatting change back to the old id.
+#[test]
+fn a_comment_on_a_numbered_document_records_no_change() {
+    let source = std::fs::read("tests/fixtures/redline/original.docx").unwrap();
+    let edited = apply_plan(
+        &source,
+        &plan(
+            r#"{"schema_version":1,"author":"Counterparty Counsel","operations":[
+            {"kind":"comment","paragraph":"p2","find":"mamão","text":"Why papaya?"}]}"#,
+        ),
+    )
+    .unwrap();
+    assert_word_valid_package(&edited.redline);
+    let changes = jubarte::changes::list_changes(&edited.redline).unwrap();
+    assert!(changes.is_empty(), "{changes:?}");
+    // Each `num` as (numId, abstractNumId).
+    let nums = |docx: &[u8]| {
+        let value = |text: &str, key: &str| {
+            let at = text.find(key).unwrap() + key.len();
+            text[at..].split('"').next().unwrap().to_string()
+        };
+        let xml = part_string(docx, "word/numbering.xml").unwrap();
+        xml.split("<w:num ")
+            .skip(1)
+            .map(|num| {
+                (
+                    value(num, "w:numId=\""),
+                    value(num, "<w:abstractNumId w:val=\""),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        nums(&edited.redline),
+        nums(&source),
+        "the source's lists, no more"
+    );
+}
