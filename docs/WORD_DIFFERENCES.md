@@ -338,14 +338,17 @@ for `fill_control`, the clean edit output also retains the control.
   deleted (w06 `45c1c5abec_table_vmerge_colspan` → `a94f4c516b_text_box`,
   Word 16's redline in the corpus).
 - **What we do.** The middle paragraph keeps its place between the tables,
-  its mark deleted, but the new text is inserted on that paragraph instead
-  of ahead of the first table. Before #1826, Word mode moved the paragraph
-  ahead of the first table, and rejecting fused the two tables into one.
+  its mark deleted. The new text starts the paragraph after the second
+  table, the one Accept All joins it to (#1851, difference 16), instead of
+  opening the body ahead of the first table. Before #1826, Word mode moved
+  the paragraph ahead of the first table, and rejecting fused the two
+  tables into one.
 - **Which is better.** Word's, for page flow: the new text opens the page.
   Both resolve correctly: rejecting gives the original's tables and the
-  paragraph between them, and accepting gives the revision. Matching Word
-  would mean splitting the paragraph into a new inserted paragraph and the
-  deleted mark; that is open.
+  paragraph between them, and accepting gives the revision. Word's own
+  redline of w06 crashes Word 16.115; ours opens (difference 16). Matching
+  Word would mean splitting the paragraph into a new inserted paragraph and
+  the deleted mark; that is open.
 
 ### 15. A header or footer only deleted section breaks reference (Compare, #1833)
 
@@ -414,6 +417,58 @@ for `fill_control`, the clean edit output also retains the control.
   Word opens it. `jubarte validate` reports those breaks as the
   `DELETED_SECTION_PAGE_FIELD` lead, a warning: Word crashed on 9 of the 11
   release-sample redlines with that shape.
+
+### 16. Inserted words before whole-deleted tables (Compare, #1851)
+
+- **What happens.** A body paragraph whose mark the revision deletes
+  keeps, in its own `w:ins` runs, every word Accept All keeps of it. A
+  whole-deleted table follows it right away (more may follow, with
+  word-less paragraphs Accept All removes whole between them), then the
+  paragraph whose mark survives, the one Accept All joins those words to.
+  Word's own Compare writes this shape too: 15 of its 600 release-sample
+  redlines have it. Word 16.115 crashed opening 6 of jubarte's 16 such
+  redlines in the 0.14.0 release sample (w03, w06, w09, w10, w14, w17),
+  its log naming its table cache (`TchtCorruption_*`) or `ErrorEid` 78
+  (#1814).
+- **What we do.** The `w:ins` runs move, in order, to the start of the
+  paragraph they join, after its properties. The paragraph they leave
+  keeps its deleted text and its deleted mark. The move is body-only. It
+  never crosses a section break, a live block, a table with a live row,
+  or a deleted paragraph that keeps words. `jubarte validate` reports the
+  shape as the `INSERTED_TEXT_BEFORE_DELETED_TABLE` lead, a warning.
+- **Not moved: deleted paragraphs before the table.** When word-less
+  deleted paragraphs sit between the words and the first deleted table,
+  the words keep Word's place. Word crashed on 2 of those 42 sample
+  redlines, near the sample's 23 in 600. Moving them opened one more
+  (s375, w13), but cost the others Word's placement: 14.8 bench points
+  each on average against Word's own redlines (29 scored).
+- **Accept and reject.** The documents do not change. Word 16.115's own
+  Accept All and Reject All of the moved files give the revision's and
+  the original's body text (fix23 rt30), and `jubarte reject` is
+  byte-identical to before. `jubarte accept` of w09 is now right: before,
+  the revision's last paragraph took the original's mark properties (bold,
+  16 pt) and an empty paragraph followed it.
+- **What it costs.** The redline shows the new words after the deleted
+  tables instead of before them, where Word's own redline shows them. In
+  a long deleted region that is far down: s487's words move past 84
+  blocks.
+- **Which is better.** Ours, for opening; Word's order, for reading. On
+  the release sample, the move changes 15 redlines, `word/document.xml`
+  only. Each was opened alone in Word 16.115:
+  - 13 are CLEAN, including 4 of the 6 among them that crashed before
+    (s187, s278, s462, s487).
+  - s116 and s257 still crash, as they did before.
+
+  Against Word's own redlines, the 4 that open now score 180.5 bench
+  points in all, where a crash scores 0. The 8 others scored lose 112.0
+  (14.0 each on average; s040 loses 50.8, its words now under the table
+  Word puts them above). Net, +68.5 points on the 600-pair sample.
+
+  Putting the deleted blocks first instead also opened w02, w07, w08 and
+  w16. It is not done: Word's own order is inserted-first in 78 of its 600
+  sample redlines, and the swap would change 76 of ours to fix 3 or 4.
+  Nothing structural tells the crashers apart either: s115 and s118 share
+  one block pattern, and only one of them crashes.
 
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 

@@ -10,6 +10,9 @@
 //! (sd_2672_plain_3x3 × hyperlink_node_internal: 99.91 → 78.64, the heading
 //! rendered body-size). A field residue must also be TEXTLESS: no visible
 //! w:t content. Word's oracle keeps [pStyle Heading1][rPr del] on the merge.
+//! A deleted table follows, so jubarte then moves the inserted hyperlink
+//! past it, to the paragraph Accept All joins it to (#1851): the title
+//! keeps [pStyle Heading1][rPr del], and the field moves whole.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -38,8 +41,8 @@ fn content_bearing_field_ins_keeps_heading_ppr_and_mark() {
     let mut xml = String::new();
     f.read_to_string(&mut xml).unwrap();
 
-    // The merged paragraph holds B's inserted hyperlink content and A's
-    // deleted title text.
+    // The merged paragraph holds A's deleted title text; B's inserted
+    // hyperlink content follows the deleted table.
     let p_start = xml.find("SD-2672 plain 3x3").expect("merged para text");
     let p = {
         let before = &xml[..p_start];
@@ -68,10 +71,18 @@ fn content_bearing_field_ins_keeps_heading_ppr_and_mark() {
         ppr.contains("<w:del "),
         "merged paragraph must keep its MARK-DEL, got: {ppr}"
     );
-    // And the field survives in ins form, with the tooltip switch carried.
-    assert!(p.contains("fldChar"), "field form must be preserved");
+    // And the field survives in ins form, whole, after the deleted table,
+    // with the tooltip switch carried.
+    let table = xml.rfind("</w:tbl>").expect("the deleted table");
+    let field = &xml[table..];
+    assert!(!p.contains("fldChar"), "the field moved: {p}");
+    assert_eq!(
+        field.matches("w:fldCharType=").count(),
+        3,
+        "field form must be preserved"
+    );
     assert!(
-        p.contains("HYPERLINK \\l \"mybookmark\" \\o \"Some tooltip\""),
+        field.contains("HYPERLINK \\l \"mybookmark\" \\o \"Some tooltip\""),
         "instr text must carry the \\o tooltip switch"
     );
 }

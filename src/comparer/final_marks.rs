@@ -31,8 +31,9 @@
 //! comparer leaves such a revision where it drops an empty paragraph
 //! (#1686); moving it joined two of the revised cell's paragraphs.
 
-use crate::namespaces::{M, W};
+use crate::namespaces::W;
 use crate::revision_processor::RevisionIds;
+use crate::validate::{keeps_words, table_revised};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Settle every cell's final mark under `root`.
@@ -129,48 +130,6 @@ fn settle(
         }
         None => unrevise(dom, last, kind),
     }
-}
-
-/// Whether `paragraph` keeps words once its `kind` revisions resolve:
-/// Accept All (`"del"`) keeps what is not deleted or moved away, Reject All
-/// (`"ins"`) what is not inserted or moved in. An equation's runs (`m:r`)
-/// are words too (codex on #1680).
-fn keeps_words(dom: &Dom, paragraph: NodeId, kind: &str) -> bool {
-    let gone = if kind == "del" {
-        [W::del(), W::move_from()]
-    } else {
-        [W::ins(), W::move_to()]
-    };
-    let (math_run, math_r_pr) = (M::r(), M::r_pr());
-    dom.descendants(paragraph, None)
-        .into_iter()
-        .filter(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &math_run))
-        .any(|run| {
-            dom.elements(run, None)
-                .into_iter()
-                .any(|child| !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &math_r_pr))
-                && !dom
-                    .ancestors(run, None)
-                    .into_iter()
-                    .take_while(|&a| a != paragraph)
-                    .any(|a| gone.iter().any(|name| dom.name_is(a, name)))
-        })
-}
-
-/// Whether every row of `table` is inserted or deleted as `kind` says.
-fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
-    let rows: Vec<NodeId> = dom
-        .descendants(table, Some(&W::tr()))
-        .into_iter()
-        .filter(|&row| dom.ancestors(row, Some(&W::tbl())).first() == Some(&table))
-        .collect();
-    !rows.is_empty()
-        && rows.iter().all(|&row| {
-            dom.element(row, &W::tr_pr()).is_some_and(|pr| {
-                dom.element(pr, &crate::validate::revision_name(kind))
-                    .is_some()
-            })
-        })
 }
 
 /// Whether `paragraph`'s mark is revised as `kind` (`"ins"` or `"del"`)
@@ -499,6 +458,7 @@ impl Stamp<'_> {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+    use crate::namespaces::M;
 
     /// A paragraph that holds only an equation keeps it once resolved, as
     /// a paragraph of words does: the final mark loses its revision, and

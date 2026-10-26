@@ -7055,6 +7055,12 @@ fn compare_documents_impl(
     // text-preserving.
     crate::comparer::finalize::reorder_replacements_ins_before_del(&mut dom, result_root);
 
+    // Inserted words a deleted paragraph mark joins across a deleted table
+    // start the paragraph they join (#1851): Word 16.115 crashes opening
+    // some such redlines. After the comment carry and M472, which rebuild
+    // runs; the bookmarks below are carried around the moved runs.
+    crate::comparer::deleted_tables::move_inserted_text_past_deleted_tables(&mut dom, result_root);
+
     // M463 — rewrite outer-wrapped math revisions into Word's internal form.
     // Must run after every mesh/finalize pass (they reason about the outer
     // wrap) and before serialize.

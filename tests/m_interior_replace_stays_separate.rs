@@ -219,8 +219,10 @@ fn the_final_empty_paragraph_survives_a_trailing_deletion() {
 /// an empty one: that text has no mark of its own before the story's final
 /// mark, so Word fuses it into the first deleted paragraph of the story's
 /// last gap, even across a deleted table (diff_before16 × diff_before19).
+/// jubarte then moves it past the deleted table, to the paragraph Accept
+/// All joins it to (#1851; Word 16.115 crashed opening such redlines).
 #[test]
-fn the_story_tail_text_fuses_into_the_first_deleted_paragraph() {
+fn the_story_tail_text_moves_past_the_deleted_table() {
     let out = compare_documents_with_settings(
         &pkg(&["Diffing feature", TABLE, ""]),
         &pkg(&["Some text", "An image will be added below:"]),
@@ -231,8 +233,11 @@ fn the_story_tail_text_fuses_into_the_first_deleted_paragraph() {
     let rows = paragraphs(&out);
     assert!(
         rows.iter()
-            .any(|(i, x, _)| i == "An image will be added below:" && x == "Diffing feature"),
-        "the tail text fuses with the deleted heading: {rows:?}"
+            .any(|(i, x, _)| i.is_empty() && x == "Diffing feature")
+            && rows
+                .last()
+                .is_some_and(|(i, x, _)| { i == "An image will be added below:" && x.is_empty() }),
+        "the tail text starts the closing paragraph: {rows:?}"
     );
 }
 
@@ -368,7 +373,9 @@ fn an_already_fused_tail_keeps_its_deleted_blank() {
 
 /// The story's final pilcrow is shared even when the original's last
 /// paragraph is deleted text: the revised last paragraph's words still fuse
-/// into the first deleted paragraph of the tail (diff_doc2 × numwords).
+/// into the first deleted paragraph of the tail (diff_doc2 × numwords). A
+/// deleted table follows it, so jubarte then moves them past it, to the
+/// closing paragraph Accept All joins them to (#1851).
 #[test]
 fn the_story_tail_fuses_before_a_deleted_final_paragraph() {
     let rows = assert_no_fused_paragraph_except(
@@ -384,8 +391,11 @@ fn the_story_tail_fuses_before_a_deleted_final_paragraph() {
     );
     assert!(
         rows.iter()
-            .any(|(i, x, _)| i == "page 3" && x == "It contains three paragraphs"),
-        "the revised tail opens the first deleted paragraph: {rows:?}"
+            .any(|(i, x, _)| i.is_empty() && x == "It contains three paragraphs")
+            && rows
+                .last()
+                .is_some_and(|(i, x, _)| i == "page 3" && x == "Another paragraph"),
+        "the revised tail opens the closing paragraph: {rows:?}"
     );
 }
 
