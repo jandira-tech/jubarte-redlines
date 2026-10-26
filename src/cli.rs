@@ -3564,6 +3564,13 @@ pub fn typed_edit_protocol(
 /// `--` when `force`. A `--dry-run` that is no flag stays: a FILE after
 /// `--`, or an option's value (`--text --dry-run`). Pure: no I/O.
 pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
+    next_command_to(argv, force, None)
+}
+
+/// [`next_command`], naming `output` as `-o OUTPUT` when the dry run named
+/// no output (#1847): the default it writes, so the command run as printed
+/// cannot write elsewhere. It goes ahead of `--force`, before any `--`.
+pub fn next_command_to(argv: &[String], force: bool, output: Option<&str>) -> Vec<String> {
     let model = top_level_command();
     let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
         .chain(argv.iter().map(Into::into))
@@ -3605,15 +3612,21 @@ pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
         .filter(|(_, (at, _))| flags.contains(at))
         .map(|(nth, _)| nth)
         .collect();
-    let mut next = Vec::with_capacity(argv.len() + 1);
+    let tail = |next: &mut Vec<String>| {
+        if let Some(output) = output {
+            next.extend(["-o".to_string(), output.to_string()]);
+        }
+        if force {
+            next.push("--force".to_string());
+        }
+    };
+    let mut next = Vec::with_capacity(argv.len() + 3);
     let mut spelled = 0;
     let mut delimited = false;
     for arg in argv {
         if !delimited && arg == "--" {
             delimited = true;
-            if force {
-                next.push("--force".to_string());
-            }
+            tail(&mut next);
         }
         if !delimited && arg == "--dry-run" {
             spelled += 1;
@@ -3623,8 +3636,8 @@ pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
         }
         next.push(arg.clone());
     }
-    if force && !delimited {
-        next.push("--force".to_string());
+    if !delimited {
+        tail(&mut next);
     }
     next
 }
