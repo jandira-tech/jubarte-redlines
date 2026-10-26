@@ -2447,6 +2447,9 @@ enum Resolved {
         para: usize,
         next: usize,
         separator: String,
+        /// A `strike` of another author's inserted mark: under keep, our
+        /// deletion joins their insertion in the mark.
+        strike: bool,
     },
     InsertParagraph {
         anchor: usize,
@@ -2462,6 +2465,9 @@ enum Resolved {
         /// `insert_toc`: the paragraphs are the TOC field (and its title),
         /// not `runs`.
         toc: Option<TocSpec>,
+        /// A `restore` of another author's deleted mark: the new paragraph
+        /// keeps `like`'s mark formatting too, as the break it gives back.
+        keep_mark: bool,
     },
     InsertTable {
         anchor: usize,
@@ -3255,6 +3261,7 @@ impl<'p> Transaction<'p> {
             para: first,
             next: last,
             separator: String::new(),
+            strike: false,
         });
         Ok(resolved)
     }
@@ -4291,6 +4298,7 @@ impl<'p> Transaction<'p> {
                         style,
                         comment: comment.clone(),
                         toc: None,
+                        keep_mark: false,
                     },
                     outcome,
                 ))
@@ -4375,6 +4383,7 @@ impl<'p> Transaction<'p> {
                         para,
                         next,
                         separator,
+                        strike: false,
                     },
                     outcome,
                 ))
@@ -4489,6 +4498,7 @@ impl<'p> Transaction<'p> {
                             levels: *levels,
                             title: title.clone(),
                         }),
+                        keep_mark: false,
                     },
                     outcome,
                 ))
@@ -6527,17 +6537,17 @@ impl<'p> Transaction<'p> {
                     style,
                     comment,
                     toc,
+                    keep_mark,
                 } => {
                     let like_node = self.paragraph_nodes[like];
+                    let dom = &mut self.opened.dom;
                     let news = match &toc {
-                        Some(toc) => toc_paragraphs(&mut self.opened.dom, toc),
-                        None => vec![build_paragraph(
-                            &mut self.opened.dom,
-                            like_node,
-                            &runs,
-                            style.as_deref(),
-                        )],
+                        Some(toc) => toc_paragraphs(dom, toc),
+                        None => vec![build_paragraph(dom, like_node, &runs, style.as_deref())],
                     };
+                    if keep_mark {
+                        copy_mark_formatting(dom, like_node, news[0]);
+                    }
                     (anchor, side, news, comment.is_some())
                 }
                 Resolved::InsertTable {
@@ -6673,6 +6683,7 @@ impl<'p> Transaction<'p> {
                     para,
                     next,
                     separator,
+                    ..
                 } => Some((*para, *next, separator.clone())),
                 _ => None,
             })
@@ -6793,12 +6804,18 @@ impl<'p> Transaction<'p> {
     }
 
     /// The comment of operation `op` when it deletes text or a paragraph,
-    /// or strikes an insertion: on deleted text, so in the redline only.
+    /// or strikes inserted text: on deleted text, so in the redline only.
+    /// A struck paragraph mark's comment sits on a word that stays.
     fn deletion_comment(&self, op: usize) -> Option<&str> {
         match &self.plan.operations[op].kind {
             OperationKind::Delete { comment, .. }
-            | OperationKind::DeleteParagraph { comment, .. }
-            | OperationKind::Strike { comment, .. } => comment.as_deref(),
+            | OperationKind::DeleteParagraph { comment, .. } => comment.as_deref(),
+            OperationKind::Strike { comment, .. } => comment.as_deref().filter(|_| {
+                !self
+                    .resolved
+                    .iter()
+                    .any(|(i, r)| *i == op && matches!(r, Resolved::CommentRange { .. }))
+            }),
             _ => None,
         }
     }
@@ -8850,6 +8867,30 @@ const PPR_ORDER: &[&str] = &[
     "pPrChange",
 ];
 
+/// Give `paragraph` the mark formatting of `like` (its `w:pPr/w:rPr`),
+/// without revision records.
+fn copy_mark_formatting(dom: &mut Dom, like: NodeId, paragraph: NodeId) {
+    let Some(rpr) = dom
+        .element(like, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return;
+    };
+    let copy = tracked::clean_rpr(dom, rpr);
+    if dom.elements(copy, None).is_empty() {
+        return;
+    }
+    let ppr = match dom.element(paragraph, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, ppr);
+            ppr
+        }
+    };
+    insert_ppr_child(dom, ppr, copy);
+}
+
 /// Insert `child` into `ppr` at its schema position.
 fn insert_ppr_child(dom: &mut Dom, ppr: NodeId, child: NodeId) {
     let rank = |local: &str| {
@@ -10040,6 +10081,7 @@ mod deeper_boundary_tests {
                             style,
                             comment,
                             toc: None,
+                            keep_mark: false,
                         } => OperationKind::InsertParagraph {
                             paragraph: selector(*anchor),
                             position: *side,
@@ -10265,6 +10307,7 @@ mod deeper_boundary_tests {
                     para: 0,
                     next: 1,
                     separator: "".into(),
+                    strike: false,
                 },
                 "merges a deleted paragraph",
             ),
@@ -10301,6 +10344,7 @@ mod deeper_boundary_tests {
                 style: None,
                 comment: None,
                 toc: None,
+                keep_mark: false,
             };
             conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, insert]).unwrap();
         }
@@ -10334,6 +10378,7 @@ mod deeper_boundary_tests {
                         para: 0,
                         next: 1,
                         separator: "".into(),
+                        strike: false,
                     },
                     Resolved::InsertTable {
                         anchor,

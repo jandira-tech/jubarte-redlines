@@ -22,8 +22,8 @@ use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounter,
     RevisionCounts, ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span,
     apply_run_format, apply_text_edit, attach_segment, build_paragraph, comment_bounds,
-    format_paragraph, insert_ppr_child, new_position, place_reply_markers, remove_comment_markers,
-    runs_in_range, set_text, split_run_at, toc_paragraphs,
+    copy_mark_formatting, format_paragraph, insert_ppr_child, new_position, place_reply_markers,
+    remove_comment_markers, runs_in_range, set_text, split_run_at, toc_paragraphs,
 };
 use crate::changes::{list_changes, list_logical_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -199,7 +199,12 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     })
                 }
             }
-            Resolved::MergeParagraphs { para, .. } => {
+            // A strike's mark is their insertion, which our deletion joins.
+            Resolved::MergeParagraphs {
+                para,
+                strike: false,
+                ..
+            } => {
                 mark_revision(dom, tx.paragraph_nodes[*para], &TRACKED).map(|mark| {
                     named(
                         "under keep, a paragraph whose mark is already tracked cannot be merged: that mark is",
@@ -732,6 +737,7 @@ fn emit(
                 style,
                 comment,
                 toc,
+                keep_mark,
             } => {
                 let like_node = t.paragraph_nodes[*like];
                 let dom = &mut t.opened.dom;
@@ -739,6 +745,9 @@ fn emit(
                     Some(toc) => toc_paragraphs(dom, toc),
                     None => vec![build_paragraph(dom, like_node, runs, style.as_deref())],
                 };
+                if *keep_mark {
+                    copy_mark_formatting(dom, like_node, news[0]);
+                }
                 for &new in &news {
                     insert_paragraph_content(dom, new, stamp);
                 }
