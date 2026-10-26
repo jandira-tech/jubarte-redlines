@@ -1425,8 +1425,12 @@ fn produce(
     let plan = tx.plan;
     let (mut clean, mut marked) = tx.finish()?;
     check_serialized_stories(tx, &clean)?;
+    // A reworded or deleted comment makes the comparer's base a copy; the
+    // emitter writes those threads itself, as under keep.
     if plan.existing_revisions == ExistingRevisions::Keep
-        || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
+        || (emit
+            && (tx.edits_only_comments()
+                || matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_))))
     {
         let result = tracked::result(tx, clean)?;
         tx.check_redactions(&[&result.clean, &result.redline])?;

@@ -2936,6 +2936,10 @@ impl<'p> Transaction<'p> {
     /// Under `update_fields` it is compared, as before: a heading the TOC
     /// lists holds its `_Toc` bookmark around its text, and renaming it is
     /// what a plan refreshing the TOC does.
+    ///
+    /// A plan that only writes comment threads
+    /// ([`Self::edits_only_comments`]) is emitted as well: it edits no text,
+    /// and the comparer's own normalizations would come back as changes.
     fn emits_directly(&self) -> Result<bool, EditError> {
         if !tracked::emits_all(self) {
             return Ok(false);
@@ -2969,7 +2973,28 @@ impl<'p> Transaction<'p> {
             }
             return Ok(true);
         }
-        Ok(!self.plan.update_fields && self.edits_beside_a_range_marker())
+        Ok(!self.plan.update_fields
+            && (self.edits_beside_a_range_marker() || self.edits_only_comments()))
+    }
+
+    /// Whether every operation of the plan writes a comment thread and
+    /// nothing else: a comment, a reply, a resolution, a reworded or a
+    /// deleted comment. Through the comparer, such a plan on a clean file
+    /// listed the comparer's normalizations as changes: a spacing's
+    /// `lineRule` written out, the stylesheet merged, a paragraph written
+    /// again (#1861).
+    pub(crate) fn edits_only_comments(&self) -> bool {
+        !self.plan.operations.is_empty()
+            && self.plan.operations.iter().all(|op| {
+                matches!(
+                    op.kind,
+                    OperationKind::Comment { .. }
+                        | OperationKind::ReplyComment { .. }
+                        | OperationKind::ResolveComment { .. }
+                        | OperationKind::EditComment { .. }
+                        | OperationKind::DeleteComment { .. }
+                )
+            })
     }
 
     /// Whether a text edit writes new words beside a range marker: one in
