@@ -99,14 +99,11 @@ jobs:
   conejo:
     name: Static analysis, review report & companion fix PR
     # 🥕 Fork and Dependabot PRs get no secrets; drafts and WIP titles wait. 🐇
-    # Jules-authored PRs (agents, companion fixes) skip this job. Its fix session only starts
-    # for TRUSTED_USERS authors anyway, so the skip saves runner time, not Jules tasks.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
         github.event.pull_request.head.repo.full_name == github.repository &&
         github.actor != 'dependabot[bot]' &&
-        github.event.pull_request.user.login != 'google-labs-jules[bot]' &&
         github.event.pull_request.draft == false &&
         !contains(github.event.pull_request.title, 'WIP') &&
         !contains(github.event.pull_request.title, 'DO NOT MERGE')
