@@ -72,7 +72,7 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
     };
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
-        .filter_map(|c| dom.attribute(c, &W::name("id")).map(str::to_string))
+        .filter_map(|c| dom.attribute(c, &W::id()).map(str::to_string))
         .collect()
 }
 
@@ -105,7 +105,7 @@ fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
-            dom.attribute(c, &W::name("id"))
+            dom.attribute(c, &W::id())
                 .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect()
@@ -296,9 +296,9 @@ fn extract_events(
     let d = dom.parse_xdocument(&xml);
     let root = dom.root(d)?;
     let body = dom.element(root, &W::body())?;
-    let start = W::name("commentRangeStart");
-    let end = W::name("commentRangeEnd");
-    let reference = W::name("commentReference");
+    let start = W::comment_range_start();
+    let end = W::comment_range_end();
+    let reference = W::comment_reference();
     let mut references: Vec<(String, Reference)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
@@ -320,12 +320,12 @@ fn extract_events(
         if dom.is_element(n) {
             let name = dom.name(n).unwrap();
             if name == start {
-                if let Some(id) = dom.attribute(n, &W::name("id")) {
+                if let Some(id) = dom.attribute(n, &W::id()) {
                     let seq = starts.len();
                     starts.entry(id.to_string()).or_insert((offset, seq));
                 }
             } else if name == end
-                && let Some(id) = dom.attribute(n, &W::name("id"))
+                && let Some(id) = dom.attribute(n, &W::id())
                 && let Some(&(s, seq)) = starts.get(id)
             {
                 ranges.push(Range {
@@ -336,7 +336,7 @@ fn extract_events(
                     reference: None,
                 });
             } else if name == reference
-                && let Some(id) = dom.attribute(n, &W::name("id"))
+                && let Some(id) = dom.attribute(n, &W::id())
             {
                 let rpr = into.as_deref_mut().and_then(|into| {
                     let run = dom.parent(n).filter(|&r| dom.name_is(r, &W::r()))?;
@@ -796,12 +796,12 @@ fn add_at_paragraph_start(dom: &mut Dom, p: NodeId, ends_deleted: bool, node: No
 
 fn new_anchor(dom: &mut Dom, start: bool, id: &str) -> NodeId {
     let name = if start {
-        W::name("commentRangeStart")
+        W::comment_range_start()
     } else {
-        W::name("commentRangeEnd")
+        W::comment_range_end()
     };
     let e = dom.new_element(name);
-    dom.set_attribute_value(e, &W::name("id"), Some(id));
+    dom.set_attribute_value(e, &W::id(), Some(id));
     e
 }
 
@@ -827,8 +827,8 @@ fn reference_run(dom: &mut Dom, id: &str, how: RefRun) -> NodeId {
             if let Some(rpr) = rpr {
                 dom.add(r, rpr);
             }
-            let cref = dom.new_element(W::name("commentReference"));
-            dom.set_attribute_value(cref, &W::name("id"), Some(id));
+            let cref = dom.new_element(W::comment_reference());
+            dom.set_attribute_value(cref, &W::id(), Some(id));
             dom.add(r, cref);
             r
         }
@@ -843,8 +843,8 @@ fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
     dom.add(rpr, style);
     dom.add(r, rpr);
-    let cref = dom.new_element(W::name("commentReference"));
-    dom.set_attribute_value(cref, &W::name("id"), Some(id));
+    let cref = dom.new_element(W::comment_reference());
+    dom.set_attribute_value(cref, &W::id(), Some(id));
     dom.add(r, cref);
     r
 }
@@ -990,12 +990,12 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     };
     let marker = |dom: &Dom, n: NodeId| {
         dom.name(n).is_some_and(|nm| {
-            nm == W::name("commentRangeStart")
-                || nm == W::name("commentRangeEnd")
+            nm == W::comment_range_start()
+                || nm == W::comment_range_end()
                 || (nm == W::r()
                     && dom.elements(n, None).into_iter().all(|c| {
                         dom.name(c)
-                            .is_some_and(|cn| cn == W::r_pr() || cn == W::name("commentReference"))
+                            .is_some_and(|cn| cn == W::r_pr() || cn == W::comment_reference())
                     }))
         })
     };
@@ -1010,7 +1010,7 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     // there on, in order, after the deletion.
     let from = kids[..at]
         .iter()
-        .rposition(|&k| dom.name(k) != Some(W::name("commentRangeStart")))
+        .rposition(|&k| dom.name(k) != Some(W::comment_range_start()))
         .map_or(0, |i| i + 1);
     let moving: Vec<NodeId> = kids[from..].to_vec();
     let mut after = del;
@@ -1290,7 +1290,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     let (Some(br), Some(ar)) = (dom.root(bd), dom.root(ad)) else {
         return id_map;
     };
-    let id_name = W::name("id");
+    let id_name = W::id();
     let b_ids: HashSet<String> = dom
         .elements(br, Some(&W::name("comment")))
         .into_iter()
@@ -1514,7 +1514,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         .iter()
         .copied()
         .filter(|&c| {
-            dom.attribute(c, &W::name("id"))
+            dom.attribute(c, &W::id())
                 .is_none_or(|id| !anchored.contains(id))
         })
         .collect();
@@ -1612,7 +1612,7 @@ fn select_anchor_aware_comments(
     };
     let mut groups = FingerprintGroups::new();
     for c in d.elements(root, Some(&W::name("comment"))) {
-        let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
+        let Some(id) = d.attribute(c, &W::id()).map(str::to_string) else {
             continue;
         };
         let Some(&range) = anchored.get(&id) else {
@@ -1758,15 +1758,15 @@ pub fn carry_comments(
 /// Remove commentRangeStart/End/commentReference whose id is not in `keep`.
 fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &HashSet<String>) {
     let names = [
-        W::name("commentRangeStart"),
-        W::name("commentRangeEnd"),
-        W::name("commentReference"),
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::comment_reference(),
     ];
     let mut dead: Vec<NodeId> = Vec::new();
     for name in names {
         for e in dom.descendants(result_root, Some(&name)) {
             if dom
-                .attribute(e, &W::name("id"))
+                .attribute(e, &W::id())
                 .is_none_or(|id| !keep.contains(id))
             {
                 dead.push(e);
@@ -1790,8 +1790,8 @@ mod tests {
                 let name = dom.name(e)?;
                 if name == W::t() {
                     Some(dom.value(e))
-                } else if name == W::name("commentRangeStart") {
-                    Some(format!("[{}", dom.attribute(e, &W::name("id"))?))
+                } else if name == W::comment_range_start() {
+                    Some(format!("[{}", dom.attribute(e, &W::id())?))
                 } else {
                     None
                 }
@@ -2333,7 +2333,7 @@ mod deeper_boundary_tests {
             assert_eq!(anchored.get("42").copied(), want);
             assert_eq!(anchored.len(), usize::from(want.is_some()));
             assert_eq!(
-                dom.descendants(root, Some(&W::name("commentReference")))
+                dom.descendants(root, Some(&W::comment_reference()))
                     .len(),
                 usize::from(want.is_some())
             );
@@ -2352,7 +2352,7 @@ mod deeper_boundary_tests {
             let (mut dom, root) = parse(&format!(
                 "<w:p><w:del><w:r><w:delText>x</w:delText></w:r><w:commentRangeStart w:id=\"7\"/><w:commentRangeEnd w:id=\"7\"/>{tail}</w:del></w:p>"
             ));
-            let end = dom.descendants(root, Some(&W::name("commentRangeEnd")))[0];
+            let end = dom.descendants(root, Some(&W::comment_range_end()))[0];
             let old_parent = dom.parent(end).unwrap();
             step_out_of_deletion_end(&mut dom, end);
             assert_eq!(dom.parent(end) != Some(old_parent), moves, "{tail}");
@@ -2656,7 +2656,7 @@ mod deeper_boundary_tests {
         for name in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             let markers = dom.descendants(root, Some(&W::name(name)));
             assert_eq!(markers.len(), 1, "{name}");
-            assert_eq!(dom.attribute(markers[0], &W::name("id")), Some("7"));
+            assert_eq!(dom.attribute(markers[0], &W::id()), Some("7"));
         }
         assert_eq!(collect_segments(&dom, root, true, "R", false).0, "kept");
     }
@@ -2789,7 +2789,7 @@ mod deeper_boundary_tests {
             let ids: Vec<_> = dom
                 .descendants(root, Some(&W::name(marker)))
                 .into_iter()
-                .map(|node| dom.attribute(node, &W::name("id")).unwrap().to_string())
+                .map(|node| dom.attribute(node, &W::id()).unwrap().to_string())
                 .collect();
             assert_eq!(ids.len(), 2, "{marker}");
             assert_eq!(
