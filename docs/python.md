@@ -1151,12 +1151,14 @@ Options:
           change (`rejected r0 in p3: "from" > "to"`)
 
       --strike
-          Strike another author's insertion r12 (with -p r12): our tracked deletion
-          inside it, so the decision shows. --content is a comment on the struck words
+          Strike another author's insertion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's insertion only): our tracked deletion inside
+          it, so the decision shows. --content is one comment on the struck words
 
       --restore
-          Restore another author's deletion r12 (with -p r12): their deletion stays and
-          our tracked insertion of its words follows it. --content is a comment on the
+          Restore another author's deletion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's deletion only): their deletion stays and our
+          tracked insertion of its words follows it. --content is one comment on the
           restored words
 
       --visible
