@@ -1294,7 +1294,7 @@ pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
 /// (`mc:AlternateContent`, `w:pict`, `w:object`) atomize as a single
 /// unit and so are kept verbatim. The MCE rule picks the first
 /// `mc:Choice` whose `@Requires` namespaces Word understands
-/// ([`choice_requires_understood`]), falling back to `mc:Fallback`.
+/// (`choice_requires_understood`), falling back to `mc:Fallback`.
 ///
 /// Run on both inputs before diffing so an AltContent run-child on one
 /// side does not become a "unreadable content" repair target.
