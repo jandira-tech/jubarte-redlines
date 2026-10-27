@@ -76,7 +76,7 @@ def build_server(*, root: Path) -> MCPServer:
         # resolve() follows symlinks, so a link pointing out of root is refused.
         p = (root / Path(path).expanduser()).resolve()
         if not p.is_relative_to(root):
-            raise ToolError("path is outside server root")
+            raise ToolError("path is outside root directory")
         # Keep the lexical path for capability-relative operations; resolving
         # is only an early diagnostic, never the authorization for actual I/O.
         return root / Path(path).expanduser()
@@ -86,14 +86,14 @@ def build_server(*, root: Path) -> MCPServer:
         try:
             return Document(authority.read(p.relative_to(root).as_posix()), p.name)
         except OSError as e:
-            raise ToolError(f"cannot read file: {e.strerror or 'OS error'}") from e
+            raise ToolError(f"cannot read file {path}: {e.strerror or 'OS error'}") from e
 
     def fresh(path: Path, overwrite: bool) -> Path:
         # An output may itself be a symlink (dangling ones report exists() False);
         # resolve it so a write can never follow a link out of root.
         target = path.resolve()
         if not target.is_relative_to(root):
-            raise ToolError("path is outside server root")
+            raise ToolError("path is outside root directory")
         if path.exists() and not overwrite:
             raise ToolError("file exists; pass overwrite=true to replace it")
         return path
