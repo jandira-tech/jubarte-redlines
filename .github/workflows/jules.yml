@@ -99,7 +99,8 @@ jobs:
   conejo:
     name: Static analysis, review report & companion fix PR
     # 🥕 Fork and Dependabot PRs get no secrets; drafts and WIP titles wait. 🐇
-    # Jules-authored PRs (agents, companion fixes) skip this job: its fix session spends Jules's daily task limit.
+    # Jules-authored PRs (agents, companion fixes) skip this job. Its fix session only starts
+    # for TRUSTED_USERS authors anyway, so the skip saves runner time, not Jules tasks.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
