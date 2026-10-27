@@ -304,6 +304,8 @@ impl MC {
     cached_xname!(MC::URI, choice, "Choice");
     cached_xname!(MC::URI, fallback, "Fallback");
     cached_xname!(MC::URI, ignorable, "Ignorable");
+    cached_xname!(MC::URI, preserve_elements, "PreserveElements");
+    cached_xname!(MC::URI, preserve_attributes, "PreserveAttributes");
 }
 
 impl M {
