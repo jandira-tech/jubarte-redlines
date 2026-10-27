@@ -2357,7 +2357,10 @@ fn collect_ids(
             }
             out.push(finding);
         }
-        if local == "docPr" {
+        // Word reads one branch of a dual-saved shape: a picture repeated in
+        // its `mc:Fallback` copy keeps the choice's docPr id, and Word opens
+        // that twin clean (w12's header, 2026-10-27).
+        if local == "docPr" && dom.ancestors(e, Some(&MC::name("Fallback"))).is_empty() {
             let wp_id = XName::get(
                 "id",
                 "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
@@ -5354,6 +5357,48 @@ mod duplicate_drawing_owned_repair_contract_tests {
         assert!(again.repaired.is_empty());
         assert!(again.remaining.is_empty());
         assert_eq!(again.docx, repaired.docx);
+    }
+
+    #[test]
+    fn a_fallback_twin_of_a_picture_is_no_second_drawing() {
+        // Word saves a text box twice (DrawingML choice, VML fallback) and a
+        // picture inside it twice with one docPr id; w12's header and Word's
+        // own redline of it carry such a twin and open clean (2026-10-27).
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let picture = |id| {
+            format!(
+                "<w:p><w:r><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='Picture {id}'/></wp:inline></w:drawing></w:r></w:p>"
+            )
+        };
+        let header = |fallback_id| {
+            format!(
+                "<w:hdr xmlns:w='{}' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:wps='http://schemas.microsoft.com/office/word/2010/wordprocessingShape' xmlns:v='urn:schemas-microsoft-com:vml' mc:Ignorable='wps'><w:p><w:r><mc:AlternateContent><mc:Choice Requires='wps'><w:drawing><wp:anchor><wp:docPr id='3' name='Text Box 3'/><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>{}</w:hdr>",
+                W::URI,
+                picture(4),
+                picture(4),
+                picture(fallback_id)
+            )
+        };
+        let docpr = |pkg: &PartFs| -> Vec<String> {
+            ring1(pkg)
+                .into_iter()
+                .filter(|f| f.code == "DUPLICATE_DOCPR_ID")
+                .map(|f| f.location)
+                .collect()
+        };
+        pkg.set_part("word/header1.xml", header(5).into_bytes());
+        assert_eq!(
+            docpr(&pkg),
+            Vec::<String>::new(),
+            "the fallback copy is a twin"
+        );
+        pkg.set_part("word/header1.xml", header(4).into_bytes());
+        assert_eq!(
+            docpr(&pkg),
+            ["w:p[1]/w:r[0]/w:drawing[0]/wp:inline[0]/wp:docPr[0]"],
+            "a picture outside the fallback repeating its id is a duplicate"
+        );
     }
 }
 
