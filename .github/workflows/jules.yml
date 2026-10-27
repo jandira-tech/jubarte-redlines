@@ -48,7 +48,7 @@ jobs:
     # twice) + 15 min for session start-up, checkout and posting.
     timeout-minutes: 180
     concurrency:
-      group: jules-api
+      group: jules-api-queue
       # Queue instead of cancel: a cancelled run still spends the Jules session it started.
       cancel-in-progress: false
     permissions:
@@ -91,6 +91,7 @@ jobs:
             ["**/package-lock.json", "**/pnpm-lock.yaml", "**/yarn.lock", "**/bun.lock",
             "**/bun.lockb", "**/uv.lock", "**/poetry.lock", "**/Cargo.lock", "**/*.min.js",
             "**/*.map", "dist/**", "build/**", ".next/**", "node_modules/**"]
+          rules_directory: ""
 
   conejo:
     name: Static analysis, review report & companion fix PR
@@ -107,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: jules-api
+      group: jules-api-queue
       # 🐇 Queue instead of cancel: a cancelled run still spends the Jules session it started.
       cancel-in-progress: false
     permissions:
@@ -587,6 +588,7 @@ jobs:
           require_plan_approval: false
           automation_mode: AUTO_CREATE_PR
           starting_branch: ${{ steps.pr.outputs.head_ref }}
+          rules_directory: ""
           jules_api_key: ${{ secrets.JULES_API_KEY }}
 
       # 🥕 Link the Jules session on the PR.
