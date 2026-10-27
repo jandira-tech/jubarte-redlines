@@ -144,13 +144,15 @@ pub fn fix_up_doc_pr_ids(dom: &mut Dom, root: NodeId) {
 pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let shape_id = XName::get("ShapeID", "");
-    for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&VML::name("shape")))) {
+    let vml_shape = VML::name("shape");
+    let o_ole_object = O::name("OLEObject");
+    for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&vml_shape))) {
         let old = dom.attribute(shape, &id).map(|s| s.to_string());
         let new = next.to_string();
         dom.set_attribute_value(shape, &id, Some(&new));
         // rewrite any sibling o:OLEObject whose ShapeID referenced the old id
         if let (Some(old), Some(parent)) = (old, dom.parent(shape)) {
-            for ole in dom.elements(parent, Some(&O::name("OLEObject"))) {
+            for ole in dom.elements(parent, Some(&o_ole_object)) {
                 if dom.attribute(ole, &shape_id).map(|s| s.to_string()) == Some(old.clone()) {
                     dom.set_attribute_value(ole, &shape_id, Some(&new));
                 }
