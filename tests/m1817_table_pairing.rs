@@ -13,6 +13,11 @@
 //!   and the old text deleted in it, the second row inserted.
 //! - w23: the original's table pairs with the revision's first table only;
 //!   the revision's second table, adjacent to it, stays a table of its own.
+//! - w12 and the Erasmus form: in a region the revision replaces, Word pairs
+//!   the original's k-th table with the revision's k-th table, whatever their
+//!   text, and writes the revision's blocks before the original's around
+//!   them. jubarte inserted the revision's tables whole and deleted the
+//!   original's whole, and Word 16.115 crashed on w12's deleted rows.
 
 mod common;
 
@@ -183,5 +188,78 @@ fn w23_pairs_the_original_table_with_the_first_adjacent_table_only() {
         rows[1..].iter().all(|row| row.mark == "del"),
         "the original's other rows are deleted: {rows:#?}"
     );
+    assert_table_counts(&redline, &a, &b);
+}
+
+/// Each table's row marks, in body order: `=` kept, `I` inserted, `D` deleted.
+fn row_marks(all: &[(Vec<Row>, bool)]) -> Vec<String> {
+    all.iter()
+        .map(|(rows, _)| {
+            rows.iter()
+                .map(|row| match row.mark.as_str() {
+                    "ins" => 'I',
+                    "del" => 'D',
+                    _ => '=',
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn w12_pairs_the_replaced_regions_tables_in_order() {
+    // The original is a proposal form whose labels each head an empty
+    // one-row box (19 tables); the revision is an application form with five
+    // tables. Word's redline: each of the revision's tables keeps its first
+    // row (the original's box) and inserts the rest; the original's other
+    // 14 tables are deleted.
+    let a = fixture("7b8a36fc9d_6b022d77b530d0e93df9ee17f79f06423a54fa1788a95c5d.docx");
+    let b = fixture("f620bc5c6d_41bae32dd2e76af1f00d37af7b3a353ca826cd6e8c20052c.docx");
+    let redline = compare(&a, &b);
+    let all = tables(&redline);
+    let marks = row_marks(&all);
+    let revised = [
+        "Last name",
+        "Proposed date of departure",
+        "Brief title",
+        "Proposed Budget",
+        "Applicant Name",
+    ];
+    assert_eq!(all.len(), 19, "{marks:?}");
+    for (k, needle) in revised.iter().enumerate() {
+        let (rows, _) = &all[k];
+        assert!(
+            holds(rows, needle),
+            "table {k} is the revision's table {k}: {marks:?}"
+        );
+        assert!(
+            marks[k].starts_with('=') && marks[k][1..].chars().all(|m| m == 'I'),
+            "table {k} keeps the original's box and inserts the rest: {marks:?}"
+        );
+    }
+    assert!(
+        marks[5..].iter().all(|m| m.chars().all(|c| c == 'D')),
+        "the original's other tables are deleted: {marks:?}"
+    );
+    assert_table_counts(&redline, &a, &b);
+}
+
+#[test]
+fn erasmus_form_pairs_the_original_tables_with_the_first_two() {
+    // The original (two five-row tables) and the revision (five tables)
+    // share no text. Word's redline pairs the original's two tables with the
+    // revision's first two and inserts the other three, revision blocks
+    // first in the region before each pair.
+    let a = fixture("f9b9dbd790_0017bce9abd08007241b106f0fcf1d64e45c05cd82a05a1d.docx");
+    let b = fixture("342f364d46_001342333d45627868f4dc5282abbba4598a91b4a7584b08.docx");
+    let redline = compare(&a, &b);
+    let all = tables(&redline);
+    assert_eq!(
+        row_marks(&all),
+        ["==DDD", "=====II", "II", "I", "I"],
+        "Word's row marks"
+    );
+    assert!(holds(&all[0].0, "Név") && holds(&all[0].0, "Droits de scolarité"));
+    assert!(holds(&all[1].0, "Mobilitás típusa") && holds(&all[1].0, "Le ou la doctorant"));
     assert_table_counts(&redline, &a, &b);
 }

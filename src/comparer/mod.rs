@@ -49,6 +49,7 @@ pub mod order_tables;
 pub mod parts;
 pub mod preprocess;
 pub mod produce;
+pub(crate) mod replaced_tables;
 pub mod revisions;
 // Constant tables ported from the C# `WmlComparer`; outside the version
 // promise (docs/VERSIONING.md).
@@ -712,6 +713,11 @@ pub fn try_compare_bodies_faithful_with_notes(
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word pairs the k-th table of a replaced body region with the
+    // revision's k-th table (#1817).
+    if settings.merge_replaced_paragraphs && dom.name_is(body1, &W::body()) {
+        replaced_tables::pair_replaced_tables(dom, &mut seqs, settings);
+    }
     // Word pairs the two final marks behind a trailing deletion.
     if settings.merge_replaced_paragraphs {
         lcs::pair_story_final_marks(dom, &mut seqs);
