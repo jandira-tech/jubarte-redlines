@@ -30,8 +30,23 @@ pub struct TableStyleNames {
 }
 
 impl TableStyleNames {
-    /// Reads `styles_xml`; no part reads as no styles.
-    pub fn parse(styles_xml: Option<&str>) -> Self {
+    /// Reads the original's `styles_xml`, on which Word builds its redline:
+    /// a style without a name keeps it, by its id (the 3x3 pair: the
+    /// original's unnamed style "a" against the revision's default splits
+    /// the rows in Word's redline). No part reads as no styles.
+    pub fn original(styles_xml: Option<&str>) -> Self {
+        Self::parse(styles_xml, true)
+    }
+
+    /// Reads the revision's `styles_xml`, whose styles Word maps into the
+    /// redline by name: a style without a name has none to map by, and its
+    /// tables take the default (70c30e926c: Word's redline drops the
+    /// revision's unnamed "a0", and the rows stay together).
+    pub fn revision(styles_xml: Option<&str>) -> Self {
+        Self::parse(styles_xml, false)
+    }
+
+    fn parse(styles_xml: Option<&str>, keep_unnamed: bool) -> Self {
         let mut names = Self::default();
         let Some(xml) = styles_xml else {
             return names;
@@ -45,13 +60,12 @@ impl TableStyleNames {
             let Some(id) = dom.attribute(style, &W::name("styleId")) else {
                 continue;
             };
-            // A style without a name goes by its id (the 3x3 pair: the
-            // original's unnamed style "a" against the revision's default
-            // splits the rows in Word's redline).
-            let name = dom
+            let named = dom
                 .element(style, &W::name("name"))
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .unwrap_or(id);
+                .and_then(|n| dom.attribute(n, &W::val()));
+            let Some(name) = named.or(keep_unnamed.then_some(id)) else {
+                continue;
+            };
             if dom.attribute(style, &W::name("type")) == Some("table")
                 && matches!(
                     dom.attribute(style, &W::name("default")),
@@ -226,7 +240,7 @@ mod tests {
     /// A styles part whose "Normal Table" (default) and "Table Grid" styles
     /// go by the ids given.
     fn names(normal: &str, grid: &str) -> TableStyleNames {
-        TableStyleNames::parse(Some(&format!(
+        TableStyleNames::original(Some(&format!(
             r#"<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="{normal}"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="{grid}"><w:name w:val="Table Grid"/></w:style></w:styles>"#,
             W::URI
         )))
@@ -349,19 +363,19 @@ mod tests {
 
     #[test]
     fn a_part_without_table_styles_defaults_to_normal_table() {
-        let a = TableStyleNames::parse(Some(&format!(r#"<w:styles xmlns:w="{}"/>"#, W::URI)));
+        let a = TableStyleNames::original(Some(&format!(r#"<w:styles xmlns:w="{}"/>"#, W::URI)));
         let b = names("TableNormal", "TableGrid");
         let body = table(r#"<w:jc w:val="center"/>"#, "", "=DD");
         assert_eq!(
             split(&body, &a, &b),
             [("=DD".into(), "300".into(), vec!["1".into(), "2".into()])]
         );
-        assert_eq!(TableStyleNames::parse(None).name(None), "Normal Table");
+        assert_eq!(TableStyleNames::revision(None).name(None), "Normal Table");
     }
 
     #[test]
-    fn a_style_without_a_name_goes_by_its_id() {
-        let a = TableStyleNames::parse(Some(&format!(
+    fn an_original_style_without_a_name_goes_by_its_id() {
+        let a = TableStyleNames::original(Some(&format!(
             r#"<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:customStyle="1" w:styleId="a"/></w:styles>"#,
             W::URI
         )));
@@ -373,6 +387,25 @@ mod tests {
         assert_eq!(
             tables.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(),
             ["=", "DD"]
+        );
+    }
+
+    #[test]
+    fn a_revision_style_without_a_name_is_the_default() {
+        // 70c30e926c: the revision's tables use unnamed styles "a0"..; Word
+        // drops them from its redline and keeps the deleted rows of the
+        // original's unstyled table in the paired table.
+        let unnamed = format!(
+            r#"<w:styles xmlns:w="{}"><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:customStyle="1" w:styleId="a0"/></w:styles>"#,
+            W::URI
+        );
+        let a = names("TableNormal", "TableGrid");
+        let b = TableStyleNames::revision(Some(&unnamed));
+        assert_eq!(b.name(Some("a0")), "Normal Table");
+        let body = table(r#"<w:tblStyle w:val="a0"/>"#, "", "=DD");
+        assert_eq!(
+            split(&body, &a, &b),
+            [("=DD".into(), "300".into(), vec!["1".into(), "2".into()])]
         );
     }
 

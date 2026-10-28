@@ -7063,8 +7063,8 @@ fn compare_documents_impl(
         split_rows_by_table_identity(
             &mut dom,
             result_root,
-            &TableStyleNames::parse(pkg1.part_string("word/styles.xml").as_deref()),
-            &TableStyleNames::parse(pkg2.part_string("word/styles.xml").as_deref()),
+            &TableStyleNames::original(pkg1.part_string("word/styles.xml").as_deref()),
+            &TableStyleNames::revision(pkg2.part_string("word/styles.xml").as_deref()),
         );
     }
 
