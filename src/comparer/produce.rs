@@ -1453,8 +1453,9 @@ fn reconstruct_element(
     // Word-alignment (M-TBL rule 4, parity/_scratch/table_class_forensics.md):
     // a DEGENERATE grid — fewer w:gridCol entries than the real column count
     // implied by the rows' gridSpan/tc structure — is rebuilt Word's way:
-    // per-column gridCols (equal split of the page content width) plus
-    // `tblW 0 auto`. GT table-vmerge-colspan_text-box: 1×4985 → 4675+4675;
+    // per-column gridCols, an equal split of the width the table declares
+    // (#1914), else of the page content width with `tblW 0 auto`.
+    // GT table-vmerge-colspan_text-box: 1×4985 → 4675+4675;
     // GT nested-table-rowspan_numbered-list: 1×9970 → 4887+4905.
     if settings.merge_replaced_paragraphs && aname == W::tbl() {
         rebuild_degenerate_grid(dom, ne, ancestor);
@@ -1648,9 +1649,91 @@ fn mesh_repartitioned_row(
         };
         records.extend(record);
     }
+    take_revision_cell_props(dom, &lives, &revision_cells(dom, g, level));
     fit_spans(dom, &lives, row_grid_columns(dom, new));
     if records.len() == lives.len() {
         fit_spans(dom, &records, row_grid_columns(dom, old));
+    }
+}
+
+/// For each cell of a merged row, in the order the row's coalescing builds
+/// them (its `tc` groups by first atom), whether the revision holds it: a
+/// cell all of whose atoms are deleted is the original's alone.
+fn revision_cells(dom: &Dom, g: &[&ComparisonUnitAtom], level: usize) -> Vec<bool> {
+    let mut cells: Vec<(&str, bool)> = Vec::new();
+    for atom in g {
+        let Some(&anc) = atom.ancestor_elements.get(level + 1) else {
+            continue;
+        };
+        let Some(unid) = atom.ancestor_unids.as_ref().and_then(|u| u.get(level + 1)) else {
+            continue;
+        };
+        if unid.is_empty() || !dom.name_is(anc, &W::tc()) {
+            continue;
+        }
+        let revision = !matches!(
+            atom.correlation_status,
+            CorrelationStatus::Deleted | CorrelationStatus::MovedSource
+        );
+        match cells.iter_mut().find(|(u, _)| *u == unid.as_str()) {
+            Some((_, held)) => *held |= revision,
+            None => cells.push((unid.as_str(), revision)),
+        }
+    }
+    cells.into_iter().map(|(_, held)| held).collect()
+}
+
+/// Word gives a cell only the original holds the live properties of the
+/// revision's cell before it (after it, when none precedes), all but the
+/// span and the merges; the cell's own stay in its `tcPrChange` (#1914:
+/// 2fa06a6cb0's 7422 → 9809, 1827ae7738's 1628 → 6817). `lives` are the
+/// row's `tcPr`s and `revision` says which cells the revision holds; a
+/// count that differs from the cells' leaves the row alone.
+fn take_revision_cell_props(dom: &mut Dom, lives: &[NodeId], revision: &[bool]) {
+    if lives.len() != revision.len() {
+        return;
+    }
+    let kept = |dom: &Dom, c: NodeId| {
+        dom.name(c).is_some_and(|n| {
+            !matches!(
+                n.local_name(),
+                "tcPrChange"
+                    | "cellIns"
+                    | "cellDel"
+                    | "cellMerge"
+                    | "gridSpan"
+                    | "vMerge"
+                    | "hMerge"
+            )
+        })
+    };
+    for (i, &live) in lives.iter().enumerate() {
+        if revision[i] {
+            continue;
+        }
+        let Some(source) = (0..i)
+            .rev()
+            .chain(i + 1..lives.len())
+            .find(|&j| revision[j])
+        else {
+            continue;
+        };
+        for c in dom.elements(live, None) {
+            if dom.name(c).is_some_and(|n| n.local_name() != "tcPrChange") {
+                dom.remove(c);
+            }
+        }
+        let record = dom.element(live, &W::name("tcPrChange"));
+        for c in dom.elements(lives[source], None) {
+            if !kept(dom, c) {
+                continue;
+            }
+            let copy = dom.clone_subtree(c);
+            match record {
+                Some(r) => dom.add_before_self(r, copy),
+                None => dom.add(live, copy),
+            }
+        }
     }
 }
 
@@ -1863,17 +1946,24 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     if content_width <= 0 {
         return;
     }
+    // A width the table declares stays, and the grid splits it (Word's
+    // redlines of 2fa06a6cb0's 9809-twip boxes, #1914: 4905 + 4904). Only a
+    // table without one takes the text width and `tblW 0 auto`.
+    let declared = dom
+        .element(tbl, &W::tbl_pr())
+        .and_then(|pr| dom.element(pr, &W::name("tblW")))
+        .and_then(|w| declared_width(dom, w, content_width));
+    let total = declared.unwrap_or(content_width);
     for c in &grid_cols {
         dom.remove(*c);
     }
-    let each = content_width / real_cols as i64;
+    let cols = real_cols as i64;
+    let (each, extra) = (total / cols, total % cols);
     let mut new_cols = Vec::with_capacity(real_cols);
-    for i in 0..real_cols {
-        let w = if i + 1 == real_cols {
-            content_width - each * (real_cols as i64 - 1)
-        } else {
-            each
-        };
+    for i in 0..cols {
+        // Word hands the odd twips out unevenly (its 9809 over three columns
+        // is 3269 + 3270 + 3270); here the first columns take them.
+        let w = each + i64::from(i < extra);
         let col = dom.new_element(W::name("gridCol"));
         dom.set_attribute_value(col, &W::name("w"), Some(&w.to_string()));
         new_cols.push(col);
@@ -1881,6 +1971,9 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     // gridCols must precede any tblGridChange history in the grid
     for col in new_cols.into_iter().rev() {
         dom.add_first(grid, col);
+    }
+    if declared.is_some() {
+        return;
     }
     // tblW → 0 auto (CT_TblPrBase schema order: tblW follows tblStyle,
     // tblpPr, tblOverlap, bidiVisual, tblStyleRowBandSize,
@@ -1899,6 +1992,30 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         dom.set_attribute_value(tblw, &W::name("w"), Some("0"));
         dom.set_attribute_value(tblw, &W::name("type"), Some("auto"));
     }
+}
+
+/// The width in twips a `tblW` declares: its twips, or its share of
+/// `text_width` (fiftieths of a percent, or a `%` value). `None` for
+/// `auto`, `nil` and nothing.
+fn declared_width(dom: &Dom, tbl_w: NodeId, text_width: i64) -> Option<i64> {
+    let w = dom.attribute(tbl_w, &W::name("w"))?;
+    let width = match dom.attribute(tbl_w, &W::name("type")) {
+        None | Some("dxa") => w.parse().ok()?,
+        Some("pct") => match w.strip_suffix('%') {
+            Some(percent) => {
+                let share = text_width as f64 * percent.parse::<f64>().ok()? / 100.0;
+                share.is_finite().then(|| share.round() as i64)?
+            }
+            None => {
+                text_width
+                    .checked_mul(w.parse::<i64>().ok()?)?
+                    .checked_add(2500)?
+                    / 5000
+            }
+        },
+        Some(_) => return None,
+    };
+    (width > 0).then_some(width)
 }
 
 /// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (WmlComparer.ts
@@ -2102,6 +2219,152 @@ mod mesh_row_span_tests {
         assert_eq!(spans(&dom, &prs), [2, 1, 1], "a fitting row is left alone");
         fit_spans(&mut dom, &prs, Some(2));
         assert_eq!(spans(&dom, &prs), [1, 1, 1], "each cell keeps one column");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod merged_row_width_tests {
+    //! #1914: the width a rebuilt grid splits, and the cell properties the
+    //! original's surplus cells take from the revision's.
+    use super::*;
+
+    fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!("<w:x xmlns:w=\"{}\">{xml}</w:x>", W::URI));
+        dom.root(doc).unwrap()
+    }
+
+    fn width(attrs: &str) -> Option<i64> {
+        let mut dom = Dom::new();
+        let root = parse(&mut dom, &format!("<w:tblW {attrs}/>"));
+        let tbl_w = dom.element(root, &W::name("tblW")).unwrap();
+        declared_width(&dom, tbl_w, 10206)
+    }
+
+    #[test]
+    fn a_declared_width_in_twips_or_as_a_share_of_the_text() {
+        assert_eq!(width(r#"w:w="9809" w:type="dxa""#), Some(9809));
+        assert_eq!(
+            width(r#"w:w="9809""#),
+            Some(9809),
+            "dxa is the default type"
+        );
+        assert_eq!(width(r#"w:w="4000" w:type="pct""#), Some(8165));
+        assert_eq!(width(r#"w:w="80%" w:type="pct""#), Some(8165));
+        for none in [
+            r#"w:w="0" w:type="auto""#,
+            r#"w:w="0" w:type="nil""#,
+            r#"w:w="0" w:type="dxa""#,
+            r#"w:type="dxa""#,
+            r#"w:w="wide" w:type="pct""#,
+            r#"w:w="9223372036854775807" w:type="pct""#,
+            r#"w:w="inf%" w:type="pct""#,
+        ] {
+            assert_eq!(width(none), None, "{none}");
+        }
+    }
+
+    /// The `tcPr`s of `xml`'s cells, and each cell's properties but its
+    /// change record, by local name and `w:val`/`w:w`.
+    fn cells(dom: &mut Dom, xml: &str) -> Vec<NodeId> {
+        let root = parse(dom, xml);
+        dom.elements(root, Some(&W::tc()))
+            .into_iter()
+            .filter_map(|tc| dom.element(tc, &W::tc_pr()))
+            .collect()
+    }
+
+    fn props(dom: &Dom, pr: NodeId) -> Vec<String> {
+        dom.elements(pr, None)
+            .into_iter()
+            .map(|c| {
+                let name = dom.name(c).unwrap().local_name().to_string();
+                let value = dom
+                    .attribute(c, &W::val())
+                    .or_else(|| dom.attribute(c, &W::name("w")))
+                    .unwrap_or_default();
+                format!("{name}={value}")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_surplus_cell_takes_the_revision_cell_before_it_less_its_span() {
+        let mut dom = Dom::new();
+        let prs = cells(
+            &mut dom,
+            "<w:tc><w:tcPr><w:tcW w:w=\"9809\"/><w:gridSpan w:val=\"2\"/><w:vMerge w:val=\"restart\"/><w:vAlign w:val=\"center\"/></w:tcPr></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"7422\"/><w:shd w:val=\"clear\"/><w:tcPrChange w:id=\"1\"><w:tcPr><w:tcW w:w=\"7422\"/></w:tcPr></w:tcPrChange></w:tcPr></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"500\"/></w:tcPr></w:tc>",
+        );
+        take_revision_cell_props(&mut dom, &prs, &[true, false, false]);
+        assert_eq!(
+            props(&dom, prs[1]),
+            ["tcW=9809", "vAlign=center", "tcPrChange="],
+            "the record stays last"
+        );
+        assert_eq!(
+            props(&dom, prs[2]),
+            ["tcW=9809", "vAlign=center"],
+            "a cell without a record takes them too"
+        );
+    }
+
+    #[test]
+    fn a_leading_surplus_cell_takes_the_revision_cell_after_it() {
+        let mut dom = Dom::new();
+        let prs = cells(
+            &mut dom,
+            "<w:tc><w:tcPr><w:tcW w:w=\"1101\"/></w:tcPr></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"9809\"/></w:tcPr></w:tc>",
+        );
+        take_revision_cell_props(&mut dom, &prs, &[false, true]);
+        assert_eq!(props(&dom, prs[0]), ["tcW=9809"]);
+    }
+
+    #[test]
+    fn a_cell_is_the_revisions_when_any_of_its_atoms_is_kept() {
+        let mut dom = Dom::new();
+        let root = parse(&mut dom, "<w:tr><w:tc/><w:tc/><w:bookmarkStart/></w:tr>");
+        let tr = dom.element(root, &W::tr()).unwrap();
+        let (tc1, tc2) = {
+            let tcs = dom.elements(tr, Some(&W::tc()));
+            (tcs[0], tcs[1])
+        };
+        let mark = dom.element(tr, &W::name("bookmarkStart")).unwrap();
+        let atom = |chain: Vec<NodeId>, unids: Option<&[&str]>, status| {
+            let mut a = ComparisonUnitAtom::new(NodeId(0), chain, "x".to_string());
+            a.ancestor_unids = unids.map(|u| u.iter().map(|s| (*s).to_string()).collect());
+            a.correlation_status = status;
+            a
+        };
+        use CorrelationStatus::{Deleted, Equal, Inserted};
+        let atoms = [
+            atom(vec![tr, tc1], Some(&["r", "c1"]), Deleted),
+            atom(vec![tr, tc2], Some(&["r", "c2"]), Deleted),
+            atom(vec![tr, tc1], Some(&["r", "c1"]), Equal),
+            // Skipped: no cell level, no Unids, an empty Unid, no cell.
+            atom(vec![tr], Some(&["r"]), Inserted),
+            atom(vec![tr, tc2], None, Inserted),
+            atom(vec![tr, tc2], Some(&["r", ""]), Inserted),
+            atom(vec![tr, mark], Some(&["r", "m"]), Inserted),
+        ];
+        let refs: Vec<&ComparisonUnitAtom> = atoms.iter().collect();
+        assert_eq!(revision_cells(&dom, &refs, 0), [true, false]);
+    }
+
+    #[test]
+    fn a_row_without_a_revision_cell_or_of_another_count_is_left_alone() {
+        let mut dom = Dom::new();
+        let prs = cells(
+            &mut dom,
+            "<w:tc><w:tcPr><w:tcW w:w=\"1101\"/></w:tcPr></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"7422\"/></w:tcPr></w:tc>",
+        );
+        take_revision_cell_props(&mut dom, &prs, &[false, false]);
+        take_revision_cell_props(&mut dom, &prs, &[true]);
+        assert_eq!(props(&dom, prs[0]), ["tcW=1101"]);
+        assert_eq!(props(&dom, prs[1]), ["tcW=7422"]);
     }
 }
 
