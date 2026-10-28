@@ -18,6 +18,8 @@
 //!   text, and writes the revision's blocks before the original's around
 //!   them. jubarte inserted the revision's tables whole and deleted the
 //!   original's whole, and Word 16.115 crashed on w12's deleted rows.
+//! - 3x3: where the paired tables' styles (by name) or layouts differ, the
+//!   original's deleted rows leave the revision's table for one of their own.
 
 mod common;
 
@@ -106,6 +108,40 @@ fn tables(docx: &[u8]) -> Vec<(Vec<Row>, bool)> {
             (rows, changed)
         })
         .collect()
+}
+
+fn superdoc(name: &str) -> Vec<u8> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source")
+        .join(name);
+    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The body's children as letters (`T` table, `P` paragraph) and each
+/// table's grid widths.
+fn body_shape(docx: &[u8]) -> (String, Vec<Vec<String>>) {
+    let pkg = PartFs::open(docx).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let mut kinds = String::new();
+    let mut grids = Vec::new();
+    for child in dom.elements(body, None) {
+        if dom.name_is(child, &W::tbl()) {
+            kinds.push('T');
+            let grid = dom.element(child, &W::name("tblGrid")).unwrap();
+            grids.push(
+                dom.elements(grid, Some(&W::name("gridCol")))
+                    .into_iter()
+                    .map(|c| dom.attribute(c, &W::name("w")).unwrap_or("").to_string())
+                    .collect(),
+            );
+        } else if dom.name_is(child, &W::p()) {
+            kinds.push('P');
+        }
+    }
+    (kinds, grids)
 }
 
 fn holds(rows: &[Row], needle: &str) -> bool {
@@ -261,5 +297,33 @@ fn erasmus_form_pairs_the_original_tables_with_the_first_two() {
     );
     assert!(holds(&all[0].0, "Név") && holds(&all[0].0, "Droits de scolarité"));
     assert!(holds(&all[1].0, "Mobilitás típusa") && holds(&all[1].0, "Le ou la doctorant"));
+    assert_table_counts(&redline, &a, &b);
+}
+
+#[test]
+fn plain_3x3_moves_the_originals_surplus_rows_to_a_table_of_their_own() {
+    // The original's one-column table (table style "a", which has no name)
+    // pairs with the revision's 3x3 table (the default table style). Word
+    // keeps rows of one table style and layout in one table: the three
+    // paired rows take the revision's table, and the original's other two
+    // rows, deleted, follow as a table of their own with the original's
+    // properties (Word's redline of the pair, a24b3782e4).
+    let a = superdoc("super_editor__list_with_table_break_ff0c4c1f.docx");
+    let b = superdoc("behavior__sd_2672_plain_3x3_87943d5d.docx");
+    let redline = compare(&a, &b);
+    let all = tables(&redline);
+    assert_eq!(row_marks(&all), ["===", "DD"], "Word's row marks");
+    assert!(
+        all[0].1,
+        "the paired table records the original's properties"
+    );
+    assert!(
+        !all[1].1,
+        "the deleted rows keep the original's properties as their own"
+    );
+    assert!(holds(&all[1].0, "Row data 5"), "{:#?}", all[1].0);
+    let (kinds, grids) = body_shape(&redline);
+    assert!(kinds.contains("TT"), "the two tables are adjacent: {kinds}");
+    assert_eq!(grids[1], ["2790"], "the original's grid");
     assert_table_counts(&redline, &a, &b);
 }

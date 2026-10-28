@@ -51,6 +51,8 @@ pub mod preprocess;
 pub mod produce;
 pub(crate) mod replaced_tables;
 pub mod revisions;
+// Word-parity pass on the finished body; outside the version promise.
+pub(crate) mod table_split;
 // Constant tables ported from the C# `WmlComparer`; outside the version
 // promise (docs/VERSIONING.md).
 #[doc(hidden)]
