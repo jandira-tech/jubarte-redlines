@@ -27,7 +27,7 @@ mod common;
 use common::docx::{docx_with_sect_pr, esc};
 use common::validity::assert_word_valid_package;
 use jubarte::comparer::WmlComparerSettings;
-use jubarte::document_comparer::compare_documents_with_settings;
+use jubarte::document_comparer::{compare_documents_with_settings, reject_revisions};
 use jubarte::namespaces::W;
 use jubarte::opc::PartFs;
 use jubarte::xmllinq::{Dom, NodeId};
@@ -154,11 +154,14 @@ fn first_table(docx: &[u8]) -> Table {
     Table { width, grid, cells }
 }
 
-fn compare(a: &[u8], b: &[u8]) -> Table {
-    let redline =
-        compare_documents_with_settings(a, b, &WmlComparerSettings::default()).expect("compare");
+fn redline(a: &[u8], b: &[u8], settings: &WmlComparerSettings) -> Vec<u8> {
+    let redline = compare_documents_with_settings(a, b, settings).expect("compare");
     assert_word_valid_package(&redline);
-    first_table(&redline)
+    redline
+}
+
+fn compare(a: &[u8], b: &[u8]) -> Table {
+    first_table(&redline(a, b, &WmlComparerSettings::default()))
 }
 
 fn cell_of(width: u32, recorded: u32) -> Cell {
@@ -242,4 +245,27 @@ fn the_copied_properties_leave_the_span() {
         v_align: Some("center".into()),
     };
     assert_eq!(t.cells, [centred(1101), centred(7422)]);
+}
+
+#[test]
+fn rejecting_gives_the_surplus_cell_its_own_width_back() {
+    let b = revision(&format!(r#"<w:tblW w:w="9809" w:type="dxa"/>{FIXED}"#));
+    let rejected = reject_revisions(&redline(&original(), &b, &WmlComparerSettings::default()))
+        .expect("reject");
+    let t = first_table(&rejected);
+    let widths: Vec<_> = t.cells.iter().map(|c| c.width).collect();
+    assert_eq!(widths, [Some(1101), Some(7422)]);
+}
+
+#[test]
+fn without_format_changes_the_surplus_cell_keeps_its_own() {
+    // No `tcPrChange` would hold the 7422, so the cell keeps it live.
+    let settings = WmlComparerSettings {
+        detect_format_changes: false,
+        ..WmlComparerSettings::default()
+    };
+    let b = revision(&format!(r#"<w:tblW w:w="9809" w:type="dxa"/>{FIXED}"#));
+    let t = first_table(&redline(&original(), &b, &settings));
+    let surplus = t.cells.last().expect("a cell");
+    assert_eq!((surplus.width, surplus.recorded), (Some(7422), None));
 }

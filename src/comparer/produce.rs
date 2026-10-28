@@ -1649,7 +1649,10 @@ fn mesh_repartitioned_row(
         };
         records.extend(record);
     }
-    take_revision_cell_props(dom, &lives, &revision_cells(dom, g, level));
+    // Without a record, Reject All could not give the cell its own back.
+    if settings.detect_format_changes {
+        take_revision_cell_props(dom, &lives, &revision_cells(dom, g, level));
+    }
     fit_spans(dom, &lives, row_grid_columns(dom, new));
     if records.len() == lives.len() {
         fit_spans(dom, &records, row_grid_columns(dom, old));
@@ -1686,27 +1689,24 @@ fn revision_cells(dom: &Dom, g: &[&ComparisonUnitAtom], level: usize) -> Vec<boo
 /// Word gives a cell only the original holds the live properties of the
 /// revision's cell before it (after it, when none precedes), all but the
 /// span and the merges; the cell's own stay in its `tcPrChange` (#1914:
-/// 2fa06a6cb0's 7422 → 9809, 1827ae7738's 1628 → 6817). `lives` are the
-/// row's `tcPr`s and `revision` says which cells the revision holds; a
+/// 2fa06a6cb0's 7422 → 9809, 1827ae7738's 1628 → 6817). The cell keeps its
+/// own merges and cell marks, and loses its own span: of the cells whose
+/// text Word's redlines of the 72 two-table bench pairs delete whole, all 8
+/// with a `vMerge` keep it, and 275 of 365 with a span lose it. `lives` are
+/// the row's `tcPr`s and `revision` says which cells the revision holds; a
 /// count that differs from the cells' leaves the row alone.
 fn take_revision_cell_props(dom: &mut Dom, lives: &[NodeId], revision: &[bool]) {
     if lives.len() != revision.len() {
         return;
     }
-    let kept = |dom: &Dom, c: NodeId| {
-        dom.name(c).is_some_and(|n| {
-            !matches!(
-                n.local_name(),
-                "tcPrChange"
-                    | "cellIns"
-                    | "cellDel"
-                    | "cellMerge"
-                    | "gridSpan"
-                    | "vMerge"
-                    | "hMerge"
-            )
-        })
+    // CT_TcPr: cnfStyle, tcW, gridSpan, the merges, the other properties,
+    // and the marks and record last.
+    const MERGES: [&str; 2] = ["hMerge", "vMerge"];
+    const MARKS: [&str; 4] = ["cellIns", "cellDel", "cellMerge", "tcPrChange"];
+    let named = |dom: &Dom, c: NodeId, names: &[&str]| {
+        dom.name(c).is_some_and(|n| names.contains(&n.local_name()))
     };
+    let own = |dom: &Dom, c: NodeId| named(dom, c, &MERGES) || named(dom, c, &MARKS);
     for (i, &live) in lives.iter().enumerate() {
         if revision[i] {
             continue;
@@ -1719,18 +1719,25 @@ fn take_revision_cell_props(dom: &mut Dom, lives: &[NodeId], revision: &[bool]) 
             continue;
         };
         for c in dom.elements(live, None) {
-            if dom.name(c).is_some_and(|n| n.local_name() != "tcPrChange") {
+            if !own(dom, c) {
                 dom.remove(c);
             }
         }
-        let record = dom.element(live, &W::name("tcPrChange"));
+        let kept = dom.elements(live, None);
+        let merges = kept.iter().copied().find(|&c| own(dom, c));
+        let marks = kept.iter().copied().find(|&c| named(dom, c, &MARKS));
         for c in dom.elements(lives[source], None) {
-            if !kept(dom, c) {
+            if own(dom, c) || named(dom, c, &["gridSpan"]) {
                 continue;
             }
+            let anchor = if named(dom, c, &["cnfStyle", "tcW"]) {
+                merges
+            } else {
+                marks
+            };
             let copy = dom.clone_subtree(c);
-            match record {
-                Some(r) => dom.add_before_self(r, copy),
+            match anchor {
+                Some(a) => dom.add_before_self(a, copy),
                 None => dom.add(live, copy),
             }
         }
@@ -1957,13 +1964,8 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     for c in &grid_cols {
         dom.remove(*c);
     }
-    let cols = real_cols as i64;
-    let (each, extra) = (total / cols, total % cols);
     let mut new_cols = Vec::with_capacity(real_cols);
-    for i in 0..cols {
-        // Word hands the odd twips out unevenly (its 9809 over three columns
-        // is 3269 + 3270 + 3270); here the first columns take them.
-        let w = each + i64::from(i < extra);
+    for w in split_width(total, real_cols as i64) {
         let col = dom.new_element(W::name("gridCol"));
         dom.set_attribute_value(col, &W::name("w"), Some(&w.to_string()));
         new_cols.push(col);
@@ -1994,13 +1996,28 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     }
 }
 
-/// The width in twips a `tblW` declares: its twips, or its share of
-/// `text_width` (fiftieths of a percent, or a `%` value). `None` for
-/// `auto`, `nil` and nothing.
+/// `total` twips over `cols` columns as Word's redlines of 2fa06a6cb0 split
+/// its 9809: 4905 + 4904, and 3269 + 3270 + 3270. Every column but the
+/// first takes the share rounded half down, and the first what is left.
+fn split_width(total: i64, cols: i64) -> Vec<i64> {
+    let share = total / cols + i64::from(2 * (total % cols) > cols);
+    let first = total - share * (cols - 1);
+    std::iter::once(first)
+        .chain(std::iter::repeat_n(share, (cols - 1) as usize))
+        .collect()
+}
+
+/// The widest table Word lays out: 22 inches, its largest page.
+const MAX_TABLE_WIDTH: i64 = 31_680;
+
+/// The width in twips a `tblW` declares: its `dxa`, or its share of
+/// `text_width` (`pct` fiftieths of a percent, or a `%` value). `None` for
+/// `auto`, `nil`, no type (the renderer's auto), and a width beyond
+/// [`MAX_TABLE_WIDTH`].
 fn declared_width(dom: &Dom, tbl_w: NodeId, text_width: i64) -> Option<i64> {
     let w = dom.attribute(tbl_w, &W::name("w"))?;
     let width = match dom.attribute(tbl_w, &W::name("type")) {
-        None | Some("dxa") => w.parse().ok()?,
+        Some("dxa") => w.parse().ok()?,
         Some("pct") => match w.strip_suffix('%') {
             Some(percent) => {
                 let share = text_width as f64 * percent.parse::<f64>().ok()? / 100.0;
@@ -2013,9 +2030,9 @@ fn declared_width(dom: &Dom, tbl_w: NodeId, text_width: i64) -> Option<i64> {
                     / 5000
             }
         },
-        Some(_) => return None,
+        _ => return None,
     };
-    (width > 0).then_some(width)
+    (1..=MAX_TABLE_WIDTH).contains(&width).then_some(width)
 }
 
 /// M4.E.8 — `ProduceNewWmlMarkupFromCorrelatedSequence` (WmlComparer.ts
@@ -2244,24 +2261,36 @@ mod merged_row_width_tests {
     #[test]
     fn a_declared_width_in_twips_or_as_a_share_of_the_text() {
         assert_eq!(width(r#"w:w="9809" w:type="dxa""#), Some(9809));
-        assert_eq!(
-            width(r#"w:w="9809""#),
-            Some(9809),
-            "dxa is the default type"
-        );
+        assert_eq!(width(r#"w:w="31680" w:type="dxa""#), Some(31680));
         assert_eq!(width(r#"w:w="4000" w:type="pct""#), Some(8165));
         assert_eq!(width(r#"w:w="80%" w:type="pct""#), Some(8165));
         for none in [
             r#"w:w="0" w:type="auto""#,
             r#"w:w="0" w:type="nil""#,
             r#"w:w="0" w:type="dxa""#,
+            r#"w:w="-100" w:type="dxa""#,
             r#"w:type="dxa""#,
+            // The renderer lays a width without a type out as auto.
+            r#"w:w="9809""#,
             r#"w:w="wide" w:type="pct""#,
+            // Past Word's widest table, or past i64.
+            r#"w:w="31681" w:type="dxa""#,
+            r#"w:w="9223372036854775807" w:type="dxa""#,
+            r#"w:w="1e30%" w:type="pct""#,
             r#"w:w="9223372036854775807" w:type="pct""#,
             r#"w:w="inf%" w:type="pct""#,
         ] {
             assert_eq!(width(none), None, "{none}");
         }
+    }
+
+    #[test]
+    fn the_grid_splits_a_width_as_word_does() {
+        assert_eq!(split_width(9809, 2), [4905, 4904]);
+        assert_eq!(split_width(9809, 3), [3269, 3270, 3270]);
+        assert_eq!(split_width(10206, 3), [3402, 3402, 3402]);
+        assert_eq!(split_width(10, 4), [4, 2, 2, 2], "2.5 rounds down");
+        assert_eq!(split_width(2, 3), [0, 1, 1]);
     }
 
     /// The `tcPr`s of `xml`'s cells, and each cell's properties but its
@@ -2293,20 +2322,43 @@ mod merged_row_width_tests {
         let mut dom = Dom::new();
         let prs = cells(
             &mut dom,
-            "<w:tc><w:tcPr><w:tcW w:w=\"9809\"/><w:gridSpan w:val=\"2\"/><w:vMerge w:val=\"restart\"/><w:vAlign w:val=\"center\"/></w:tcPr></w:tc>\
+            "<w:tc><w:tcPr><w:cnfStyle w:val=\"100\"/><w:tcW w:w=\"9809\"/><w:gridSpan w:val=\"2\"/><w:vMerge w:val=\"restart\"/><w:vAlign w:val=\"center\"/><w:cellIns w:id=\"7\"/></w:tcPr></w:tc>\
              <w:tc><w:tcPr><w:tcW w:w=\"7422\"/><w:shd w:val=\"clear\"/><w:tcPrChange w:id=\"1\"><w:tcPr><w:tcW w:w=\"7422\"/></w:tcPr></w:tcPrChange></w:tcPr></w:tc>\
              <w:tc><w:tcPr><w:tcW w:w=\"500\"/></w:tcPr></w:tc>",
         );
         take_revision_cell_props(&mut dom, &prs, &[true, false, false]);
         assert_eq!(
             props(&dom, prs[1]),
-            ["tcW=9809", "vAlign=center", "tcPrChange="],
+            ["cnfStyle=100", "tcW=9809", "vAlign=center", "tcPrChange="],
             "the record stays last"
         );
         assert_eq!(
             props(&dom, prs[2]),
-            ["tcW=9809", "vAlign=center"],
+            ["cnfStyle=100", "tcW=9809", "vAlign=center"],
             "a cell without a record takes them too"
+        );
+    }
+
+    #[test]
+    fn a_surplus_cell_keeps_its_own_merges_and_marks_but_not_its_span() {
+        let mut dom = Dom::new();
+        let prs = cells(
+            &mut dom,
+            "<w:tc><w:tcPr><w:tcW w:w=\"9809\"/><w:vAlign w:val=\"center\"/></w:tcPr></w:tc>\
+             <w:tc><w:tcPr><w:tcW w:w=\"500\"/><w:gridSpan w:val=\"3\"/><w:hMerge/><w:vMerge/><w:shd w:val=\"clear\"/><w:cellDel w:id=\"2\"/><w:tcPrChange w:id=\"1\"/></w:tcPr></w:tc>",
+        );
+        take_revision_cell_props(&mut dom, &prs, &[true, false]);
+        assert_eq!(
+            props(&dom, prs[1]),
+            [
+                "tcW=9809",
+                "hMerge=",
+                "vMerge=",
+                "vAlign=center",
+                "cellDel=",
+                "tcPrChange="
+            ],
+            "in CT_TcPr order"
         );
     }
 

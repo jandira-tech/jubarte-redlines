@@ -152,7 +152,8 @@ fn healthy_tblgrid_left_untouched() {
 /// resolving to the OLD (doc A) table, the effective tblPr/tblGrid must STILL
 /// come from the NEW (doc B) table, with A's props recorded in tblPrChange.
 /// A = table-bookmark-end (t1: tblW 6000 dxa, 3×2000), B = table-vmerge-colspan
-/// (t1: 9972 dxa, degenerate grid → Word rebuilds to tblW 0 auto). GT first
+/// (t1: no tblW, degenerate 1×4985 grid → Word rebuilds to tblW 0 auto; the
+/// 9972 dxa is B's second table). GT first
 /// table: effective tblW 0/auto, tblPrChange holds the OLD 6000. Ours
 /// (pre-fix) kept A's 6000 effective with no change record.
 #[test]
