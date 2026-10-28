@@ -9955,19 +9955,20 @@ fn unclamped_col_widths(
         }
         return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true);
     }
-    if geom.content_autofit {
-        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
-    }
     // An autofit table whose rows reach past its saved grid is laid out
     // again: its columns share the width it declares by their content, as
     // over a grid that held them (Word probes q2, q3 and q8, r58
     // 2026-10-28; 6926d6b8fd's 18-cell rows over a 14-column grid, which
     // the padded grid wrapped letter by letter onto two more pages).
     // Without a tblW its columns keep their own widths: a tcW, or else
-    // their lines (probes q4, t2 and t3, r60).
+    // their lines (probes q4, t2 and t3, r60), over a grid another tool
+    // wrote too (r1 and r2), so before the content fit.
     if !geom.fixed && geom.rows_past_grid {
         let target = declared_table_width(geom, avail);
         return fill_table_width(fonts, cols.len(), rows, geom, target, avail);
+    }
+    if geom.content_autofit {
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
     }
     let widths = table_col_widths(cols, geom, avail);
     // An autofit column is at least its longest word: Word widens a tcW
@@ -10276,12 +10277,18 @@ fn share_room(mins: &[f32], maxs: &[f32], room: f32, gap: f32, break_words: bool
 /// cell prefers a width in twips keeps it (probes q7 and q10: 125pt of
 /// 300, 50pt of 400), and one that prefers a share of the declared width
 /// keeps that share (p1 and p2: 50% of 300 is 150pt, 25% of 400 100pt).
-/// The others go between their longest words and their lines
-/// (`share_room`) or, when their lines leave room over, widen in
-/// proportion to them (probe q6: lines of 39, 39, 71 and 34pt take 85,
-/// 86, 155 and 74pt of 400). Without a declared width (`target` None) the
+/// The others widen in proportion to their lines when those leave room
+/// over (probe q6: lines of about 39, 39, 71 and 34pt take 85, 86, 155
+/// and 74pt of 400), or else go between their longest words and their
+/// lines (`share_room`). Without a declared width (`target` None) the
 /// table is as wide as those widths and lines, up to the room a content
 /// fit has.
+///
+/// A table too narrow for all that gives way in Word's order (probes r5
+/// and r6): the other columns keep their longest words and the preferred
+/// widths share what is left; narrower still, every column keeps its
+/// longest word and the table outgrows its width, up to the room a
+/// content fit has, past which the words break (probe long).
 fn fill_table_width(
     fonts: &Fonts,
     n: usize,
@@ -10290,46 +10297,68 @@ fn fill_table_width(
     target: Option<f32>,
     avail: f32,
 ) -> Vec<f32> {
-    let (mut mins, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false);
-    let mut free = vec![true; n];
-    for (j, (lo, hi)) in mins.iter_mut().zip(&mut maxs).enumerate() {
+    let (words, mut maxs) = content_autofit_extents(fonts, n, rows, geom, false);
+    let mut mins = words.clone();
+    let mut held = vec![false; n];
+    for j in 0..n {
         let pref = match geom.pref.get(j) {
             Some(&PrefWidth::Dxa(w)) if w > 0.0 => Some(w),
             Some(&PrefWidth::Pct(p)) if p > 0.0 => target.map(|t| t * p),
             _ => None,
         };
         if let Some(w) = pref {
-            *lo = lo.max(w);
-            *hi = *lo;
-            free[j] = false;
+            mins[j] = words[j].max(w);
+            maxs[j] = mins[j];
+            held[j] = true;
         }
     }
     let gap = 2.0 * geom.cell_spacing;
     let gaps = gap * (n as f32 + 1.0);
-    let target =
-        target.unwrap_or_else(|| (maxs.iter().sum::<f32>() + gaps).min(avail + geom.pct_margins));
-    let room = (target - gaps).max(0.0);
-    let held: f32 = maxs
-        .iter()
-        .zip(&free)
-        .filter(|(_, f)| !**f)
-        .map(|(w, _)| w)
-        .sum();
-    let lines: f32 = maxs
-        .iter()
-        .zip(&free)
-        .filter(|(_, f)| **f)
-        .map(|(w, _)| w)
-        .sum();
-    if lines > 0.0 && held + lines < room {
-        let scale = (room - held) / lines;
-        return maxs
+    let cap = (avail + geom.pct_margins - gaps).max(0.0);
+    let room = match target {
+        Some(t) => (t - gaps).max(0.0),
+        None => maxs.iter().sum::<f32>().min(cap),
+    };
+    let sum_where = |widths: &[f32], want: bool| -> f32 {
+        widths
             .iter()
-            .zip(&free)
-            .map(|(w, f)| if *f { w * scale } else { *w } + gap)
+            .zip(&held)
+            .filter(|(_, h)| **h == want)
+            .map(|(w, _)| w)
+            .sum()
+    };
+    let (prefs, lines, free_words) = (
+        sum_where(&maxs, true),
+        sum_where(&maxs, false),
+        sum_where(&mins, false),
+    );
+    if lines > 0.0 && prefs + lines < room {
+        let scale = (room - prefs) / lines;
+        return (0..n)
+            .map(|j| {
+                let width = if held[j] { maxs[j] } else { maxs[j] * scale };
+                width + gap
+            })
             .collect();
     }
-    share_room(&mins, &maxs, room, gap, true)
+    if prefs + free_words <= room {
+        return share_room(&mins, &maxs, room, gap, false);
+    }
+    let all_words: f32 = words.iter().sum();
+    if prefs > 0.0 && all_words < room {
+        let scale = (room - free_words) / prefs;
+        return (0..n)
+            .map(|j| {
+                let width = if held[j] {
+                    (mins[j] * scale).max(words[j])
+                } else {
+                    mins[j]
+                };
+                width + gap
+            })
+            .collect();
+    }
+    share_room(&words, &words, all_words.min(cap), gap, true)
 }
 
 /// Each column's (minimum, maximum) for [`content_autofit_widths`], its
@@ -13902,6 +13931,28 @@ fn table_block(
     }
     if cols.is_empty() && occupancy > 0 {
         cols = vec![80.0; occupancy];
+    }
+    // Laid out again, a fixed table gives a column that only rows'
+    // gridBefore or gridAfter holds no width, whatever their wBefore says
+    // (Word probes r3 and r7: 0, 100, 100 and 18pt). The autofit fit has
+    // no extents for one either.
+    if fixed && rows_past_grid {
+        let mut held = vec![false; cols.len()];
+        for row in &raw_rows {
+            let mut col = 0usize;
+            for cell in row {
+                let span = cell.colspan.max(1);
+                if !cell.grid_skip {
+                    held.iter_mut().skip(col).take(span).for_each(|h| *h = true);
+                }
+                col += span;
+            }
+        }
+        for (width, held) in cols.iter_mut().zip(held) {
+            if !held {
+                *width = 0.0;
+            }
+        }
     }
     // Word writes a tcW on every cell it saves, and fits a table another
     // tool wrote to its content on open when every column holds a cell
@@ -63325,6 +63376,73 @@ mod complete_coordinate_layout_contract_tests {
     }
 
     #[test]
+    fn a_cell_width_the_table_cannot_hold_takes_what_the_longest_words_leave() {
+        // Word probe r6 (r60): a tcW of 250pt in a 300pt tblW, beside
+        // columns whose longest words take 117pt, gets 183pt; those
+        // columns keep their longest words.
+        let (em, fonts) = (mono_em(), fonts());
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", 18.0 * em * 20.0);
+        cells[1].0 = &tc_w;
+        let (tbl_w, target) = dxa(20.0 * em);
+        let (cols, rows, geom) = mono_row_table(&tbl_w, &[3000, 3000], &cells);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, target - 8.0 * em, 3.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn a_table_width_too_narrow_for_its_longest_words_grows_to_them() {
+        // Word probe r5 (r60): a 100pt tblW over columns whose longest
+        // words take 161pt grows to them, and a 300pt tcW among them gives
+        // way: no word breaks.
+        let (em, fonts) = (mono_em(), fonts());
+        let mut cells = PAST_GRID_TEXTS.map(|t| ("", t));
+        let tc_w = format!("<w:tcW w:w='{}' w:type='dxa'/>", 40.0 * em * 20.0);
+        cells[1].0 = &tc_w;
+        let (tbl_w, _) = dxa(8.0 * em);
+        let (cols, rows, geom) = mono_row_table(&tbl_w, &[1000, 1000], &cells);
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 3.0 * em, 3.0 * em, 2.0 * em],
+        );
+    }
+
+    #[test]
+    fn cells_past_a_grid_without_widths_keep_their_own() {
+        // Word probes r1 and r2 (r60): past a grid whose columns have no
+        // width, or whose cells have none, a cell's tcW is still its
+        // column's width (60pt each), and a cell without one takes its
+        // line.
+        let (em, fonts) = (mono_em(), fonts());
+        let tc_w = "<w:tcW w:w='1200' w:type='dxa'/>";
+        let long = ["AAA AAA AAA", "AAA AAA AAA AAA"];
+        let (cols, rows, geom) = mono_table(&format!(
+            "<w:tbl><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}</w:tr></w:tbl>",
+            mono_cells(&[
+                (tc_w, long[0]),
+                (tc_w, long[0]),
+                (tc_w, long[1]),
+                (tc_w, long[1])
+            ])
+        ));
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[60.0, 60.0, 60.0, 60.0],
+        );
+        let (cols, rows, geom) = mono_row_table(
+            "",
+            &[2400, 2400],
+            &[("", "AAA"), ("", "AAA"), (tc_w, long[1]), (tc_w, long[1])],
+        );
+        assert_widths(
+            &resolved_col_widths(&fonts, &cols, &rows, &geom, 60.0 * em),
+            &[3.0 * em, 3.0 * em, 60.0, 60.0],
+        );
+    }
+
+    #[test]
     fn a_grid_before_column_past_the_grid_takes_no_width() {
         // Word probes b1 and b2 (r60): rows that open one grid column in
         // and reach past the grid leave that column no width, whatever
@@ -63356,12 +63474,10 @@ mod complete_coordinate_layout_contract_tests {
 
     #[test]
     fn rows_past_the_grid_without_a_table_width_keep_their_lines() {
-        // Word probe q4: without a tblW the same cells take their lines
-        // (the content autofit Word gives a grid it did not save). These
-        // cells have no tcW, so the grid already counted as another tool's
-        // before `rows_past_grid`.
-        // `rows_past_a_saved_grid_without_a_table_width_keep_their_lines_too`
-        // holds Word's own marks.
+        // Word probe q4: without a tblW the same cells take their lines.
+        // They did before `rows_past_grid` too, through the content fit of
+        // a grid another tool wrote; the rows-past-grid fill now comes
+        // first, and gives the same.
         let (em, fonts) = (mono_em(), fonts());
         let (cols, rows, geom) =
             mono_row_table("", &[3000, 3000], &PAST_GRID_TEXTS.map(|t| ("", t)));
@@ -63432,6 +63548,33 @@ mod complete_coordinate_layout_contract_tests {
             &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
             &[150.0 * s, 150.0 * s, 18.0 * s, 18.0 * s],
         );
+    }
+
+    #[test]
+    fn a_fixed_table_past_its_grid_gives_a_grid_before_column_no_width() {
+        // Word probes r3 and r7 (r60): fixed rows that open one 100pt grid
+        // column in and reach past the grid take 0, 100, 100 and 18pt,
+        // whatever their wBefore says.
+        let fonts = fonts();
+        for tr_pr in [
+            "<w:gridBefore w:val='1'/>",
+            "<w:gridBefore w:val='1'/><w:wBefore w:w='1000' w:type='dxa'/>",
+        ] {
+            let (cols, rows, geom) = mono_table(&format!(
+                "<w:tbl><w:tblPr><w:tblLayout w:type='fixed'/></w:tblPr><w:tblGrid>{}</w:tblGrid><w:tr><w:trPr>{tr_pr}</w:trPr>{}</w:tr></w:tbl>",
+                mono_grid(&[2000, 2000, 2000]),
+                mono_cells(
+                    &PAST_GRID_TEXTS[1..]
+                        .iter()
+                        .map(|t| ("", *t))
+                        .collect::<Vec<_>>()
+                )
+            ));
+            assert_widths(
+                &resolved_col_widths(&fonts, &cols, &rows, &geom, 468.0),
+                &[0.0, 100.0, 100.0, 18.0],
+            );
+        }
     }
 
     #[test]
