@@ -1308,14 +1308,16 @@ pub enum Command {
         /// resolved change (`rejected r0 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
-        /// Strike another author's insertion r12 (with -p r12): our tracked
-        /// deletion inside it, so the decision shows. --content is a comment
-        /// on the struck words.
+        /// Strike another author's insertion r12 (with -p r12; r10+11 for a
+        /// change of several marks, a replacement's insertion only): our
+        /// tracked deletion inside it, so the decision shows. --content is
+        /// one comment on the struck words.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         strike: Vec<bool>,
-        /// Restore another author's deletion r12 (with -p r12): their deletion
-        /// stays and our tracked insertion of its words follows it. --content
-        /// is a comment on the restored words.
+        /// Restore another author's deletion r12 (with -p r12; r10+11 for a
+        /// change of several marks, a replacement's deletion only): their
+        /// deletion stays and our tracked insertion of its words follows it.
+        /// --content is one comment on the restored words.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         restore: Vec<bool>,
         /// With --reject: strike each insertion and restore each deletion

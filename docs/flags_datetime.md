@@ -488,8 +488,8 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--rewrite-others-comments` |  |  | false |  |  | Let `-p c5 --content`, `--delete` and `--resolve` change a comment another author wrote (a reworded one keeps their name), and `--delete` take their reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one author answers another with --reply |
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
-| `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12): our tracked deletion inside it, so the decision shows. --content is a comment on the struck words |
-| `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12): their deletion stays and our tracked insertion of its words follows it. --content is a comment on the restored words |
+| `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12; r10+11 for a change of several marks, a replacement's insertion only): our tracked deletion inside it, so the decision shows. --content is one comment on the struck words |
+| `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12; r10+11 for a change of several marks, a replacement's deletion only): their deletion stays and our tracked insertion of its words follows it. --content is one comment on the restored words |
 | `--visible` |  |  |  |  | append | With --reject: strike each insertion and restore each deletion instead of removing the change without a trace |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |

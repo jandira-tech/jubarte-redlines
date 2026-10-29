@@ -298,7 +298,7 @@ fn composite<'a>(members: impl IntoIterator<Item = &'a Change>) -> String {
 
 /// The composite id of the marks `ids` names, in their order: every mark
 /// of a change is in one story, the first's.
-fn joined<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+pub(super) fn joined<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
     let mut story = None;
     let mut wids = Vec::new();
     for (s, wid) in ids.into_iter().filter_map(single) {
