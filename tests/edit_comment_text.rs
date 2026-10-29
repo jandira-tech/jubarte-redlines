@@ -9,7 +9,7 @@
 mod common;
 
 use common::docx::{docx, para, part_string};
-use common::validity::assert_word_valid_package;
+use common::validity::{assert_word_valid_package, check_word_valid_package};
 use jubarte::comments::list_comments;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::edit::{EditPlan, apply_plan};
@@ -756,4 +756,86 @@ fn a_comment_on_a_numbered_document_records_no_change() {
         nums(&source),
         "the source's lists, no more"
     );
+}
+
+/// A bench fixture under `tests/corpus`, by file name.
+fn bench_clean(name: &str) -> Vec<u8> {
+    std::fs::read(format!(
+        "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/{name}"
+    ))
+    .unwrap()
+}
+
+/// `plan` applied to `source`; its redline lists no change and adds no
+/// Ring-1 finding to the source's own.
+fn records_no_change(source: &[u8], json: &str, name: &str) -> Vec<u8> {
+    let edited = apply_plan(source, &plan(json)).unwrap();
+    let changes = jubarte::changes::list_changes(&edited.redline).unwrap();
+    assert!(changes.is_empty(), "{name}: {changes:?}");
+    assert_eq!(
+        check_word_valid_package(&edited.redline).errors,
+        check_word_valid_package(source).errors,
+        "{name}: the source's own findings, no more"
+    );
+    edited.redline
+}
+
+/// #1861: a comment edits nothing, whatever the document. Through the
+/// comparer, its normalizations came back as changes: a heading's spacing
+/// with its `lineRule` written out, the stylesheet merged (Normal took
+/// another font and size), a short paragraph before a page break written
+/// again.
+#[test]
+fn a_comment_records_no_change_on_any_document() {
+    for name in [
+        "00da16e738_heading_4_style_demo_id_paraid_overflow_2.docx",
+        "0b2a46481b_nested_table_rowspan.docx",
+        "6a65e5219d_24_id_paraid_overflow.docx",
+    ] {
+        let source = bench_clean(name);
+        let redline = records_no_change(
+            &source,
+            r#"{"schema_version":1,"author":"Probe","operations":[
+            {"kind":"comment","paragraph":"p0","text":"Probe note."}]}"#,
+            name,
+        );
+        assert_eq!(list_comments(&redline).unwrap().len(), 1, "{name}");
+    }
+}
+
+/// #1861: replying to a comment, resolving, rewording and deleting it
+/// edit nothing either.
+#[test]
+fn a_comment_thread_records_no_change() {
+    let name = "0b2a46481b_nested_table_rowspan.docx";
+    let commented = apply_plan(
+        &bench_clean(name),
+        &plan(
+            r#"{"schema_version":1,"author":"Probe","existing_revisions":"keep","operations":[
+            {"kind":"comment","paragraph":"p0","text":"Probe note."}]}"#,
+        ),
+    )
+    .unwrap()
+    .redline;
+    let replied = records_no_change(
+        &commented,
+        r#"{"schema_version":1,"author":"Probe","operations":[
+        {"kind":"reply_comment","comment_id":"c0","text":"A reply."},
+        {"kind":"resolve_comment","comment_id":"c0"}]}"#,
+        "reply and resolve",
+    );
+    assert_eq!(list_comments(&replied).unwrap().len(), 2);
+    records_no_change(
+        &commented,
+        r#"{"schema_version":1,"author":"Probe","operations":[
+        {"kind":"edit_comment","comment_id":"c0","text":"Reworded."}]}"#,
+        "edit",
+    );
+    let deleted = records_no_change(
+        &commented,
+        r#"{"schema_version":1,"author":"Probe","operations":[
+        {"kind":"delete_comment","comment_id":"c0"}]}"#,
+        "delete",
+    );
+    assert!(list_comments(&deleted).unwrap().is_empty());
 }
