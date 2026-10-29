@@ -408,3 +408,118 @@ fn a_paragraph_inserted_before_a_trailing_picture_leaves_its_start() {
         }
     }
 }
+
+/// The bookmark only the original holds. A paragraph inserted ahead of a
+/// textless one that is not the document's first is not a paragraph of the
+/// original's view, so the start stays in the textless paragraph.
+#[test]
+fn an_original_only_start_stays_out_of_a_paragraph_inserted_before_it() {
+    let build = |inserted: &str, bookmark: bool| {
+        let (start, end) = if bookmark {
+            (
+                r#"<w:bookmarkStart w:id="0" w:name="_Toc1"/>"#,
+                r#"<w:bookmarkEnd w:id="0"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        docx(&format!(
+            r#"{}{inserted}<w:p>{start}{TAB}{end}</w:p>{}{}"#,
+            para("Intro."),
+            para("Heading text"),
+            para("Body text.")
+        ))
+    };
+    let original = build("", true);
+    let revised = build(&para("Probe paragraph."), false);
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            assert_starts_in(
+                &docx,
+                "tab",
+                &format!("original only before, {mode}, {view}"),
+            );
+        }
+    }
+}
+
+/// The bookmark only the original holds. A paragraph the revised side
+/// inserts between the last text and the trailing picture is not a
+/// paragraph of the original's view, so the start stays in the picture.
+#[test]
+fn an_original_only_start_stays_out_of_a_paragraph_inserted_before_the_picture() {
+    let build = |inserted: &str, bookmark: bool| {
+        let (start, end) = if bookmark {
+            (
+                r#"<w:bookmarkStart w:id="0" w:name="_Toc1"/>"#,
+                r#"<w:bookmarkEnd w:id="0"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        vml_docx(&format!(
+            r#"{}{}{inserted}<w:p>{start}{PICTURE}{end}</w:p>"#,
+            para("Intro."),
+            para("Heading text")
+        ))
+    };
+    let original = build("", true);
+    let revised = build(&para("Probe paragraph."), false);
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            assert_starts_in(
+                &docx,
+                "pict",
+                &format!("original only insert, {mode}, {view}"),
+            );
+        }
+    }
+}
+
+/// Both documents bookmark the trailing picture. The original has one more
+/// paragraph before it, which the revised side deletes. The start is placed
+/// from the revised view and stays in the picture.
+#[test]
+fn a_paragraph_deleted_before_a_trailing_picture_leaves_its_start() {
+    let build = |extra: &str| {
+        vml_docx(&format!(
+            r#"{}{}{extra}<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/>{PICTURE}<w:bookmarkEnd w:id="0"/></w:p>"#,
+            para("Intro."),
+            para("Heading text")
+        ))
+    };
+    let (original, revised) = (build(&para("Gone paragraph.")), build(""));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        assert!(
+            part_string(&redline, "word/document.xml")
+                .unwrap()
+                .contains("<w:del "),
+            "{mode}: the deletion is marked"
+        );
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            assert_starts_in(
+                &docx,
+                "pict",
+                &format!("deleted before picture, {mode}, {view}"),
+            );
+        }
+    }
+}

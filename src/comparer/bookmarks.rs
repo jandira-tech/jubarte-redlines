@@ -288,10 +288,11 @@ fn map_point(src: &[char], merged: &[char], o: usize, hint: usize, after: bool) 
 
 /// Move a start placed by its text offset to the paragraph without text it
 /// leads in its source, `gap` paragraphs from the one it was put in.
-/// Paragraphs count on this side's view of the redline, where a paragraph
-/// ends at a mark on that side (a mark of the other side joins it to the
-/// next); `paragraphs` lists the redline's paragraphs in document order. An
-/// empty range's `end` follows its start.
+/// Paragraphs count on this side's view of the redline. A paragraph whose
+/// mark belongs to the other side is in the redline but not in that view,
+/// so it is neither a step nor where the start lands. `paragraphs` lists
+/// the redline's paragraphs in document order. An empty range's `end`
+/// follows its start.
 fn to_textless_paragraph(
     dom: &mut Dom,
     paragraphs: &[NodeId],
@@ -306,37 +307,25 @@ fn to_textless_paragraph(
         return;
     };
     let on_side = |&i: &usize| mark_on_side(dom, paragraphs[i], b_side);
-    // The paragraph after a mark on this side opens a paragraph of the view.
+    // `gap` paragraphs of this side from the one the offset landed in.
     let target = match gap {
         Textless::Back(gap) => {
-            // The mark `gap` view paragraphs back, or none when exactly
-            // `gap` marks precede: then the view's first paragraph.
-            let mut seen = 0;
-            let mut mark = None;
-            for i in (0..at).rev().filter(on_side) {
-                if seen == gap {
-                    mark = Some(i);
-                    break;
-                }
-                seen += 1;
-            }
-            match mark {
-                Some(mark) => paragraphs[mark + 1],
-                None if seen == gap => paragraphs[0],
-                None => return,
-            }
-        }
-        Textless::Forward(gap) => {
-            let Some(mark) = gap
+            let Some(idx) = gap
                 .checked_sub(1)
-                .and_then(|k| (at..paragraphs.len()).filter(on_side).nth(k))
+                .and_then(|k| (0..at).rev().filter(on_side).nth(k))
             else {
                 return;
             };
-            let Some(&target) = paragraphs.get(mark + 1) else {
+            paragraphs[idx]
+        }
+        Textless::Forward(gap) => {
+            let Some(idx) = gap
+                .checked_sub(1)
+                .and_then(|k| (at + 1..paragraphs.len()).filter(on_side).nth(k))
+            else {
                 return;
             };
-            target
+            paragraphs[idx]
         }
     };
     dom.remove(start);
