@@ -1496,7 +1496,7 @@ fn record_revised_row_cell_props(
     // A row's exceptions are the revision's too (#1869).
     if aname == W::tr() {
         if ancestor != new {
-            let ex_name = W::name("tblPrEx");
+            let ex_name = W::tbl_pr_ex();
             for hoisted in dom.elements(ne, Some(&ex_name)) {
                 dom.remove(hoisted);
             }
@@ -1579,7 +1579,7 @@ fn record_revised_row_exceptions(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let ex_name = W::name("tblPrEx");
+    let ex_name = W::tbl_pr_ex();
     let signature = |dom: &Dom, ex: Option<NodeId>| {
         ex.map_or_else(String::new, |ex| {
             children_signature(dom, ex, "tblPrExChange")
@@ -1596,7 +1596,7 @@ fn record_revised_row_exceptions(
         ex
     });
     // One record per row (CT_TblPrEx): the source's own gives way.
-    for c in dom.elements(live, Some(&W::name("tblPrExChange"))) {
+    for c in dom.elements(live, Some(&W::tbl_pr_ex_change())) {
         dom.remove(c);
     }
     let previous = dom.new_element(ex_name);
@@ -1611,7 +1611,7 @@ fn record_revised_row_exceptions(
             }
         }
     }
-    let change = dom.new_element(W::name("tblPrExChange"));
+    let change = dom.new_element(W::tbl_pr_ex_change());
     dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
     dom.set_attribute_value(change, &W::author(), Some(&settings.author_for_revisions));
@@ -1912,7 +1912,7 @@ fn children_signature(dom: &Dom, n: NodeId, change: &str) -> String {
 }
 /// Put a row's `trPr` after its `tblPrEx`, a cell's `tcPr` first.
 fn place_row_cell_props(dom: &mut Dom, container: NodeId, pr: NodeId) {
-    match dom.element(container, &W::name("tblPrEx")) {
+    match dom.element(container, &W::tbl_pr_ex()) {
         Some(ex) => dom.add_after_self(ex, pr),
         None => dom.add_first(container, pr),
     }

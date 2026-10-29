@@ -223,6 +223,8 @@ impl W {
     cached_xname!(W::URI, tc, "tc");
     cached_xname!(W::URI, tc_pr, "tcPr");
     cached_xname!(W::URI, tbl_pr, "tblPr");
+    cached_xname!(W::URI, tbl_pr_ex, "tblPrEx");
+    cached_xname!(W::URI, tbl_pr_ex_change, "tblPrExChange");
     cached_xname!(W::URI, tr_pr, "trPr");
     cached_xname!(W::URI, grid_span, "gridSpan");
     // The schema-hygiene pass: a table grid's columns and their `w:type`,
