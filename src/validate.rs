@@ -3407,7 +3407,7 @@ fn story_part(id: &str) -> String {
 /// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
 /// Another author's comment that is gone, reworded, resolved or reopened,
 /// and a new comment or reply not signed `author`, is a `FOREIGN_COMMENT`
-/// finding.
+/// finding (`check_foreign_comments`).
 ///
 /// # Errors
 ///
