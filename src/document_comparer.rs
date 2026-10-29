@@ -7338,16 +7338,18 @@ fn compare_documents_impl(
             (None, Some(from_xml)) if !is_styles || settings.preserve_untouched => {
                 let kind = if is_styles { "styles" } else { "numbering" };
                 out.set_part(part, from_xml.into_bytes());
+
+                let ct_type = format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml");
                 out.add_content_type_override(
                     &format!("/{part}"),
-                    &format!(
-                        "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
-                    ),
+                    &ct_type,
                 );
+
+                let rel_suffix = format!("/{kind}");
                 let has_rel = out.read_rels_for(&main1).is_some_and(|r| {
                     r.items
                         .iter()
-                        .any(|i| i.rel_type.ends_with(&format!("/{kind}")))
+                        .any(|i| i.rel_type.ends_with(&rel_suffix))
                 });
                 if !has_rel {
                     out.add_document_relationship(
