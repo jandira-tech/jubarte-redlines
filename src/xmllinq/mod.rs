@@ -1347,6 +1347,7 @@ impl Dom {
     /// `serialize_element(el).replacen(WML_DEFAULT_XMLNS, "", 1)` without
     /// materializing the full XML string. Used by the atom-hash stream
     /// (HASH-STREAM).
+    #[must_use]
     pub fn serialize_element_sha1_hex(&self, el: NodeId) -> String {
         serialize::serialize_element_sha1_hex(self, el)
     }
@@ -1355,11 +1356,13 @@ impl Dom {
     /// element nesting, no text / comment / PI children, with the same
     /// first-WML-default-xmlns strip as [`Self::serialize_element_sha1_hex`].
     /// HASH-STREAM-02.
+    #[must_use]
     pub fn serialize_element_structure_sha1_hex(&self, el: NodeId) -> String {
         serialize::serialize_element_structure_sha1_hex(self, el)
     }
     /// Serialize a whole document (declaration + children) to a string.
     /// See [`serialize::serialize_document`].
+    #[must_use]
     pub fn serialize_document(&self, doc: NodeId) -> String {
         serialize::serialize_document(self, doc)
     }
