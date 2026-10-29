@@ -6571,6 +6571,7 @@ fn compare_documents_impl(
         )
         .map_err(crate::opc::refused)?;
         if settings.merge_replaced_paragraphs
+            && !settings.preserve_untouched
             && docx_has_tracked_changes(&owned, settings.input_limits)
         {
             owned = accept_source_revisions(&owned, settings.input_limits)?;
@@ -6622,8 +6623,11 @@ fn compare_documents_impl(
     // packages first (Word Compare of *finals*). Without this, stamp/re-emit of
     // pre-existing TC drowns real moves and inflates ins/del (broken_ones_two
     // file_8_file_9 37→56, file_27_file_28 38→61 with accept-then). PowerTools
-    // faithful leaves inputs as-is.
+    // faithful leaves inputs as-is. So does an edit (`preserve_untouched`):
+    // its plan settled the revisions it resolves, and those left (a style's
+    // record) are the source's to keep, untidied (#1885).
     if settings.merge_replaced_paragraphs
+        && !settings.preserve_untouched
         && (docx_has_tracked_changes(&original_owned, settings.input_limits)
             || docx_has_tracked_changes(&modified_owned, settings.input_limits))
     {
