@@ -970,6 +970,20 @@ impl Dom {
         }
     }
 
+    /// ⚡ Bolt: Sorts attributes in-place to avoid heavy allocations during canonicalization.
+    pub fn sort_attributes(&mut self, id: NodeId) {
+        let attrs = &mut self.data_mut(id).attrs;
+        if attrs.len() < 2 {
+            return;
+        }
+        attrs.sort_by(|a, b| {
+            a.name
+                .local_name()
+                .cmp(b.name.local_name())
+                .then_with(|| a.name.namespace_name().cmp(b.name.namespace_name()))
+        });
+    }
+
     /// Add or update an attribute. Passing `Some(value)` inserts the
     /// attribute when missing or replaces its value when present;
     /// `None` removes any matching attribute. Matches the TS
