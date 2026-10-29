@@ -86,7 +86,7 @@ fn is_run_status_carrier(dom: &Dom, d: NodeId) -> bool {
             n == W::t()
                 || n == W::del_text()
                 || ALLOWABLE_RUN_CHILDREN.contains(&n)
-                || n == MC::name("AlternateContent")
+                || n == MC::alternate_content()
                 || n == W::pict()
                 || n == W::name("object")
         }
@@ -864,7 +864,7 @@ pub fn ignore_pt14_namespace(dom: &mut Dom, root: NodeId) {
     if dom.attribute(root, &pt14).is_none() {
         dom.set_attribute_value(root, &pt14, Some(PT::URI));
     }
-    let ignorable = MC::name("Ignorable");
+    let ignorable = MC::ignorable();
     let cur = dom.attribute(root, &ignorable).unwrap_or("").to_string();
     let mut toks: Vec<&str> = cur.split_whitespace().collect();
     if !toks.contains(&"pt14") {
@@ -963,7 +963,7 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
     if !used.contains(&true) {
         return;
     }
-    let ignorable = MC::name("Ignorable");
+    let ignorable = MC::ignorable();
     let mut tokens: Vec<String> = dom
         .attribute(root, &ignorable)
         .unwrap_or("")
@@ -1310,7 +1310,7 @@ pub(crate) fn resolve_alternate_content_with(
     root: NodeId,
     understood: fn(&str) -> bool,
 ) {
-    for ac in dom.descendants_and_self(root, Some(&MC::name("AlternateContent"))) {
+    for ac in dom.descendants_and_self(root, Some(&MC::alternate_content())) {
         // A nested AltContent inside a discarded Fallback may already be detached.
         if dom.parent(ac).is_none() {
             continue;
@@ -1345,10 +1345,10 @@ pub(crate) fn resolve_alternate_content_with(
         // requirement for a vocabulary the document never declares, and Word
         // passes over one it declares but does not know (#1876).
         let src = dom
-            .elements(ac, Some(&MC::name("Choice")))
+            .elements(ac, Some(&MC::choice()))
             .into_iter()
             .find(|&choice| choice_requires_understood(dom, choice, understood))
-            .or_else(|| dom.element(ac, &MC::name("Fallback")));
+            .or_else(|| dom.element(ac, &MC::fallback()));
         if let Some(src) = src {
             let kids = dom.nodes(src);
             dom.replace_with(ac, &kids);
@@ -11738,7 +11738,7 @@ pub fn mark_fully_revised_rows(
                                                 ALLOWABLE_RUN_CHILDREN.contains(&name)
                                                     || name == W::object()
                                                     || name == W::pict()
-                                                    || name == MC::name("AlternateContent")
+                                                    || name == MC::alternate_content()
                                                     || name == W::name("fldSimple")
                                             })
                                         }))
@@ -16091,7 +16091,7 @@ mod coverage_tests {
             resolve_alternate_content(&mut dom, root);
             assert_eq!(text(&dom, root, &W::t()), expected);
             assert_eq!(
-                dom.descendants(root, Some(&MC::name("AlternateContent")))
+                dom.descendants(root, Some(&MC::alternate_content()))
                     .is_empty(),
                 resolved
             );
@@ -24791,7 +24791,7 @@ mod coverage_final_batch_finalize_tests {
                         );
                     }
                     if already_ignorable {
-                        dom.set_attribute_value(root, &MC::name("Ignorable"), Some("legacy w14"));
+                        dom.set_attribute_value(root, &MC::ignorable(), Some("legacy w14"));
                     }
                     let p = dom.new_element(if placement == "element" {
                         W14::name("paraId")
@@ -24812,7 +24812,7 @@ mod coverage_final_batch_finalize_tests {
                         })
                     );
                     let tokens = dom
-                        .attribute(root, &MC::name("Ignorable"))
+                        .attribute(root, &MC::ignorable())
                         .unwrap_or("")
                         .split_whitespace()
                         .collect::<Vec<_>>();
@@ -26299,7 +26299,7 @@ mod coverage_real_revision_merge_matrix_tests {
                     }),
                 "complete public projections contain no PowerTools scratch payload"
             );
-            let ignorable = MC::name("Ignorable");
+            let ignorable = MC::ignorable();
             if dom.attribute(root, &ignorable) == Some("pt14") {
                 dom.set_attribute_value(root, &ignorable, None);
             }
