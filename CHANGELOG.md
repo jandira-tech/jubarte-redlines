@@ -59,6 +59,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - **A paragraph between two deleted tables stays between them in Word mode** (#1826). When a revision replaced a body of `table, paragraph, table` with new text, the default mode moved the original's middle paragraph, carrying the new text, ahead of the first table. That left the two deleted tables adjacent, and `jubarte reject` fused them into one table. The paragraph now keeps its place between the tables, as in Word's redline, and rejecting gives the original's two tables back. The new text stays on that paragraph, where Word puts it in a paragraph of its own ahead of the first table (docs/WORD_DIFFERENCES.md).
 - **Review follow-ups to the fixes above.** These are from the bots' reviews of their PRs.
   - A bookmark that starts a paragraph with no text after the document's last text, such as a final picture, now starts there too. It used to start after the last text before it.
+  - A paragraph the other side inserted or deleted no longer takes a textless bookmark's start. The count stays on this side's paragraphs, in both modes, so Accept All and Reject All still start it on the picture or the tab.
   - A text box drawn before such a start no longer takes the start into the box (#1880).
   - The footer move leaves a footer part alone when one of its slots must stay: a part shared with a slot an earlier section sets moves whole or not at all.
   - A first-page footer moves only to a final section that shows first pages (`w:titlePg`) (#1833).

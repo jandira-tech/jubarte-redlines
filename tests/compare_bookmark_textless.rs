@@ -523,3 +523,34 @@ fn a_paragraph_deleted_before_a_trailing_picture_leaves_its_start() {
         }
     }
 }
+
+/// Both documents bookmark the tab. The original has one more paragraph
+/// ahead of it, which the revised side deletes. The start is placed from
+/// the revised view and stays on the tab.
+#[test]
+fn a_paragraph_deleted_before_a_textless_tab_leaves_its_start() {
+    let original = package(
+        TAB,
+        &format!("{}{}", para("Intro."), para("Gone paragraph.")),
+        "",
+        true,
+    );
+    let revised = package(TAB, &para("Intro."), "", true);
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        assert!(
+            part_string(&redline, "word/document.xml")
+                .unwrap()
+                .contains("<w:del "),
+            "{mode}: the deletion is marked"
+        );
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            assert_starts_in(&docx, "tab", &format!("deleted before tab, {mode}, {view}"));
+        }
+    }
+}
