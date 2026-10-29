@@ -349,19 +349,23 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
     let moving: Vec<_> = inherited
         .into_iter()
         .filter(|(slot, (sect, _, part))| {
+            // The section that sets the slot last; every earlier section
+            // from it on shows its story.
+            let at = earlier.iter().position(|s| s == sect).unwrap_or(0);
             // Rejected, the breaks that lose the reference show the slot of
             // the section before them: another section's story when one
-            // sets it (the trusts' exhibit labels). Only an unset slot, a
-            // blank, moves.
-            let shadowed = earlier_references
+            // sets it (the trusts' exhibit labels), even between two that
+            // set this one. Only an unset slot, a blank, moves.
+            let shadowed = earlier_references[..at]
                 .iter()
-                .take_while(|refs| !refs.iter().any(|(_, s, p)| s == slot && p == part))
-                .any(|refs| refs.iter().any(|(_, s, _)| s == slot));
+                .flatten()
+                .any(|(_, s, p)| s == slot && p != part);
             // A first-page story shows only in a section with `w:titlePg`:
-            // moved to a final section without it, the source section's
-            // first pages would lose it and no page would show it.
-            let first_unshown =
-                slot.1 == "first" && title_page(dom, *sect) && !title_page(dom, last);
+            // moved to a final section without it, the first pages of the
+            // sections that show it would lose it and no page would show it.
+            let first_unshown = slot.1 == "first"
+                && earlier[at..].iter().any(|&s| title_page(dom, s))
+                && !title_page(dom, last);
             !(set.contains(slot)
                 || shadowed
                 || first_unshown
@@ -10181,6 +10185,69 @@ mod coverage_boundary_tests {
         assert_eq!(moved(&pkg, &body("<w:titlePg/>", "<w:titlePg/>")), goes);
         assert_eq!(moved(&pkg, &body("", "")), goes);
         assert_eq!(moved(&pkg, &body("<w:titlePg w:val='false'/>", "")), goes);
+    }
+
+    /// Review of the #1842 follow-up: a later deleted break that inherits the
+    /// first-page slot and shows first pages shows the footer too, so it
+    /// stays where the final section cannot show it.
+    #[test]
+    fn a_first_page_footer_an_inheriting_break_shows_stays() {
+        let (pkg, [first, _, _]) = page_footers();
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='first' r:id='{first}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:titlePg/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        assert_eq!(
+            moved(&pkg, &body),
+            [vec![footer("first", &first)], vec![], vec![]]
+        );
+        // A break that sets the slot itself hides the earlier one's.
+        let (_, [_, other, _]) = page_footers();
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='first' r:id='{first}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='first' r:id='{other}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:titlePg/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        assert_eq!(
+            moved(&pkg, &body),
+            [
+                vec![footer("first", &first)],
+                vec![footer("first", &other)],
+                vec![],
+                vec![],
+            ]
+        );
+    }
+
+    /// Review of the #1842 follow-up: a slot set to the part, then to
+    /// another part, then to the part again. Moved, Reject All would show
+    /// the other part on the last break's pages: the part stays.
+    #[test]
+    fn a_slot_another_part_sets_in_between_stays() {
+        let (pkg, [part, other, _]) = page_footers();
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{part}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{other}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{part}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        assert_eq!(
+            moved(&pkg, &body),
+            [
+                vec![footer("default", &part)],
+                vec![footer("default", &other)],
+                vec![footer("default", &part)],
+                vec![],
+            ]
+        );
     }
 
     /// codex on #1842: the closing paragraph's PAGE code split across runs

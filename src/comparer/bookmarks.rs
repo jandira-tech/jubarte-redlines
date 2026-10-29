@@ -236,11 +236,15 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
         let next = text_paragraphs.partition_point(|&(at, _)| at < m.start);
         m.textless = match text_paragraphs.get(next) {
             Some(&(_, holder)) => (holder > opened).then(|| Textless::Back(holder - opened)),
-            // No text follows: the offset lands in the last text's paragraph.
-            None => text_paragraphs
-                .last()
-                .filter(|&&(_, holder)| opened > holder)
-                .map(|&(_, holder)| Textless::Forward(opened - holder)),
+            // No text follows: the offset lands in the last text's paragraph,
+            // before the start's (forward) or in a text box it draws (back).
+            None => text_paragraphs.last().and_then(|&(_, holder)| {
+                if opened > holder {
+                    Some(Textless::Forward(opened - holder))
+                } else {
+                    (holder > opened).then(|| Textless::Back(holder - opened))
+                }
+            }),
         };
     }
     markers.sort_by_key(|m| m.start);

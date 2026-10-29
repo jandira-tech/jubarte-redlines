@@ -331,3 +331,47 @@ fn a_text_box_before_the_start_does_not_take_it() {
         }
     }
 }
+
+/// With no text after the start, the last text may sit in a text box the
+/// start's own paragraph draws: the start stays in that paragraph, not in
+/// the box.
+#[test]
+fn a_last_paragraph_drawing_a_text_box_keeps_its_start() {
+    let build = |intro: &str| {
+        vml_docx(&format!(
+            r#"{}<w:p>{TEXT_BOX}<w:bookmarkStart w:id="0" w:name="_Toc1"/>{TAB}<w:bookmarkEnd w:id="0"/></w:p>"#,
+            para(intro)
+        ))
+    };
+    let (original, revised) = (build("Intro."), build("Intro, changed."));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            let xml = part_string(&docx, "word/document.xml").unwrap();
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc).unwrap();
+            let start = dom
+                .descendants(root, Some(&W::name("bookmarkStart")))
+                .into_iter()
+                .find(|&s| dom.attribute(s, &W::name("name")) == Some("_Toc1"))
+                .unwrap_or_else(|| panic!("{mode}, {view}: no _Toc1: {xml}"));
+            assert!(
+                dom.ancestors(start, Some(&W::name("txbxContent")))
+                    .is_empty(),
+                "{mode}, {view}: the start went into the text box: {xml}"
+            );
+            let p = dom.ancestors(start, Some(&W::p()))[0];
+            assert!(
+                !dom.descendants(p, Some(&W::name("txbxContent"))).is_empty(),
+                "{mode}, {view}: the start left the box's paragraph: {}",
+                dom.serialize_element(p)
+            );
+        }
+    }
+}
