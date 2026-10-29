@@ -214,6 +214,8 @@ impl W {
     cached_xname!(W::URI, author, "author");
     cached_xname!(W::URI, date, "date");
     cached_xname!(W::URI, val, "val");
+    cached_xname!(W::URI, abstract_num, "abstractNum");
+    cached_xname!(W::URI, abstract_num_id, "abstractNumId");
     // NAME-01b: table / field / bookmark locals hit on every hash-clone walk.
     cached_xname!(W::URI, tbl, "tbl");
     cached_xname!(W::URI, tr, "tr");

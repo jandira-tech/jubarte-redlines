@@ -348,12 +348,12 @@ fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> Str
 /// paragraphs alike.
 fn list_signature(dom: &mut Dom, num: NodeId, numbering: NodeId) -> Option<String> {
     let reference = dom
-        .element(num, &W::name("abstractNumId"))
+        .element(num, &W::abstract_num_id())
         .and_then(|e| get_int_attribute(dom, e, &W::val()))?;
     let definition = dom
-        .elements(numbering, Some(&W::name("abstractNum")))
+        .elements(numbering, Some(&W::abstract_num()))
         .into_iter()
-        .find(|&e| get_int_attribute(dom, e, &W::name("abstractNumId")) == Some(reference))?;
+        .find(|&e| get_int_attribute(dom, e, &W::abstract_num_id()) == Some(reference))?;
     let overrides: String = dom
         .elements(num, Some(&W::name("lvlOverride")))
         .into_iter()
@@ -430,8 +430,8 @@ pub fn copy_missing_numbering(
         // content match against the CURRENT destination (grows as we copy),
         // the same id first: identical definitions are separate lists, and
         // one matched to another's id moves its nums to fresh ids (#1850)
-        let mut to_ans: Vec<NodeId> = dom.elements(to_root, Some(&abstract_num));
-        to_ans.sort_by_key(|&e| get_int_attribute(dom, e, &abstract_num_id) != Some(from_id));
+        let mut to_ans: Vec<NodeId> = dom.elements(to_root, Some(&W::abstract_num()));
+        to_ans.sort_by_key(|&e| get_int_attribute(dom, e, &W::abstract_num_id()) != Some(from_id));
         let mut matching: Option<NodeId> = None;
         for e in to_ans {
             if normalized_abstract_num_signature(dom, e) == normalized_from {
