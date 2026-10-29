@@ -104,6 +104,20 @@ pub fn element_has_tracked_revisions(dom: &Dom, root: NodeId) -> bool {
     walk(dom, root)
 }
 
+/// True if `xml` opens a `w:` element named in `TRACKED_REVISION_LOCALS`:
+/// the byte-level twin of [`element_has_tracked_revisions`]. It matches
+/// whole names, so a field's `<w:instrText>` and a table's `<w:insideH>`
+/// are not a `<w:ins>` (#1870).
+pub(crate) fn xml_has_tracked_revisions(xml: &str) -> bool {
+    xml.match_indices("<w:").any(|(at, open)| {
+        let rest = &xml[at + open.len()..];
+        let end = rest
+            .find(|c: char| c.is_ascii_whitespace() || c == '>' || c == '/')
+            .unwrap_or(rest.len());
+        TRACKED_REVISION_LOCAL_SET.contains(&rest[..end])
+    })
+}
+
 /// Does `el` have a child element named `local` (in the W namespace)?
 fn has_child(dom: &Dom, el: NodeId, name: &XName) -> bool {
     dom.element(el, name).is_some()
