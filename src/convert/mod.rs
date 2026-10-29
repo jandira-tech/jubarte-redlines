@@ -18271,7 +18271,7 @@ fn shape_roots(dom: &Dom, node: NodeId) -> Vec<NodeId> {
 }
 
 fn shape_roots_rec(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
-    if dom.name_is(node, &MC::name("AlternateContent")) {
+    if dom.name_is(node, &MC::alternate_content()) {
         if let Some(chosen) = alternate_choice(dom, node) {
             shape_roots_rec(dom, chosen, out);
         }
@@ -18296,8 +18296,8 @@ fn shape_roots_rec(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
 /// first `mc:Choice` whose `Requires` it understands
 /// ([`renderer_understands_namespace`]), else the `mc:Fallback`.
 fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    let choice = MC::name("Choice");
-    let fallback = MC::name("Fallback");
+    let choice = MC::choice();
+    let fallback = MC::fallback();
     let mut fb = None;
     for i in 0..dom.child_count(node) {
         let child = dom.child_at(node, i);
@@ -18771,7 +18771,7 @@ fn collect_images(
             }
             if had_drawing
                 && !dom
-                    .ancestors(root, Some(&MC::name("AlternateContent")))
+                    .ancestors(root, Some(&MC::alternate_content()))
                     .is_empty()
             {
                 continue;
@@ -18780,7 +18780,7 @@ fn collect_images(
             // elsewhere (00f49849's header text box painted as a 131x337pt
             // picture, its logo twice).
             if inside_text_box(dom, root, para)
-                || !dom.ancestors(root, Some(&MC::name("Fallback"))).is_empty()
+                || !dom.ancestors(root, Some(&MC::fallback())).is_empty()
             {
                 continue;
             }
@@ -21585,7 +21585,7 @@ fn renderer_understands_namespace(uri: &str) -> bool {
 /// Drawing wrappers stay for [`alternate_choice`]. A part is rewritten only
 /// when a wrapper went.
 fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
-    let wrapper = MC::name("AlternateContent");
+    let wrapper = MC::alternate_content();
     let mut parts = vec![main.to_string()];
     parts.extend(story_part_names(pkg, main));
     for part in parts {
