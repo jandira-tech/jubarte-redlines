@@ -666,21 +666,19 @@ fn text_selection(
     paragraph_nodes: &[NodeId],
 ) -> Result<HashSet<usize>, EditError> {
     let matcher: Box<dyn Fn(&str) -> bool> = if let Some(find) = &request.find {
-        if request.ignore_case {
-            // OPTIMIZATION: precompile case-insensitive match via regex to avoid per-paragraph string allocation `text.to_lowercase()`
-            let pattern = format!("(?i){}", regex::escape(find));
-            let compiled = regex::Regex::new(&pattern).map_err(|e| {
-                super::err(
-                    "USAGE",
-                    None,
-                    format!("--find regex compilation failed internally: {e}"),
-                )
-            })?;
-            Box::new(move |text: &str| compiled.is_match(text))
+        let needle = if request.ignore_case {
+            find.to_lowercase()
         } else {
-            let needle = find.clone();
-            Box::new(move |text: &str| text.contains(&needle))
-        }
+            find.clone()
+        };
+        let ignore_case = request.ignore_case;
+        Box::new(move |text: &str| {
+            if ignore_case {
+                text.to_lowercase().contains(&needle)
+            } else {
+                text.contains(&needle)
+            }
+        })
     } else {
         let pattern = request.regex.as_deref().unwrap_or("");
         let pattern = if request.ignore_case {
