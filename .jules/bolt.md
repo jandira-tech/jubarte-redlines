@@ -1,0 +1,3 @@
+## 2024-10-29 - [O(N) String Allocations in Document AST Processing]
+ **Learning:** [When dealing with large text AST structures (like `LegacyDocument`), eagerly collecting or concatenating text from `Paragraph` spans and `Table` cells into temporary `Vec<String>` structures for simple substring existence checks creates massive O(N) memory allocation overhead. This pattern scales poorly linearly with document size and tanks performance.]
+ **Action:** [Instead of using eager combinators like `.cloned().collect()` on large strings, utilize Rust iterators with short-circuiting methods (`.any()`, `.all()`, `.find()`) to perform lazy evaluation directly against the raw string slices in the AST, avoiding intermediate heap allocations.]
