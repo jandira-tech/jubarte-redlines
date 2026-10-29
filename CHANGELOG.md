@@ -15,6 +15,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-29
+
 ### Breaking
 
 - **`jubarte::debug::Check` gains `Tables`** (#1817). A Rust `match` on `Check` without a wildcard arm needs one for it.
@@ -4790,6 +4792,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.15.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.15.0
 [0.14.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.14.0
 [0.13.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.13.0
 [0.12.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.12.0
