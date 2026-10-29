@@ -563,12 +563,23 @@ those row lifetimes too before #1817, outside five observed free-mesh routes,
 and Word 16.115 would not open the deleted rows they wrote for the w04 and
 w23 fixtures.
 
-Word's mesh differs from jubarte's in three ways:
+Word's mesh differs from jubarte's in four ways:
 
 - Word derives new grid columns so the recorded spans fit (`i02a`: an
   authored `3120,6240` recorded as `3118,1667,4565`); jubarte keeps both
   authored grids and trims the spans that would overflow them, from the last
   cell back.
+- Word lays the live grid out again whenever a cell of the original joins a
+  row of the revision. A fixed table that declares a width in twips gets
+  that width split evenly, even where the revision's grid already has the
+  columns: `4000,5809` became `4905,4904`. An autofit table gets it split by
+  its content (`4544,5265`). A fixed table without a width takes its cells'
+  widths (`9809,9809`, wider than the page). A percentage also counts the
+  cells' side margins. jubarte rebuilds only a grid with fewer columns than
+  the row, and splits the declared width evenly whatever the layout, or the
+  text width when there is none, without the margins (#1914, Word 16.115
+  probes in `jubarte-loop/fix23/r55/syn`). Both sides now keep the declared
+  width and give the original's cell the revision's cell properties.
 - Word records `tblPrChange` and `tblGridChange` on 20 of the 21 tables, even
   when neither changed; jubarte records them only when they changed.
 - Word pairs the cells of a row by their text when a column is added in the
