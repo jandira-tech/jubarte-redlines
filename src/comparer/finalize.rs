@@ -1293,12 +1293,23 @@ pub fn coalesce_adjacent_runs(dom: &mut Dom, container: NodeId) -> NodeId {
 /// fallbacks (DrawingML `Choice` + VML `Fallback`). Opaque run-children
 /// (`mc:AlternateContent`, `w:pict`, `w:object`) atomize as a single
 /// unit and so are kept verbatim. The MCE rule picks the first
-/// `mc:Choice` whose `@Requires` namespaces the document actually
-/// declares, falling back to `mc:Fallback`.
+/// `mc:Choice` whose `@Requires` namespaces Word understands
+/// (`choice_requires_understood`), falling back to `mc:Fallback`.
 ///
 /// Run on both inputs before diffing so an AltContent run-child on one
 /// side does not become a "unreadable content" repair target.
 pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
+    resolve_alternate_content_with(dom, root, word_understands_namespace);
+}
+
+/// [`resolve_alternate_content`] for a consumer that understands the
+/// namespaces `understood` accepts: the renderer cannot draw every Choice
+/// Word can (#1876).
+pub(crate) fn resolve_alternate_content_with(
+    dom: &mut Dom,
+    root: NodeId,
+    understood: fn(&str) -> bool,
+) {
     for ac in dom.descendants_and_self(root, Some(&MC::name("AlternateContent"))) {
         // A nested AltContent inside a discarded Fallback may already be detached.
         if dom.parent(ac).is_none() {
@@ -1330,12 +1341,13 @@ pub fn resolve_alternate_content(dom: &mut Dom, root: NodeId) {
         // to content Word would never keep when the first Choice gates on a
         // namespace this document doesn't even bind, or when a later Choice/Fallback
         // is the one Word selects. "Understood" here means every prefix in
-        // `@Requires` resolves to an in-scope `xmlns:*` declaration — you cannot
-        // satisfy a requirement for a vocabulary the document never declares.
+        // `@Requires` is bound to a namespace Word knows: you cannot satisfy a
+        // requirement for a vocabulary the document never declares, and Word
+        // passes over one it declares but does not know (#1876).
         let src = dom
             .elements(ac, Some(&MC::name("Choice")))
             .into_iter()
-            .find(|&choice| choice_requires_understood(dom, choice))
+            .find(|&choice| choice_requires_understood(dom, choice, understood))
             .or_else(|| dom.element(ac, &MC::name("Fallback")));
         if let Some(src) = src {
             let kids = dom.nodes(src);
@@ -1472,17 +1484,50 @@ pub fn unwrap_content_controls_in_pure_revisions(dom: &mut Dom, root: NodeId) {
     }
 }
 
-/// True if every namespace prefix listed in a `mc:Choice`'s `@Requires` is bound by
-/// an in-scope `xmlns:*` declaration. An absent/empty `@Requires` is vacuously true
-/// (the schema requires it, but be lenient). The `@Requires` attribute is unprefixed
-/// (no namespace) per the MCE schema.
-fn choice_requires_understood(dom: &Dom, choice: NodeId) -> bool {
+/// True if every namespace prefix listed in a `mc:Choice`'s `@Requires` is bound,
+/// where it is named, to a namespace `understood` accepts (Word's:
+/// [`word_understands_namespace`]). Word 16 passes over a Choice gated on a
+/// namespace it does not know, though the document declares it, for the next
+/// Choice, else the Fallback (#1876, probed). An absent/empty `@Requires` is
+/// vacuously true (the schema requires it, but be lenient). The `@Requires`
+/// attribute is unprefixed (no namespace) per the MCE schema.
+pub(crate) fn choice_requires_understood(
+    dom: &Dom,
+    choice: NodeId,
+    understood: fn(&str) -> bool,
+) -> bool {
     let Some(requires) = dom.attribute(choice, &XNamespace::none().name("Requires")) else {
         return true;
     };
     requires
         .split_whitespace()
-        .all(|prefix| prefix_in_scope(dom, choice, prefix))
+        .all(|prefix| prefix_namespace(dom, choice, prefix).is_some_and(|uri| understood(&uri)))
+}
+
+/// The namespace the nearest `xmlns:prefix` declaration on `node` or its
+/// ancestors binds `prefix` to.
+fn prefix_namespace(dom: &Dom, node: NodeId, prefix: &str) -> Option<String> {
+    dom.ancestors_and_self(node, None)
+        .into_iter()
+        .find_map(|anc| {
+            dom.attributes(anc)
+                .into_iter()
+                .find(|(name, _)| dom.is_namespace_declaration(name) && name.local_name() == prefix)
+                .map(|(_, uri)| uri)
+        })
+}
+
+/// A namespace Word knows: the OOXML standard's (transitional and strict),
+/// Office's own extensions, and VML's.
+pub(crate) fn word_understands_namespace(uri: &str) -> bool {
+    [
+        "http://schemas.openxmlformats.org/",
+        "http://purl.oclc.org/ooxml/",
+        "http://schemas.microsoft.com/office/",
+        "urn:schemas-microsoft-com:",
+    ]
+    .iter()
+    .any(|root| uri.starts_with(root))
 }
 
 /// True if `prefix` is bound by an `xmlns:prefix` declaration on `node` or any of
@@ -16009,6 +16054,18 @@ mod coverage_tests {
             ),
             (
                 "<mc:Choice Requires=\"missing\"><w:r><w:t>bad</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:t>fallback</w:t></w:r></mc:Fallback>",
+                "fallback",
+                true,
+            ),
+            // Declared, but not a namespace Word knows: Word 16 draws the
+            // next Choice (#1876).
+            (
+                "<mc:Choice xmlns:x1=\"urn:jubarte:probe:unknown\" Requires=\"x1\"><w:r><w:t>unknown</w:t></w:r></mc:Choice><mc:Choice Requires=\"w14\"><w:r><w:t>known</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:t>fallback</w:t></w:r></mc:Fallback>",
+                "known",
+                true,
+            ),
+            (
+                "<mc:Choice xmlns:x1=\"urn:jubarte:probe:unknown\" Requires=\"x1\"><w:r><w:t>unknown</w:t></w:r></mc:Choice><mc:Fallback><w:r><w:t>fallback</w:t></w:r></mc:Fallback>",
                 "fallback",
                 true,
             ),
