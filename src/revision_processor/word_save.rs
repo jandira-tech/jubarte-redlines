@@ -66,7 +66,7 @@ pub(crate) fn drop_unreferenced_headers_footers(pkg: &mut PartFs) {
     let referenced: HashSet<String> = ["headerReference", "footerReference"]
         .into_iter()
         .flat_map(|local| doc.w(local))
-        .filter_map(|r| doc.dom.attribute(r, &R::name("id")).map(str::to_string))
+        .filter_map(|r| doc.dom.attribute(r, &R::id()).map(str::to_string))
         .collect();
     let orphans: Vec<String> = pkg
         .read_rels_for(&main)
@@ -101,7 +101,7 @@ fn non_paragraph_styles(pkg: &PartFs) -> HashSet<String> {
     else {
         return HashSet::new();
     };
-    let (ty, id) = (W::type_(), W::name("styleId"));
+    let (ty, id) = (W::type_(), W::style_id());
     styles
         .w("style")
         .into_iter()

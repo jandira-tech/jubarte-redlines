@@ -166,10 +166,9 @@ pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     let rsid_attrs: Vec<_> = if name == W::tr() {
         Vec::new()
     } else {
-        dom.attributes(node)
-            .into_iter()
+        dom.attributes_iter(node)
             .filter(|(an, _)| is_rsid_attr(an))
-            .map(|(an, _)| an)
+            .map(|(an, _)| an.clone())
             .collect()
     };
     for an in &rsid_attrs {

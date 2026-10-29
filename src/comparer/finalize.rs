@@ -783,7 +783,7 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         W::name("tblPrChange"),
         W::name("tblGridChange"),
         W::name("trPrChange"),
-        W::name("tcPrChange"),
+        W::tc_pr_change(),
         W::name("sectPrChange"),
         W::numbering_change(),
         W::cell_ins(),
@@ -1512,10 +1512,9 @@ fn prefix_namespace(dom: &Dom, node: NodeId, prefix: &str) -> Option<String> {
     dom.ancestors_and_self(node, None)
         .into_iter()
         .find_map(|anc| {
-            dom.attributes(anc)
-                .into_iter()
+            dom.attributes_iter(anc)
                 .find(|(name, _)| dom.is_namespace_declaration(name) && name.local_name() == prefix)
-                .map(|(_, uri)| uri)
+                .map(|(_, uri)| uri.to_string())
         })
 }
 
@@ -1536,8 +1535,7 @@ pub(crate) fn word_understands_namespace(uri: &str) -> bool {
 /// its ancestors (XML namespace scoping).
 fn prefix_in_scope(dom: &Dom, node: NodeId, prefix: &str) -> bool {
     dom.ancestors_and_self(node, None).iter().any(|&anc| {
-        dom.attributes(anc)
-            .iter()
+        dom.attributes_iter(anc)
             .any(|(name, _)| dom.is_namespace_declaration(name) && name.local_name() == prefix)
     })
 }
@@ -1645,7 +1643,7 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
     let hyperlinks: Vec<NodeId> = dom
         .descendants(root, Some(&W::hyperlink()))
         .into_iter()
-        .filter(|&hl| dom.attribute(hl, &R::name("id")).is_none())
+        .filter(|&hl| dom.attribute(hl, &R::id()).is_none())
         .collect();
     for hl in hyperlinks {
         // Ensure every run under the hyperlink carries Hyperlink rStyle.
@@ -1659,8 +1657,8 @@ pub fn unwrap_hyperlinks_to_styled_runs(dom: &mut Dom, root: NodeId) {
                     rp
                 }
             };
-            if dom.element(rpr, &W::name("rStyle")).is_none() {
-                let rs = dom.new_element(W::name("rStyle"));
+            if dom.element(rpr, &W::r_style()).is_none() {
+                let rs = dom.new_element(W::r_style());
                 dom.set_attribute_value(rs, &W::val(), Some("Hyperlink"));
                 dom.add_first(rpr, rs);
             }
@@ -3303,9 +3301,7 @@ pub fn closing_mark_takes_revised_properties(
     // Revised text on the closing paragraph is the revision's own paragraph
     // run into it (the comment list item `unmerge_comment_list_item` splits
     // back out): its properties are that paragraph's, not the closing one's.
-    if dom.elements(last, Some(&W::ins())).len()
-        + dom.elements(last, Some(&W::move_to())).len()
-        > 0
+    if dom.elements(last, Some(&W::ins())).len() + dom.elements(last, Some(&W::move_to())).len() > 0
     {
         return;
     }
@@ -6321,10 +6317,10 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
         }
         let rows: Vec<NodeId> = dom.elements(tbl, Some(&W::tr()));
         for tr in rows {
-            if dom.element(tr, &W::name("tblPrEx")).is_some() {
+            if dom.element(tr, &W::tbl_pr_ex()).is_some() {
                 continue;
             }
-            let ex = dom.new_element(W::name("tblPrEx"));
+            let ex = dom.new_element(W::tbl_pr_ex());
             let mar = dom.new_element(W::name("tblCellMar"));
             for side in ["top", "bottom"] {
                 let edge = dom.new_element(W::name(side));
@@ -6359,8 +6355,8 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
                 rpr
             }
         };
-        if dom.element(rpr, &W::name("rStyle")).is_none() {
-            let style = dom.new_element(W::name("rStyle"));
+        if dom.element(rpr, &W::r_style()).is_none() {
+            let style = dom.new_element(W::r_style());
             dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
             dom.add(rpr, style);
         }
@@ -6395,7 +6391,7 @@ pub fn rewrite_inserted_external_hyperlinks(
         if dom.attribute(hl, &W::name("anchor")).is_some() {
             continue;
         }
-        let Some(rid) = dom.attribute(hl, &R::name("id")).map(str::to_string) else {
+        let Some(rid) = dom.attribute(hl, &R::id()).map(str::to_string) else {
             continue;
         };
         let Some(url) = id_to_target.get(&rid).cloned() else {
@@ -6596,9 +6592,7 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(
         // Already live jc — leave alone. A live `w:spacing` means the pair
         // carries a real layout change, which Word records as a pPrChange over
         // the old jc rather than promoting it (file_116_117).
-        if dom.element(ppr, &W::jc_el()).is_some()
-            || dom.element(ppr, &W::spacing_el()).is_some()
-        {
+        if dom.element(ppr, &W::jc_el()).is_some() || dom.element(ppr, &W::spacing_el()).is_some() {
             continue;
         }
         let Some(chg) = dom.element(ppr, &W::p_pr_change()) else {
@@ -9463,9 +9457,7 @@ fn merge_replaced_in_container(
                         && dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
                         && dom.descendants(last_ins, Some(&W::drawing())).is_empty()
                         && dom.descendants(last_ins, Some(&W::pict())).is_empty()
-                        && dom
-                            .descendants(last_ins, Some(&W::object()))
-                            .is_empty();
+                        && dom.descendants(last_ins, Some(&W::object())).is_empty();
                     if !empty_shell {
                         continue;
                     }
@@ -11323,7 +11315,7 @@ pub fn synthesize_table_cell_margins(
         if source_has_default {
             continue;
         }
-        if dom.element(tblpr, &W::name("tblInd")).is_none() {
+        if dom.element(tblpr, &W::tbl_ind()).is_none() {
             let ind = dxa(dom, "tblInd", "10");
             insert_tblpr_child_in_order(dom, tblpr, ind, 100);
         }
@@ -11955,11 +11947,10 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
         let rows = dom.elements(node, Some(&W::tr()));
         !rows.is_empty()
             && rows.iter().all(|&row| {
-                dom.element(row, &W::tr_pr())
-                    .is_some_and(|properties| {
-                        dom.element(properties, &W::ins()).is_some()
-                            && dom.element(properties, &W::del()).is_none()
-                    })
+                dom.element(row, &W::tr_pr()).is_some_and(|properties| {
+                    dom.element(properties, &W::ins()).is_some()
+                        && dom.element(properties, &W::del()).is_none()
+                })
             })
     };
     if prefix[insert_after + 1..]
@@ -12548,14 +12539,9 @@ fn final_peel_has_identical_closing_properties(
         }
         if let Some(rpr) = dom.element(ppr, &W::r_pr())
             && dom.elements(rpr, None).into_iter().any(|child| {
-                [
-                    W::del(),
-                    W::move_from(),
-                    W::move_to(),
-                    W::r_pr_change(),
-                ]
-                .iter()
-                .any(|name| dom.name_is(child, name))
+                [W::del(), W::move_from(), W::move_to(), W::r_pr_change()]
+                    .iter()
+                    .any(|name| dom.name_is(child, name))
             })
         {
             return false;
@@ -14992,9 +14978,7 @@ pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
             match dom.name(c).as_ref() {
                 // A nested revision owns its own text kind — an insertion inside a
                 // deletion still holds live `w:t`.
-                Some(n)
-                    if n == &W::ins() || n == &W::move_from() || n == &W::move_to() =>
-                {
+                Some(n) if n == &W::ins() || n == &W::move_from() || n == &W::move_to() => {
                     continue;
                 }
                 Some(n) if n == &W::t() => dom.set_name(c, W::del_text()),
@@ -19324,7 +19308,7 @@ mod coverage_round_three_tests {
                         names,
                         ["tblW", "tblInd", "tblBorders", "tblCellMar", "tblLook"]
                     );
-                    let ind = dom.element(pr, &W::name("tblInd")).unwrap();
+                    let ind = dom.element(pr, &W::tbl_ind()).unwrap();
                     assert_eq!(dom.attribute(ind, &W::w()), Some("10"));
                     assert_eq!(dom.attribute(ind, &W::type_()), Some("dxa"));
                     let mar = dom.element(pr, &W::name("tblCellMar")).unwrap();
@@ -19362,15 +19346,12 @@ mod coverage_round_three_tests {
             synthesize_table_cell_margins(&mut dom, root, (false, false));
             let pr = dom.descendants(root, Some(&W::tbl_pr()))[0];
             assert_eq!(
-                dom.attribute(dom.element(pr, &W::name("tblInd")).unwrap(), &W::w()),
+                dom.attribute(dom.element(pr, &W::tbl_ind()).unwrap(), &W::w()),
                 Some(if ind { "720" } else { "10" })
             );
             let margins = dom.element(pr, &W::name("tblCellMar")).unwrap();
             assert_eq!(
-                dom.attribute(
-                    dom.element(margins, &W::name("left")).unwrap(),
-                    &W::w()
-                ),
+                dom.attribute(dom.element(margins, &W::name("left")).unwrap(), &W::w()),
                 Some(if mar { "108" } else { "10" })
             );
             assert_eq!(dom.element(margins, &W::name("right")).is_some(), !mar);
@@ -20354,10 +20335,7 @@ mod coverage_round_next_tests {
             ));
             let mut id = 1;
             let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
-            assert!(
-                dom.descendants(result, Some(&W::fld_simple()))
-                    .is_empty()
-            );
+            assert!(dom.descendants(result, Some(&W::fld_simple())).is_empty());
             let p = dom.descendants(result, Some(&W::p()))[0];
             let kids = dom.elements(p, None);
             assert_eq!(kids.len(), 1, "{status}");
@@ -24746,7 +24724,7 @@ mod coverage_final_batch_finalize_tests {
                         dom.attribute(root, &XNamespace::none().name("accidental"))
                             .is_none()
                     );
-                    assert_eq!(dom.attribute(root, &W::name("abstractNumId")), Some("1"));
+                    assert_eq!(dom.attribute(root, &W::abstract_num_id()), Some("1"));
                     let shd = dom.descendants(root, Some(&W::shd()))[0];
                     assert_eq!(
                         dom.attribute(shd, &W::val()),
@@ -25011,7 +24989,7 @@ mod coverage_real_revision_merge_matrix_tests {
             .descendants(root, None)
             .into_iter()
             .filter(|&n| {
-                [W::name("tblGrid"), W::tbl_pr(), W::tc_pr()]
+                [W::tbl_grid(), W::tbl_pr(), W::tc_pr()]
                     .iter()
                     .any(|name| dom.name_is(n, name))
             })
@@ -27081,9 +27059,7 @@ mod coverage_real_revision_merge_matrix_tests {
         let controls = dom
             .descendants(root, None)
             .into_iter()
-            .filter(|&node| {
-                dom.name_is(node, &W::sdt_pr()) || dom.name_is(node, &W::name("sdtEndPr"))
-            })
+            .filter(|&node| dom.name_is(node, &W::sdt_pr()) || dom.name_is(node, &W::sdt_end_pr()))
             .map(|node| dom.serialize_element(node))
             .collect();
         let row_properties = dom
@@ -28374,7 +28350,7 @@ mod coverage_real_revision_merge_matrix_tests {
         dom.descendants(root, None)
             .into_iter()
             .filter(|&node| {
-                [W::tbl_pr(), W::name("tblGrid"), W::tc_pr()]
+                [W::tbl_pr(), W::tbl_grid(), W::tc_pr()]
                     .iter()
                     .any(|name| dom.name_is(node, name))
             })

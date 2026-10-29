@@ -645,7 +645,7 @@ pub(crate) fn row_properties(dom: &mut Dom, tr: NodeId) -> NodeId {
         return p;
     }
     let p = dom.new_element(W::tr_pr());
-    match dom.element(tr, &W::name("tblPrEx")) {
+    match dom.element(tr, &W::tbl_pr_ex()) {
         Some(ex) => dom.add_after_self(ex, p),
         None => dom.add_first(tr, p),
     }

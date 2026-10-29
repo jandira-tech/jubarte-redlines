@@ -277,11 +277,49 @@ impl W {
     cached_xname!(W::URI, hdr, "hdr");
     cached_xname!(W::URI, ftr, "ftr");
     cached_xname!(W::URI, fld_simple, "fldSimple");
+    cached_xname!(W::URI, fld_char_type, "fldCharType");
+    cached_xname!(W::URI, instr, "instr");
+    // A section's story references and its distinct first page, read per
+    // section by the page-footer move (#1833).
+    cached_xname!(W::URI, header_reference, "headerReference");
+    cached_xname!(W::URI, footer_reference, "footerReference");
+    cached_xname!(W::URI, title_pg, "titlePg");
+    // Table grid, row and cell properties the comparer and the revision
+    // processor read per table, row or cell.
+    cached_xname!(W::URI, tbl_grid, "tblGrid");
+    cached_xname!(W::URI, tbl_ind, "tblInd");
+    cached_xname!(W::URI, tbl_w, "tblW");
+    cached_xname!(W::URI, tc_w, "tcW");
+    cached_xname!(W::URI, tc_pr_change, "tcPrChange");
+    cached_xname!(W::URI, grid_before, "gridBefore");
+    cached_xname!(W::URI, grid_after, "gridAfter");
+    cached_xname!(W::URI, sdt_end_pr, "sdtEndPr");
+    cached_xname!(W::URI, style_id, "styleId");
     // The marks Word saves a table with, read per table by the convert fit.
     cached_xname!(W::URI, rsid_r, "rsidR");
     cached_xname!(W::URI, rsid_tr, "rsidTr");
     // A table grid column's width, read per column (`grid_col` is above).
     cached_xname!(W::URI, w, "w");
+}
+
+impl R {
+    cached_xname!(R::URI, id, "id");
+}
+
+// The drawing and object names the docPr and shape id passes read per
+// drawing or shape.
+impl WP {
+    cached_xname!(WP::URI, doc_pr, "docPr");
+}
+
+impl VML {
+    cached_xname!(VML::URI, shape, "shape");
+    cached_xname!(VML::URI, shapetype, "shapetype");
+    cached_xname!(VML::URI, group, "group");
+}
+
+impl O {
+    cached_xname!(O::URI, ole_object, "OLEObject");
 }
 
 impl W14 {
@@ -306,7 +344,6 @@ impl PT {
     cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
 }
 
-// ── OMML names the comparer's final-mark pass reads per paragraph ─────────────
 impl MC {
     cached_xname!(MC::URI, alternate_content, "AlternateContent");
     cached_xname!(MC::URI, choice, "Choice");
@@ -316,6 +353,7 @@ impl MC {
     cached_xname!(MC::URI, preserve_attributes, "PreserveAttributes");
 }
 
+// ── OMML names the comparer's final-mark pass reads per paragraph ─────────────
 impl M {
     cached_xname!(M::URI, r, "r");
     cached_xname!(M::URI, r_pr, "rPr");

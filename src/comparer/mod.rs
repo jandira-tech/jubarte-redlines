@@ -292,7 +292,7 @@ pub fn try_compare_bodies_faithful_with_notes(
             // (kind, w:type).
             let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::sect_pr()));
             let type_attr = W::type_();
-            for kind in [W::name("headerReference"), W::name("footerReference")] {
+            for kind in [W::header_reference(), W::footer_reference()] {
                 for ty in ["even", "default", "first"] {
                     let found = chain.iter().rev().find_map(|&sect| {
                         dom.elements(sect, Some(&kind))

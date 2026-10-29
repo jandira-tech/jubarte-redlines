@@ -3599,7 +3599,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let mut style_names: HashMap<String, String> = HashMap::new();
     let mut not_para: std::collections::HashSet<String> = std::collections::HashSet::new();
     for style in dom.descendants(root, Some(&W::name("style"))) {
-        let Some(sid) = dom.attribute(style, &W::name("styleId")) else {
+        let Some(sid) = dom.attribute(style, &W::style_id()) else {
             continue;
         };
         if let Some(nm) = first_named(&dom, style, "name").and_then(|n| dom.attribute(n, &W::val()))
@@ -3779,7 +3779,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     if let Some(sp) = dom
         .descendants(root, Some(&W::name("style")))
         .into_iter()
-        .find(|st| dom.attribute(*st, &W::name("styleId")) == Some(implicit_id))
+        .find(|st| dom.attribute(*st, &W::style_id()) == Some(implicit_id))
         .and_then(|st| dom.element(st, &W::p_pr()))
         .and_then(|ppr| first_named(&dom, ppr, "spacing"))
     {
@@ -15709,13 +15709,13 @@ fn collect_runs_rec(
             if ctx.dom.name_is(child, &W::name("footnoteReference")) {
                 footnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
             }
-            if ctx.dom.name_is(child, &W::name("footnoteRef")) {
+            if ctx.dom.name_is(child, &W::footnote_ref()) {
                 note_ref = true;
             }
             if ctx.dom.name_is(child, &W::name("endnoteReference")) {
                 endnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
             }
-            if ctx.dom.name_is(child, &W::name("endnoteRef")) {
+            if ctx.dom.name_is(child, &W::endnote_ref()) {
                 endnote_id = Some(String::new());
             }
             if ctx.dom.name_is(child, &W::name("separator")) {
@@ -21012,7 +21012,7 @@ fn sect_ref_chrome_of(
 fn page_background(dom: &Dom, node: NodeId) -> bool {
     dom.ancestors(node, Some(&W::document()))
         .first()
-        .is_some_and(|doc| dom.element(*doc, &W::name("background")).is_some())
+        .is_some_and(|doc| dom.element(*doc, &W::background()).is_some())
 }
 
 fn load_chrome_part(
@@ -21067,9 +21067,7 @@ fn chrome_part_xml(
         .into_iter()
         .rfind(|p| {
             !hf_para_in_table(&part_dom, root, *p)
-                && part_dom
-                    .ancestors(*p, Some(&W::txbx_content()))
-                    .is_empty()
+                && part_dom.ancestors(*p, Some(&W::txbx_content())).is_empty()
         });
     // Estimated top of each top-level paragraph below the part's top: one
     // line of its largest size (x1.15, its multiple) and max(after, before).
@@ -21184,11 +21182,7 @@ fn chrome_part_xml(
             let size = part_dom
                 .descendants(para, Some(&W::name("sz")))
                 .into_iter()
-                .filter(|n| {
-                    part_dom
-                        .ancestors(*n, Some(&W::txbx_content()))
-                        .is_empty()
-                })
+                .filter(|n| part_dom.ancestors(*n, Some(&W::txbx_content())).is_empty())
                 .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
                 .map(|half| half / 2.0)
                 .fold(prun.size, f32::max);
@@ -21274,11 +21268,7 @@ fn chrome_part_xml(
                 || part_dom
                     .descendants(para, Some(&WP::name("inline")))
                     .into_iter()
-                    .any(|inl| {
-                        part_dom
-                            .ancestors(inl, Some(&W::txbx_content()))
-                            .is_empty()
-                    }));
+                    .any(|inl| part_dom.ancestors(inl, Some(&W::txbx_content())).is_empty()));
         // A picture paragraph with no text or bare line after it in the
         // part stands under the whole text band.
         let band_para = |p: NodeId| {
@@ -21586,8 +21576,17 @@ fn renderer_understands_namespace(uri: &str) -> bool {
 /// when a wrapper went.
 fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
     let wrapper = MC::alternate_content();
-    let mut parts = vec![main.to_string()];
-    parts.extend(story_part_names(pkg, main));
+    // Sections often share a header or footer part: each part once.
+    let mut seen = std::collections::HashSet::new();
+    let parts: Vec<String> = std::iter::once(main.to_string())
+        .chain(story_part_names(pkg, main))
+        .filter(|part| seen.insert(part.clone()))
+        .collect();
+    let wrappers = |dom: &Dom, root: NodeId| {
+        let mut count = 0usize;
+        dom.for_each_descendant_element(root, Some(&wrapper), |_| count += 1);
+        count
+    };
     for part in parts {
         let Some(xml) = pkg.part_string(&part) else {
             continue;
@@ -21600,13 +21599,13 @@ fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
         let Some(root) = dom.root(doc) else {
             continue;
         };
-        let before = dom.descendants(root, Some(&wrapper)).len();
+        let before = wrappers(&dom, root);
         crate::comparer::finalize::resolve_alternate_content_with(
             &mut dom,
             root,
             renderer_understands_namespace,
         );
-        if dom.descendants(root, Some(&wrapper)).len() != before {
+        if wrappers(&dom, root) != before {
             pkg.set_part(&part, dom.serialize_document(doc).into_bytes());
         }
     }
@@ -22127,10 +22126,7 @@ fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
 fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
     dom.descendants(para, Some(&WP::name("inline")))
         .into_iter()
-        .filter(|inl| {
-            dom.ancestors(*inl, Some(&W::txbx_content()))
-                .is_empty()
-        })
+        .filter(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
         .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
         .map(|cy| cy / 12700.0)
@@ -22152,10 +22148,7 @@ fn hf_flat_pic_run(
     let inl = dom
         .descendants(para, Some(&WP::name("inline")))
         .into_iter()
-        .find(|inl| {
-            dom.ancestors(*inl, Some(&W::txbx_content()))
-                .is_empty()
-        })?;
+        .find(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())?;
     let mut run = prun.clone();
     if let Some(rpr) = dom
         .ancestors(inl, Some(&W::r()))

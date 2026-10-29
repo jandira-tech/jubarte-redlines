@@ -732,9 +732,8 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
                 .elements(node, None)
                 .into_iter()
                 .filter(|&e| {
-                    dom.name(e).is_some_and(|n| {
-                        n == W::name("headerReference") || n == W::name("footerReference")
-                    })
+                    dom.name(e)
+                        .is_some_and(|n| n == W::header_reference() || n == W::footer_reference())
                 })
                 .collect();
             for r in refs.into_iter().rev() {
@@ -2869,9 +2868,7 @@ fn add_content_controls_with_owners(
             .into_iter()
             .filter(|&e| {
                 let n = dom.name(e).unwrap();
-                n != W::p_pr()
-                    && n != W::comment_range_start()
-                    && n != W::comment_range_end()
+                n != W::p_pr() && n != W::comment_range_start() && n != W::comment_range_end()
             })
             .collect();
         let foreign_pilcrow_owner = paragraph_owners
@@ -3291,7 +3288,7 @@ fn own_tbl_pr_ex(dom: &Dom, first: NodeId, member: NodeId) -> Vec<NodeId> {
 /// row's own, in schema order.
 fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
     let row_ex: Vec<NodeId> = dom
-        .element(tr, &W::name("tblPrEx"))
+        .element(tr, &W::tbl_pr_ex())
         .map(|ex| dom.elements(ex, None))
         .unwrap_or_default();
     let mut kids: Vec<NodeId> = row_ex.clone();
@@ -3301,7 +3298,7 @@ fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
         }
     }
     kids.sort_by_key(|&c| tbl_pr_ex_rank(dom, c).unwrap_or(TBL_PR_EX.len()));
-    let ex = dom.new_element(W::name("tblPrEx"));
+    let ex = dom.new_element(W::tbl_pr_ex());
     for c in kids {
         let cc = dom.clone_subtree(c);
         dom.add(ex, cc);
@@ -3331,7 +3328,7 @@ fn wrapped_children(dom: &Dom, parent: NodeId, name: &XName) -> Vec<NodeId> {
 /// grid cursor, exactly like the C#.
 fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
     let grid_lines: Vec<i64> = dom
-        .elements(tbl, Some(&W::name("tblGrid")))
+        .elements(tbl, Some(&W::tbl_grid()))
         .into_iter()
         .flat_map(|g| dom.elements(g, Some(&W::grid_col())))
         .map(|gc| {
@@ -3347,7 +3344,7 @@ fn fix_widths(dom: &mut Dom, tbl: NodeId) -> NodeId {
             // Singular tcPr / tcW / gridSpan — avoid multi-Vec flat_map scans.
             let tc_w = dom
                 .element(tc, &W::tc_pr())
-                .and_then(|p| dom.element(p, &W::name("tcW")))
+                .and_then(|p| dom.element(p, &W::tc_w()))
                 .filter(|&w| dom.attribute(w, &W::w()).is_some());
             let Some(tc_w) = tc_w else { continue };
             let grid_span: i64 = dom
@@ -3425,7 +3422,7 @@ fn whole_table_key(dom: &Dom, tbl: NodeId) -> String {
             }
         }
     }
-    for grid in dom.elements(tbl, Some(&W::name("tblGrid"))) {
+    for grid in dom.elements(tbl, Some(&W::tbl_grid())) {
         for change in dom.elements(grid, Some(&W::name("tblGridChange"))) {
             key.push_str(&dom.serialize_element(change));
         }
@@ -3565,7 +3562,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
         let mut rolled: Vec<i64> = Vec::new();
         for &tbl in &group {
             let mut sum = 0i64;
-            for g in dom.elements(tbl, Some(&W::name("tblGrid"))) {
+            for g in dom.elements(tbl, Some(&W::tbl_grid())) {
                 for gc in dom.elements(g, Some(&W::grid_col())) {
                     let v: i64 = dom
                         .attribute(gc, &W::w())
@@ -3584,7 +3581,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
             let c = dom.clone_subtree(pr);
             dom.add(new_table, c);
         }
-        let new_grid = dom.new_element(W::name("tblGrid"));
+        let new_grid = dom.new_element(W::tbl_grid());
         for (i, &r) in rolled.iter().enumerate() {
             let v = if i == 0 { r } else { r - rolled[i - 1] };
             let gc = dom.new_element(W::grid_col());
@@ -3609,8 +3606,8 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     let ex = row_tbl_pr_ex(dom, tr, &own_ex);
                     dom.add(new_row, ex);
                 }
-                for property in [W::name("tblPrEx"), W::tr_pr()] {
-                    if !own_ex.is_empty() && property == W::name("tblPrEx") {
+                for property in [W::tbl_pr_ex(), W::tr_pr()] {
+                    if !own_ex.is_empty() && property == W::tbl_pr_ex() {
                         continue;
                     }
                     for e in dom.elements(tr, Some(&property)) {
@@ -3619,7 +3616,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                     }
                 }
                 for child in dom.elements(tr, None) {
-                    if dom.name(child) == Some(W::name("tblPrEx"))
+                    if dom.name(child) == Some(W::tbl_pr_ex())
                         || dom.name(child) == Some(W::tr_pr())
                     {
                         continue;
@@ -3631,7 +3628,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                 for tc in wrapped_children(dom, new_row, &W::tc()) {
                     let w: Option<i64> = dom
                         .element(tc, &W::tc_pr())
-                        .and_then(|p| dom.element(p, &W::name("tcW")))
+                        .and_then(|p| dom.element(p, &W::tc_w()))
                         .and_then(|t| dom.attribute(t, &W::w()))
                         .and_then(|v| v.parse().ok());
                     let Some(w) = w else { continue };
@@ -3684,9 +3681,7 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
                 dom.replace_with(tr, &[new_row]);
             }
             for child in dom.elements(fixed, None) {
-                if dom.name(child) == Some(W::tbl_pr())
-                    || dom.name(child) == Some(W::name("tblGrid"))
-                {
+                if dom.name(child) == Some(W::tbl_pr()) || dom.name(child) == Some(W::tbl_grid()) {
                     continue;
                 }
                 let c = dom.clone_subtree(child);
@@ -4342,7 +4337,7 @@ mod revision_boundary_coverage_tests {
     }
 
     fn widths(dom: &Dom, table: NodeId) -> Vec<String> {
-        let grid = dom.element(table, &W::name("tblGrid")).unwrap();
+        let grid = dom.element(table, &W::tbl_grid()).unwrap();
         dom.elements(grid, Some(&W::grid_col()))
             .into_iter()
             .map(|n| dom.attribute(n, &W::w()).unwrap().to_string())
@@ -4441,7 +4436,7 @@ mod revision_boundary_coverage_tests {
             .iter()
             .map(|&c| {
                 dom.element(c, &W::tc_pr())
-                    .and_then(|p| dom.element(p, &W::name("tcW")))
+                    .and_then(|p| dom.element(p, &W::tc_w()))
                     .and_then(|w| dom.attribute(w, &W::w()))
                     .map(str::to_string)
             })
@@ -4456,7 +4451,7 @@ mod revision_boundary_coverage_tests {
             ]
         );
         let width = dom
-            .element(dom.element(cells[1], &W::tc_pr()).unwrap(), &W::name("tcW"))
+            .element(dom.element(cells[1], &W::tc_pr()).unwrap(), &W::tc_w())
             .unwrap();
         assert_eq!(dom.attribute(width, &W::type_()), Some("dxa"));
         assert_eq!(dom.value(fixed), "no-widthwidelastpast-grid");
@@ -4506,21 +4501,21 @@ mod revision_boundary_coverage_tests {
         let tables = dom.elements(result, Some(&W::tbl()));
         assert_eq!(tables.len(), 1);
         let rows = dom.elements(tables[0], Some(&W::tr()));
-        assert!(dom.element(rows[0], &W::name("tblPrEx")).is_none());
-        let ex = dom.element(rows[1], &W::name("tblPrEx")).unwrap();
+        assert!(dom.element(rows[0], &W::tbl_pr_ex()).is_none());
+        let ex = dom.element(rows[1], &W::tbl_pr_ex()).unwrap();
         assert_eq!(
             local_children(&dom, ex),
             ["tblW", "shd", "tblLayout", "payload"]
         );
         assert_eq!(
-            dom.attribute(dom.element(ex, &W::name("tblW")).unwrap(), &W::w()),
+            dom.attribute(dom.element(ex, &W::tbl_w()).unwrap(), &W::w()),
             Some("200")
         );
         assert_eq!(
             dom.attribute(dom.element(ex, &W::shd()).unwrap(), &W::fill()),
             Some("CCCCCC")
         );
-        assert_eq!(dom.elements(rows[1], Some(&W::name("tblPrEx"))).len(), 1);
+        assert_eq!(dom.elements(rows[1], Some(&W::tbl_pr_ex())).len(), 1);
         assert_eq!(
             dom.descendants(rows[1], Some(&W::name("cantSplit"))).len(),
             1
@@ -4680,11 +4675,7 @@ mod revision_boundary_coverage_tests {
                 "p"
             ]
         );
-        assert_eq!(
-            dom.descendants(result, Some(&W::bookmark_start()))
-                .len(),
-            1
-        );
+        assert_eq!(dom.descendants(result, Some(&W::bookmark_start())).len(), 1);
         assert_eq!(
             dom.descendants(result, Some(&XName::get("payload", "urn:fixture")))
                 .len(),
@@ -4747,7 +4738,7 @@ mod revision_boundary_coverage_tests {
             dom.descendants(result, Some(&W::name("cantSplit"))).len(),
             1
         );
-        assert_eq!(dom.descendants(result, Some(&W::name("tcW"))).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::tc_w())).len(), 1);
         assert_eq!(dom.descendants(result, Some(&W::name("keepNext"))).len(), 1);
         assert_eq!(
             dom.descendants(result, Some(&W::move_from_range_end()))
@@ -4841,8 +4832,7 @@ mod revision_boundary_coverage_tests {
                             "livetail"
                         }
                     );
-                    let spacing =
-                        projection_dom.descendants(projection, Some(&W::spacing_el()))[0];
+                    let spacing = projection_dom.descendants(projection, Some(&W::spacing_el()))[0];
                     assert_eq!(
                         projection_dom.attribute(spacing, &W::name("after")),
                         Some("240")
@@ -5044,7 +5034,7 @@ mod revision_boundary_coverage_tests {
         assert!(dom.descendants(rejected, Some(&W::r_pr())).is_empty());
         for result in [accepted, rejected] {
             let style = dom.element(result, &W::name("style")).unwrap();
-            assert_eq!(dom.attribute(style, &W::name("styleId")), Some("owner"));
+            assert_eq!(dom.attribute(style, &W::style_id()), Some("owner"));
             assert_eq!(dom.value(result), "style-payload");
             assert_eq!(
                 dom.descendants(result, Some(&XName::get("payload", "urn:fixture")))
@@ -5156,7 +5146,7 @@ mod public_block_control_ownership_tests {
             let child = dom.element(props, &W::name(local)).unwrap();
             assert_eq!(dom.attribute(child, &W::val()), Some(value));
         }
-        let end = dom.element(control, &W::name("sdtEndPr")).unwrap();
+        let end = dom.element(control, &W::sdt_end_pr()).unwrap();
         let color = dom.descendants(end, Some(&W::name("color")))[0];
         assert_eq!(dom.attribute(color, &W::val()), Some("234567"));
         dom.element(control, &W::sdt_content()).unwrap()
@@ -5211,7 +5201,7 @@ mod public_block_control_ownership_tests {
             let properties = dom.element(cell, &W::tc_pr()).unwrap();
             let shade = dom.element(properties, &W::shd()).unwrap();
             assert_eq!(dom.attribute(shade, &W::fill()), Some("123456"));
-            let grid = dom.element(tables[0], &W::name("tblGrid")).unwrap();
+            let grid = dom.element(tables[0], &W::tbl_grid()).unwrap();
             let column = dom.elements(grid, None)[0];
             assert_eq!(dom.attribute(column, &W::w()), Some("1800"));
         }
@@ -5250,7 +5240,7 @@ mod public_block_control_ownership_tests {
                                 Some(expected.as_str())
                             );
                         }
-                        let end = dom.element(control, &W::name("sdtEndPr")).unwrap();
+                        let end = dom.element(control, &W::sdt_end_pr()).unwrap();
                         let color = dom.descendants(end, Some(&W::name("color")))[0];
                         assert_eq!(dom.attribute(color, &W::val()), Some("234567"));
                         parent = dom.element(control, &W::sdt_content()).unwrap();
@@ -5318,16 +5308,13 @@ mod public_block_control_ownership_tests {
             for (cell, width) in [(cells[0], "1800"), (cells[1], "900")] {
                 let props = dom.element(cell, &W::tc_pr()).unwrap();
                 assert_eq!(
-                    dom.attribute(dom.element(props, &W::name("tcW")).unwrap(), &W::w()),
+                    dom.attribute(dom.element(props, &W::tc_w()).unwrap(), &W::w()),
                     Some(width)
                 );
             }
             let nested_props = dom.element(cells[1], &W::tc_pr()).unwrap();
             assert_eq!(
-                dom.attribute(
-                    dom.element(nested_props, &W::shd()).unwrap(),
-                    &W::fill()
-                ),
+                dom.attribute(dom.element(nested_props, &W::shd()).unwrap(), &W::fill()),
                 Some("ABCDEF")
             );
             for (control, id) in [(controls[0], "42"), (controls[1], "43")] {
