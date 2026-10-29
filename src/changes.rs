@@ -1425,6 +1425,7 @@ fn resolve_for_edit_or_cli(
             Vec::new(),
         ),
     };
+    move_words_past_deleted_tables(&mut pkg, &main);
     // The comment-body revisions a selection left tracked (#1223). The
     // part may be gone when every comment went.
     let comment_left = comment_changes_in(&pkg).len();
@@ -1546,6 +1547,29 @@ fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|e| ChangeError::Package(e.to_string()))?;
     PartFs::open(&normalized).map_err(|e| ChangeError::Package(e.to_string()))
+}
+
+/// A selection can leave a paragraph's inserted words right before a
+/// deleted table: resolving the deleted mark between them joins the two
+/// paragraphs. Word 16.115 crashes opening that shape (#1851), so the words
+/// start the paragraph Accept All joins them to, as compare writes them.
+/// The story is rewritten only when it holds the shape.
+fn move_words_past_deleted_tables(pkg: &mut PartFs, main: &str) {
+    let Some(xml) = pkg.part_string(main) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let shaped = dom.element(root, &W::body()).is_some_and(|body| {
+        !crate::validate::inserted_text_before_deleted_tables(&dom, body).is_empty()
+    });
+    if shaped {
+        crate::comparer::deleted_tables::move_inserted_text_past_deleted_tables(&mut dom, root);
+        pkg.set_part(main, dom.serialize_document(doc).into_bytes());
+    }
 }
 
 fn main_part(pkg: &PartFs) -> String {

@@ -52,6 +52,7 @@
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
+//! | `INSERTED_TEXT_BEFORE_DELETED_TABLE` | no: Word 16.115 crashed opening 6 of the 16 release-sample redlines with the paragraph right before the table (#1851, 2026-10-25); warning | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -82,7 +83,7 @@ use serde::{Deserialize, Serialize};
 use crate::admission::{AdmissionError, InputLimits};
 use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
-use crate::namespaces::{MC, R, VML, W, W14, WP};
+use crate::namespaces::{M, MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -207,7 +208,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 31] = [
+const RING1_CODES: [&str; 32] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
@@ -239,6 +240,7 @@ const RING1_CODES: [&str; 31] = [
     "STYLE_NAME_COMMA",
     "CELL_FINAL_MARK_REVISION",
     "DELETED_SECTION_PAGE_FIELD",
+    "INSERTED_TEXT_BEFORE_DELETED_TABLE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1246,6 +1248,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_data_bindings_have_stores(pkg, &mut out);
     check_cell_final_marks(pkg, &mut out);
     check_deleted_section_page_fields(pkg, &mut out);
+    check_inserted_text_before_deleted_tables(pkg, &mut out);
     out
 }
 
@@ -1298,6 +1301,180 @@ fn check_deleted_section_page_fields(pkg: &PartFs, out: &mut Vec<Finding>) {
             "a deleted section break references this story, whose closing paragraph holds a PAGE or NUMPAGES field; Word 16.115 crashed opening such redlines whatever the story's marks (#1833). Word opened them once no deleted section break referenced the story".to_string(),
         ));
     }
+}
+
+/// A body paragraph whose mark is deleted while it keeps inserted words,
+/// then a table every row of which is deleted, then the paragraph Accept
+/// All joins those words to ([`inserted_text_before_deleted_tables`]).
+/// Word's own Compare writes it. Word 16.115 crashed opening 6 of the 16
+/// release-sample redlines (0.14.0) whose paragraph sat right before the
+/// table, its table cache corrupt at the deleted row's end, and opened the
+/// other 10: a lead (#1851). It opened w06, w10, w14 and w17 once the
+/// words started the paragraph they join (fix23 probe33).
+fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    // A deleted row's `w:trPr`, whatever its prefix.
+    if !pkg
+        .part_bytes(&main)
+        .is_some_and(|bytes| bytes.windows(5).any(|w| w == b"trPr>"))
+    {
+        return;
+    }
+    let Some((dom, root)) = parse_part(pkg, &main) else {
+        return;
+    };
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    for (paragraph, _) in inserted_text_before_deleted_tables(&dom, body) {
+        out.push(Finding::new(
+            "INSERTED_TEXT_BEFORE_DELETED_TABLE",
+            &main,
+            element_path(&dom, paragraph),
+            "this paragraph's mark is deleted while it keeps inserted words, and a table every row of which is deleted follows it: Accept All joins those words to the paragraph after the table. Word 16.115 crashed opening such redlines (#1851); it opened them once the words started the paragraph they join".to_string(),
+        ));
+    }
+}
+
+/// `INSERTED_TEXT_BEFORE_DELETED_TABLE`'s rule, which the comparer's pass
+/// applies too: each paragraph of `body` whose inserted words Accept All
+/// joins across a deleted table, with the paragraph they join. The
+/// paragraph's mark is deleted, its own `w:ins` children hold the only
+/// words Accept All keeps of it, and no section break ends it. A table
+/// every row of which is deleted follows it right away, then more such
+/// tables or none, with only paragraphs Accept All removes whole between
+/// them (a deleted mark, deleted words, no section break), then the
+/// paragraph the words join: its mark is not deleted. Zero-width markers
+/// between blocks (bookmarks, comment ranges, permissions, proofing marks)
+/// do not count.
+///
+/// Only a paragraph right before the table: 6 of the 16 such
+/// release-sample redlines crashed Word 16.115. With deleted paragraphs
+/// between the two, 2 of 42 crashed, near the sample's 23 in 600, and
+/// moving their words cost their views Word's placement: 14.8
+/// bench points on average, against Word's own redlines (#1851).
+pub(crate) fn inserted_text_before_deleted_tables(
+    dom: &Dom,
+    body: NodeId,
+) -> Vec<(NodeId, NodeId)> {
+    let markers = [
+        W::bookmark_start(),
+        W::bookmark_end(),
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::perm_start(),
+        W::perm_end(),
+        W::proof_err(),
+    ];
+    let blocks: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&b| !markers.iter().any(|name| dom.name_is(b, name)))
+        .collect();
+    let mut out = Vec::new();
+    for (at, &paragraph) in blocks.iter().enumerate() {
+        let right_before_a_table = blocks
+            .get(at + 1)
+            .is_some_and(|&next| dom.name_is(next, &W::tbl()) && table_revised(dom, next, "del"));
+        if !right_before_a_table || !keeps_only_inserted_words(dom, paragraph) {
+            continue;
+        }
+        let mut tables = 0;
+        let joined = blocks[at + 1..].iter().copied().find(|&block| {
+            if dom.name_is(block, &W::tbl()) && table_revised(dom, block, "del") {
+                tables += 1;
+                return false;
+            }
+            !(dom.name_is(block, &W::p())
+                && only_mark_deleted(dom, block)
+                && !keeps_words(dom, block, "del"))
+        });
+        if let Some(joined) = joined.filter(|&joined| {
+            tables > 0
+                && dom.name_is(joined, &W::p())
+                && !mark_carries(dom, joined, &[W::del(), W::move_from()])
+        }) {
+            out.push((paragraph, joined));
+        }
+    }
+    out
+}
+
+/// Whether `paragraph`'s mark is deleted, and no more (not inserted, not
+/// moved), and it ends no section.
+fn only_mark_deleted(dom: &Dom, paragraph: NodeId) -> bool {
+    mark_carries(dom, paragraph, &[W::del()])
+        && !mark_carries(dom, paragraph, &[W::ins(), W::move_from(), W::move_to()])
+        && dom
+            .element(paragraph, &W::p_pr())
+            .is_none_or(|ppr| dom.element(ppr, &W::sect_pr()).is_none())
+}
+
+/// Whether `paragraph`'s mark (`w:pPr/w:rPr`) holds one of `records`.
+fn mark_carries(dom: &Dom, paragraph: NodeId, records: &[XName]) -> bool {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| records.iter().any(|name| dom.element(rpr, name).is_some()))
+}
+
+/// Whether `paragraph`, its mark deleted, keeps words under Accept All
+/// and every one of them sits in its own `w:ins` children.
+fn keeps_only_inserted_words(dom: &Dom, paragraph: NodeId) -> bool {
+    if !dom.name_is(paragraph, &W::p()) || !only_mark_deleted(dom, paragraph) {
+        return false;
+    }
+    let (inserted, other): (Vec<NodeId>, Vec<NodeId>) = dom
+        .elements(paragraph, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::p_pr()))
+        .partition(|&child| dom.name_is(child, &W::ins()));
+    inserted.iter().any(|&ins| keeps_words(dom, ins, "del"))
+        && !other.iter().any(|&child| keeps_words(dom, child, "del"))
+}
+
+/// Whether `node` keeps words once its `kind` revisions resolve: a run in
+/// it (`node` itself included; an equation's `m:r` too) with content,
+/// under no revision that resolution removes, up to `node`. Accept All
+/// (`"del"`) removes what is deleted or moved away, Reject All (`"ins"`)
+/// what is inserted or moved in.
+pub(crate) fn keeps_words(dom: &Dom, node: NodeId, kind: &str) -> bool {
+    let gone = if kind == "del" {
+        [W::del(), W::move_from()]
+    } else {
+        [W::ins(), W::move_to()]
+    };
+    let (math_run, math_r_pr) = (M::r(), M::r_pr());
+    let stop = dom.parent(node);
+    std::iter::once(node)
+        .chain(dom.descendants(node, None))
+        .filter(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &math_run))
+        .any(|run| {
+            dom.elements(run, None)
+                .into_iter()
+                .any(|child| !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &math_r_pr))
+                && !dom
+                    .ancestors(run, None)
+                    .into_iter()
+                    .take_while(|&a| Some(a) != stop)
+                    .any(|a| gone.iter().any(|name| dom.name_is(a, name)))
+        })
+}
+
+/// Whether every row of `table` (its own, not a nested table's) is
+/// inserted or deleted as `kind` says.
+pub(crate) fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
+    let rows: Vec<NodeId> = dom
+        .descendants(table, Some(&W::tr()))
+        .into_iter()
+        .filter(|&row| dom.ancestors(row, Some(&W::tbl())).first() == Some(&table))
+        .collect();
+    !rows.is_empty()
+        && rows.iter().all(|&row| {
+            dom.element(row, &W::tr_pr())
+                .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
+        })
 }
 
 /// A story's closing paragraph: its last block when that is a paragraph of
