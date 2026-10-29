@@ -3,6 +3,7 @@
   "source_sha256": "8440a5d52cfcc0b3ca13e4692ed5e7b7ffda82cb8ff6a2c1740694a04b9e245a",
   "author": "Ben Vendor",
   "date": "2026-10-04T15:00:00Z",
+  "rewrite_others_comments": true,
   "operations": [
     {
       "id": "reply-ask",

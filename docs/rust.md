@@ -1311,9 +1311,10 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --rewrite-others-comments
-          Let `-p c5 --content` change a comment another author wrote; it keeps their
-          name. Without it that is refused (COMMENT_NOT_YOURS): one author answers
-          another with --reply
+          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
+          author wrote (a reworded one keeps their name), and `--delete` take their
+          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
+          author answers another with --reply
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved

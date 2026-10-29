@@ -1137,9 +1137,10 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --rewrite-others-comments
-          Let `-p c5 --content` change a comment another author wrote; it keeps their
-          name. Without it that is refused (COMMENT_NOT_YOURS): one author answers
-          another with --reply
+          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
+          author wrote (a reworded one keeps their name), and `--delete` take their
+          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
+          author answers another with --reply
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -2524,6 +2525,9 @@ EditPlan.resolve_comment(self, comment_id: 'int', *, done: 'bool' = True, id: 's
 
 Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
 
+Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+plan sets ``rewrite_others_comments``.
+
 #### `EditPlan.edit_comment`
 
 ```python
@@ -2542,6 +2546,10 @@ EditPlan.delete_comment(self, comment_id: 'int', *, id: 'str | None' = None) -> 
 ```
 
 Remove comment ``comment_id`` with its replies and anchors.
+
+Another author's comment, or one of yours whose thread holds another
+author's reply, is refused (``COMMENT_NOT_YOURS``) unless the plan
+sets ``rewrite_others_comments``.
 
 #### `EditPlan.watermark`
 

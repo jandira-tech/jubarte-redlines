@@ -549,7 +549,8 @@ fn c(n: u32) -> Value {
 #[test]
 fn comment_mutations_and_final_thread_state_compose() {
     let s = comment_source();
-    let q = plan(
+    // c0 is Other's: Me resolves and deletes it on purpose (#1846).
+    let q = rewriting_plan(
         &s,
         json!([
             {"kind":"resolve_comment","target":c(0),"done":true},
@@ -570,7 +571,7 @@ fn comment_mutations_and_final_thread_state_compose() {
         .unwrap()
         .push(json!({"kind":"resolve_comment","target":c(0),"done":false}));
     assert_eq!(run(&s, &duplicate).unwrap_err().code, "CONFLICT");
-    let mut deletion = plan(
+    let mut deletion = rewriting_plan(
         &out.redline,
         json!([{"kind":"delete_comment","target":c(0),"include_replies":false}]),
     );
@@ -1050,10 +1051,11 @@ fn deleting_a_reply_conflicts_with_mutations_on_its_thread() {
 #[test]
 fn replies_preserve_prior_state_and_sibling_parentage() {
     let s = comment_source();
+    // c0 is Other's: Me resolves or reopens it on purpose (#1846).
     for done in [false, true] {
         let with = run(
             &s,
-            &plan(
+            &rewriting_plan(
                 &s,
                 json!([
                     {"kind":"reply_comment","target":c(0),"text":"Existing reply"},
@@ -1074,7 +1076,7 @@ fn replies_preserve_prior_state_and_sibling_parentage() {
                     json!({"kind":"resolve_comment","target":c(1),"done":state}),
                 );
             }
-            let out = run(&with, &plan(&with, json!(ops))).unwrap();
+            let out = run(&with, &rewriting_plan(&with, json!(ops))).unwrap();
             for bytes in [&out.clean, &out.redline] {
                 let comments = jubarte::comments::list_comments(bytes).unwrap();
                 assert_eq!(
@@ -1265,9 +1267,10 @@ fn empty_source_paragraph_takes_the_text_and_its_attached_comment() {
 #[test]
 fn explicit_comment_deletion_authorizes_anchor_removal() {
     let s = comment_source();
+    // c0 is Other's: Me deletes it on purpose (#1846).
     let out = run(
         &s,
-        &plan(
+        &rewriting_plan(
             &s,
             json!([
                 {"kind":"delete","target":p(0),"find":"Alpha Beta"},

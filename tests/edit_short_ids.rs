@@ -607,6 +607,8 @@ fn the_cli_p_flag_takes_settled_ids_and_refuses_expired_ones() {
                 "-p",
                 at,
                 "--resolve",
+                // c5 is another author's: resolved on request (#1846).
+                "--rewrite-others-comments",
                 "--out-dir",
                 &out_dir,
             ],

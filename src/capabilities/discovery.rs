@@ -173,10 +173,16 @@ fn support(runtime: &str, version: u32, kind: &str, schema: &Value) -> Vec<Value
                     }
                     conditions
                 };
-                // Both dialects refuse another author's comment (#1264).
-                if refusal.is_none() && kind == "edit_comment" {
+                // Both dialects refuse another author's comment (#1264,
+                // #1846), and a delete that would take their reply.
+                if refusal.is_none()
+                    && matches!(kind, "edit_comment" | "delete_comment" | "resolve_comment")
+                {
                     conditions
                         .push_str("; another author's comment requires rewrite_others_comments");
+                    if kind == "delete_comment" {
+                        conditions.push_str(", as does deleting a thread that holds their reply");
+                    }
                 }
                 rows.push(json!({"runtime": runtime, "target": target, "track": track,
                     "existing_revisions": existing,

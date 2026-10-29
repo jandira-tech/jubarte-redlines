@@ -139,10 +139,11 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
-    /// Let `edit_comment` change a comment another author wrote; the
-    /// comment keeps its author, and the report notes each one. Without
-    /// it such an edit is refused (`COMMENT_NOT_YOURS`): a reply is how
-    /// one author answers another.
+    /// Let `edit_comment`, `delete_comment` and `resolve_comment` change a
+    /// comment another author wrote (a reworded one keeps its author), and
+    /// a delete take another author's reply with its thread; the report
+    /// notes each one. Without it such an operation is refused
+    /// (`COMMENT_NOT_YOURS`): a reply is how one author answers another.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rewrite_others_comments: bool,
 }
@@ -2573,6 +2574,91 @@ impl ThreadOp {
     }
 }
 
+/// A comment of another author a thread operation changes: refused
+/// without `rewrite_others_comments` (`COMMENT_NOT_YOURS`), noted with it
+/// (#1264, #1846).
+#[derive(Clone, Debug)]
+struct OthersComment {
+    /// The comment changed.
+    comment: u32,
+    /// Its author; `""` when it names none.
+    author: String,
+    change: OthersChange,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OthersChange {
+    Reword,
+    Delete,
+    Resolve,
+    Reopen,
+    /// A reply deleted with the plan author's own comment, the root given.
+    DeletedWith(u32),
+}
+
+impl OthersComment {
+    /// The refusal: what to do instead (`reply` / `resolve` spelled for
+    /// the plan's syntax), or the opt-in `rewrite` that allows it.
+    fn refusal(&self, reply: &str, resolve: &str, rewrite: &str) -> String {
+        let (comment, author) = (self.comment, &self.author);
+        let named = !author.is_empty();
+        let (verb, theirs) = match self.change {
+            OthersChange::DeletedWith(root) => {
+                let (whose, that) = if named {
+                    (format!("a reply by {author:?}"), "their")
+                } else {
+                    ("a reply that names no author".to_string(), "that")
+                };
+                return format!(
+                    "deleting c{root} deletes c{comment}, {whose}; resolve c{root} instead ({resolve}), or pass {rewrite} to delete {that} reply with it"
+                );
+            }
+            OthersChange::Reword => ("change", "their words under their name"),
+            OthersChange::Delete => ("delete", "their comment"),
+            OthersChange::Resolve => ("resolve", "their comment"),
+            OthersChange::Reopen => ("reopen", "their comment"),
+        };
+        let what = match (self.change, named) {
+            (_, true) => format!("{verb} {theirs}"),
+            (OthersChange::Reword, false) => "change its words".to_string(),
+            (_, false) => format!("{verb} it"),
+        };
+        format!(
+            "{}; reply instead ({reply}), or pass {rewrite} to {what}",
+            self.whose()
+        )
+    }
+
+    /// The report's note when `rewrite_others_comments` let it through.
+    fn note(&self) -> String {
+        let named = !self.author.is_empty();
+        let what = match (self.change, named) {
+            (OthersChange::Reword, true) => "their words were changed under their name".into(),
+            (OthersChange::Reword, false) => "its words were changed".into(),
+            (OthersChange::Delete, true) => "their comment was deleted".into(),
+            (OthersChange::Resolve, true) => "their comment was resolved".into(),
+            (OthersChange::Reopen, true) => "their comment was reopened".into(),
+            (OthersChange::Delete, false) => "it was deleted".into(),
+            (OthersChange::Resolve, false) => "it was resolved".into(),
+            (OthersChange::Reopen, false) => "it was reopened".into(),
+            (OthersChange::DeletedWith(root), true) => {
+                format!("their reply was deleted with c{root}")
+            }
+            (OthersChange::DeletedWith(root), false) => format!("it was deleted with c{root}"),
+        };
+        format!("{}; {what}", self.whose())
+    }
+
+    /// `c5 is by "Bob"`, or `c5 names no author`.
+    fn whose(&self) -> String {
+        if self.author.is_empty() {
+            format!("c{} names no author", self.comment)
+        } else {
+            format!("c{} is by {:?}", self.comment, self.author)
+        }
+    }
+}
+
 /// A resolved `insert_toc`.
 #[derive(Clone, Debug)]
 struct TocSpec {
@@ -2647,9 +2733,9 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
-    /// Another author's comments `edit_comment` rewrites under
-    /// `rewrite_others_comments`: (outcome index, comment id, author).
-    rewritten: Vec<(usize, u32, String)>,
+    /// Another author's comments a thread operation changes under
+    /// `rewrite_others_comments`, by outcome index.
+    rewritten: Vec<(usize, OthersComment)>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
     /// The body's content controls, in document order.
@@ -3233,40 +3319,41 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// One note per comment of another author an `edit_comment` rewrote
-    /// under `rewrite_others_comments`: their name now carries our words.
+    /// One note per comment of another author a thread operation changed
+    /// under `rewrite_others_comments`: rewording keeps their name on our
+    /// words; deleting, resolving or reopening speaks for them.
     fn rewrite_notes(&self) -> Vec<String> {
         self.rewritten
             .iter()
-            .filter_map(|(i, comment, author)| {
+            .filter_map(|(i, others)| {
                 let outcome = self.outcomes.get(*i).filter(|o| o.status == "ok")?;
-                let what = if author.is_empty() {
-                    format!("c{comment} names no author; its words were changed")
-                } else {
-                    format!(
-                        "c{comment} is by {author:?}; their words were changed under their name"
-                    )
-                };
-                Some(format!("{} (edit_comment): {what}", outcome.id))
+                Some(format!(
+                    "{} ({}): {}",
+                    outcome.id,
+                    outcome.kind,
+                    others.note()
+                ))
             })
             .collect()
     }
 
-    /// Record each `edit_comment` among `resolved` (the operation whose
+    /// Record each thread operation among `resolved` (the operation whose
     /// outcome will be `outcomes[outcome]`) that changes a comment not the
     /// plan author's, for [`Self::rewrite_notes`]: v1 and v2 alike.
     pub(crate) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
-        for r in resolved {
-            if let Resolved::Thread {
-                op: ThreadOp::Edit { id: comment, .. },
-                ..
-            } = r
-                && let Some(family) = &self.family
-                && let Some(author) = self.not_own_comment(family, *comment)
-            {
-                self.rewritten.push((outcome, *comment, author));
-            }
-        }
+        let Some(family) = &self.family else {
+            return;
+        };
+        let changed: Vec<OthersComment> = resolved
+            .iter()
+            .filter_map(|r| match r {
+                Resolved::Thread { op, .. } => Some(self.others_comments(family, op)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        self.rewritten
+            .extend(changed.into_iter().map(|others| (outcome, others)));
     }
 
     /// The author of comment `id` when it is not the plan author's, `""`
@@ -3275,6 +3362,48 @@ impl<'p> Transaction<'p> {
     fn not_own_comment(&self, family: &crate::comments::CommentFamily, id: u32) -> Option<String> {
         let author = family.author(id).unwrap_or_default();
         (author != self.plan.author).then(|| author.to_string())
+    }
+
+    /// The comments of other authors `op` changes: the one it rewords,
+    /// deletes, resolves or reopens, or the replies by others that deleting
+    /// the plan author's own comment takes with it (#1846). A reply
+    /// changes no one's comment.
+    fn others_comments(
+        &self,
+        family: &crate::comments::CommentFamily,
+        op: &ThreadOp,
+    ) -> Vec<OthersComment> {
+        let change = match op {
+            ThreadOp::Reply { .. } => return Vec::new(),
+            ThreadOp::Edit { .. } => OthersChange::Reword,
+            ThreadOp::Delete { .. } => OthersChange::Delete,
+            ThreadOp::Resolve { done: true, .. } => OthersChange::Resolve,
+            ThreadOp::Resolve { done: false, .. } => OthersChange::Reopen,
+        };
+        let target = op.target();
+        if let Some(author) = self.not_own_comment(family, target) {
+            return vec![OthersComment {
+                comment: target,
+                author,
+                change,
+            }];
+        }
+        if !matches!(op, ThreadOp::Delete { .. }) {
+            return Vec::new();
+        }
+        family
+            .with_replies(target)
+            .into_iter()
+            .filter(|&reply| reply != target)
+            .filter_map(|reply| {
+                self.not_own_comment(family, reply)
+                    .map(|author| OthersComment {
+                        comment: reply,
+                        author,
+                        change: OthersChange::DeletedWith(target),
+                    })
+            })
+            .collect()
     }
 
     /// Resolve every operation against the untouched source; the first
@@ -4372,9 +4501,10 @@ impl<'p> Transaction<'p> {
     /// properties are discarded, so it may not carry a section break.
     /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
     /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
-    /// comment's reference to anchor on; `edit_comment` on another
-    /// author's comment needs `rewrite_others_comments`
-    /// (`COMMENT_NOT_YOURS`).
+    /// comment's reference to anchor on; `edit_comment`, `delete_comment`
+    /// and `resolve_comment` on another author's comment, or a delete
+    /// whose thread holds another author's reply, need
+    /// `rewrite_others_comments` (`COMMENT_NOT_YOURS`).
     fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
@@ -4444,30 +4574,25 @@ impl<'p> Transaction<'p> {
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         }
-        // A comment speaks for its author: another author answers it.
-        if let ThreadOp::Edit { id, .. } = op
-            && !self.plan.rewrite_others_comments
-            && let Some(author) = self.not_own_comment(family, id)
+        // A comment speaks for its author: another author answers it, and
+        // only its author rewords, deletes, resolves or reopens it. Deleting
+        // one's own comment deletes the replies in its thread too.
+        if !self.plan.rewrite_others_comments
+            && let Some(others) = self.others_comments(family, &op).first()
         {
-            let (reply, rewrite) = match self.syntax {
+            let (reply, resolve, rewrite) = match self.syntax {
                 PlanSyntax::Flags | PlanSyntax::Typed => (
-                    format!("-p c{id} --reply TEXT"),
+                    format!("-p c{target} --reply TEXT"),
+                    format!("-p c{target} --resolve"),
                     "--rewrite-others-comments",
                 ),
                 PlanSyntax::V1 | PlanSyntax::V2 => (
                     "reply_comment".to_string(),
+                    "resolve_comment".to_string(),
                     r#""rewrite_others_comments": true"#,
                 ),
             };
-            let message = if author.is_empty() {
-                format!(
-                    "c{id} names no author; reply instead ({reply}), or pass {rewrite} to change its words"
-                )
-            } else {
-                format!(
-                    "c{id} is by {author:?}; reply instead ({reply}), or pass {rewrite} to change their words under their name"
-                )
-            };
+            let message = others.refusal(&reply, &resolve, rewrite);
             return Err(fail("COMMENT_NOT_YOURS", message, outcome));
         }
         let ids = match &op {
@@ -9117,6 +9242,82 @@ fn toggle(dom: &mut Dom, rpr: NodeId, local: &str, value: Option<bool>) {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// Every change to another author's comment, named or not, refuses
+    /// and notes in its own words (#1846).
+    #[test]
+    fn others_comment_wording_covers_every_change() {
+        let others = |change, author: &str| OthersComment {
+            comment: 1,
+            author: author.to_string(),
+            change,
+        };
+        let cases = [
+            (
+                OthersChange::Reword,
+                "change their words under their name",
+                "change its words",
+                "their words were changed under their name",
+                "its words were changed",
+            ),
+            (
+                OthersChange::Delete,
+                "delete their comment",
+                "delete it",
+                "their comment was deleted",
+                "it was deleted",
+            ),
+            (
+                OthersChange::Resolve,
+                "resolve their comment",
+                "resolve it",
+                "their comment was resolved",
+                "it was resolved",
+            ),
+            (
+                OthersChange::Reopen,
+                "reopen their comment",
+                "reopen it",
+                "their comment was reopened",
+                "it was reopened",
+            ),
+        ];
+        for (change, named_to, unnamed_to, named_note, unnamed_note) in cases {
+            assert_eq!(
+                others(change, "Bob").refusal("R", "S", "O"),
+                format!(r#"c1 is by "Bob"; reply instead (R), or pass O to {named_to}"#)
+            );
+            assert_eq!(
+                others(change, "").refusal("R", "S", "O"),
+                format!("c1 names no author; reply instead (R), or pass O to {unnamed_to}")
+            );
+            assert_eq!(
+                others(change, "Bob").note(),
+                format!(r#"c1 is by "Bob"; {named_note}"#)
+            );
+            assert_eq!(
+                others(change, "").note(),
+                format!("c1 names no author; {unnamed_note}")
+            );
+        }
+        let with = OthersChange::DeletedWith(0);
+        assert_eq!(
+            others(with, "Bob").refusal("R", "S", "O"),
+            r#"deleting c0 deletes c1, a reply by "Bob"; resolve c0 instead (S), or pass O to delete their reply with it"#
+        );
+        assert_eq!(
+            others(with, "").refusal("R", "S", "O"),
+            "deleting c0 deletes c1, a reply that names no author; resolve c0 instead (S), or pass O to delete that reply with it"
+        );
+        assert_eq!(
+            others(with, "Bob").note(),
+            r#"c1 is by "Bob"; their reply was deleted with c0"#
+        );
+        assert_eq!(
+            others(with, "").note(),
+            "c1 names no author; it was deleted with c0"
+        );
+    }
 
     #[test]
     fn a_copy_is_the_edits_own_only_when_it_copies_the_edits_own_record() {

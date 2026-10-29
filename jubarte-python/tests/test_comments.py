@@ -25,9 +25,12 @@ def test_reply_and_resolve_round_trip() -> None:
     assert (root.text, root.done, root.parent) == ("Too low", False, None)
     assert (root.anchor_text, root.before, root.after, root.paragraph) == ("cap", "The ", " is 10.", "p0")
     assert root.last_paragraph is None
-    second = first.clean.edit(
-        jubarte.EditPlan(author="Bob").reply_comment(root.id, text="Agreed").resolve_comment(root.id)
-    )
+    # Bob answers Ann's comment; resolving it is Ann's to do (#1846).
+    with pytest.raises(jubarte.EditPlanError) as refused:
+        first.clean.edit(jubarte.EditPlan(author="Bob").resolve_comment(root.id))
+    assert refused.value.code == "COMMENT_NOT_YOURS"
+    replied = first.clean.edit(jubarte.EditPlan(author="Bob").reply_comment(root.id, text="Agreed"))
+    second = replied.clean.edit(jubarte.EditPlan(author="Ann").resolve_comment(root.id))
     thread = second.clean.comments()
     assert thread[1].parent == root.id and thread[0].done and thread[1].done
     assert len(second.redline.comments()) == 2
@@ -47,7 +50,13 @@ def test_edit_delete_through_and_filters() -> None:
     assert [x.text for x in replied.clean.comments(latest=True)] == ["Yes"]
     reopened = replied.clean.edit(jubarte.EditPlan(author="Ann").resolve_comment(c.id, done=False))
     assert not any(x.done for x in reopened.clean.comments())
-    deleted = replied.clean.edit(jubarte.EditPlan(author="Ann").delete_comment(c.id))
+    # Deleting her comment would delete Bob's reply with it (#1846).
+    with pytest.raises(jubarte.EditPlanError) as refused:
+        replied.clean.edit(jubarte.EditPlan(author="Ann").delete_comment(c.id))
+    assert refused.value.code == "COMMENT_NOT_YOURS"
+    deleted = replied.clean.edit(
+        jubarte.EditPlan(author="Ann", rewrite_others_comments=True).delete_comment(c.id)
+    )
     assert deleted.clean.comments() == ()
     assert deleted.redline.comments() == ()
 

@@ -1293,9 +1293,11 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Let `-p c5 --content` change a comment another author wrote; it
-        /// keeps their name. Without it that is refused
-        /// (COMMENT_NOT_YOURS): one author answers another with --reply.
+        /// Let `-p c5 --content`, `--delete` and `--resolve` change a comment
+        /// another author wrote (a reworded one keeps their name), and
+        /// `--delete` take their reply with your thread. Without it that is
+        /// refused (COMMENT_NOT_YOURS): one author answers another with
+        /// --reply.
         #[arg(long)]
         rewrite_others_comments: bool,
         /// Accept revision r12 (with -p r12; r1+2 for several); prints the
