@@ -51,7 +51,7 @@
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
-//! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
+//! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
 //! OpenXmlValidator checks them (`Sem_UniqueAttributeValue`): two `w:ins`
@@ -3405,6 +3405,9 @@ fn story_part(id: &str) -> String {
 /// explained solely by a missing separator revision is not another change.
 /// Missing original permission endpoints are reported as
 /// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
+/// Another author's comment that is gone, reworded, resolved or reopened,
+/// and a new comment or reply not signed `author`, is a `FOREIGN_COMMENT`
+/// finding (`check_foreign_comments`).
 ///
 /// # Errors
 ///
@@ -3422,6 +3425,7 @@ pub fn audit_tracked(
     };
     let reverted = reject_changes(edited, &filter)?;
     check_foreign_revisions(original, &reverted, author, &mut out)?;
+    check_foreign_comments(original, edited, author, &mut out)?;
     // Paragraph-by-paragraph text: the same projection `jubarte text` prints,
     // body first, then every header, footer and notes story.
     let before = all_paragraphs(original)?;
@@ -4142,6 +4146,130 @@ fn check_dropped_permissions(original: &PartFs, edited: &PartFs, out: &mut Vec<F
 }
 
 /// [`audit_tracked`]'s findings belong to the `edits` set and fail a run.
+/// Comments `author` may not have changed (#1846). `original`'s comments
+/// are paired with `edited`'s, first by id (with the same author and
+/// date), then in order by author, date and text, then by author and date:
+/// another tool may renumber them. Another author's comment (one that names
+/// no author included) that has no pair is gone; a pair whose text differs
+/// was reworded; a thread root whose resolved state differs was resolved
+/// or reopened (a reply's state follows its root, so resolving one's own
+/// thread changes no one else's). An `edited` comment with no pair that is
+/// not signed `author` is new. Each finding's message starts with the
+/// comment's id, `edited`'s where it has one.
+fn check_foreign_comments(
+    original: &[u8],
+    edited: &[u8],
+    author: &str,
+    out: &mut Vec<Finding>,
+) -> Result<(), ValidateError> {
+    use crate::comments::{CommentError, CommentRecord, list_comments};
+    let listed = |docx: &[u8]| {
+        list_comments(docx).map_err(|e| match e {
+            CommentError::Admission(e) => ValidateError::Refused(e),
+            CommentError::Package(m) => ValidateError::Package(m),
+        })
+    };
+    let before = listed(original)?;
+    let after = listed(edited)?;
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut paired_after = vec![false; after.len()];
+    let mut paired_before = vec![false; before.len()];
+    // Every pass needs the same author and date; the first also the same
+    // id, the second the same text.
+    for pass in 0..3 {
+        let same = |b: &CommentRecord, a: &CommentRecord| {
+            b.author == a.author
+                && b.date == a.date
+                && match pass {
+                    0 => b.id == a.id,
+                    1 => b.text == a.text,
+                    _ => true,
+                }
+        };
+        for (i, b) in before.iter().enumerate() {
+            if paired_before[i] {
+                continue;
+            }
+            if let Some(j) = (0..after.len()).find(|&j| !paired_after[j] && same(b, &after[j])) {
+                paired_before[i] = true;
+                paired_after[j] = true;
+                pairs.push((i, j));
+            }
+        }
+    }
+    let whose = |c: &CommentRecord| {
+        if c.author.is_empty() {
+            format!("c{}, which names no author,", c.id)
+        } else {
+            format!("c{} by {:?}", c.id, c.author)
+        }
+    };
+    let instead = |c: &CommentRecord, doing: &str| {
+        let them = if c.author.is_empty() {
+            "it"
+        } else {
+            "their comment"
+        };
+        format!("reply to {them} instead of {doing}")
+    };
+    let mut findings: Vec<(usize, String)> = Vec::new();
+    for (i, b) in before.iter().enumerate() {
+        if !paired_before[i] && b.author != author {
+            findings.push((
+                i,
+                format!("{} is gone: {}", whose(b), instead(b, "deleting it")),
+            ));
+        }
+    }
+    pairs.sort_unstable();
+    for &(i, j) in &pairs {
+        let (b, a) = (&before[i], &after[j]);
+        if b.author == author {
+            continue;
+        }
+        if b.text != a.text {
+            findings.push((
+                i,
+                format!(
+                    "{} was reworded: {}",
+                    whose(a),
+                    instead(a, "changing its words")
+                ),
+            ));
+        }
+        if b.parent.is_none() && b.done != a.done {
+            let (done, doing) = if a.done {
+                ("resolved", "resolving it")
+            } else {
+                ("reopened", "reopening it")
+            };
+            findings.push((i, format!("{} was {done}: {}", whose(a), instead(a, doing))));
+        }
+    }
+    findings.sort_by_key(|(i, _)| *i);
+    out.extend(
+        findings
+            .into_iter()
+            .map(|(_, message)| Finding::new("FOREIGN_COMMENT", "word/comments.xml", "", message)),
+    );
+    for (j, a) in after.iter().enumerate() {
+        if !paired_after[j] && a.author != author {
+            let signed = if a.author.is_empty() {
+                "names no author".to_string()
+            } else {
+                format!("signed {:?}", a.author)
+            };
+            out.push(Finding::new(
+                "FOREIGN_COMMENT",
+                "word/comments.xml",
+                "",
+                format!("c{} is new and {signed}, not {author:?}", a.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
     for f in &mut findings {
         f.set = "edits".to_string();

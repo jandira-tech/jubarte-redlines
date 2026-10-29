@@ -451,8 +451,10 @@ Gotchas:
   (the author your plan names).
   `jubarte validate review/redline.docx --original contract.docx --author
   Claude` runs that check and the Word-validity check in one; it replaces
-  `validate.py --original --author`. `--repair out.docx` fixes what it can
-  and lists what it cannot.
+  `validate.py --original --author`. It also fails on another author's
+  comment you deleted, reworded, resolved or reopened, and on a comment or
+  reply not signed `--author` (`FOREIGN_COMMENT`). `--repair out.docx`
+  fixes what it can and lists what it cannot.
 - `jubarte validate file.docx --rules a11y,style,structure --json` lists
   heading skips, images without alt text, tables without a header row,
   a missing document language, literal bullets, spacer paragraphs, stale TOC and page-count caches, and
