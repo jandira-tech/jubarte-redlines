@@ -453,7 +453,7 @@ impl Seg {
 
 /// Whether a paragraph's mark is on this side: not inserted on A's, not
 /// deleted on B's (a moved mark counts at its own end).
-fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
+pub(super) fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
     let changes: &[&str] = if b_side {
         &["del", "moveFrom"]
     } else {
