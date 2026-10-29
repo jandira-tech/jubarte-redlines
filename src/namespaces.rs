@@ -215,6 +215,8 @@ impl W {
     cached_xname!(W::URI, tbl_pr, "tblPr");
     cached_xname!(W::URI, tr_pr, "trPr");
     cached_xname!(W::URI, grid_span, "gridSpan");
+    // A table grid's columns. The convert fit reads one per column.
+    cached_xname!(W::URI, grid_col, "gridCol");
     cached_xname!(W::URI, bookmark_start, "bookmarkStart");
     cached_xname!(W::URI, bookmark_end, "bookmarkEnd");
     cached_xname!(W::URI, del_text, "delText");
@@ -251,6 +253,8 @@ impl W {
     cached_xname!(W::URI, smart_tag, "smartTag");
     cached_xname!(W::URI, rsid_r, "rsidR");
     cached_xname!(W::URI, rsid_tr, "rsidTr");
+    // A table grid column's width, read per column (`grid_col` is above).
+    cached_xname!(W::URI, w, "w");
     cached_xname!(W::URI, r_pr_change, "rPrChange");
     cached_xname!(W::URI, p_pr_change, "pPrChange");
     cached_xname!(W::URI, numbering_change, "numberingChange");

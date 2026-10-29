@@ -13250,18 +13250,20 @@ fn table_block(
     // capability matrix wraps into a hairline column.
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
-        for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+        let w = W::w();
+        for col in dom.elements(grid, Some(&W::grid_col())) {
             // A `w:type` on a gridCol, or a gridCol without a width, is
             // a grid Word never wrote: it fits the columns to their
             // content on open (0edc50c464's `<w:gridCol/>` tables). Cells
             // without a width can say so too (`cells_foreign`, below).
-            let width = dom.attribute(col, &W::name("w"));
+            let width = dom.attribute(col, &w);
             foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
-            let w = width
-                .and_then(|s| s.parse::<f32>().ok())
-                .map(twip)
-                .unwrap_or(80.0);
-            cols.push(w);
+            cols.push(
+                width
+                    .and_then(|s| s.parse::<f32>().ok())
+                    .map(twip)
+                    .unwrap_or(80.0),
+            );
         }
     }
     // With no table style anywhere Word pads a cell 0.5pt, not 108 twips
@@ -20754,7 +20756,7 @@ fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
         _ => {
             let mut w = 0.0;
             if let Some(grid) = direct_named(dom, table, "tblGrid") {
-                for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+                for col in dom.elements(grid, Some(&W::grid_col())) {
                     w += attr_any(dom, col, "w")
                         .and_then(|s| s.parse::<f32>().ok())
                         .map(twip)
