@@ -375,3 +375,36 @@ fn a_last_paragraph_drawing_a_text_box_keeps_its_start() {
         }
     }
 }
+
+/// Cursor Bugbot on #1921: a paragraph inserted between the last text and a
+/// trailing paragraph without text does not take that paragraph's start.
+#[test]
+fn a_paragraph_inserted_before_a_trailing_picture_leaves_its_start() {
+    let build = |inserted: &str| {
+        vml_docx(&format!(
+            r#"{}{}{inserted}<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/>{PICTURE}<w:bookmarkEnd w:id="0"/></w:p>"#,
+            para("Intro."),
+            para("Heading text")
+        ))
+    };
+    assert_kept(
+        &build(""),
+        &build(&para("Probe paragraph.")),
+        "pict",
+        "inserted before a trailing picture",
+    );
+    // An inserted paragraph with no text of its own either.
+    let original = build("");
+    let revised = build(&format!("<w:p>{TAB}</w:p>"));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            assert_starts_in(&docx, "pict", &format!("textless insert, {mode}, {view}"));
+        }
+    }
+}
