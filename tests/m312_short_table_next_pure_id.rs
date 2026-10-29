@@ -190,7 +190,7 @@ fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
 }
 
 #[test]
-fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
+fn hyperlink_x_rtl_table_title_pure_i_and_only_paired_cells_mix() {
     // M313: base may have a table; next short rtl_table title; jaccard 0.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
@@ -229,8 +229,19 @@ fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
         "must not MIX rtl title with hyperlink base: {:?}",
         &first_content.1[..first_content.1.len().min(100)]
     );
-    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
-    assert_eq!(n_m, 0, "Word IDDD… MIX=0; got MIX={n_m}");
+    // Word pairs the original's table with the revision's (#1817): the two
+    // paired first-row cells mix, nothing else does (Word's redline of the
+    // pair, 38aa2282ac).
+    let mixed: Vec<&str> = paras
+        .iter()
+        .filter(|(c, _)| *c == 'M')
+        .map(|(_, t)| t.as_str())
+        .collect();
+    assert_eq!(mixed.len(), 2, "Word's MIX=2; got {mixed:?}");
+    assert!(
+        mixed.iter().all(|t| t.starts_with("rtl-r0c")),
+        "only the paired cells mix: {mixed:?}"
+    );
 }
 
 #[test]
@@ -266,8 +277,15 @@ fn list_with_table_break_x_plain_3x3_title_pure_i() {
         "must not MIX list item into title: {:?}",
         first_content.1
     );
-    let n_m = paras.iter().filter(|(c, _)| *c == 'M').count();
-    assert_eq!(n_m, 0, "Word IDDD… MIX=0; MIX={n_m}");
+    // Word pairs the original's table with the revision's (#1817): the
+    // first cell of each paired row mixes, nothing else does (Word's redline
+    // of the pair, 022de5dc91).
+    let mixed: Vec<&str> = paras
+        .iter()
+        .filter(|(c, _)| *c == 'M')
+        .map(|(_, t)| t.as_str())
+        .collect();
+    assert_eq!(mixed, ["r0c0Table row 1", "r1c0Row 2", "r2c0Row 3"]);
 }
 
 #[test]

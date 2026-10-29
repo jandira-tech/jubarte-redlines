@@ -7081,6 +7081,19 @@ fn compare_documents_impl(
     // text-preserving.
     crate::comparer::finalize::reorder_replacements_ins_before_del(&mut dom, result_root);
 
+    // Word mode: the deleted rows of a paired table whose style or layout
+    // changed become tables of their own, as in Word's redlines (#1817).
+    // Before the pass below, which reads the deleted tables.
+    if settings.merge_replaced_paragraphs {
+        use crate::comparer::table_split::{TableStyleNames, split_rows_by_table_identity};
+        split_rows_by_table_identity(
+            &mut dom,
+            result_root,
+            &TableStyleNames::original(pkg1.part_string("word/styles.xml").as_deref()),
+            &TableStyleNames::revision(pkg2.part_string("word/styles.xml").as_deref()),
+        );
+    }
+
     // Inserted words a deleted paragraph mark joins across a deleted table
     // start the paragraph they join (#1851): Word 16.115 crashes opening
     // some such redlines. After the comment carry and M472, which rebuild
