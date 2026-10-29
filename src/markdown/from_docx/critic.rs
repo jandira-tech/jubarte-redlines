@@ -168,18 +168,7 @@ pub(super) fn display(by: &str) -> String {
         }
         out
     };
-    {
-        let mut out = String::with_capacity(tagged.len() + 32);
-        let mut first = true;
-        for part in tagged.split(ON).map(one) {
-            if !first {
-                out.push_str(" re ");
-            }
-            out.push_str(&part);
-            first = false;
-        }
-        out
-    }
+    tagged.split(ON).map(one).collect::<Vec<_>>().join(" re ")
 }
 
 /// A printed plain part (`r1+2 Name (date)`) with the name's parentheses,

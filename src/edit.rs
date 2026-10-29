@@ -5856,19 +5856,7 @@ impl<'p> Transaction<'p> {
             }
             let message = format!(
                 "the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it",
-                {
-                    let mut s =
-                        String::with_capacity(parts.iter().map(|s| s.len() + 2).sum::<usize>());
-                    let mut first = true;
-                    for p in parts {
-                        if !first {
-                            s.push_str(", ");
-                        }
-                        s.push_str(&p);
-                        first = false;
-                    }
-                    s
-                }
+                parts.into_iter().collect::<Vec<_>>().join(", ")
             );
             let mut error = self.conflict(op, &message);
             error.code = "REDACTION_LEAK".into();

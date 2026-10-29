@@ -3854,18 +3854,7 @@ fn task_usage(argv: &[String], program: &str) -> Option<String> {
         .find(|a| !a.starts_with('-'))?;
     let usage = model.find_subcommand_mut(name)?.render_usage().to_string();
     let usage = usage.strip_prefix("Usage: ")?;
-    {
-        let mut out = String::with_capacity(usage.len());
-        let mut first = true;
-        for line in usage.lines().map(str::trim) {
-            if !first {
-                out.push('\n');
-            }
-            out.push_str(line);
-            first = false;
-        }
-        Some(out)
-    }
+    Some(usage.lines().map(str::trim).collect::<Vec<_>>().join("\n"))
 }
 
 /// The usage error for a task the host (`program`) does not have.
