@@ -4438,26 +4438,36 @@ fn check_foreign_comments(
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     let mut paired_after = vec![false; after.len()];
     let mut paired_before = vec![false; before.len()];
+    let mut after_by_key: std::collections::HashMap<(&str, Option<&str>), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (j, a) in after.iter().enumerate() {
+        after_by_key
+            .entry((a.author.as_str(), a.date.as_deref()))
+            .or_default()
+            .push(j);
+    }
+
     // Every pass needs the same author and date; the first also the same
     // id, the second the same text.
     for pass in 0..3 {
-        let same = |b: &CommentRecord, a: &CommentRecord| {
-            b.author == a.author
-                && b.date == a.date
-                && match pass {
-                    0 => b.id == a.id,
-                    1 => b.text == a.text,
-                    _ => true,
-                }
-        };
         for (i, b) in before.iter().enumerate() {
             if paired_before[i] {
                 continue;
             }
-            if let Some(j) = (0..after.len()).find(|&j| !paired_after[j] && same(b, &after[j])) {
-                paired_before[i] = true;
-                paired_after[j] = true;
-                pairs.push((i, j));
+            if let Some(candidates) = after_by_key.get(&(b.author.as_str(), b.date.as_deref())) {
+                let found = candidates.iter().find(|&&j| {
+                    !paired_after[j]
+                        && match pass {
+                            0 => b.id == after[j].id,
+                            1 => b.text == after[j].text,
+                            _ => true,
+                        }
+                });
+                if let Some(&j) = found {
+                    paired_before[i] = true;
+                    paired_after[j] = true;
+                    pairs.push((i, j));
+                }
             }
         }
     }
