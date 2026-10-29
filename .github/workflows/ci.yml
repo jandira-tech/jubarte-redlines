@@ -95,7 +95,7 @@ jobs:
       - if: matrix.os == 'self-hosted'
         uses: ./.github/actions/mbx
       - if: matrix.os != 'self-hosted'
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
         with:
           tool: cargo-nextest
@@ -216,7 +216,7 @@ jobs:
           toolchain: nightly
       # Not mbx: under it the sanitizer build of jubarte-fuzz stalled past
       # the timeout twice on 2026-10-17, and mbx bypasses the instrumented C.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: fuzz
           # A fuzzer that finds a crash fails the job; keep the build anyway.
