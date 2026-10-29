@@ -27976,15 +27976,7 @@ mod coverage_real_revision_merge_matrix_tests {
             failures.is_empty(),
             "{} exact cross-field owner failures:\n{}",
             failures.len(),
-            {
-                let mut it = failures.into_iter().take(32);
-                let mut joined = it.next().unwrap_or_default();
-                for next_part in it {
-                    joined.push('\n');
-                    joined.push_str(&next_part);
-                }
-                joined
-            }
+            failures.into_iter().take(32).collect::<Vec<_>>().join("\n")
         );
     }
     fn organic_table(revised_geometry: bool, profile: usize) -> String {
