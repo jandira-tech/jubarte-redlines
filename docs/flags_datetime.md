@@ -566,9 +566,9 @@ Diagnose a Word package, or compare package structures
 |-|-|-|-|-|-|-|
 | `<FILES>` |  | <FILE>... |  |  | required; append | One package, or two to compare (A then B) |
 | `-l, --list` |  |  | false |  |  | List the package's entries (sizes); with two files, the entries that differ |
-| `-c, --check` |  | <CHECKS> |  | orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, styledefs, numbering, render | append | Reports to run [default: orphans, fields, bookmarks, package, structure] |
+| `-c, --check` |  | <CHECKS> |  | orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, tables, styledefs, numbering, render | append | Reports to run [default: orphans, fields, bookmarks, package, structure] |
 | `-p, --part` |  | <NAME> |  |  |  | Only parts whose name contains this (e.g. document.xml) |
-| `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
+| `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/tables/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
 | `-n, --limit` |  | <N> | 5 |  |  | Examples per finding kind |
 | `-C, --context` |  | <N> | 0 |  |  | text/xml/runs of two files: common lines shown around each change |
 | `--full-lines` |  |  | false |  |  | text/xml/runs/changes/styledefs/numbering/render: show complete lines instead of clipping them at 200 characters |
@@ -712,7 +712,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--changed` | (shorthand), __edit-template template, compare, read | `default=false values=` |
 | `--changed-only` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values= alias of --changed-pages` |
 | `--changed-pages` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values=` |
-| `--check` | self-update, debug | **differs**: `default=false values=` on self-update; `-c <CHECKS> default= values=orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, styledefs, numbering, render` on debug |
+| `--check` | self-update, debug | **differs**: `default=false values=` on self-update; `-c <CHECKS> default= values=orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, tables, styledefs, numbering, render` on debug |
 | `--columns` | diff | `<N> default=72 values=` |
 | `--comment` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, add | **differs**: `default= values=` on add; `<COMMENT> default= values=` on __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert |
 | `--comment-notes` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values=` |

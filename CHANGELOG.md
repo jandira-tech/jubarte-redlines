@@ -15,13 +15,16 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Breaking
+
+- **`jubarte::debug::Check` gains `Tables`** (#1817). A Rust `match` on `Check` without a wildcard arm needs one for it.
+
 ### Added
 
 - **`validate --original --author NAME` checks comments too** (#1846). It read only revisions, so a counterparty comment you deleted or resolved, or one `add` signed "Jubarte" because `--author` was left out, passed with "no findings". Each is now a `FOREIGN_COMMENT` error in the `edits` set: another author's comment (or reply) that is gone, reworded, resolved or reopened, and a new comment or reply not signed NAME. Every message says what to do instead (`c0 by "Counterparty Counsel" was resolved: reply to their comment instead of resolving it`). Comments pair by id, then by author, date and text, so a file whose comment ids another tool renumbered still pairs. NAME's own comments change freely, and resolving NAME's own thread does not count against the replies in it. The Python (`Document.audit_tracked`) and WASM (`auditTracked`) audits report the same findings.
-
 - **`strike` and `restore` take a paragraph mark** (#1848). When another author split a paragraph, striking their inserted mark puts your tracked deletion beside their insertion in the mark, as Word writes it, and Accept All joins the paragraphs. When they joined two paragraphs, restoring their deleted mark puts an empty paragraph of yours right after theirs, with its properties and mark formatting, and Accept All splits them again. Reject All gives the original either way. A comment (`--content`) sits on the last word before the break. Both used to be refused, with advice that answered the change without a trace (`reject rNN`) or struck the paragraph's own words too (`delete paragraph pN`).
-
 - **`strike` and `restore` take a change of several marks** (#1849). `jubarte changes` lists one author's touching marks under one id (`r10+11`, a replacement's `r11+12`), but a plan's `strike`/`restore` refused that id (`strike takes one revision`) and `-p r11+12 --strike --content` refused the comment (`--content comments one revision`). A strike now strikes every insertion mark of the change and a restore restores every deletion mark, each mark checked as it would be alone, under one comment from the first answered word to the last. A replacement's other half stays as it is, and the edit says so (`note: op-1: struck r12; r11 is its deletion: restore it too to reject the whole change`). A change with no mark of the kind is refused (`r12+13 holds no insertion: restore it instead`), and so is one holding your own mark, naming it. `-p r11+12 --reject --visible --content TEXT` gives a replacement its restore and its strike, the comment on the first in reading order. A strike or restore's note (`already struck` included) now prints as a `note:` line.
+- **`jubarte debug FILE -c tables` lists every table's grid, rows and cells** (#1817). Each cell shows its width, span and vertical merge, its revision marks and the old properties its `tcPrChange` records, then its text; nested tables are indented under their cell, and each table shows its old grid and `tblPrChange`. `debug` is the maintainer tool hidden from `jubarte --help`.
 
 ### Changed
 

@@ -93,6 +93,12 @@ pub enum Check {
     /// …): where each sits and what the live properties add and drop
     /// against the recorded ones.
     Changes,
+    /// Tables per story part: the grid (and the old one a `tblGridChange`
+    /// records), each row's mark, `gridBefore`/`gridAfter` and
+    /// `trPrChange`, each cell's mark (`cellIns`, `cellDel`, `cellMerge`),
+    /// span, width and `vMerge` with the old ones a `tcPrChange` records,
+    /// and its paragraphs as `Text` shows them.
+    Tables,
     /// Style definitions by type and name (ids name nothing across
     /// documents): docDefaults, then each style's default flag, basedOn and
     /// link by name, and its pPr/rPr/tblPr/trPr/tcPr items.
@@ -126,8 +132,8 @@ pub struct Options {
     /// Only parts whose name contains this.
     pub part: Option<String>,
     /// `textbox`: only stories whose text contains this; `text`, `runs`,
-    /// `xml`, `changes`, `styledefs`, `numbering`: only lines that hold it, a `runs`
-    /// line read as plain text, printed whole.
+    /// `xml`, `changes`, `tables`, `styledefs`, `numbering`: only lines that
+    /// hold it, a `runs` line read as plain text, printed whole.
     pub grep: Option<String>,
     /// Examples per finding kind, lines per listing.
     pub limit: usize,
@@ -1825,6 +1831,141 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String
     (w.out, w.paras)
 }
 
+/// `tables`: each table of a story part, a nested one under its cell: the
+/// grid and the old grid a `tblGridChange` records; each row's mark,
+/// `gridBefore`/`gridAfter` and `trPrChange`; each cell's mark (`cellIns`
+/// `+`, `cellDel` `-`, `cellMerge` `~`), span, width, `vMerge`, the old
+/// span, width and `vMerge` a `tcPrChange` records, and its paragraphs as
+/// `text` shows them. The count is the number of tables.
+fn table_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    /// `n`'s children named `name`, through content controls and custom XML.
+    fn kids(dom: &Dom, n: NodeId, name: &str) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        for c in dom.nodes(n) {
+            match local(dom, c).as_str() {
+                l if l == name => out.push(c),
+                "sdt" | "sdtContent" | "customXml" => out.extend(kids(dom, c, name)),
+                _ => {}
+            }
+        }
+        out
+    }
+    fn child(dom: &Dom, n: NodeId, name: &str) -> Option<NodeId> {
+        dom.nodes(n).into_iter().find(|&c| local(dom, c) == name)
+    }
+    /// ` key=val` for `pr`'s child `name` (` key` when it has no `w:val`).
+    fn val(dom: &Dom, pr: Option<NodeId>, name: &str, key: &str) -> String {
+        let Some(c) = pr.and_then(|pr| child(dom, pr, name)) else {
+            return String::new();
+        };
+        match attr(dom, c, "val") {
+            v if v.is_empty() => format!(" {key}"),
+            v => format!(" {key}={v}"),
+        }
+    }
+    /// A cell's span, width and `vMerge` as ` span=2 w=3120 vMerge=restart`.
+    fn cell_props(dom: &Dom, pr: Option<NodeId>) -> String {
+        let mut s = val(dom, pr, "gridSpan", "span");
+        if let Some(w) = pr.and_then(|pr| child(dom, pr, "tcW")) {
+            let ty = attr(dom, w, "type");
+            let unit = if ty.is_empty() || ty == "dxa" {
+                String::new()
+            } else {
+                ty
+            };
+            s.push_str(&format!(" w={}{unit}", attr(dom, w, "w")));
+        }
+        s + &val(dom, pr, "vMerge", "vMerge")
+    }
+    fn grid(dom: &Dom, g: NodeId) -> String {
+        let cols: Vec<String> = kids(dom, g, "gridCol")
+            .into_iter()
+            .map(|c| attr(dom, c, "w"))
+            .collect();
+        cols.join(",")
+    }
+    /// The first of `marks` among `pr`'s children, as its sign.
+    fn sign(dom: &Dom, pr: Option<NodeId>, marks: &[(&str, &'static str)]) -> &'static str {
+        let Some(pr) = pr else { return "" };
+        dom.nodes(pr)
+            .into_iter()
+            .find_map(|c| {
+                let l = local(dom, c);
+                marks.iter().find(|(m, _)| *m == l).map(|(_, s)| *s)
+            })
+            .unwrap_or("")
+    }
+    fn table(dom: &Dom, tbl: NodeId, pad: &str, n: &mut usize, out: &mut Vec<String>) {
+        *n += 1;
+        let mut head = format!("{pad}table");
+        if let Some(g) = child(dom, tbl, "tblGrid") {
+            head.push_str(&format!(" grid={}", grid(dom, g)));
+            let old = child(dom, g, "tblGridChange").and_then(|c| child(dom, c, "tblGrid"));
+            if let Some(old) = old {
+                head.push_str(&format!(" (old grid={})", grid(dom, old)));
+            }
+        }
+        let tblpr = child(dom, tbl, "tblPr");
+        if tblpr.and_then(|p| child(dom, p, "tblPrChange")).is_some() {
+            head.push_str(" tblPrChange");
+        }
+        out.push(head);
+        for tr in kids(dom, tbl, "tr") {
+            let trpr = child(dom, tr, "trPr");
+            let mut row = format!(
+                "{pad} row{}",
+                sign(dom, trpr, &[("ins", "+"), ("del", "-")])
+            );
+            row.push_str(&val(dom, trpr, "gridBefore", "before"));
+            row.push_str(&val(dom, trpr, "gridAfter", "after"));
+            if trpr.and_then(|p| child(dom, p, "trPrChange")).is_some() {
+                row.push_str(" trPrChange");
+            }
+            out.push(row);
+            for tc in kids(dom, tr, "tc") {
+                let tcpr = child(dom, tc, "tcPr");
+                let marks = [("cellIns", "+"), ("cellDel", "-"), ("cellMerge", "~")];
+                let mut cell = format!(
+                    "{pad}  cell{}{}",
+                    sign(dom, tcpr, &marks),
+                    cell_props(dom, tcpr)
+                );
+                let old = tcpr
+                    .and_then(|p| child(dom, p, "tcPrChange"))
+                    .and_then(|c| child(dom, c, "tcPr"));
+                if let Some(old) = old {
+                    cell.push_str(&format!(" (old{})", cell_props(dom, Some(old))));
+                }
+                // The cell's own paragraphs: `text` lines at depth 0.
+                let paras: Vec<String> = text_lines(dom, tc, false, false)
+                    .0
+                    .into_iter()
+                    .filter(|l| l.starts_with("  ¶"))
+                    .map(|l| l[2..].to_string())
+                    .collect();
+                cell.push_str(&format!(": {}", paras.join(" | ")));
+                out.push(cell);
+                for inner in kids(dom, tc, "tbl") {
+                    table(dom, inner, &format!("{pad}    "), n, out);
+                }
+            }
+        }
+    }
+    fn find(dom: &Dom, n: NodeId, count: &mut usize, out: &mut Vec<String>) {
+        for c in dom.nodes(n) {
+            if local(dom, c) == "tbl" {
+                table(dom, c, "  ", count, out);
+            } else if dom.is_element(c) {
+                find(dom, c, count, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut count = 0;
+    find(dom, root, &mut count, &mut out);
+    (out, count)
+}
+
 /// `xml`: `xml` without its declaration, namespace declarations,
 /// `mc:Ignorable`, rsids and paragraph ids; attributes sorted, one element
 /// per line indented by depth, an element holding only text on one line.
@@ -2160,6 +2301,15 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
             }
             continue;
         }
+        if check == Check::Tables {
+            if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
+                let (lines, n) = table_lines(&dom, root);
+                if n > 0 {
+                    map.insert(e.name.clone(), (lines, n));
+                }
+            }
+            continue;
+        }
         if check == Check::StyleDefs {
             if local(&dom, root) == "styles" {
                 map.insert(e.name.clone(), style_lines(&dom, root));
@@ -2356,6 +2506,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         Check::Xml => "xml",
         Check::Runs => "runs",
         Check::Changes => "changes",
+        Check::Tables => "tables",
         Check::StyleDefs => "styledefs",
         Check::Numbering => "numbering",
         Check::Render => "render",
@@ -2369,6 +2520,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, part);
             } else if check == Check::Changes {
                 line(&mut out, &format!("{part}: {paras} property changes"));
+            } else if check == Check::Tables {
+                line(&mut out, &format!("{part}: {paras} tables"));
             } else if check == Check::StyleDefs {
                 line(&mut out, &format!("{part}: {paras} styles"));
             } else if check == Check::Numbering {
@@ -2682,6 +2835,7 @@ pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, Stri
                 | Check::Xml
                 | Check::Runs
                 | Check::Changes
+                | Check::Tables
                 | Check::StyleDefs
                 | Check::Numbering
                 | Check::Render
@@ -3569,6 +3723,40 @@ mod tests {
         ] {
             assert!(out.contains(expected), "{expected:?} in\n{out}");
         }
+    }
+
+    #[test]
+    fn tables_list_grids_rows_and_cells_with_their_marks() {
+        let body = concat!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblPrChange w:id="1" w:author="A"><w:tblPr/></w:tblPrChange></w:tblPr>"#,
+            r#"<w:tblGrid><w:gridCol w:w="3120"/><w:gridCol w:w="6240"/><w:tblGridChange w:id="2"><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid></w:tblGridChange></w:tblGrid>"#,
+            r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="3120" w:type="dxa"/><w:tcPrChange w:id="3" w:author="A"><w:tcPr><w:tcW w:w="9360" w:type="dxa"/><w:gridSpan w:val="2"/></w:tcPr></w:tcPrChange></w:tcPr>"#,
+            r#"<w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc>"#,
+            r#"<w:tc><w:tcPr><w:tcW w:w="50" w:type="pct"/><w:vMerge w:val="restart"/><w:cellIns w:id="4" w:author="A"/></w:tcPr>"#,
+            r#"<w:p><w:ins w:id="5" w:author="A"><w:r><w:t>Role</w:t></w:r></w:ins></w:p>"#,
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:tc></w:tr>"#,
+            r#"<w:sdt><w:sdtContent><w:tr><w:trPr><w:gridBefore w:val="1"/><w:del w:id="6" w:author="A"/></w:trPr>"#,
+            r#"<w:tc><w:tcPr><w:vMerge/><w:cellDel w:id="7" w:author="A"/></w:tcPr><w:p><w:del w:id="8" w:author="A"><w:r><w:delText>Old</w:delText></w:r></w:del></w:p></w:tc></w:tr></w:sdtContent></w:sdt>"#,
+            r#"</w:tbl><w:p/>"#,
+        );
+        let out = report(&docx(body), None, &opts_for(Check::Tables)).unwrap();
+        let expected = concat!(
+            "word/document.xml: 2 tables\n",
+            "  table grid=3120,6240 (old grid=9360) tblPrChange\n",
+            "   row\n",
+            "    cell w=3120 (old span=2 w=9360): ¶  Name\n",
+            "    cell+ w=50pct vMerge=restart: ¶  {+Role+} | ¶  \n",
+            "      table grid=2000\n",
+            "       row\n",
+            "        cell: ¶  Inner\n",
+            "   row- before=1\n",
+            "    cell- vMerge: ¶  [-Old-]\n",
+        );
+        assert!(out.contains(expected), "{expected}\nin\n{out}");
+        let same = report(&docx(body), Some(&docx(body)), &opts_for(Check::Tables)).unwrap();
+        assert!(!same.contains("cell"), "{same}");
+        let plain = report(&docx("<w:p/>"), None, &opts_for(Check::Tables)).unwrap();
+        assert!(!plain.contains("tables"), "{plain}");
     }
 
     #[test]
