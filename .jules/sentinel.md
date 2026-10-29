@@ -1,4 +1,0 @@
-## 2024-10-29 - Prevent Regex DoS in Search Filter
-**Vulnerability:** The `--regex` flag in `read --for-edit` passed unbounded user input directly to `regex::Regex::new()`. While Rust's `regex` crate is generally immune to catastrophic backtracking due to its DFA/NFA implementation, it can still suffer from DoS if a massive or excessively complex regex is compiled without bounds, eventually exhausting resources or hitting the compile-time size limit unexpectedly and resulting in a runtime failure.
-**Learning:** `RegexBuilder` should be used instead of `Regex::new` to explicitly configure limits (like `size_limit`) when dealing with user-supplied regular expressions, and user input lengths should be bounded before even attempting compilation to prevent trivially large inputs from consuming resources.
-**Prevention:** Bound user input lengths and use `regex::RegexBuilder` with a configured `size_limit` when compiling arbitrary user-provided regular expressions.

@@ -681,19 +681,12 @@ fn text_selection(
         })
     } else {
         let pattern = request.regex.as_deref().unwrap_or("");
-        // Sentinel: Prevent Regex DoS by bounding user input length
-        if pattern.len() > 1000 {
-            return Err(super::err("USAGE", None, "--regex pattern is too long".to_string()));
-        }
         let pattern = if request.ignore_case {
             format!("(?i){pattern}")
         } else {
             pattern.to_string()
         };
-        let compiled = regex::RegexBuilder::new(&pattern)
-            // Sentinel: Explicitly configure limit to prevent memory exhaustion
-            .size_limit(1_000_000)
-            .build()
+        let compiled = regex::Regex::new(&pattern)
             .map_err(|e| super::err("USAGE", None, format!("--regex does not compile: {e}")))?;
         Box::new(move |text: &str| compiled.is_match(text))
     };
