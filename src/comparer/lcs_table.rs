@@ -396,9 +396,10 @@ pub(crate) fn rows_by_table(
         return None;
     }
     let shared = |a: &[ComparisonUnit], b: &[ComparisonUnit]| {
-        a.iter()
-            .filter(|row| b.iter().any(|other| other.sha1() == row.sha1()))
-            .count()
+        shared_rows(
+            a.iter().map(ComparisonUnit::sha1),
+            b.iter().map(ComparisonUnit::sha1),
+        )
     };
     // best[i][j]: (rows shared, tables paired) over old[i..] and new[j..].
     let (m, n) = (old.len(), new.len());
@@ -2096,5 +2097,37 @@ mod shared_word_alignment_tests {
             row_word_tokens(&dom, &table.contents[0]),
             toks(&["alpha", "beta", "gamma", "delta"])
         );
+    }
+}
+
+/// How many rows of `a` pair one to one with a row of `b` of the same hash:
+/// a row on either side pairs at most once.
+fn shared_rows<'a>(a: impl Iterator<Item = &'a str>, b: impl Iterator<Item = &'a str>) -> usize {
+    let mut left: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for row in b {
+        *left.entry(row).or_default() += 1;
+    }
+    a.filter(|row| {
+        left.get_mut(row)
+            .filter(|n| **n > 0)
+            .map(|n| *n -= 1)
+            .is_some()
+    })
+    .count()
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod shared_rows_tests {
+    use super::shared_rows;
+
+    /// Each row on either side pairs once: `[X, X, X]` shares one row with
+    /// `[X, Y]`, fewer than `[X, Y]` itself (Codex on #1921).
+    #[test]
+    fn a_duplicate_row_is_shared_once() {
+        let score = |a: &[&str], b: &[&str]| shared_rows(a.iter().copied(), b.iter().copied());
+        assert_eq!(score(&["X", "X", "X"], &["X", "Y"]), 1);
+        assert_eq!(score(&["X", "Y"], &["X", "Y"]), 2);
+        assert_eq!(score(&["X", "Y", "X"], &["X", "X", "Z"]), 2);
     }
 }

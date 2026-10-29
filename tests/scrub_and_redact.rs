@@ -67,6 +67,27 @@ fn scrub_removes_the_author_and_rsids_everywhere() {
     );
 }
 
+/// A Word-saved table row carries its own `w:rsidR`/`w:rsidTr`; accept and
+/// reject keep them for the layout, but scrub promises every edit-session id
+/// is gone (Codex on #1921).
+#[test]
+fn scrub_removes_a_table_rows_rsids() {
+    let body = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr w:rsidR="00AB12CD" w:rsidTr="00EF3456"><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+    let out = scrub(
+        &docx(body),
+        &ScrubOptions {
+            author_alias: None,
+            rsids: true,
+            docprops: false,
+            comments: false,
+        },
+    )
+    .unwrap();
+    assert_word_valid_package(&out);
+    let bytes = all_bytes(&out);
+    assert!(!contains(&bytes, "00AB12CD") && !contains(&bytes, "00EF3456"));
+}
+
 const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
 const SETTINGS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";

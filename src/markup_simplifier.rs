@@ -155,6 +155,16 @@ fn is_rsid_attr(name: &XName) -> bool {
 /// transform is unchanged; only intermediate allocation / drop work is
 /// removed.
 pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
+    strip_rsids(dom, node, true)
+}
+
+/// [`remove_rsid_transform`] without its exception: a table row's
+/// `w:rsid*` go too, as scrub promises every edit-session id is gone.
+pub fn remove_all_rsids(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
+    strip_rsids(dom, node, false)
+}
+
+fn strip_rsids(dom: &mut Dom, node: NodeId, keep_rows: bool) -> Option<NodeId> {
     if !dom.is_element(node) {
         return Some(node);
     }
@@ -163,7 +173,7 @@ pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
         return None;
     }
     // Strip rsid* attributes without rebuilding the element.
-    let rsid_attrs: Vec<_> = if name == W::tr() {
+    let rsid_attrs: Vec<_> = if keep_rows && name == W::tr() {
         Vec::new()
     } else {
         dom.attributes_iter(node)
@@ -179,7 +189,7 @@ pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
         .map(|i| dom.child_at(node, i))
         .collect();
     for k in kids {
-        if remove_rsid_transform(dom, k).is_none() {
+        if strip_rsids(dom, k, keep_rows).is_none() {
             dom.remove(k);
         }
     }

@@ -1848,6 +1848,11 @@ fn row_grid_columns(dom: &Dom, tr: NodeId) -> Option<u32> {
     columns.checked_sub(skipped).filter(|&c| c > 0)
 }
 
+/// Whether `spans` together cover no more than `columns`.
+fn spans_fit(spans: &[u32], columns: u32) -> bool {
+    spans.iter().map(|&s| u64::from(s)).sum::<u64>() <= u64::from(columns)
+}
+
 /// Trims the `gridSpan`s of one row's cell properties `prs` until they fit
 /// `columns`, from the last cell back: each cell keeps at most what the
 /// cells after it, one column each, leave it.
@@ -1862,7 +1867,7 @@ fn fit_spans(dom: &mut Dom, prs: &[NodeId], columns: Option<u32>) {
             .max(1)
     };
     let spans: Vec<u32> = prs.iter().map(|&pr| span_of(dom, pr)).collect();
-    if spans.iter().sum::<u32>() <= columns {
+    if spans_fit(&spans, columns) {
         return;
     }
     let mut used = 0u32;
@@ -3369,5 +3374,20 @@ mod nontext_run_format_history_tests {
                 assert_eq!(signature(&dom, payload), payload_before);
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod spans_fit_tests {
+    use super::spans_fit;
+
+    /// Spans whose sum passes `u32::MAX` never fit: the sum neither panics
+    /// nor wraps to a small number (Codex on #1921).
+    #[test]
+    fn spans_past_u32_max_do_not_fit() {
+        assert!(!spans_fit(&[u32::MAX, 1], 3));
+        assert!(!spans_fit(&[u32::MAX, u32::MAX], u32::MAX));
+        assert!(spans_fit(&[1, 2], 3));
     }
 }

@@ -17,7 +17,7 @@
 //! whose documents both hold two or more tables, no paired table whose sides
 //! differ so keeps a deleted row.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId};
@@ -119,12 +119,27 @@ fn deleted_row(dom: &Dom, child: NodeId) -> Option<bool> {
 }
 
 /// One past the largest `w:id` under `root`.
-fn next_id(dom: &Dom, root: NodeId) -> u32 {
+/// The `w:id`s under `root`, from which [`take_id`] hands out new ones.
+fn taken_ids(dom: &Dom, root: NodeId) -> HashSet<u32> {
     dom.descendants(root, None)
         .into_iter()
         .filter_map(|n| dom.attribute(n, &W::id())?.parse::<u32>().ok())
+        .collect()
+}
+
+/// The first id after the largest taken one that no node holds: past
+/// `u32::MAX` the search wraps instead of overflowing into a taken id.
+fn take_id(taken: &mut HashSet<u32>) -> u32 {
+    let mut next = taken
+        .iter()
+        .copied()
         .max()
-        .map_or(0, |max| max + 1)
+        .map_or(0, |max| max.wrapping_add(1));
+    while taken.contains(&next) {
+        next = next.wrapping_add(1);
+    }
+    taken.insert(next);
+    next
 }
 
 /// Splits every body table whose `tblPrChange` records an original of
@@ -141,7 +156,7 @@ pub fn split_rows_by_table_identity(
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    let mut fresh = next_id(dom, root);
+    let mut taken = taken_ids(dom, root);
     for tbl in dom.descendants(body, Some(&W::tbl())) {
         let Some(pr) = dom.element(tbl, &W::tbl_pr()) else {
             continue;
@@ -213,8 +228,8 @@ pub fn split_rows_by_table_identity(
                         .flat_map(|(el, name)| dom.elements(el, Some(&W::name(name))))
                         .collect();
                     for record in records {
-                        dom.set_attribute_value(record, &W::id(), Some(&fresh.to_string()));
-                        fresh += 1;
+                        let id = take_id(&mut taken);
+                        dom.set_attribute_value(record, &W::id(), Some(&id.to_string()));
                     }
                 }
                 live_seen = true;
@@ -358,6 +373,25 @@ mod tests {
                 .all(|id| !["1", "2", "9"].contains(&id.as_str())),
             "fresh ids: {:?}",
             tables[2].2
+        );
+    }
+
+    /// An id next to `u32::MAX` already in the part: the copies' ids wrap
+    /// past it to unused ones instead of overflowing (Codex on #1921).
+    #[test]
+    fn fresh_ids_past_u32_max_wrap_to_unused_ones() {
+        let (a, b) = (names("TableNormal", "Grille"), names("Normal", "Racs"));
+        let body = table(r#"<w:tblLayout w:type="fixed"/>"#, "", "=D=D=")
+            .replace(r#"w:id="1""#, r#"w:id="4294967294""#)
+            .replace(r#"w:id="2""#, r#"w:id="0""#);
+        let tables = split(&body, &a, &b);
+        let ids: Vec<&String> = tables.iter().flat_map(|t| &t.2).collect();
+        assert_eq!(ids.len(), 6, "{ids:?}");
+        let unique: HashSet<&String> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
+        assert!(
+            ids[2..].iter().all(|id| *id != "9"),
+            "the deleted rows' id stays theirs: {ids:?}"
         );
     }
 

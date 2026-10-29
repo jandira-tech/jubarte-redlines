@@ -70,6 +70,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
   - An endnote's mark is no longer doubled by a footnote-styled one (#1871).
   - A drawing id repeated at `u32::MAX` gets a fresh id instead of `u32::MAX` again (#1872).
   - `debug -c tables` lists tables in a cell's text boxes, and no DrawingML `a:tbl` (#1817).
+  - `scrub --rsids` strips a table row's `w:rsidR`/`w:rsidTr` too. Accept and reject still keep them for the table layout.
+  - When several tables are replaced together, a repeated row counts once in matching old tables to new ones, so the closest table pairs.
+  - The ids of a split table's copied change records wrap past `u32::MAX` to unused ones instead of overflowing.
+  - `gridSpan`s whose sum passes `u32::MAX` are trimmed to the grid instead of overflowing the check.
 
 ## [0.14.0] - 2026-10-24
 
