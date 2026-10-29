@@ -1105,6 +1105,72 @@ fn the_failed_plan_keeps_ids_nothing_moved() {
     assert!(!why.contains("in the output"), "{why}");
 }
 
+/// #1847: a dry run that names no output prints the one its next command
+/// writes, as `-o`, so the line run as printed cannot write elsewhere. The
+/// in-place default (an `X_modified.docx` input) is the input itself, which
+/// `-o` may not name: its line keeps no `-o`.
+#[test]
+fn the_next_command_names_the_default_output() {
+    let dir = workspace(&json!([
+        {"kind":"replace","paragraph":"p0","find":"30 days","replacement":"45 days"},
+    ]));
+    let bin = shown_bin();
+    let tail = |args: &[&str]| {
+        let out = cli(dir.path(), args);
+        let says = stderr(&out);
+        assert_eq!(out.status.code(), Some(0), "{says}");
+        let lines: Vec<String> = says.lines().map(str::to_string).collect();
+        lines[lines.len().saturating_sub(2)..].to_vec()
+    };
+    let dry = ["edit", "in.docx", "--plan", "plan.json", "--dry-run"];
+    assert_eq!(
+        tail(&dry),
+        [
+            "note: the next command writes in_modified.docx; in.docx stays as it is".to_string(),
+            format!("next: {bin} edit in.docx --plan plan.json -o in_modified.docx"),
+        ]
+    );
+    assert!(!dir.path().join("in_modified.docx").exists());
+    // The default output there already: replaced, by name.
+    std::fs::write(dir.path().join("in_modified.docx"), SOURCE).unwrap();
+    assert_eq!(
+        tail(&dry),
+        [
+            "note: in_modified.docx exists; the next command replaces it (--force)".to_string(),
+            format!("next: {bin} edit in.docx --plan plan.json -o in_modified.docx --force"),
+        ]
+    );
+    // An X_modified.docx input is edited in place: no -o.
+    assert_eq!(
+        tail(&[
+            "edit",
+            "in_modified.docx",
+            "--plan",
+            "plan.json",
+            "--dry-run"
+        ]),
+        [
+            "note: the next command updates in_modified.docx in place (--force)".to_string(),
+            format!("next: {bin} edit in_modified.docx --plan plan.json --force"),
+        ]
+    );
+    // The line, run as printed, writes the output it names.
+    std::fs::remove_file(dir.path().join("in_modified.docx")).unwrap();
+    let out = cli(
+        dir.path(),
+        &[
+            "edit",
+            "in.docx",
+            "--plan",
+            "plan.json",
+            "-o",
+            "in_modified.docx",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(dir.path().join("in_modified.docx").exists());
+}
+
 /// Only the parsed --dry-run flag leaves the next command: one an option
 /// takes as its value stays, as does a FILE after `--` (#1289 review).
 #[test]
@@ -1140,6 +1206,40 @@ fn the_next_command_drops_the_flag_not_a_value_spelled_like_it() {
             true,
         ),
         argv(&["edit", "--plan", "p.json", "--force", "--", "--dry-run"])
+    );
+    // The output a dry run named none of goes ahead of --force, before
+    // any `--` (#1847).
+    assert_eq!(
+        jubarte::cli::next_command_to(
+            &argv(&["edit", "--dry-run", "--plan", "p.json", "--", "f.docx"]),
+            true,
+            Some("f_modified.docx"),
+        ),
+        argv(&[
+            "edit",
+            "--plan",
+            "p.json",
+            "-o",
+            "f_modified.docx",
+            "--force",
+            "--",
+            "f.docx"
+        ])
+    );
+    assert_eq!(
+        jubarte::cli::next_command_to(
+            &argv(&["edit", "f.docx", "--plan", "p.json", "--dry-run"]),
+            false,
+            Some("f_modified.docx"),
+        ),
+        argv(&[
+            "edit",
+            "f.docx",
+            "--plan",
+            "p.json",
+            "-o",
+            "f_modified.docx"
+        ])
     );
 }
 

@@ -1335,7 +1335,11 @@ Every write prints the primary output's `sha256:` (the `summary`
 event's `output_sha256`), the digest a follow-up plan's `source_sha256`
 names. A `--dry-run` that passes whole ends with `next:`, the same
 command without `--dry-run`, quoted for a POSIX shell (`-q` drops it); a
-dry run that would skip operations prints none. When the output is
+dry run that would skip operations prints none. A dry run that named no
+output gets the default one spelled out (`-o <stem>_modified.docx`) and a
+note that the input stays as it is, so the command run as printed writes
+only that file. An `X_modified.docx` input is updated in place: its
+`next:` names no output, and the note says so. When the output is
 already there, a note says the next command replaces it, and `next:`
 ends with `--force`.
 
