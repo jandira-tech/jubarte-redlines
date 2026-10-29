@@ -22,10 +22,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::namespaces::{PT, W};
 use crate::util::group_adjacent;
-use crate::xmllinq::{Dom, NodeId, XNamespace};
+use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::lcs::TaggedAtom;
-use super::{CorrelationStatus, WmlComparerSettings};
+use super::{CorrelationStatus, WmlComparerSettings, lcs_table};
 
 static REV_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -1449,6 +1449,9 @@ fn reconstruct_element(
     if settings.detect_format_changes && (aname == W::tr() || aname == W::tc()) {
         record_revised_row_cell_props(dom, ne, g, ancestor, level, settings, id_gen);
     }
+    if settings.merge_replaced_paragraphs && aname == W::tr() {
+        mesh_repartitioned_row(dom, ne, g, level, settings, id_gen);
+    }
     // Word-alignment (M-TBL rule 4, parity/_scratch/table_class_forensics.md):
     // a DEGENERATE grid — fewer w:gridCol entries than the real column count
     // implied by the rows' gridSpan/tc structure — is rebuilt Word's way:
@@ -1485,31 +1488,9 @@ fn record_revised_row_cell_props(
     } else {
         ("tcPr", "tcPrChange")
     };
-    let same_kind = |anc: &NodeId| dom.name(*anc).as_ref() == Some(&aname);
-    // The original's container: a deleted atom's own ancestor, or an equal
-    // atom's before-side one. The revision's: any other atom's ancestor.
-    let old = g.iter().find_map(|a| match a.correlation_status {
-        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => {
-            a.ancestor_elements.get(level).copied().filter(same_kind)
-        }
-        _ => a
-            .comparison_unit_atom_before
-            .as_ref()?
-            .ancestor_elements
-            .get(level)
-            .copied()
-            .filter(same_kind),
-    });
-    let new = g.iter().find_map(|a| match a.correlation_status {
-        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => None,
-        _ => a.ancestor_elements.get(level).copied().filter(same_kind),
-    });
-    let (Some(old), Some(new)) = (old, new) else {
+    let Some((old, new)) = source_containers(dom, g, level, &aname) else {
         return;
     };
-    if old == new {
-        return;
-    }
     let pr_name = W::name(pr_local);
     // A row's exceptions are the revision's too (#1869).
     if aname == W::tr() {
@@ -1636,6 +1617,165 @@ fn record_revised_row_exceptions(
     dom.set_attribute_value(change, &W::date(), Some(&settings.date_time_for_revisions));
     dom.add(change, previous);
     dom.add(live, change);
+}
+
+/// The original's and the revision's `kind` container of a merged group,
+/// when they differ: the original's is a deleted atom's own ancestor or an
+/// equal atom's before-side one, the revision's any other atom's ancestor.
+fn source_containers(
+    dom: &Dom,
+    g: &[&ComparisonUnitAtom],
+    level: usize,
+    kind: &XName,
+) -> Option<(NodeId, NodeId)> {
+    let same_kind = |anc: &NodeId| dom.name(*anc).as_ref() == Some(kind);
+    let old = g.iter().find_map(|a| match a.correlation_status {
+        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => {
+            a.ancestor_elements.get(level).copied().filter(same_kind)
+        }
+        _ => a
+            .comparison_unit_atom_before
+            .as_ref()?
+            .ancestor_elements
+            .get(level)
+            .copied()
+            .filter(same_kind),
+    })?;
+    let new = g.iter().find_map(|a| match a.correlation_status {
+        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => None,
+        _ => a.ancestor_elements.get(level).copied().filter(same_kind),
+    })?;
+    (old != new).then_some((old, new))
+}
+
+/// Word meshes a row whose cell boundaries moved (#1817, the 21 Word
+/// Compare redlines in jubarte-loop/fix23/ab1817): the row keeps one cell
+/// count on both sides, and
+/// - every cell records its properties in a `tcPrChange`, an unchanged
+///   cell its own (Word's Reject All gives a cell without one `tcW 0 auto`);
+/// - each side's spans fit that side's grid: Word never records a span
+///   that overflows it. Here the later cells give up their spans first. An
+///   overflowing live row would also make the grid rebuild of
+///   [`rebuild_degenerate_grid`] replace the grid that Reject All restores.
+fn mesh_repartitioned_row(
+    dom: &mut Dom,
+    ne: NodeId,
+    g: &[&ComparisonUnitAtom],
+    level: usize,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some((old, new)) = source_containers(dom, g, level, &W::tr()) else {
+        return;
+    };
+    if lcs_table::row_partition(dom, old) == lcs_table::row_partition(dom, new) {
+        return;
+    }
+    let mut lives = Vec::new();
+    let mut records = Vec::new();
+    for tc in dom.elements(ne, Some(&W::tc())) {
+        let live = match dom.element(tc, &W::tc_pr()) {
+            Some(p) => p,
+            None => {
+                let p = dom.new_element(W::tc_pr());
+                dom.add_first(tc, p);
+                p
+            }
+        };
+        lives.push(live);
+        if !settings.detect_format_changes {
+            continue;
+        }
+        let change_name = W::name("tcPrChange");
+        let record = match dom.element(live, &change_name) {
+            Some(change) => dom.element(change, &W::tc_pr()),
+            None => {
+                let own = dom.clone_subtree(live);
+                for c in dom.elements(own, None) {
+                    if dom.name(c).is_some_and(|n| {
+                        matches!(
+                            n.local_name(),
+                            "tcPrChange" | "cellIns" | "cellDel" | "cellMerge"
+                        )
+                    }) {
+                        dom.remove(c);
+                    }
+                }
+                let change = dom.new_element(change_name);
+                dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
+                *id_gen += 1;
+                dom.set_attribute_value(change, &W::author(), Some(&settings.author_for_revisions));
+                dom.set_attribute_value(
+                    change,
+                    &W::date(),
+                    Some(&settings.date_time_for_revisions),
+                );
+                dom.add(change, own);
+                dom.add(live, change);
+                Some(own)
+            }
+        };
+        records.extend(record);
+    }
+    fit_spans(dom, &lives, row_grid_columns(dom, new));
+    if records.len() == lives.len() {
+        fit_spans(dom, &records, row_grid_columns(dom, old));
+    }
+}
+
+/// The grid columns a source row's cells can span: its table's `gridCol`s
+/// less the row's `gridBefore` and `gridAfter`.
+fn row_grid_columns(dom: &Dom, tr: NodeId) -> Option<u32> {
+    let tbl = dom.ancestors(tr, Some(&W::tbl())).into_iter().next()?;
+    let grid = dom.element(tbl, &W::name("tblGrid"))?;
+    let columns = u32::try_from(dom.elements(grid, Some(&W::grid_col())).len()).ok()?;
+    let skipped: u32 = dom
+        .element(tr, &W::tr_pr())
+        .map(|pr| {
+            ["gridBefore", "gridAfter"]
+                .into_iter()
+                .filter_map(|name| dom.element(pr, &W::name(name)))
+                .filter_map(|el| dom.attribute(el, &W::val())?.parse::<u32>().ok())
+                .sum()
+        })
+        .unwrap_or(0);
+    columns.checked_sub(skipped).filter(|&c| c > 0)
+}
+
+/// Trims the `gridSpan`s of one row's cell properties `prs` until they fit
+/// `columns`, from the last cell back: each cell keeps at most what the
+/// cells after it, one column each, leave it.
+fn fit_spans(dom: &mut Dom, prs: &[NodeId], columns: Option<u32>) {
+    let Some(columns) = columns else {
+        return;
+    };
+    let span_of = |dom: &Dom, pr: NodeId| {
+        dom.element(pr, &W::grid_span())
+            .and_then(|s| dom.attribute(s, &W::val())?.parse::<u32>().ok())
+            .unwrap_or(1)
+            .max(1)
+    };
+    let spans: Vec<u32> = prs.iter().map(|&pr| span_of(dom, pr)).collect();
+    if spans.iter().sum::<u32>() <= columns {
+        return;
+    }
+    let mut used = 0u32;
+    for (i, (&pr, &span)) in prs.iter().zip(&spans).enumerate() {
+        let after = u32::try_from(prs.len() - i - 1).unwrap_or(u32::MAX);
+        let fitted = span.min(columns.saturating_sub(used).saturating_sub(after).max(1));
+        used += fitted;
+        if fitted == span {
+            continue;
+        }
+        let Some(el) = dom.element(pr, &W::grid_span()) else {
+            continue;
+        };
+        if fitted == 1 {
+            dom.remove(el);
+        } else {
+            dom.set_attribute_value(el, &W::val(), Some(&fitted.to_string()));
+        }
+    }
 }
 
 /// A property element's name, sorted attributes and children, recursively:
@@ -1975,6 +2115,62 @@ mod tblpr_order_tests {
             pos("tblW") > pos("tblpPr") && pos("tblW") > pos("bidiVisual"),
             "tblW must follow tblpPr and bidiVisual (CT_TblPrBase), got: {order:?}"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod mesh_row_span_tests {
+    //! #1817: a meshed row's spans fit its side's grid, the columns a row's
+    //! `gridBefore`/`gridAfter` skip left out.
+    use super::*;
+
+    fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!("<w:tbl xmlns:w=\"{}\">{xml}</w:tbl>", W::URI));
+        dom.root(doc).unwrap()
+    }
+
+    fn spans(dom: &Dom, prs: &[NodeId]) -> Vec<u32> {
+        prs.iter()
+            .map(|&pr| {
+                dom.element(pr, &W::grid_span())
+                    .and_then(|s| dom.attribute(s, &W::val())?.parse().ok())
+                    .unwrap_or(1)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spans_fit_the_columns_the_row_leaves_its_cells() {
+        let mut dom = Dom::new();
+        let grid: String = (0..5).map(|_| "<w:gridCol w:w=\"1000\"/>").collect();
+        let tbl = parse(
+            &mut dom,
+            &format!(
+                "<w:tblGrid>{grid}</w:tblGrid><w:tr><w:trPr><w:gridBefore w:val=\"1\"/></w:trPr>\
+                 <w:tc><w:tcPr><w:gridSpan w:val=\"3\"/></w:tcPr></w:tc>\
+                 <w:tc><w:tcPr><w:gridSpan w:val=\"2\"/></w:tcPr></w:tc>\
+                 <w:tc><w:tcPr/></w:tc></w:tr>"
+            ),
+        );
+        let tr = dom.element(tbl, &W::tr()).unwrap();
+        let columns = row_grid_columns(&dom, tr);
+        assert_eq!(columns, Some(4), "five columns, one skipped");
+        let prs: Vec<NodeId> = dom
+            .elements(tr, Some(&W::tc()))
+            .into_iter()
+            .filter_map(|tc| dom.element(tc, &W::tc_pr()))
+            .collect();
+        fit_spans(&mut dom, &prs, columns);
+        assert_eq!(
+            spans(&dom, &prs),
+            [2, 1, 1],
+            "the later cells give up theirs first"
+        );
+        fit_spans(&mut dom, &prs, Some(4));
+        assert_eq!(spans(&dom, &prs), [2, 1, 1], "a fitting row is left alone");
+        fit_spans(&mut dom, &prs, Some(2));
+        assert_eq!(spans(&dom, &prs), [1, 1, 1], "each cell keeps one column");
     }
 }
 

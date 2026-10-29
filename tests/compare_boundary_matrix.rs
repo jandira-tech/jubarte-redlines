@@ -1104,6 +1104,27 @@ fn structured_cases() -> Vec<(&'static str, Vec<u8>)> {
         .collect()
 }
 
+/// The two-cell tables of `structured_cases`, each a horizontal repartition
+/// of `spanned-cell`'s one row.
+const TWO_CELL_TABLES: [&str; 6] = [
+    "two-cells",
+    "changed-cells",
+    "empty-cell",
+    "nested-table",
+    "table-before-text",
+    "table-after-text",
+];
+
+/// Word mode meshes a row whose cell boundaries moved, as Word 16 does
+/// (#1817): the row keeps one cell count, so the projection onto the
+/// spanned-cell document keeps the two-cell side's extra cell, empty, as
+/// Word's own Accept All of a merge and Reject All of a split do
+/// (docs/WORD_DIFFERENCES.md). Its text still matches; its structure does
+/// not. The other projection stays exact.
+fn word_mesh_keeps_an_extra_cell(mode: &str, target: &str, other: &str) -> bool {
+    mode == "Word" && target == "spanned-cell" && TWO_CELL_TABLES.contains(&other)
+}
+
 #[test]
 fn structured_documents_recover_text_across_every_ordered_pair() {
     let cases = structured_cases();
@@ -1136,18 +1157,22 @@ fn structured_documents_recover_text_across_every_ordered_pair() {
                 assert_field_instruction_policy(
                     left, right, &compared, &accepted, &rejected, true, &label,
                 );
-                assert_structured_signature(
-                    &accepted,
-                    right,
-                    &format!("accept structure {label}"),
-                    true,
-                );
-                assert_structured_signature(
-                    &rejected,
-                    left,
-                    &format!("reject structure {label}"),
-                    true,
-                );
+                if !word_mesh_keeps_an_extra_cell(mode, right_name, left_name) {
+                    assert_structured_signature(
+                        &accepted,
+                        right,
+                        &format!("accept structure {label}"),
+                        true,
+                    );
+                }
+                if !word_mesh_keeps_an_extra_cell(mode, left_name, right_name) {
+                    assert_structured_signature(
+                        &rejected,
+                        left,
+                        &format!("reject structure {label}"),
+                        true,
+                    );
+                }
                 assert_word_valid_package(&accepted);
                 assert_word_valid_package(&rejected);
             }

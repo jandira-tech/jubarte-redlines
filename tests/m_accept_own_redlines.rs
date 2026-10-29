@@ -1057,11 +1057,12 @@ fn cell_pprs(pkg: &[u8]) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// A synthetic one-table replacement conserves both complete cell partitions.
-/// The real ff42b4a7a3 pair is a six-table document against a directory and
-/// uses the specialized M348 Word mesh; its paired-cell history is checked
-/// separately below. This smaller shared-heading fixture must not imply that
-/// arbitrary horizontal repartitioning can safely pair individual cells.
+/// A one-table replacement whose row gains a cell. Word mode meshes the row
+/// as Word 16 does (#1817): every cell takes the revision's properties, and
+/// Reject All keeps the revision's extra cell, empty and with its own
+/// properties, as Word's own Reject All does (docs/WORD_DIFFERENCES.md).
+/// Powertools mode conserves both complete cell partitions. The real
+/// ff42b4a7a3 pair's paired-cell history is checked separately below.
 #[test]
 fn a_rewritten_row_takes_the_revised_cell_properties() {
     let shaded =
@@ -1097,24 +1098,23 @@ fn a_rewritten_row_takes_the_revised_cell_properties() {
         assert!(live.contains(r#"w:w="3120""#), "{cells:?}");
         assert!(!live.contains("F8FAFC"), "{cells:?}");
     }
-    // Cell revisions can instead preserve whole rows. Require the complete
-    // projected cell content and properties, rather than a history container
-    // on a revised cell that has no original partner in this route.
+    // Both modes accept to the revision's complete cells. Rejecting restores
+    // the original's in powertools mode, and the original's plus the empty
+    // "Role" cell in Word mode.
     use jubarte::comparer::WmlComparerSettings;
     use jubarte::document_comparer::compare_documents_with_settings;
-    for compared in [
-        redline.clone(),
+    let faithful =
         compare_documents_with_settings(&base, &next, &WmlComparerSettings::powertools_faithful())
-            .unwrap(),
-    ] {
+            .unwrap();
+    let mut word_rejected = cell_state(&base);
+    let role = cell_state(&next)[0][0][2].0.clone();
+    word_rejected[0][0].push((role, vec![String::new()]));
+    for (compared, rejected) in [(&redline, word_rejected), (&faithful, cell_state(&base))] {
         assert_eq!(
-            cell_state(&accept_revisions(&compared).unwrap()),
+            cell_state(&accept_revisions(compared).unwrap()),
             cell_state(&next)
         );
-        assert_eq!(
-            cell_state(&reject_revisions(&compared).unwrap()),
-            cell_state(&base)
-        );
+        assert_eq!(cell_state(&reject_revisions(compared).unwrap()), rejected);
     }
 
     let accepted = accept_revisions(&redline).unwrap();

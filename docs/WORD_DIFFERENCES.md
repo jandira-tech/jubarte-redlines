@@ -390,41 +390,51 @@ python3 tools/parity_ladder.py sweep      # compare against tools/parity_baselin
 uv run --project ../neurotic_docx_bench python tools/redline40/redline40.py run --label NAME --against baseline-0.9.3
 ```
 
-### M337: Word retains an extra empty cell after horizontal table replacement
+### Word keeps one cell count when a row's cells are repartitioned (#1817)
 
-For `sd_2766_pirates_tracked_changes_3285d875` →
-`sd_1494_table_left_indent_11bb24c7`, the Word reference
-`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`
-retains four physical cells in each of the first revised table's two rows.
-The revised source authored three cells per row. Word records cell-property
-changes and deletes the old text, but records no cell deletion for the fourth
-cell. Accepting its redline therefore produces table cell counts
-`[[4, 4], [3, 3]]` rather than the source's `[[3, 3], [3, 3]]`.
+When a paired row's cell boundaries move (a cell split or merged, a column
+added or deleted, a boundary shifted), Word 16's Compare meshes the row. The
+two rows pair, the row keeps one cell count, and Word records no cell
+insertion or deletion: the revision's extra cell holds inserted text, the
+original's deleted text. Every cell of the row records its properties in a
+`tcPrChange`, an unchanged cell its own, and no recorded span overflows its
+side's grid. In 21 Word Compare redlines of such rows
+(`jubarte-loop/fix23/ab1817`), Word wrote no `cellIns` or `cellDel`. Its own
+Reject All of a split, and its Accept All of a merge, keep the extra cell,
+empty; a shifted boundary comes back wrong both ways.
 
-Word mode preserves that observed paragraph and table shape only within the
-M337 unrelated-source route: one original five-row, four-cell table facing two
-revised two-row, three-cell tables, with the first revised table empty. This
-can be worse than preserving the revised source: acceptance keeps an extra
-empty column. `--mode powertools` uses separate inserted/deleted row lifetimes
-and restores the authored cell counts on both acceptance and rejection. Use
-that mode when exact source table reconstruction matters. Other horizontal
-partition changes retain the conservative row lifecycle fallback in both modes.
+Word mode copies that mesh, and it is worse than the sources: accepting a
+merge keeps an empty extra cell, and rejecting a split keeps one.
+`--mode powertools` keeps complete inserted and deleted rows instead and
+restores the authored cell counts, spans and text on both acceptance and
+rejection; use it when exact table reconstruction matters. Word mode used
+those row lifetimes too before #1817, outside five observed free-mesh routes,
+and Word 16.115 would not open the deleted rows they wrote for the w04 and
+w23 fixtures.
 
-The public M337 regression checks both projections and the Word paragraph
-shape; the reference is indexed by `corpus/word/notices/RENAMED.csv` in
-`neurotic_docx_bench`.
+Word's mesh differs from jubarte's in three ways:
 
-The same bounded Word free-mesh exception covers three further observed
-references. `pirates × table_border_widths` (`28d97cb1f1`) accepts the first
-revised table with four cells instead of its authored two.
+- Word derives new grid columns so the recorded spans fit (`i02a`: an
+  authored `3120,6240` recorded as `3118,1667,4565`); jubarte keeps both
+  authored grids and trims the spans that would overflow them, from the last
+  cell back.
+- Word records `tblPrChange` and `tblGridChange` on 20 of the 21 tables, even
+  when neither changed; jubarte records them only when they changed.
+- Word pairs the cells of a row by their text when a column is added in the
+  middle (`i09`) or one cell's text is divided between two (`i11`); jubarte
+  pairs them in order. Open.
+
+The observed references that first showed the mesh remain its regressions:
+`sd_2766_pirates_tracked_changes_3285d875` →
+`sd_1494_table_left_indent_11bb24c7`
+(`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`, accepted
+cell counts `[[4, 4], [3, 3]]` for the source's `[[3, 3], [3, 3]]`),
+`pirates × table_border_widths` (`28d97cb1f1`),
 `eigenpal_docx_editor_suggesting_mixed_edits × employee_directory_table_2`
-(`b351836b34`) rejects the first original table with three cells instead of
-its authored two. `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`)
-rejects the original's first two rows with three cells instead of two. Each
-exception is authorized only inside that family's existing Word free-mesh
-route and requires its observed complete source table geometry. The original
-Word mixed-cell assertions remain in place. Faithful mode keeps exact authored
-cell partitions, spans and text on both projections for all four families.
+(`b351836b34`) and `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`).
+They are indexed by `corpus/word/notices/RENAMED.csv` in
+`neurotic_docx_bench`. Faithful mode keeps exact authored cell partitions,
+spans and text on both projections for all of them.
 
 ### Folded demo title paragraph history (M465)
 
