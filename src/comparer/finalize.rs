@@ -10130,7 +10130,14 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     fn block_class(dom: &Dom, el: NodeId) -> Option<bool> {
         let n = dom.name(el)?;
         if n == W::p() {
-            return para_replacement_class(dom, el);
+            // A paragraph whose mark carries the other revision is a mix:
+            // inserted text on a deleted mark is the original's paragraph,
+            // and its mark stays where it stands (#1826: moved ahead of a
+            // deleted table, it left two deleted tables adjacent, and
+            // rejecting fused them).
+            let class = para_replacement_class(dom, el)?;
+            let other = if class { W::del() } else { W::ins() };
+            return (!para_mark_revision(dom, el, &other)).then_some(class);
         }
         if n == W::tbl() {
             let trs = dom.descendants(el, Some(&W::name("tr")));
@@ -28612,6 +28619,33 @@ mod consecutive_block_splice_tests {
         let (mut dom, root) = parse(&format!("{prefix}{live}{deleted}{inserted}"));
         reorder_replaced_blocks(&mut dom, root);
         let (expected, expected_root) = parse(&format!("{prefix}{live}{inserted}{deleted}"));
+        assert_eq!(
+            dom.serialize_element(root),
+            expected.serialize_element(expected_root)
+        );
+    }
+
+    #[test]
+    fn inserted_text_on_a_deleted_mark_stays_between_the_deleted_tables() {
+        let table = |text| {
+            format!(
+                "<w:tbl><w:tr><w:trPr><w:del/></w:trPr><w:tc>{}</w:tc></w:tr></w:tbl>",
+                paragraph("del", text)
+            )
+        };
+        // The original's paragraph between its tables (#1826): its mark is
+        // deleted and the revision's text is inserted on it.
+        let mixed = "<w:p><w:pPr><w:rPr><w:del w:id=\"5\"/></w:rPr></w:pPr><w:ins w:id=\"6\"><w:r><w:t>Revised</w:t></w:r></w:ins></w:p>";
+        let (mut dom, root) = parse(&format!("{}{mixed}{}", table("First"), table("Second")));
+        let before = dom.serialize_element(root);
+        reorder_replaced_blocks(&mut dom, root);
+        assert_eq!(dom.serialize_element(root), before);
+        // The same text on its own inserted mark still goes ahead of the
+        // deleted table.
+        let inserted = paragraph("ins", "Revised");
+        let (mut dom, root) = parse(&format!("{}{inserted}", table("First")));
+        reorder_replaced_blocks(&mut dom, root);
+        let (expected, expected_root) = parse(&format!("{inserted}{}", table("First")));
         assert_eq!(
             dom.serialize_element(root),
             expected.serialize_element(expected_root)
