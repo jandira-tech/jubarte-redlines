@@ -318,7 +318,7 @@ fn empty_placeholder(document: &LegacyDocument) -> String {
         .map(|n| format!("jubarteemptyparagraph{n}"))
         .find(|candidate| {
             !document.blocks.iter().any(|block| match block {
-                Block::Paragraph(paragraph) => paragraph.spans.iter().any(|span| span.text.contains(candidate.as_str())),
+                Block::Paragraph(paragraph) => paragraph.text().contains(candidate.as_str()),
                 Block::Table(table) => table.rows.iter().flatten().any(|cell| cell.contains(candidate.as_str())),
             })
         })
