@@ -1011,12 +1011,10 @@ fn ensure_reference_marker(
         let style = dom
             .elements(run, Some(&W::r_pr()))
             .into_iter()
-            .flat_map(|rpr| dom.elements(rpr, Some(&W::name("rStyle"))))
+            .flat_map(|rpr| dom.elements(rpr, Some(&W::r_style())))
             .find_map(|st| dom.attribute(st, &W::val()));
         style == Some("FootnoteReference")
-            || !dom
-                .descendants(run, Some(&W::name("footnoteRef")))
-                .is_empty()
+            || !dom.descendants(run, Some(&W::footnote_ref())).is_empty()
     });
     if has_marker {
         return;
@@ -1033,17 +1031,13 @@ fn ensure_reference_marker(
         return;
     };
     let (style_val, ref_el) = if is_footnote {
-        ("FootnoteReference", "footnoteRef")
+        ("FootnoteReference", W::footnote_ref())
     } else {
-        ("EndnoteReference", "endnoteRef")
+        ("EndnoteReference", W::endnote_ref())
     };
     let marker = dom.new_element(W::r());
     let own_run = source
-        .and_then(|def| {
-            dom.descendants(def, Some(&W::name(ref_el)))
-                .first()
-                .copied()
-        })
+        .and_then(|def| dom.descendants(def, Some(&ref_el)).first().copied())
         .and_then(|own| dom.parent(own))
         .filter(|&run| dom.name_is(run, &r_name));
     if let Some(run) = own_run {
@@ -1053,12 +1047,12 @@ fn ensure_reference_marker(
         }
     } else {
         let rpr = dom.new_element(W::r_pr());
-        let rstyle = dom.new_element(W::name("rStyle"));
+        let rstyle = dom.new_element(W::r_style());
         dom.set_attribute_value(rstyle, &W::val(), Some(style_val));
         dom.add(rpr, rstyle);
         dom.add(marker, rpr);
     }
-    let re = dom.new_element(W::name(ref_el));
+    let re = dom.new_element(ref_el);
     dom.add(marker, re);
     dom.add_before_self(first_run, marker);
 }
@@ -1582,10 +1576,10 @@ mod deterministic_note_boundary_tests {
             let mut dom = Dom::new();
             let root = parse(&mut dom, &format!("<w:body>{body}</w:body>"));
             let before = properties(&dom, root);
-            let marker_count = dom.descendants(root, Some(&W::name("footnoteRef"))).len();
+            let marker_count = dom.descendants(root, Some(&W::footnote_ref())).len();
             ensure_reference_marker(&mut dom, root, true, direct, None);
             assert_eq!(
-                dom.descendants(root, Some(&W::name("footnoteRef"))).len(),
+                dom.descendants(root, Some(&W::footnote_ref())).len(),
                 marker_count + usize::from(added)
             );
             if !added {

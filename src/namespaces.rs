@@ -255,7 +255,10 @@ impl W {
     // spacing/… were still interning per call — thread-local pool hash each).
     cached_xname!(W::URI, spacing_el, "spacing");
     cached_xname!(W::URI, p_style, "pStyle");
+    cached_xname!(W::URI, r_style, "rStyle");
     cached_xname!(W::URI, jc_el, "jc");
+    cached_xname!(W::URI, footnote_ref, "footnoteRef");
+    cached_xname!(W::URI, endnote_ref, "endnoteRef");
 
     cached_xname!(W::URI, sdt_pr, "sdtPr");
     cached_xname!(W::URI, fld_char, "fldChar");
