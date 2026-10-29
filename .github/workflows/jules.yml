@@ -73,7 +73,6 @@ jobs:
           # Correctness, security, performance, best practices and syntax,
           # with this repository's own rules (Word parity first).
           rules_file: .github/jules-review-rules.md
-          rules_directory: .github/jules-rules
           extra_instructions: |
             Be exhaustive. Check every changed hunk for: correctness and edge cases; security
             (secrets in code or logs, injection, authz, unsafe deserialization, SSRF, path traversal);
