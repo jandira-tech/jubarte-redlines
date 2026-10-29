@@ -1257,6 +1257,31 @@ impl Dom {
         copy
     }
 
+    /// Deep-copy the subtree rooted at `id` in another arena `src` into this
+    /// one and return the new root, which has no parent. Names, attributes
+    /// (namespace declarations included) and child order are kept;
+    /// annotations are not.
+    pub fn import_subtree(&mut self, src: &Dom, id: NodeId) -> NodeId {
+        let new_kind = match &src.data(id).kind {
+            NodeKind::Element { name } => NodeKind::Element { name: name.clone() },
+            NodeKind::Text(v) => NodeKind::Text(v.clone()),
+            NodeKind::Comment(v) => NodeKind::Comment(v.clone()),
+            NodeKind::Pi(pi) => NodeKind::Pi(pi.clone()),
+            NodeKind::Document { declaration } => NodeKind::Document {
+                declaration: declaration.clone(),
+            },
+        };
+        let copy = self.alloc(new_kind);
+        self.data_mut(copy).attrs = src.data(id).attrs.clone();
+        for &k in &src.data(id).content {
+            let ck = self.import_subtree(src, k);
+            self.validate_attachment(copy, ck);
+            self.data_mut(ck).parent = Some(copy);
+            self.data_mut(copy).content.push(ck);
+        }
+        copy
+    }
+
     // ── annotations ────────────────────────────────────────────────────────────
     // Stored in a `Dom` side table keyed by `NodeId` rather than inline on every
     // `NodeData` (ANN-01): production never annotates, so the map stays empty and
@@ -1436,5 +1461,28 @@ mod attribute_iter_tests {
         let leaf = dom.elements(root, None)[0];
         assert_eq!(dom.attributes_iter(leaf).next(), None);
         assert_eq!(dom.attributes_iter(leaf).len(), 0);
+    }
+
+    /// `import_subtree` copies a subtree out of another arena: the copy
+    /// serializes as the source does, has no parent, and the source is left
+    /// as it was.
+    #[test]
+    fn import_subtree_copies_across_arenas() {
+        let mut src = Dom::new();
+        let doc = src.parse_xdocument(
+            r#"<w:r xmlns:w="urn:w"><w:rPr><w:sz w:val="21"/><!--c--><?pi x?></w:rPr><w:t xml:space="preserve"> a </w:t></w:r>"#,
+        );
+        let run = src.root(doc).unwrap();
+        let rpr = src.elements(run, None)[0];
+        let mut dst = Dom::new();
+        dst.parse_xdocument("<x/>");
+        let copy = dst.import_subtree(&src, rpr);
+        assert_eq!(dst.parent(copy), None);
+        assert_eq!(dst.serialize_element(copy), src.serialize_element(rpr));
+        let whole = dst.import_subtree(&src, run);
+        assert_eq!(dst.serialize_element(whole), src.serialize_element(run));
+        assert_eq!(src.parent(rpr), Some(run));
+        let other = dst.import_subtree(&src, doc);
+        assert_eq!(dst.root(other).map(|r| dst.name(r)), Some(src.name(run)));
     }
 }

@@ -134,7 +134,7 @@ fn normalized_text(text: &str) -> String {
 /// logical locations while still matching Word-renumbered copies.
 fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String> {
     let definitions = comment_id_fingerprint_of(pkg);
-    let Some((text, ranges)) = extract_events(pkg, main) else {
+    let Some((text, ranges)) = extract_events(pkg, main, None) else {
         return definitions
             .into_iter()
             .map(|(id, definition)| {
@@ -232,6 +232,18 @@ enum Kind {
     /// An empty range: start, end and reference together, at the end's place
     /// (a start placed on its own would land in the next paragraph).
     Point,
+    /// A reference its source writes apart from its range's end (#1897).
+    Reference,
+}
+
+/// A comment's reference run.
+#[derive(Clone, Copy)]
+enum RefRun {
+    /// The source has no reference: a bare `rStyle CommentReference` run.
+    Generated,
+    /// The source's reference, with its run's `w:rPr` (imported into the
+    /// merged arena) or none.
+    Carried(Option<NodeId>),
 }
 
 struct Event {
@@ -240,6 +252,18 @@ struct Event {
     id: String,
     /// Document order of the range's start in its source.
     seq: usize,
+    /// The reference run placed with this event: none for a start, nor for
+    /// an end whose reference has its own [`Kind::Reference`] event.
+    reference: Option<RefRun>,
+}
+
+/// A comment's reference as its source writes it.
+struct Reference {
+    /// Its offset in the source projection.
+    offset: usize,
+    /// Its run's `w:rPr`, imported into the arena the body is rebuilt in;
+    /// `None` when the run has none, or when nothing was imported.
+    rpr: Option<NodeId>,
 }
 
 /// A comment's [start, end) character interval in its source projection.
@@ -249,6 +273,8 @@ struct Range {
     end: usize,
     /// Document order of the start among the source's starts.
     seq: usize,
+    /// The comment's first reference, when its source has one.
+    reference: Option<Reference>,
 }
 
 /// The paragraph mark in a projection: a marker after it sits in a later
@@ -258,8 +284,13 @@ const MARK: char = '\n';
 /// Extract anchor ranges + the projection text from a source document's main
 /// part. Counted text = every `w:t` character in body order, each paragraph
 /// closed by a [`MARK`] (the inputs are post-PreProcessMarkup, i.e.
-/// revisions accepted — no live `w:delText`).
-fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
+/// revisions accepted — no live `w:delText`). With `into`, each reference
+/// run's `w:rPr` is imported into that arena.
+fn extract_events(
+    pkg: &PartFs,
+    main: &str,
+    mut into: Option<&mut Dom>,
+) -> Option<(String, Vec<Range>)> {
     let xml = pkg.part_string(main)?;
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(&xml);
@@ -268,7 +299,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let start = W::name("commentRangeStart");
     let end = W::name("commentRangeEnd");
     let reference = W::name("commentReference");
-    let mut references: Vec<(String, usize)> = Vec::new();
+    let mut references: Vec<(String, Reference)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
     let mut starts: HashMap<String, (usize, usize)> = HashMap::new();
@@ -302,11 +333,17 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
                     start: s,
                     end: offset,
                     seq,
+                    reference: None,
                 });
             } else if name == reference
                 && let Some(id) = dom.attribute(n, &W::name("id"))
             {
-                references.push((id.to_string(), offset));
+                let rpr = into.as_deref_mut().and_then(|into| {
+                    let run = dom.parent(n).filter(|&r| dom.name_is(r, &W::r()))?;
+                    let rpr = dom.element(run, &W::r_pr())?;
+                    Some(into.import_subtree(&dom, rpr))
+                });
+                references.push((id.to_string(), Reference { offset, rpr }));
             }
         } else if dom.is_text(n)
             && dom
@@ -321,14 +358,18 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     }
     text.extend(open.iter().map(|_| MARK));
     // A reference with no range markers is a point comment: an empty range
-    // where the reference sits, which is how Word's redline writes it.
-    for (id, at) in references {
-        if !starts.contains_key(&id) && !ranges.iter().any(|r| r.id == id) {
+    // where the reference sits, which is how Word's redline writes it. A
+    // comment's first reference is its own.
+    for (id, reference) in references {
+        if let Some(range) = ranges.iter_mut().find(|r| r.id == id) {
+            range.reference.get_or_insert(reference);
+        } else if !starts.contains_key(&id) {
             ranges.push(Range {
                 id,
-                start: at,
-                end: at,
+                start: reference.offset,
+                end: reference.offset,
                 seq: usize::MAX, // no start marker
+                reference: Some(reference),
             });
         }
     }
@@ -764,6 +805,36 @@ fn new_anchor(dom: &mut Dom, start: bool, id: &str) -> NodeId {
     e
 }
 
+/// Where a reference its source writes apart from range `r`'s end goes in
+/// `merged`: past the source's text between the end and the reference (a
+/// paragraph mark, the next paragraph's words), when that text follows the
+/// mapped end `e` unchanged (`r5_01`, `r5_06`, `71c67c168f`).
+fn apart_reference(src: &[char], merged: &[char], r: &Range, e: usize) -> Option<usize> {
+    let at = r.reference.as_ref()?.offset;
+    if at <= r.end {
+        return None;
+    }
+    let gap = src.get(r.end..at)?;
+    (merged.get(e..e + gap.len()) == Some(gap)).then_some(e + gap.len())
+}
+
+/// The run that holds comment `id`'s reference, as `how` says.
+fn reference_run(dom: &mut Dom, id: &str, how: RefRun) -> NodeId {
+    match how {
+        RefRun::Generated => new_reference_run(dom, id),
+        RefRun::Carried(rpr) => {
+            let r = dom.new_element(W::r());
+            if let Some(rpr) = rpr {
+                dom.add(r, rpr);
+            }
+            let cref = dom.new_element(W::name("commentReference"));
+            dom.set_attribute_value(cref, &W::name("id"), Some(id));
+            dom.add(r, cref);
+            r
+        }
+    }
+}
+
 /// The GT reference-run shape: `w:rStyle CommentReference` + `w:commentReference`.
 fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     let r = dom.new_element(W::r());
@@ -795,7 +866,7 @@ fn inject_side(
     id_map: &HashMap<String, String>,
     only_ids: Option<&HashSet<String>>,
 ) -> AnchoredRanges {
-    let Some((src_text, ranges)) = extract_events(src_pkg, src_main) else {
+    let Some((src_text, ranges)) = extract_events(src_pkg, src_main, Some(dom)) else {
         return HashMap::new();
     };
     if ranges.is_empty() {
@@ -819,27 +890,29 @@ fn inject_side(
         };
         let out_id = id_map.get(&r.id).cloned().unwrap_or_else(|| r.id.clone());
         anchored_ranges.insert(out_id, (s, e));
+        // The source's reference run, its properties with it (#1897).
+        let carried = r.reference.as_ref().map_or(RefRun::Generated, |reference| {
+            RefRun::Carried(reference.rpr)
+        });
+        let event = |offset, kind, reference| Event {
+            offset,
+            kind,
+            id: r.id.clone(),
+            seq: r.seq,
+            reference,
+        };
         if s == e {
-            events.push(Event {
-                offset: e,
-                kind: Kind::Point,
-                id: r.id.clone(),
-                seq: r.seq,
-            });
+            events.push(event(e, Kind::Point, Some(carried)));
             continue;
         }
-        events.push(Event {
-            offset: s,
-            kind: Kind::Start,
-            id: r.id.clone(),
-            seq: r.seq,
-        });
-        events.push(Event {
-            offset: e,
-            kind: Kind::End,
-            id: r.id.clone(),
-            seq: r.seq,
-        });
+        events.push(event(s, Kind::Start, None));
+        match apart_reference(&src_chars, &merged_chars, r, e) {
+            Some(at) => {
+                events.push(event(e, Kind::End, None));
+                events.push(event(at, Kind::Reference, Some(carried)));
+            }
+            None => events.push(event(e, Kind::End, Some(carried))),
+        }
     }
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
@@ -852,8 +925,9 @@ fn inject_side(
         run.sort_by_key(|&i| events[i].seq);
     }
 
-    // The reference run of the last end placed, by offset: a second end at
-    // the same place follows it, so the source order holds.
+    // The last node placed after an offset (an end, or the reference run that
+    // follows it): a second one at the same place follows it, so the source
+    // order holds.
     let mut last_end: Option<(usize, NodeId)> = None;
     for idx in order {
         let ev = &events[idx];
@@ -874,10 +948,23 @@ fn inject_side(
                     let start = new_anchor(dom, true, &out_id);
                     dom.add_before_self(anchor, start);
                 }
-                let refrun = new_reference_run(dom, &out_id);
-                dom.add_after_self(anchor, refrun);
+                let mut last = anchor;
+                if let Some(how) = ev.reference {
+                    let refrun = reference_run(dom, &out_id, how);
+                    dom.add_after_self(anchor, refrun);
+                    last = refrun;
+                }
                 if ev.kind == Kind::Point {
                     step_out_of_deletion_end(dom, anchor);
+                }
+                last_end = Some((o, last));
+            }
+            Kind::Reference => {
+                let how = ev.reference.unwrap_or(RefRun::Generated);
+                let refrun = reference_run(dom, &out_id, how);
+                match last_end {
+                    Some((at, prev)) if at == o => dom.add_after_self(prev, refrun),
+                    _ => place_after_offset(dom, &mut segs, o, refrun),
                 }
                 last_end = Some((o, refrun));
             }
@@ -1736,6 +1823,7 @@ mod tests {
             start,
             end,
             seq: 0,
+            reference: None,
         };
         assert_eq!(map_range(&src, &merged, &r), Some((start, end)));
         // The tail must follow the head: a merged text holding only the tail
@@ -1763,6 +1851,7 @@ mod tests {
             start: second,
             end: second + len,
             seq: 0,
+            reference: None,
         };
         let merged_second = format!("Intro. {section} Middle part added. ")
             .chars()
@@ -1874,6 +1963,7 @@ mod deeper_boundary_tests {
             start,
             end,
             seq: 0,
+            reference: None,
         }
     }
 
@@ -1901,7 +1991,7 @@ mod deeper_boundary_tests {
             }
             assert!(comment_ids_of(&pkg).is_empty());
             assert!(comment_id_fingerprint_of(&pkg).is_empty());
-            assert!(extract_events(&pkg, MAIN).is_none());
+            assert!(extract_events(&pkg, MAIN, None).is_none());
             assert!(b_carries_same_comments_as_a(&pkg, &package(None, None)));
             assert!(b_covers_comment_identities_of_a(
                 &pkg,
@@ -1999,7 +2089,7 @@ mod deeper_boundary_tests {
     #[test]
     fn extraction_ignores_idless_markers_and_deduplicates_reference_points() {
         let body = "<!-- non-text node --><w:p><w:commentRangeStart/><w:commentRangeEnd/><w:commentRangeEnd w:id=\"missing\"/><w:r><w:commentReference/><w:commentReference w:id=\"p\"/><w:commentReference w:id=\"p\"/><w:t>é🐋</w:t></w:r><w:commentRangeStart w:id=\"r\"/><w:commentRangeStart w:id=\"r\"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id=\"r\"/><w:r><w:commentReference w:id=\"r\"/></w:r></w:p><w:p/>";
-        let (text, ranges) = extract_events(&package(None, Some(body)), MAIN).unwrap();
+        let (text, ranges) = extract_events(&package(None, Some(body)), MAIN, None).unwrap();
         assert_eq!(text, "é🐋x\n\n");
         assert_eq!(
             ranges
@@ -2008,6 +2098,27 @@ mod deeper_boundary_tests {
                 .collect::<Vec<_>>(),
             [("r", 2, 3, 0), ("p", 0, 0, usize::MAX)]
         );
+    }
+
+    /// A comment keeps its first reference, its offset and (into an arena)
+    /// its run's properties; a reference to a range that never ends is
+    /// neither a range nor a point.
+    #[test]
+    fn extraction_keeps_each_comments_first_reference_and_its_properties() {
+        let body = "<w:p><w:commentRangeStart w:id=\"open\"/><w:commentRangeStart w:id=\"r\"/><w:r><w:t>ab</w:t></w:r><w:commentRangeEnd w:id=\"r\"/></w:p><w:p><w:r><w:rPr><w:sz w:val=\"21\"/></w:rPr><w:commentReference w:id=\"r\"/></w:r><w:r><w:commentReference w:id=\"r\"/></w:r><w:r><w:commentReference w:id=\"open\"/></w:r><w:r><w:t>c</w:t></w:r></w:p>";
+        let pkg = package(None, Some(body));
+        let mut into = Dom::new();
+        let (text, ranges) = extract_events(&pkg, MAIN, Some(&mut into)).unwrap();
+        assert_eq!(text, "ab\nc\n");
+        assert_eq!(ranges.len(), 1);
+        let reference = ranges[0].reference.as_ref().unwrap();
+        assert_eq!(reference.offset, 3);
+        let sz = into
+            .element(reference.rpr.unwrap(), &W::name("sz"))
+            .and_then(|sz| into.attribute(sz, &W::val()));
+        assert_eq!(sz, Some("21"));
+        let (_, ranges) = extract_events(&pkg, MAIN, None).unwrap();
+        assert!(ranges[0].reference.as_ref().unwrap().rpr.is_none());
     }
 
     #[test]
