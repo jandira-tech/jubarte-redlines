@@ -45,12 +45,13 @@ pub fn fix_up_drawing_ids(dom: &mut Dom, root: NodeId, preserve_untouched: bool)
 
 /// Every drawing's `wp:docPr`, in document order.
 fn doc_pr_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    let wp_doc_pr = WP::name("docPr");
     let nodes: Vec<NodeId> = dom
         .descendants(root, None)
         .into_iter()
         .filter(|&e| {
             dom.name(e).is_some_and(|n| n.local_name() == "docPr")
-                || dom.name(e).as_ref() == Some(&WP::name("docPr"))
+                || dom.name_is(e, &wp_doc_pr)
         })
         .collect();
     // Dedup while preserving document order (filter may match twice if WP==local).
@@ -97,7 +98,9 @@ fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
 fn rename_repeated_shape_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let shape_id = XName::get("ShapeID", "");
-    let shapes = dom.descendants(root, Some(&VML::name("shape")));
+    let vml_shape = VML::name("shape");
+    let o_ole_object = O::name("OLEObject");
+    let shapes = dom.descendants(root, Some(&vml_shape));
     let mut taken: HashSet<String> = shapes
         .iter()
         .filter_map(|&s| dom.attribute(s, &id).map(str::to_string))
@@ -113,7 +116,7 @@ fn rename_repeated_shape_ids(dom: &mut Dom, root: NodeId) {
         let new = unused_id(&old, &mut taken);
         dom.set_attribute_value(shape, &id, Some(&new));
         if let Some(parent) = dom.parent(shape) {
-            for ole in dom.elements(parent, Some(&O::name("OLEObject"))) {
+            for ole in dom.elements(parent, Some(&o_ole_object)) {
                 if dom.attribute(ole, &shape_id) == Some(old.as_str()) {
                     dom.set_attribute_value(ole, &shape_id, Some(&new));
                 }
@@ -141,13 +144,15 @@ pub fn fix_up_doc_pr_ids(dom: &mut Dom, root: NodeId) {
 pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let shape_id = XName::get("ShapeID", "");
-    for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&VML::name("shape")))) {
+    let vml_shape = VML::name("shape");
+    let o_ole_object = O::name("OLEObject");
+    for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&vml_shape))) {
         let old = dom.attribute(shape, &id).map(|s| s.to_string());
         let new = next.to_string();
         dom.set_attribute_value(shape, &id, Some(&new));
         // rewrite any sibling o:OLEObject whose ShapeID referenced the old id
         if let (Some(old), Some(parent)) = (old, dom.parent(shape)) {
-            for ole in dom.elements(parent, Some(&O::name("OLEObject"))) {
+            for ole in dom.elements(parent, Some(&o_ole_object)) {
                 if dom.attribute(ole, &shape_id).map(|s| s.to_string()) == Some(old.clone()) {
                     dom.set_attribute_value(ole, &shape_id, Some(&new));
                 }
