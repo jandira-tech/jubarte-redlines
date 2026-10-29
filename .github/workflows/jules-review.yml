@@ -34,7 +34,6 @@ jobs:
       # so no token is persisted to disk in the workspace.
       - name: Jules review
         uses: arthrod/jules-pr-reviewer@8972cac9a5a8d3f389abbfb4b13f0b4a2c0dc650
-        continue-on-error: true
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

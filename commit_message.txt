@@ -1,5 +1,0 @@
-⚡ perf: eliminate vec allocation and clone in validation tests
-
-💡 **What:** Replaced `vec![expected.clone()]` with `*std::slice::from_ref(&expected)` in test assertions.
-🎯 **Why:** `vec![item]` allocates a new vector on the heap, and `.clone()` deeply clones the test fixture object unnecessarily. By comparing against a slice reference via `std::slice::from_ref`, we skip both the heap allocation and the deep copy without running afoul of the borrow checker or move semantics.
-📊 **Measured Improvement:** As this optimizes a test fixture assertion path, it predominantly speeds up the test suite rather than runtime performance. The optimization is theoretically optimal as it takes allocation and deep copy cost to O(1) pointer operations.
