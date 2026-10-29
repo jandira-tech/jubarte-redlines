@@ -3924,14 +3924,14 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
         run_family,
         cell_mar_lr: {
             let mar = dom
-                .element(style, &W::name("tblPr"))
+                .element(style, &W::tbl_pr())
                 .and_then(|pr| first_named(dom, pr, "tblCellMar"));
             let edge = |name: &str| mar.and_then(|m| mar_side(dom, m, name));
             (edge("left"), edge("right"))
         },
         cell_mar_tb: {
             let mar = dom
-                .element(style, &W::name("tblPr"))
+                .element(style, &W::tbl_pr())
                 .and_then(|pr| first_named(dom, pr, "tblCellMar"));
             let edge = |name: &str| {
                 mar.and_then(|m| first_named(dom, m, name))
@@ -7577,7 +7577,7 @@ fn word_balloon_comments(
         return None;
     }
     let mut dead = HashSet::new();
-    for end in dom.descendants(body, Some(&W::name("commentRangeEnd"))) {
+    for end in dom.descendants(body, Some(&W::comment_range_end())) {
         let Some(id) = attr_any(dom, end, "id") else {
             continue;
         };
@@ -7600,7 +7600,7 @@ fn word_balloon_comments(
         }
     };
     Some(
-        dom.descendants(body, Some(&W::name("commentReference")))
+        dom.descendants(body, Some(&W::comment_reference()))
             .into_iter()
             .filter_map(|r| attr_any(dom, r, "id"))
             .filter(|id| alive(id))
@@ -7620,10 +7620,10 @@ fn word_balloon_comments(
 fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
     let mut up = dom.parent(end);
     while let Some(node) = up {
-        if dom.name_is(node, &W::name("p")) {
+        if dom.name_is(node, &W::p()) {
             break;
         }
-        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::name("tc")) {
+        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::tc()) {
             return false;
         }
         up = dom.parent(node);
@@ -7638,10 +7638,10 @@ fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
         .into_iter()
         .take_while(|&node| node != end)
         .any(|node| {
-            if dom.name_is(node, &W::name("commentRangeStart")) {
+            if dom.name_is(node, &W::comment_range_start()) {
                 return id.is_some() && attr_any(dom, node, "id") == id;
             }
-            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::name("delText")) {
+            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::del_text()) {
                 return (0..dom.child_count(node))
                     .filter_map(|i| dom.text_value(dom.child_at(node, i)))
                     .any(|s| !s.is_empty());
@@ -7686,7 +7686,7 @@ fn comments_extended(pkg: &PartFs, main: &str) -> (HashMap<String, String>, Hash
     if let Some(root) = cdom.root(cdoc) {
         for comment in cdom.descendants(root, Some(&W::name("comment"))) {
             let last = cdom
-                .descendants(comment, Some(&W::name("p")))
+                .descendants(comment, Some(&W::p()))
                 .last()
                 .and_then(|&p| cdom.attribute(p, &W14::name("paraId")));
             if let (Some(para), Some(id)) = (last, attr_any(&cdom, comment, "id")) {
@@ -8947,7 +8947,7 @@ fn walk_container(
         let Some(child) = child else {
             break;
         };
-        if dom.name_is(child, &W::name("commentRangeStart")) {
+        if dom.name_is(child, &W::comment_range_start()) {
             if let Some(id) = attr_any(dom, child, "id") {
                 let mut open = ctx.open_comments.borrow_mut();
                 if !open.iter().any(|o| o == id) {
@@ -8956,7 +8956,7 @@ fn walk_container(
             }
             continue;
         }
-        if dom.name_is(child, &W::name("commentRangeEnd")) {
+        if dom.name_is(child, &W::comment_range_end()) {
             if let Some(id) = attr_any(dom, child, "id") {
                 ctx.open_comments.borrow_mut().retain(|o| o != id);
             }
@@ -9658,7 +9658,7 @@ fn para_sect_pr(dom: &Dom, para: NodeId) -> Option<NodeId> {
 
 fn para_has_page_break(dom: &Dom, para: NodeId) -> bool {
     for br in dom.descendants(para, Some(&W::name("br"))) {
-        if let Some(kind) = dom.attribute(br, &W::name("type"))
+        if let Some(kind) = dom.attribute(br, &W::type_())
             && (kind == "page" || kind == "oddPage" || kind == "evenPage")
         {
             return true;
@@ -9669,7 +9669,7 @@ fn para_has_page_break(dom: &Dom, para: NodeId) -> bool {
 
 fn para_has_column_break(dom: &Dom, para: NodeId) -> bool {
     for br in dom.descendants(para, Some(&W::name("br"))) {
-        if dom.attribute(br, &W::name("type")) == Some("column") {
+        if dom.attribute(br, &W::type_()) == Some("column") {
             return true;
         }
     }
@@ -11644,7 +11644,7 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 /// paragraph even when no text was inserted or deleted (pool p0016, p0033,
 /// p0111, p0225).
 fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
-    [W::p_pr_change(), W::name("rPrChange")].iter().any(|n| {
+    [W::p_pr_change(), W::r_pr_change()].iter().any(|n| {
         dom.find_descendant_element(para, Some(n), |cand| !under_prior_change(dom, para, cand))
             .is_some()
     })
@@ -11968,7 +11968,7 @@ fn paragraph_block(
 }
 
 fn para_bookmark_names(dom: &Dom, para: NodeId) -> Vec<String> {
-    let want = W::name("bookmarkStart");
+    let want = W::bookmark_start();
     let mut names = Vec::new();
     collect_bookmark_names(dom, para, &want, &mut names);
     names
@@ -15222,7 +15222,7 @@ fn number_comments(
     let mut number_of: HashMap<String, usize> = HashMap::new();
     let mut replies: HashMap<String, usize> = HashMap::new();
     let mut seen = HashSet::new();
-    for node in dom.descendants(body, Some(&W::name("commentReference"))) {
+    for node in dom.descendants(body, Some(&W::comment_reference())) {
         let Some(id) = attr_any(dom, node, "id") else {
             continue;
         };
@@ -15524,7 +15524,7 @@ fn collect_runs_rec(
     author: &str,
     runs: &mut Vec<TextRun>,
 ) {
-    if ctx.dom.name_is(node, &W::name("commentRangeStart")) {
+    if ctx.dom.name_is(node, &W::comment_range_start()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             let id = id.to_string();
             if !ctx.open.iter().any(|o| o == &id) {
@@ -15533,7 +15533,7 @@ fn collect_runs_rec(
         }
         return;
     }
-    if ctx.dom.name_is(node, &W::name("commentRangeEnd")) {
+    if ctx.dom.name_is(node, &W::comment_range_end()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             ctx.open.retain(|o| o != id);
             // The note binds where the range ends: Word's connector leaves
@@ -15545,7 +15545,7 @@ fn collect_runs_rec(
         }
         return;
     }
-    if ctx.dom.name_is(node, &W::name("commentReference")) {
+    if ctx.dom.name_is(node, &W::comment_reference()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             let id = id.to_string();
             if !ctx.bound.contains(&id)
@@ -15630,9 +15630,9 @@ fn collect_runs_rec(
     if ctx.dom.name_is(node, &W::r()) {
         for idx in 0..ctx.dom.child_count(node) {
             let child = ctx.dom.child_at(node, idx);
-            if ctx.dom.name_is(child, &W::name("commentRangeStart"))
-                || ctx.dom.name_is(child, &W::name("commentRangeEnd"))
-                || ctx.dom.name_is(child, &W::name("commentReference"))
+            if ctx.dom.name_is(child, &W::comment_range_start())
+                || ctx.dom.name_is(child, &W::comment_range_end())
+                || ctx.dom.name_is(child, &W::comment_reference())
                 || ctx.dom.name_is(child, &W::fld_char())
                 || ctx.dom.name_is(child, &W::instr_text())
                 || ctx.dom.name_is(child, &W::del_instr_text())
@@ -16476,7 +16476,7 @@ fn collect_visible_marked(
     }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
         if dom.name_is(node, &W::name("br")) {
-            let kind = dom.attribute(node, &W::name("type"));
+            let kind = dom.attribute(node, &W::type_());
             let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
             let column = kind == Some("column");
             match breaks {
@@ -17862,7 +17862,7 @@ fn nested_in_text(dom: &Dom, node: NodeId, drawing: NodeId) -> bool {
         && descendants_local(dom, drawing, "txbxContent")
             .into_iter()
             .any(|tx| {
-                [W::t(), W::name("delText")].iter().any(|name| {
+                [W::t(), W::del_text()].iter().any(|name| {
                     dom.descendants(tx, Some(name))
                         .into_iter()
                         .any(|t| !element_text(dom, t).trim().is_empty())
@@ -17897,7 +17897,7 @@ fn descendants_local(dom: &Dom, node: NodeId, local: &str) -> Vec<NodeId> {
 /// line by line).
 fn w_text(dom: &Dom, node: NodeId) -> String {
     let mut words: Vec<NodeId> = dom.descendants(node, Some(&W::t()));
-    words.extend(dom.descendants(node, Some(&W::name("delText"))));
+    words.extend(dom.descendants(node, Some(&W::del_text())));
     words.into_iter().map(|t| element_text(dom, t)).collect()
 }
 
@@ -18509,7 +18509,7 @@ fn collect_images(
         .descendants(para, None)
         .into_iter()
         .filter(|n| {
-            (dom.name_is(*n, &W::t()) || dom.name_is(*n, &W::name("delText")))
+            (dom.name_is(*n, &W::t()) || dom.name_is(*n, &W::del_text()))
                 && !element_text(dom, *n).trim().is_empty()
                 && !inside_text_box(dom, *n, para)
         })
@@ -20740,7 +20740,7 @@ fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<
     let own = |s: NodeId| {
         dom.elements(s, Some(&W::name(local)))
             .into_iter()
-            .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
+            .find(|&node| dom.attribute(node, &W::type_()).unwrap_or("default") == want)
             .and_then(|node| attr_any(dom, node, "id"))
             .map(str::to_string)
     };
@@ -20792,7 +20792,7 @@ fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
         _ => {
             let mut w = 0.0;
             if let Some(grid) = direct_named(dom, table, "tblGrid") {
-                for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+                for col in dom.elements(grid, Some(&W::grid_col())) {
                     w += attr_any(dom, col, "w")
                         .and_then(|s| s.parse::<f32>().ok())
                         .map(twip)
@@ -21010,7 +21010,7 @@ fn sect_ref_chrome_of(
 /// `w:document/w:background`: Word anchors the page colour's shape in the
 /// header story, which then ends with one more empty Normal paragraph.
 fn page_background(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, Some(&W::name("document")))
+    dom.ancestors(node, Some(&W::document()))
         .first()
         .is_some_and(|doc| dom.element(*doc, &W::name("background")).is_some())
 }
@@ -21068,7 +21068,7 @@ fn chrome_part_xml(
         .rfind(|p| {
             !hf_para_in_table(&part_dom, root, *p)
                 && part_dom
-                    .ancestors(*p, Some(&W::name("txbxContent")))
+                    .ancestors(*p, Some(&W::txbx_content()))
                     .is_empty()
         });
     // Estimated top of each top-level paragraph below the part's top: one
@@ -21154,7 +21154,7 @@ fn chrome_part_xml(
                 .map(|inl| {
                     let mut run = prun.clone();
                     if let Some(rpr) = part_dom
-                        .ancestors(inl, Some(&W::name("r")))
+                        .ancestors(inl, Some(&W::r()))
                         .first()
                         .and_then(|r| part_dom.element(*r, &W::r_pr()))
                     {
@@ -21186,7 +21186,7 @@ fn chrome_part_xml(
                 .into_iter()
                 .filter(|n| {
                     part_dom
-                        .ancestors(*n, Some(&W::name("txbxContent")))
+                        .ancestors(*n, Some(&W::txbx_content()))
                         .is_empty()
                 })
                 .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
@@ -21253,7 +21253,7 @@ fn chrome_part_xml(
             .into_iter()
             .any(|pict| {
                 part_dom
-                    .ancestors(pict, Some(&W::name("txbxContent")))
+                    .ancestors(pict, Some(&W::txbx_content()))
                     .is_empty()
                     && descendants_local(&part_dom, pict, "shape")
                         .iter()
@@ -21276,7 +21276,7 @@ fn chrome_part_xml(
                     .into_iter()
                     .any(|inl| {
                         part_dom
-                            .ancestors(inl, Some(&W::name("txbxContent")))
+                            .ancestors(inl, Some(&W::txbx_content()))
                             .is_empty()
                     }));
         // A picture paragraph with no text or bare line after it in the
@@ -21871,7 +21871,7 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
 }
 
 fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
-    let header = dom.name_is(node, &W::name("hdr"));
+    let header = dom.name_is(node, &W::hdr());
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
     // An empty top-level paragraph above the first line or below the last
@@ -22128,7 +22128,7 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
     dom.descendants(para, Some(&WP::name("inline")))
         .into_iter()
         .filter(|inl| {
-            dom.ancestors(*inl, Some(&W::name("txbxContent")))
+            dom.ancestors(*inl, Some(&W::txbx_content()))
                 .is_empty()
         })
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
@@ -22153,12 +22153,12 @@ fn hf_flat_pic_run(
         .descendants(para, Some(&WP::name("inline")))
         .into_iter()
         .find(|inl| {
-            dom.ancestors(*inl, Some(&W::name("txbxContent")))
+            dom.ancestors(*inl, Some(&W::txbx_content()))
                 .is_empty()
         })?;
     let mut run = prun.clone();
     if let Some(rpr) = dom
-        .ancestors(inl, Some(&W::name("r")))
+        .ancestors(inl, Some(&W::r()))
         .first()
         .and_then(|r| dom.element(*r, &W::r_pr()))
     {
@@ -22176,10 +22176,10 @@ fn hf_flat_pic_run(
 fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut pics_w = 0.0_f32;
     for n in dom.descendants(para, None) {
-        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+        if !dom.ancestors(n, Some(&W::txbx_content())).is_empty() {
             continue;
         }
-        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
             && !element_text(dom, n).trim().is_empty()
         {
             break;
@@ -22210,10 +22210,10 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
     let mut pics_w = 0.0_f32;
     let mut pics_h = 0.0_f32;
     for n in dom.descendants(para, None) {
-        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+        if !dom.ancestors(n, Some(&W::txbx_content())).is_empty() {
             continue;
         }
-        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
             && !element_text(dom, n).trim().is_empty()
         {
             if pics_w > 0.0 {
@@ -56170,7 +56170,7 @@ mod coverage_round_three_tests {
                 ));
                 let p = first_named(&dom, root, "p").unwrap();
                 assert_eq!(hf_inline_pic_h(&dom, p), height);
-                assert_eq!(dom.descendants(p, Some(&W::name("t"))).len(), 0);
+                assert_eq!(dom.descendants(p, Some(&W::t())).len(), 0);
             }
         }
 

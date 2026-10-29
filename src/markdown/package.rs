@@ -1318,7 +1318,7 @@ fn separator_formats(xml: &str, kind: &str, changes: &[String]) -> String {
         let note = dom
             .elements(root, Some(&W::name(kind)))
             .into_iter()
-            .find(|&note| dom.attribute(note, &W::name("type")) == Some(ty));
+            .find(|&note| dom.attribute(note, &W::type_()) == Some(ty));
         let Some(note) = note else { continue };
         let Some(paragraph) = dom.element(note, &W::p()) else {
             continue;
@@ -1328,7 +1328,7 @@ fn separator_formats(xml: &str, kind: &str, changes: &[String]) -> String {
             dom.add_first(paragraph, properties);
             properties
         });
-        for old in dom.elements(properties, Some(&W::name("pPrChange"))) {
+        for old in dom.elements(properties, Some(&W::p_pr_change())) {
             dom.remove(old);
         }
         if let Some(change) = changes.get(at) {

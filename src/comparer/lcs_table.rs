@@ -233,7 +233,7 @@ fn row_word_tokens(dom: &Dom, row: &ComparisonUnit) -> std::collections::HashSet
 }
 
 fn table_has_merges(dom: &Dom, rows: &[ComparisonUnit]) -> bool {
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     rows.iter()
         .filter_map(as_group)
         .find_map(|g| ancestor_named(dom, g, &tbl_name))
@@ -285,8 +285,8 @@ pub(crate) fn shared_word_row_sequences(
 }
 
 fn contains_merged(dom: &Dom, tbl: NodeId) -> bool {
-    !dom.descendants(tbl, Some(&W::name("vMerge"))).is_empty()
-        || !dom.descendants(tbl, Some(&W::name("gridSpan"))).is_empty()
+    !dom.descendants(tbl, Some(&W::v_merge())).is_empty()
+        || !dom.descendants(tbl, Some(&W::grid_span())).is_empty()
 }
 
 fn positional_rows(rows1: &[ComparisonUnit], rows2: &[ComparisonUnit]) -> Vec<CorrelatedSequence> {
@@ -555,7 +555,7 @@ pub fn do_lcs_algorithm_for_table(
     }
 
     // merged-cell / structure-hash fallback
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     let left_merged = ancestor_named(dom, g1, &tbl_name).is_some_and(|t| contains_merged(dom, t));
     let right_merged = ancestor_named(dom, g2, &tbl_name).is_some_and(|t| contains_merged(dom, t));
     if left_merged || right_merged {
@@ -588,7 +588,7 @@ pub fn mark_rows_as_deleted_or_inserted(
     sequences: &[CorrelatedSequence],
     next_id: &mut u32,
 ) {
-    let tr_name = W::name("tr");
+    let tr_name = W::tr();
     let mut marked = std::collections::HashSet::new();
     for cs in sequences {
         let (units, rev_name) = match cs.correlation_status {
@@ -641,10 +641,10 @@ pub fn mark_rows_as_deleted_or_inserted(
 /// The row's `w:trPr`, created when absent after a `w:tblPrEx` (CT_Row
 /// order), else as the row's first child.
 pub(crate) fn row_properties(dom: &mut Dom, tr: NodeId) -> NodeId {
-    if let Some(p) = dom.element(tr, &W::name("trPr")) {
+    if let Some(p) = dom.element(tr, &W::tr_pr()) {
         return p;
     }
-    let p = dom.new_element(W::name("trPr"));
+    let p = dom.new_element(W::tr_pr());
     match dom.element(tr, &W::name("tblPrEx")) {
         Some(ex) => dom.add_after_self(ex, p),
         None => dom.add_first(tr, p),
@@ -805,7 +805,7 @@ mod horizontal_partition_tests {
             .map(|tbl| {
                 dom.element(tbl, &W::name("tblGrid"))
                     .map(|grid| {
-                        dom.elements(grid, Some(&W::name("gridCol")))
+                        dom.elements(grid, Some(&W::grid_col()))
                             .into_iter()
                             .map(|column| prop(&dom, column))
                             .collect()
@@ -1032,7 +1032,7 @@ mod horizontal_partition_tests {
             .element(grid, &W::name("tblGridChange"))
             .and_then(|c| dom.element(c, &W::name("tblGrid")))
             .unwrap_or(grid);
-        let old_columns = dom.elements(old_grid, Some(&W::name("gridCol"))).len();
+        let old_columns = dom.elements(old_grid, Some(&W::grid_col())).len();
         let span = |pr: Option<NodeId>| {
             pr.and_then(|pr| dom.element(pr, &W::grid_span()))
                 .and_then(|s| dom.attribute(s, &W::val()))
@@ -1471,7 +1471,7 @@ mod nested_lifecycle_owner_regressions {
             assert_eq!(next_id, if table_unit { 102 } else { 101 });
             for row in std::iter::once(outer_row).chain(inner_rows) {
                 let insertion = dom
-                    .element(row, &W::name("trPr"))
+                    .element(row, &W::tr_pr())
                     .and_then(|pr| dom.element(pr, &W::ins()));
                 assert_eq!(
                     insertion.is_some(),

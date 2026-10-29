@@ -296,7 +296,7 @@ impl Levels {
                         .attribute(l, &W::name("ilvl"))
                         .and_then(|i| i.parse().ok())
                         .unwrap_or(0);
-                    (ilvl, dom.element(l, &W::name("pPr")))
+                    (ilvl, dom.element(l, &W::p_pr()))
                 })
                 .collect()
         };
@@ -369,7 +369,7 @@ pub(super) fn recorded_blocks(dom: &Dom, styles_root: NodeId) -> Vec<(String, &'
     let mut out = Vec::new();
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
         if !matches!(
-            dom.attribute(style, &W::name("type"))
+            dom.attribute(style, &W::type_())
                 .unwrap_or("paragraph"),
             "paragraph" | "character"
         ) {
@@ -421,7 +421,7 @@ pub(super) fn restore_against_built_ins(
         .map(|&(_, style, _)| style)
         .collect();
     read_toggles_against_restored_ancestors(dom, &by_id, &rpr_styles);
-    order.retain(|&(_, style, _)| dom.attribute(style, &W::name("type")) != Some("character"));
+    order.retain(|&(_, style, _)| dom.attribute(style, &W::type_()) != Some("character"));
     let recorded_rpr: Vec<NodeId> = order
         .iter()
         .filter(|(_, _, block)| *block == "rPr")
@@ -531,7 +531,7 @@ fn linked(dom: &Dom, by_id: &HashMap<String, NodeId>, style: NodeId, kind: &str)
     dom.element(style, &W::name("link"))
         .and_then(|l| dom.attribute(l, &W::val()))
         .and_then(|id| by_id.get(id).copied())
-        .filter(|&s| dom.attribute(s, &W::name("type")).unwrap_or("paragraph") == kind)
+        .filter(|&s| dom.attribute(s, &W::type_()).unwrap_or("paragraph") == kind)
 }
 
 /// R28: the linked character style of each paragraph style whose rPr record
@@ -558,7 +558,7 @@ fn resync_linked_character_styles(
         }
         done.push(chr);
         let rpr = effective_rpr(dom, styles_root, by_id, para, next_id);
-        if let Some(own) = dom.element(chr, &W::name("rPr")) {
+        if let Some(own) = dom.element(chr, &W::r_pr()) {
             dom.remove(own);
         }
         if !dom.elements(rpr, None).is_empty() {
@@ -571,7 +571,7 @@ fn resync_linked_character_styles(
                 .and_then(|b| dom.attribute(b, &W::val()))
                 .and_then(|id| by_id.get(id).copied());
             if based == Some(chr)
-                && dom.attribute(child, &W::name("type")) == Some("character")
+                && dom.attribute(child, &W::type_()) == Some("character")
                 && let Some(para) = linked(dom, by_id, child, "paragraph")
             {
                 pending.push((child, para));
@@ -589,12 +589,12 @@ fn effective_rpr(
     style: NodeId,
     next_id: &mut super::RevisionIds,
 ) -> NodeId {
-    let out = dom.new_element(W::name("rPr"));
+    let out = dom.new_element(W::r_pr());
     let mut chain = ancestors(dom, by_id, style);
     chain.reverse();
     chain.push(style);
     for s in chain {
-        let Some(block) = dom.element(s, &W::name("rPr")) else {
+        let Some(block) = dom.element(s, &W::r_pr()) else {
             continue;
         };
         for prop in dom.elements(block, None) {
@@ -616,7 +616,7 @@ fn effective_rpr(
     if let Some(dd) = dom
         .element(styles_root, &W::name("docDefaults"))
         .and_then(|d| dom.element(d, &W::name("rPrDefault")))
-        .and_then(|d| dom.element(d, &W::name("rPr")))
+        .and_then(|d| dom.element(d, &W::r_pr()))
     {
         let defaults = slot_values(dom, dd);
         for (slot, value) in slot_values(dom, out) {
@@ -646,7 +646,7 @@ fn read_toggles_against_restored_ancestors(
             .find_map(|a| read.get(&a))
             .cloned()
             .unwrap_or_default();
-        let rpr = dom.element(style, &W::name("rPr"));
+        let rpr = dom.element(style, &W::r_pr());
         let mut own = HashMap::new();
         for &t in XOR_TOGGLES {
             let prop = rpr.and_then(|r| dom.element(r, &W::name(t)));
@@ -702,7 +702,7 @@ fn resolve(
     let level = (block_local == "pPr")
         .then(|| {
             own_block.iter().chain(&inherited).find_map(|&b| {
-                let num_pr = dom.element(b, &W::name("numPr"))?;
+                let num_pr = dom.element(b, &W::num_pr())?;
                 let num_id = dom
                     .element(num_pr, &W::name("numId"))
                     .and_then(|e| dom.attribute(e, &W::val()))?;

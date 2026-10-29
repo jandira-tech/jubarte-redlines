@@ -1200,10 +1200,10 @@ fn insert_paragraph_content(dom: &mut Dom, paragraph: NodeId, stamp: &mut Stamp<
 /// other properties) and every cell paragraph's runs and mark inserted.
 fn insert_table_content(dom: &mut Dom, table: NodeId, stamp: &mut Stamp<'_>) {
     for row in dom.elements(table, Some(&W::tr())) {
-        let properties = match dom.element(row, &W::name("trPr")) {
+        let properties = match dom.element(row, &W::tr_pr()) {
             Some(properties) => properties,
             None => {
-                let properties = dom.new_element(W::name("trPr"));
+                let properties = dom.new_element(W::tr_pr());
                 match dom.element(row, &W::name("tblPrEx")) {
                     Some(exceptions) => dom.add_after_self(exceptions, properties),
                     None => dom.add_first(row, properties),
@@ -1785,7 +1785,7 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
             if !dom.name_is(child, &W::r()) {
                 break;
             }
-            let references = dom.elements(child, Some(&W::name("commentReference")));
+            let references = dom.elements(child, Some(&W::comment_reference()));
             if references.is_empty()
                 || references.iter().any(|&reference| {
                     dom.attribute(reference, &W::id())
@@ -1793,7 +1793,7 @@ fn insertion_split_boundary(dom: &Dom, children: &[NodeId], mut at: usize, befor
                 })
                 || dom.elements(child, None).iter().any(|&element| {
                     !dom.name_is(element, &W::r_pr())
-                        && !dom.name_is(element, &W::name("commentReference"))
+                        && !dom.name_is(element, &W::comment_reference())
                 })
             {
                 break;
@@ -1821,7 +1821,7 @@ fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Ve
     let opened_in_deletion = |id: &str| {
         let mut back = children[..index].iter().rev();
         let found = back.by_ref().find_map(|&c| {
-            if dom.name_is(c, &W::name("commentRangeStart"))
+            if dom.name_is(c, &W::comment_range_start())
                 && dom.attribute(c, &W::id()) == Some(id)
             {
                 Some(true)
@@ -1846,7 +1846,7 @@ fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Ve
                 .filter(|id| opened_in_deletion(id))
                 .is_some_and(|id| closed.insert(id))
         } else {
-            let references = dom.elements(child, Some(&W::name("commentReference")));
+            let references = dom.elements(child, Some(&W::comment_reference()));
             dom.name_is(child, &W::r())
                 && !references.is_empty()
                 && references.iter().all(|&r| {
@@ -1854,7 +1854,7 @@ fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Ve
                         .is_some_and(|id| closed.contains(id))
                 })
                 && dom.elements(child, None).iter().all(|&e| {
-                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::name("commentReference"))
+                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::comment_reference())
                 })
         };
         if !passes {
@@ -2021,8 +2021,8 @@ fn rename_deleted_text(dom: &mut Dom, run: NodeId) {
     for child in dom.elements(run, None) {
         if dom.name_is(child, &W::t()) {
             dom.set_name(child, W::del_text());
-        } else if dom.name_is(child, &W::name("instrText")) {
-            dom.set_name(child, W::name("delInstrText"));
+        } else if dom.name_is(child, &W::instr_text()) {
+            dom.set_name(child, W::del_instr_text());
         }
     }
 }
@@ -2301,8 +2301,8 @@ pub(super) fn strip_records(dom: &mut Dom, rpr: NodeId) {
         if dom.name_is(child, &W::r_pr_change())
             || dom.name_is(child, &W::ins())
             || dom.name_is(child, &W::del())
-            || dom.name_is(child, &W::name("moveFrom"))
-            || dom.name_is(child, &W::name("moveTo"))
+            || dom.name_is(child, &W::move_from())
+            || dom.name_is(child, &W::move_to())
         {
             dom.remove(child);
         }
@@ -2397,7 +2397,7 @@ mod tests {
         );
         assert_eq!(dom.descendants(p, Some(&W::del())).len(), 3);
         assert_eq!(dom.descendants(p, Some(&W::del_text())).len(), 3);
-        assert_eq!(dom.descendants(p, Some(&W::name("delInstrText"))).len(), 1);
+        assert_eq!(dom.descendants(p, Some(&W::del_instr_text())).len(), 1);
         assert!(dom.descendants(p, Some(&W::t())).is_empty());
     }
 }
@@ -2487,7 +2487,7 @@ mod nested_run_deletion_source_boundary_tests {
                     Some("2001-02-03T04:05:06Z")
                 );
                 assert!(dom.descendants(run, Some(&W::t())).is_empty());
-                assert!(dom.descendants(run, Some(&W::name("instrText"))).is_empty());
+                assert!(dom.descendants(run, Some(&W::instr_text())).is_empty());
             }
             let result = crate::revision_processor::reject_revisions_document(&mut dom, root);
             assert_eq!(
@@ -2538,7 +2538,7 @@ mod tracked_source_property_boundary_tests {
             };
             track_properties(&mut dom, p, &mut stamp, |dom| {
                 let ppr = paragraph_properties(dom, p);
-                let jc = dom.new_element(W::name("jc"));
+                let jc = dom.new_element(W::jc_el());
                 dom.set_attribute_value(jc, &W::val(), Some("right"));
                 insert_ppr_child(dom, ppr, jc);
             });
@@ -2553,7 +2553,7 @@ mod tracked_source_property_boundary_tests {
             let old = dom.element(record, &W::p_pr()).unwrap();
             assert!(dom.element(old, &W::r_pr()).is_none());
             assert!(dom.element(old, &W::sect_pr()).is_none());
-            assert!(dom.element(old, &W::name("jc")).is_none());
+            assert!(dom.element(old, &W::jc_el()).is_none());
             if shell.contains("BodyText") {
                 assert_eq!(
                     dom.attribute(dom.element(old, &W::p_style()).unwrap(), &W::val()),
@@ -2561,7 +2561,7 @@ mod tracked_source_property_boundary_tests {
                 );
                 assert_eq!(
                     dom.attribute(
-                        dom.element(old, &W::name("spacing")).unwrap(),
+                        dom.element(old, &W::spacing_el()).unwrap(),
                         &W::name("after")
                     ),
                     Some("240")
@@ -2584,7 +2584,7 @@ mod tracked_source_property_boundary_tests {
             let frozen_record = dom.serialize_element(record);
             track_properties(&mut dom, p, &mut stamp, |dom| {
                 let ppr = paragraph_properties(dom, p);
-                let jc = dom.element(ppr, &W::name("jc")).unwrap();
+                let jc = dom.element(ppr, &W::jc_el()).unwrap();
                 dom.set_attribute_value(jc, &W::val(), Some("center"));
             });
             assert_eq!(dom.serialize_element(record), frozen_record);

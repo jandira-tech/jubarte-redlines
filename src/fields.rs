@@ -389,7 +389,7 @@ fn split_mark_runs(dom: &mut Dom, root: NodeId) -> bool {
                 .into_iter()
                 .filter(|&c| !dom.name_is(c, &W::r_pr()))
                 .collect();
-            content.len() > 1 && content.iter().any(|&c| dom.name_is(c, &W::name("fldChar")))
+            content.len() > 1 && content.iter().any(|&c| dom.name_is(c, &W::fld_char()))
         })
         .collect();
     for &run in &runs {
@@ -401,7 +401,7 @@ fn split_mark_runs(dom: &mut Dom, root: NodeId) -> bool {
             if Some(child) == rpr {
                 continue;
             }
-            if dom.name_is(child, &W::name("fldChar")) {
+            if dom.name_is(child, &W::fld_char()) {
                 groups.push(vec![child]);
                 open = false;
             } else if open {
@@ -434,8 +434,8 @@ fn split_mark_runs(dom: &mut Dom, root: NodeId) -> bool {
 /// Deleted content and fallback copies take no part in field results.
 fn skipped(dom: &Dom, node: NodeId) -> bool {
     dom.ancestors(node, None).into_iter().any(|a| {
-        dom.name_is(a, &W::name("del"))
-            || dom.name_is(a, &W::name("moveFrom"))
+        dom.name_is(a, &W::del())
+            || dom.name_is(a, &W::move_from())
             || dom.name_is(a, &MC::name("Fallback"))
     })
 }
@@ -697,7 +697,7 @@ fn sequence(code: &str, counters: &mut HashMap<String, Option<u32>>) -> Option<S
 /// The text a bookmark spans, when it lies within one paragraph.
 fn bookmark_text(dom: &Dom, root: NodeId, name: &str) -> Option<String> {
     let start = dom
-        .descendants(root, Some(&W::name("bookmarkStart")))
+        .descendants(root, Some(&W::bookmark_start()))
         .into_iter()
         .find(|&b| dom.attribute(b, &W::name("name")) == Some(name))?;
     let id = dom.attribute(start, &W::id())?.to_string();
@@ -712,7 +712,7 @@ fn bookmark_text(dom: &Dom, root: NodeId, name: &str) -> Option<String> {
         if !inside {
             continue;
         }
-        if dom.name_is(node, &W::name("bookmarkEnd"))
+        if dom.name_is(node, &W::bookmark_end())
             && dom.attribute(node, &W::id()) == Some(id.as_str())
         {
             return Some(text);
@@ -744,7 +744,7 @@ fn in_run(dom: &Dom, node: NodeId) -> bool {
 }
 
 fn bookmark_names(dom: &Dom, root: NodeId) -> Vec<String> {
-    dom.descendants(root, Some(&W::name("bookmarkStart")))
+    dom.descendants(root, Some(&W::bookmark_start()))
         .into_iter()
         .filter_map(|b| dom.attribute(b, &W::name("name")).map(str::to_string))
         .collect()
@@ -853,7 +853,7 @@ fn write_result(dom: &mut Dom, field: &Field, text: &str) -> bool {
                 return false;
             }
             let run = dom.new_element(W::r());
-            let separate = dom.new_element(W::name("fldChar"));
+            let separate = dom.new_element(W::fld_char());
             dom.set_attribute_value(separate, &W::name("fldCharType"), Some("separate"));
             dom.add(run, separate);
             dom.add_before_self(end_run, run);
@@ -1083,7 +1083,7 @@ struct BookmarkNamer {
 
 impl BookmarkNamer {
     fn new(dom: &Dom, root: NodeId) -> Self {
-        let starts = dom.descendants(root, Some(&W::name("bookmarkStart")));
+        let starts = dom.descendants(root, Some(&W::bookmark_start()));
         let next_id = starts
             .iter()
             .filter_map(|&b| {
@@ -1101,7 +1101,7 @@ impl BookmarkNamer {
 
     fn ensure(&mut self, dom: &mut Dom, paragraph: NodeId) -> String {
         if let Some(name) = dom
-            .descendants(paragraph, Some(&W::name("bookmarkStart")))
+            .descendants(paragraph, Some(&W::bookmark_start()))
             .into_iter()
             .filter_map(|b| dom.attribute(b, &W::name("name")))
             .find(|name| name.starts_with("_Toc"))
@@ -1117,10 +1117,10 @@ impl BookmarkNamer {
         };
         let id = self.next_id.to_string();
         self.next_id += 1;
-        let start = dom.new_element(W::name("bookmarkStart"));
+        let start = dom.new_element(W::bookmark_start());
         dom.set_attribute_value(start, &W::id(), Some(&id));
         dom.set_attribute_value(start, &W::name("name"), Some(&name));
-        let end = dom.new_element(W::name("bookmarkEnd"));
+        let end = dom.new_element(W::bookmark_end());
         dom.set_attribute_value(end, &W::id(), Some(&id));
         match dom.element(paragraph, &W::p_pr()) {
             Some(ppr) => dom.add_after_self(ppr, start),
@@ -1184,7 +1184,7 @@ fn write_toc(
                 .nodes_after_self(begin_run)
                 .into_iter()
                 .take_while(|&n| n != end_run)
-                .filter(|&n| !dom.descendants(n, Some(&W::name("instrText"))).is_empty())
+                .filter(|&n| !dom.descendants(n, Some(&W::instr_text())).is_empty())
                 .last()
                 .unwrap_or(begin_run);
             let run = fld_char_run(dom, "separate");
@@ -1285,7 +1285,7 @@ fn write_toc(
 
 fn fld_char_run(dom: &mut Dom, kind: &str) -> NodeId {
     let run = dom.new_element(W::r());
-    let mark = dom.new_element(W::name("fldChar"));
+    let mark = dom.new_element(W::fld_char());
     dom.set_attribute_value(mark, &W::name("fldCharType"), Some(kind));
     dom.add(run, mark);
     run
@@ -1362,7 +1362,7 @@ fn entry_content(dom: &mut Dom, text: &str, bookmark: &str, hyperlinks: bool) ->
     runs.push(tab_run);
     runs.push(fld_char_run(dom, "begin"));
     let code_run = dom.new_element(W::r());
-    let instr = dom.new_element(W::name("instrText"));
+    let instr = dom.new_element(W::instr_text());
     dom.set_attribute_value(instr, &XNamespace::xml().name("space"), Some("preserve"));
     dom.add_text(instr, &format!(" PAGEREF {bookmark} \\h "));
     dom.add(code_run, instr);
@@ -1372,7 +1372,7 @@ fn entry_content(dom: &mut Dom, text: &str, bookmark: &str, hyperlinks: bool) ->
     if !hyperlinks {
         return runs;
     }
-    let link = dom.new_element(W::name("hyperlink"));
+    let link = dom.new_element(W::hyperlink());
     dom.set_attribute_value(link, &W::name("anchor"), Some(bookmark));
     dom.set_attribute_value(link, &W::name("history"), Some("1"));
     for run in runs {
@@ -1400,7 +1400,7 @@ fn paragraph_style_names(styles_xml: &str) -> HashMap<String, String> {
     };
     dom.elements(root, Some(&W::name("style")))
         .into_iter()
-        .filter(|&s| dom.attribute(s, &W::name("type")) == Some("paragraph"))
+        .filter(|&s| dom.attribute(s, &W::type_()) == Some("paragraph"))
         .filter_map(|s| {
             let id = dom.attribute(s, &W::name("styleId"))?.to_string();
             let name = dom
@@ -1829,9 +1829,9 @@ mod boundary_coverage_tests {
         assert_eq!(namer.ensure(&mut dom, paras[2]), "_Toc100000003");
         let children = dom.elements(paras[1], None);
         assert!(dom.name_is(children[0], &W::p_pr()));
-        assert!(dom.name_is(children[1], &W::name("bookmarkStart")));
+        assert!(dom.name_is(children[1], &W::bookmark_start()));
         assert_eq!(dom.attribute(children[1], &W::id()), Some("8"));
-        assert!(dom.name_is(*children.last().unwrap(), &W::name("bookmarkEnd")));
+        assert!(dom.name_is(*children.last().unwrap(), &W::bookmark_end()));
         assert_eq!(
             dom.attribute(*children.last().unwrap(), &W::id()),
             Some("8")
@@ -2080,7 +2080,7 @@ mod field_cache_boundary_tests {
                     vec!["Before".into(), replacement.into(), "After".into()]
                 };
                 assert_eq!(texts, expected);
-                assert_eq!(dom.descendants(root, Some(&W::name("fldChar"))).len(), 3);
+                assert_eq!(dom.descendants(root, Some(&W::fld_char())).len(), 3);
                 let end_run = dom.parent(f[0].end).unwrap();
                 let rp = dom.element(end_run, &W::r_pr()).unwrap();
                 assert_eq!(
@@ -2133,7 +2133,7 @@ mod field_cache_boundary_tests {
                 .collect();
             assert_eq!(text, vec!["First", "Second", "After"]);
             assert_eq!(
-                dom.descendants(root, Some(&W::name("hyperlink"))).len(),
+                dom.descendants(root, Some(&W::hyperlink())).len(),
                 if links { 2 } else { 0 }
             );
             for (i, p) in ps.into_iter().enumerate() {
@@ -2385,7 +2385,7 @@ mod authored_field_projection_contract_tests {
         assert_eq!(runs.len(), 5);
         for run in runs {
             assert_eq!(
-                story.dom.attribute(run, &W::name("rsidR")),
+                story.dom.attribute(run, &W::rsid_r()),
                 Some("01234567")
             );
             let properties = story.dom.element(run, &W::r_pr()).unwrap();

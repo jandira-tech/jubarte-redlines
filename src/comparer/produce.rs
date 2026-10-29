@@ -282,7 +282,7 @@ pub fn flatten_to_comparison_unit_atom_list(
 /// Word can regenerate ids without changing the authored tag. QName alone
 /// pairs the old inner control with the new outer one and discards its metadata.
 fn same_authored_control(dom: &Dom, a: NodeId, b: NodeId) -> bool {
-    let properties = W::name("sdtPr");
+    let properties = W::sdt_pr();
     let (Some(a), Some(b)) = (dom.element(a, &properties), dom.element(b, &properties)) else {
         return false;
     };
@@ -309,7 +309,7 @@ fn authored_control_match_strength(dom: &Dom, a: NodeId, b: NodeId) -> u8 {
         return 0;
     }
     let control_id = |node| {
-        dom.element(node, &W::name("sdtPr"))
+        dom.element(node, &W::sdt_pr())
             .and_then(|pr| dom.element(pr, &W::id()))
             .and_then(|id| dom.attribute(id, &W::val()))
             .filter(|id| !id.is_empty())
@@ -781,7 +781,7 @@ pub fn convert_outer_math_wraps_to_internal(
     settings: &WmlComparerSettings,
 ) {
     let math_names = [
-        crate::namespaces::M::name("oMath"),
+        crate::namespaces::M::o_math(),
         crate::namespaces::M::name("oMathPara"),
     ];
     // Next free revision id — internal marks need fresh ones.
@@ -836,7 +836,7 @@ fn mark_math_revisions_internally(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let m_r = crate::namespaces::M::name("r");
+    let m_r = crate::namespaces::M::r();
     let m_ctrl_pr = crate::namespaces::M::name("ctrlPr");
     let w_rpr = W::r_pr();
     let cambria = |dom: &mut Dom| -> NodeId {
@@ -878,7 +878,7 @@ fn mark_math_revisions_internally(
         let mark = new_mark(dom);
         let mut saw_wrpr = false;
         for c in children {
-            let is_m_rpr = dom.name(c) == Some(crate::namespaces::M::name("rPr"));
+            let is_m_rpr = dom.name(c) == Some(crate::namespaces::M::r_pr());
             saw_wrpr |= dom.name(c).as_ref() == Some(&w_rpr);
             dom.remove(c);
             dom.add(mark, c);
@@ -891,7 +891,7 @@ fn mark_math_revisions_internally(
             let anchor = dom
                 .elements(mark, None)
                 .into_iter()
-                .find(|&c| dom.name(c) == Some(crate::namespaces::M::name("rPr")));
+                .find(|&c| dom.name(c) == Some(crate::namespaces::M::r_pr()));
             match anchor {
                 Some(a) => dom.add_after_self(a, rpr),
                 None => match dom.elements(mark, None).first().copied() {
@@ -1104,7 +1104,7 @@ pub fn coalesce_recurse(
         // Empty w:fldSimple — its own atom (atomize), so clone + status like
         // a drawing. Reconstructed as a container it had no child to carry
         // the status and came out live (b15, 0.12.0 release sample).
-        if aname == W::name("fldSimple") && dom.elements(ancestor, None).is_empty() {
+        if aname == W::fld_simple() && dom.elements(ancestor, None).is_empty() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);
@@ -1150,7 +1150,7 @@ pub fn coalesce_recurse(
         // the final Word serialization (revision marks INSIDE the math, M463)
         // is produced by `convert_outer_math_wraps_to_internal` at the very
         // end of the pipeline.
-        if aname == crate::namespaces::M::name("oMath")
+        if aname == crate::namespaces::M::o_math()
             || aname == crate::namespaces::M::name("oMathPara")
         {
             for (_key, gc) in &groupedchildren {
@@ -1968,7 +1968,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     let Some(grid) = dom.element(tbl, &W::name("tblGrid")) else {
         return;
     };
-    let grid_cols = dom.elements(grid, Some(&W::name("gridCol")));
+    let grid_cols = dom.elements(grid, Some(&W::grid_col()));
     // real column count: max over rows of Σ gridSpan (default 1) per cell
     let real_cols = dom
         .elements(tbl, Some(&W::tr()))
@@ -2000,7 +2000,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         .and_then(|sect| {
             let w: i64 = dom
                 .element(sect, &W::name("pgSz"))
-                .and_then(|e| dom.attribute(e, &W::name("w")))
+                .and_then(|e| dom.attribute(e, &W::w()))
                 .and_then(|v| v.parse().ok())?;
             let mar = dom.element(sect, &W::name("pgMar"))?;
             let l: i64 = dom
@@ -2015,7 +2015,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
         .unwrap_or_else(|| {
             grid_cols
                 .iter()
-                .filter_map(|&c| dom.attribute(c, &W::name("w")))
+                .filter_map(|&c| dom.attribute(c, &W::w()))
                 .filter_map(|v| v.parse::<i64>().ok())
                 .sum()
         });
@@ -2035,8 +2035,8 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     }
     let mut new_cols = Vec::with_capacity(real_cols);
     for w in split_width(total, real_cols as i64) {
-        let col = dom.new_element(W::name("gridCol"));
-        dom.set_attribute_value(col, &W::name("w"), Some(&w.to_string()));
+        let col = dom.new_element(W::grid_col());
+        dom.set_attribute_value(col, &W::w(), Some(&w.to_string()));
         new_cols.push(col);
     }
     // gridCols must precede any tblGridChange history in the grid
@@ -2060,8 +2060,8 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
                 e
             }
         };
-        dom.set_attribute_value(tblw, &W::name("w"), Some("0"));
-        dom.set_attribute_value(tblw, &W::name("type"), Some("auto"));
+        dom.set_attribute_value(tblw, &W::w(), Some("0"));
+        dom.set_attribute_value(tblw, &W::type_(), Some("auto"));
     }
 }
 
@@ -2084,8 +2084,8 @@ const MAX_TABLE_WIDTH: i64 = 31_680;
 /// `auto`, `nil`, no type (the renderer's auto), and a width beyond
 /// [`MAX_TABLE_WIDTH`].
 fn declared_width(dom: &Dom, tbl_w: NodeId, text_width: i64) -> Option<i64> {
-    let w = dom.attribute(tbl_w, &W::name("w"))?;
-    let width = match dom.attribute(tbl_w, &W::name("type")) {
+    let w = dom.attribute(tbl_w, &W::w())?;
+    let width = match dom.attribute(tbl_w, &W::type_()) {
         Some("dxa") => w.parse().ok()?,
         Some("pct") => match w.strip_suffix('%') {
             Some(percent) => {
@@ -2379,7 +2379,7 @@ mod merged_row_width_tests {
                 let name = dom.name(c).unwrap().local_name().to_string();
                 let value = dom
                     .attribute(c, &W::val())
-                    .or_else(|| dom.attribute(c, &W::name("w")))
+                    .or_else(|| dom.attribute(c, &W::w()))
                     .unwrap_or_default();
                 format!("{name}={value}")
             })
@@ -2452,7 +2452,7 @@ mod merged_row_width_tests {
             let tcs = dom.elements(tr, Some(&W::tc()));
             (tcs[0], tcs[1])
         };
-        let mark = dom.element(tr, &W::name("bookmarkStart")).unwrap();
+        let mark = dom.element(tr, &W::bookmark_start()).unwrap();
         let atom = |chain: Vec<NodeId>, unids: Option<&[&str]>, status| {
             let mut a = ComparisonUnitAtom::new(NodeId(0), chain, "x".to_string());
             a.ancestor_unids = unids.map(|u| u.iter().map(|s| (*s).to_string()).collect());
@@ -2594,7 +2594,7 @@ mod content_control_source_order_regressions {
                 1,
                 "aligned equal controls must not be flattened"
             );
-            let properties = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+            let properties = dom.element(controls[0], &W::sdt_pr()).unwrap();
             assert_eq!(
                 dom.attribute(
                     dom.element(properties, &W::name("alias")).unwrap(),
@@ -2827,7 +2827,7 @@ mod run_format_history_regressions {
                         Some("Clause")
                     );
                 } else {
-                    let properties = dom.element(containers[0], &W::name("sdtPr")).unwrap();
+                    let properties = dom.element(containers[0], &W::sdt_pr()).unwrap();
                     for (name, value) in [
                         ("id", "11"),
                         ("alias", "Clause"),
@@ -2972,7 +2972,7 @@ mod repeated_control_tag_regressions {
                             1,
                             "only the retained control is correlated; block={block}, reverse={reverse}"
                         );
-                        let props = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+                        let props = dom.element(controls[0], &W::sdt_pr()).unwrap();
                         for (name, expected) in
                             [("id", "11"), ("tag", "Clause"), ("alias", "Inner")]
                         {
@@ -3016,7 +3016,7 @@ mod reordered_retained_control_identity_regression {
             .copied()
             .filter(|&node| dom.name_is(node, &W::sdt()))
             .map(|sdt| {
-                let pr = dom.element(sdt, &W::name("sdtPr")).unwrap();
+                let pr = dom.element(sdt, &W::sdt_pr()).unwrap();
                 let id = dom.element(pr, &W::id()).unwrap();
                 dom.attribute(id, &W::val()).unwrap().to_string()
             })
@@ -3056,7 +3056,7 @@ mod reordered_retained_control_identity_regression {
                 .filter(|&node| dom.name_is(node, &W::sdt()))
                 .collect();
             for control in controls {
-                let pr = dom.element(control, &W::name("sdtPr")).unwrap();
+                let pr = dom.element(control, &W::sdt_pr()).unwrap();
                 let identifier = dom.element(pr, &W::id()).unwrap();
                 if dom.attribute(identifier, &W::val()) == Some(id) {
                     let tag = dom.element(pr, &W::name("tag")).unwrap();
@@ -3192,7 +3192,7 @@ mod coverage_ruby_math_ownership {
                     );
                     assert_eq!(semantic(&dom, prior), frozen);
                     assert_eq!(id, 32, "only live run and control properties get new marks");
-                    let runs = dom.descendants(math, Some(&M::name("r")));
+                    let runs = dom.descendants(math, Some(&M::r()));
                     assert_eq!(dom.value(runs[0]), "old");
                     assert_eq!(dom.value(runs[1]), "new");
                     let mark = dom.elements(runs[1], Some(&W::name(added)))[0];

@@ -5101,7 +5101,7 @@ impl<'p> Transaction<'p> {
         };
         dom.elements(root, Some(&W::name("style")))
             .into_iter()
-            .filter(|&s| dom.attribute(s, &W::name("type")).unwrap_or("paragraph") == "paragraph")
+            .filter(|&s| dom.attribute(s, &W::type_()).unwrap_or("paragraph") == "paragraph")
             .filter_map(|s| {
                 let id = dom.attribute(s, &W::name("styleId"))?.to_string();
                 let name = dom
@@ -5407,11 +5407,11 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            if dom.name_is(node, &W::name("hyperlink")) {
+            if dom.name_is(node, &W::hyperlink()) {
                 inner = Some(
                     "a hyperlink; edit the text on either side of it, or comment on it".into(),
                 );
-            } else if dom.name_is(node, &W::name("fldSimple")) {
+            } else if dom.name_is(node, &W::fld_simple()) {
                 inner = Some(format!(
                     "the result of the field{}; edit the text on either side of it, or comment on it",
                     match attr("instr").trim() {
@@ -5419,9 +5419,9 @@ impl<'p> Transaction<'p> {
                         instr => format!(" {instr:?}"),
                     }
                 ));
-            } else if dom.name_is(node, &W::name("sdt")) {
+            } else if dom.name_is(node, &W::sdt()) {
                 let property = |local: &str| {
-                    dom.element(node, &W::name("sdtPr"))
+                    dom.element(node, &W::sdt_pr())
                         .and_then(|pr| dom.element(pr, &W::name(local)))
                         .and_then(|e| dom.attribute(e, &W::val()))
                         .map(|v| format!(" ({local} {v:?})"))
@@ -5492,7 +5492,7 @@ impl<'p> Transaction<'p> {
             && author != self.plan.author
             && story.is_some_and(|s| {
                 let stretches = dom
-                    .descendants(s.root, Some(&W::name("del")))
+                    .descendants(s.root, Some(&W::del()))
                     .into_iter()
                     .filter(|&n| {
                         dom.attribute(n, &W::id()) == Some(wid)
@@ -5908,7 +5908,7 @@ impl<'p> Transaction<'p> {
                 .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                 .is_some_and(|rpr| {
                     dom.element(rpr, &W::del()).is_some()
-                        || dom.element(rpr, &W::name("moveFrom")).is_some()
+                        || dom.element(rpr, &W::move_from()).is_some()
                 })
         };
         let placed = |anchor: usize, wanted: Side| {
@@ -7115,7 +7115,7 @@ impl<'p> Transaction<'p> {
         if self.opened.pkg.part_bytes("word/comments.xml").is_none() {
             return false;
         }
-        let name = W::name("commentReference");
+        let name = W::comment_reference();
         let ids = |dom: &Dom, root: NodeId| -> std::collections::HashSet<String> {
             dom.descendants(root, Some(&name))
                 .into_iter()
@@ -7230,7 +7230,7 @@ fn lift_out_of_deletion(dom: &mut Dom, scope: NodeId, id: u32, next_id: &mut u64
         return;
     };
     let reference = dom.next_element(end).filter(|&run| {
-        dom.element(run, &W::name("commentReference"))
+        dom.element(run, &W::comment_reference())
             .is_some_and(|r| dom.attribute(r, &W::id()) == Some(id.as_str()))
     });
     let last = reference.unwrap_or(end);
@@ -7762,7 +7762,7 @@ fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
         }
         // Markers in removed text count too: Word's Accept All takes the
         // words between a deleted `begin` and `end` with the field.
-        if dom.name_is(node, &W::name("fldChar")) {
+        if dom.name_is(node, &W::fld_char()) {
             match dom.attribute(node, &W::name("fldCharType")) {
                 Some("begin") => fields += 1,
                 Some("end") => fields = fields.saturating_sub(1),
@@ -8014,7 +8014,7 @@ fn inner_comment_references(
     let (Some(from), Some(to)) = (at(first), at(last)) else {
         return Vec::new();
     };
-    dom.descendants(paragraph, Some(&W::name("commentReference")))
+    dom.descendants(paragraph, Some(&W::comment_reference()))
         .into_iter()
         .filter(|&r| at(r).is_some_and(|i| from < i && i < to))
         .collect()
@@ -8071,7 +8071,7 @@ fn closing_comment_references(
     };
     let opened: Vec<&str> = order[from + 1..to]
         .iter()
-        .filter(|&&n| dom.name_is(n, &W::name("commentRangeStart")))
+        .filter(|&&n| dom.name_is(n, &W::comment_range_start()))
         .filter_map(|&n| dom.attribute(n, &W::id()))
         .filter(|id| marker("commentRangeEnd", id, to + 1..next))
         .collect();
@@ -8079,7 +8079,7 @@ fn closing_comment_references(
         .iter()
         .copied()
         .filter(|&n| {
-            dom.name_is(n, &W::name("commentReference"))
+            dom.name_is(n, &W::comment_reference())
                 && dom
                     .attribute(n, &W::id())
                     .is_some_and(|id| opened.contains(&id))
@@ -8534,12 +8534,12 @@ fn anchor_comment(
     ids: &mut RevisionCounter,
 ) {
     let id_str = id.to_string();
-    let range_start = dom.new_element(W::name("commentRangeStart"));
+    let range_start = dom.new_element(W::comment_range_start());
     dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
-    let range_end = dom.new_element(W::name("commentRangeEnd"));
+    let range_end = dom.new_element(W::comment_range_end());
     dom.set_attribute_value(range_end, &W::id(), Some(&id_str));
     let reference_run = dom.new_element(W::r());
-    let reference = dom.new_element(W::name("commentReference"));
+    let reference = dom.new_element(W::comment_reference());
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
     if wrap_range(dom, paragraph, start, end, range_start, range_end, ids) {
@@ -8563,7 +8563,7 @@ fn place_reference(dom: &mut Dom, range_start: NodeId, range_end: NodeId, refere
         if dom.name_is(ancestor, &W::p()) {
             break;
         }
-        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::name("moveTo")))
+        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::move_to()))
             && !dom.ancestors(range_start, None).contains(&ancestor)
         {
             after = ancestor;
@@ -8594,7 +8594,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, ids: &mut Re
     let range_end = comment_marker(dom, "commentRangeEnd", &id);
     let reference_run = comment_reference_run(dom, &id);
     let len = project_paragraph(dom, first).text.len();
-    let scratch = dom.new_element(W::name("commentRangeEnd"));
+    let scratch = dom.new_element(W::comment_range_end());
     if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch, ids) {
         dom.remove(scratch);
     } else {
@@ -8604,7 +8604,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, ids: &mut Re
         }
     }
     let len = project_paragraph(dom, last).text.len();
-    let scratch = dom.new_element(W::name("commentRangeStart"));
+    let scratch = dom.new_element(W::comment_range_start());
     if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end, ids) {
         dom.remove(scratch);
         place_reference(dom, range_start, range_end, reference_run);
@@ -8833,19 +8833,19 @@ fn format_paragraph(
         }
     }
     if let Some(alignment) = alignment {
-        if let Some(existing) = dom.element(ppr, &W::name("jc")) {
+        if let Some(existing) = dom.element(ppr, &W::jc_el()) {
             dom.set_attribute_value(existing, &W::val(), Some(alignment.jc()));
         } else {
-            let el = dom.new_element(W::name("jc"));
+            let el = dom.new_element(W::jc_el());
             dom.set_attribute_value(el, &W::val(), Some(alignment.jc()));
             insert_ppr_child(dom, ppr, el);
         }
     }
     if spacing != Spacing::default() {
-        let el = match dom.element(ppr, &W::name("spacing")) {
+        let el = match dom.element(ppr, &W::spacing_el()) {
             Some(el) => el,
             None => {
-                let el = dom.new_element(W::name("spacing"));
+                let el = dom.new_element(W::spacing_el());
                 insert_ppr_child(dom, ppr, el);
                 el
             }
@@ -9024,14 +9024,14 @@ fn toc_paragraphs(dom: &mut Dom, toc: &TocSpec) -> Vec<NodeId> {
     let p = dom.new_element(W::p());
     let mark = |dom: &mut Dom, p: NodeId, kind: &str| {
         let run = dom.new_element(W::r());
-        let fld = dom.new_element(W::name("fldChar"));
+        let fld = dom.new_element(W::fld_char());
         dom.set_attribute_value(fld, &W::name("fldCharType"), Some(kind));
         dom.add(run, fld);
         dom.add(p, run);
     };
     mark(dom, p, "begin");
     let run = dom.new_element(W::r());
-    let instr = dom.new_element(W::name("instrText"));
+    let instr = dom.new_element(W::instr_text());
     dom.set_attribute_value(instr, &XNamespace::xml().name("space"), Some("preserve"));
     dom.add_text(
         instr,
@@ -10464,7 +10464,7 @@ mod deeper_boundary_tests {
         let references = tx
             .opened
             .dom
-            .descendants(tx.opened.body, Some(&W::name("commentReference")));
+            .descendants(tx.opened.body, Some(&W::comment_reference()));
         assert_eq!(reference, Some(references[0]));
         for r in references {
             tx.opened.dom.remove(r);
@@ -10745,10 +10745,10 @@ mod deeper_boundary_tests {
                 Some("New")
             );
             assert_eq!(
-                d.attribute(d.element(ppr, &W::name("jc")).unwrap(), &W::val()),
+                d.attribute(d.element(ppr, &W::jc_el()).unwrap(), &W::val()),
                 Some("both")
             );
-            let s = d.element(ppr, &W::name("spacing")).unwrap();
+            let s = d.element(ppr, &W::spacing_el()).unwrap();
             for (local, value) in [
                 "line",
                 "before",
@@ -10824,7 +10824,7 @@ mod deeper_boundary_tests {
                 format!("head{separator}tail")
             );
             assert_eq!(
-                d.descendants(ps[1], Some(&W::name("bookmarkStart"))).len(),
+                d.descendants(ps[1], Some(&W::bookmark_start())).len(),
                 1
             );
             let runs = d.elements(ps[1], Some(&W::r()));
@@ -10836,7 +10836,7 @@ mod deeper_boundary_tests {
             }
             let ppr = d.element(ps[1], &W::p_pr()).unwrap();
             assert_eq!(
-                d.attribute(d.element(ppr, &W::name("jc")).unwrap(), &W::val()),
+                d.attribute(d.element(ppr, &W::jc_el()).unwrap(), &W::val()),
                 Some("right")
             );
         }

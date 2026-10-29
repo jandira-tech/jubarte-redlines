@@ -88,7 +88,7 @@ fn is_run_status_carrier(dom: &Dom, d: NodeId) -> bool {
                 || ALLOWABLE_RUN_CHILDREN.contains(&n)
                 || n == MC::name("AlternateContent")
                 || n == W::pict()
-                || n == W::name("object")
+                || n == W::object()
         }
         None => false,
     }
@@ -109,13 +109,13 @@ fn convert_run_text_to_del_text(dom: &mut Dom, run: NodeId) {
                 Some(n)
                     if n == &W::ins()
                         || n == &W::del()
-                        || n == &W::name("moveFrom")
-                        || n == &W::name("moveTo") =>
+                        || n == &W::move_from()
+                        || n == &W::move_to() =>
                 {
                     continue;
                 }
                 Some(n) if n == &W::t() => dom.set_name(c, W::del_text()),
-                Some(n) if n == &W::instr_text() => dom.set_name(c, W::name("delInstrText")),
+                Some(n) if n == &W::instr_text() => dom.set_name(c, W::del_instr_text()),
                 _ => walk(dom, c),
             }
         }
@@ -202,7 +202,7 @@ pub fn mark_content_transform(
 
     // An empty field is a whole atom with no run to carry the status: Word's
     // redline spells it as a complex field inside the revision (b15).
-    if name == W::name("fldSimple") && dom.elements(node, None).is_empty() {
+    if name == W::fld_simple() && dom.elements(node, None).is_empty() {
         let status = dom.attribute(node, &PT::status()).map(str::to_string);
         if let Some(moved @ ("MovedSource" | "MovedDestination")) = status.as_deref() {
             // As moved runs: range markers around a moveFrom / moveTo whose
@@ -257,7 +257,7 @@ pub fn mark_content_transform(
     }
 
     if name == W::r() {
-        let txbx = W::name("txbxContent");
+        let txbx = W::txbx_content();
         let carriers: Vec<NodeId> = descendants_trimmed(dom, node, &txbx)
             .into_iter()
             .filter(|&d| is_run_status_carrier(dom, d))
@@ -304,14 +304,14 @@ pub fn mark_content_transform(
             "MovedSource" | "MovedDestination" => {
                 let (range_start, mid, range_end) = if status == "MovedSource" {
                     (
-                        W::name("moveFromRangeStart"),
-                        W::name("moveFrom"),
+                        W::move_from_range_start(),
+                        W::move_from(),
                         W::move_from_range_end(),
                     )
                 } else {
                     (
-                        W::name("moveToRangeStart"),
-                        W::name("moveTo"),
+                        W::move_to_range_start(),
+                        W::move_to(),
                         W::move_to_range_end(),
                     )
                 };
@@ -348,7 +348,7 @@ pub fn mark_content_transform(
                     }
                 };
                 let old_rpr = parse_rpr(dom, old_rpr_str.as_deref());
-                let chg = dom.new_element(W::name("rPrChange"));
+                let chg = dom.new_element(W::r_pr_change());
                 dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
                 *id_gen += 1;
                 dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -397,9 +397,9 @@ pub fn mark_content_transform(
                         p
                     }
                 };
-                if dom.element(rpr, &W::name("rPrChange")).is_none() {
+                if dom.element(rpr, &W::r_pr_change()).is_none() {
                     let old_rpr = parse_rpr(dom, Some(&old_rpr_s));
-                    let chg = dom.new_element(W::name("rPrChange"));
+                    let chg = dom.new_element(W::r_pr_change());
                     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
                     *id_gen += 1;
                     dom.set_attribute_value(
@@ -772,30 +772,30 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     let rev_names = [
         W::ins(),
         W::del(),
-        W::name("moveFrom"),
-        W::name("moveTo"),
-        W::name("moveFromRangeStart"),
+        W::move_from(),
+        W::move_to(),
+        W::move_from_range_start(),
         W::move_from_range_end(),
-        W::name("moveToRangeStart"),
+        W::move_to_range_start(),
         W::move_to_range_end(),
-        W::name("rPrChange"),
+        W::r_pr_change(),
         W::p_pr_change(),
         W::name("tblPrChange"),
         W::name("tblGridChange"),
         W::name("trPrChange"),
         W::name("tcPrChange"),
         W::name("sectPrChange"),
-        W::name("numberingChange"),
+        W::numbering_change(),
         W::cell_ins(),
         W::cell_del(),
-        W::name("cellMerge"),
+        W::cell_merge(),
     ];
     // Comment anchors keep their own ids (must stay aligned with comments.xml).
     // Reserved so revision renumber never reuses them.
     let reserved_names = [
-        W::name("commentRangeStart"),
-        W::name("commentRangeEnd"),
-        W::name("commentReference"),
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::comment_reference(),
     ];
     let mut reserved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut all = Vec::new();
@@ -831,8 +831,8 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     let (mffe, mtre, mffs, mtrs) = (
         W::move_from_range_end(),
         W::move_to_range_end(),
-        W::name("moveFromRangeStart"),
-        W::name("moveToRangeStart"),
+        W::move_from_range_start(),
+        W::move_to_range_start(),
     );
     for rev in all {
         let Some(old) = dom.attribute(rev, &W::id()).map(|s| s.to_string()) else {
@@ -1388,7 +1388,7 @@ pub fn sanitize_sdt_properties(dom: &mut Dom, root: NodeId) {
         "citation",
         "bibliography",
     ];
-    for sdtpr in dom.descendants(root, Some(&W::name("sdtPr"))) {
+    for sdtpr in dom.descendants(root, Some(&W::sdt_pr())) {
         for k in dom.elements(sdtpr, None) {
             if let Some(n) = dom.name(k)
                 && n.namespace_name() == W::URI
@@ -1576,7 +1576,7 @@ pub fn fix_paragraph_mark_revision_order(dom: &mut Dom, root: NodeId) {
         )
     };
     for ppr in dom.descendants(root, Some(&W::p_pr())) {
-        let Some(rpr) = dom.element(ppr, &W::name("rPr")) else {
+        let Some(rpr) = dom.element(ppr, &W::r_pr()) else {
             continue;
         };
         // (a) move revision markers to the front of the paraRPr (preserve their order).
@@ -1714,13 +1714,13 @@ fn wrap_revised_hyperlink_as_field(dom: &mut Dom, hl: NodeId) {
         return;
     }
     let instr_name = if is_del {
-        W::name("delInstrText")
+        W::del_instr_text()
     } else {
-        W::name("instrText")
+        W::instr_text()
     };
     let mk_fld = |dom: &mut Dom, ty: &str| -> NodeId {
         let r = dom.new_element(W::r());
-        let f = dom.new_element(W::name("fldChar"));
+        let f = dom.new_element(W::fld_char());
         dom.set_attribute_value(f, &W::name("fldCharType"), Some(ty));
         dom.add(r, f);
         r
@@ -3302,7 +3302,7 @@ pub fn closing_mark_takes_revised_properties(
     // run into it (the comment list item `unmerge_comment_list_item` splits
     // back out): its properties are that paragraph's, not the closing one's.
     if dom.elements(last, Some(&W::ins())).len()
-        + dom.elements(last, Some(&W::name("moveTo"))).len()
+        + dom.elements(last, Some(&W::move_to())).len()
         > 0
     {
         return;
@@ -3456,7 +3456,7 @@ fn closing_mark_takes_revised_mark_formatting(
         return;
     }
     let live = dom.element(ppr, &W::r_pr());
-    if live.is_some_and(|m| dom.element(m, &W::name("rPrChange")).is_some()) {
+    if live.is_some_and(|m| dom.element(m, &W::r_pr_change()).is_some()) {
         return;
     }
     let new = dom.element(revised, &W::r_pr());
@@ -3479,7 +3479,7 @@ fn closing_mark_takes_revised_mark_formatting(
         Some(m) => dom.clone_subtree(m),
         None => dom.new_element(W::r_pr()),
     };
-    let chg = dom.new_element(W::name("rPrChange"));
+    let chg = dom.new_element(W::r_pr_change());
     dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
     *id_gen += 1;
     dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
@@ -3552,7 +3552,7 @@ fn para_has_no_text(dom: &Dom, p: NodeId) -> bool {
         && dom.descendants(p, Some(&W::name("br"))).is_empty()
         && dom.descendants(p, Some(&W::drawing())).is_empty()
         && dom.descendants(p, Some(&W::pict())).is_empty()
-        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&W::object())).is_empty()
         && dom.descendants(p, Some(&M::name("oMath"))).is_empty()
         && dom.descendants(p, Some(&M::name("oMathPara"))).is_empty()
 }
@@ -3579,7 +3579,7 @@ fn para_is_visually_blank(dom: &Dom, p: NodeId) -> bool {
         && !para_has_omath(dom, p)
         && dom.descendants(p, Some(&W::drawing())).is_empty()
         && dom.descendants(p, Some(&W::pict())).is_empty()
-        && dom.descendants(p, Some(&W::name("object"))).is_empty()
+        && dom.descendants(p, Some(&W::object())).is_empty()
         && dom.descendants(p, Some(&W::name("br"))).is_empty()
 }
 
@@ -4407,7 +4407,7 @@ pub fn fold_whitespace_pure_ins_into_following_pure_del(dom: &mut Dom, root: Nod
             if !dom.descendants(ins_p, Some(&W::name("br"))).is_empty()
                 || !dom.descendants(ins_p, Some(&W::drawing())).is_empty()
                 || !dom.descendants(ins_p, Some(&W::pict())).is_empty()
-                || !dom.descendants(ins_p, Some(&W::name("object"))).is_empty()
+                || !dom.descendants(ins_p, Some(&W::object())).is_empty()
             {
                 continue;
             }
@@ -6008,7 +6008,7 @@ pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
             .is_some_and(|&n| {
                 dom.element(n, &W::p_pr())
                     .and_then(|np| dom.element(np, &W::r_pr()))
-                    .is_some_and(|rpr| dom.element(rpr, &W::name("ins")).is_some())
+                    .is_some_and(|rpr| dom.element(rpr, &W::ins()).is_some())
             });
         if !next_has_inserted_mark {
             continue;
@@ -6139,7 +6139,7 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId, original_line
         .rev()
         .find(|&node| !dom.name_is(node, &W::sect_pr()));
     let mut drop_nodes: Vec<NodeId> = Vec::new();
-    for el in dom.descendants(body, Some(&W::name("type"))) {
+    for el in dom.descendants(body, Some(&W::type_())) {
         if dom.attribute(el, &W::val()).unwrap_or("") == "nextPage" {
             drop_nodes.push(el);
         }
@@ -6159,7 +6159,7 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId, original_line
             drop_nodes.push(el);
         }
     }
-    for tbl_pr in dom.descendants(body, Some(&W::name("tblPr"))) {
+    for tbl_pr in dom.descendants(body, Some(&W::tbl_pr())) {
         if let Some(jc) = dom.element(tbl_pr, &W::jc_el()) {
             let v = dom.attribute(jc, &W::val()).unwrap_or("");
             if v == "left" || v == "start" {
@@ -6270,7 +6270,7 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    let tbl_prs: Vec<NodeId> = dom.descendants(body, Some(&W::name("tblPr")));
+    let tbl_prs: Vec<NodeId> = dom.descendants(body, Some(&W::tbl_pr()));
     for tbl_pr in tbl_prs {
         // CT_TblPr requires tblPrChange last. The nested tblPr is the
         // previous snapshot; a look stamped there, or appended on the live
@@ -6311,7 +6311,7 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
         // (red_strikethrough × plate_30 keeps top 80 and has no tblPrEx).
         let vertical_set = ["top", "bottom"].iter().any(|side| {
             dom.element(tbl_mar, &W::name(side))
-                .and_then(|edge| dom.attribute(edge, &W::name("w")))
+                .and_then(|edge| dom.attribute(edge, &W::w()))
                 .is_some_and(|w| w != "0")
         });
         if vertical_set {
@@ -6326,8 +6326,8 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
             let mar = dom.new_element(W::name("tblCellMar"));
             for side in ["top", "bottom"] {
                 let edge = dom.new_element(W::name(side));
-                dom.set_attribute_value(edge, &W::name("w"), Some("0"));
-                dom.set_attribute_value(edge, &W::name("type"), Some("dxa"));
+                dom.set_attribute_value(edge, &W::w(), Some("0"));
+                dom.set_attribute_value(edge, &W::type_(), Some("dxa"));
                 dom.add(mar, edge);
             }
             dom.add(ex, mar);
@@ -6340,7 +6340,7 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
             }
         }
     }
-    let refs: Vec<NodeId> = dom.descendants(body, Some(&W::name("commentReference")));
+    let refs: Vec<NodeId> = dom.descendants(body, Some(&W::comment_reference()));
     for cref in refs {
         let Some(run) = dom
             .ancestors_and_self(cref, None)
@@ -6408,7 +6408,7 @@ pub fn rewrite_inserted_external_hyperlinks(
         let instr_text = format!("HYPERLINK \"{url}\" \\h");
         let begin = field_char_run(dom, "begin");
         let instr_r = dom.new_element(W::r());
-        let instr = dom.new_element(W::name("instrText"));
+        let instr = dom.new_element(W::instr_text());
         dom.add_text(instr, &instr_text);
         dom.add(instr_r, instr);
         let sep = field_char_run(dom, "separate");
@@ -6462,7 +6462,7 @@ fn hyperlink_is_wholly_inserted(dom: &Dom, hl: NodeId) -> bool {
 
 fn field_char_run(dom: &mut Dom, ty: &str) -> NodeId {
     let run = dom.new_element(W::r());
-    let fld = dom.new_element(W::name("fldChar"));
+    let fld = dom.new_element(W::fld_char());
     dom.set_attribute_value(fld, &W::name("fldCharType"), Some(ty));
     dom.add(run, fld);
     run
@@ -6595,7 +6595,7 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(
         // carries a real layout change, which Word records as a pPrChange over
         // the old jc rather than promoting it (file_116_117).
         if dom.element(ppr, &W::jc_el()).is_some()
-            || dom.element(ppr, &W::name("spacing")).is_some()
+            || dom.element(ppr, &W::spacing_el()).is_some()
         {
             continue;
         }
@@ -6704,7 +6704,7 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
 /// each; deeper reordering is left for the multi-paragraph peel
 /// ladder.
 pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
-    let fld_char = W::name("fldChar");
+    let fld_char = W::fld_char();
     let mut i = 0usize;
     loop {
         let kids = dom.nodes(node);
@@ -6777,7 +6777,7 @@ pub(crate) fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String,
     if let Some(rev) = own(node) {
         return Some(rev);
     }
-    if dom.name(node).as_ref() != Some(&W::name("hyperlink")) {
+    if dom.name(node).as_ref() != Some(&W::hyperlink()) {
         return None;
     }
     let mut found: Option<(bool, String, String)> = None;
@@ -6867,14 +6867,14 @@ pub fn simplify_move_markup_to_del_ins(dom: &mut Dom, root: NodeId) -> NodeId {
 fn simplify_move_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let name = dom.name(node).unwrap();
     let ranges = [
-        W::name("moveFromRangeStart"),
+        W::move_from_range_start(),
         W::move_from_range_end(),
-        W::name("moveToRangeStart"),
+        W::move_to_range_start(),
         W::move_to_range_end(),
     ];
-    let new_name = if name == W::name("moveFrom") {
+    let new_name = if name == W::move_from() {
         W::del()
-    } else if name == W::name("moveTo") {
+    } else if name == W::move_to() {
         W::ins()
     } else {
         name.clone()
@@ -6883,7 +6883,7 @@ fn simplify_move_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     // Oracle (WmlComparer.cs:2874-2878) propagates only w:author, w:date, w:id
     // — but only when rewriting w:moveFrom/w:moveTo. Recreated descendant
     // elements (w:r, w:p, …) must keep all of their attributes.
-    if name == W::name("moveFrom") || name == W::name("moveTo") {
+    if name == W::move_from() || name == W::move_to() {
         copy_move_id_attrs(dom, node, ne);
     } else {
         copy_attrs(dom, node, ne, false);
@@ -6949,7 +6949,7 @@ pub fn merge_replaced_paragraphs_in(
 ) {
     let body = dom.element(root, &W::body());
     let mut containers: Vec<NodeId> = body.into_iter().collect();
-    for name in [W::name("tc"), W::name("txbxContent"), W::sdt_content()] {
+    for name in [W::tc(), W::txbx_content(), W::sdt_content()] {
         containers.extend(dom.descendants(root, Some(&name)));
     }
     for c in containers {
@@ -7689,7 +7689,7 @@ fn para_mark_revision(dom: &Dom, p: NodeId, rev: &crate::xmllinq::XName) -> bool
 /// paragraphs hold: Word nests fldChar by position, and a crossed TOC pair
 /// spun it at full CPU (98bf5f3d × a3701d36).
 fn fold_crosses_a_field(dom: &Dom, d: NodeId, carrier: NodeId, inss: &[NodeId]) -> bool {
-    let fld_char = W::name("fldChar");
+    let fld_char = W::fld_char();
     let field_type = W::name("fldCharType");
     let mut depth = 0i32;
     let mut balanced = true;
@@ -7716,7 +7716,7 @@ fn fold_crosses_a_field(dom: &Dom, d: NodeId, carrier: NodeId, inss: &[NodeId]) 
 /// the M360 residue gates (sd_2672_plain_3x3 × hyperlink_node_internal lost
 /// its Heading1 pStyle + MARK-DEL to the bare-pPr branch, 99.91 → 78.64).
 fn para_is_field_residue(dom: &Dom, p: NodeId) -> bool {
-    if dom.descendants(p, Some(&W::name("fldChar"))).is_empty() {
+    if dom.descendants(p, Some(&W::fld_char())).is_empty() {
         return false;
     }
     !dom.descendants(p, Some(&W::t()))
@@ -7769,7 +7769,7 @@ fn accumulate_para_child_class_with_moves(
             _ => {}
         }
     }
-    if n == W::p_pr() || n == W::name("bookmarkStart") || n == W::name("bookmarkEnd") {
+    if n == W::p_pr() || n == W::bookmark_start() || n == W::bookmark_end() {
         return;
     }
     if n == W::ins() {
@@ -7819,9 +7819,9 @@ fn para_replacement_class_with_moves(dom: &Dom, p: NodeId, include_moves: bool) 
     };
     if include_moves && let Some(inserted) = class {
         let moved = if inserted {
-            W::name("moveTo")
+            W::move_to()
         } else {
-            W::name("moveFrom")
+            W::move_from()
         };
         let mark = if inserted { W::ins() } else { W::del() };
         // Moving text between existing cells does not insert/delete their row.
@@ -7850,7 +7850,7 @@ fn para_class_carried_aware(dom: &Dom, p: NodeId, comparer_author: &str) -> Opti
             plain = true;
             continue;
         };
-        if n == W::p_pr() || n == W::name("bookmarkStart") || n == W::name("bookmarkEnd") {
+        if n == W::p_pr() || n == W::bookmark_start() || n == W::bookmark_end() {
             continue;
         } else if n == W::ins() {
             if dom.attribute(c, &W::author()).unwrap_or("") == comparer_author {
@@ -7907,7 +7907,7 @@ fn para_has_real_del(dom: &Dom, p: NodeId) -> bool {
 /// Live + deleted body text of a paragraph (for relatedness gates).
 fn para_revision_body_text(dom: &Dom, p: NodeId) -> String {
     let mut out = String::new();
-    for name in [W::name("t"), W::del_text()] {
+    for name in [W::t(), W::del_text()] {
         for t in dom.descendants(p, Some(&name)) {
             out.push_str(&dom.value_str(t));
             out.push(' ');
@@ -8441,7 +8441,7 @@ fn para_carries_page_break(dom: &Dom, p: NodeId) -> bool {
         || dom
             .descendants(p, Some(&W::name("br")))
             .iter()
-            .any(|&b| dom.attribute(b, &W::name("type")) == Some("page"))
+            .any(|&b| dom.attribute(b, &W::type_()) == Some("page"))
 }
 
 /// Word's story-tail fusion: the revised last paragraph's runs open the
@@ -9418,7 +9418,7 @@ fn merge_replaced_in_container(
                 if !dom.descendants(last_ins, Some(&W::name("br"))).is_empty()
                     && (!dom.descendants(d, Some(&W::drawing())).is_empty()
                         || !dom.descendants(d, Some(&W::pict())).is_empty()
-                        || !dom.descendants(d, Some(&W::name("object"))).is_empty())
+                        || !dom.descendants(d, Some(&W::object())).is_empty())
                 {
                     continue;
                 }
@@ -9462,7 +9462,7 @@ fn merge_replaced_in_container(
                         && dom.descendants(last_ins, Some(&W::drawing())).is_empty()
                         && dom.descendants(last_ins, Some(&W::pict())).is_empty()
                         && dom
-                            .descendants(last_ins, Some(&W::name("object")))
+                            .descendants(last_ins, Some(&W::object()))
                             .is_empty();
                     if !empty_shell {
                         continue;
@@ -10140,13 +10140,13 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
             return (!para_mark_revision(dom, el, &other)).then_some(class);
         }
         if n == W::tbl() {
-            let trs = dom.descendants(el, Some(&W::name("tr")));
+            let trs = dom.descendants(el, Some(&W::tr()));
             if trs.is_empty() {
                 return None;
             }
             let mut cls: Option<bool> = None;
             for tr in trs {
-                let trpr = dom.element(tr, &W::name("trPr"))?;
+                let trpr = dom.element(tr, &W::tr_pr())?;
                 let c = if dom.element(trpr, &W::del()).is_some() {
                     false
                 } else if dom.element(trpr, &W::ins()).is_some() {
@@ -10184,7 +10184,7 @@ pub fn reorder_replaced_blocks(dom: &mut Dom, root: NodeId) {
     if let Some(b) = dom.element(root, &W::body()) {
         containers.push(b);
     }
-    containers.extend(dom.descendants(root, Some(&W::name("tc"))));
+    containers.extend(dom.descendants(root, Some(&W::tc())));
     for container in containers {
         let children: Vec<NodeId> = dom.elements(container, None);
         let classes: Vec<Option<bool>> = children.iter().map(|&c| block_class(dom, c)).collect();
@@ -10377,7 +10377,7 @@ pub fn convert_stamped_preins(
             for t in dom.descendants(run, Some(&W::del_text())) {
                 dom.set_name(t, W::t());
             }
-            for t in dom.descendants(run, Some(&W::name("delInstrText"))) {
+            for t in dom.descendants(run, Some(&W::del_instr_text())) {
                 dom.set_name(t, W::instr_text());
             }
         };
@@ -10461,7 +10461,7 @@ pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
     };
     if dom.element(sect, &W::name("pgSz")).is_none() {
         let pg = dom.new_element(W::name("pgSz"));
-        dom.set_attribute_value(pg, &W::name("w"), Some("12240"));
+        dom.set_attribute_value(pg, &W::w(), Some("12240"));
         dom.set_attribute_value(pg, &W::name("h"), Some("15840"));
         // CT_SectPr schema order: pgSz comes AFTER header/footer references,
         // footnotePr/endnotePr and type — add_first would put it before any
@@ -10813,7 +10813,7 @@ pub fn wrap_bare_del_text_runs(
     id_gen: &mut u32,
 ) {
     let del_text = W::del_text();
-    let move_from = W::name("moveFrom");
+    let move_from = W::move_from();
     let runs: Vec<NodeId> = dom
         .descendants(root, Some(&W::r()))
         .into_iter()
@@ -10853,8 +10853,8 @@ fn delete_stories_of_deleted_text_boxes(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let txbx = W::name("txbxContent");
-    let revision = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    let txbx = W::txbx_content();
+    let revision = [W::ins(), W::del(), W::move_from(), W::move_to()];
     // Nearest enclosing text box of `n`, or None when a revision wrapper comes
     // first (the run is already covered) or there is no text box.
     let bare_in = |dom: &Dom, n: NodeId| -> Option<NodeId> {
@@ -10969,7 +10969,7 @@ fn mark_paragraph_mark_deleted(
             x
         }
     };
-    let revision = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    let revision = [W::ins(), W::del(), W::move_from(), W::move_to()];
     if revision.iter().any(|r| dom.element(rpr, r).is_some()) {
         return;
     }
@@ -11031,7 +11031,7 @@ pub fn pending_deletion_texts(dom: &Dom, body: NodeId) -> std::collections::Hash
 /// one used at the capture site in `flatten_tracked_deletions`.
 fn pending_deletion_fingerprint(dom: &Dom, del: NodeId) -> String {
     let del_text = W::del_text();
-    let del_instr = W::name("delInstrText");
+    let del_instr = W::del_instr_text();
     dom.descendants(del, None)
         .into_iter()
         .filter(|&n| {
@@ -11120,7 +11120,7 @@ pub fn flatten_tracked_deletions(
         for t in dom.descendants(d, Some(&W::del_text())) {
             dom.set_name(t, W::t());
         }
-        for t in dom.descendants(d, Some(&W::name("delInstrText"))) {
+        for t in dom.descendants(d, Some(&W::del_instr_text())) {
             dom.set_name(t, W::instr_text());
         }
         let author = dom.attribute(d, &W::author()).map(|s| s.to_string());
@@ -11259,7 +11259,7 @@ pub fn convert_stamped_predeletes(
             dom.set_name(t, W::del_text());
         }
         for t in dom.descendants(r, Some(&W::instr_text())) {
-            dom.set_name(t, W::name("delInstrText"));
+            dom.set_name(t, W::del_instr_text());
         }
     }
 }
@@ -11291,13 +11291,13 @@ pub fn synthesize_table_cell_margins(
 ) {
     fn dxa(dom: &mut Dom, name: &str, w: &str) -> NodeId {
         let e = dom.new_element(W::name(name));
-        dom.set_attribute_value(e, &W::name("w"), Some(w));
-        dom.set_attribute_value(e, &W::name("type"), Some("dxa"));
+        dom.set_attribute_value(e, &W::w(), Some(w));
+        dom.set_attribute_value(e, &W::type_(), Some("dxa"));
         e
     }
     let tbls: Vec<NodeId> = dom.descendants(root, Some(&W::tbl()));
     for tbl in tbls {
-        let Some(tblpr) = dom.element(tbl, &W::name("tblPr")) else {
+        let Some(tblpr) = dom.element(tbl, &W::tbl_pr()) else {
             continue;
         };
         // Word synthesizes ONLY on bordered tables — corpus discriminator:
@@ -11459,7 +11459,7 @@ pub fn fix_strict_validity_artifacts(dom: &mut Dom, root: NodeId) {
     {
         let wne_txbx = crate::namespaces::WNE::name("txbxContent");
         for e in dom.descendants(root, Some(&wne_txbx)) {
-            dom.set_name(e, W::name("txbxContent"));
+            dom.set_name(e, W::txbx_content());
         }
     }
     // Strict jc enumeration values on w:jc / w:lvlJc: "start"/"end" are
@@ -11707,8 +11707,8 @@ pub fn mark_fully_revised_rows(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let tr_name = W::name("tr");
-    let tc_name = W::name("tc");
+    let tr_name = W::tr();
+    let tc_name = W::tc();
     let trs: Vec<NodeId> = dom.descendants(root, Some(&tr_name));
     for tr in trs {
         let mut class: Option<bool> = None; // Some(false)=all-del, Some(true)=all-ins
@@ -11746,7 +11746,7 @@ pub fn mark_fully_revised_rows(
                                                     || name == W::object()
                                                     || name == W::pict()
                                                     || name == MC::name("AlternateContent")
-                                                    || name == W::name("fldSimple")
+                                                    || name == W::fld_simple()
                                             })
                                         }))
                         });
@@ -11768,10 +11768,10 @@ pub fn mark_fully_revised_rows(
             continue;
         }
         let Some(k) = class else { continue };
-        let trpr = match dom.element(tr, &W::name("trPr")) {
+        let trpr = match dom.element(tr, &W::tr_pr()) {
             Some(p) => p,
             None => {
-                let p = dom.new_element(W::name("trPr"));
+                let p = dom.new_element(W::tr_pr());
                 dom.add_first(tr, p);
                 p
             }
@@ -11953,7 +11953,7 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
         let rows = dom.elements(node, Some(&W::tr()));
         !rows.is_empty()
             && rows.iter().all(|&row| {
-                dom.element(row, &W::name("trPr"))
+                dom.element(row, &W::tr_pr())
                     .is_some_and(|properties| {
                         dom.element(properties, &W::ins()).is_some()
                             && dom.element(properties, &W::del()).is_none()
@@ -12549,8 +12549,8 @@ fn final_peel_has_identical_closing_properties(
                 [
                     W::del(),
                     W::move_from(),
-                    W::name("moveTo"),
-                    W::name("rPrChange"),
+                    W::move_to(),
+                    W::r_pr_change(),
                 ]
                 .iter()
                 .any(|name| dom.name_is(child, name))
@@ -12948,10 +12948,10 @@ fn text_side(dom: &Dom, t: NodeId, stop: NodeId) -> &'static str {
         if a == stop {
             break;
         }
-        if dom.name_is(a, &W::ins()) || dom.name_is(a, &W::name("moveTo")) {
+        if dom.name_is(a, &W::ins()) || dom.name_is(a, &W::move_to()) {
             return "ins";
         }
-        if dom.name_is(a, &W::del()) || dom.name_is(a, &W::name("moveFrom")) {
+        if dom.name_is(a, &W::del()) || dom.name_is(a, &W::move_from()) {
             return "del";
         }
     }
@@ -13094,7 +13094,7 @@ fn block_is_original_only(dom: &Dom, n: NodeId) -> bool {
         return false;
     }
     if !dom.descendants(n, Some(&W::ins())).is_empty()
-        || !dom.descendants(n, Some(&W::name("moveTo"))).is_empty()
+        || !dom.descendants(n, Some(&W::move_to())).is_empty()
     {
         return false;
     }
@@ -14727,8 +14727,8 @@ fn rewrite_rev_text(dom: &mut Dom, rev: NodeId, new_text: &str, is_del: bool) {
 /// above produced the bad shape) and runs before the renumber below
 /// fixes up duplicate `w:id`s the split leaves behind.
 pub fn hoist_hyperlinks_out_of_revisions(dom: &mut Dom, root: NodeId) {
-    let rev_names = [W::name("ins"), W::name("del")];
-    let wrappers = [W::hyperlink(), W::name("fldSimple")];
+    let rev_names = [W::ins(), W::del()];
+    let wrappers = [W::hyperlink(), W::fld_simple()];
     let mut next_id = dom
         .descendants_and_self(root, None)
         .into_iter()
@@ -14766,7 +14766,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let Some(rev_name) = dom.name(rev) else {
         return;
     };
-    let wrappers = [W::hyperlink(), W::name("fldSimple")];
+    let wrappers = [W::hyperlink(), W::fld_simple()];
     let attrs = dom.attributes(rev);
     let children = dom.nodes(rev);
 
@@ -14785,7 +14785,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
     let mut pending: Option<NodeId> = None; // open revision collecting plain children
     for child in children {
         dom.remove(child);
-        if dom.name_is(child, &W::name("fldSimple")) && dom.elements(child, None).is_empty() {
+        if dom.name_is(child, &W::fld_simple()) && dom.elements(child, None).is_empty() {
             // An empty field has no result to carry the revision: hoisted
             // bare it stays live, and Word 16.115 hangs on it in a deleted
             // paragraph (b15, 0.12.0 sample). Word's redline spells it as a
@@ -14841,7 +14841,7 @@ fn split_revision_around_hyperlinks(dom: &mut Dom, rev: NodeId, next_id: &mut u3
 fn complex_field_runs(dom: &mut Dom, field: NodeId, deleted: bool) -> Vec<NodeId> {
     let char_run = |dom: &mut Dom, kind: &str| {
         let run = dom.new_element(W::r());
-        let fld_char = dom.new_element(W::name("fldChar"));
+        let fld_char = dom.new_element(W::fld_char());
         dom.set_attribute_value(fld_char, &W::name("fldCharType"), Some(kind));
         dom.add(run, fld_char);
         (run, fld_char)
@@ -14991,12 +14991,12 @@ pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
                 // A nested revision owns its own text kind — an insertion inside a
                 // deletion still holds live `w:t`.
                 Some(n)
-                    if n == &W::ins() || n == &W::name("moveFrom") || n == &W::name("moveTo") =>
+                    if n == &W::ins() || n == &W::move_from() || n == &W::move_to() =>
                 {
                     continue;
                 }
                 Some(n) if n == &W::t() => dom.set_name(c, W::del_text()),
-                Some(n) if n == &W::instr_text() => dom.set_name(c, W::name("delInstrText")),
+                Some(n) if n == &W::instr_text() => dom.set_name(c, W::del_instr_text()),
                 _ => walk(dom, c),
             }
         }
@@ -15361,7 +15361,7 @@ fn spacing_only_change(dom: &Dom, change: NodeId) -> Option<NodeId> {
         return None;
     }
     let kids = dom.elements(old[0], None);
-    if kids.len() == 1 && dom.name_is(kids[0], &W::name("spacing")) {
+    if kids.len() == 1 && dom.name_is(kids[0], &W::spacing_el()) {
         Some(kids[0])
     } else {
         None
@@ -15386,8 +15386,8 @@ fn unmerge_comment_list_item(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let start = W::name("commentRangeStart");
-    let reference = W::name("commentReference");
+    let start = W::comment_range_start();
+    let reference = W::comment_reference();
     let paragraphs = body_paragraphs(dom, root);
     for paragraph in paragraphs {
         let insertions = dom.elements(paragraph, Some(&W::ins()));
@@ -15406,7 +15406,7 @@ fn unmerge_comment_list_item(
         let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
             continue;
         };
-        if dom.element(ppr, &W::name("numPr")).is_none() {
+        if dom.element(ppr, &W::num_pr()).is_none() {
             continue;
         }
         let Some(change) = dom.element(ppr, &W::p_pr_change()) else {
@@ -15447,7 +15447,7 @@ fn change_is_empty(dom: &Dom, change: NodeId) -> bool {
 }
 
 fn drop_duplicate_normal_style(dom: &mut Dom, root: NodeId) {
-    let style_name = W::name("pStyle");
+    let style_name = W::p_style();
     let paragraphs = body_paragraphs(dom, root);
     for (index, &paragraph) in paragraphs.iter().enumerate() {
         let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
@@ -15491,7 +15491,7 @@ fn drop_duplicate_normal_style(dom: &mut Dom, root: NodeId) {
 
 fn spacing_signature(dom: &Dom, paragraph: NodeId) -> Option<Vec<(String, String)>> {
     let ppr = dom.element(paragraph, &W::p_pr())?;
-    let spacing = dom.element(ppr, &W::name("spacing"))?;
+    let spacing = dom.element(ppr, &W::spacing_el())?;
     let mut attrs: Vec<(String, String)> = dom
         .attributes(spacing)
         .into_iter()
@@ -15503,7 +15503,7 @@ fn spacing_signature(dom: &Dom, paragraph: NodeId) -> Option<Vec<(String, String
 
 fn direct_spacing(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
     let ppr = dom.element(paragraph, &W::p_pr())?;
-    dom.element(ppr, &W::name("spacing"))
+    dom.element(ppr, &W::spacing_el())
 }
 
 struct RevisedSpacing {
@@ -15600,8 +15600,8 @@ fn stamp_trailing_numbering(
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
-    let num_pr = W::name("numPr");
-    let style_name = W::name("pStyle");
+    let num_pr = W::num_pr();
+    let style_name = W::p_style();
     let Some(numbering) = body_paragraphs(dom, revised)
         .into_iter()
         .find_map(|paragraph| {
@@ -15955,7 +15955,7 @@ mod coverage_tests {
         let run = dom.descendants(root, Some(&W::r()))[0];
         convert_run_text_to_del_text(&mut dom, run);
         assert_eq!(text(&dom, run, &W::del_text()), "oldnested");
-        assert_eq!(text(&dom, run, &W::name("delInstrText")), "FIELD");
+        assert_eq!(text(&dom, run, &W::del_instr_text()), "FIELD");
         assert_eq!(text(&dom, run, &W::t()), "newownedfromto");
     }
 
@@ -15976,7 +15976,7 @@ mod coverage_tests {
                 .collect();
             let (dom, root) = xml(&format!("<w:p>{fields}</w:p>"));
             assert_eq!(
-                fields_complete(&dom, root, &W::name("fldChar")),
+                fields_complete(&dom, root, &W::fld_char()),
                 expected,
                 "{types:?}"
             );
@@ -16028,7 +16028,7 @@ mod coverage_tests {
         );
         unwrap_content_controls(&mut dom, root);
         assert!(dom.descendants(root, Some(&W::sdt())).is_empty());
-        assert!(dom.descendants(root, Some(&W::name("sdtPr"))).is_empty());
+        assert!(dom.descendants(root, Some(&W::sdt_pr())).is_empty());
         assert_eq!(text(&dom, root, &W::t()), "ABC");
         assert_eq!(
             dom.elements(paragraphs(&dom, root)[0], Some(&W::r())).len(),
@@ -18526,7 +18526,7 @@ mod coverage_round_three_tests {
             let ps = paragraphs(&dom, body);
             assert_eq!(ps.len(), 2);
             assert_eq!(props_xml(&dom, ps[0]), expected);
-            assert_eq!(dom.attribute(ps[0], &W::name("rsidR")), Some("ABCD"));
+            assert_eq!(dom.attribute(ps[0], &W::rsid_r()), Some("ABCD"));
             expect_segments(
                 &dom,
                 ps[0],
@@ -19187,7 +19187,7 @@ mod coverage_round_three_tests {
         );
         let mut id = 100;
         wrap_bare_del_text_runs(&mut dom, root, &settings(), &mut id);
-        let tb = dom.descendants(root, Some(&W::name("txbxContent")))[0];
+        let tb = dom.descendants(root, Some(&W::txbx_content()))[0];
         let ps = paragraphs(&dom, tb);
         expect_segments(
             &dom,
@@ -19248,7 +19248,7 @@ mod coverage_round_three_tests {
             let (mut dom, root, _) = document(&format!(
                 "<w:p><w:del><w:r><w:pict><w:txbxContent><w:p><w:pPr><w:rPr><w:moveTo w:id=\"77\"/></w:rPr></w:pPr>{nested}</w:p></w:txbxContent></w:pict></w:r></w:del></w:p>"
             ));
-            let boxes = dom.descendants(root, Some(&W::name("txbxContent")));
+            let boxes = dom.descendants(root, Some(&W::txbx_content()));
             let outer_p = paragraphs(&dom, boxes[0])[0];
             let inner_p = paragraphs(&dom, boxes[1])[0];
             let outer_props = props_xml(&dom, outer_p);
@@ -19278,7 +19278,7 @@ mod coverage_round_three_tests {
             let (mut dom, root, _) = document(&format!(
                 "<w:p><w:del><w:r><w:drawing><w:txbxContent><w:p><w:pPr><w:rPr><w:{existing} w:id=\"88\"/></w:rPr></w:pPr><w:r><w:t>Story</w:t></w:r></w:p></w:txbxContent></w:drawing></w:r></w:del></w:p>"
             ));
-            let tb = dom.descendants(root, Some(&W::name("txbxContent")))[0];
+            let tb = dom.descendants(root, Some(&W::txbx_content()))[0];
             let p = paragraphs(&dom, tb)[0];
             let expected_props = props_xml(&dom, p);
             let mut id = 400;
@@ -19312,7 +19312,7 @@ mod coverage_round_three_tests {
                 if suppressed {
                     assert_eq!(dom.serialize_element(root), before);
                 } else {
-                    let pr = dom.descendants(root, Some(&W::name("tblPr")))[0];
+                    let pr = dom.descendants(root, Some(&W::tbl_pr()))[0];
                     let names = dom
                         .elements(pr, None)
                         .iter()
@@ -19323,13 +19323,13 @@ mod coverage_round_three_tests {
                         ["tblW", "tblInd", "tblBorders", "tblCellMar", "tblLook"]
                     );
                     let ind = dom.element(pr, &W::name("tblInd")).unwrap();
-                    assert_eq!(dom.attribute(ind, &W::name("w")), Some("10"));
-                    assert_eq!(dom.attribute(ind, &W::name("type")), Some("dxa"));
+                    assert_eq!(dom.attribute(ind, &W::w()), Some("10"));
+                    assert_eq!(dom.attribute(ind, &W::type_()), Some("dxa"));
                     let mar = dom.element(pr, &W::name("tblCellMar")).unwrap();
                     for side in ["left", "right"] {
                         let n = dom.element(mar, &W::name(side)).unwrap();
-                        assert_eq!(dom.attribute(n, &W::name("w")), Some("10"));
-                        assert_eq!(dom.attribute(n, &W::name("type")), Some("dxa"));
+                        assert_eq!(dom.attribute(n, &W::w()), Some("10"));
+                        assert_eq!(dom.attribute(n, &W::type_()), Some("dxa"));
                     }
                     let once = dom.serialize_element(root);
                     synthesize_table_cell_margins(&mut dom, root, defaults);
@@ -19358,16 +19358,16 @@ mod coverage_round_three_tests {
                 "<w:tbl><w:tblPr>{explicit_ind}<w:tblBorders/>{explicit_mar}</w:tblPr><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"
             ));
             synthesize_table_cell_margins(&mut dom, root, (false, false));
-            let pr = dom.descendants(root, Some(&W::name("tblPr")))[0];
+            let pr = dom.descendants(root, Some(&W::tbl_pr()))[0];
             assert_eq!(
-                dom.attribute(dom.element(pr, &W::name("tblInd")).unwrap(), &W::name("w")),
+                dom.attribute(dom.element(pr, &W::name("tblInd")).unwrap(), &W::w()),
                 Some(if ind { "720" } else { "10" })
             );
             let margins = dom.element(pr, &W::name("tblCellMar")).unwrap();
             assert_eq!(
                 dom.attribute(
                     dom.element(margins, &W::name("left")).unwrap(),
-                    &W::name("w")
+                    &W::w()
                 ),
                 Some(if mar { "108" } else { "10" })
             );
@@ -19439,7 +19439,7 @@ mod coverage_round_three_tests {
                     para(kind, "Second cell", "")
                 ));
                 let row = dom.descendants(root, Some(&W::tr()))[0];
-                let cells = dom.elements(row, Some(&W::name("tc")));
+                let cells = dom.elements(row, Some(&W::tc()));
                 let cell_xml = cells
                     .iter()
                     .map(|&c| dom.serialize_element(c))
@@ -20330,7 +20330,7 @@ mod coverage_round_next_tests {
             let moved = dom.elements(p, None)[1];
             assert_eq!(dom.elements(moved, Some(&W::r())).len(), 4);
             assert_eq!(
-                dom.value(dom.descendants(moved, Some(&W::name("instrText")))[0]),
+                dom.value(dom.descendants(moved, Some(&W::instr_text()))[0]),
                 "PAGE"
             );
             assert!(
@@ -20353,7 +20353,7 @@ mod coverage_round_next_tests {
             let mut id = 1;
             let result = mark_content_as_deleted_or_inserted(&mut dom, root, &settings(), &mut id);
             assert!(
-                dom.descendants(result, Some(&W::name("fldSimple")))
+                dom.descendants(result, Some(&W::fld_simple()))
                     .is_empty()
             );
             let p = dom.descendants(result, Some(&W::p()))[0];
@@ -21713,7 +21713,7 @@ mod deep_production_path_tests {
             } else if payload.contains("pict") {
                 W::pict()
             } else {
-                W::name("object")
+                W::object()
             };
             let payloads = dom.descendants(root, Some(&payload_name));
             assert_eq!(
@@ -24201,7 +24201,7 @@ mod short_label_format_history_tests {
                 "Lvl 1 – "
             );
             assert_eq!(markup_text(&dom, dom.elements(p, Some(&W::ins()))[0]), " ");
-            let changes = dom.descendants(eq, Some(&W::name("rPrChange")));
+            let changes = dom.descendants(eq, Some(&W::r_pr_change()));
             if old == new {
                 assert!(changes.is_empty());
             } else {
@@ -24241,7 +24241,7 @@ mod short_label_format_history_tests {
         let live = dom.element(eq, &W::r_pr()).unwrap();
         assert!(dom.element(live, &W::name("i")).is_some());
         assert!(dom.element(live, &W::name("b")).is_none());
-        let change = dom.element(live, &W::name("rPrChange")).unwrap();
+        let change = dom.element(live, &W::r_pr_change()).unwrap();
         let old = dom.element(change, &W::r_pr()).unwrap();
         assert!(dom.element(old, &W::name("b")).is_some());
         assert!(dom.element(old, &W::name("i")).is_none());
@@ -24263,7 +24263,7 @@ mod short_label_format_history_tests {
         assert_eq!(resolved(&mut dom, root, false), rejected);
         assert!(dom.elements(p, Some(&W::ins())).is_empty());
         assert_eq!(dom.elements(p, Some(&W::r())).len(), 1);
-        assert_eq!(dom.descendants(p, Some(&W::name("rPrChange"))).len(), 1);
+        assert_eq!(dom.descendants(p, Some(&W::r_pr_change())).len(), 1);
     }
 
     #[test]
@@ -24351,7 +24351,7 @@ mod short_label_format_history_tests {
                 }
                 assert_eq!(resolved(&mut dom, root, true), accepted);
                 assert_eq!(resolved(&mut dom, root, false), rejected);
-                let changes = dom.descendants(root, Some(&W::name("rPrChange")));
+                let changes = dom.descendants(root, Some(&W::r_pr_change()));
                 assert_eq!(changes.len(), usize::from(tracking));
                 if tracking {
                     let change = changes[0];
@@ -24600,7 +24600,7 @@ mod coverage_final_batch_finalize_tests {
                                 format!("HYPERLINK \"{url}\" \\h")
                             );
                             let kinds = dom
-                                .descendants(root, Some(&W::name("fldChar")))
+                                .descendants(root, Some(&W::fld_char()))
                                 .into_iter()
                                 .map(|n| {
                                     dom.attribute(n, &W::name("fldCharType"))
@@ -24655,7 +24655,7 @@ mod coverage_final_batch_finalize_tests {
                                 assert_eq!(code.len(), 1);
                                 assert_eq!(dom.value(code[0]), "DATE");
                                 let kinds: Vec<_> = dom
-                                    .descendants(root, Some(&W::name("fldChar")))
+                                    .descendants(root, Some(&W::fld_char()))
                                     .into_iter()
                                     .map(|c| {
                                         dom.attribute(c, &W::name("fldCharType"))
@@ -24708,10 +24708,10 @@ mod coverage_final_batch_finalize_tests {
             "<w:p><w:del w:id=\"4\" w:author=\"A\" w:date=\"D\"><w:fldSimple w:instr=\" PAGE \" w:dirty=\"true\" w:fldLock=\"1\"/></w:del></w:p>",
         );
         hoist_hyperlinks_out_of_revisions(&mut dom, root);
-        let begin = dom.descendants(root, Some(&W::name("fldChar")))[0];
+        let begin = dom.descendants(root, Some(&W::fld_char()))[0];
         assert_eq!(dom.attribute(begin, &W::name("dirty")), Some("true"));
         assert_eq!(dom.attribute(begin, &W::name("fldLock")), Some("1"));
-        let code = dom.descendants(root, Some(&W::name("delInstrText")))[0];
+        let code = dom.descendants(root, Some(&W::del_instr_text()))[0];
         assert_eq!(dom.value(code), " PAGE ");
         assert_eq!(
             dom.attribute(code, &XNamespace::xml().name("space")),
@@ -24745,12 +24745,12 @@ mod coverage_final_batch_finalize_tests {
                             .is_none()
                     );
                     assert_eq!(dom.attribute(root, &W::name("abstractNumId")), Some("1"));
-                    let shd = dom.descendants(root, Some(&W::name("shd")))[0];
+                    let shd = dom.descendants(root, Some(&W::shd()))[0];
                     assert_eq!(
                         dom.attribute(shd, &W::val()),
                         Some(if declared { "solid" } else { "clear" })
                     );
-                    assert_eq!(dom.attribute(shd, &W::name("fill")), Some("ABCDEF"));
+                    assert_eq!(dom.attribute(shd, &W::fill()), Some("ABCDEF"));
                     let color = dom.descendants(root, Some(&W::name("color")))[0];
                     assert_eq!(dom.attribute(color, &W::val()), Some("auto"));
                     assert_eq!(
@@ -24996,7 +24996,7 @@ mod coverage_real_revision_merge_matrix_tests {
             .filter(|&n| {
                 [
                     W::name("br"),
-                    W::name("fldChar"),
+                    W::fld_char(),
                     W::instr_text(),
                     M::name("oMath"),
                 ]
@@ -34931,9 +34931,9 @@ mod live_opaque_row_source_boundary_tests {
                         );
                         assert_eq!(dom.node_count(), nodes);
                         assert_eq!(next_id, 100, "no synthesized history or lifetime");
-                        let row = dom.descendants(root, Some(&W::name("tr")))[0];
+                        let row = dom.descendants(root, Some(&W::tr()))[0];
                         let row_properties = dom
-                            .element(row, &W::name("trPr"))
+                            .element(row, &W::tr_pr())
                             .expect("authored row properties");
                         assert!(dom.element(row_properties, &W::ins()).is_none());
                         assert!(dom.element(row_properties, &W::del()).is_none());

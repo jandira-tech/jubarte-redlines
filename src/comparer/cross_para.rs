@@ -2518,7 +2518,7 @@ mod public_option_source_ownership_tests {
                         .expect("owned note part"),
                 );
                 let matches = notes
-                    .elements(notes.root(doc).unwrap(), Some(&W::name("footnote")))
+                    .elements(notes.root(doc).unwrap(), Some(&W::footnote()))
                     .into_iter()
                     .filter(|&note| notes.attribute(note, &W::id()) == Some(id))
                     .collect::<Vec<_>>();
@@ -2888,7 +2888,7 @@ mod public_option_source_ownership_tests {
                     }
                     if !settings.detect_format_changes {
                         assert!(
-                            dom.descendants(root, Some(&W::name("rPrChange")))
+                            dom.descendants(root, Some(&W::r_pr_change()))
                                 .is_empty(),
                             "{label}: no invented format tracking"
                         );
@@ -3238,8 +3238,8 @@ mod public_option_source_ownership_tests {
                             for name in [
                                 W::move_from(),
                                 W::move_to(),
-                                W::name("moveFromRangeStart"),
-                                W::name("moveToRangeStart"),
+                                W::move_from_range_start(),
+                                W::move_to_range_start(),
                             ] {
                                 assert!(
                                     dom.descendants(root, Some(&name)).is_empty(),

@@ -830,7 +830,7 @@ fn w_vals(dom: &Dom, root: NodeId, locals: &[&str]) -> Vec<(NodeId, String)> {
 /// built-in names folded to lower case.
 fn style_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let ty = dom
-        .attribute(style, &W::name("type"))
+        .attribute(style, &W::type_())
         .unwrap_or("paragraph")
         .to_string();
     let name = dom
@@ -1295,7 +1295,7 @@ fn join(
             let paragraph = dom.new_element(W::p());
             let run = dom.new_element(W::r());
             let br = dom.new_element(W::name("br"));
-            dom.set_attribute_value(br, &W::name("type"), Some("page"));
+            dom.set_attribute_value(br, &W::type_(), Some("page"));
             dom.add(run, br);
             dom.add(paragraph, run);
             joined.push(paragraph);
@@ -1329,7 +1329,7 @@ const BEFORE_TYPE: &[&str] = &[
 /// How B's section starts: on a new page (Word's default, no `w:type`) or
 /// continuously.
 fn set_section_type(dom: &mut Dom, sect: NodeId, section_break: SectionBreak) {
-    let type_name = W::name("type");
+    let type_name = W::type_();
     for old in dom.elements(sect, Some(&type_name)) {
         dom.remove(old);
     }
@@ -1416,7 +1416,7 @@ mod tests {
             .collect();
         assert_eq!(names, ["headerReference", "type", "pgSz"]);
         set_section_type(&mut dom, sect, SectionBreak::NextPage);
-        assert!(dom.element(sect, &W::name("type")).is_none());
+        assert!(dom.element(sect, &W::type_()).is_none());
     }
 
     #[test]

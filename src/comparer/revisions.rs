@@ -33,7 +33,7 @@ fn is_rev_element_with_no_text(dom: &Dom, e: NodeId) -> bool {
     let Some(n) = dom.name(e) else {
         return false;
     };
-    n == M::name("oMath") || n == M::name("oMathPara") || n == W::name("drawing")
+    n == M::name("oMath") || n == M::name("oMathPara") || n == W::drawing()
 }
 
 /// `CorrelationStatus.ToString()` for the grouping key.
@@ -197,8 +197,8 @@ pub fn get_revisions_from_body(
         // Native move markup: group id from the nearest PRECEDING
         // moveFromRangeStart/moveToRangeStart's w:name (:4024–:4034).
         if revision_type == WmlComparerRevisionType::Moved {
-            let mfs = W::name("moveFromRangeStart");
-            let mts = W::name("moveToRangeStart");
+            let mfs = W::move_from_range_start();
+            let mts = W::move_to_range_start();
             let mrs = elements_before_self(dom, rt)
                 .into_iter()
                 .rev()
@@ -311,7 +311,7 @@ fn extract_property_dictionary(
     let props: Vec<NodeId> = dom.elements(rpr, None);
     for prop in props {
         let n = dom.name(prop).unwrap();
-        if n == W::name("rPrChange") {
+        if n == W::r_pr_change() {
             continue;
         }
         let name = super::formatchg::friendly_property_name(n.local_name());
@@ -369,7 +369,7 @@ pub fn get_format_change_revisions(
 ) -> Vec<WmlComparerRevision> {
     let mut out = Vec::new();
     for &(root, part_name) in parts {
-        let changes: Vec<NodeId> = dom.descendants(root, Some(&W::name("rPrChange")));
+        let changes: Vec<NodeId> = dom.descendants(root, Some(&W::r_pr_change()));
         for rpc in changes {
             let author = dom
                 .attribute(rpc, &W::author())

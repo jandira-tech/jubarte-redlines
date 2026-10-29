@@ -128,7 +128,7 @@ pub fn clone_block_level_content_for_hashing(
     let root = cloned
         .into_iter()
         .next()
-        .unwrap_or_else(|| dom.new_element(dom.name(node).unwrap_or_else(|| W::name("p"))));
+        .unwrap_or_else(|| dom.new_element(dom.name(node).unwrap_or_else(W::p)));
     // remove all namespace-declaration attributes across the result
     // (index walk — no descendants_and_self / attributes() Vec per node)
     fn strip_nsdecls(dom: &mut Dom, id: NodeId) {

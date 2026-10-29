@@ -292,7 +292,7 @@ fn holds_words(dom: &Dom, del: NodeId) -> bool {
 /// restore itself makes.
 pub(super) fn restorable(dom: &Dom, del: NodeId, stretches: usize) -> bool {
     stretches == 1
-        && dom.name_is(del, &W::name("del"))
+        && dom.name_is(del, &W::del())
         && dom.parent(del).is_some_and(|p| in_paragraph(dom, p))
         && holds_words(dom, del)
         && unsupported_child(dom, del, &[]).is_none()
@@ -766,7 +766,7 @@ impl Transaction<'_> {
                     )));
                 }
                 let marks: Vec<String> = dom
-                    .descendants(del, Some(&W::name("commentReference")))
+                    .descendants(del, Some(&W::comment_reference()))
                     .into_iter()
                     .filter_map(|r| dom.attribute(r, &W::id()).map(|n| format!("c{n}")))
                     .collect();

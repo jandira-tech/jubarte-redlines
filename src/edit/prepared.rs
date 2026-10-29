@@ -759,7 +759,7 @@ fn range_markers(docx: &[u8]) -> RangeMarkers {
         let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
             continue;
         };
-        for start in dom.descendants(root, Some(&W::name("bookmarkStart"))) {
+        for start in dom.descendants(root, Some(&W::bookmark_start())) {
             if let Some(name) = dom.attribute(start, &W::name("name"))
                 && name != "_GoBack"
             {
@@ -767,9 +767,9 @@ fn range_markers(docx: &[u8]) -> RangeMarkers {
             }
         }
         markers.comments += dom
-            .descendants(root, Some(&W::name("commentRangeStart")))
+            .descendants(root, Some(&W::comment_range_start()))
             .len();
-        markers.permissions += dom.descendants(root, Some(&W::name("permStart"))).len();
+        markers.permissions += dom.descendants(root, Some(&W::perm_start())).len();
     }
     markers
 }

@@ -423,7 +423,7 @@ impl Package {
                 continue;
             };
             let paragraph = dom
-                .attribute(style, &W::name("type"))
+                .attribute(style, &W::type_())
                 .unwrap_or("paragraph")
                 == "paragraph";
             if !paragraph {
@@ -786,7 +786,7 @@ impl Package {
                         }
                         _ => {}
                     }
-                } else if dom.name_is(node, &W::name("instrText")) {
+                } else if dom.name_is(node, &W::instr_text()) {
                     if let Some(field) = open.last_mut().filter(|field| !field.separated) {
                         field.instruction.push_str(&dom.value_str(node));
                     }
