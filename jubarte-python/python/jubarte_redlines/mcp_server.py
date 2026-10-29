@@ -74,12 +74,13 @@ def build_server(*, root: Path) -> MCPServer:
 
     def contained(path: str) -> Path:
         # resolve() follows symlinks, so a link pointing out of root is refused.
-        p = (root / Path(path).expanduser()).resolve()
+        clean_path = path.lstrip("/")
+        p = (root / Path(clean_path).expanduser()).resolve()
         if not p.is_relative_to(root):
             raise ToolError(f"{path} is outside root {root}")
         # Keep the lexical path for capability-relative operations; resolving
         # is only an early diagnostic, never the authorization for actual I/O.
-        return root / Path(path).expanduser()
+        return root / Path(clean_path).expanduser()
 
     def load(path: str) -> Document:
         p = contained(path)
