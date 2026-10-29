@@ -422,10 +422,7 @@ impl Package {
             let Some(id) = dom.attribute(style, &W::name("styleId")) else {
                 continue;
             };
-            let paragraph = dom
-                .attribute(style, &W::type_())
-                .unwrap_or("paragraph")
-                == "paragraph";
+            let paragraph = dom.attribute(style, &W::type_()).unwrap_or("paragraph") == "paragraph";
             if !paragraph {
                 continue;
             }

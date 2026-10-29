@@ -1488,23 +1488,54 @@ pub(crate) fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
         .filter(|&last| dom.name_is(last, &W::p()))
 }
 
-/// Whether paragraph `p` holds a PAGE or NUMPAGES field: a field code
-/// (`w:instrText`, `w:delInstrText`, a `w:fldSimple`'s `w:instr`) whose
-/// first word is one of them.
+/// Whether paragraph `p` holds a PAGE or NUMPAGES field: a field code whose
+/// first word is one of them. A complex field's code is every
+/// `w:instrText` or `w:delInstrText` between its `begin` and its
+/// `separate` (or `end`), split across runs as Word often writes it; a
+/// `w:fldSimple`'s is its `w:instr`. Code outside any field in `p` (its
+/// `begin` in an earlier paragraph) counts piece by piece.
 pub(crate) fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
     let page = |code: &str| {
         code.split_whitespace().next().is_some_and(|word| {
             word.eq_ignore_ascii_case("PAGE") || word.eq_ignore_ascii_case("NUMPAGES")
         })
     };
-    dom.descendants(p, None).into_iter().any(|n| {
-        if dom.name_is(n, &W::name("instrText")) || dom.name_is(n, &W::name("delInstrText")) {
-            page(&dom.value(n))
-        } else {
-            dom.name_is(n, &W::name("fldSimple"))
-                && dom.attribute(n, &W::name("instr")).is_some_and(page)
+    let (instr_text, del_instr_text) = (W::instr_text(), W::del_instr_text());
+    let (fld_char, fld_char_type) = (W::fld_char(), W::fld_char_type());
+    let (fld_simple, instr) = (W::fld_simple(), W::instr());
+    // The open complex fields' codes, innermost last; `None` once read.
+    let mut codes: Vec<Option<String>> = Vec::new();
+    for n in dom.descendants(p, None) {
+        if dom.name_is(n, &instr_text) || dom.name_is(n, &del_instr_text) {
+            match codes.last_mut() {
+                Some(Some(code)) => code.push_str(&dom.value(n)),
+                Some(None) => {}
+                None if page(&dom.value(n)) => return true,
+                None => {}
+            }
+        } else if dom.name_is(n, &fld_char) {
+            match dom.attribute(n, &fld_char_type) {
+                Some("begin") => codes.push(Some(String::new())),
+                Some(kind @ ("separate" | "end")) => {
+                    if codes
+                        .last_mut()
+                        .and_then(Option::take)
+                        .is_some_and(|code| page(&code))
+                    {
+                        return true;
+                    }
+                    if kind == "end" {
+                        codes.pop();
+                    }
+                }
+                _ => {}
+            }
+        } else if dom.name_is(n, &fld_simple) && dom.attribute(n, &instr).is_some_and(page) {
+            return true;
         }
-    })
+    }
+    // A field whose `separate` and `end` lie past the paragraph.
+    codes.into_iter().flatten().any(|code| page(&code))
 }
 
 /// A table cell's final paragraph mark inserted or deleted while its row
@@ -1788,14 +1819,14 @@ fn text_box_name(dom: &Dom, node: NodeId) -> String {
     for ancestor in dom.ancestors(node, None) {
         if dom.name(ancestor).is_some_and(|n| n == W::drawing()) {
             if let Some(name) = dom
-                .descendants(ancestor, Some(&WP::name("docPr")))
+                .descendants(ancestor, Some(&WP::doc_pr()))
                 .into_iter()
                 .find_map(|id| dom.attribute(id, &XName::get("name", "")))
                 .filter(|name| !name.is_empty())
             {
                 return name.to_string();
             }
-        } else if dom.name(ancestor).is_some_and(|n| n == VML::name("shape"))
+        } else if dom.name(ancestor).is_some_and(|n| n == VML::shape())
             && let Some(name) = dom.attribute(ancestor, &XName::get("id", ""))
             && !name.is_empty()
         {
@@ -3614,9 +3645,7 @@ fn drop_orphan_comment_anchors(dom: &mut Dom, root: NodeId, defined: &HashSet<St
         .filter(|&r| orphan(dom, r))
         .collect();
     for reference in references {
-        let run = dom
-            .parent(reference)
-            .filter(|&p| dom.name_is(p, &W::r()));
+        let run = dom.parent(reference).filter(|&p| dom.name_is(p, &W::r()));
         dom.remove(reference);
         if let Some(run) = run
             && dom
@@ -4438,39 +4467,52 @@ fn check_foreign_comments(
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     let mut paired_after = vec![false; after.len()];
     let mut paired_before = vec![false; before.len()];
-    let mut after_by_key: std::collections::HashMap<(&str, Option<&str>), Vec<usize>> =
-        std::collections::HashMap::new();
-    for (j, a) in after.iter().enumerate() {
-        after_by_key
-            .entry((a.author.as_str(), a.date.as_deref()))
-            .or_default()
-            .push(j);
-    }
-
-    // Every pass needs the same author and date; the first also the same
-    // id, the second the same text.
-    for pass in 0..3 {
+    /// One pass: each unpaired comment of `before`, in order, takes the
+    /// first unpaired comment of `after` with its key. Each key's
+    /// candidates queue in document order and leave the queue once taken,
+    /// so comments sharing an author and a date (or no date) cost no
+    /// rescan: the pass is linear (Sourcery #4374424613).
+    fn pair_by<'a, K: Eq + std::hash::Hash>(
+        before: &'a [CommentRecord],
+        after: &'a [CommentRecord],
+        paired_before: &mut [bool],
+        paired_after: &mut [bool],
+        pairs: &mut Vec<(usize, usize)>,
+        key: impl Fn(&'a CommentRecord) -> K,
+    ) {
+        let mut queues: std::collections::HashMap<K, std::collections::VecDeque<usize>> =
+            std::collections::HashMap::with_capacity(after.len());
+        for (j, a) in after.iter().enumerate() {
+            if !paired_after[j] {
+                queues.entry(key(a)).or_default().push_back(j);
+            }
+        }
         for (i, b) in before.iter().enumerate() {
             if paired_before[i] {
                 continue;
             }
-            if let Some(candidates) = after_by_key.get(&(b.author.as_str(), b.date.as_deref())) {
-                let found = candidates.iter().find(|&&j| {
-                    !paired_after[j]
-                        && match pass {
-                            0 => b.id == after[j].id,
-                            1 => b.text == after[j].text,
-                            _ => true,
-                        }
-                });
-                if let Some(&j) = found {
-                    paired_before[i] = true;
-                    paired_after[j] = true;
-                    pairs.push((i, j));
-                }
+            if let Some(j) = queues
+                .get_mut(&key(b))
+                .and_then(std::collections::VecDeque::pop_front)
+            {
+                paired_before[i] = true;
+                paired_after[j] = true;
+                pairs.push((i, j));
             }
         }
     }
+    // Every pass needs the same author and date; the first also the same
+    // id, the second the same text.
+    let (pb, pa) = (&mut paired_before, &mut paired_after);
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref(), c.id)
+    });
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref(), c.text.as_str())
+    });
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref())
+    });
     let whose = |c: &CommentRecord| {
         if c.author.is_empty() {
             format!("c{}, which names no author,", c.id)
@@ -5850,5 +5892,68 @@ mod baseline_tests {
             "input has 1 validity error and 2 warnings; \
              jubarte validate 'my file.docx' lists them"
         );
+    }
+}
+
+#[cfg(test)]
+mod page_field_tests {
+    use super::*;
+
+    /// Whether the one paragraph of `runs` holds a PAGE or NUMPAGES field.
+    fn holds(runs: &str) -> bool {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{runs}</w:p>"#, W::URI));
+        let p = dom.root(doc).unwrap();
+        holds_page_field(&dom, p)
+    }
+
+    fn field(pieces: &[&str]) -> String {
+        let code: String = pieces
+            .iter()
+            .map(|piece| {
+                format!(r#"<w:r><w:instrText xml:space="preserve">{piece}</w:instrText></w:r>"#)
+            })
+            .collect();
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>{code}<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    }
+
+    /// Word splits a field code across runs: `PA` + `GE` is a PAGE field.
+    #[test]
+    fn a_page_code_split_across_runs_is_a_page_field() {
+        assert!(holds(&field(&[" PA", "GE "])));
+        assert!(holds(&field(&[" NUM", "PAGES \\* Arabic "])));
+        assert!(holds(&field(&[" PAGE "])));
+    }
+
+    /// The code's first word decides, read whole: `PAGE` + `REF` is a
+    /// PAGEREF, and a PAGE inside another field's result is still found.
+    #[test]
+    fn only_the_whole_first_word_counts() {
+        assert!(!holds(&field(&[" PAGE", "REF _Ref1 \\h "])));
+        assert!(!holds(&field(&[" REF ", "PAGE "])));
+        let nested = format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> IF 1 = 1 </w:instrText></w:r>{}<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            field(&[" PA", "GE "])
+        );
+        assert!(holds(&nested));
+    }
+
+    /// A simple field, a deleted code, and code whose field began in an
+    /// earlier paragraph.
+    #[test]
+    fn simple_deleted_and_continued_codes_count() {
+        assert!(holds(
+            r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#
+        ));
+        assert!(holds(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText>PA</w:delInstrText></w:r><w:r><w:delInstrText>GE</w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        ));
+        assert!(holds(r#"<w:r><w:instrText> PAGE </w:instrText></w:r>"#));
+        assert!(holds(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PA</w:instrText></w:r><w:r><w:instrText>GE </w:instrText></w:r>"#
+        ));
+        assert!(!holds(r#"<w:r><w:t>PAGE</w:t></w:r>"#));
     }
 }

@@ -1821,9 +1821,7 @@ fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Ve
     let opened_in_deletion = |id: &str| {
         let mut back = children[..index].iter().rev();
         let found = back.by_ref().find_map(|&c| {
-            if dom.name_is(c, &W::comment_range_start())
-                && dom.attribute(c, &W::id()) == Some(id)
-            {
+            if dom.name_is(c, &W::comment_range_start()) && dom.attribute(c, &W::id()) == Some(id) {
                 Some(true)
             } else if ours.contains(&c) || is_one_of(dom, c, &RANGE_STARTS) {
                 None
@@ -1853,9 +1851,10 @@ fn past_deleted_comments(dom: &Dom, del: NodeId, ours: &[NodeId]) -> (NodeId, Ve
                     dom.attribute(r, &W::id())
                         .is_some_and(|id| closed.contains(id))
                 })
-                && dom.elements(child, None).iter().all(|&e| {
-                    dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::comment_reference())
-                })
+                && dom
+                    .elements(child, None)
+                    .iter()
+                    .all(|&e| dom.name_is(e, &W::r_pr()) || dom.name_is(e, &W::comment_reference()))
         };
         if !passes {
             break;

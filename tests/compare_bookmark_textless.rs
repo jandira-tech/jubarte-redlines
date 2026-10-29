@@ -252,3 +252,82 @@ fn a_bookmark_on_text_stays_on_its_text() {
         }
     }
 }
+
+/// `body` as a document that declares the VML namespace.
+fn vml_docx(body: &str) -> Vec<u8> {
+    let built = docx(body);
+    let document = part_string(&built, "word/document.xml").unwrap().replacen(
+        "<w:document ",
+        r#"<w:document xmlns:v="urn:schemas-microsoft-com:vml" "#,
+        1,
+    );
+    replace_entry(&built, "word/document.xml", document.as_bytes())
+}
+
+/// A paragraph without text after the last text keeps its bookmark: no
+/// later text holds an offset to place it by, so the start must not fall
+/// back to the end of the text before it.
+#[test]
+fn a_trailing_picture_paragraph_keeps_its_start() {
+    let build = |intro: &str| {
+        vml_docx(&format!(
+            r#"{}{}<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/>{PICTURE}<w:bookmarkEnd w:id="0"/></w:p>"#,
+            para(intro),
+            para("Heading text")
+        ))
+    };
+    assert_kept(
+        &build("Intro."),
+        &build("Intro, changed."),
+        "pict",
+        "trailing picture",
+    );
+}
+
+/// A text box drawn in the paragraph without text, ahead of the bookmark.
+const TEXT_BOX: &str = r#"<w:r><w:pict><v:shape style="width:100pt;height:20pt"><v:textbox><w:txbxContent><w:p><w:r><w:t>Box text</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>"#;
+
+/// The text box's own paragraph does not count as one of the paragraphs
+/// between the start and its next text: the start stays in the paragraph
+/// that draws the box, not in the box.
+#[test]
+fn a_text_box_before_the_start_does_not_take_it() {
+    let build = |after: &str| {
+        vml_docx(&format!(
+            r#"<w:p>{TEXT_BOX}<w:bookmarkStart w:id="0" w:name="_Toc1"/>{TAB}</w:p>{after}{}<w:bookmarkEnd w:id="0"/>{}"#,
+            para("Heading text"),
+            para("Body text.")
+        ))
+    };
+    let (original, revised) = (build(""), build(&para("Probe paragraph.")));
+    for (mode, settings) in modes() {
+        let redline = compare_documents_with_settings(&original, &revised, &settings).unwrap();
+        assert_word_valid_package(&redline);
+        for (view, docx) in [
+            ("redline", redline.clone()),
+            ("accept", accept_revisions(&redline).unwrap()),
+            ("reject", reject_revisions(&redline).unwrap()),
+        ] {
+            let xml = part_string(&docx, "word/document.xml").unwrap();
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc).unwrap();
+            let start = dom
+                .descendants(root, Some(&W::name("bookmarkStart")))
+                .into_iter()
+                .find(|&s| dom.attribute(s, &W::name("name")) == Some("_Toc1"))
+                .unwrap_or_else(|| panic!("{mode}, {view}: no _Toc1: {xml}"));
+            assert!(
+                dom.ancestors(start, Some(&W::name("txbxContent")))
+                    .is_empty(),
+                "{mode}, {view}: the start went into the text box: {xml}"
+            );
+            let p = dom.ancestors(start, Some(&W::p()))[0];
+            assert!(
+                !dom.descendants(p, Some(&W::name("txbxContent"))).is_empty(),
+                "{mode}, {view}: the start left the box's paragraph: {}",
+                dom.serialize_element(p)
+            );
+        }
+    }
+}

@@ -132,6 +132,32 @@ fn a_row_whose_exceptions_change_records_the_original_ones() {
     }
 }
 
+/// Without format tracking the row still shows the revised exceptions; only
+/// their record waits on the setting, so Accept All keeps the revision's
+/// (codex #4377134044).
+#[test]
+fn without_format_changes_a_row_still_takes_the_revised_exceptions() {
+    let original = docx(&table(&[
+        row("", "Kept row"),
+        row(BORDERS, "An old row that goes away"),
+    ]));
+    let modified = docx(&table(&[
+        row("", "Kept row"),
+        row(MARGINS, "Quite another row arrives"),
+    ]));
+    for (mode, mut settings) in modes() {
+        settings.detect_format_changes = false;
+        let redline = compare_documents_with_settings(&original, &modified, &settings).unwrap();
+        let xml = part_string(&redline, "word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:tblPrExChange ").count(), 0, "{mode}: {xml}");
+        assert_eq!(
+            exceptions(&accept_revisions(&redline).unwrap()),
+            ["", MARGINS],
+            "{mode}"
+        );
+    }
+}
+
 /// An edit elsewhere in the document leaves the rows as the source has
 /// them (#1868 found it on `60dfd517a9`).
 #[test]

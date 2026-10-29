@@ -766,9 +766,7 @@ fn range_markers(docx: &[u8]) -> RangeMarkers {
                 markers.bookmarks.insert(name.to_string());
             }
         }
-        markers.comments += dom
-            .descendants(root, Some(&W::comment_range_start()))
-            .len();
+        markers.comments += dom.descendants(root, Some(&W::comment_range_start())).len();
         markers.permissions += dom.descendants(root, Some(&W::perm_start())).len();
     }
     markers

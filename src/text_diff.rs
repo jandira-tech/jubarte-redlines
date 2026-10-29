@@ -213,11 +213,15 @@ fn clip(text: &str, changed_at: usize, window: Option<usize>) -> String {
     }
     let start = changed_at.saturating_sub(width / 2).min(len);
     let end = start.saturating_add(width).min(len);
-    let mut out = String::new();
+    // The window's bytes, so the string is sized once (#1830).
+    let byte_at = |i: usize| text.char_indices().nth(i).map_or(text.len(), |(b, _)| b);
+    let window = &text[byte_at(start)..byte_at(end)];
+    let ellipses = usize::from(start > 0) + usize::from(end < len);
+    let mut out = String::with_capacity(window.len() + ellipses * '…'.len_utf8());
     if start > 0 {
         out.push('…');
     }
-    out.extend(text.chars().skip(start).take(end - start));
+    out.push_str(window);
     if end < len {
         out.push('…');
     }
@@ -247,7 +251,7 @@ fn replacement_rows(old: &[&str], new: &[&str]) -> Vec<Row> {
     }
     let old_words: Vec<_> = old.iter().map(|text| matching_words(text)).collect();
     let new_words: Vec<_> = new.iter().map(|text| matching_words(text)).collect();
-    let mut rows = Vec::new();
+    let mut rows = Vec::with_capacity(old_words.len() + new_words.len());
     let mut next = 0;
     for (i, a) in old_words.iter().enumerate() {
         let mut best = None;
@@ -907,6 +911,21 @@ mod tests {
         assert_eq!(clip("", 0, Some(0)), "");
         assert_eq!(first_difference("é界", "é中"), 1);
         assert_eq!(first_difference("same", "same suffix"), 4);
+    }
+
+    /// A clipped window is sized from its UTF-8 bytes and ellipses once
+    /// (Sourcery #4372659578, Jules #4372904367 on #1830).
+    #[test]
+    fn a_clipped_window_is_allocated_once() {
+        for (text, at, width) in [
+            ("é界xyz", 3, 2),
+            ("界界界界界界", 3, 2),
+            ("é界xyz", 0, 2),
+            ("abc", 1, 0),
+        ] {
+            let out = clip(text, at, Some(width));
+            assert_eq!(out.capacity(), out.len(), "{text:?} at {at}: {out:?}");
+        }
     }
 
     #[test]

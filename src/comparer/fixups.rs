@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::namespaces::{O, VML, WP};
+use crate::namespaces::{O, VML};
 use crate::xmllinq::{Dom, NodeId, XName};
 
 fn id_attr() -> XName {
@@ -43,20 +43,13 @@ pub fn fix_up_drawing_ids(dom: &mut Dom, root: NodeId, preserve_untouched: bool)
     }
 }
 
-/// Every drawing's `wp:docPr`, in document order.
+/// Every drawing's `wp:docPr`, in document order: any element named
+/// `docPr`, whatever its namespace (Strict and remapped drawings too).
 fn doc_pr_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
-    let wp_doc_pr = WP::name("docPr");
-    let nodes: Vec<NodeId> = dom
-        .descendants(root, None)
+    dom.descendants(root, None)
         .into_iter()
-        .filter(|&e| {
-            dom.name(e).is_some_and(|n| n.local_name() == "docPr")
-                || dom.name_is(e, &wp_doc_pr)
-        })
-        .collect();
-    // Dedup while preserving document order (filter may match twice if WP==local).
-    let mut seen = HashSet::new();
-    nodes.into_iter().filter(|n| seen.insert(*n)).collect()
+        .filter(|&e| dom.name(e).is_some_and(|n| n.local_name() == "docPr"))
+        .collect()
 }
 
 /// `old` with the first `_N` suffix no id in `taken` has; the result is
@@ -75,11 +68,14 @@ fn unused_id(old: &str, taken: &mut HashSet<String>) -> String {
 fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let nodes = doc_pr_nodes(dom, root);
-    let mut next = nodes
+    // Every id the drawings hold: a new one may be none of them, nor one
+    // given before. Past `u32::MAX` the search wraps (never to 0) instead
+    // of handing `u32::MAX` out again.
+    let mut taken: HashSet<u32> = nodes
         .iter()
         .filter_map(|&n| dom.attribute(n, &id)?.parse::<u32>().ok())
-        .max()
-        .unwrap_or(0);
+        .collect();
+    let mut next = taken.iter().copied().max().unwrap_or(0);
     let mut seen = HashSet::new();
     for node in nodes {
         if let Some(own) = dom.attribute(node, &id).and_then(|v| v.parse::<u32>().ok())
@@ -87,8 +83,11 @@ fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
         {
             continue;
         }
-        next = next.saturating_add(1);
-        seen.insert(next);
+        next = next.wrapping_add(1);
+        while next == 0 || taken.contains(&next) {
+            next = next.wrapping_add(1);
+        }
+        taken.insert(next);
         dom.set_attribute_value(node, &id, Some(&next.to_string()));
     }
 }
@@ -98,8 +97,8 @@ fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
 fn rename_repeated_shape_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let shape_id = XName::get("ShapeID", "");
-    let vml_shape = VML::name("shape");
-    let o_ole_object = O::name("OLEObject");
+    let vml_shape = VML::shape();
+    let o_ole_object = O::ole_object();
     let shapes = dom.descendants(root, Some(&vml_shape));
     let mut taken: HashSet<String> = shapes
         .iter()
@@ -144,8 +143,8 @@ pub fn fix_up_doc_pr_ids(dom: &mut Dom, root: NodeId) {
 pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
     let shape_id = XName::get("ShapeID", "");
-    let vml_shape = VML::name("shape");
-    let o_ole_object = O::name("OLEObject");
+    let vml_shape = VML::shape();
+    let o_ole_object = O::ole_object();
     for (next, shape) in (1u32..).zip(dom.descendants(root, Some(&vml_shape))) {
         let old = dom.attribute(shape, &id).map(|s| s.to_string());
         let new = next.to_string();
@@ -153,7 +152,7 @@ pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
         // rewrite any sibling o:OLEObject whose ShapeID referenced the old id
         if let (Some(old), Some(parent)) = (old, dom.parent(shape)) {
             for ole in dom.elements(parent, Some(&o_ole_object)) {
-                if dom.attribute(ole, &shape_id).map(|s| s.to_string()) == Some(old.clone()) {
+                if dom.attribute(ole, &shape_id) == Some(old.as_str()) {
                     dom.set_attribute_value(ole, &shape_id, Some(&new));
                 }
             }
@@ -178,8 +177,8 @@ pub fn fix_up_shape_type_ids(dom: &mut Dom, root: NodeId) {
 fn relink_shape_types(dom: &mut Dom, root: NodeId, keep_unique: bool) {
     let id = id_attr();
     let type_attr = XName::get("type", "");
-    let shapetype = VML::name("shapetype");
-    let shape = VML::name("shape");
+    let shapetype = VML::shapetype();
+    let shape = VML::shape();
     let nodes: Vec<NodeId> = dom
         .descendants(root, None)
         .into_iter()
@@ -253,7 +252,7 @@ fn relink_shape_types(dom: &mut Dom, root: NodeId, keep_unique: bool) {
 /// consolidate flow.
 pub fn fix_up_group_ids(dom: &mut Dom, root: NodeId) {
     let id = id_attr();
-    for (next, g) in (1u32..).zip(dom.descendants(root, Some(&VML::name("group")))) {
+    for (next, g) in (1u32..).zip(dom.descendants(root, Some(&VML::group()))) {
         dom.set_attribute_value(g, &id, Some(&next.to_string()));
     }
 }
@@ -302,4 +301,49 @@ pub(crate) fn fix_up_drawing_ids_in_package_within(
     fix_up_drawing_ids(&mut dom, root, preserve_untouched);
     pkg.set_part(&main, dom.serialize_element(root).into_bytes());
     pkg.to_zip()
+}
+
+#[cfg(test)]
+mod repeated_doc_pr_id_tests {
+    use super::*;
+    use crate::namespaces::WP;
+
+    fn drawings(ids: &[&str]) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let body: String = ids
+            .iter()
+            .map(|id| format!(r#"<wp:docPr id="{id}" name="Picture"/>"#))
+            .collect();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="{}">{body}</w:body>"#,
+            WP::URI
+        ));
+        let root = dom.root(doc).expect("a root");
+        (dom, root)
+    }
+
+    fn ids(dom: &Dom, root: NodeId) -> Vec<String> {
+        doc_pr_nodes(dom, root)
+            .into_iter()
+            .map(|n| dom.attribute(n, &id_attr()).unwrap_or_default().to_string())
+            .collect()
+    }
+
+    /// Repeats of the largest id each get their own, wrapping past
+    /// `u32::MAX` instead of saturating there (Jules #4395711592).
+    #[test]
+    fn repeats_of_the_largest_id_get_distinct_ids() {
+        let max = u32::MAX.to_string();
+        let (mut dom, root) = drawings(&[&max, &max, &max, "1"]);
+        rename_repeated_doc_pr_ids(&mut dom, root);
+        assert_eq!(ids(&dom, root), [max.as_str(), "2", "3", "1"]);
+    }
+
+    /// A new id is none a later drawing already holds.
+    #[test]
+    fn a_new_id_skips_the_ids_later_drawings_hold() {
+        let (mut dom, root) = drawings(&["7", "7", "8", "x"]);
+        rename_repeated_doc_pr_ids(&mut dom, root);
+        assert_eq!(ids(&dom, root), ["7", "9", "8", "10"]);
+    }
 }

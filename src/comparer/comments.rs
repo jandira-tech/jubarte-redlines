@@ -70,9 +70,10 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
     let Some(root) = dom.root(d) else {
         return HashSet::new();
     };
+    let id = W::id();
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
-        .filter_map(|c| dom.attribute(c, &W::id()).map(str::to_string))
+        .filter_map(|c| dom.attribute(c, &id).map(str::to_string))
         .collect()
 }
 
@@ -102,10 +103,11 @@ fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
     let Some(root) = dom.root(d) else {
         return HashMap::new();
     };
+    let id = W::id();
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
-            dom.attribute(c, &W::id())
+            dom.attribute(c, &id)
                 .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect()
@@ -299,6 +301,7 @@ fn extract_events(
     let start = W::comment_range_start();
     let end = W::comment_range_end();
     let reference = W::comment_reference();
+    let id_attr = W::id();
     let mut references: Vec<(String, Reference)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
@@ -320,12 +323,12 @@ fn extract_events(
         if dom.is_element(n) {
             let name = dom.name(n).unwrap();
             if name == start {
-                if let Some(id) = dom.attribute(n, &W::id()) {
+                if let Some(id) = dom.attribute(n, &id_attr) {
                     let seq = starts.len();
                     starts.entry(id.to_string()).or_insert((offset, seq));
                 }
             } else if name == end
-                && let Some(id) = dom.attribute(n, &W::id())
+                && let Some(id) = dom.attribute(n, &id_attr)
                 && let Some(&(s, seq)) = starts.get(id)
             {
                 ranges.push(Range {
@@ -336,7 +339,7 @@ fn extract_events(
                     reference: None,
                 });
             } else if name == reference
-                && let Some(id) = dom.attribute(n, &W::id())
+                && let Some(id) = dom.attribute(n, &id_attr)
             {
                 let rpr = into.as_deref_mut().and_then(|into| {
                     let run = dom.parent(n).filter(|&r| dom.name_is(r, &W::r()))?;
@@ -360,10 +363,16 @@ fn extract_events(
     // A reference with no range markers is a point comment: an empty range
     // where the reference sits, which is how Word's redline writes it. A
     // comment's first reference is its own.
+    // Each id's first range, by index: a lookup per reference, not a scan.
+    let mut first: HashMap<String, usize> = HashMap::new();
+    for (i, range) in ranges.iter().enumerate() {
+        first.entry(range.id.clone()).or_insert(i);
+    }
     for (id, reference) in references {
-        if let Some(range) = ranges.iter_mut().find(|r| r.id == id) {
-            range.reference.get_or_insert(reference);
+        if let Some(&i) = first.get(&id) {
+            ranges[i].reference.get_or_insert(reference);
         } else if !starts.contains_key(&id) {
+            first.insert(id.clone(), ranges.len());
             ranges.push(Range {
                 id,
                 start: reference.offset,
@@ -839,7 +848,7 @@ fn reference_run(dom: &mut Dom, id: &str, how: RefRun) -> NodeId {
 fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     let r = dom.new_element(W::r());
     let rpr = dom.new_element(W::r_pr());
-    let style = dom.new_element(W::name("rStyle"));
+    let style = dom.new_element(W::r_style());
     dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
     dom.add(rpr, style);
     dom.add(r, rpr);
@@ -988,14 +997,16 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     let Some(del) = dom.parent(end).filter(|&d| dom.name(d) == Some(W::del())) else {
         return;
     };
+    let (range_start, range_end) = (W::comment_range_start(), W::comment_range_end());
+    let (run, run_pr, reference) = (W::r(), W::r_pr(), W::comment_reference());
     let marker = |dom: &Dom, n: NodeId| {
         dom.name(n).is_some_and(|nm| {
-            nm == W::comment_range_start()
-                || nm == W::comment_range_end()
-                || (nm == W::r()
+            nm == range_start
+                || nm == range_end
+                || (nm == run
                     && dom.elements(n, None).into_iter().all(|c| {
                         dom.name(c)
-                            .is_some_and(|cn| cn == W::r_pr() || cn == W::comment_reference())
+                            .is_some_and(|cn| cn == run_pr || cn == reference)
                     }))
         })
     };
@@ -1010,7 +1021,7 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     // there on, in order, after the deletion.
     let from = kids[..at]
         .iter()
-        .rposition(|&k| dom.name(k) != Some(W::comment_range_start()))
+        .rposition(|&k| !dom.name_is(k, &range_start))
         .map_or(0, |i| i + 1);
     let moving: Vec<NodeId> = kids[from..].to_vec();
     let mut after = del;
@@ -1762,13 +1773,11 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
         W::comment_range_end(),
         W::comment_reference(),
     ];
+    let id = W::id();
     let mut dead: Vec<NodeId> = Vec::new();
     for name in names {
         for e in dom.descendants(result_root, Some(&name)) {
-            if dom
-                .attribute(e, &W::id())
-                .is_none_or(|id| !keep.contains(id))
-            {
+            if dom.attribute(e, &id).is_none_or(|id| !keep.contains(id)) {
                 dead.push(e);
             }
         }
@@ -2333,8 +2342,7 @@ mod deeper_boundary_tests {
             assert_eq!(anchored.get("42").copied(), want);
             assert_eq!(anchored.len(), usize::from(want.is_some()));
             assert_eq!(
-                dom.descendants(root, Some(&W::comment_reference()))
-                    .len(),
+                dom.descendants(root, Some(&W::comment_reference())).len(),
                 usize::from(want.is_some())
             );
             assert_eq!(collect_segments(&dom, root, true, "R", false).0, text);

@@ -1302,7 +1302,7 @@ fn reconstruct_element(
     }
     // hoist property children (in declared order)
     if aname == W::pict() {
-        for p in dom.elements(ancestor, Some(&crate::namespaces::VML::name("shapetype"))) {
+        for p in dom.elements(ancestor, Some(&crate::namespaces::VML::shapetype())) {
             let c = dom.clone_subtree(p);
             dom.add(ne, c);
         }
@@ -1419,8 +1419,8 @@ fn reconstruct_element(
             }
             // tblGrid → tblGridChange
             if let (Some(new_grid), Some(old_grid)) = (
-                dom.element(ne, &W::name("tblGrid")),
-                dom.element(old_tbl, &W::name("tblGrid")),
+                dom.element(ne, &W::tbl_grid()),
+                dom.element(old_tbl, &W::tbl_grid()),
             ) {
                 let old_clone = dom.clone_subtree(old_grid);
                 strip_change(dom, old_clone, "tblGridChange");
@@ -1445,6 +1445,9 @@ fn reconstruct_element(
     }
     for c in new_children {
         dom.add(ne, c);
+    }
+    if aname == W::tr() {
+        take_revised_row_exceptions(dom, ne, g, ancestor, level);
     }
     if settings.detect_format_changes && (aname == W::tr() || aname == W::tc()) {
         record_revised_row_cell_props(dom, ne, g, ancestor, level, settings, id_gen);
@@ -1493,18 +1496,7 @@ fn record_revised_row_cell_props(
         return;
     };
     let pr_name = W::name(pr_local);
-    // A row's exceptions are the revision's too (#1869).
     if aname == W::tr() {
-        if ancestor != new {
-            let ex_name = W::tbl_pr_ex();
-            for hoisted in dom.elements(ne, Some(&ex_name)) {
-                dom.remove(hoisted);
-            }
-            if let Some(ex) = dom.element(new, &ex_name) {
-                let c = dom.clone_subtree(ex);
-                dom.add_first(ne, c);
-            }
-        }
         record_revised_row_exceptions(dom, ne, old, settings, id_gen);
     }
     if ancestor != new {
@@ -1568,6 +1560,32 @@ fn record_revised_row_cell_props(
     dom.add(live, change);
 }
 
+/// A merged row shows the revision's exceptions (#1869), whether or not
+/// format changes are tracked: only their record waits on
+/// `detect_format_changes`, so Accept All keeps the revision's either way.
+fn take_revised_row_exceptions(
+    dom: &mut Dom,
+    ne: NodeId,
+    g: &[&ComparisonUnitAtom],
+    ancestor: NodeId,
+    level: usize,
+) {
+    let Some((_, new)) = source_containers(dom, g, level, &W::tr()) else {
+        return;
+    };
+    if ancestor == new {
+        return;
+    }
+    let ex_name = W::tbl_pr_ex();
+    for hoisted in dom.elements(ne, Some(&ex_name)) {
+        dom.remove(hoisted);
+    }
+    if let Some(ex) = dom.element(new, &ex_name) {
+        let c = dom.clone_subtree(ex);
+        dom.add_first(ne, c);
+    }
+}
+
 /// A merged row whose exceptions changed records the original's in a
 /// `w:tblPrExChange`, the last child of the revision's `w:tblPrEx`, as
 /// Word's compare does (`60dfd517a9`'s Word redline in `tests/corpus`):
@@ -1601,11 +1619,9 @@ fn record_revised_row_exceptions(
     }
     let previous = dom.new_element(ex_name);
     if let Some(old_ex) = old_ex {
+        let change_name = W::tbl_pr_ex_change();
         for c in dom.elements(old_ex, None) {
-            if dom
-                .name(c)
-                .is_some_and(|n| n.local_name() != "tblPrExChange")
-            {
+            if !dom.name_is(c, &change_name) {
                 let copy = dom.clone_subtree(c);
                 dom.add(previous, copy);
             }
@@ -1687,7 +1703,7 @@ fn mesh_repartitioned_row(
         if !settings.detect_format_changes {
             continue;
         }
-        let change_name = W::name("tcPrChange");
+        let change_name = W::tc_pr_change();
         let record = match dom.element(live, &change_name) {
             Some(change) => dom.element(change, &W::tc_pr()),
             None => {
@@ -1817,14 +1833,14 @@ fn take_revision_cell_props(dom: &mut Dom, lives: &[NodeId], revision: &[bool]) 
 /// less the row's `gridBefore` and `gridAfter`.
 fn row_grid_columns(dom: &Dom, tr: NodeId) -> Option<u32> {
     let tbl = dom.ancestors(tr, Some(&W::tbl())).into_iter().next()?;
-    let grid = dom.element(tbl, &W::name("tblGrid"))?;
+    let grid = dom.element(tbl, &W::tbl_grid())?;
     let columns = u32::try_from(dom.elements(grid, Some(&W::grid_col())).len()).ok()?;
     let skipped: u32 = dom
         .element(tr, &W::tr_pr())
         .map(|pr| {
-            ["gridBefore", "gridAfter"]
+            [W::grid_before(), W::grid_after()]
                 .into_iter()
-                .filter_map(|name| dom.element(pr, &W::name(name)))
+                .filter_map(|name| dom.element(pr, &name))
                 .filter_map(|el| dom.attribute(el, &W::val())?.parse::<u32>().ok())
                 .sum()
         })
@@ -1965,7 +1981,7 @@ fn add_tblpr_child_in_order(dom: &mut Dom, tbl_pr: NodeId, child: NodeId, local:
 /// M-TBL rule 4 — see call site. `src_tbl` is the source-document table node
 /// used to locate the section geometry (page width minus margins).
 fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
-    let Some(grid) = dom.element(tbl, &W::name("tblGrid")) else {
+    let Some(grid) = dom.element(tbl, &W::tbl_grid()) else {
         return;
     };
     let grid_cols = dom.elements(grid, Some(&W::grid_col()));
@@ -2027,7 +2043,7 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     // table without one takes the text width and `tblW 0 auto`.
     let declared = dom
         .element(tbl, &W::tbl_pr())
-        .and_then(|pr| dom.element(pr, &W::name("tblW")))
+        .and_then(|pr| dom.element(pr, &W::tbl_w()))
         .and_then(|w| declared_width(dom, w, content_width));
     let total = declared.unwrap_or(content_width);
     for c in &grid_cols {
@@ -2052,10 +2068,10 @@ fn rebuild_degenerate_grid(dom: &mut Dom, tbl: NodeId, src_tbl: NodeId) {
     // floating (tblpPr) or banded table stays schema-valid; mutate in place
     // when tblW already exists.
     if let Some(tbl_pr) = dom.element(tbl, &W::tbl_pr()) {
-        let tblw = match dom.element(tbl_pr, &W::name("tblW")) {
+        let tblw = match dom.element(tbl_pr, &W::tbl_w()) {
             Some(e) => e,
             None => {
-                let e = dom.new_element(W::name("tblW"));
+                let e = dom.new_element(W::tbl_w());
                 add_tblpr_child_in_order(dom, tbl_pr, e, "tblW");
                 e
             }
@@ -2237,7 +2253,7 @@ mod tblpr_order_tests {
         );
         let doc = dom.parse_xdocument(xml);
         let tblpr = dom.root(doc).expect("root");
-        let tblw = dom.new_element(W::name("tblW"));
+        let tblw = dom.new_element(W::tbl_w());
         add_tblpr_child_in_order(&mut dom, tblpr, tblw, "tblW");
         let order: Vec<String> = dom
             .elements(tblpr, None)
@@ -2323,7 +2339,7 @@ mod merged_row_width_tests {
     fn width(attrs: &str) -> Option<i64> {
         let mut dom = Dom::new();
         let root = parse(&mut dom, &format!("<w:tblW {attrs}/>"));
-        let tbl_w = dom.element(root, &W::name("tblW")).unwrap();
+        let tbl_w = dom.element(root, &W::tbl_w()).unwrap();
         declared_width(&dom, tbl_w, 10206)
     }
 

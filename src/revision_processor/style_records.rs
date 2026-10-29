@@ -369,8 +369,7 @@ pub(super) fn recorded_blocks(dom: &Dom, styles_root: NodeId) -> Vec<(String, &'
     let mut out = Vec::new();
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
         if !matches!(
-            dom.attribute(style, &W::type_())
-                .unwrap_or("paragraph"),
+            dom.attribute(style, &W::type_()).unwrap_or("paragraph"),
             "paragraph" | "character"
         ) {
             continue;

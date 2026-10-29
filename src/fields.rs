@@ -2384,10 +2384,7 @@ mod authored_field_projection_contract_tests {
         let runs = story.dom.descendants(story.root, Some(&W::r()));
         assert_eq!(runs.len(), 5);
         for run in runs {
-            assert_eq!(
-                story.dom.attribute(run, &W::rsid_r()),
-                Some("01234567")
-            );
+            assert_eq!(story.dom.attribute(run, &W::rsid_r()), Some("01234567"));
             let properties = story.dom.element(run, &W::r_pr()).unwrap();
             assert!(story.dom.element(properties, &W::name("b")).is_some());
             let color = story.dom.element(properties, &W::name("color")).unwrap();

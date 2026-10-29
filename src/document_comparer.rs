@@ -149,19 +149,16 @@ fn header_footer_refs_by_section(pkg: &PartFs) -> (usize, Vec<SectionRef>) {
     let sections = section_props(&d, root);
     let mut out = Vec::new();
     for (ref_name, kind) in [
-        (W::name("headerReference"), "header"),
-        (W::name("footerReference"), "footer"),
+        (W::header_reference(), "header"),
+        (W::footer_reference(), "footer"),
     ] {
         for r in d.descendants(root, Some(&ref_name)) {
-            let ty = d
-                .attribute(r, &W::type_())
-                .unwrap_or("default")
-                .to_string();
+            let ty = d.attribute(r, &W::type_()).unwrap_or("default").to_string();
             let section = d
                 .parent(r)
                 .and_then(|s| sections.iter().position(|&x| x == s))
                 .unwrap_or(0);
-            if let Some(rid) = d.attribute(r, &R::name("id"))
+            if let Some(rid) = d.attribute(r, &R::id())
                 && let Some(&tgt) = id_to_target.get(rid)
             {
                 out.push((
@@ -221,10 +218,9 @@ pub(crate) fn section_story_parts(
                 .elements(sect, None)
                 .into_iter()
                 .filter(|&r| {
-                    dom.name_is(r, &W::name("headerReference"))
-                        || dom.name_is(r, &W::name("footerReference"))
+                    dom.name_is(r, &W::header_reference()) || dom.name_is(r, &W::footer_reference())
                 })
-                .filter_map(|r| targets.get(dom.attribute(r, &R::name("id"))?))
+                .filter_map(|r| targets.get(dom.attribute(r, &R::id())?))
                 .map(|target| referenced_part(pkg, main, target))
                 .collect();
             (deleted, parts)
@@ -308,17 +304,19 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
             .and_then(|p| dom.element(p, &W::r_pr()))
             .is_some_and(|r| dom.element(r, &W::del()).is_some())
     };
+    let (header_reference, footer_reference) = (W::header_reference(), W::footer_reference());
+    let (ty_attr, rid) = (W::type_(), R::id());
     // Each header/footer reference of a section: (its slot, its part).
     let references = |dom: &Dom, sect: NodeId| -> Vec<(NodeId, (bool, String), String)> {
         dom.elements(sect, None)
             .into_iter()
             .filter_map(|r| {
-                let header = dom.name_is(r, &W::name("headerReference"));
-                if !header && !dom.name_is(r, &W::name("footerReference")) {
+                let header = dom.name_is(r, &header_reference);
+                if !header && !dom.name_is(r, &footer_reference) {
                     return None;
                 }
-                let ty = dom.attribute(r, &W::name("type")).unwrap_or("default");
-                let target = targets.get(dom.attribute(r, &R::name("id"))?)?;
+                let ty = dom.attribute(r, &ty_attr).unwrap_or("default");
+                let target = targets.get(dom.attribute(r, &rid)?)?;
                 Some((
                     r,
                     (header, ty.to_string()),
@@ -343,31 +341,64 @@ fn move_page_story_to_final_section(dom: &mut Dom, root: NodeId, pkg: &PartFs, m
             inherited.insert(slot, (sect, r, part));
         }
     }
-    for (slot, (sect, reference, part)) in inherited {
-        // Rejected, the breaks that lose the reference show the slot of the
-        // section before them: another section's story when one sets it
-        // (the trusts' exhibit labels). Only an unset slot, a blank, moves.
-        let shadowed = earlier
+    let earlier_references: Vec<_> = earlier.iter().map(|&s| references(dom, s)).collect();
+    let title_page = |dom: &Dom, sect: NodeId| {
+        dom.element(sect, &W::title_pg())
+            .is_some_and(|t| !on_off_is_off(dom, t))
+    };
+    let moving: Vec<_> = inherited
+        .into_iter()
+        .filter(|(slot, (sect, _, part))| {
+            // Rejected, the breaks that lose the reference show the slot of
+            // the section before them: another section's story when one
+            // sets it (the trusts' exhibit labels). Only an unset slot, a
+            // blank, moves.
+            let shadowed = earlier_references
+                .iter()
+                .take_while(|refs| !refs.iter().any(|(_, s, p)| s == slot && p == part))
+                .any(|refs| refs.iter().any(|(_, s, _)| s == slot));
+            // A first-page story shows only in a section with `w:titlePg`:
+            // moved to a final section without it, the source section's
+            // first pages would lose it and no page would show it.
+            let first_unshown =
+                slot.1 == "first" && title_page(dom, *sect) && !title_page(dom, last);
+            !(set.contains(slot)
+                || shadowed
+                || first_unshown
+                || !deleted(dom, *sect)
+                || live.contains(part)
+                || !story_closes_with_page_field(pkg, part))
+        })
+        .collect();
+    // A part leaves the deleted breaks whole or not at all: a reference to
+    // it in a slot that stays (shared by two slots, or handed down in a
+    // slot a later section overrides) keeps the part where it is.
+    let approved: std::collections::HashSet<(&(bool, String), &str)> = moving
+        .iter()
+        .map(|(slot, (_, _, part))| (slot, part.as_str()))
+        .collect();
+    let mut cleared = std::collections::HashSet::new();
+    for (_, (_, reference, part)) in &moving {
+        let whole = earlier_references
             .iter()
-            .map(|&s| references(dom, s))
-            .take_while(|refs| !refs.iter().any(|(_, s, p)| *s == slot && *p == part))
-            .any(|refs| refs.iter().any(|(_, s, _)| *s == slot));
-        if set.contains(&slot)
-            || shadowed
-            || !deleted(dom, sect)
-            || live.contains(&part)
-            || !story_closes_with_page_field(pkg, &part)
-        {
+            .flatten()
+            .filter(|(_, _, p)| p == part)
+            .all(|(_, s, p)| approved.contains(&(s, p.as_str())));
+        if !whole {
             continue;
         }
-        dom.add_first(last, reference);
-        for &sect in earlier {
-            for (r, _, other) in references(dom, sect) {
+        // Once per part: a second slot of the part must not take back the
+        // reference the first one moved.
+        if cleared.insert(part.as_str()) {
+            for (r, _, other) in earlier_references.iter().flatten() {
                 if other == part {
-                    dom.remove(r);
+                    dom.remove(*r);
                 }
             }
         }
+        // `EG_HdrFtrReferences` is a choice: header and footer references
+        // come in any order, ahead of the section's other properties.
+        dom.add_first(last, *reference);
     }
 }
 
@@ -479,7 +510,7 @@ fn find_normal_style(dom: &Dom, styles_root: NodeId) -> Option<NodeId> {
     styles
         .iter()
         .copied()
-        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("Normal"))
+        .find(|&s| dom.attribute(s, &W::style_id()) == Some("Normal"))
         .or_else(|| {
             styles
                 .iter()
@@ -1295,16 +1326,8 @@ fn merge_normal_style_spacing(
     // own rPrChange shares this id.
     let id = style_record_id(dom, out_root, ppr, settings);
     dom.set_attribute_value(chg, &W::id(), Some(&id));
-    dom.set_attribute_value(
-        chg,
-        &W::author(),
-        Some(&settings.author_for_revisions),
-    );
-    dom.set_attribute_value(
-        chg,
-        &W::date(),
-        Some(&settings.date_time_for_revisions),
-    );
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
     dom.add(chg, old_ppr);
     dom.add(ppr, chg); // pPrChange is last in CT_PPr
     true
@@ -1352,7 +1375,7 @@ fn cascade_normal_change_to_based_styles(
         if dom.attribute(style, &W::type_()) != Some("paragraph") {
             continue;
         }
-        if dom.attribute(style, &W::name("styleId")) == Some("Normal") {
+        if dom.attribute(style, &W::style_id()) == Some("Normal") {
             continue;
         }
         let based = dom
@@ -1411,16 +1434,8 @@ fn cascade_normal_change_to_based_styles(
                 let chg = dom.new_element(W::p_pr_change());
                 let id = style_record_id(dom, styles_root, ppr, settings);
                 dom.set_attribute_value(chg, &W::id(), Some(&id));
-                dom.set_attribute_value(
-                    chg,
-                    &W::author(),
-                    Some(&settings.author_for_revisions),
-                );
-                dom.set_attribute_value(
-                    chg,
-                    &W::date(),
-                    Some(&settings.date_time_for_revisions),
-                );
+                dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+                dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
                 dom.add(chg, old_ppr);
                 dom.add(ppr, chg);
                 changed = true;
@@ -1441,16 +1456,8 @@ fn cascade_normal_change_to_based_styles(
                 let chg = dom.new_element(W::r_pr_change());
                 let id = style_record_id(dom, styles_root, rpr, settings);
                 dom.set_attribute_value(chg, &W::id(), Some(&id));
-                dom.set_attribute_value(
-                    chg,
-                    &W::author(),
-                    Some(&settings.author_for_revisions),
-                );
-                dom.set_attribute_value(
-                    chg,
-                    &W::date(),
-                    Some(&settings.date_time_for_revisions),
-                );
+                dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+                dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
                 let clone = dom.clone_subtree(old_r);
                 // strip nested rPrChange if any
                 for c in dom.descendants(clone, Some(&W::r_pr_change())) {
@@ -1809,12 +1816,7 @@ fn inherited_only_style_changes(
     let by_id = |root| -> std::collections::HashMap<String, NodeId> {
         dom.elements(root, Some(&W::name("style")))
             .into_iter()
-            .filter_map(|style| {
-                Some((
-                    dom.attribute(style, &W::name("styleId"))?.to_string(),
-                    style,
-                ))
-            })
+            .filter_map(|style| Some((dom.attribute(style, &W::style_id())?.to_string(), style)))
             .collect()
     };
     let by_key = |root| -> std::collections::HashMap<(String, String), NodeId> {
@@ -2050,7 +2052,7 @@ fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let name = dom
         .element(style, &W::name("name"))
         .and_then(|n| dom.attribute(n, &W::val()))
-        .or_else(|| dom.attribute(style, &W::name("styleId")))?;
+        .or_else(|| dom.attribute(style, &W::style_id()))?;
     let key = if crate::builtin_styles::is_built_in(name) {
         name.to_ascii_lowercase()
     } else {
@@ -2094,10 +2096,7 @@ fn complete_root_style_change_records(
     };
     let mut changed = false;
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
-        if dom
-            .attribute(style, &W::type_())
-            .unwrap_or("paragraph")
-            != "paragraph"
+        if dom.attribute(style, &W::type_()).unwrap_or("paragraph") != "paragraph"
             || dom.element(style, &W::name("basedOn")).is_some()
             || blocks
                 .iter()
@@ -2175,10 +2174,7 @@ fn complete_based_style_change_records(dom: &mut Dom, styles_root: NodeId, a_roo
     }
     let mut changed = false;
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
-        if dom
-            .attribute(style, &W::type_())
-            .unwrap_or("paragraph")
-            != "paragraph"
+        if dom.attribute(style, &W::type_()).unwrap_or("paragraph") != "paragraph"
             || dom.element(style, &W::name("basedOn")).is_none()
         {
             continue;
@@ -2313,16 +2309,8 @@ fn append_style_change_record(
     let chg = dom.new_element(W::name(change_local));
     let id = style_record_id(dom, styles_root, block, settings);
     dom.set_attribute_value(chg, &W::id(), Some(&id));
-    dom.set_attribute_value(
-        chg,
-        &W::author(),
-        Some(&settings.author_for_revisions),
-    );
-    dom.set_attribute_value(
-        chg,
-        &W::date(),
-        Some(&settings.date_time_for_revisions),
-    );
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
     dom.add(chg, old);
     dom.add(block, chg);
 }
@@ -2368,7 +2356,7 @@ fn merge_revised_style_definitions(
     inherited_only: &std::collections::HashSet<(NodeId, &'static str)>,
 ) -> bool {
     let style_nm = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     let normal_out = find_normal_style(dom, out_root);
     let normal_b = find_normal_style(dom, b_root);
 
@@ -2686,10 +2674,7 @@ fn merge_revised_style_definitions(
                 }
                 // Paragraph styles only — Word leaves the linked *Char
                 // styles (FooterChar, Hyperlink, …) unmarked in the oracle.
-                let stype = dom
-                    .attribute(style, &W::type_())
-                    .unwrap_or("")
-                    .to_string();
+                let stype = dom.attribute(style, &W::type_()).unwrap_or("").to_string();
                 if stype != "paragraph" {
                     continue;
                 }
@@ -2821,7 +2806,7 @@ fn factory_scaffold_bake_b_styles(
     settings: &WmlComparerSettings,
 ) -> bool {
     let style_nm = W::name("style");
-    let style_id_nm = W::name("styleId");
+    let style_id_nm = W::style_id();
     // --- capture B's docDefaults values ---
     let dd = dom.element(root, &W::name("docDefaults"));
     let b_ppr_spacing = dd
@@ -3193,7 +3178,7 @@ fn normalize_word_paragraph_style_line(dom: &mut Dom, styles_root: NodeId) -> bo
         .collect();
     for style in styles {
         let sid = dom
-            .attribute(style, &W::name("styleId"))
+            .attribute(style, &W::style_id())
             .unwrap_or("")
             .to_string();
         if !TOUCH.contains(&sid.as_str()) {
@@ -3296,7 +3281,7 @@ fn align_paragraph_style_fonts_with_normal(dom: &mut Dom, styles_root: NodeId) -
 
     for style in styles {
         let sid = dom
-            .attribute(style, &W::name("styleId"))
+            .attribute(style, &W::style_id())
             .unwrap_or("")
             .to_string();
         if PROMOTE.contains(&sid.as_str()) {
@@ -3381,7 +3366,7 @@ fn default_paragraph_line(styles_xml: &str) -> String {
         styles
             .iter()
             .copied()
-            .find(|&s| dom.attribute(s, &W::name("styleId")) == Some(id))
+            .find(|&s| dom.attribute(s, &W::style_id()) == Some(id))
     };
     let line_of = |ppr: Option<NodeId>| {
         ppr.and_then(|p| dom.element(p, &W::spacing_el()))
@@ -3828,7 +3813,7 @@ fn copy_missing_styles_by_name(
     from_root: NodeId,
 ) -> std::collections::HashMap<String, String> {
     let style_nm = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     let mut by_name: std::collections::HashMap<(String, String), String> =
         std::collections::HashMap::new();
     for s in dom.elements(to_root, Some(&style_nm)) {
@@ -3871,7 +3856,7 @@ fn canonicalize_style_ids(
     styles_root: NodeId,
 ) -> std::collections::HashMap<String, String> {
     let style_nm = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     let name_el = W::name("name");
     let styles: Vec<NodeId> = dom.elements(styles_root, Some(&style_nm));
 
@@ -4138,7 +4123,7 @@ fn bake_bothsides_dd_disabling_neutralizers(
     }
 
     let style_nm = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     let type_nm = W::type_();
     let based_nm = W::name("basedOn");
     let normal = find_normal_style(dom, out_root);
@@ -4268,7 +4253,7 @@ fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: Node
     let index = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
         dom.elements(root, Some(&style_nm))
             .into_iter()
-            .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
+            .filter_map(|s| Some((dom.attribute(s, &W::style_id())?.to_string(), s)))
             .collect()
     };
     let out_idx = index(dom, out_root);
@@ -4561,9 +4546,8 @@ fn merge_normal_style_rpr(
     // B pPr only → Word writes B's run defaults). 227 corpus Word redlines
     // agree: with either side structured and differing run defaults, Word
     // always writes Normal rPr.
-    let structured = |s: NodeId| {
-        dom.element(s, &W::r_pr()).is_some() || dom.element(s, &W::p_pr()).is_some()
-    };
+    let structured =
+        |s: NodeId| dom.element(s, &W::r_pr()).is_some() || dom.element(s, &W::p_pr()).is_some();
     if !structured(a_style) && !b_style.is_some_and(structured) {
         return false;
     }
@@ -4786,16 +4770,8 @@ fn merge_normal_style_rpr(
     // shares its id, as Word's do (see `style_record_id`).
     let id = style_record_id(dom, out_root, rpr, settings);
     dom.set_attribute_value(chg, &W::id(), Some(&id));
-    dom.set_attribute_value(
-        chg,
-        &W::author(),
-        Some(&settings.author_for_revisions),
-    );
-    dom.set_attribute_value(
-        chg,
-        &W::date(),
-        Some(&settings.date_time_for_revisions),
-    );
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
     dom.add(chg, old_rpr);
     dom.add(rpr, chg); // rPrChange is last in CT_RPr
     true
@@ -5303,8 +5279,8 @@ fn strip_final_sectpr_inherited_header_footer(
     result_root: NodeId,
     revised_final: &std::collections::HashSet<(bool, String)>,
 ) {
-    let href = W::name("headerReference");
-    let fref = W::name("footerReference");
+    let href = W::header_reference();
+    let fref = W::footer_reference();
     let type_name = W::type_();
     let Some(body) = dom.element(result_root, &W::body()) else {
         return;
@@ -5384,9 +5360,9 @@ fn final_header_footer_slots(pkg: &PartFs) -> std::collections::HashSet<(bool, S
         .into_iter()
         .filter_map(|e| {
             let n = dom.name(e)?;
-            let is_header = if n == W::name("headerReference") {
+            let is_header = if n == W::header_reference() {
                 true
-            } else if n == W::name("footerReference") {
+            } else if n == W::footer_reference() {
                 false
             } else {
                 return None;
@@ -5419,8 +5395,8 @@ fn adopt_revised_header_footer(
     out_main: &str,
     settings: &WmlComparerSettings,
 ) {
-    let href = W::name("headerReference");
-    let fref = W::name("footerReference");
+    let href = W::header_reference();
+    let fref = W::footer_reference();
     let Some(body) = dom.element(result_root, &W::body()) else {
         return;
     };
@@ -5534,7 +5510,7 @@ fn adopt_revised_header_footer(
         if final_slots.contains(&slot) {
             continue;
         }
-        let Some(rid) = d2.attribute(r, &R::name("id")) else {
+        let Some(rid) = d2.attribute(r, &R::id()) else {
             continue;
         };
         let Some(target) = id_to_target.get(rid) else {
@@ -5680,7 +5656,7 @@ fn adopt_revised_header_footer(
             fref.clone()
         });
         dom.set_attribute_value(refel, &W::type_(), Some(&ty));
-        dom.set_attribute_value(refel, &R::name("id"), Some(&new_rid));
+        dom.set_attribute_value(refel, &R::id(), Some(&new_rid));
         dom.add_first(out_sect, refel);
     }
 }
@@ -5837,12 +5813,7 @@ fn delete_story_closing_mark(dom: &mut Dom, story: NodeId, settings: &WmlCompare
     let Some(&last) = dom.elements(story, None).last() else {
         return;
     };
-    let live_content = [
-        W::t(),
-        W::drawing(),
-        W::pict(),
-        W::object(),
-    ];
+    let live_content = [W::t(), W::drawing(), W::pict(), W::object()];
     if !dom.name_is(last, &W::p())
         || live_content
             .iter()
@@ -7279,8 +7250,7 @@ fn compare_documents_impl(
                                     else {
                                         continue;
                                     };
-                                    if unchanged && pd.element(ppr, &W::p_pr_change()).is_none()
-                                    {
+                                    if unchanged && pd.element(ppr, &W::p_pr_change()).is_none() {
                                         let old_ppr = pd.new_element(W::p_pr());
                                         for c in pd.elements(ppr, None) {
                                             if pd.name(c).is_some_and(|n| {
@@ -7336,29 +7306,28 @@ fn compare_documents_impl(
             // sides present → insert-heavy next with lists lost numbering.
             // An edit takes the stylesheet its plan created the same way.
             (None, Some(from_xml)) if !is_styles || settings.preserve_untouched => {
-                let kind = if is_styles { "styles" } else { "numbering" };
+                let (ct_type, rel_type, rel_suffix, target) = if is_styles {
+                    (
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                        "/styles",
+                        "styles.xml",
+                    )
+                } else {
+                    (
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                        "/numbering",
+                        "numbering.xml",
+                    )
+                };
                 out.set_part(part, from_xml.into_bytes());
-
-                let ct_type = format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml");
-                out.add_content_type_override(
-                    &format!("/{part}"),
-                    &ct_type,
-                );
-
-                let rel_suffix = format!("/{kind}");
-                let has_rel = out.read_rels_for(&main1).is_some_and(|r| {
-                    r.items
-                        .iter()
-                        .any(|i| i.rel_type.ends_with(&rel_suffix))
-                });
+                out.add_content_type_override(&format!("/{part}"), ct_type);
+                let has_rel = out
+                    .read_rels_for(&main1)
+                    .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with(rel_suffix)));
                 if !has_rel {
-                    out.add_document_relationship(
-                        &main1,
-                        &format!(
-                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}"
-                        ),
-                        &format!("{kind}.xml"),
-                    );
+                    out.add_document_relationship(&main1, rel_type, target);
                 }
             }
             // A has no styles part, B does: copy B, canonicalize, then M462 —
@@ -7746,15 +7715,14 @@ fn compare_documents_impl(
             // content-ceiling for the pair 44.83 → 100.00). The M480
             // neutralizer principle at the document.xml level.
             {
-                let index =
-                    |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
-                        dom.elements(root, Some(&W::name("style")))
-                            .into_iter()
-                            .filter_map(|s| {
-                                Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s))
-                            })
-                            .collect()
-                    };
+                let index = |dom: &Dom,
+                             root: NodeId|
+                 -> std::collections::HashMap<String, NodeId> {
+                    dom.elements(root, Some(&W::name("style")))
+                        .into_iter()
+                        .filter_map(|s| Some((dom.attribute(s, &W::style_id())?.to_string(), s)))
+                        .collect()
+                };
                 let out_idx = index(&sd, or);
                 let b_idx = index(&sd, br);
                 // B's counterpart of an output style id: the style of the same
@@ -7764,10 +7732,9 @@ fn compare_documents_impl(
                 let mut b_by_key: std::collections::HashMap<(String, String), String> =
                     std::collections::HashMap::new();
                 for s in sd.elements(br, Some(&W::name("style"))) {
-                    if let (Some(k), Some(id)) = (
-                        style_match_key(&sd, s),
-                        sd.attribute(s, &W::name("styleId")),
-                    ) {
+                    if let (Some(k), Some(id)) =
+                        (style_match_key(&sd, s), sd.attribute(s, &W::style_id()))
+                    {
                         b_by_key.entry(k).or_insert_with(|| id.to_string());
                     }
                 }
@@ -7789,7 +7756,7 @@ fn compare_documents_impl(
                                         Some("1") | Some("true")
                                     )
                             })
-                            .and_then(|s| dom.attribute(s, &W::name("styleId")).map(str::to_string))
+                            .and_then(|s| dom.attribute(s, &W::style_id()).map(str::to_string))
                     };
                     (dp(&sd, br), dp(&sd, or))
                 };
@@ -8191,11 +8158,7 @@ fn compare_documents_impl(
                     // hdr/ftr under that wrapper is dead (PR #81 / kilo): re-wrap
                     // the body children as the original container type so the
                     // redlined part stays a valid header/footer part.
-                    let container_name = if kind == "header" {
-                        W::hdr()
-                    } else {
-                        W::ftr()
-                    };
+                    let container_name = if kind == "header" { W::hdr() } else { W::ftr() };
                     let Some(out_body) = hd.element(res, &W::body()) else {
                         continue;
                     };
@@ -8892,7 +8855,7 @@ mod tests {
         let mut dom = Dom::new();
         let (root, _) = parse(&mut dom, &s);
         let normal = find_normal_style(&dom, root).expect("Normal found by name");
-        assert_eq!(dom.attribute(normal, &W::name("styleId")), Some("style0"));
+        assert_eq!(dom.attribute(normal, &W::style_id()), Some("style0"));
     }
 
     /// A stylesheet with a Normal; `dd` = (rPrDefault, pPrDefault) contents,
@@ -9297,14 +9260,14 @@ mod coverage_boundary_tests {
     fn style(dom: &Dom, styles: NodeId, id: &str) -> NodeId {
         dom.elements(styles, Some(&W::name("style")))
             .into_iter()
-            .find(|&n| dom.attribute(n, &W::name("styleId")) == Some(id))
+            .find(|&n| dom.attribute(n, &W::style_id()) == Some(id))
             .expect(id)
     }
 
     fn index(dom: &Dom, styles: NodeId) -> HashMap<String, NodeId> {
         dom.elements(styles, Some(&W::name("style")))
             .into_iter()
-            .filter_map(|n| Some((dom.attribute(n, &W::name("styleId"))?.to_string(), n)))
+            .filter_map(|n| Some((dom.attribute(n, &W::style_id())?.to_string(), n)))
             .collect()
     }
 
@@ -9809,11 +9772,11 @@ mod coverage_boundary_tests {
             Some("NewName")
         );
         assert_eq!(
-            dom.attribute(style(&dom, r, "Collision"), &W::name("styleId")),
+            dom.attribute(style(&dom, r, "Collision"), &W::style_id()),
             Some("Collision")
         );
         assert_eq!(
-            dom.attribute(style(&dom, r, "Race"), &W::name("styleId")),
+            dom.attribute(style(&dom, r, "Race"), &W::style_id()),
             Some("Race")
         );
         let body = root(
@@ -9972,28 +9935,7 @@ mod coverage_boundary_tests {
         let deleted = "<w:rPr><w:del w:id='1' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:rPr>";
         // Word's crash is in its table cache: the move needs a deleted row.
         let row = "<w:tbl><w:tr><w:trPr><w:del w:id='2' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl>";
-        // Each section's references, as (local name, w:type, r:id).
-        let references = |dom: &Dom, root: NodeId| -> Vec<Vec<(String, String, String)>> {
-            section_props(dom, root)
-                .into_iter()
-                .map(|sect| {
-                    dom.elements(sect, None)
-                        .into_iter()
-                        .filter(|&r| {
-                            dom.name_is(r, &W::name("headerReference"))
-                                || dom.name_is(r, &W::name("footerReference"))
-                        })
-                        .map(|r| {
-                            (
-                                dom.name(r).unwrap().local_name().to_string(),
-                                dom.attribute(r, &W::name("type")).unwrap().to_string(),
-                                dom.attribute(r, &R::name("id")).unwrap().to_string(),
-                            )
-                        })
-                        .collect()
-                })
-                .collect()
-        };
+        let references = story_references;
         let reference =
             |kind: &str, ty: &str, id: &str| (kind.to_string(), ty.to_string(), id.to_string());
 
@@ -10117,6 +10059,151 @@ mod coverage_boundary_tests {
             move_page_story_to_final_section(&mut dom, top, &pkg, MAIN);
             assert_eq!(references(&dom, top), before, "{body}");
         }
+    }
+
+    /// The references of each section of `root`, as (local name, `w:type`,
+    /// `r:id`).
+    fn story_references(dom: &Dom, root: NodeId) -> Vec<Vec<(String, String, String)>> {
+        section_props(dom, root)
+            .into_iter()
+            .map(|sect| {
+                dom.elements(sect, None)
+                    .into_iter()
+                    .filter(|&r| {
+                        dom.name_is(r, &W::header_reference())
+                            || dom.name_is(r, &W::footer_reference())
+                    })
+                    .map(|r| {
+                        (
+                            dom.name(r).unwrap().local_name().to_string(),
+                            dom.attribute(r, &W::type_()).unwrap().to_string(),
+                            dom.attribute(r, &R::id()).unwrap().to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A package with three page-number footers, their relationship ids in
+    /// order.
+    fn page_footers() -> (PartFs, [String; 3]) {
+        let mut pkg = package("<w:body/>");
+        let page = xml(
+            "ftr",
+            "<w:p><w:r><w:instrText> PAGE </w:instrText></w:r></w:p>",
+        );
+        for part in ["footer1.xml", "footer2.xml", "footer3.xml"] {
+            pkg.set_part(&format!("word/{part}"), page.clone().into_bytes());
+        }
+        let ids = ["footer1.xml", "footer2.xml", "footer3.xml"]
+            .map(|part| pkg.add_document_relationship(MAIN, &format!("{REL}footer"), part));
+        (pkg, ids)
+    }
+
+    const DELETED_MARK: &str =
+        "<w:rPr><w:del w:id='1' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:rPr>";
+    const DELETED_ROW: &str = "<w:tbl><w:tr><w:trPr><w:del w:id='2' w:author='A' w:date='2001-02-03T04:05:06Z'/></w:trPr><w:tc><w:p/></w:tc></w:tr></w:tbl>";
+
+    fn moved(pkg: &PartFs, body: &str) -> Vec<Vec<(String, String, String)>> {
+        let mut dom = Dom::new();
+        let top = root(&mut dom, &xml("document", body));
+        move_page_story_to_final_section(&mut dom, top, pkg, MAIN);
+        story_references(&dom, top)
+    }
+
+    fn footer(ty: &str, id: &str) -> (String, String, String) {
+        (
+            "footerReference".to_string(),
+            ty.to_string(),
+            id.to_string(),
+        )
+    }
+
+    /// codex on #1842: one footer part in two slots of a deleted break,
+    /// one of them shadowed by an earlier section. Moving the free slot
+    /// would take the shadowed slot's reference with it, and Reject All
+    /// would show the earlier section's footer there. The part stays.
+    #[test]
+    fn a_part_shared_with_a_slot_that_stays_does_not_move() {
+        let (pkg, [own, shared, _]) = page_footers();
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{own}'/></w:sectPr></w:pPr></w:p>\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{shared}'/><w:footerReference w:type='first' r:id='{shared}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        assert_eq!(
+            moved(&pkg, &body),
+            [
+                vec![footer("default", &own)],
+                vec![footer("default", &shared), footer("first", &shared)],
+                vec![],
+            ]
+        );
+        // Both slots free: the part moves whole, each slot once.
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{shared}'/><w:footerReference w:type='even' r:id='{shared}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        let after = moved(&pkg, &body);
+        assert_eq!(after[0], vec![]);
+        let mut last = after[1].clone();
+        last.sort();
+        assert_eq!(last, [footer("default", &shared), footer("even", &shared)]);
+    }
+
+    /// codex on #1842: a first-page footer shows only where `w:titlePg` is
+    /// on. From a section that shows it to a final section that does not,
+    /// the move would leave it on no page: it stays. A final section with
+    /// `w:titlePg` takes it, and so does one whose source never showed it.
+    #[test]
+    fn a_first_page_footer_moves_only_where_it_still_shows() {
+        let (pkg, [first, _, _]) = page_footers();
+        let body = |source: &str, last: &str| {
+            format!(
+                "<w:body>{DELETED_ROW}\
+                 <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='first' r:id='{first}'/>{source}</w:sectPr></w:pPr></w:p>\
+                 <w:sectPr>{last}</w:sectPr>\
+                 </w:body>"
+            )
+        };
+        let stays = [vec![footer("first", &first)], vec![]];
+        let goes = [vec![], vec![footer("first", &first)]];
+        assert_eq!(moved(&pkg, &body("<w:titlePg/>", "")), stays);
+        assert_eq!(
+            moved(&pkg, &body("<w:titlePg/>", "<w:titlePg w:val='0'/>")),
+            stays
+        );
+        assert_eq!(moved(&pkg, &body("<w:titlePg/>", "<w:titlePg/>")), goes);
+        assert_eq!(moved(&pkg, &body("", "")), goes);
+        assert_eq!(moved(&pkg, &body("<w:titlePg w:val='false'/>", "")), goes);
+    }
+
+    /// codex on #1842: the closing paragraph's PAGE code split across runs
+    /// still moves the footer.
+    #[test]
+    fn a_footer_with_a_split_page_code_moves() {
+        let mut pkg = package("<w:body/>");
+        pkg.set_part(
+            "word/footer1.xml",
+            xml(
+                "ftr",
+                "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> PA</w:instrText></w:r><w:r><w:instrText>GE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>",
+            )
+            .into_bytes(),
+        );
+        let id = pkg.add_document_relationship(MAIN, &format!("{REL}footer"), "footer1.xml");
+        let body = format!(
+            "<w:body>{DELETED_ROW}\
+             <w:p><w:pPr>{DELETED_MARK}<w:sectPr><w:footerReference w:type='default' r:id='{id}'/></w:sectPr></w:pPr></w:p>\
+             <w:sectPr/>\
+             </w:body>"
+        );
+        assert_eq!(moved(&pkg, &body), [vec![], vec![footer("default", &id)]]);
     }
 
     #[test]
@@ -10395,10 +10482,7 @@ mod coverage_boundary_tests {
             dom.attribute(child(&dom, final_sect, "headerReference"), &W::type_()),
             Some("first")
         );
-        assert_eq!(
-            dom.descendants(r, Some(&W::name("headerReference"))).len(),
-            2
-        );
+        assert_eq!(dom.descendants(r, Some(&W::header_reference())).len(), 2);
         for content in [
             "",
             "<w:body/>",
@@ -10579,8 +10663,8 @@ mod coverage_boundary_tests {
         let r = root(&mut dom, &carried);
         let links = dom.descendants(r, Some(&W::hyperlink()));
         assert_eq!(
-            dom.attribute(links[0], &R::name("id")),
-            dom.attribute(links[1], &R::name("id"))
+            dom.attribute(links[0], &R::id()),
+            dom.attribute(links[1], &R::id())
         );
         assert_eq!(dom.value(r), "onetwo");
         let rels = out.read_rels_for("word/header.xml").unwrap();
@@ -10971,15 +11055,11 @@ mod coverage_boundary_tests {
                             );
                             assert_eq!(dom.serialize_element(result), root_before);
                         } else {
-                            let rid = dom.attribute(refs[0], &R::name("id")).unwrap().to_owned();
+                            let rid = dom.attribute(refs[0], &R::id()).unwrap().to_owned();
                             assert_eq!(dom.attribute(refs[0], &W::type_()), Some(slot));
                             let expected_reference = dom.new_element(W::name(&reference));
-                            dom.set_attribute_value(
-                                expected_reference,
-                                &W::type_(),
-                                Some(slot),
-                            );
-                            dom.set_attribute_value(expected_reference, &R::name("id"), Some(&rid));
+                            dom.set_attribute_value(expected_reference, &W::type_(), Some(slot));
+                            dom.set_attribute_value(expected_reference, &R::id(), Some(&rid));
                             let expected_section =
                                 child(&dom, child(&dom, expected_root, "body"), "sectPr");
                             dom.add_first(expected_section, expected_reference);
@@ -11038,8 +11118,7 @@ mod coverage_boundary_tests {
                                     .descendants(result, Some(&W::name(&reference)))
                                     .into_iter()
                                     .filter(|&n| {
-                                        dom.attribute(n, &R::name("id"))
-                                            == Some(original_id.as_str())
+                                        dom.attribute(n, &R::id()) == Some(original_id.as_str())
                                     })
                                     .count();
                                 assert_eq!(mid_refs, 1);
@@ -11305,7 +11384,7 @@ mod coverage_boundary_tests {
                 "headerReference",
             );
             assert_eq!(dom.attribute(reference, &W::type_()), Some("default"));
-            let id = dom.attribute(reference, &R::name("id")).unwrap();
+            let id = dom.attribute(reference, &R::id()).unwrap();
             let rel = out
                 .read_rels_for(MAIN)
                 .unwrap()
@@ -11368,7 +11447,7 @@ mod coverage_boundary_tests {
         assert_eq!(texts, ["B default", "B even"]);
         let final_refs = dom.elements(
             child(&dom, child(&dom, r, "body"), "sectPr"),
-            Some(&W::name("headerReference")),
+            Some(&W::header_reference()),
         );
         assert_eq!(final_refs.len(), 2);
     }
@@ -12828,10 +12907,7 @@ mod comparer_relationship_contract_tests {
         let links = dom.descendants(root, Some(&W::hyperlink()));
         assert_eq!(links.len(), 2);
         for (i, node) in links.into_iter().enumerate() {
-            assert_eq!(
-                dom.attribute(node, &R::name("id")),
-                Some(rels[0].id.as_str())
-            );
+            assert_eq!(dom.attribute(node, &R::id()), Some(rels[0].id.as_str()));
             assert_eq!(dom.value(node), if i == 0 { "First" } else { "Second" });
             let pr = dom.descendants(node, Some(&W::r_pr()))[0];
             assert!(
@@ -12860,7 +12936,7 @@ mod authored_style_chain_boundary_tests {
             .into_iter()
             .map(|node| {
                 (
-                    dom.attribute(node, &W::name("styleId")).unwrap().to_owned(),
+                    dom.attribute(node, &W::style_id()).unwrap().to_owned(),
                     node,
                 )
             })
@@ -13086,11 +13162,7 @@ mod isolated_header_container_revision_boundary_tests {
                             "headerReference"
                         }));
                         main_dom.set_attribute_value(reference, &W::type_(), Some("default"));
-                        main_dom.set_attribute_value(
-                            reference,
-                            &R::name("id"),
-                            Some(&relationship),
-                        );
+                        main_dom.set_attribute_value(reference, &R::id(), Some(&relationship));
                         main_dom.add_first(section, reference);
                         pkg.set_part(
                             "word/document.xml",
@@ -13431,7 +13503,7 @@ mod adopted_story_relationship_owner_tests {
                         let refs =
                             dom.elements(section, Some(&W::name(&format!("{kind}Reference"))));
                         assert_eq!(refs.len(), 1);
-                        let rid = dom.attribute(refs[0], &R::name("id")).unwrap();
+                        let rid = dom.attribute(refs[0], &R::id()).unwrap();
                         let main_rels = out.read_rels_for(MAIN).unwrap();
                         let relationship = main_rels.items.iter().find(|r| r.id == rid).unwrap();
                         let adopted = out.resolve_rel_target(MAIN, &relationship.target);
@@ -13651,13 +13723,13 @@ mod public_numbering_definition_source_owner_tests {
                         "reference {id} resolves one concrete definition"
                     );
                     let num = nums[0];
-                    let abstract_ref = dom.element(num, &W::name("abstractNumId")).unwrap();
+                    let abstract_ref = dom.element(num, &W::abstract_num_id()).unwrap();
                     let abstract_id = dom.attribute(abstract_ref, &W::val()).unwrap().to_owned();
                     let abstracts = dom
                         .elements(numbering, Some(&W::name("abstractNum")))
                         .into_iter()
                         .filter(|&owner| {
-                            dom.attribute(owner, &W::name("abstractNumId"))
+                            dom.attribute(owner, &W::abstract_num_id())
                                 == Some(abstract_id.as_str())
                         })
                         .collect::<Vec<_>>();
@@ -13667,11 +13739,10 @@ mod public_numbering_definition_source_owner_tests {
                         "concrete definition resolves one abstract definition"
                     );
                     let abstract_copy = dom.clone_subtree(abstracts[0]);
-                    dom.set_attribute_value(abstract_copy, &W::name("abstractNumId"), None);
+                    dom.set_attribute_value(abstract_copy, &W::abstract_num_id(), None);
                     let num_copy = dom.clone_subtree(num);
                     dom.set_attribute_value(num_copy, &W::name("numId"), None);
-                    let abstract_ref_copy =
-                        dom.element(num_copy, &W::name("abstractNumId")).unwrap();
+                    let abstract_ref_copy = dom.element(num_copy, &W::abstract_num_id()).unwrap();
                     dom.set_attribute_value(abstract_ref_copy, &W::val(), Some("resolved"));
                     let resolved = format!(
                         "{}:{}",

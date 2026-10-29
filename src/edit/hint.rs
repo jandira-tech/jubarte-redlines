@@ -188,13 +188,7 @@ fn run_text(dom: &Dom, node: NodeId) -> Option<String> {
         "t" | "delText" => return Some(dom.value(node)),
         "tab" | "ptab" => '\t',
         "cr" => '\n',
-        "br" if !matches!(
-            dom.attribute(node, &W::type_()),
-            Some("page" | "column")
-        ) =>
-        {
-            '\n'
-        }
+        "br" if !matches!(dom.attribute(node, &W::type_()), Some("page" | "column")) => '\n',
         "noBreakHyphen" => '\u{2011}',
         "softHyphen" => '\u{00ad}',
         "sym" => '\u{fffc}',

@@ -2888,8 +2888,7 @@ mod public_option_source_ownership_tests {
                     }
                     if !settings.detect_format_changes {
                         assert!(
-                            dom.descendants(root, Some(&W::r_pr_change()))
-                                .is_empty(),
+                            dom.descendants(root, Some(&W::r_pr_change())).is_empty(),
                             "{label}: no invented format tracking"
                         );
                     }

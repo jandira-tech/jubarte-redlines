@@ -10823,10 +10823,7 @@ mod deeper_boundary_tests {
                 project_paragraph(&d, ps[1]).text,
                 format!("head{separator}tail")
             );
-            assert_eq!(
-                d.descendants(ps[1], Some(&W::bookmark_start())).len(),
-                1
-            );
+            assert_eq!(d.descendants(ps[1], Some(&W::bookmark_start())).len(), 1);
             let runs = d.elements(ps[1], Some(&W::r()));
             assert_eq!(runs.len(), if separator.is_empty() { 2 } else { 3 });
             if !separator.is_empty() {

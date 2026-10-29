@@ -159,7 +159,7 @@ pub fn fill_in_empty_footnotes_endnotes(dom: &mut Dom, notes_root: NodeId, is_fo
         dom.add(p, ppr);
         let r = dom.new_element(W::r());
         let rpr = dom.new_element(W::r_pr());
-        let rstyle = dom.new_element(W::name("rStyle"));
+        let rstyle = dom.new_element(W::r_style());
         dom.set_attribute_value(rstyle, &W::val(), Some(r_style));
         dom.add(rpr, rstyle);
         dom.add(r, rpr);
@@ -216,7 +216,7 @@ pub fn content_contains_footnote_endnote_references_that_have_revisions(
 /// references in [`strip_unresolved_style_refs`].
 pub fn defined_style_ids(dom: &Dom, styles_root: NodeId) -> std::collections::HashSet<String> {
     let style = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     dom.elements(styles_root, Some(&style))
         .into_iter()
         .filter_map(|st| dom.attribute(st, &style_id).map(|s| s.to_string()))
@@ -266,7 +266,7 @@ pub fn strip_unresolved_style_refs(
 /// id from `from_root`.
 pub fn copy_missing_styles(dom: &mut Dom, to_root: NodeId, from_root: NodeId) {
     let style = W::name("style");
-    let style_id = W::name("styleId");
+    let style_id = W::style_id();
     let mut existing: std::collections::HashSet<String> = dom
         .elements(to_root, Some(&style))
         .into_iter()
@@ -325,7 +325,7 @@ fn get_int_attribute(dom: &Dom, e: NodeId, name: &XName) -> Option<i32> {
 /// children, compared by serialization.
 fn normalized_abstract_num_signature(dom: &mut Dom, abstract_num: NodeId) -> String {
     let c = dom.clone_subtree(abstract_num);
-    dom.set_attribute_value(c, &W::name("abstractNumId"), None);
+    dom.set_attribute_value(c, &W::abstract_num_id(), None);
     // w15:restartNumberingAfterBreak="0" is the default — a producer writing
     // it (or not) doesn't change the list. Treating it as identity split
     // basic_list × sd_1707_list_enter into two lists once M482 started
@@ -387,9 +387,9 @@ pub fn copy_missing_numbering(
     to_root: NodeId,
     from_root: NodeId,
 ) -> (std::collections::HashMap<String, String>, Vec<NodeId>) {
-    let abstract_num = W::name("abstractNum");
+    let abstract_num = W::abstract_num();
     let num = W::name("num");
-    let abstract_num_id = W::name("abstractNumId");
+    let abstract_num_id = W::abstract_num_id();
     let num_id_attr = W::name("numId");
     let mut num_remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
@@ -430,8 +430,8 @@ pub fn copy_missing_numbering(
         // content match against the CURRENT destination (grows as we copy),
         // the same id first: identical definitions are separate lists, and
         // one matched to another's id moves its nums to fresh ids (#1850)
-        let mut to_ans: Vec<NodeId> = dom.elements(to_root, Some(&W::abstract_num()));
-        to_ans.sort_by_key(|&e| get_int_attribute(dom, e, &W::abstract_num_id()) != Some(from_id));
+        let mut to_ans: Vec<NodeId> = dom.elements(to_root, Some(&abstract_num));
+        to_ans.sort_by_key(|&e| get_int_attribute(dom, e, &abstract_num_id) != Some(from_id));
         let mut matching: Option<NodeId> = None;
         for e in to_ans {
             if normalized_abstract_num_signature(dom, e) == normalized_from {
@@ -567,7 +567,7 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
     let fresh_aid = dom
         .elements(numbering_root, Some(&W::name("abstractNum")))
         .into_iter()
-        .filter_map(|e| get_int_attribute(dom, e, &W::name("abstractNumId")))
+        .filter_map(|e| get_int_attribute(dom, e, &W::abstract_num_id()))
         .max()
         .map_or(0, |m| m.saturating_add(1));
     let mut lvls = String::new();
@@ -1007,37 +1007,42 @@ fn ensure_reference_marker(
     source: Option<NodeId>,
 ) {
     let r_name = W::r();
-    let has_marker = dom.descendants(temp, Some(&r_name)).into_iter().any(|run| {
-        let style = dom
-            .elements(run, Some(&W::r_pr()))
-            .into_iter()
-            .flat_map(|rpr| dom.elements(rpr, Some(&W::r_style())))
-            .find_map(|st| dom.attribute(st, &W::val()));
-        style == Some("FootnoteReference")
-            || !dom.descendants(run, Some(&W::footnote_ref())).is_empty()
-    });
-    if has_marker {
-        return;
-    }
-    let Some(first_para) = dom.descendants(temp, Some(&W::p())).first().copied() else {
-        return;
-    };
-    let first_run = if direct_child_run {
-        dom.element(first_para, &r_name)
-    } else {
-        dom.descendants(first_para, Some(&r_name)).first().copied()
-    };
-    let Some(first_run) = first_run else {
-        return;
-    };
+    // The note kind's own mark: an endnote holds `endnoteRef`, styled
+    // `EndnoteReference`, never the footnote's.
     let (style_val, ref_el) = if is_footnote {
         ("FootnoteReference", W::footnote_ref())
     } else {
         ("EndnoteReference", W::endnote_ref())
     };
+    let r_style = W::r_style();
+    let has_marker = dom.descendants(temp, Some(&r_name)).into_iter().any(|run| {
+        let style = dom
+            .elements(run, Some(&W::r_pr()))
+            .into_iter()
+            .flat_map(|rpr| dom.elements(rpr, Some(&r_style)))
+            .find_map(|st| dom.attribute(st, &W::val()));
+        style == Some(style_val)
+            || dom
+                .find_descendant_element(run, Some(&ref_el), |_| true)
+                .is_some()
+    });
+    if has_marker {
+        return;
+    }
+    let Some(first_para) = dom.find_descendant_element(temp, Some(&W::p()), |_| true) else {
+        return;
+    };
+    let first_run = if direct_child_run {
+        dom.element(first_para, &r_name)
+    } else {
+        dom.find_descendant_element(first_para, Some(&r_name), |_| true)
+    };
+    let Some(first_run) = first_run else {
+        return;
+    };
     let marker = dom.new_element(W::r());
     let own_run = source
-        .and_then(|def| dom.descendants(def, Some(&ref_el)).first().copied())
+        .and_then(|def| dom.find_descendant_element(def, Some(&ref_el), |_| true))
         .and_then(|own| dom.parent(own))
         .filter(|&run| dom.name_is(run, &r_name));
     if let Some(run) = own_run {
@@ -1047,7 +1052,7 @@ fn ensure_reference_marker(
         }
     } else {
         let rpr = dom.new_element(W::r_pr());
-        let rstyle = dom.new_element(W::r_style());
+        let rstyle = dom.new_element(r_style);
         dom.set_attribute_value(rstyle, &W::val(), Some(style_val));
         dom.add(rpr, rstyle);
         dom.add(marker, rpr);
@@ -1417,9 +1422,7 @@ mod deterministic_note_boundary_tests {
                 assert_eq!(dom.attribute(note, &W::type_()), Some(kind));
                 let paragraph = dom.element(note, &W::p()).unwrap();
                 let paragraph_properties = dom.element(paragraph, &W::p_pr()).unwrap();
-                let spacing = dom
-                    .element(paragraph_properties, &W::spacing_el())
-                    .unwrap();
+                let spacing = dom.element(paragraph_properties, &W::spacing_el()).unwrap();
                 assert_eq!(dom.attribute(spacing, &W::name("after")), Some("0"));
                 assert_eq!(dom.attribute(spacing, &W::name("line")), Some("240"));
                 assert_eq!(dom.attribute(spacing, &W::name("lineRule")), Some("auto"));
@@ -1595,6 +1598,31 @@ mod deterministic_note_boundary_tests {
         }
     }
 
+    /// An endnote that still holds its own mark, by element or by style,
+    /// gets no second one (Jules #4377843383): the check is the endnote's,
+    /// not the footnote's.
+    #[test]
+    fn an_endnote_keeps_its_one_mark() {
+        for body in [
+            "<w:p><w:r><w:endnoteRef/></w:r><w:r><w:t>Payload</w:t></w:r></w:p>",
+            "<w:p><w:r><w:rPr><w:rStyle w:val=\"EndnoteReference\"/></w:rPr><w:t>1</w:t></w:r><w:r><w:t>Payload</w:t></w:r></w:p>",
+        ] {
+            let mut dom = Dom::new();
+            let root = parse(&mut dom, &format!("<w:body>{body}</w:body>"));
+            let runs = dom.descendants(root, Some(&W::r())).len();
+            ensure_reference_marker(&mut dom, root, false, true, None);
+            assert_eq!(dom.descendants(root, Some(&W::r())).len(), runs, "{body}");
+        }
+        // A footnote's style on an endnote is no endnote mark.
+        let mut dom = Dom::new();
+        let root = parse(
+            &mut dom,
+            "<w:body><w:p><w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/></w:rPr><w:t>Payload</w:t></w:r></w:p></w:body>",
+        );
+        ensure_reference_marker(&mut dom, root, false, true, None);
+        assert_eq!(dom.descendants(root, Some(&W::endnote_ref())).len(), 1);
+    }
+
     /// The marker put back takes the source definition's own marker run
     /// properties, none when its marker has none, and C#'s bare style only
     /// when it has no marker (#1871).
@@ -1758,7 +1786,7 @@ mod deterministic_note_boundary_tests {
             let abstract_num = dom
                 .elements(before, Some(&W::name("abstractNum")))
                 .into_iter()
-                .find(|&node| dom.attribute(node, &W::name("abstractNumId")) == Some(id))
+                .find(|&node| dom.attribute(node, &W::abstract_num_id()) == Some(id))
                 .unwrap();
             assert!(
                 dom.descendants(abstract_num, Some(&W::name("lvlPicBulletId")))
@@ -1772,7 +1800,7 @@ mod deterministic_note_boundary_tests {
                 .into_iter()
                 .find(|&node| dom.attribute(node, &W::name("numId")) == Some(num_id))
                 .unwrap();
-            let reference = dom.element(number, &W::name("abstractNumId")).unwrap();
+            let reference = dom.element(number, &W::abstract_num_id()).unwrap();
             assert_eq!(
                 dom.attribute(reference, &W::val()),
                 Some(abstract_id),

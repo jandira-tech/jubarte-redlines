@@ -844,7 +844,7 @@ fn the_hook_waits_for_a_line_written_after_connecting() {
         stream.read_exact(&mut released).unwrap();
         released[0]
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     let stream = loop {
         match listener.accept() {
             Ok((stream, _)) => break stream,

@@ -1878,11 +1878,14 @@ fn table_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
         s + &val(dom, pr, "vMerge", "vMerge")
     }
     fn grid(dom: &Dom, g: NodeId) -> String {
-        let cols: Vec<String> = kids(dom, g, "gridCol")
-            .into_iter()
-            .map(|c| attr(dom, c, "w"))
-            .collect();
-        cols.join(",")
+        let mut cols = String::new();
+        for (i, c) in kids(dom, g, "gridCol").into_iter().enumerate() {
+            if i > 0 {
+                cols.push(',');
+            }
+            cols.push_str(&attr(dom, c, "w"));
+        }
+        cols
     }
     /// The first of `marks` among `pr`'s children, as its sign.
     fn sign(dom: &Dom, pr: Option<NodeId>, marks: &[(&str, &'static str)]) -> &'static str {
@@ -1937,32 +1940,41 @@ fn table_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
                     cell.push_str(&format!(" (old{})", cell_props(dom, Some(old))));
                 }
                 // The cell's own paragraphs: `text` lines at depth 0.
-                let paras: Vec<String> = text_lines(dom, tc, false, false)
-                    .0
-                    .into_iter()
-                    .filter(|l| l.starts_with("  ¶"))
-                    .map(|l| l[2..].to_string())
-                    .collect();
-                cell.push_str(&format!(": {}", paras.join(" | ")));
-                out.push(cell);
-                for inner in kids(dom, tc, "tbl") {
-                    table(dom, inner, &format!("{pad}    "), n, out);
+                cell.push_str(": ");
+                let lines = text_lines(dom, tc, false, false).0;
+                for (i, l) in lines.iter().filter(|l| l.starts_with("  ¶")).enumerate() {
+                    if i > 0 {
+                        cell.push_str(" | ");
+                    }
+                    cell.push_str(&l[2..]);
                 }
+                out.push(cell);
+                // Its tables: nested ones and those in its text boxes.
+                find(dom, tc, &format!("{pad}    "), n, out);
             }
         }
     }
-    fn find(dom: &Dom, n: NodeId, count: &mut usize, out: &mut Vec<String>) {
+    /// A WordprocessingML table, Transitional or Strict: a DrawingML
+    /// `a:tbl` in a picture is not one.
+    fn is_table(dom: &Dom, n: NodeId) -> bool {
+        const STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+        dom.name(n).is_some_and(|x| {
+            x.local_name() == "tbl"
+                && matches!(x.namespace_name(), crate::namespaces::W::URI | STRICT)
+        })
+    }
+    fn find(dom: &Dom, n: NodeId, pad: &str, count: &mut usize, out: &mut Vec<String>) {
         for c in dom.nodes(n) {
-            if local(dom, c) == "tbl" {
-                table(dom, c, "  ", count, out);
+            if is_table(dom, c) {
+                table(dom, c, pad, count, out);
             } else if dom.is_element(c) {
-                find(dom, c, count, out);
+                find(dom, c, pad, count, out);
             }
         }
     }
     let mut out = Vec::new();
     let mut count = 0;
-    find(dom, root, &mut count, &mut out);
+    find(dom, root, "  ", &mut count, &mut out);
     (out, count)
 }
 
@@ -3757,6 +3769,35 @@ mod tests {
         assert!(!same.contains("cell"), "{same}");
         let plain = report(&docx("<w:p/>"), None, &opts_for(Check::Tables)).unwrap();
         assert!(!plain.contains("tables"), "{plain}");
+    }
+
+    /// A table in a text box inside a cell is listed under the cell
+    /// (codex #4372490724); a DrawingML `a:tbl` is no document table
+    /// (codex #4372490734).
+    #[test]
+    fn tables_reach_text_boxes_in_cells_and_skip_drawing_tables() {
+        let text_box = concat!(
+            r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml"><v:textbox><w:txbxContent>"#,
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+            r#"</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+        );
+        let drawing_table = concat!(
+            r#"<w:p><w:r><w:drawing><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData>"#,
+            r#"<a:tbl><a:tblGrid><a:gridCol w="100"/></a:tblGrid><a:tr h="1"><a:tc><a:txBody/></a:tc></a:tr></a:tbl>"#,
+            r#"</a:graphicData></a:graphic></w:drawing></w:r></w:p>"#,
+        );
+        let body = format!(
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{text_box}</w:tc></w:tr></w:tbl>{drawing_table}<w:p/>"#
+        );
+        let out = report(&docx(&body), None, &opts_for(Check::Tables)).unwrap();
+        for expected in [
+            "word/document.xml: 2 tables\n",
+            "  table grid=4000\n   row\n    cell",
+            "\n      table grid=1000\n       row\n        cell: ¶  Boxed\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        assert!(!out.contains("grid=100\n"), "{out}");
     }
 
     #[test]

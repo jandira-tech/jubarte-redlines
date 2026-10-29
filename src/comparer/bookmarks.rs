@@ -72,10 +72,24 @@ struct Marker {
     cols: Option<(String, String)>,
     /// The start sits in a content control in its source.
     in_sdt: bool,
-    /// The start leads a paragraph with no text, this many paragraphs before
-    /// the one its next text is in. Its text offset is that text's, so
-    /// placement by offset alone lands in that later paragraph (#1880).
-    textless: Option<usize>,
+    /// The start leads a paragraph with no text, this many paragraphs from
+    /// the one its text offset lands in. Its offset is its next text's, so
+    /// placement by offset alone lands in that later paragraph (#1880); with
+    /// no text after it, the offset is the end of the text before it.
+    textless: Option<Textless>,
+    /// The paragraph without text a leading start sits in, and its place in
+    /// document order (1-based), until `textless` is worked out.
+    leading: Option<(NodeId, usize)>,
+}
+
+/// Where a start's paragraph without text lies from the paragraph its text
+/// offset lands in, in paragraphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Textless {
+    /// Before the paragraph its next text is in.
+    Back(usize),
+    /// After the paragraph the last text is in: no text follows the start.
+    Forward(usize),
 }
 
 /// The nearest enclosing paragraph of `node`, if any.
@@ -119,11 +133,13 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
     let mut occurrences: HashMap<String, usize> = HashMap::new();
     let mut open: HashMap<String, Marker> = HashMap::new();
     let mut markers = Vec::new();
-    // Paragraphs opened so far; where each text node starts and how many
-    // paragraphs had opened by then; each leading start's paragraph and count.
+    // Paragraphs opened so far and each one's place in that order; where
+    // each text node starts and how many paragraphs had opened by then. A
+    // paragraph's place is its own: a text box's paragraphs open after the
+    // paragraph drawing it, never before it.
     let mut paragraphs = 0usize;
+    let mut opened_at: HashMap<NodeId, usize> = HashMap::new();
     let mut text_paragraphs: Vec<(usize, usize)> = Vec::new();
-    let mut leading: HashMap<(String, usize), (NodeId, usize)> = HashMap::new();
     for n in dom.descendant_nodes(body) {
         if dom.is_text(n) {
             if dom.parent(n).is_some_and(|leaf| dom.name_is(leaf, &t)) {
@@ -140,6 +156,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
         }
         if dom.name_is(n, &W::p()) {
             paragraphs += 1;
+            opened_at.insert(n, paragraphs);
             continue;
         }
         let Some(name) = dom.name(n) else { continue };
@@ -173,9 +190,9 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                         .all(|node| !dom.name_is(node, &t) || dom.value(node).is_empty())
                 });
             let ordinal = occurrences.entry(bm.to_string()).or_default();
-            if leads && let Some(p) = paragraph {
-                leading.insert((bm.to_string(), *ordinal), (p, paragraphs));
-            }
+            let leading = paragraph
+                .filter(|_| leads)
+                .and_then(|p| Some((p, *opened_at.get(&p)?)));
             let marker = Marker {
                 ordinal: *ordinal,
                 name: bm.to_string(),
@@ -191,6 +208,7 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 cols,
                 in_sdt: !dom.ancestors(n, Some(&W::sdt())).is_empty(),
                 textless: None,
+                leading,
             };
             *ordinal += 1;
             open.insert(id.to_string(), marker);
@@ -209,18 +227,21 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
     }
     markers.extend(open.into_values());
     for m in &mut markers {
-        let Some(&(p, opened)) = leading.get(&(m.name.clone(), m.ordinal)) else {
+        let Some((p, opened)) = m.leading.take() else {
             continue;
         };
         if with_text.contains(&p) {
             continue;
         }
         let next = text_paragraphs.partition_point(|&(at, _)| at < m.start);
-        if let Some(&(_, holder)) = text_paragraphs.get(next)
-            && holder > opened
-        {
-            m.textless = Some(holder - opened);
-        }
+        m.textless = match text_paragraphs.get(next) {
+            Some(&(_, holder)) => (holder > opened).then(|| Textless::Back(holder - opened)),
+            // No text follows: the offset lands in the last text's paragraph.
+            None => text_paragraphs
+                .last()
+                .filter(|&&(_, holder)| opened > holder)
+                .map(|&(_, holder)| Textless::Forward(opened - holder)),
+        };
     }
     markers.sort_by_key(|m| m.start);
     (text, markers)
@@ -261,32 +282,59 @@ fn map_point(src: &[char], merged: &[char], o: usize, hint: usize, after: bool) 
     None
 }
 
-/// Move a start placed by its text offset back to the paragraph without
-/// text it leads in its source, `gap` paragraphs before the one it was put
-/// in. Paragraphs count on this side's view of the redline, where a
-/// paragraph ends at a mark on that side (a mark of the other side joins
-/// it to the next). An empty range's `end` follows its start.
-fn back_to_textless_paragraph(
+/// Move a start placed by its text offset to the paragraph without text it
+/// leads in its source, `gap` paragraphs from the one it was put in.
+/// Paragraphs count on this side's view of the redline, where a paragraph
+/// ends at a mark on that side (a mark of the other side joins it to the
+/// next); `paragraphs` lists the redline's paragraphs in document order. An
+/// empty range's `end` follows its start.
+fn to_textless_paragraph(
     dom: &mut Dom,
-    root: NodeId,
+    paragraphs: &[NodeId],
     (start, end): (NodeId, Option<NodeId>),
-    gap: usize,
+    gap: Textless,
     b_side: bool,
 ) {
     let Some(here) = paragraph_of(dom, start) else {
         return;
     };
-    let paragraphs = dom.descendants(root, Some(&W::p()));
     let Some(at) = paragraphs.iter().position(|&p| p == here) else {
         return;
     };
-    let marks: Vec<usize> = (0..at)
-        .filter(|&i| mark_on_side(dom, paragraphs[i], b_side))
-        .collect();
-    let Some(index) = marks.len().checked_sub(gap) else {
-        return;
+    let on_side = |&i: &usize| mark_on_side(dom, paragraphs[i], b_side);
+    // The paragraph after a mark on this side opens a paragraph of the view.
+    let target = match gap {
+        Textless::Back(gap) => {
+            // The mark `gap` view paragraphs back, or none when exactly
+            // `gap` marks precede: then the view's first paragraph.
+            let mut seen = 0;
+            let mut mark = None;
+            for i in (0..at).rev().filter(on_side) {
+                if seen == gap {
+                    mark = Some(i);
+                    break;
+                }
+                seen += 1;
+            }
+            match mark {
+                Some(mark) => paragraphs[mark + 1],
+                None if seen == gap => paragraphs[0],
+                None => return,
+            }
+        }
+        Textless::Forward(gap) => {
+            let Some(mark) = gap
+                .checked_sub(1)
+                .and_then(|k| (at..paragraphs.len()).filter(on_side).nth(k))
+            else {
+                return;
+            };
+            let Some(&target) = paragraphs.get(mark + 1) else {
+                return;
+            };
+            target
+        }
     };
-    let target = paragraphs[index.checked_sub(1).map_or(0, |i| marks[i] + 1)];
     dom.remove(start);
     match dom.element(target, &W::p_pr()) {
         Some(ppr) => dom.add_after_self(ppr, start),
@@ -400,6 +448,9 @@ fn inject_side(
     let merged: Vec<char> = merged_text.chars().collect();
     let identical = merged == src;
     let mut hint = 0usize;
+    // Placing endpoints adds no paragraph: list them once, when a start
+    // without text first needs them.
+    let mut paragraphs: Option<Vec<NodeId>> = None;
     for (index, m) in markers.iter().enumerate() {
         let empty = m.end == m.start;
         let (s, e) = if identical {
@@ -452,7 +503,9 @@ fn inject_side(
         }
         if let Some(gap) = m.textless {
             let end = (s >= e).then_some(end);
-            back_to_textless_paragraph(dom, result_root, (start, end), gap, b_side);
+            let paragraphs =
+                paragraphs.get_or_insert_with(|| dom.descendants(result_root, Some(&W::p())));
+            to_textless_paragraph(dom, paragraphs, (start, end), gap, b_side);
         }
         leave_foreign_controls(dom, m, start, end, s >= e);
         // A body endpoint belongs beside the paragraph, even when its
@@ -936,6 +989,7 @@ mod tests {
                 cols: None,
                 in_sdt: false,
                 textless: None,
+                leading: None,
             };
             inject_side(
                 &mut dom,

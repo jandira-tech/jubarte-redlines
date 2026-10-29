@@ -455,6 +455,19 @@ impl Transaction<'_> {
         };
         let shorts: Vec<String> = marks.iter().map(crate::ids::ChangeId::short).collect();
         let revision = crate::changes::composite_id(&shorts);
+        // A mark named twice would be answered twice: its words struck or
+        // restored once per mention.
+        if let Some(twice) = shorts
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| shorts[..i].contains(s).then_some(s))
+        {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("{revision} names {twice} twice"),
+                &outcome,
+            ));
+        }
         let (noun, opposite, other, other_verb) = match visible {
             Visible::Strike => ("insertion", ChangeKind::Deletion, "deletion", "restore"),
             Visible::Restore => ("deletion", ChangeKind::Insertion, "insertion", "strike"),
@@ -522,18 +535,28 @@ impl Transaction<'_> {
                 &outcome,
             ));
         }
+        // The other kind's marks stay, whether or not this answer did
+        // anything: a second strike of a replacement still names its deletion.
+        let rest = (!left.is_empty()).then(|| {
+            format!(
+                "{} is its {other}: {other_verb} it too to reject the whole change",
+                crate::changes::composite_id(&left)
+            )
+        });
         if resolved.is_empty() {
-            outcome.message = Some("already struck".into());
+            outcome.message = Some(match rest {
+                Some(rest) => format!("already struck; {rest}"),
+                None => "already struck".into(),
+            });
             return Ok((Vec::new(), outcome));
         }
         outcome.matches = 1;
         outcome.context = Some(contexts.join(" "));
-        if !left.is_empty() {
+        if let Some(rest) = rest {
             outcome.message = Some(format!(
-                "{} {}; {} is its {other}: {other_verb} it too to reject the whole change",
+                "{} {}; {rest}",
                 visible.past(),
                 crate::changes::composite_id(&done),
-                crate::changes::composite_id(&left),
             ));
         }
         Ok((one_comment(resolved), outcome))

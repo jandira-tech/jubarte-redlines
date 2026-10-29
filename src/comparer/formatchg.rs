@@ -260,10 +260,7 @@ fn is_para_comparison_noise(dom: &Dom, child: NodeId) -> bool {
     let Some(n) = dom.name(child) else {
         return true;
     };
-    n == W::r_pr()
-        || n == W::sect_pr()
-        || n == W::p_pr_change()
-        || n.namespace_name() == PT::URI
+    n == W::r_pr() || n == W::sect_pr() || n == W::p_pr_change() || n.namespace_name() == PT::URI
 }
 
 /// First non-default `w:jc` child of a projected pPr, if any.

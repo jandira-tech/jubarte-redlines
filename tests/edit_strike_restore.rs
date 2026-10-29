@@ -427,6 +427,35 @@ fn a_replacement_is_struck_on_its_insertion_and_restored_on_its_deletion() {
 }
 
 #[test]
+fn a_change_naming_one_mark_twice_is_refused() {
+    // r12+12 would restore r12's words twice (codex #4374535797).
+    let e = refused(&deleted_twice(), &plan(&restore("r12+12")));
+    assert_eq!(e.code, "INVALID_EDIT");
+    assert_eq!(e.message, "r12+12 names r12 twice");
+    let e = refused(&typed_twice("Bob Lee"), &plan(&strike("r10+11+10")));
+    assert_eq!(e.code, "INVALID_EDIT");
+    assert_eq!(e.message, "r10+11+10 names r10 twice");
+}
+
+#[test]
+fn a_replacement_struck_again_still_names_its_deletion() {
+    // Striking r4+5 a second time strikes nothing, but r4 still stands
+    // (codex #4374535802).
+    let once = applied(STEP2, &plan(&json!([{"kind":"strike","revision":"r4+5"}])));
+    assert!(logical_ids(&once.redline).iter().any(|id| id == "r4+5"));
+    let again = applied(
+        &once.redline,
+        &plan(&json!([{"kind":"strike","revision":"r4+5"}])),
+    );
+    let outcome = &again.report.operations[0];
+    assert_eq!(outcome.status, "ok");
+    assert_eq!(
+        outcome.message.as_deref(),
+        Some("already struck; r4 is its deletion: restore it too to reject the whole change")
+    );
+}
+
+#[test]
 fn a_change_with_nothing_of_the_kind_is_refused() {
     let e = refused(&deleted_twice(), &plan(&strike("r12+13")));
     assert_eq!(e.code, "INVALID_EDIT");

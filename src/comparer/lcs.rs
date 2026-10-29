@@ -3399,12 +3399,7 @@ fn unit_is_textless(dom: &Dom, u: &ComparisonUnit) -> bool {
             return dom.value_str(e).trim().is_empty();
         }
         // Visible non-text content is words to Word's chain rule.
-        let visible = [
-            W::drawing(),
-            W::pict(),
-            W::object(),
-            W::name("sym"),
-        ];
+        let visible = [W::drawing(), W::pict(), W::object(), W::name("sym")];
         !visible.iter().any(|n| dom.name_is(e, n))
             && dom.name(e).is_none_or(|n| n.namespace_name() != MATH_URI)
     })
