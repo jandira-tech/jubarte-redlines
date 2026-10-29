@@ -290,7 +290,8 @@ const SECT_ORDER: &[&str] = &[
     "sectPrChange",
 ];
 
-fn sect_rank(local: &str) -> usize {
+/// `local`'s position in [`SECT_ORDER`]; unknown names sort last.
+pub(crate) fn sect_rank(local: &str) -> usize {
     SECT_ORDER
         .iter()
         .position(|&n| n == local)

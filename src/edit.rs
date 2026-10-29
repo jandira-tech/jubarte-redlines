@@ -55,7 +55,7 @@ mod replacement_order;
 pub mod resolution;
 mod rewrite;
 mod runs;
-mod sections;
+pub(crate) mod sections;
 mod skip;
 mod structural;
 mod tracked;

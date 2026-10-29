@@ -3217,8 +3217,12 @@ pub fn closing_mark_takes_revised_properties(
     let revised = dom.clone_subtree(revised);
     dom.add(scratch_p, revised);
     normalize_universal_measures(dom, scratch);
-    strip_redundant_demo_default_spacing(dom, scratch, default_lines);
-    normalize_incomplete_spacing(dom, scratch);
+    // An edit's revised paragraphs keep their spacing as written, and so
+    // does its closing mark.
+    if !settings.preserve_untouched {
+        strip_redundant_demo_default_spacing(dom, scratch, default_lines);
+        normalize_incomplete_spacing(dom, scratch);
+    }
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };

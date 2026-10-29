@@ -307,13 +307,19 @@ pub fn try_compare_bodies_faithful_with_notes(
                     // Word omits default section type `nextPage` on single-section
                     // redlines (format demos score ~87 with type kept vs Word
                     // without). Equal-width cols default is likewise omitted.
+                    // An edit keeps the section as the edited document
+                    // states it.
                     if child == "type"
                         && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
                         && dom.attribute(cc, &W::val()).unwrap_or("") == "nextPage"
                     {
                         continue;
                     }
-                    if child == "cols" && settings.merge_replaced_paragraphs {
+                    if child == "cols"
+                        && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
+                    {
                         let eq = W::name("equalWidth");
                         if matches!(
                             dom.attribute(cc, &eq),
@@ -356,6 +362,37 @@ pub fn try_compare_bodies_faithful_with_notes(
                 match later {
                     Some(l) => dom.add_before_self(l, cc),
                     None => dom.add(clean, cc),
+                }
+            }
+            // An edit keeps the rest of the edited document's section too:
+            // vertical alignment, page borders, line numbers, notes
+            // properties, text direction. Each goes to its schema position.
+            if settings.preserve_untouched {
+                for c in dom.elements(sp, None) {
+                    let Some(name) = dom.name(c) else {
+                        continue;
+                    };
+                    let local = name.local_name().to_string();
+                    if name.namespace_name() != W::URI
+                        || dom.element(clean, &name).is_some()
+                        || matches!(
+                            local.as_str(),
+                            "headerReference" | "footerReference" | "sectPrChange"
+                        )
+                    {
+                        continue;
+                    }
+                    let rank = crate::edit::sections::sect_rank(&local);
+                    let later = dom.elements(clean, None).into_iter().find(|&n| {
+                        dom.name(n).is_some_and(|nm| {
+                            crate::edit::sections::sect_rank(nm.local_name()) > rank
+                        })
+                    });
+                    let cc = dom.clone_subtree(c);
+                    match later {
+                        Some(l) => dom.add_before_self(l, cc),
+                        None => dom.add(clean, cc),
+                    }
                 }
             }
             // Word-mode change record: when the base's final-section geometry
@@ -790,6 +827,14 @@ pub fn try_compare_bodies_faithful_with_notes(
         let merged: Vec<String> = ignorable.into_iter().collect();
         dom.set_attribute_value(document, &mc_ignorable, Some(&merged.join(" ")));
     }
+    // An edit keeps the edited document's page background; the rebuilt
+    // document is otherwise its body alone.
+    if settings.preserve_untouched
+        && let Some(background) = dom.element(source_root2, &W::name("background"))
+    {
+        let background = dom.clone_subtree(background);
+        dom.add(document, background);
+    }
     let body = dom.new_element(W::body());
     for c in body_children {
         dom.add(body, c);
@@ -913,36 +958,41 @@ pub fn try_compare_bodies_faithful_with_notes(
     } else {
         std::collections::HashMap::new()
     };
-    // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
-        let default_line = |dom: &Dom, r: NodeId| {
-            dom.attribute(r, &crate::namespaces::PT::default_line())
-                .map(str::to_string)
-        };
-        let lines = (
-            default_line(dom, source_root1),
-            default_line(dom, source_root2),
-        );
-        finalize::strip_redundant_demo_default_spacing(
-            dom,
-            root,
-            (lines.0.as_deref(), lines.1.as_deref()),
-        );
-        // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
-        // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
-        finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
-        // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
-        finalize::normalize_incomplete_spacing(dom, root);
-        // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
-        finalize::ensure_pure_i_list_snug_spacing(dom, root);
-        // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
-        // (file_14/file_69) need source before/after for LO page parity.
-        // file_33 residual pure-D spacing: M67 strips Heading residual only.
-        // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
-        finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
-        // M390: flatten content controls inside pure-I/D/MIX residual only
-        // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
-        finalize::unwrap_content_controls_in_pure_revisions(dom, root);
+        // An edit's redline keeps the source's properties and the plan's
+        // content as written: these passes restyle what neither side changed.
+        if !settings.preserve_untouched {
+            // Word-mode: drop body spacing that only restates demo pPrDefault
+            // (line=276).
+            let default_line = |dom: &Dom, r: NodeId| {
+                dom.attribute(r, &crate::namespaces::PT::default_line())
+                    .map(str::to_string)
+            };
+            let lines = (
+                default_line(dom, source_root1),
+                default_line(dom, source_root2),
+            );
+            finalize::strip_redundant_demo_default_spacing(
+                dom,
+                root,
+                (lines.0.as_deref(), lines.1.as_deref()),
+            );
+            // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
+            // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
+            finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
+            // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
+            finalize::normalize_incomplete_spacing(dom, root);
+            // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
+            finalize::ensure_pure_i_list_snug_spacing(dom, root);
+            // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
+            // (file_14/file_69) need source before/after for LO page parity.
+            // file_33 residual pure-D spacing: M67 strips Heading residual only.
+            // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
+            finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
+            // M390: flatten content controls inside pure-I/D/MIX residual only
+            // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
+            finalize::unwrap_content_controls_in_pure_revisions(dom, root);
+        }
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
@@ -1039,8 +1089,12 @@ pub fn try_compare_bodies_faithful_with_notes(
             has_default_table_style(dom, source_root1),
             has_default_table_style(dom, source_root2),
         );
-        finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
-        finalize::ensure_default_page_size(dom, root);
+        // Word Compare's own table margins and page size are not the
+        // source's: an edit keeps the source's.
+        if !settings.preserve_untouched {
+            finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
+            finalize::ensure_default_page_size(dom, root);
+        }
         // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
         // mutation inside — structure folds re-classify after this block).
         finalize::begin_para_classification_cache();
@@ -1051,8 +1105,12 @@ pub fn try_compare_bodies_faithful_with_notes(
             finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
         }
         // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
-        // equal-spacing pPrChange strip, default jc=left strip.
-        finalize::cleanup_spacing_and_default_jc(dom, root);
+        // equal-spacing pPrChange strip, default jc=left strip. The strip
+        // reaches untouched paragraphs, and `left` overrides a style that
+        // aligns otherwise: an edit keeps it.
+        if !settings.preserve_untouched {
+            finalize::cleanup_spacing_and_default_jc(dom, root);
+        }
         // M92 after M69 strip path may leave empty with live spacing.
         finalize::trailing_empty_spacing_to_pprchange(
             dom,
@@ -1236,10 +1294,13 @@ pub fn try_compare_bodies_faithful_with_notes(
         // Default nextPage, false cantSplit, rtl 0, table jc left, line=276
         // on a deleted mark, and an inserted pilcrow on a mixed paragraph
         // are absent from Word's redline once the text matches.
-        finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
         // Table look and comment-reference size are present on Word's
         // redline whenever this corpus has the underlying table or mark.
-        finalize::align_word_table_and_comment_chrome(dom, root);
+        // Both reach untouched content: an edit keeps the source's.
+        if !settings.preserve_untouched {
+            finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
+            finalize::align_word_table_and_comment_chrome(dom, root);
+        }
     }
     // Word marks a changed text box's words inside the one box; the diff
     // sees the box as one opaque run and deletes and inserts it whole.
@@ -1422,6 +1483,13 @@ pub struct WmlComparerSettings {
     /// do not tune.
     #[doc(hidden)]
     pub in_word_level_paragraph: bool,
+    /// Internal — true while `edit` builds its redline (#1868). The revised
+    /// document is the source with the plan applied, so what the plan did
+    /// not touch must come out as the source has it: the Word-visual passes
+    /// that restyle, respace or unwrap untouched content, or rename and merge
+    /// the stylesheet, stay off. Do not tune.
+    #[doc(hidden)]
+    pub preserve_untouched: bool,
 }
 
 /// Word-visual default for [`WmlComparerSettings::detail_threshold`] —
@@ -1530,6 +1598,7 @@ impl Default for WmlComparerSettings {
             input_limits: InputLimits::compare(),
             in_stamp_residual: false,
             in_word_level_paragraph: false,
+            preserve_untouched: false,
         }
     }
 }

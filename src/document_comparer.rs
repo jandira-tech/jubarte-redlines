@@ -4715,6 +4715,17 @@ pub fn pre_process_markup(
     pkg: &mut PartFs,
     starting_id_for_footnotes_endnotes: i32,
 ) -> Result<Vec<String>, OpcError> {
+    pre_process(pkg, starting_id_for_footnotes_endnotes, false)
+}
+
+/// [`pre_process_markup`]. `keep_unresolved_styles` leaves a reference to a
+/// style the stylesheet lacks in place: an edit's two sides share one
+/// stylesheet, so the reference cannot take the other side's style (#1868).
+fn pre_process(
+    pkg: &mut PartFs,
+    starting_id_for_footnotes_endnotes: i32,
+    keep_unresolved_styles: bool,
+) -> Result<Vec<String>, OpcError> {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -4783,7 +4794,9 @@ pub fn pre_process_markup(
         // lacks as unstyled. Kept until the stylesheets merge, the reference
         // took the other document's style of that id (221577c35b: the
         // original's Normal text turned into the revision's headings).
-        if let Some(ids) = &style_ids {
+        if let Some(ids) = &style_ids
+            && !keep_unresolved_styles
+        {
             crate::comparer::footnotes::strip_unresolved_style_refs(&mut dom, r, ids);
         }
     }
@@ -6595,8 +6608,9 @@ fn compare_documents_impl(
 
     // Accept-before-diff flattens a revised insertion into live text, so a late
     // pass can no longer see where that insertion ended. Keep both main parts
-    // from this moment. Faithful mode never reads them.
-    let ladder_sources = if settings.merge_replaced_paragraphs {
+    // from this moment. Faithful mode never reads them, nor does an edit:
+    // the ladder matches Word Compare's shapes, not the plan's.
+    let ladder_sources = if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
         match (
             main_part_xml(&original_owned, settings.input_limits),
             main_part_xml(&modified_owned, settings.input_limits),
@@ -6635,21 +6649,32 @@ fn compare_documents_impl(
     let mut pkg1 = PartFs::open_within(original, settings.input_limits)?;
     let mut pkg2 = PartFs::open_within(modified, settings.input_limits)?;
 
+    // The notes parts the original has before preprocessing adds empty ones.
+    let original_notes = {
+        let (footnotes, endnotes) = notes_part_names(&pkg1);
+        (
+            pkg1.part_bytes(&footnotes).is_some(),
+            pkg1.part_bytes(&endnotes).is_some(),
+        )
+    };
+
     // CompareInternal :154–:155 — disjoint footnote/endnote id spaces: doc A
     // gets starting_id+1000, doc B +2000 (block hashing ignores ref ids, so
     // correlation is unaffected; the disjoint spaces make reference-driven
     // note pairing sound).
     let changed1 = if pre_process_original {
-        pre_process_markup(
+        pre_process(
             &mut pkg1,
             settings.starting_id_for_footnotes_endnotes + 1000,
+            settings.preserve_untouched,
         )?
     } else {
         Vec::new()
     };
-    pre_process_markup(
+    pre_process(
         &mut pkg2,
         settings.starting_id_for_footnotes_endnotes + 2000,
+        settings.preserve_untouched,
     )?;
 
     let main1 = pkg1
@@ -6899,7 +6924,10 @@ fn compare_documents_impl(
                 let fd = sd.parse_xdocument(&from_xml);
                 if let (Some(tr), Some(fr)) = (sd.root(td), sd.root(fd)) {
                     if is_styles {
-                        if settings.merge_replaced_paragraphs {
+                        // An edit's revised stylesheet is the source's plus
+                        // what the plan added, under the same ids: copy the
+                        // additions, rename nothing.
+                        if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
                             let a_ids = crate::comparer::footnotes::defined_style_ids(&sd, tr);
                             materialize_builtin_paragraph_defaults(&mut sd, tr);
                             materialize_builtin_paragraph_defaults(&mut sd, fr);
@@ -7067,20 +7095,28 @@ fn compare_documents_impl(
             // A has no numbering part, B does (file_21×file_22): copy B's
             // numbering wholesale + document rel. Prior match required both
             // sides present → insert-heavy next with lists lost numbering.
-            (None, Some(from_xml)) if !is_styles => {
+            // An edit takes the stylesheet its plan created the same way.
+            (None, Some(from_xml)) if !is_styles || settings.preserve_untouched => {
+                let kind = if is_styles { "styles" } else { "numbering" };
                 out.set_part(part, from_xml.into_bytes());
                 out.add_content_type_override(
                     &format!("/{part}"),
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                    &format!(
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
+                    ),
                 );
-                let has_num_rel = out
-                    .read_rels_for(&main1)
-                    .is_some_and(|r| r.items.iter().any(|i| i.rel_type.ends_with("/numbering")));
-                if !has_num_rel {
+                let has_rel = out.read_rels_for(&main1).is_some_and(|r| {
+                    r.items
+                        .iter()
+                        .any(|i| i.rel_type.ends_with(&format!("/{kind}")))
+                });
+                if !has_rel {
                     out.add_document_relationship(
                         &main1,
-                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
-                        "numbering.xml",
+                        &format!(
+                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}"
+                        ),
+                        &format!("{kind}.xml"),
                     );
                 }
             }
@@ -7114,7 +7150,11 @@ fn compare_documents_impl(
                 }
             }
             // A has styles, B has none: still canonicalize A's ids (Word does).
-            (Some(to_xml), None) if is_styles && settings.merge_replaced_paragraphs => {
+            (Some(to_xml), None)
+                if is_styles
+                    && settings.merge_replaced_paragraphs
+                    && !settings.preserve_untouched =>
+            {
                 let mut sd = Dom::new();
                 let td = sd.parse_xdocument(&to_xml);
                 if let Some(tr) = sd.root(td) {
@@ -7172,8 +7212,12 @@ fn compare_documents_impl(
     // thin. When BOTH sides are bare demos (C5 formatting one-pagers), Word
     // still saves factory settings/theme/fontTable — inject if still missing.
     if settings.merge_replaced_paragraphs {
-        adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
-        ensure_factory_package_chrome(&mut out, &main1);
+        // An edit's source keeps the parts it has: no chrome comes from
+        // Word's blank document.
+        if !settings.preserve_untouched {
+            adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
+            ensure_factory_package_chrome(&mut out, &main1);
+        }
         repair_missing_core_relationships(&mut out, &main1);
         merge_custom_properties(&mut out, &pkg2);
         // M492: deleted paragraphs keep their A-ORIGINAL direct spacing.
@@ -7283,7 +7327,8 @@ fn compare_documents_impl(
     // Word-parity: strip pStyle/rStyle that styles.xml does not define. LO maps
     // built-in names (Heading1, Title, …) even when the style entry is absent;
     // Word's redline omits the attribute entirely (heading_1_bold×heading_1_style).
-    if settings.merge_replaced_paragraphs {
+    // An edit keeps the source's references as they are.
+    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
         // POSTSTEP-STYLES-CACHE-01: reuse the defined-style-id set captured after
         // styles-copy instead of re-parsing word/styles.xml. Fall back to a fresh
         // parse only when styles-copy did not run (no output stylesheet).
@@ -7338,7 +7383,8 @@ fn compare_documents_impl(
     // 111 → 117 pages with this patch, GT 116). Provenance: when B's Normal
     // pPr is empty/absent, Word resolves it to FACTORY defaults
     // (after=160 line=278 lineRule=auto — matches neither side's docDefaults).
-    if settings.merge_replaced_paragraphs {
+    // An edit's Normal is the source's.
+    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
         // POSTSTEP-STYLES-CACHE-02: reuse the arena styles-copy already parsed;
         // fall back to a fresh parse of both stylesheets only when it did not run.
         let arena = styles_arena.take().or_else(|| {
@@ -7657,7 +7703,8 @@ fn compare_documents_impl(
     // the document references a numId no w:num defines — dangling numbering
     // silently renders lists as plain paragraphs; Word repairs it on open, so
     // match it at compare time (evidence: nested-table-rowspan_numbered-list).
-    if settings.merge_replaced_paragraphs {
+    // An edit leaves the source's numbering as Word opens it.
+    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
         let num_id = W::name("numId");
         let mut referenced: Vec<String> = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -7778,6 +7825,34 @@ fn compare_documents_impl(
     // shells or skipped; copy B's separator/continuationSeparator notes.
     if settings.merge_replaced_paragraphs {
         adopt_b_notes_when_a_lacks_separators(&mut out, &pkg1, &pkg2, &main1);
+    }
+    // An edit leaves no empty notes part the source did not have: the one
+    // preprocessing added held nothing the plan wrote.
+    if settings.preserve_untouched {
+        for (had, ids, kind) in [
+            (original_notes.0, &footnote_ids, "footnotes"),
+            (original_notes.1, &endnote_ids, "endnotes"),
+        ] {
+            if had || !ids.is_empty() {
+                continue;
+            }
+            let rel_type = format!(
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}"
+            );
+            let rel_ids: Vec<String> = out
+                .read_rels_for(&main1)
+                .map(|rels| {
+                    rels.items
+                        .iter()
+                        .filter(|r| r.rel_type == rel_type)
+                        .map(|r| r.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for id in rel_ids {
+                out.remove_related_part(&main1, &id);
+            }
+        }
     }
     // settings.xml may still list special footnote/endnote ids (e.g. id=1
     // continuationNotice) that rectify dropped. Dangling settings refs make
@@ -8034,8 +8109,9 @@ fn compare_documents_impl(
                 if part == main1 {
                     crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
                     // Word-visual chrome. Faithful mode runs none of these;
-                    // the body path already gates them the same way.
-                    if settings.merge_replaced_paragraphs {
+                    // the body path already gates them the same way, and an
+                    // edit keeps the source's markup and the plan's links.
+                    if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
                         // Package steps can put a default nextPage back into the
                         // recorded sectPr, or leave line=276 on a deleted mark.
                         let original_line = pkg1

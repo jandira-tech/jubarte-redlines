@@ -1452,9 +1452,12 @@ fn produce(
             marked = Some(refresh(bytes)?.docx);
         }
     }
+    // Accept All gives back `clean`: the comparer leaves what the plan did
+    // not touch as the source has it (#1868).
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
         date_time_for_revisions: tx.date.clone(),
+        preserve_untouched: true,
         ..WmlComparerSettings::default()
     };
     let revised = marked.as_deref().unwrap_or(&clean);
