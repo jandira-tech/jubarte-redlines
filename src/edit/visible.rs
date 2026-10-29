@@ -13,8 +13,9 @@
 //! and the run formatting kept.
 
 use super::{
-    EditError, EditOutcome, EditPlan, ExistingRevisions, OperationKind, Resolved, Transaction,
-    check_comment, comment_marker, comment_reference_run, editable_insertion, err, excerpt, run_of,
+    EditError, EditOutcome, EditPlan, ExistingRevisions, OperationKind, Resolved, Side,
+    Transaction, check_comment, comment_marker, comment_reference_run, editable_insertion, err,
+    excerpt, run_of,
 };
 use crate::changes::{Change, ChangeKind, MoveSide};
 use crate::inspect::project_paragraph;
@@ -341,6 +342,10 @@ fn offset_before(tx: &Transaction<'_>, para: usize, node: NodeId) -> usize {
 
 type Failure = Box<(EditError, EditOutcome)>;
 
+/// The refusal of a comment outside the body.
+const BODY_ONLY: &str =
+    "comments are supported in the body only: Word cannot anchor one in a header, footer or note";
+
 impl Transaction<'_> {
     /// Resolve a `strike` or a `restore` of `revision`: the text deletions
     /// that strike their insertion, or the copy that restores their
@@ -433,19 +438,19 @@ impl Transaction<'_> {
             (Visible::Restore, ChangeKind::Move, Some(MoveSide::From)) => Some((
                 "UNSUPPORTED_STRUCTURE",
                 format!(
-                    "{short} is the source of a move: restoring it would duplicate the moved words; reject the move ({short}) instead"
+                    "{short} is the source of a move: restoring it would duplicate the moved words; comment on it instead"
                 ),
             )),
             (Visible::Strike, ChangeKind::Move, Some(MoveSide::To)) => Some((
                 "UNSUPPORTED_STRUCTURE",
                 format!(
-                    "{short} is the destination of a move: striking it would lose the moved words; reject the move ({short}) instead"
+                    "{short} is the destination of a move: striking it would lose the moved words; comment on it instead"
                 ),
             )),
             (_, ChangeKind::Move, _) => Some((
                 "INVALID_EDIT",
                 format!(
-                    "{short} is a move, not {}: reject the move ({short}) instead",
+                    "{short} is a move, not {}: comment on it instead",
                     match visible {
                         Visible::Strike => "an insertion",
                         Visible::Restore => "a deletion",
@@ -461,7 +466,7 @@ impl Transaction<'_> {
             (_, ChangeKind::Formatting, _) => Some((
                 "INVALID_EDIT",
                 format!(
-                    "{short} is a formatting change; {verb} takes {} text: reject {short} to undo it (no visible reject of formatting yet; it leaves no trace)",
+                    "{short} is a formatting change; {verb} takes {} text: comment on it instead",
                     visible.takes()
                 ),
             )),
@@ -471,21 +476,10 @@ impl Transaction<'_> {
         }
         let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
         match change.target {
-            "text" => {}
-            "paragraph_mark" => {
-                let paragraph = change.paragraph.as_deref().unwrap_or("its paragraph");
-                return Err(unsupported(match visible {
-                    Visible::Strike => format!(
-                        "{short} is an inserted paragraph mark; strike takes inserted text only: delete paragraph {paragraph} to strike it with its mark"
-                    ),
-                    Visible::Restore => format!(
-                        "{short} is a deleted paragraph mark; restore takes deleted text only: reject {short} to put the paragraph break back"
-                    ),
-                }));
-            }
+            "text" | "paragraph_mark" => {}
             other => {
                 return Err(unsupported(format!(
-                    "{short} is {} {}; {verb} takes {} text only: reject {short} instead",
+                    "{short} is {} {}; {verb} takes {} text only: comment on it instead",
                     match visible {
                         Visible::Strike => "an inserted",
                         Visible::Restore => "a deleted",
@@ -498,6 +492,9 @@ impl Transaction<'_> {
         let Some(story) = self.stories.iter().position(|s| s.id == one.story) else {
             return Err(fail("UNKNOWN_CHANGE", unknown(), &outcome));
         };
+        if change.target == "paragraph_mark" {
+            return self.resolve_visible_mark(id, visible, story, one, comment, outcome);
+        }
         let local_name = match visible {
             Visible::Strike => "ins",
             Visible::Restore => "del",
@@ -519,18 +516,14 @@ impl Transaction<'_> {
         let Some(first_para) = nodes.iter().find_map(|&n| paragraph_of(n)) else {
             return Err(fail(
                 "UNSUPPORTED_STRUCTURE",
-                format!("{short} is not in a paragraph jubarte edits; reject {short} instead"),
+                format!("{short} is not in a paragraph jubarte edits"),
                 &outcome,
             ));
         };
         outcome.paragraph = Some(self.paragraph_id(first_para));
         let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
         if comment.is_some() && self.paragraph_story[first_para].0 != 0 {
-            return Err(fail(
-                "COMMENT_NOT_IN_BODY",
-                "comments are supported in the body only: Word cannot anchor one in a header, footer or note".into(),
-                &outcome,
-            ));
+            return Err(fail("COMMENT_NOT_IN_BODY", BODY_ONLY.into(), &outcome));
         }
         match visible {
             Visible::Strike => {
@@ -540,12 +533,12 @@ impl Transaction<'_> {
                 for &ins in &nodes {
                     if let Some(what) = unsupported_child(dom, ins, &["del"]) {
                         return Err(unsupported(format!(
-                            "{short} holds {what}; strike takes plain inserted text only: reject {short} instead, or comment on it"
+                            "{short} holds {what}; strike takes plain inserted text only: comment on it instead"
                         )));
                     }
                     let Some(para) = paragraph_of(ins) else {
                         return Err(unsupported(format!(
-                            "{short} is not in a paragraph jubarte edits; reject {short} instead"
+                            "{short} is not in a paragraph jubarte edits"
                         )));
                     };
                     let projection = &self.projections[para];
@@ -559,7 +552,7 @@ impl Transaction<'_> {
                         }
                         if editable_insertion(dom, &segment.piece) != Some(ins) {
                             return Err(unsupported(format!(
-                                "{short} holds a field's result; strike takes plain inserted text only: reject {short} instead, or comment on it"
+                                "{short} holds a field's result; strike takes plain inserted text only: comment on it instead"
                             )));
                         }
                         match ranges.last_mut() {
@@ -608,7 +601,7 @@ impl Transaction<'_> {
             Visible::Restore => {
                 let &[del] = nodes.as_slice() else {
                     return Err(unsupported(format!(
-                        "{short} is split over several places; restore takes one deleted stretch: reject {short} instead"
+                        "{short} is split over several places; restore takes one deleted stretch: comment on it instead"
                     )));
                 };
                 let parent = dom.parent(del).expect("a run-level deletion has a parent");
@@ -620,7 +613,7 @@ impl Transaction<'_> {
                         _ => "markup that is not a paragraph",
                     };
                     return Err(unsupported(format!(
-                        "{short} sits inside {inside}; restore takes deleted text in a paragraph only: reject {short} instead"
+                        "{short} sits inside {inside}; restore takes deleted text in a paragraph only: comment on it instead"
                     )));
                 }
                 let marks: Vec<String> = dom
@@ -630,12 +623,12 @@ impl Transaction<'_> {
                     .collect();
                 if !holds_words(dom, del) {
                     let message = match marks.as_slice() {
-                        [] => format!("{short} holds no text; reject {short} instead"),
+                        [] => format!("{short} holds no text: nothing to restore"),
                         [one] => format!(
-                            "{short} holds no text, only comment {one}'s mark; reject {short} to keep {one}"
+                            "{short} holds no text, only comment {one}'s mark: nothing to restore"
                         ),
                         many => format!(
-                            "{short} holds no text, only the marks of comments {}; reject {short} to keep them",
+                            "{short} holds no text, only the marks of comments {}: nothing to restore",
                             many.join(", ")
                         ),
                     };
@@ -643,7 +636,7 @@ impl Transaction<'_> {
                 }
                 if let Some(what) = unsupported_child(dom, del, &[]) {
                     return Err(unsupported(format!(
-                        "{short} holds {what}; restore takes plain deleted text only: reject {short} instead"
+                        "{short} holds {what}; restore takes plain deleted text only: comment on it instead"
                     )));
                 }
                 let at = offset_before(self, first_para, del);
@@ -669,5 +662,138 @@ impl Transaction<'_> {
                 ))
             }
         }
+    }
+
+    /// Resolve a `strike` or a `restore` of paragraph mark `one`, in
+    /// `story`. A strike joins its paragraph to the next one: our deletion
+    /// joins their insertion in the mark. A restore puts right after its
+    /// paragraph an empty one of ours, with its properties and mark
+    /// formatting, whose mark is our insertion. Accepted, either reads as
+    /// their change rejected. A comment sits on the last word before the
+    /// break.
+    fn resolve_visible_mark(
+        &self,
+        id: &str,
+        visible: Visible,
+        story: usize,
+        one: &crate::ids::ChangeId,
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
+        let short = one.short();
+        let fail = |code: &str, message: String, outcome: &EditOutcome| {
+            Box::new((err(code, Some(id), message), outcome.clone()))
+        };
+        let dom = &self.opened.dom;
+        let local_name = match visible {
+            Visible::Strike => "ins",
+            Visible::Restore => "del",
+        };
+        let in_mark = |n: NodeId| {
+            dom.parent(n).is_some_and(|rpr| {
+                dom.name_is(rpr, &W::r_pr())
+                    && dom
+                        .parent(rpr)
+                        .is_some_and(|ppr| dom.name_is(ppr, &W::p_pr()))
+            })
+        };
+        let Some(para) = dom
+            .descendants(self.stories[story].root, Some(&W::name(local_name)))
+            .into_iter()
+            .filter(|&n| dom.attribute(n, &W::id()) == Some(one.wid.as_str()) && in_mark(n))
+            .find_map(|n| {
+                let p = *dom.ancestors(n, Some(&W::p())).first()?;
+                self.paragraph_nodes.iter().position(|&m| m == p)
+            })
+        else {
+            return Err(fail(
+                "UNSUPPORTED_STRUCTURE",
+                format!("{short} is not in a paragraph jubarte edits"),
+                &outcome,
+            ));
+        };
+        outcome.paragraph = Some(self.paragraph_id(para));
+        if comment.is_some() && self.paragraph_story[para].0 != 0 {
+            return Err(fail("COMMENT_NOT_IN_BODY", BODY_ONLY.into(), &outcome));
+        }
+        let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
+        let what = match visible {
+            Visible::Strike => "an inserted",
+            Visible::Restore => "a deleted",
+        };
+        let node = self.paragraph_nodes[para];
+        let ppr = dom.element(node, &W::p_pr());
+        if ppr.is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some()) {
+            let cannot = match visible {
+                Visible::Strike => "striking it would drop the section break",
+                Visible::Restore => "restore cannot put a section break back",
+            };
+            return Err(unsupported(format!(
+                "{short} is {what} paragraph mark that ends a section; {cannot}: comment on it instead"
+            )));
+        }
+        let Ok(next) = self.merge_partner(para) else {
+            let only = match visible {
+                Visible::Strike => "strike joins two paragraphs only",
+                Visible::Restore => "restore parts two paragraphs only",
+            };
+            return Err(unsupported(format!(
+                "{short} is {what} paragraph mark with no paragraph right after it; {only}: comment on it instead"
+            )));
+        };
+        let struck = ppr
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+            .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
+        if visible == Visible::Strike && struck {
+            outcome.message = Some("already struck".into());
+            return Ok((Vec::new(), outcome));
+        }
+        let text = &self.projections[para].text;
+        let chars: Vec<char> = text.chars().collect();
+        let tail: String = chars[chars.len().saturating_sub(20)..].iter().collect();
+        let (edit, mark) = match visible {
+            Visible::Strike => (
+                Resolved::MergeParagraphs {
+                    para,
+                    next,
+                    separator: String::new(),
+                    strike: true,
+                },
+                "{-¶}",
+            ),
+            Visible::Restore => (
+                Resolved::InsertParagraph {
+                    anchor: para,
+                    side: Side::After,
+                    runs: Vec::new(),
+                    like: para,
+                    style: None,
+                    comment: None,
+                    toc: None,
+                    keep_mark: true,
+                },
+                "{+¶}",
+            ),
+        };
+        outcome.matches = 1;
+        outcome.context = Some(format!(
+            "{tail}{mark}{}",
+            excerpt(&self.projections[next].text, 20)
+        ));
+        // The last word before the break, or the break itself in an empty
+        // paragraph.
+        let words = text.trim_end();
+        let start = words
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        let comment = comment.map(|note| Resolved::CommentRange {
+            para,
+            start,
+            end: words.len(),
+            text: note.to_string(),
+        });
+        Ok((std::iter::once(edit).chain(comment).collect(), outcome))
     }
 }

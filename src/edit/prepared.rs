@@ -1012,6 +1012,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                 para,
                 next,
                 separator,
+                ..
             } => {
                 merges.push((*para, *next, separator.clone(), tx.outcomes[*op].id.clone()));
             }
