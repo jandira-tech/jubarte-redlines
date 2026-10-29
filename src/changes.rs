@@ -1625,7 +1625,7 @@ pub(crate) fn reported_date(local: Option<&str>, utc: Option<&str>) -> Option<St
 
 /// The revision elements under `root`, in document order.
 fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
-    let id_attr = W::name("id");
+    let id_attr = W::id();
     let name_attr = W::name("name");
     // Open move ranges, innermost last: (range id, move name).
     let mut open_from: Vec<(String, String)> = Vec::new();
@@ -1709,7 +1709,7 @@ fn carriers(dom: &Dom, root: NodeId, story: &str) -> Vec<Carrier> {
                 r#ref: crate::ids::ChangeId::new(story, id.as_str()).short(),
                 kind,
                 target,
-                author: dom.attribute(e, &W::name("author")).map(str::to_string),
+                author: dom.attribute(e, &W::author()).map(str::to_string),
                 date: revision_date(|ns, local| dom.attribute(e, &XName::get(local, ns))),
                 text,
                 paragraph: None,
@@ -1758,7 +1758,7 @@ fn held_comment_marks(dom: &Dom, e: NodeId, target: &str) -> Vec<String> {
     };
     let mut held = Vec::new();
     for mark in content
-        .map(|c| dom.descendants(c, Some(&W::name("commentReference"))))
+        .map(|c| dom.descendants(c, Some(&W::comment_reference())))
         .unwrap_or_default()
     {
         if let Some(id) = dom.attribute(mark, &W::id()) {
@@ -2009,7 +2009,7 @@ fn deleted_text(dom: &Dom, e: NodeId) -> Vec<NodeId> {
     if dom.name(e) != Some(del.clone()) {
         return Vec::new();
     }
-    let (text, instr) = (W::name("delText"), W::name("delInstrText"));
+    let (text, instr) = (W::del_text(), W::del_instr_text());
     dom.descendants(e, None)
         .into_iter()
         .filter(|&d| dom.name(d).is_some_and(|n| n == text || n == instr))
@@ -2019,7 +2019,7 @@ fn deleted_text(dom: &Dom, e: NodeId) -> Vec<NodeId> {
 
 /// Inserted, deleted or moved text under `e`.
 fn text_of(dom: &Dom, e: NodeId) -> String {
-    let (t, del) = (W::t(), W::name("delText"));
+    let (t, del) = (W::t(), W::del_text());
     dom.descendants(e, None)
         .into_iter()
         .filter(|&d| dom.name(d).is_some_and(|n| n == t || n == del))

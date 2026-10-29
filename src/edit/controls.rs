@@ -132,7 +132,7 @@ impl Transaction<'_> {
         let block = dom.ancestors(sdt, Some(&W::p())).is_empty();
         if let Some(content) = content
             && dom.elements(content, None).into_iter().any(|c| {
-                [W::name("tr"), W::name("tc"), W::tbl()]
+                [W::tr(), W::tc(), W::tbl()]
                     .iter()
                     .any(|n| dom.name_is(c, n))
             })
@@ -411,7 +411,7 @@ impl Transaction<'_> {
         let (y, m, d) = parse_date(date)
             .ok_or_else(|| format!("date {date:?} is not a calendar date in YYYY-MM-DD form"))?;
         let pattern = pr
-            .and_then(|pr| dom.element(pr, &W::name("date")))
+            .and_then(|pr| dom.element(pr, &W::date()))
             .and_then(|e| dom.element(e, &W::name("dateFormat")))
             .and_then(|f| dom.attribute(f, &W::val()))
             .unwrap_or("yyyy-MM-dd");
@@ -530,7 +530,7 @@ fn fill(dom: &mut Dom, sdt: NodeId, block: bool, value: &FillValue) {
     let text = match value {
         FillValue::Text(text) => text.clone(),
         FillValue::Date { full, text } => {
-            if let Some(date) = dom.element(pr, &W::name("date")) {
+            if let Some(date) = dom.element(pr, &W::date()) {
                 dom.set_attribute_value(date, &W::name("fullDate"), Some(full));
             }
             text.clone()

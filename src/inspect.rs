@@ -829,7 +829,7 @@ impl Opened {
                             .descendants(part_root, Some(&W::name("style")))
                             .into_iter()
                             .any(|style| {
-                                part_dom.attribute(style, &W::name("type")) == Some("paragraph")
+                                part_dom.attribute(style, &W::type_()) == Some("paragraph")
                                     && !part_dom.descendants(style, Some(&W::num_pr())).is_empty()
                             });
                         summary.list_numbering |= numbered_style;
@@ -977,7 +977,7 @@ fn note_count(dom: &Dom, root: NodeId, local: &str) -> usize {
         .iter()
         .filter(|&&node| {
             !matches!(
-                dom.attribute(node, &W::name("type")),
+                dom.attribute(node, &W::type_()),
                 Some("separator" | "continuationSeparator")
             )
         })
@@ -1180,9 +1180,9 @@ pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
         .into_iter()
         .filter(|&p| {
             !dom.ancestors(p, None).into_iter().any(|a| {
-                (dom.name_is(a, &W::name("footnote")) || dom.name_is(a, &W::name("endnote")))
+                (dom.name_is(a, &W::footnote()) || dom.name_is(a, &W::endnote()))
                     && matches!(
-                        dom.attribute(a, &W::name("type")),
+                        dom.attribute(a, &W::type_()),
                         Some("separator" | "continuationSeparator" | "continuationNotice")
                     )
             })
@@ -1424,7 +1424,7 @@ fn walk_run(
             }
             "tab" | "ptab" => glyph(out, '\t'),
             "cr" => glyph(out, '\n'),
-            "br" => match dom.attribute(child, &W::name("type")) {
+            "br" => match dom.attribute(child, &W::type_()) {
                 Some("page") => out.page_break = true,
                 Some("column") => {
                     out.limitations.insert("column_break".into());

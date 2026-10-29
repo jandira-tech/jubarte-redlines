@@ -318,7 +318,7 @@ fn sect_child(dom: &mut Dom, sect: NodeId, local: &str) -> NodeId {
 /// Write `geometry` into `sect`'s `w:pgSz` and `w:pgMar`.
 pub(super) fn write_geometry(dom: &mut Dom, sect: NodeId, geometry: &Geometry) {
     let size = sect_child(dom, sect, "pgSz");
-    dom.set_attribute_value(size, &W::name("w"), Some(&geometry.width.to_string()));
+    dom.set_attribute_value(size, &W::w(), Some(&geometry.width.to_string()));
     dom.set_attribute_value(size, &W::name("h"), Some(&geometry.height.to_string()));
     dom.set_attribute_value(
         size,

@@ -906,7 +906,7 @@ pub(super) fn revision_pair(dom: &Dom, el: NodeId, story: &str, part: &str) -> T
         .name(el)
         .map(|n| n.local_name().to_string())
         .unwrap_or_default();
-    let wid = dom.attribute(el, &W::name("id")).unwrap_or_default();
+    let wid = dom.attribute(el, &W::id()).unwrap_or_default();
     let short = crate::ids::ChangeId::new(story, wid).short();
     let stem = crate::ids::part_story(part);
     let usable = super::native_keys::revision_id(wid).is_some();
@@ -980,7 +980,7 @@ fn classify(
                     "move"
                 };
                 let revision = revision_pair(dom, node, story, part);
-                let author = dom.attribute(node, &W::name("author"));
+                let author = dom.attribute(node, &W::author());
                 return (
                     kind.to_string(),
                     "conditional".to_string(),
@@ -1067,7 +1067,7 @@ fn obstacles(
             revisions.push(RevisionRef {
                 target: pair,
                 kind: kind.to_string(),
-                author: dom.attribute(el, &W::name("author")).map(str::to_string),
+                author: dom.attribute(el, &W::author()).map(str::to_string),
                 range,
                 basis: "working".to_string(),
             });
@@ -1237,19 +1237,19 @@ fn obstacles(
             mark_revisions.push(RevisionRef {
                 target: pair,
                 kind: kind.to_string(),
-                author: dom.attribute(el, &W::name("author")).map(str::to_string),
+                author: dom.attribute(el, &W::author()).map(str::to_string),
                 range: None,
                 basis: "working".to_string(),
             });
         }
     }
     // Recorded formatting changes stay visible as references, not blockers.
-    for el in dom.descendants(paragraph, Some(&W::name("rPrChange"))) {
+    for el in dom.descendants(paragraph, Some(&W::r_pr_change())) {
         let pair = revision_pair(dom, el, story, part);
         revisions.push(RevisionRef {
             target: pair,
             kind: "formatting".to_string(),
-            author: dom.attribute(el, &W::name("author")).map(str::to_string),
+            author: dom.attribute(el, &W::author()).map(str::to_string),
             range: None,
             basis: "working".to_string(),
         });

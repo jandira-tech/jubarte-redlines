@@ -287,7 +287,7 @@ pub fn try_compare_bodies_faithful_with_notes(
             // breaks first, final last) and take the LAST-seen ref per
             // (kind, w:type).
             let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::sect_pr()));
-            let type_attr = W::name("type");
+            let type_attr = W::type_();
             for kind in [W::name("headerReference"), W::name("footerReference")] {
                 for ty in ["even", "default", "first"] {
                     let found = chain.iter().rev().find_map(|&sect| {
@@ -388,7 +388,7 @@ pub fn try_compare_bodies_faithful_with_notes(
                     // equalWidth=1 that A leaves implicit — Word emits NO
                     // sectPrChange; ours wrongly did, adding a spurious record).
                     // type=nextPage is the default → drop it entirely.
-                    if let Some(ty) = dom.element(scratch, &W::name("type"))
+                    if let Some(ty) = dom.element(scratch, &W::type_())
                         && dom.attribute(ty, &W::val()).unwrap_or("nextPage") == "nextPage"
                     {
                         dom.remove(ty);
@@ -422,12 +422,12 @@ pub fn try_compare_bodies_faithful_with_notes(
                     let change = dom.new_element(W::name("sectPrChange"));
                     dom.set_attribute_value(
                         change,
-                        &W::name("author"),
+                        &W::author(),
                         Some(&settings.author_for_revisions),
                     );
                     dom.set_attribute_value(
                         change,
-                        &W::name("date"),
+                        &W::date(),
                         Some(&settings.date_time_for_revisions),
                     );
                     let old_clean = dom.new_element(W::sect_pr());
@@ -464,7 +464,7 @@ pub fn try_compare_bodies_faithful_with_notes(
                     if dom.element(clean, &grid).is_none() && dom.element(old_sp, &grid).is_some() {
                         let g = dom.new_element(grid);
                         dom.set_attribute_value(g, &W::name("linePitch"), Some("0"));
-                        dom.set_attribute_value(g, &W::name("type"), Some("default"));
+                        dom.set_attribute_value(g, &W::type_(), Some("default"));
                         dom.add_before_self(change, g);
                     }
                 }
@@ -1779,7 +1779,7 @@ mod body_section_source_ownership_tests {
             assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
             let section = dom.element(body, &W::sect_pr()).unwrap();
             let size = dom.element(section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+            assert_eq!(dom.attribute(size, &W::w()), Some("12240"));
             assert_eq!(dom.attribute(size, &W::name("h")), Some("15840"));
             for node in dom.descendants_and_self(compared, None) {
                 assert!(
@@ -1800,7 +1800,7 @@ mod body_section_source_ownership_tests {
             let revised_body = dom.element(revised, &W::body()).unwrap();
             let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
             let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
-            dom.set_attribute_value(revised_size, &W::name("w"), Some("14400"));
+            dom.set_attribute_value(revised_size, &W::w(), Some("14400"));
             let mut expected_original = source_view(&mut dom, original, false);
             if genuine {
                 // The closing carrier `a` takes the break as a pPr change,
@@ -1845,7 +1845,7 @@ mod body_section_source_ownership_tests {
                 let sections = dom.elements(projected_body, Some(&W::sect_pr()));
                 assert_eq!(sections.len(), 1);
                 let size = dom.element(sections[0], &W::name("pgSz")).unwrap();
-                assert_eq!(dom.attribute(size, &W::name("w")), Some(width));
+                assert_eq!(dom.attribute(size, &W::w()), Some(width));
                 assert!(
                     dom.descendants(sections[0], Some(&W::name("sectPrChange")))
                         .is_empty()
@@ -1854,7 +1854,7 @@ mod body_section_source_ownership_tests {
             let body = dom.element(compared, &W::body()).unwrap();
             let final_section = dom.element(body, &W::sect_pr()).unwrap();
             let live_size = dom.element(final_section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(live_size, &W::name("w")), Some("14400"));
+            assert_eq!(dom.attribute(live_size, &W::w()), Some("14400"));
             let history = dom
                 .element(final_section, &W::name("sectPrChange"))
                 .unwrap();
@@ -1871,7 +1871,7 @@ mod body_section_source_ownership_tests {
             );
             let old_section = dom.element(history, &W::sect_pr()).unwrap();
             let old_size = dom.element(old_section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(old_size, &W::name("w")), Some("12240"));
+            assert_eq!(dom.attribute(old_size, &W::w()), Some("12240"));
             let embedded = dom
                 .descendants(compared, Some(&W::p_pr()))
                 .into_iter()
@@ -1885,7 +1885,7 @@ mod body_section_source_ownership_tests {
             assert_eq!(embedded.len(), 2 * usize::from(genuine));
             for section in embedded {
                 let size = dom.element(section, &W::name("pgSz")).unwrap();
-                assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+                assert_eq!(dom.attribute(size, &W::w()), Some("12240"));
                 assert!(dom.element(section, &W::name("sectPrChange")).is_none());
             }
             let paragraph_histories = dom.descendants(compared, Some(&W::p_pr_change()));
@@ -1905,7 +1905,7 @@ mod body_section_source_ownership_tests {
                 );
                 let properties = dom.elements(old_properties, None);
                 assert_eq!(properties.len(), 1);
-                assert!(dom.name_is(properties[0], &W::name("spacing")));
+                assert!(dom.name_is(properties[0], &W::spacing_el()));
                 assert_eq!(
                     dom.attribute(properties[0], &W::name("before")),
                     Some("120")
