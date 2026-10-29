@@ -31,6 +31,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 ### Fixed
 
 - **An edit dry run's `next:` line names the file it writes** (#1847). A dry run that named no output printed a `next:` command without one, so the command run as printed wrote `<stem>_modified.docx` beside the input, while the file the caller meant to update stayed as it was. The line now spells the default as `-o <stem>_modified.docx`, after a note that the input stays as it is. An `X_modified.docx` input, updated in place, gets no `-o` (naming the input as the output is refused), and its note says it is updated in place.
+- **A comment no longer renumbers the document's lists** (#1850). When a document held several identical list definitions, as Word writes them, a redline (`compare`, and the redline of `add` and `edit`) matched each of the revised side's definitions to the first identical one. Every list then looked like a clash and moved to a fresh `numId`, each of its paragraphs carrying a formatting change back to the old one. Adding one comment to `tests/fixtures/redline/original.docx` listed 9 such changes. The lists that moved also shared one definition, so their numbering ran on from one list into the next. In Word 16.115, the fixture's one-item lists, each "1.", showed "1." struck and "2." to "10." inserted, and Accept All kept those numbers. A definition now matches its own id first, and a list drawn the same on both sides keeps its `numId`.
 
 ## [0.14.0] - 2026-10-24
 
