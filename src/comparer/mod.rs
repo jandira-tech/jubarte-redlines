@@ -1614,22 +1614,9 @@ impl Default for WmlComparerSettings {
 fn canonicalize_attr_order(dom: &mut Dom, root: NodeId) {
     let nodes: Vec<NodeId> = dom.descendants_and_self(root, None);
     for node in nodes {
-        let mut attrs = dom.attributes(node);
-        if attrs.len() < 2 {
-            continue;
-        }
-        attrs.sort_by(|a, b| {
-            a.0.local_name()
-                .cmp(b.0.local_name())
-                .then_with(|| a.0.namespace_name().cmp(b.0.namespace_name()))
-        });
-        let names: Vec<_> = attrs.iter().map(|(name, _)| name.clone()).collect();
-        for name in &names {
-            dom.set_attribute_value(node, name, None);
-        }
-        for (name, value) in &attrs {
-            dom.set_attribute_value(node, name, Some(value));
-        }
+        // ⚡ Bolt: Use in-place sorting for attributes to avoid heavy String/XName cloning
+        // and multiple hash map lookups/insertions when re-adding attributes.
+        dom.sort_attributes(node);
     }
 }
 
