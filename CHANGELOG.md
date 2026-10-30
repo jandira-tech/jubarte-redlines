@@ -21,6 +21,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- CLI `--version` and the `--help` header identify the build with the short Git commit as SemVer build metadata, plus `.dirty` for a changed tree. Builds without Git or a checkout keep the Cargo version alone; Python and npm package versions stay unchanged (#1924).
+
 - **An edit can delete or replace a paragraph's first words and insert at its start** (#1922). Expected-text checks now compose touching ranges in the same order as the writers and refuse invalid ranges instead of panicking. A `delete` that starts at the paragraph's first character and an insertion at `position: "start"` (or one that ends at its last character and an insertion at `position: "end"`) are written as one whole substitution, so deleting every run keeps the inserted text in Accept All; a `replace` beside an edge insert keeps writing only the words it changed. Two differently formatted insertions merged into one such delete are refused as `OVERLAPPING_EDITS`.
 
 - **`jubarte validate` reports a move range start with no `w:name`** (#1939). `w:moveFromRangeStart` and `w:moveToRangeStart` require `w:name`. A missing or empty name never entered the per-name counts, so a nameless source range with no destination passed with no finding. It is now `MOVE_RANGE_NAME_MISSING`, a warning. Word's reaction to a nameless range is unverified, so the finding is not Word-fatal. A named range whose source and destination counts differ is still `MOVE_RANGE_COUNT_MISMATCH`.

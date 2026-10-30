@@ -30,6 +30,7 @@ include = [
   "/assets/fonts/**",
   "/benches/**",
   "/Cargo.toml",
+  "/build.rs",
   "/README.md",
   "/README.crates.md",
   "/CHANGELOG.md",

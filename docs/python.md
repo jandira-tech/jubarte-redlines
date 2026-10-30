@@ -54,6 +54,7 @@ binary when retention is needed.
 
 ```text
 $ jubarte-redlines --help
+jubarte-redlines 0.15.0
 Read, edit, compare and render Word documents
 
 Usage: jubarte-redlines [OPTIONS]
