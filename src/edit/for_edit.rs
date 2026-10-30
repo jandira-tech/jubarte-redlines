@@ -681,6 +681,9 @@ fn text_selection(
         })
     } else {
         let pattern = request.regex.as_deref().unwrap_or("");
+        if pattern.len() > 1024 {
+            return Err(super::err("USAGE", None, "regex pattern exceeds maximum length of 1024 bytes"));
+        }
         let pattern = if request.ignore_case {
             format!("(?i){pattern}")
         } else {
