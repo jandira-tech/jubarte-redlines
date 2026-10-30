@@ -34,8 +34,13 @@ fn build_run(dom: &mut Dom, rpr_elems: &[NodeId], inner: NodeId) -> NodeId {
 
 /// Copy `src`'s attributes onto `dst`.
 fn copy_attrs(dom: &mut Dom, src: NodeId, dst: NodeId) {
-    for (name, value) in dom.attributes(src) {
+    let mut i = 0;
+    while i < dom.attr_count(src) {
+        let (name, value) = dom.attr_at(src, i);
+        let name = name.clone();
+        let value = value.to_string();
         dom.set_attribute_value(dst, &name, Some(&value));
+        i += 1;
     }
 }
 

@@ -159,8 +159,14 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         };
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         for tn in accept_move_from_move_to_transform(dom, c) {
@@ -345,8 +351,14 @@ fn try_accept_cell_merge(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Ve
 fn try_accept_hyperlink(dom: &mut Dom, node: NodeId, name: &XName) -> Option<Vec<NodeId>> {
     if name == &W::hyperlink() {
         let ne = dom.new_element(name.clone());
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         for c in dom.nodes(node) {
             for tn in accept_all_other_revisions_transform(dom, c) {
@@ -456,8 +468,14 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
 
     // Identity clone with transformed children.
     let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         for tn in accept_all_other_revisions_transform(dom, c) {
@@ -621,8 +639,14 @@ fn reverse_revisions_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) -> NodeId {
     let ne = dom.new_element(new_name);
     if keep_attrs {
-        for (an, av) in dom.attributes(src) {
+        let mut _i = 0;
+        while _i < dom.attr_count(src) {
+            let (an, av) = dom.attr_at(src, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
     }
     for c in dom.nodes(src) {
@@ -760,8 +784,14 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
 
     // Identity: rebuild with attributes + transformed children.
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(t) = reject_revisions_for_part_transform(dom, c) {
@@ -1081,8 +1111,14 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
     let name = dom.name(node).unwrap();
     if name == W::instr_text() {
         let ne = dom.new_element(W::del_instr_text());
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         // C# takes element.Nodes() as-is (no recursion below instrText).
         for c in dom.nodes(node) {
@@ -1092,8 +1128,14 @@ fn transform_instr_text_to_del_instr_text(dom: &mut Dom, node: NodeId) -> NodeId
         return ne;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         let tc = transform_instr_text_to_del_instr_text(dom, c);
@@ -1145,8 +1187,14 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
         let g_len = grouped.len();
 
         let new_paragraph = dom.new_element(W::p());
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(new_paragraph, &an, Some(&av));
+            _i += 1;
         }
         for (i, (key, group)) in grouped.iter().enumerate() {
             match key {
@@ -1187,8 +1235,14 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
         return new_paragraph;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         let tc = fix_up_deleted_or_inserted_field_codes_transform(dom, c);
@@ -1367,8 +1421,14 @@ fn normalize_orphan_moves_transform(
         dom.name(node).unwrap()
     };
     let ne = dom.new_element(new_name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(tc) = normalize_orphan_moves_transform(dom, c, to_ins, to_del, drop_markers) {
@@ -1505,8 +1565,14 @@ fn accept_move_from_ranges_transform(
         return None;
     }
     let ne = dom.new_element(dom.name(node).unwrap());
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(tc) = accept_move_from_ranges_transform(dom, c, to_delete) {
@@ -1541,8 +1607,14 @@ pub fn collapse_paragraph_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> 
         return keep.into_iter().map(|e| dom.clone_subtree(e)).collect();
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         for tc in collapse_paragraph_transform(dom, c) {
@@ -1569,8 +1641,14 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
     let name = dom.name(node).unwrap();
     if name == W::p() {
         let np = dom.new_element(W::p());
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(np, &an, Some(&av));
+            _i += 1;
         }
         for e in dom.elements(node, None) {
             let ce = dom.clone_subtree(e);
@@ -1584,8 +1662,14 @@ pub fn coalesque_paragraph_end_tags_in_move_from_transform(
         return np;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         let tc = coalesque_paragraph_end_tags_in_move_from_transform(dom, c, group);
@@ -1656,8 +1740,14 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
             // as-is (C# attaches the original elements to a new parent, which
             // XLinq clones; descendants are NOT re-transformed here).
             let ne = dom.new_element(name);
-            for (an, av) in dom.attributes(node) {
+            let mut _i = 0;
+            while _i < dom.attr_count(node) {
+                let (an, av) = dom.attr_at(node, _i);
+                let an = an.clone();
+                let av = av.to_string();
+
                 dom.set_attribute_value(ne, &an, Some(&av));
+                _i += 1;
             }
             for (key, group) in grouped {
                 if !key {
@@ -1678,8 +1768,14 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         // FAITHFUL-BUG: in-range groups exist → plain recursive rebuild, no
         // coalescing.
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         for c in dom.nodes(node) {
             let tc = accept_paragraph_end_tags_in_move_from_transform(dom, c);
@@ -1688,8 +1784,14 @@ pub fn accept_paragraph_end_tags_in_move_from_transform(dom: &mut Dom, node: Nod
         return ne;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         let tc = accept_paragraph_end_tags_in_move_from_transform(dom, c);
@@ -1860,8 +1962,14 @@ fn accept_deleted_and_moved_from_content_controls_transform(
         return vec![];
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         for tc in
@@ -1955,8 +2063,14 @@ fn collapse_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         return vec![];
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         for tc in collapse_transform(dom, c) {
@@ -2077,8 +2191,14 @@ fn accept_paragraph_marks_with_owners(
     let name = dom.name(node).unwrap();
     if !block_level_content_containers().contains(&name) {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         for c in dom.nodes(node) {
             let tc = accept_paragraph_marks_with_owners(dom, c, paragraph_owners);
@@ -2245,8 +2365,14 @@ fn accept_paragraph_marks_with_owners(
                 let this = z.0.this_block_content_element.unwrap();
                 let rebuilt_name = dom.name(this).unwrap();
                 let re = dom.new_element(rebuilt_name);
-                for (an, av) in dom.attributes(this) {
+                let mut _i = 0;
+                while _i < dom.attr_count(this) {
+                    let (an, av) = dom.attr_at(this, _i);
+                    let an = an.clone();
+                    let av = av.to_string();
+
                     dom.set_attribute_value(re, &an, Some(&av));
+                    _i += 1;
                 }
                 let held = held_marks.get(&this).copied();
                 if let Some(next) = held
@@ -2270,8 +2396,14 @@ fn accept_paragraph_marks_with_owners(
     }
 
     let ne = dom.new_element(name.clone());
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for e in dom.elements(node, Some(&W::tc_pr())) {
         let ce = dom.clone_subtree(e);
@@ -2672,8 +2804,14 @@ fn add_content_controls_with_owners(
                     .any(|node| from_after(dom, node))
             });
             let emptied = dom.new_element(sdt.clone());
-            for (an, av) in dom.attributes(cc) {
+            let mut _i = 0;
+            while _i < dom.attr_count(cc) {
+                let (an, av) = dom.attr_at(cc, _i);
+                let an = an.clone();
+                let av = av.to_string();
+
                 dom.set_attribute_value(emptied, &an, Some(&av));
+                _i += 1;
             }
             let props: Vec<NodeId> = dom
                 .elements(cc, None)
@@ -2873,8 +3011,14 @@ fn add_content_controls_with_owners(
             // ordered by Order_sdt — not from a control holding the merged
             // paragraph.
             let new_cc = dom.new_element(dom.name(cc).unwrap());
-            for (an, av) in dom.attributes(cc) {
+            let mut _i = 0;
+            while _i < dom.attr_count(cc) {
+                let (an, av) = dom.attr_at(cc, _i);
+                let an = an.clone();
+                let av = av.to_string();
+
                 dom.set_attribute_value(new_cc, &an, Some(&av));
+                _i += 1;
             }
             let mut cc_children = dom.elements(cc, None);
             cc_children.sort_by_key(|&e| order_sdt(&dom.name(e).unwrap()));
@@ -2899,8 +3043,14 @@ fn add_content_controls_with_owners(
             dom.remove(c);
         }
         let new_cc = dom.new_element(dom.name(cc).unwrap());
-        for (an, av) in dom.attributes(cc) {
+        let mut _i = 0;
+        while _i < dom.attr_count(cc) {
+            let (an, av) = dom.attr_at(cc, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(new_cc, &an, Some(&av));
+            _i += 1;
         }
         let sdt_content = dom.new_element(W::sdt_content());
         for &e in &in_range {
@@ -3086,8 +3236,14 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
     }
     let had_rows = name == W::tbl() && dom.element(node, &W::tr()).is_some();
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(tc) = remove_rows_left_empty_by_move_from_inner(dom, c) {
@@ -3154,8 +3310,14 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let name = dom.name(node).unwrap();
     if name != W::tr() {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         for c in dom.nodes(node) {
             let tc = accept_deleted_cells_transform(dom, c);
@@ -3187,8 +3349,14 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
     let grouped = crate::util::group_adjacent(children, |&e| key_of(dom, e));
 
     let tr = dom.new_element(W::tr());
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(tr, &an, Some(&av));
+        _i += 1;
     }
     for ((is_deleted, _anchor), group) in grouped {
         if !is_deleted {
@@ -3514,8 +3682,14 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
     let tbl_name = W::tbl();
     if dom.element(node, &tbl_name).is_none() {
         let ne = dom.new_element(name);
-        for (an, av) in dom.attributes(node) {
+        let mut _i = 0;
+        while _i < dom.attr_count(node) {
+            let (an, av) = dom.attr_at(node, _i);
+            let an = an.clone();
+            let av = av.to_string();
+
             dom.set_attribute_value(ne, &an, Some(&av));
+            _i += 1;
         }
         for c in dom.nodes(node) {
             let tc = merge_adjacent_tables(dom, c, mode);
@@ -3528,8 +3702,14 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
     let grouped = crate::util::group_adjacent(children, |&e| table_merge_key(dom, e, mode));
 
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for (key, group) in grouped {
         if key.is_empty() || group.len() == 1 {
@@ -3588,8 +3768,14 @@ fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeI
             let fixed = fix_widths(dom, tbl);
             for tr in wrapped_children(dom, fixed, &W::tr()) {
                 let new_row = dom.new_element(W::tr());
-                for (an, av) in dom.attributes(tr) {
+                let mut _i = 0;
+                while _i < dom.attr_count(tr) {
+                    let (an, av) = dom.attr_at(tr, _i);
+                    let an = an.clone();
+                    let av = av.to_string();
+
                     dom.set_attribute_value(new_row, &an, Some(&av));
+                    _i += 1;
                 }
                 if !own_ex.is_empty() {
                     let ex = row_tbl_pr_ex(dom, tr, &own_ex);
@@ -3917,8 +4103,14 @@ fn accept_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return None;
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(tc) = accept_revisions_for_styles_transform(dom, c) {
@@ -3950,8 +4142,14 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
         return inner.and_then(|i| reject_revisions_for_styles_transform(dom, i));
     }
     let ne = dom.new_element(name);
-    for (an, av) in dom.attributes(node) {
+    let mut _i = 0;
+    while _i < dom.attr_count(node) {
+        let (an, av) = dom.attr_at(node, _i);
+        let an = an.clone();
+        let av = av.to_string();
+
         dom.set_attribute_value(ne, &an, Some(&av));
+        _i += 1;
     }
     for c in dom.nodes(node) {
         if let Some(tc) = reject_revisions_for_styles_transform(dom, c) {

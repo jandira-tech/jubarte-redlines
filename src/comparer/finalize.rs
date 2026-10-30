@@ -134,11 +134,17 @@ fn rev_el(dom: &mut Dom, name: XName, settings: &WmlComparerSettings, id_gen: &m
 
 /// Clone `src`'s attributes onto `dst` (optionally skipping the pt namespace).
 fn copy_attrs(dom: &mut Dom, src: NodeId, dst: NodeId, skip_pt: bool) {
-    for (an, av) in dom.attributes(src) {
+    let mut i = 0;
+    while i < dom.attr_count(src) {
+        let (an, av) = dom.attr_at(src, i);
         if skip_pt && an.namespace_name() == PT::URI {
+            i += 1;
             continue;
         }
+        let an = an.clone();
+        let av = av.to_string();
         dom.set_attribute_value(dst, &an, Some(&av));
+        i += 1;
     }
 }
 
