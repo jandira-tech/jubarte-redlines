@@ -352,8 +352,10 @@ auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
 
 Check that every text change from `original` to `edited` is a revision
 by `author`. Returns the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`,
-and `PERMISSION_RANGE_DROPPED` for a permission endpoint of `original`
-that `edited` lost) as a JSON array.
+`FOREIGN_COMMENT` for another author's comment gone, reworded, resolved
+or reopened, or a new comment not signed `author`, and
+`PERMISSION_RANGE_DROPPED` for a permission endpoint of `original` that
+`edited` lost) as a JSON array.
 
 Mirrors `jubarte::validate::audit_tracked`.
 
@@ -2176,9 +2178,10 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --rewrite-others-comments
-          Let `-p c5 --content` change a comment another author wrote; it keeps their
-          name. Without it that is refused (COMMENT_NOT_YOURS): one author answers
-          another with --reply
+          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
+          author wrote (a reworded one keeps their name), and `--delete` take their
+          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
+          author answers another with --reply
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -2189,12 +2192,14 @@ Options:
           change (`rejected r0 in p3: "from" > "to"`)
 
       --strike
-          Strike another author's insertion r12 (with -p r12): our tracked deletion
-          inside it, so the decision shows. --content is a comment on the struck words
+          Strike another author's insertion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's insertion only): our tracked deletion inside
+          it, so the decision shows. --content is one comment on the struck words
 
       --restore
-          Restore another author's deletion r12 (with -p r12): their deletion stays and
-          our tracked insertion of its words follows it. --content is a comment on the
+          Restore another author's deletion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's deletion only): their deletion stays and our
+          tracked insertion of its words follows it. --content is one comment on the
           restored words
 
       --visible
