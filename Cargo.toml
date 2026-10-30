@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
@@ -57,6 +57,7 @@ include = [
 "0.12.0" = "Agent view (jubarte::markdown, read/edit/add flag plans), text diff views, PdfOptions::comments (CommentPlacement::End) and PdfOptions::changed_only (a struct literal naming every field now needs ..PdfOptions::default()), Word's Roman/letter field formats, a searchable PDF text layer for text no font covers (/ActualText), and redline fixes for files Word 16.115 hung on. rdocx-opc 0.2 fixes RUSTSEC-2026-0194. On two 600-item samples scored against Word's own output: redlines mean 71.89 (Docxodus 64.95), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document."
 "0.13.0" = "replace keeps the words it keeps; one logical change per edit (composite ids); edit --skip-failed; visible rejects (strike, restore); Word math as LaTeX and Markdown round-trips for charts, fields and images; PDF math layout, columns and header PAGE fields; Strict OOXML read and compared as itself; malformed ZIP packages refused (GHSA-m665-v7pm-7grj); -d, --datetime replaces --date. On two 600-item samples scored against Word's own output: redlines mean 71.63 (Docxodus 64.92), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.19 (LibreOffice 54.61), no failed document."
 "0.14.0" = "Breaking: `jubarte::cli::ReadArgs::paragraphs` is a `Vec<String>` and `Command::Changes` gains `author`. New Rust API: `cli::refused_package`, `update::verify_signature` with `ReleaseKey`, `comparer::order_tables`, more `namespaces` helpers. Tracked edits keep formatting history apart and refuse duplicate revision ids; table redlines avoid the final-mark revision that hangs Word. No `block-buffer` 0.10.4 in any build. Known: 3 of 600 sample redlines crash Word 16.115 where Word's own does not (#1802)."
+"0.15.0" = "Word-mode table pairing, splitting and row meshing as Word Compare does; validate --original checks comments; strike/restore take paragraph marks and multi-mark changes; comments and edits leave untouched formatting and lists alone; Word opens redlines with deleted page-numbered footers. Breaking: debug::Check gains Tables. Builds against oxml-opc 0.14.4."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"

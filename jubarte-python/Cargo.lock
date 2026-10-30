@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-python"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "jubarte-redlines",
  "pyo3",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "base64",
  "cap-std",

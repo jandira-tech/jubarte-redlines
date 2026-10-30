@@ -1714,7 +1714,7 @@ redaction therefore refuses with `REDACTION_LEAK` instead of accepting an
 incomplete scan. Comparer settings continue to supply their own limits.
 
 <!-- gen:python-api:start -->
-Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.14.0`).
+Reflects the `jubarte_redlines` package built from this source tree (`__version__` reports `0.15.0`).
 
 ### `JubarteError`
 
@@ -1723,7 +1723,7 @@ Raised when the jubarte-redlines engine cannot process a document.
 
 ### `__version__`
 
-`'0.14.0'`
+`'0.15.0'`
 
 ### `accept_revisions`
 
