@@ -49,6 +49,7 @@
 //! | `NESTED_TEXT_BOX` | yes: A/C/E crash; F/H refuse to load; B/D/G open (Word probes 2026-10-18, #1132) | no |
 //! | `COMMENT_RANGE_UNPAIRED`, `BARE_RUN_IN_DELETED_TEXTBOX`, `BOOKMARK_*` | no | no |
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
+//! | `MOVE_RANGE_NAME_MISSING` | no: `w:name` is schema-required; Word's reaction to a nameless range is unverified (#1939); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
@@ -208,9 +209,10 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 32] = [
+const RING1_CODES: [&str; 33] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
+    "MOVE_RANGE_NAME_MISSING",
     "NESTED_TEXT_BOX",
     "NESTED_PPR",
     "MC_UNBOUND_PREFIX",
@@ -1706,6 +1708,9 @@ fn check_data_bindings_have_stores(pkg: &PartFs, out: &mut Vec<Finding>) {
 
 /// Word opens unequal per-name move ranges cleanly, but Reject All can
 /// restore the destination over only one source range and duplicate text.
+/// A start whose `w:name` is missing or empty cannot be paired. The
+/// attribute is schema-required; Word's reaction is unverified, so that
+/// finding is a warning lead (#1939).
 fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
     for part in xml_parts(pkg) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
@@ -1718,6 +1723,14 @@ fn check_move_range_counts(pkg: &PartFs, out: &mut Vec<Finding>) {
                     .attribute(start, &W::name("name"))
                     .filter(|n| !n.is_empty())
                 else {
+                    out.push(Finding::new(
+                        "MOVE_RANGE_NAME_MISSING",
+                        &part,
+                        element_path(&dom, start),
+                        format!(
+                            "w:{side} has no w:name; the attribute is required to pair the range (#1939)"
+                        ),
+                    ));
                     continue;
                 };
                 let counts = moves
