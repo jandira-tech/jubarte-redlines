@@ -193,6 +193,7 @@ macro_rules! cached_xname {
 
 impl W {
     cached_xname!(W::URI, document, "document");
+    cached_xname!(W::URI, background, "background");
     cached_xname!(W::URI, body, "body");
     cached_xname!(W::URI, p, "p");
     cached_xname!(W::URI, r, "r");
@@ -214,12 +215,16 @@ impl W {
     cached_xname!(W::URI, author, "author");
     cached_xname!(W::URI, date, "date");
     cached_xname!(W::URI, val, "val");
+    cached_xname!(W::URI, abstract_num, "abstractNum");
+    cached_xname!(W::URI, abstract_num_id, "abstractNumId");
     // NAME-01b: table / field / bookmark locals hit on every hash-clone walk.
     cached_xname!(W::URI, tbl, "tbl");
     cached_xname!(W::URI, tr, "tr");
     cached_xname!(W::URI, tc, "tc");
     cached_xname!(W::URI, tc_pr, "tcPr");
     cached_xname!(W::URI, tbl_pr, "tblPr");
+    cached_xname!(W::URI, tbl_pr_ex, "tblPrEx");
+    cached_xname!(W::URI, tbl_pr_ex_change, "tblPrExChange");
     cached_xname!(W::URI, tr_pr, "trPr");
     cached_xname!(W::URI, grid_span, "gridSpan");
     // The schema-hygiene pass: a table grid's columns and their `w:type`,
@@ -250,7 +255,10 @@ impl W {
     // spacing/… were still interning per call — thread-local pool hash each).
     cached_xname!(W::URI, spacing_el, "spacing");
     cached_xname!(W::URI, p_style, "pStyle");
+    cached_xname!(W::URI, r_style, "rStyle");
     cached_xname!(W::URI, jc_el, "jc");
+    cached_xname!(W::URI, footnote_ref, "footnoteRef");
+    cached_xname!(W::URI, endnote_ref, "endnoteRef");
 
     cached_xname!(W::URI, sdt_pr, "sdtPr");
     cached_xname!(W::URI, fld_char, "fldChar");
@@ -269,11 +277,49 @@ impl W {
     cached_xname!(W::URI, hdr, "hdr");
     cached_xname!(W::URI, ftr, "ftr");
     cached_xname!(W::URI, fld_simple, "fldSimple");
+    cached_xname!(W::URI, fld_char_type, "fldCharType");
+    cached_xname!(W::URI, instr, "instr");
+    // A section's story references and its distinct first page, read per
+    // section by the page-footer move (#1833).
+    cached_xname!(W::URI, header_reference, "headerReference");
+    cached_xname!(W::URI, footer_reference, "footerReference");
+    cached_xname!(W::URI, title_pg, "titlePg");
+    // Table grid, row and cell properties the comparer and the revision
+    // processor read per table, row or cell.
+    cached_xname!(W::URI, tbl_grid, "tblGrid");
+    cached_xname!(W::URI, tbl_ind, "tblInd");
+    cached_xname!(W::URI, tbl_w, "tblW");
+    cached_xname!(W::URI, tc_w, "tcW");
+    cached_xname!(W::URI, tc_pr_change, "tcPrChange");
+    cached_xname!(W::URI, grid_before, "gridBefore");
+    cached_xname!(W::URI, grid_after, "gridAfter");
+    cached_xname!(W::URI, sdt_end_pr, "sdtEndPr");
+    cached_xname!(W::URI, style_id, "styleId");
     // The marks Word saves a table with, read per table by the convert fit.
     cached_xname!(W::URI, rsid_r, "rsidR");
     cached_xname!(W::URI, rsid_tr, "rsidTr");
     // A table grid column's width, read per column (`grid_col` is above).
     cached_xname!(W::URI, w, "w");
+}
+
+impl R {
+    cached_xname!(R::URI, id, "id");
+}
+
+// The drawing and object names the docPr and shape id passes read per
+// drawing or shape.
+impl WP {
+    cached_xname!(WP::URI, doc_pr, "docPr");
+}
+
+impl VML {
+    cached_xname!(VML::URI, shape, "shape");
+    cached_xname!(VML::URI, shapetype, "shapetype");
+    cached_xname!(VML::URI, group, "group");
+}
+
+impl O {
+    cached_xname!(O::URI, ole_object, "OLEObject");
 }
 
 impl W14 {
@@ -296,6 +342,15 @@ impl PT {
     // Word-mode stamp on each source root: "1" when that document's styles
     // define a default table style (read by the table-margin synthesis).
     cached_xname!(PT::URI, has_default_table_style, "HasDefaultTableStyle");
+}
+
+impl MC {
+    cached_xname!(MC::URI, alternate_content, "AlternateContent");
+    cached_xname!(MC::URI, choice, "Choice");
+    cached_xname!(MC::URI, fallback, "Fallback");
+    cached_xname!(MC::URI, ignorable, "Ignorable");
+    cached_xname!(MC::URI, preserve_elements, "PreserveElements");
+    cached_xname!(MC::URI, preserve_attributes, "PreserveAttributes");
 }
 
 // ── OMML names the comparer's final-mark pass reads per paragraph ─────────────

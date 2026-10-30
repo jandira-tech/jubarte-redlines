@@ -225,10 +225,9 @@ Operation kinds: `replace`, `insert` (one of `after`, `before`,
 paragraph; `through` instead of `find` covers every paragraph from
 `paragraph` to that one), `reply_comment` (`comment_id`, `text`),
 `resolve_comment` (`comment_id`, `done` default true; false reopens),
-`edit_comment` (`comment_id`, `text`; another author's comment is refused
-unless the plan sets `"rewrite_others_comments": true`, and it keeps their
-name: answer them with `reply_comment` instead), `delete_comment` (`comment_id`;
-replies and anchors go with it), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
+`edit_comment` (`comment_id`, `text`; it keeps the comment's author),
+`delete_comment` (`comment_id`; replies and anchors go with it),
+`insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `highlight`; copies the anchor's paragraph properties, or those of the
 paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `format_paragraph` (any of `style` (id or name), `alignment`
@@ -261,7 +260,11 @@ character in the clean copy and the redline alike, untracked; optional
 booleans and `protection` `{"edit": "readOnly|comments|trackedChanges|forms|none",
 "enforcement": true}`; no paragraph; one per plan; this `update_fields`
 asks Word to recompute fields on open, the plan's top-level one writes
-jubarte's results now). `replace` and
+jubarte's results now). `edit_comment`, `resolve_comment` and
+`delete_comment` on another author's comment are refused
+(`COMMENT_NOT_YOURS`), and so is deleting your own comment whose thread
+holds their reply: answer them with `reply_comment`. Only
+`"rewrite_others_comments": true` lets such an operation through. `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
@@ -448,8 +451,10 @@ Gotchas:
   (the author your plan names).
   `jubarte validate review/redline.docx --original contract.docx --author
   Claude` runs that check and the Word-validity check in one; it replaces
-  `validate.py --original --author`. `--repair out.docx` fixes what it can
-  and lists what it cannot.
+  `validate.py --original --author`. It also fails on another author's
+  comment you deleted, reworded, resolved or reopened, and on a comment or
+  reply not signed `--author` (`FOREIGN_COMMENT`). `--repair out.docx`
+  fixes what it can and lists what it cannot.
 - `jubarte validate file.docx --rules a11y,style,structure --json` lists
   heading skips, images without alt text, tables without a header row,
   a missing document language, literal bullets, spacer paragraphs, stale TOC and page-count caches, and

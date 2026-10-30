@@ -21,7 +21,7 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// Remove, before the accept transforms run, every bookmark whose span held
 /// only deleted characters.
 pub(super) fn drop_wholly_deleted_bookmarks(dom: &mut Dom, root: NodeId) {
-    let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
+    let (start, end) = (W::bookmark_start(), W::bookmark_end());
     let dropped = wholly_deleted_endpoints(dom, root, &start, &end);
     for endpoint in dropped {
         dom.remove(endpoint);
@@ -150,7 +150,7 @@ fn row_is_deleted(dom: &Dom, tr: NodeId) -> bool {
 /// has no half bookmark, and the accept transforms can drop one side with
 /// the content around it (a deleted row, a moved-from run).
 pub(super) fn drop_unpaired_bookmarks(dom: &mut Dom, root: NodeId) {
-    let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
+    let (start, end) = (W::bookmark_start(), W::bookmark_end());
     let id = W::id();
     let ids = |dom: &Dom, name: &XName| -> HashSet<String> {
         dom.descendants(root, Some(name))

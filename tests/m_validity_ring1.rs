@@ -2842,3 +2842,329 @@ fn a_cell_shape_in_a_custom_xml_data_part_is_not_checked() {
     ]);
     assert_eq!(cell_final_marks(&bytes).len(), 1);
 }
+
+/// The header and footer references of [`deleted_section_package`]
+/// (`rIdX0` is the header, `rIdX1` the footer).
+const HEADER_FOOTER_REFS: &str = r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#;
+
+/// A redline whose first section break is deleted, the header's and the
+/// footer's runs all deleted. `field` is the footer's field code; each
+/// `*_deleted` deletes that story's closing mark; `break_refs` opens the
+/// deleted break's `w:sectPr` and `final_refs` the body's own.
+fn deleted_section_package(
+    field: &str,
+    header_deleted: bool,
+    footer_deleted: bool,
+    break_refs: &str,
+    final_refs: &str,
+) -> Vec<u8> {
+    use common::docx::{Part, W_NS};
+    let by = r#"w:author="Ana" w:date="2026-10-25T00:00:00Z""#;
+    let mark = |deleted: bool, id: u32| {
+        if deleted {
+            format!(r#"<w:rPr><w:del w:id="{id}" {by}/></w:rPr>"#)
+        } else {
+            String::new()
+        }
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}"><w:p><w:pPr><w:pStyle w:val="Header"/>{}</w:pPr><w:del w:id="10" {by}><w:r><w:delText>Confidential</w:delText></w:r></w:del></w:p></w:hdr>"#,
+        mark(header_deleted, 11)
+    );
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{W_NS}"><w:p><w:pPr><w:jc w:val="right"/>{}</w:pPr><w:del w:id="20" {by}><w:r><w:delText xml:space="preserve">Page </w:delText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText xml:space="preserve"> {field} </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:del></w:p></w:ftr>"#,
+        mark(footer_deleted, 21)
+    );
+    let body = format!(
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="1" {by}/></w:rPr><w:sectPr>{break_refs}</w:sectPr></w:pPr><w:del w:id="2" {by}><w:r><w:delText>Old section.</w:delText></w:r></w:del></w:p><w:p><w:r><w:t>Kept.</w:t></w:r></w:p>"#
+    );
+    let rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+    let ct = "application/vnd.openxmlformats-officedocument.wordprocessingml.";
+    common::docx::docx_with_sect(
+        &body,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: &format!("{ct}header+xml"),
+                rel_type: &format!("{rel}header"),
+                xml: &header,
+            },
+            Part {
+                name: "word/footer1.xml",
+                content_type: &format!("{ct}footer+xml"),
+                rel_type: &format!("{rel}footer"),
+                xml: &footer,
+            },
+        ],
+        final_refs,
+    )
+}
+
+fn deleted_section_page_fields(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DELETED_SECTION_PAGE_FIELD")
+        .collect()
+}
+
+/// #1833: Word's own redline of the file_N family. A deleted break
+/// references a footer whose closing paragraph holds PAGE or NUMPAGES.
+/// Word 16.115 crashed opening it whatever the stories' marks: both live,
+/// either one deleted (probes n0, n23, n24), both deleted (s176, s472,
+/// round 18), and with a live section referencing the footer as well (n17,
+/// g1, g3), all 2026-10-25. It opened 8441c4ae21 and 82348eef4b: a lead,
+/// not Word-fatal, not repairable.
+#[test]
+fn probe_a_page_footer_a_deleted_break_references_is_a_lead() {
+    let footer_ref = r#"<w:footerReference w:type="default" r:id="rIdX1"/>"#;
+    for (field, header_deleted, footer_deleted, final_refs) in [
+        ("PAGE", false, false, ""),
+        ("NUMPAGES", false, false, ""),
+        ("PAGE", true, false, ""),
+        ("PAGE", false, true, ""),
+        ("PAGE", true, true, ""),
+        ("PAGE", true, true, footer_ref),
+    ] {
+        let bytes = deleted_section_package(
+            field,
+            header_deleted,
+            footer_deleted,
+            HEADER_FOOTER_REFS,
+            final_refs,
+        );
+        let found = deleted_section_page_fields(&bytes);
+        let case = format!(
+            "{field} header_deleted={header_deleted} footer_deleted={footer_deleted} final_refs={final_refs}"
+        );
+        assert_eq!(found.len(), 1, "{case}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.part, "word/footer1.xml", "{case}");
+        assert_eq!(finding.location, "w:p[0]", "{case}");
+        assert_eq!(finding.severity, "warning", "{case}: {finding:?}");
+        assert!(
+            !finding.word_fatal && !finding.repairable,
+            "{case}: {finding:?}"
+        );
+    }
+}
+
+/// #1833: what Word opens passes. The references moved from the deleted
+/// break to the live final section (g2, g4 and all ten flagged redlines,
+/// round 18), or a field that is no page number (a30c48b63b's DOCPROPERTY).
+#[test]
+fn a_page_footer_no_deleted_break_references_passes() {
+    for (field, break_refs, final_refs, case) in [
+        (
+            "PAGE",
+            "",
+            HEADER_FOOTER_REFS,
+            "references on the live section",
+        ),
+        ("DOCPROPERTY Title", HEADER_FOOTER_REFS, "", "no page field"),
+    ] {
+        let bytes = deleted_section_package(field, true, true, break_refs, final_refs);
+        assert_eq!(deleted_section_page_fields(&bytes), [], "{case}");
+        assert_word_valid_package(&bytes);
+    }
+    // The field in the last paragraph of a content control that ends the
+    // story, every mark live: Word opened both such footers of the sample
+    // (25e6d4b508, 7c98e8f2b6).
+    let mut pkg = PartFs::open(&deleted_section_package(
+        "PAGE",
+        false,
+        false,
+        HEADER_FOOTER_REFS,
+        "",
+    ))
+    .unwrap();
+    let footer = pkg.part_string("word/footer1.xml").unwrap();
+    let (start, end) = (
+        footer.find("<w:p>").unwrap(),
+        footer.rfind("</w:p>").unwrap() + 6,
+    );
+    let wrapped = format!(
+        "{}<w:sdt><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        &footer[..start],
+        &footer[start..end],
+        &footer[end..]
+    );
+    pkg.set_part("word/footer1.xml", wrapped.into_bytes());
+    let bytes = pkg.to_zip().unwrap();
+    assert_eq!(deleted_section_page_fields(&bytes), [], "content control");
+    assert_word_valid_package(&bytes);
+}
+
+/// A body that deletes a table and moves a paragraph's words past it, its
+/// blocks named by letter:
+/// - `P`: mark deleted, deleted text, inserted text;
+/// - `p`: `P` without its inserted text, which `S` then starts with;
+/// - `D`: mark deleted, deleted text only;
+/// - `T`: a table every row of which is deleted;
+/// - `t`: a table with a deleted row and a live one;
+/// - `L`: a live paragraph; `S`: a live one, the last of a case;
+/// - `K`: mark deleted, a live word, inserted text;
+/// - `X`: `P` holding a deleted section break;
+/// - `M`: `P` with a live mark.
+fn ins_before_table_body(blocks: &str) -> String {
+    let by = r#"w:author="Ana" w:date="2026-10-25T00:00:00Z""#;
+    // Every revision its own id, so Ring-1 sees no duplicate.
+    let next = std::cell::Cell::new(1);
+    let id = || {
+        next.set(next.get() + 1);
+        next.get()
+    };
+    let deleted_mark = || format!(r#"<w:rPr><w:del w:id="{}" {by}/></w:rPr>"#, id());
+    let deleted = |text: &str| {
+        format!(
+            r#"<w:del w:id="{}" {by}><w:r><w:delText>{text}</w:delText></w:r></w:del>"#,
+            id()
+        )
+    };
+    let inserted = || {
+        format!(
+            r#"<w:ins w:id="{}" {by}><w:r><w:t>New terms.</w:t></w:r></w:ins>"#,
+            id()
+        )
+    };
+    let row = |deleted_row: bool| {
+        let (row_mark, mark, text) = if deleted_row {
+            (
+                format!(r#"<w:trPr><w:del w:id="{}" {by}/></w:trPr>"#, id()),
+                deleted_mark(),
+                deleted("Fee"),
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                "<w:r><w:t>Fee</w:t></w:r>".to_string(),
+            )
+        };
+        format!(
+            r#"<w:tr>{row_mark}<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr>{mark}</w:pPr>{text}</w:p></w:tc></w:tr>"#
+        )
+    };
+    let table = |rows: String| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>{rows}</w:tbl>"#
+        )
+    };
+    let mut moved = false;
+    let mut body = String::new();
+    for block in blocks.chars() {
+        body.push_str(&match block {
+            'P' => format!(
+                "<w:p><w:pPr>{}</w:pPr>{}{}</w:p>",
+                deleted_mark(),
+                deleted("Old terms."),
+                inserted()
+            ),
+            'p' => {
+                moved = true;
+                format!(
+                    "<w:p><w:pPr>{}</w:pPr>{}</w:p>",
+                    deleted_mark(),
+                    deleted("Old terms.")
+                )
+            }
+            'D' => format!(
+                "<w:p><w:pPr>{}</w:pPr>{}</w:p>",
+                deleted_mark(),
+                deleted("Gone.")
+            ),
+            'T' => table(row(true)),
+            't' => table(row(true) + &row(false)),
+            'L' => "<w:p><w:r><w:t>Live.</w:t></w:r></w:p>".to_string(),
+            'S' if moved => format!("<w:p>{}<w:r><w:t>Kept.</w:t></w:r></w:p>", inserted()),
+            'S' => "<w:p><w:r><w:t>Kept.</w:t></w:r></w:p>".to_string(),
+            'K' => format!(
+                "<w:p><w:pPr>{}</w:pPr><w:r><w:t>Stays.</w:t></w:r>{}</w:p>",
+                deleted_mark(),
+                inserted()
+            ),
+            'X' => format!(
+                r#"<w:p><w:pPr>{}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr>{}{}</w:p>"#,
+                deleted_mark(),
+                deleted("Old terms."),
+                inserted()
+            ),
+            'M' => format!("<w:p>{}{}</w:p>", deleted("Old terms."), inserted()),
+            other => panic!("no block {other}"),
+        });
+    }
+    body
+}
+
+fn inserted_before_deleted_tables(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "INSERTED_TEXT_BEFORE_DELETED_TABLE")
+        .collect()
+}
+
+/// #1851: Word's own Compare writes a deleted paragraph mark whose
+/// paragraph keeps inserted words before a deleted table: Accept All joins
+/// those words to the paragraph after the table. Word 16.115 crashed
+/// opening 6 of the 16 release-sample redlines (0.14.0) whose paragraph sat
+/// right before the table, its table cache corrupt at the deleted row's end
+/// (fix23 probe30). It opened 10: a lead, not Word-fatal, not repairable.
+#[test]
+fn probe_inserted_text_before_a_deleted_table_is_a_lead() {
+    for (blocks, location) in [
+        ("PTS", "w:body[0]/w:p[0]"),
+        ("LPTTS", "w:body[0]/w:p[1]"),
+        ("PTDTS", "w:body[0]/w:p[0]"),
+        ("PTSPTS", "w:body[0]/w:p[0]"),
+    ] {
+        let bytes = common::docx::docx(&ins_before_table_body(blocks));
+        let found = inserted_before_deleted_tables(&bytes);
+        let expected = if blocks == "PTSPTS" { 2 } else { 1 };
+        assert_eq!(found.len(), expected, "{blocks}: {found:?}");
+        let finding = &found[0];
+        assert_eq!(finding.part, "word/document.xml", "{blocks}");
+        assert_eq!(finding.location, location, "{blocks}");
+        assert_eq!(finding.severity, "warning", "{blocks}: {finding:?}");
+        assert!(
+            !finding.word_fatal && !finding.repairable,
+            "{blocks}: {finding:?}"
+        );
+    }
+}
+
+/// #1851: the words already in the paragraph Accept All keeps pass (Word
+/// opened w06, w10, w14 and w17 so, fix23 probe33), and so does every
+/// paragraph whose words no table separates from that paragraph or that
+/// keeps words of its own: a live row, a live block, a live mark, a
+/// section break, no table, no paragraph after the table. A deleted
+/// paragraph between the words and the table passes too: that shape
+/// crashed Word no more often than any redline.
+#[test]
+fn inserted_text_no_deleted_table_separates_passes() {
+    for (blocks, case) in [
+        ("pTS", "the words moved past the table"),
+        (
+            "pDTDS",
+            "the words moved past the table and the deleted paragraphs",
+        ),
+        ("PtS", "a live row"),
+        ("PLTS", "a live paragraph between"),
+        ("MTS", "a live mark"),
+        ("KTS", "a live word besides the inserted ones"),
+        ("XTS", "a deleted section break"),
+        ("PDS", "no table"),
+        (
+            "PDTS",
+            "a deleted paragraph between the words and the table",
+        ),
+        ("PT", "no paragraph after the table"),
+        ("PTKS", "a paragraph keeping words after the table"),
+    ] {
+        let bytes = common::docx::docx(&ins_before_table_body(blocks));
+        assert_eq!(
+            inserted_before_deleted_tables(&bytes),
+            [],
+            "{blocks}: {case}"
+        );
+        assert_word_valid_package(&bytes);
+    }
+}

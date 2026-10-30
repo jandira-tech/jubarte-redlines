@@ -87,8 +87,10 @@ fn pirates_x_table_left_not_wholesale_pure_id() {
 }
 
 #[test]
-fn hyperlink_x_rtl_still_pure_id() {
-    // Single-table next stays on M313 pure-I/D (MIX=0).
+fn hyperlink_x_rtl_pairs_the_tables_like_word() {
+    // Word pairs the original's table with the single-table next's (#1817):
+    // its redline of the pair (38aa2282ac) mixes the two paired cells and
+    // keeps every other paragraph pure.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src =
         root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
@@ -114,10 +116,7 @@ fn hyperlink_x_rtl_still_pure_id() {
     f.read_to_string(&mut xml).unwrap();
     let cls = body_para_classes(&xml);
     let n_m = cls.iter().filter(|&&c| c == 'M').count();
-    assert_eq!(
-        n_m, 0,
-        "single-table next stays pure-I/D MIX=0; got MIX={n_m}"
-    );
+    assert_eq!(n_m, 2, "Word's MIX=2, the paired cells; got MIX={n_m}");
 }
 
 /// Capture physical source cells, their live spans, and their paragraph text.

@@ -1137,9 +1137,10 @@ Options:
           Reply to comment c5 (with -p c5), as `add -p c5 --content`
 
       --rewrite-others-comments
-          Let `-p c5 --content` change a comment another author wrote; it keeps their
-          name. Without it that is refused (COMMENT_NOT_YOURS): one author answers
-          another with --reply
+          Let `-p c5 --content`, `--delete` and `--resolve` change a comment another
+          author wrote (a reworded one keeps their name), and `--delete` take their
+          reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one
+          author answers another with --reply
 
       --accept
           Accept revision r12 (with -p r12; r1+2 for several); prints the resolved
@@ -1150,12 +1151,14 @@ Options:
           change (`rejected r0 in p3: "from" > "to"`)
 
       --strike
-          Strike another author's insertion r12 (with -p r12): our tracked deletion
-          inside it, so the decision shows. --content is a comment on the struck words
+          Strike another author's insertion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's insertion only): our tracked deletion inside
+          it, so the decision shows. --content is one comment on the struck words
 
       --restore
-          Restore another author's deletion r12 (with -p r12): their deletion stays and
-          our tracked insertion of its words follows it. --content is a comment on the
+          Restore another author's deletion r12 (with -p r12; r10+11 for a change of
+          several marks, a replacement's deletion only): their deletion stays and our
+          tracked insertion of its words follows it. --content is one comment on the
           restored words
 
       --visible
@@ -2042,7 +2045,9 @@ Every text change against ``original`` must be a revision by ``author``.
 Rejecting that author's changes must give ``original``'s text back;
 a paragraph that still differs is an ``UNTRACKED_EDIT`` finding.
 A foreign revision added, changed or removed against ``original`` is a
-``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
+``FOREIGN_AUTHOR`` finding, and another author's comment gone, reworded,
+resolved or reopened, or a new comment not signed ``author``, a
+``FOREIGN_COMMENT`` one. Existing foreign revisions may remain;
 paragraphs align by full text, including deleted text, within each story.
 An untracked paragraph merge or split around another author's revisions
 reports those revisions as new and gone alongside ``UNTRACKED_EDIT``.
@@ -2524,6 +2529,9 @@ EditPlan.resolve_comment(self, comment_id: 'int', *, done: 'bool' = True, id: 's
 
 Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
 
+Another author's comment is refused (``COMMENT_NOT_YOURS``) unless the
+plan sets ``rewrite_others_comments``.
+
 #### `EditPlan.edit_comment`
 
 ```python
@@ -2542,6 +2550,10 @@ EditPlan.delete_comment(self, comment_id: 'int', *, id: 'str | None' = None) -> 
 ```
 
 Remove comment ``comment_id`` with its replies and anchors.
+
+Another author's comment, or one of yours whose thread holds another
+author's reply, is refused (``COMMENT_NOT_YOURS``) unless the plan
+sets ``rewrite_others_comments``.
 
 #### `EditPlan.watermark`
 

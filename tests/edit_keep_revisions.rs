@@ -561,7 +561,7 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
         .map(|c| c.id)
         .collect();
     assert_eq!(ids.len(), 2);
-    let plan = keep(&format!(
+    let mut plan = keep(&format!(
         r#"[{{"kind":"reply_comment","comment_id":{a},"text":"New York"}},
             {{"kind":"resolve_comment","comment_id":{a}}},
             {{"kind":"delete_comment","comment_id":{b}}},
@@ -570,6 +570,8 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
         a = ids[0],
         b = ids[1]
     ));
+    // Both are Ann's: Me resolves one and deletes the other on purpose (#1846).
+    plan.rewrite_others_comments = true;
     let out = apply_plan(&first.clean, &plan).unwrap();
     invariants(&first.clean, &out);
     for doc in [&out.clean, &out.redline] {

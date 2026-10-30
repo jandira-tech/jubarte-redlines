@@ -774,7 +774,7 @@ fn with_layout<T>(
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx)
         .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
-    let pkg =
+    let mut pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
     let main = pkg
         .main_document_part()
@@ -783,6 +783,7 @@ fn with_layout<T>(
                 .map(|_| "word/document.xml".to_string())
         })
         .ok_or(ConvertError::MissingDocument)?;
+    resolve_text_alternates(&mut pkg, &main);
     let xml = pkg
         .part_string(&main)
         .ok_or(ConvertError::MissingDocument)?;
@@ -3598,7 +3599,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let mut style_names: HashMap<String, String> = HashMap::new();
     let mut not_para: std::collections::HashSet<String> = std::collections::HashSet::new();
     for style in dom.descendants(root, Some(&W::name("style"))) {
-        let Some(sid) = dom.attribute(style, &W::name("styleId")) else {
+        let Some(sid) = dom.attribute(style, &W::style_id()) else {
             continue;
         };
         if let Some(nm) = first_named(&dom, style, "name").and_then(|n| dom.attribute(n, &W::val()))
@@ -3778,7 +3779,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     if let Some(sp) = dom
         .descendants(root, Some(&W::name("style")))
         .into_iter()
-        .find(|st| dom.attribute(*st, &W::name("styleId")) == Some(implicit_id))
+        .find(|st| dom.attribute(*st, &W::style_id()) == Some(implicit_id))
         .and_then(|st| dom.element(st, &W::p_pr()))
         .and_then(|ppr| first_named(&dom, ppr, "spacing"))
     {
@@ -3923,14 +3924,14 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
         run_family,
         cell_mar_lr: {
             let mar = dom
-                .element(style, &W::name("tblPr"))
+                .element(style, &W::tbl_pr())
                 .and_then(|pr| first_named(dom, pr, "tblCellMar"));
             let edge = |name: &str| mar.and_then(|m| mar_side(dom, m, name));
             (edge("left"), edge("right"))
         },
         cell_mar_tb: {
             let mar = dom
-                .element(style, &W::name("tblPr"))
+                .element(style, &W::tbl_pr())
                 .and_then(|pr| first_named(dom, pr, "tblCellMar"));
             let edge = |name: &str| {
                 mar.and_then(|m| first_named(dom, m, name))
@@ -7576,7 +7577,7 @@ fn word_balloon_comments(
         return None;
     }
     let mut dead = HashSet::new();
-    for end in dom.descendants(body, Some(&W::name("commentRangeEnd"))) {
+    for end in dom.descendants(body, Some(&W::comment_range_end())) {
         let Some(id) = attr_any(dom, end, "id") else {
             continue;
         };
@@ -7599,7 +7600,7 @@ fn word_balloon_comments(
         }
     };
     Some(
-        dom.descendants(body, Some(&W::name("commentReference")))
+        dom.descendants(body, Some(&W::comment_reference()))
             .into_iter()
             .filter_map(|r| attr_any(dom, r, "id"))
             .filter(|id| alive(id))
@@ -7619,10 +7620,10 @@ fn word_balloon_comments(
 fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
     let mut up = dom.parent(end);
     while let Some(node) = up {
-        if dom.name_is(node, &W::name("p")) {
+        if dom.name_is(node, &W::p()) {
             break;
         }
-        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::name("tc")) {
+        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::tc()) {
             return false;
         }
         up = dom.parent(node);
@@ -7637,10 +7638,10 @@ fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
         .into_iter()
         .take_while(|&node| node != end)
         .any(|node| {
-            if dom.name_is(node, &W::name("commentRangeStart")) {
+            if dom.name_is(node, &W::comment_range_start()) {
                 return id.is_some() && attr_any(dom, node, "id") == id;
             }
-            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::name("delText")) {
+            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::del_text()) {
                 return (0..dom.child_count(node))
                     .filter_map(|i| dom.text_value(dom.child_at(node, i)))
                     .any(|s| !s.is_empty());
@@ -7685,7 +7686,7 @@ fn comments_extended(pkg: &PartFs, main: &str) -> (HashMap<String, String>, Hash
     if let Some(root) = cdom.root(cdoc) {
         for comment in cdom.descendants(root, Some(&W::name("comment"))) {
             let last = cdom
-                .descendants(comment, Some(&W::name("p")))
+                .descendants(comment, Some(&W::p()))
                 .last()
                 .and_then(|&p| cdom.attribute(p, &W14::name("paraId")));
             if let (Some(para), Some(id)) = (last, attr_any(&cdom, comment, "id")) {
@@ -8946,7 +8947,7 @@ fn walk_container(
         let Some(child) = child else {
             break;
         };
-        if dom.name_is(child, &W::name("commentRangeStart")) {
+        if dom.name_is(child, &W::comment_range_start()) {
             if let Some(id) = attr_any(dom, child, "id") {
                 let mut open = ctx.open_comments.borrow_mut();
                 if !open.iter().any(|o| o == id) {
@@ -8955,7 +8956,7 @@ fn walk_container(
             }
             continue;
         }
-        if dom.name_is(child, &W::name("commentRangeEnd")) {
+        if dom.name_is(child, &W::comment_range_end()) {
             if let Some(id) = attr_any(dom, child, "id") {
                 ctx.open_comments.borrow_mut().retain(|o| o != id);
             }
@@ -9657,7 +9658,7 @@ fn para_sect_pr(dom: &Dom, para: NodeId) -> Option<NodeId> {
 
 fn para_has_page_break(dom: &Dom, para: NodeId) -> bool {
     for br in dom.descendants(para, Some(&W::name("br"))) {
-        if let Some(kind) = dom.attribute(br, &W::name("type"))
+        if let Some(kind) = dom.attribute(br, &W::type_())
             && (kind == "page" || kind == "oddPage" || kind == "evenPage")
         {
             return true;
@@ -9668,7 +9669,7 @@ fn para_has_page_break(dom: &Dom, para: NodeId) -> bool {
 
 fn para_has_column_break(dom: &Dom, para: NodeId) -> bool {
     for br in dom.descendants(para, Some(&W::name("br"))) {
-        if dom.attribute(br, &W::name("type")) == Some("column") {
+        if dom.attribute(br, &W::type_()) == Some("column") {
             return true;
         }
     }
@@ -11643,7 +11644,7 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
 /// paragraph even when no text was inserted or deleted (pool p0016, p0033,
 /// p0111, p0225).
 fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
-    [W::p_pr_change(), W::name("rPrChange")].iter().any(|n| {
+    [W::p_pr_change(), W::r_pr_change()].iter().any(|n| {
         dom.find_descendant_element(para, Some(n), |cand| !under_prior_change(dom, para, cand))
             .is_some()
     })
@@ -11967,7 +11968,7 @@ fn paragraph_block(
 }
 
 fn para_bookmark_names(dom: &Dom, para: NodeId) -> Vec<String> {
-    let want = W::name("bookmarkStart");
+    let want = W::bookmark_start();
     let mut names = Vec::new();
     collect_bookmark_names(dom, para, &want, &mut names);
     names
@@ -15221,7 +15222,7 @@ fn number_comments(
     let mut number_of: HashMap<String, usize> = HashMap::new();
     let mut replies: HashMap<String, usize> = HashMap::new();
     let mut seen = HashSet::new();
-    for node in dom.descendants(body, Some(&W::name("commentReference"))) {
+    for node in dom.descendants(body, Some(&W::comment_reference())) {
         let Some(id) = attr_any(dom, node, "id") else {
             continue;
         };
@@ -15523,7 +15524,7 @@ fn collect_runs_rec(
     author: &str,
     runs: &mut Vec<TextRun>,
 ) {
-    if ctx.dom.name_is(node, &W::name("commentRangeStart")) {
+    if ctx.dom.name_is(node, &W::comment_range_start()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             let id = id.to_string();
             if !ctx.open.iter().any(|o| o == &id) {
@@ -15532,7 +15533,7 @@ fn collect_runs_rec(
         }
         return;
     }
-    if ctx.dom.name_is(node, &W::name("commentRangeEnd")) {
+    if ctx.dom.name_is(node, &W::comment_range_end()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             ctx.open.retain(|o| o != id);
             // The note binds where the range ends: Word's connector leaves
@@ -15544,7 +15545,7 @@ fn collect_runs_rec(
         }
         return;
     }
-    if ctx.dom.name_is(node, &W::name("commentReference")) {
+    if ctx.dom.name_is(node, &W::comment_reference()) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             let id = id.to_string();
             if !ctx.bound.contains(&id)
@@ -15629,9 +15630,9 @@ fn collect_runs_rec(
     if ctx.dom.name_is(node, &W::r()) {
         for idx in 0..ctx.dom.child_count(node) {
             let child = ctx.dom.child_at(node, idx);
-            if ctx.dom.name_is(child, &W::name("commentRangeStart"))
-                || ctx.dom.name_is(child, &W::name("commentRangeEnd"))
-                || ctx.dom.name_is(child, &W::name("commentReference"))
+            if ctx.dom.name_is(child, &W::comment_range_start())
+                || ctx.dom.name_is(child, &W::comment_range_end())
+                || ctx.dom.name_is(child, &W::comment_reference())
                 || ctx.dom.name_is(child, &W::fld_char())
                 || ctx.dom.name_is(child, &W::instr_text())
                 || ctx.dom.name_is(child, &W::del_instr_text())
@@ -15708,13 +15709,13 @@ fn collect_runs_rec(
             if ctx.dom.name_is(child, &W::name("footnoteReference")) {
                 footnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
             }
-            if ctx.dom.name_is(child, &W::name("footnoteRef")) {
+            if ctx.dom.name_is(child, &W::footnote_ref()) {
                 note_ref = true;
             }
             if ctx.dom.name_is(child, &W::name("endnoteReference")) {
                 endnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
             }
-            if ctx.dom.name_is(child, &W::name("endnoteRef")) {
+            if ctx.dom.name_is(child, &W::endnote_ref()) {
                 endnote_id = Some(String::new());
             }
             if ctx.dom.name_is(child, &W::name("separator")) {
@@ -16475,7 +16476,7 @@ fn collect_visible_marked(
     }
     if !in_del && (dom.name_is(node, &W::name("tab")) || dom.name_is(node, &W::name("br"))) {
         if dom.name_is(node, &W::name("br")) {
-            let kind = dom.attribute(node, &W::name("type"));
+            let kind = dom.attribute(node, &W::type_());
             let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
             let column = kind == Some("column");
             match breaks {
@@ -17861,7 +17862,7 @@ fn nested_in_text(dom: &Dom, node: NodeId, drawing: NodeId) -> bool {
         && descendants_local(dom, drawing, "txbxContent")
             .into_iter()
             .any(|tx| {
-                [W::t(), W::name("delText")].iter().any(|name| {
+                [W::t(), W::del_text()].iter().any(|name| {
                     dom.descendants(tx, Some(name))
                         .into_iter()
                         .any(|t| !element_text(dom, t).trim().is_empty())
@@ -17896,7 +17897,7 @@ fn descendants_local(dom: &Dom, node: NodeId, local: &str) -> Vec<NodeId> {
 /// line by line).
 fn w_text(dom: &Dom, node: NodeId) -> String {
     let mut words: Vec<NodeId> = dom.descendants(node, Some(&W::t()));
-    words.extend(dom.descendants(node, Some(&W::name("delText"))));
+    words.extend(dom.descendants(node, Some(&W::del_text())));
     words.into_iter().map(|t| element_text(dom, t)).collect()
 }
 
@@ -18270,7 +18271,7 @@ fn shape_roots(dom: &Dom, node: NodeId) -> Vec<NodeId> {
 }
 
 fn shape_roots_rec(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
-    if dom.name_is(node, &MC::name("AlternateContent")) {
+    if dom.name_is(node, &MC::alternate_content()) {
         if let Some(chosen) = alternate_choice(dom, node) {
             shape_roots_rec(dom, chosen, out);
         }
@@ -18291,13 +18292,22 @@ fn shape_roots_rec(dom: &Dom, node: NodeId, out: &mut Vec<NodeId>) {
     }
 }
 
+/// The branch of a drawing `mc:AlternateContent` the renderer draws: the
+/// first `mc:Choice` whose `Requires` it understands
+/// ([`renderer_understands_namespace`]), else the `mc:Fallback`.
 fn alternate_choice(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    let choice = MC::name("Choice");
-    let fallback = MC::name("Fallback");
+    let choice = MC::choice();
+    let fallback = MC::fallback();
     let mut fb = None;
     for i in 0..dom.child_count(node) {
         let child = dom.child_at(node, i);
-        if dom.name_is(child, &choice) {
+        if dom.name_is(child, &choice)
+            && crate::comparer::finalize::choice_requires_understood(
+                dom,
+                child,
+                renderer_understands_namespace,
+            )
+        {
             return Some(child);
         }
         if dom.name_is(child, &fallback) {
@@ -18499,7 +18509,7 @@ fn collect_images(
         .descendants(para, None)
         .into_iter()
         .filter(|n| {
-            (dom.name_is(*n, &W::t()) || dom.name_is(*n, &W::name("delText")))
+            (dom.name_is(*n, &W::t()) || dom.name_is(*n, &W::del_text()))
                 && !element_text(dom, *n).trim().is_empty()
                 && !inside_text_box(dom, *n, para)
         })
@@ -18761,7 +18771,7 @@ fn collect_images(
             }
             if had_drawing
                 && !dom
-                    .ancestors(root, Some(&MC::name("AlternateContent")))
+                    .ancestors(root, Some(&MC::alternate_content()))
                     .is_empty()
             {
                 continue;
@@ -18770,7 +18780,7 @@ fn collect_images(
             // elsewhere (00f49849's header text box painted as a 131x337pt
             // picture, its logo twice).
             if inside_text_box(dom, root, para)
-                || !dom.ancestors(root, Some(&MC::name("Fallback"))).is_empty()
+                || !dom.ancestors(root, Some(&MC::fallback())).is_empty()
             {
                 continue;
             }
@@ -20730,7 +20740,7 @@ fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<
     let own = |s: NodeId| {
         dom.elements(s, Some(&W::name(local)))
             .into_iter()
-            .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
+            .find(|&node| dom.attribute(node, &W::type_()).unwrap_or("default") == want)
             .and_then(|node| attr_any(dom, node, "id"))
             .map(str::to_string)
     };
@@ -20782,7 +20792,7 @@ fn hf_table_width_pt(dom: &Dom, table: NodeId) -> f32 {
         _ => {
             let mut w = 0.0;
             if let Some(grid) = direct_named(dom, table, "tblGrid") {
-                for col in dom.elements(grid, Some(&W::name("gridCol"))) {
+                for col in dom.elements(grid, Some(&W::grid_col())) {
                     w += attr_any(dom, col, "w")
                         .and_then(|s| s.parse::<f32>().ok())
                         .map(twip)
@@ -21000,9 +21010,9 @@ fn sect_ref_chrome_of(
 /// `w:document/w:background`: Word anchors the page colour's shape in the
 /// header story, which then ends with one more empty Normal paragraph.
 fn page_background(dom: &Dom, node: NodeId) -> bool {
-    dom.ancestors(node, Some(&W::name("document")))
+    dom.ancestors(node, Some(&W::document()))
         .first()
-        .is_some_and(|doc| dom.element(*doc, &W::name("background")).is_some())
+        .is_some_and(|doc| dom.element(*doc, &W::background()).is_some())
 }
 
 fn load_chrome_part(
@@ -21057,9 +21067,7 @@ fn chrome_part_xml(
         .into_iter()
         .rfind(|p| {
             !hf_para_in_table(&part_dom, root, *p)
-                && part_dom
-                    .ancestors(*p, Some(&W::name("txbxContent")))
-                    .is_empty()
+                && part_dom.ancestors(*p, Some(&W::txbx_content())).is_empty()
         });
     // Estimated top of each top-level paragraph below the part's top: one
     // line of its largest size (x1.15, its multiple) and max(after, before).
@@ -21144,7 +21152,7 @@ fn chrome_part_xml(
                 .map(|inl| {
                     let mut run = prun.clone();
                     if let Some(rpr) = part_dom
-                        .ancestors(inl, Some(&W::name("r")))
+                        .ancestors(inl, Some(&W::r()))
                         .first()
                         .and_then(|r| part_dom.element(*r, &W::r_pr()))
                     {
@@ -21174,11 +21182,7 @@ fn chrome_part_xml(
             let size = part_dom
                 .descendants(para, Some(&W::name("sz")))
                 .into_iter()
-                .filter(|n| {
-                    part_dom
-                        .ancestors(*n, Some(&W::name("txbxContent")))
-                        .is_empty()
-                })
+                .filter(|n| part_dom.ancestors(*n, Some(&W::txbx_content())).is_empty())
                 .filter_map(|n| attr_any(&part_dom, n, "val").and_then(|v| v.parse::<f32>().ok()))
                 .map(|half| half / 2.0)
                 .fold(prun.size, f32::max);
@@ -21243,7 +21247,7 @@ fn chrome_part_xml(
             .into_iter()
             .any(|pict| {
                 part_dom
-                    .ancestors(pict, Some(&W::name("txbxContent")))
+                    .ancestors(pict, Some(&W::txbx_content()))
                     .is_empty()
                     && descendants_local(&part_dom, pict, "shape")
                         .iter()
@@ -21264,11 +21268,7 @@ fn chrome_part_xml(
                 || part_dom
                     .descendants(para, Some(&WP::name("inline")))
                     .into_iter()
-                    .any(|inl| {
-                        part_dom
-                            .ancestors(inl, Some(&W::name("txbxContent")))
-                            .is_empty()
-                    }));
+                    .any(|inl| part_dom.ancestors(inl, Some(&W::txbx_content())).is_empty()));
         // A picture paragraph with no text or bare line after it in the
         // part stands under the whole text band.
         let band_para = |p: NodeId| {
@@ -21529,9 +21529,9 @@ fn para_shown_text(dom: &Dom, para: NodeId) -> String {
     out
 }
 
-/// The main document's other story parts (headers, footers, footnotes,
-/// endnotes, comments), found by relationship type.
-fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+/// The names of the main document's other story parts (headers, footers,
+/// footnotes, endnotes, comments), found by relationship type.
+fn story_part_names(pkg: &PartFs, main: &str) -> Vec<String> {
     let Some(rels) = pkg.read_rels_for(main) else {
         return Vec::new();
     };
@@ -21543,8 +21543,72 @@ fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
                     .iter()
                     .any(|k| r.rel_type.ends_with(k))
         })
-        .filter_map(|r| pkg.part_string(&pkg.resolve_rel_target(main, &r.target)))
+        .map(|r| pkg.resolve_rel_target(main, &r.target))
         .collect()
+}
+
+/// The main document's other story parts' xml ([`story_part_names`]).
+fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+    story_part_names(pkg, main)
+        .iter()
+        .filter_map(|part| pkg.part_string(part))
+        .collect()
+}
+
+/// `w16se`, Word's emoji symbols (`w16se:symEx`, a font and a character).
+const W16SE: &str = "http://schemas.microsoft.com/office/word/2015/wordml/symex";
+
+/// A namespace whose Choice the renderer draws: Word's
+/// ([`crate::comparer::finalize::word_understands_namespace`]) but `w16se`.
+/// The renderer draws no `w16se:symEx`, so it takes the Fallback, which
+/// holds the same character as text in the same font (#1876: `a1cfa10c32`'s
+/// emoji).
+fn renderer_understands_namespace(uri: &str) -> bool {
+    uri != W16SE && crate::comparer::finalize::word_understands_namespace(uri)
+}
+
+/// Put in place of each `mc:AlternateContent` that holds no drawing, in the
+/// main part and its story parts, the branch the renderer draws: the first
+/// `mc:Choice` whose `Requires` it understands
+/// ([`renderer_understands_namespace`]), else the `mc:Fallback` (#1876). The walks that follow know nothing of the wrapper: they drew
+/// both branches of a run-level one and nothing of a block-level one.
+/// Drawing wrappers stay for [`alternate_choice`]. A part is rewritten only
+/// when a wrapper went.
+fn resolve_text_alternates(pkg: &mut PartFs, main: &str) {
+    let wrapper = MC::alternate_content();
+    // Sections often share a header or footer part: each part once.
+    let mut seen = std::collections::HashSet::new();
+    let parts: Vec<String> = std::iter::once(main.to_string())
+        .chain(story_part_names(pkg, main))
+        .filter(|part| seen.insert(part.clone()))
+        .collect();
+    let wrappers = |dom: &Dom, root: NodeId| {
+        let mut count = 0usize;
+        dom.for_each_descendant_element(root, Some(&wrapper), |_| count += 1);
+        count
+    };
+    for part in parts {
+        let Some(xml) = pkg.part_string(&part) else {
+            continue;
+        };
+        if !xml.contains("AlternateContent") {
+            continue;
+        }
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let before = wrappers(&dom, root);
+        crate::comparer::finalize::resolve_alternate_content_with(
+            &mut dom,
+            root,
+            renderer_understands_namespace,
+        );
+        if wrappers(&dom, root) != before {
+            pkg.set_part(&part, dom.serialize_document(doc).into_bytes());
+        }
+    }
 }
 
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
@@ -21806,7 +21870,7 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
 }
 
 fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
-    let header = dom.name_is(node, &W::name("hdr"));
+    let header = dom.name_is(node, &W::hdr());
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
     // An empty top-level paragraph above the first line or below the last
@@ -22062,10 +22126,7 @@ fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
 fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
     dom.descendants(para, Some(&WP::name("inline")))
         .into_iter()
-        .filter(|inl| {
-            dom.ancestors(*inl, Some(&W::name("txbxContent")))
-                .is_empty()
-        })
+        .filter(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
         .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
         .map(|cy| cy / 12700.0)
@@ -22087,13 +22148,10 @@ fn hf_flat_pic_run(
     let inl = dom
         .descendants(para, Some(&WP::name("inline")))
         .into_iter()
-        .find(|inl| {
-            dom.ancestors(*inl, Some(&W::name("txbxContent")))
-                .is_empty()
-        })?;
+        .find(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())?;
     let mut run = prun.clone();
     if let Some(rpr) = dom
-        .ancestors(inl, Some(&W::name("r")))
+        .ancestors(inl, Some(&W::r()))
         .first()
         .and_then(|r| dom.element(*r, &W::r_pr()))
     {
@@ -22111,10 +22169,10 @@ fn hf_flat_pic_run(
 fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut pics_w = 0.0_f32;
     for n in dom.descendants(para, None) {
-        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+        if !dom.ancestors(n, Some(&W::txbx_content())).is_empty() {
             continue;
         }
-        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
             && !element_text(dom, n).trim().is_empty()
         {
             break;
@@ -22145,10 +22203,10 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
     let mut pics_w = 0.0_f32;
     let mut pics_h = 0.0_f32;
     for n in dom.descendants(para, None) {
-        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+        if !dom.ancestors(n, Some(&W::txbx_content())).is_empty() {
             continue;
         }
-        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
             && !element_text(dom, n).trim().is_empty()
         {
             if pics_w > 0.0 {
@@ -39366,9 +39424,12 @@ mod drawing_tests {
         assert_eq!(text, "Datum plane");
     }
 
+    // `wps` is declared: a Choice on an undeclared prefix is passed over
+    // for the Fallback, and Word cannot read such a file at all (#1876).
     const TXBX_XML: &str = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+ xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
 <w:body><w:p>
 <w:r>
@@ -56102,7 +56163,7 @@ mod coverage_round_three_tests {
                 ));
                 let p = first_named(&dom, root, "p").unwrap();
                 assert_eq!(hf_inline_pic_h(&dom, p), height);
-                assert_eq!(dom.descendants(p, Some(&W::name("t"))).len(), 0);
+                assert_eq!(dom.descendants(p, Some(&W::t())).len(), 0);
             }
         }
 

@@ -44,14 +44,16 @@ tables, four `tblPrChange` and four `tblGridChange`. jubarte writes 3.
 different horizontal partitions when they share a word, and row words split
 at cell, paragraph and tab boundaries.
 
-**Open:** the table split, and pairing the old header row (`Rhythmia`) with
-the new one (`Group`).
+**Done (#1817):** Word mode meshes a row whose cells were repartitioned,
+so the old header row (`Rhythmia`) now pairs with the new one (`Group`);
+`our_compare_pairs_unmatched_rows_into_merged_rows` runs.
 
-**Tests:** `our_compare_matches_word_table_shape` and
-`our_compare_pairs_unmatched_rows_into_merged_rows` in
-`tests/m_table_alignment_3d4318d7e9.rs` assert Word's shape and are
+**Open:** the table split.
+
+**Tests:** `our_compare_matches_word_table_shape` in
+`tests/m_table_alignment_3d4318d7e9.rs` asserts Word's shape and is
 `#[ignore]`d with this item's number; `word_redline_has_expected_table_shape`
-pins Word's own redline and runs. Run the targets with `cargo test --test
+pins Word's own redline and runs. Run the target with `cargo test --test
 m_table_alignment_3d4318d7e9 -- --ignored`.
 
 ### 10. A square-wrapped float does not wrap the lines above its anchor — **OPEN, PDF layout**

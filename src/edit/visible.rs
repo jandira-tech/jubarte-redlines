@@ -13,8 +13,9 @@
 //! and the run formatting kept.
 
 use super::{
-    EditError, EditOutcome, EditPlan, ExistingRevisions, OperationKind, Resolved, Transaction,
-    check_comment, comment_marker, comment_reference_run, editable_insertion, err, excerpt, run_of,
+    EditError, EditOutcome, EditPlan, ExistingRevisions, OperationKind, Resolved, Side,
+    Transaction, check_comment, comment_marker, comment_reference_run, editable_insertion, err,
+    excerpt, run_of,
 };
 use crate::changes::{Change, ChangeKind, MoveSide};
 use crate::inspect::project_paragraph;
@@ -130,25 +131,60 @@ pub(super) fn lower(source: &[u8], plan: &EditPlan) -> Result<Option<EditPlan>, 
     Ok(Some(lowered))
 }
 
+/// Whether the visible reject of `revision` is a `restore`: of a deletion
+/// or of a move's source. An id `listed` lacks is struck (the strike then
+/// refuses it as unknown).
+fn restores(listed: &[Change], revision: &str) -> bool {
+    listed.iter().find(|c| c.id == revision).is_some_and(|c| {
+        matches!(
+            (c.kind, c.move_side),
+            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From))
+        )
+    })
+}
+
 /// The visible reject of `revision`: a `restore` of a deletion or of a
-/// move's source, a `strike` of anything else, an id `listed` lacks
-/// included (the strike then refuses it as unknown).
+/// move's source, a `strike` of anything else.
 pub(super) fn reject_kind(
     listed: &[Change],
     revision: String,
     comment: Option<String>,
 ) -> OperationKind {
-    let restores = listed.iter().find(|c| c.id == revision).is_some_and(|c| {
-        matches!(
-            (c.kind, c.move_side),
-            (ChangeKind::Deletion, _) | (ChangeKind::Move, Some(MoveSide::From))
-        )
-    });
-    if restores {
+    if restores(listed, &revision) {
         OperationKind::Restore { revision, comment }
     } else {
         OperationKind::Strike { revision, comment }
     }
+}
+
+/// The visible reject of the change the marks `ids` make: one operation
+/// per kind ([`reject_kind`]), the kind of the first mark first, and
+/// `comment` on that one.
+pub(super) fn reject_kinds(
+    listed: &[Change],
+    ids: &[String],
+    comment: Option<String>,
+) -> Vec<OperationKind> {
+    let (back, out): (Vec<String>, Vec<String>) =
+        ids.iter().cloned().partition(|id| restores(listed, id));
+    let mut kinds = [(true, back), (false, out)];
+    if !ids.first().is_some_and(|id| restores(listed, id)) {
+        kinds.swap(0, 1);
+    }
+    let mut comment = comment;
+    kinds
+        .into_iter()
+        .filter(|(_, marks)| !marks.is_empty())
+        .map(|(restore, marks)| {
+            let revision = crate::changes::composite_id(&marks);
+            let comment = comment.take();
+            if restore {
+                OperationKind::Restore { revision, comment }
+            } else {
+                OperationKind::Strike { revision, comment }
+            }
+        })
+        .collect()
 }
 
 /// The run content a struck or restored run may hold: text and the
@@ -256,7 +292,7 @@ fn holds_words(dom: &Dom, del: NodeId) -> bool {
 /// restore itself makes.
 pub(super) fn restorable(dom: &Dom, del: NodeId, stretches: usize) -> bool {
     stretches == 1
-        && dom.name_is(del, &W::name("del"))
+        && dom.name_is(del, &W::del())
         && dom.parent(del).is_some_and(|p| in_paragraph(dom, p))
         && holds_words(dom, del)
         && unsupported_child(dom, del, &[]).is_none()
@@ -341,10 +377,14 @@ fn offset_before(tx: &Transaction<'_>, para: usize, node: NodeId) -> usize {
 
 type Failure = Box<(EditError, EditOutcome)>;
 
+/// The refusal of a comment outside the body.
+const BODY_ONLY: &str =
+    "comments are supported in the body only: Word cannot anchor one in a header, footer or note";
+
 impl Transaction<'_> {
-    /// Resolve a `strike` or a `restore` of `revision`: the text deletions
-    /// that strike their insertion, or the copy that restores their
-    /// deletion.
+    /// Resolve a `strike` or a `restore` of `revision`, a change as
+    /// `changes` lists it: the text deletions that strike its insertion,
+    /// or the copy that restores its deletion.
     pub(super) fn resolve_visible(
         &mut self,
         id: &str,
@@ -352,7 +392,7 @@ impl Transaction<'_> {
         revision: &str,
         comment: Option<&str>,
     ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
-        let mut outcome = EditOutcome {
+        let outcome = EditOutcome {
             id: id.to_string(),
             kind: String::new(),
             status: String::new(),
@@ -366,25 +406,176 @@ impl Transaction<'_> {
             anchor_read_as: None,
             near: None,
         };
+        let fail =
+            |code: &str, message: String| Box::new((err(code, Some(id), message), outcome.clone()));
+        let verb = visible.verb();
+        let ids = crate::ids::parse_change_ids(revision.trim())
+            .map_err(|e| fail("INVALID_EDIT", format!("{verb}: {e}")))?;
+        if let Some(note) = comment {
+            check_comment(note).map_err(|m| fail("INVALID_EDIT", m))?;
+        }
+        let listed = crate::changes::list_changes(&self.base)
+            .map_err(|e| fail("INVALID_DOCUMENT", e.to_string()))?;
+        match ids.as_slice() {
+            [one] => self.resolve_mark(id, visible, one, &listed, comment, outcome),
+            marks => self.resolve_marks(id, visible, marks, &listed, comment, outcome),
+        }
+    }
+
+    /// The refusal of `change` when it is the plan author's own: the way to
+    /// undo it is theirs to take, not a strike or a restore.
+    fn own_revision(&self, visible: Visible, change: &Change) -> Option<String> {
+        let author = change
+            .author
+            .as_deref()
+            .filter(|&a| a == self.plan.author)?;
+        let instead = match (visible, change.kind) {
+            (Visible::Strike, ChangeKind::Insertion) => "delete the text instead",
+            _ => "reject it instead",
+        };
+        Some(format!("{} is by {author:?}; {instead}", change.id))
+    }
+
+    /// Resolve a `strike` or a `restore` of a change of several `marks`
+    /// (`r10+11`): each mark of the operation's kind as it would be alone,
+    /// in reading order, and one comment over the answer. The marks of the
+    /// other kind (a replacement's deletion under a strike) stay as they
+    /// are, and the outcome says so.
+    fn resolve_marks(
+        &mut self,
+        id: &str,
+        visible: Visible,
+        marks: &[crate::ids::ChangeId],
+        listed: &[Change],
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
+        let fail = |code: &str, message: String, outcome: &EditOutcome| {
+            Box::new((err(code, Some(id), message), outcome.clone()))
+        };
+        let shorts: Vec<String> = marks.iter().map(crate::ids::ChangeId::short).collect();
+        let revision = crate::changes::composite_id(&shorts);
+        // A mark named twice would be answered twice: its words struck or
+        // restored once per mention.
+        if let Some(twice) = shorts
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| shorts[..i].contains(s).then_some(s))
+        {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("{revision} names {twice} twice"),
+                &outcome,
+            ));
+        }
+        let (noun, opposite, other, other_verb) = match visible {
+            Visible::Strike => ("insertion", ChangeKind::Deletion, "deletion", "restore"),
+            Visible::Restore => ("deletion", ChangeKind::Insertion, "insertion", "strike"),
+        };
+        // Every mark is known and none is ours, whichever its kind.
+        let mut answered = Vec::new();
+        let mut left = Vec::new();
+        for (mark, short) in marks.iter().zip(&shorts) {
+            let Some(at) = listed.iter().position(|c| &c.id == short) else {
+                return Err(fail(
+                    "UNKNOWN_CHANGE",
+                    format!("no tracked change {short}"),
+                    &outcome,
+                ));
+            };
+            if let Some(message) = self.own_revision(visible, &listed[at]) {
+                return Err(fail("OWN_REVISION", message, &outcome));
+            }
+            if listed[at].kind == opposite {
+                left.push(short.clone());
+            } else {
+                answered.push((at, mark));
+            }
+        }
+        if answered.is_empty() {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("{revision} holds no {noun}: {other_verb} it instead"),
+                &outcome,
+            ));
+        }
+        answered.sort_by_key(|&(at, _)| at);
+        let mut resolved = Vec::new();
+        let mut paragraphs: Vec<String> = Vec::new();
+        let mut contexts = Vec::new();
+        let mut done = Vec::new();
+        for (_, mark) in answered {
+            let (answer, said) =
+                self.resolve_mark(id, visible, mark, listed, comment, outcome.clone())?;
+            if let Some(paragraph) = said.paragraph
+                && !paragraphs.contains(&paragraph)
+            {
+                paragraphs.push(paragraph);
+            }
+            if !answer.is_empty() {
+                done.push(mark.short());
+                contexts.extend(said.context);
+            }
+            resolved.extend(answer);
+        }
+        outcome.paragraph = paragraphs.first().cloned();
+        if comment.is_some()
+            && let [first, .., last] = paragraphs.as_slice()
+        {
+            let between = &paragraphs[1..paragraphs.len() - 1];
+            let named = between
+                .iter()
+                .fold(first.clone(), |all, p| format!("{all}, {p}"));
+            return Err(fail(
+                "INVALID_EDIT",
+                format!(
+                    "{revision} has marks in {named} and {last}; a comment answers one paragraph's: give each paragraph's marks their own {}",
+                    visible.verb()
+                ),
+                &outcome,
+            ));
+        }
+        // The other kind's marks stay, whether or not this answer did
+        // anything: a second strike of a replacement still names its deletion.
+        let rest = (!left.is_empty()).then(|| {
+            format!(
+                "{} is its {other}: {other_verb} it too to reject the whole change",
+                crate::changes::composite_id(&left)
+            )
+        });
+        if resolved.is_empty() {
+            outcome.message = Some(match rest {
+                Some(rest) => format!("already struck; {rest}"),
+                None => "already struck".into(),
+            });
+            return Ok((Vec::new(), outcome));
+        }
+        outcome.matches = 1;
+        outcome.context = Some(contexts.join(" "));
+        if let Some(rest) = rest {
+            outcome.message = Some(format!(
+                "{} {}; {rest}",
+                visible.past(),
+                crate::changes::composite_id(&done),
+            ));
+        }
+        Ok((one_comment(resolved), outcome))
+    }
+
+    /// Resolve a `strike` or a `restore` of the single mark `one`.
+    fn resolve_mark(
+        &mut self,
+        id: &str,
+        visible: Visible,
+        one: &crate::ids::ChangeId,
+        listed: &[Change],
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
         let fail = |code: &str, message: String, outcome: &EditOutcome| {
             Box::new((err(code, Some(id), message), outcome.clone()))
         };
         let verb = visible.verb();
-        let ids = crate::ids::parse_change_ids(revision.trim())
-            .map_err(|e| fail("INVALID_EDIT", format!("{verb}: {e}"), &outcome))?;
-        let [one] = ids.as_slice() else {
-            let names: Vec<String> = ids.iter().map(crate::ids::ChangeId::short).collect();
-            return Err(fail(
-                "INVALID_EDIT",
-                format!(
-                    "{verb} takes one revision; {} names {} ({})",
-                    revision.trim(),
-                    names.len(),
-                    names.join(", ")
-                ),
-                &outcome,
-            ));
-        };
         let short = one.short();
         let settled = &self.resolved_revisions;
         if settled.accepted.contains(&short) || settled.rejected.contains(&short) {
@@ -397,27 +588,13 @@ impl Transaction<'_> {
                 &outcome,
             ));
         }
-        if let Some(note) = comment {
-            check_comment(note).map_err(|m| fail("INVALID_EDIT", m, &outcome))?;
-        }
         let unknown = || format!("no tracked change {short}");
-        let listed = crate::changes::list_changes(&self.base)
-            .map_err(|e| fail("INVALID_DOCUMENT", e.to_string(), &outcome))?;
-        let Some(change) = listed.into_iter().find(|c| c.id == short) else {
+        let Some(change) = listed.iter().find(|c| c.id == short) else {
             return Err(fail("UNKNOWN_CHANGE", unknown(), &outcome));
         };
-        // Our own revision first, whatever its kind: the way to undo it is
-        // ours to take, not a strike or a restore.
-        if let Some(author) = change.author.as_deref().filter(|&a| a == self.plan.author) {
-            let instead = match (visible, change.kind) {
-                (Visible::Strike, ChangeKind::Insertion) => "delete the text instead",
-                _ => "reject it instead",
-            };
-            return Err(fail(
-                "OWN_REVISION",
-                format!("{short} is by {author:?}; {instead}"),
-                &outcome,
-            ));
+        // Our own revision first, whatever its kind.
+        if let Some(message) = self.own_revision(visible, change) {
+            return Err(fail("OWN_REVISION", message, &outcome));
         }
         let wrong_kind = match (visible, change.kind, change.move_side) {
             (Visible::Strike, ChangeKind::Insertion, _)
@@ -433,19 +610,19 @@ impl Transaction<'_> {
             (Visible::Restore, ChangeKind::Move, Some(MoveSide::From)) => Some((
                 "UNSUPPORTED_STRUCTURE",
                 format!(
-                    "{short} is the source of a move: restoring it would duplicate the moved words; reject the move ({short}) instead"
+                    "{short} is the source of a move: restoring it would duplicate the moved words; comment on it instead"
                 ),
             )),
             (Visible::Strike, ChangeKind::Move, Some(MoveSide::To)) => Some((
                 "UNSUPPORTED_STRUCTURE",
                 format!(
-                    "{short} is the destination of a move: striking it would lose the moved words; reject the move ({short}) instead"
+                    "{short} is the destination of a move: striking it would lose the moved words; comment on it instead"
                 ),
             )),
             (_, ChangeKind::Move, _) => Some((
                 "INVALID_EDIT",
                 format!(
-                    "{short} is a move, not {}: reject the move ({short}) instead",
+                    "{short} is a move, not {}: comment on it instead",
                     match visible {
                         Visible::Strike => "an insertion",
                         Visible::Restore => "a deletion",
@@ -461,7 +638,7 @@ impl Transaction<'_> {
             (_, ChangeKind::Formatting, _) => Some((
                 "INVALID_EDIT",
                 format!(
-                    "{short} is a formatting change; {verb} takes {} text: reject {short} to undo it (no visible reject of formatting yet; it leaves no trace)",
+                    "{short} is a formatting change; {verb} takes {} text: comment on it instead",
                     visible.takes()
                 ),
             )),
@@ -471,21 +648,10 @@ impl Transaction<'_> {
         }
         let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
         match change.target {
-            "text" => {}
-            "paragraph_mark" => {
-                let paragraph = change.paragraph.as_deref().unwrap_or("its paragraph");
-                return Err(unsupported(match visible {
-                    Visible::Strike => format!(
-                        "{short} is an inserted paragraph mark; strike takes inserted text only: delete paragraph {paragraph} to strike it with its mark"
-                    ),
-                    Visible::Restore => format!(
-                        "{short} is a deleted paragraph mark; restore takes deleted text only: reject {short} to put the paragraph break back"
-                    ),
-                }));
-            }
+            "text" | "paragraph_mark" => {}
             other => {
                 return Err(unsupported(format!(
-                    "{short} is {} {}; {verb} takes {} text only: reject {short} instead",
+                    "{short} is {} {}; {verb} takes {} text only: comment on it instead",
                     match visible {
                         Visible::Strike => "an inserted",
                         Visible::Restore => "a deleted",
@@ -498,6 +664,9 @@ impl Transaction<'_> {
         let Some(story) = self.stories.iter().position(|s| s.id == one.story) else {
             return Err(fail("UNKNOWN_CHANGE", unknown(), &outcome));
         };
+        if change.target == "paragraph_mark" {
+            return self.resolve_visible_mark(id, visible, story, one, comment, outcome);
+        }
         let local_name = match visible {
             Visible::Strike => "ins",
             Visible::Restore => "del",
@@ -519,18 +688,14 @@ impl Transaction<'_> {
         let Some(first_para) = nodes.iter().find_map(|&n| paragraph_of(n)) else {
             return Err(fail(
                 "UNSUPPORTED_STRUCTURE",
-                format!("{short} is not in a paragraph jubarte edits; reject {short} instead"),
+                format!("{short} is not in a paragraph jubarte edits"),
                 &outcome,
             ));
         };
         outcome.paragraph = Some(self.paragraph_id(first_para));
         let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
         if comment.is_some() && self.paragraph_story[first_para].0 != 0 {
-            return Err(fail(
-                "COMMENT_NOT_IN_BODY",
-                "comments are supported in the body only: Word cannot anchor one in a header, footer or note".into(),
-                &outcome,
-            ));
+            return Err(fail("COMMENT_NOT_IN_BODY", BODY_ONLY.into(), &outcome));
         }
         match visible {
             Visible::Strike => {
@@ -540,12 +705,12 @@ impl Transaction<'_> {
                 for &ins in &nodes {
                     if let Some(what) = unsupported_child(dom, ins, &["del"]) {
                         return Err(unsupported(format!(
-                            "{short} holds {what}; strike takes plain inserted text only: reject {short} instead, or comment on it"
+                            "{short} holds {what}; strike takes plain inserted text only: comment on it instead"
                         )));
                     }
                     let Some(para) = paragraph_of(ins) else {
                         return Err(unsupported(format!(
-                            "{short} is not in a paragraph jubarte edits; reject {short} instead"
+                            "{short} is not in a paragraph jubarte edits"
                         )));
                     };
                     let projection = &self.projections[para];
@@ -559,7 +724,7 @@ impl Transaction<'_> {
                         }
                         if editable_insertion(dom, &segment.piece) != Some(ins) {
                             return Err(unsupported(format!(
-                                "{short} holds a field's result; strike takes plain inserted text only: reject {short} instead, or comment on it"
+                                "{short} holds a field's result; strike takes plain inserted text only: comment on it instead"
                             )));
                         }
                         match ranges.last_mut() {
@@ -608,7 +773,7 @@ impl Transaction<'_> {
             Visible::Restore => {
                 let &[del] = nodes.as_slice() else {
                     return Err(unsupported(format!(
-                        "{short} is split over several places; restore takes one deleted stretch: reject {short} instead"
+                        "{short} is split over several places; restore takes one deleted stretch: comment on it instead"
                     )));
                 };
                 let parent = dom.parent(del).expect("a run-level deletion has a parent");
@@ -620,22 +785,22 @@ impl Transaction<'_> {
                         _ => "markup that is not a paragraph",
                     };
                     return Err(unsupported(format!(
-                        "{short} sits inside {inside}; restore takes deleted text in a paragraph only: reject {short} instead"
+                        "{short} sits inside {inside}; restore takes deleted text in a paragraph only: comment on it instead"
                     )));
                 }
                 let marks: Vec<String> = dom
-                    .descendants(del, Some(&W::name("commentReference")))
+                    .descendants(del, Some(&W::comment_reference()))
                     .into_iter()
                     .filter_map(|r| dom.attribute(r, &W::id()).map(|n| format!("c{n}")))
                     .collect();
                 if !holds_words(dom, del) {
                     let message = match marks.as_slice() {
-                        [] => format!("{short} holds no text; reject {short} instead"),
+                        [] => format!("{short} holds no text: nothing to restore"),
                         [one] => format!(
-                            "{short} holds no text, only comment {one}'s mark; reject {short} to keep {one}"
+                            "{short} holds no text, only comment {one}'s mark: nothing to restore"
                         ),
                         many => format!(
-                            "{short} holds no text, only the marks of comments {}; reject {short} to keep them",
+                            "{short} holds no text, only the marks of comments {}: nothing to restore",
                             many.join(", ")
                         ),
                     };
@@ -643,7 +808,7 @@ impl Transaction<'_> {
                 }
                 if let Some(what) = unsupported_child(dom, del, &[]) {
                     return Err(unsupported(format!(
-                        "{short} holds {what}; restore takes plain deleted text only: reject {short} instead"
+                        "{short} holds {what}; restore takes plain deleted text only: comment on it instead"
                     )));
                 }
                 let at = offset_before(self, first_para, del);
@@ -670,4 +835,203 @@ impl Transaction<'_> {
             }
         }
     }
+
+    /// Resolve a `strike` or a `restore` of paragraph mark `one`, in
+    /// `story`. A strike joins its paragraph to the next one: our deletion
+    /// joins their insertion in the mark. A restore puts right after its
+    /// paragraph an empty one of ours, with its properties and mark
+    /// formatting, whose mark is our insertion. Accepted, either reads as
+    /// their change rejected. A comment sits on the last word before the
+    /// break.
+    fn resolve_visible_mark(
+        &self,
+        id: &str,
+        visible: Visible,
+        story: usize,
+        one: &crate::ids::ChangeId,
+        comment: Option<&str>,
+        mut outcome: EditOutcome,
+    ) -> Result<(Vec<Resolved>, EditOutcome), Failure> {
+        let short = one.short();
+        let fail = |code: &str, message: String, outcome: &EditOutcome| {
+            Box::new((err(code, Some(id), message), outcome.clone()))
+        };
+        let dom = &self.opened.dom;
+        let local_name = match visible {
+            Visible::Strike => "ins",
+            Visible::Restore => "del",
+        };
+        let in_mark = |n: NodeId| {
+            dom.parent(n).is_some_and(|rpr| {
+                dom.name_is(rpr, &W::r_pr())
+                    && dom
+                        .parent(rpr)
+                        .is_some_and(|ppr| dom.name_is(ppr, &W::p_pr()))
+            })
+        };
+        let Some(para) = dom
+            .descendants(self.stories[story].root, Some(&W::name(local_name)))
+            .into_iter()
+            .filter(|&n| dom.attribute(n, &W::id()) == Some(one.wid.as_str()) && in_mark(n))
+            .find_map(|n| {
+                let p = *dom.ancestors(n, Some(&W::p())).first()?;
+                self.paragraph_nodes.iter().position(|&m| m == p)
+            })
+        else {
+            return Err(fail(
+                "UNSUPPORTED_STRUCTURE",
+                format!("{short} is not in a paragraph jubarte edits"),
+                &outcome,
+            ));
+        };
+        outcome.paragraph = Some(self.paragraph_id(para));
+        if comment.is_some() && self.paragraph_story[para].0 != 0 {
+            return Err(fail("COMMENT_NOT_IN_BODY", BODY_ONLY.into(), &outcome));
+        }
+        let unsupported = |message: String| fail("UNSUPPORTED_STRUCTURE", message, &outcome);
+        let what = match visible {
+            Visible::Strike => "an inserted",
+            Visible::Restore => "a deleted",
+        };
+        let node = self.paragraph_nodes[para];
+        let ppr = dom.element(node, &W::p_pr());
+        if ppr.is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some()) {
+            let cannot = match visible {
+                Visible::Strike => "striking it would drop the section break",
+                Visible::Restore => "restore cannot put a section break back",
+            };
+            return Err(unsupported(format!(
+                "{short} is {what} paragraph mark that ends a section; {cannot}: comment on it instead"
+            )));
+        }
+        let Ok(next) = self.merge_partner(para) else {
+            let only = match visible {
+                Visible::Strike => "strike joins two paragraphs only",
+                Visible::Restore => "restore parts two paragraphs only",
+            };
+            return Err(unsupported(format!(
+                "{short} is {what} paragraph mark with no paragraph right after it; {only}: comment on it instead"
+            )));
+        };
+        let struck = ppr
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+            .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
+        if visible == Visible::Strike && struck {
+            outcome.message = Some("already struck".into());
+            return Ok((Vec::new(), outcome));
+        }
+        let text = &self.projections[para].text;
+        let chars: Vec<char> = text.chars().collect();
+        let tail: String = chars[chars.len().saturating_sub(20)..].iter().collect();
+        let (edit, mark) = match visible {
+            Visible::Strike => (
+                Resolved::MergeParagraphs {
+                    para,
+                    next,
+                    separator: String::new(),
+                    strike: true,
+                },
+                "{-¶}",
+            ),
+            Visible::Restore => (
+                Resolved::InsertParagraph {
+                    anchor: para,
+                    side: Side::After,
+                    runs: Vec::new(),
+                    like: para,
+                    style: None,
+                    comment: None,
+                    toc: None,
+                    keep_mark: true,
+                },
+                "{+¶}",
+            ),
+        };
+        outcome.matches = 1;
+        outcome.context = Some(format!(
+            "{tail}{mark}{}",
+            excerpt(&self.projections[next].text, 20)
+        ));
+        // The last word before the break, or the break itself in an empty
+        // paragraph.
+        let words = text.trim_end();
+        let start = words
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map_or(0, |(i, c)| i + c.len_utf8());
+        let comment = comment.map(|note| Resolved::CommentRange {
+            para,
+            start,
+            end: words.len(),
+            text: note.to_string(),
+        });
+        Ok((std::iter::once(edit).chain(comment).collect(), outcome))
+    }
+}
+
+/// `resolved`, the answers to the marks of one change, with one comment:
+/// the strikes' comments joined into one from the first struck word to the
+/// last, only the first restore's (the copies of all of them anchor it),
+/// and a paragraph mark's only when no words carry one.
+fn one_comment(resolved: Vec<Resolved>) -> Vec<Resolved> {
+    let words = resolved.iter().any(|r| {
+        matches!(
+            r,
+            Resolved::StrikeComment { .. }
+                | Resolved::Restore {
+                    comment: Some(_),
+                    ..
+                }
+        )
+    });
+    let mut out: Vec<Resolved> = Vec::with_capacity(resolved.len());
+    let mut struck: Option<usize> = None;
+    let mut restored = false;
+    let mut marked = false;
+    for r in resolved {
+        match r {
+            Resolved::StrikeComment { para, start, end } => match struck {
+                Some(at) => {
+                    if let Resolved::StrikeComment {
+                        start: first,
+                        end: last,
+                        ..
+                    } = &mut out[at]
+                    {
+                        *first = (*first).min(start);
+                        *last = (*last).max(end);
+                    }
+                }
+                None => {
+                    struck = Some(out.len());
+                    out.push(Resolved::StrikeComment { para, start, end });
+                }
+            },
+            Resolved::Restore {
+                para,
+                wid,
+                at,
+                text,
+                comment,
+            } => {
+                let comment = comment.filter(|_| !restored);
+                restored |= comment.is_some();
+                out.push(Resolved::Restore {
+                    para,
+                    wid,
+                    at,
+                    text,
+                    comment,
+                });
+            }
+            Resolved::CommentRange { .. } if words || marked => {}
+            r @ Resolved::CommentRange { .. } => {
+                marked = true;
+                out.push(r);
+            }
+            r => out.push(r),
+        }
+    }
+    out
 }

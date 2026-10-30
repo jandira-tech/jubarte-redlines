@@ -51,7 +51,9 @@
 //! | `MOVE_RANGE_COUNT_MISMATCH` | no: Word opens it but Reject All can duplicate moved text (#1214); warning | no |
 //! | `DATA_BINDING_WITHOUT_STORE` | no: Word opens it and shows the bound control empty (#1427); warning | no |
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
-//! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR` | n/a | no |
+//! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
+//! | `INSERTED_TEXT_BEFORE_DELETED_TABLE` | no: Word 16.115 crashed opening 6 of the 16 release-sample redlines with the paragraph right before the table (#1851, 2026-10-25); warning | no |
+//! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
 //! OpenXmlValidator checks them (`Sem_UniqueAttributeValue`): two `w:ins`
@@ -81,7 +83,7 @@ use serde::{Deserialize, Serialize};
 use crate::admission::{AdmissionError, InputLimits};
 use crate::changes::{Change, ChangeError, ChangeFilter, list_changes, reject_changes};
 use crate::inspect::InspectError;
-use crate::namespaces::{MC, R, VML, W, W14, WP};
+use crate::namespaces::{M, MC, R, VML, W, W14, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::serialize::{well_known_namespace, well_known_prefix};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -206,7 +208,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 30] = [
+const RING1_CODES: [&str; 32] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "NESTED_TEXT_BOX",
@@ -237,6 +239,8 @@ const RING1_CODES: [&str; 30] = [
     "COMMENT_METADATA_MISMATCH",
     "STYLE_NAME_COMMA",
     "CELL_FINAL_MARK_REVISION",
+    "DELETED_SECTION_PAGE_FIELD",
+    "INSERTED_TEXT_BEFORE_DELETED_TABLE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1243,7 +1247,295 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_move_range_counts(pkg, &mut out);
     check_data_bindings_have_stores(pkg, &mut out);
     check_cell_final_marks(pkg, &mut out);
+    check_deleted_section_page_fields(pkg, &mut out);
+    check_inserted_text_before_deleted_tables(pkg, &mut out);
     out
+}
+
+/// A deleted section break that references a header or footer whose
+/// closing paragraph holds a PAGE or NUMPAGES field. Word's own Compare
+/// writes it when the revision drops the original's sections and
+/// page-number footer. Word 16.115 crashed opening 9 of the 11 such
+/// redlines in the 0.14.0 release sample, so it is a lead (#1833). Whether
+/// Word crashes depends on the layout, not on the story's marks: the
+/// story's text live, deleted, or deleted with every mark crashed alike
+/// (s176, s472), and so did a live section referencing the story as well.
+/// Word opened each of them once no deleted break referenced the story. A
+/// story that ends in a content control has no closing paragraph here:
+/// Word opened both such footers (25e6d4b508, 7c98e8f2b6), the field in
+/// the control's last paragraph.
+fn check_deleted_section_page_fields(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    if !pkg
+        .part_bytes(&main)
+        .is_some_and(|bytes| bytes.windows(9).any(|w| w == b"Reference"))
+    {
+        return;
+    }
+    let Some((dom, root)) = parse_part(pkg, &main) else {
+        return;
+    };
+    let sections = crate::document_comparer::section_story_parts(&dom, root, pkg, &main);
+    let mut seen = HashSet::new();
+    for part in sections
+        .iter()
+        .filter(|(deleted, _)| *deleted)
+        .flat_map(|(_, parts)| parts)
+    {
+        if !seen.insert(part) {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, part) else {
+            continue;
+        };
+        let Some(last) = closing_paragraph(&dom, root).filter(|&p| holds_page_field(&dom, p))
+        else {
+            continue;
+        };
+        out.push(Finding::new(
+            "DELETED_SECTION_PAGE_FIELD",
+            part,
+            element_path(&dom, last),
+            "a deleted section break references this story, whose closing paragraph holds a PAGE or NUMPAGES field; Word 16.115 crashed opening such redlines whatever the story's marks (#1833). Word opened them once no deleted section break referenced the story".to_string(),
+        ));
+    }
+}
+
+/// A body paragraph whose mark is deleted while it keeps inserted words,
+/// then a table every row of which is deleted, then the paragraph Accept
+/// All joins those words to ([`inserted_text_before_deleted_tables`]).
+/// Word's own Compare writes it. Word 16.115 crashed opening 6 of the 16
+/// release-sample redlines (0.14.0) whose paragraph sat right before the
+/// table, its table cache corrupt at the deleted row's end, and opened the
+/// other 10: a lead (#1851). It opened w06, w10, w14 and w17 once the
+/// words started the paragraph they join (fix23 probe33).
+fn check_inserted_text_before_deleted_tables(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    // A deleted row's `w:trPr`, whatever its prefix.
+    if !pkg
+        .part_bytes(&main)
+        .is_some_and(|bytes| bytes.windows(5).any(|w| w == b"trPr>"))
+    {
+        return;
+    }
+    let Some((dom, root)) = parse_part(pkg, &main) else {
+        return;
+    };
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    for (paragraph, _) in inserted_text_before_deleted_tables(&dom, body) {
+        out.push(Finding::new(
+            "INSERTED_TEXT_BEFORE_DELETED_TABLE",
+            &main,
+            element_path(&dom, paragraph),
+            "this paragraph's mark is deleted while it keeps inserted words, and a table every row of which is deleted follows it: Accept All joins those words to the paragraph after the table. Word 16.115 crashed opening such redlines (#1851); it opened them once the words started the paragraph they join".to_string(),
+        ));
+    }
+}
+
+/// `INSERTED_TEXT_BEFORE_DELETED_TABLE`'s rule, which the comparer's pass
+/// applies too: each paragraph of `body` whose inserted words Accept All
+/// joins across a deleted table, with the paragraph they join. The
+/// paragraph's mark is deleted, its own `w:ins` children hold the only
+/// words Accept All keeps of it, and no section break ends it. A table
+/// every row of which is deleted follows it right away, then more such
+/// tables or none, with only paragraphs Accept All removes whole between
+/// them (a deleted mark, deleted words, no section break), then the
+/// paragraph the words join: its mark is not deleted. Zero-width markers
+/// between blocks (bookmarks, comment ranges, permissions, proofing marks)
+/// do not count.
+///
+/// Only a paragraph right before the table: 6 of the 16 such
+/// release-sample redlines crashed Word 16.115. With deleted paragraphs
+/// between the two, 2 of 42 crashed, near the sample's 23 in 600, and
+/// moving their words cost their views Word's placement: 14.8
+/// bench points on average, against Word's own redlines (#1851).
+pub(crate) fn inserted_text_before_deleted_tables(
+    dom: &Dom,
+    body: NodeId,
+) -> Vec<(NodeId, NodeId)> {
+    let markers = [
+        W::bookmark_start(),
+        W::bookmark_end(),
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::perm_start(),
+        W::perm_end(),
+        W::proof_err(),
+    ];
+    let blocks: Vec<NodeId> = dom
+        .elements(body, None)
+        .into_iter()
+        .filter(|&b| !markers.iter().any(|name| dom.name_is(b, name)))
+        .collect();
+    let mut out = Vec::new();
+    for (at, &paragraph) in blocks.iter().enumerate() {
+        let right_before_a_table = blocks
+            .get(at + 1)
+            .is_some_and(|&next| dom.name_is(next, &W::tbl()) && table_revised(dom, next, "del"));
+        if !right_before_a_table || !keeps_only_inserted_words(dom, paragraph) {
+            continue;
+        }
+        let mut tables = 0;
+        let joined = blocks[at + 1..].iter().copied().find(|&block| {
+            if dom.name_is(block, &W::tbl()) && table_revised(dom, block, "del") {
+                tables += 1;
+                return false;
+            }
+            !(dom.name_is(block, &W::p())
+                && only_mark_deleted(dom, block)
+                && !keeps_words(dom, block, "del"))
+        });
+        if let Some(joined) = joined.filter(|&joined| {
+            tables > 0
+                && dom.name_is(joined, &W::p())
+                && !mark_carries(dom, joined, &[W::del(), W::move_from()])
+        }) {
+            out.push((paragraph, joined));
+        }
+    }
+    out
+}
+
+/// Whether `paragraph`'s mark is deleted, and no more (not inserted, not
+/// moved), and it ends no section.
+fn only_mark_deleted(dom: &Dom, paragraph: NodeId) -> bool {
+    mark_carries(dom, paragraph, &[W::del()])
+        && !mark_carries(dom, paragraph, &[W::ins(), W::move_from(), W::move_to()])
+        && dom
+            .element(paragraph, &W::p_pr())
+            .is_none_or(|ppr| dom.element(ppr, &W::sect_pr()).is_none())
+}
+
+/// Whether `paragraph`'s mark (`w:pPr/w:rPr`) holds one of `records`.
+fn mark_carries(dom: &Dom, paragraph: NodeId, records: &[XName]) -> bool {
+    dom.element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| records.iter().any(|name| dom.element(rpr, name).is_some()))
+}
+
+/// Whether `paragraph`, its mark deleted, keeps words under Accept All
+/// and every one of them sits in its own `w:ins` children.
+fn keeps_only_inserted_words(dom: &Dom, paragraph: NodeId) -> bool {
+    if !dom.name_is(paragraph, &W::p()) || !only_mark_deleted(dom, paragraph) {
+        return false;
+    }
+    let (inserted, other): (Vec<NodeId>, Vec<NodeId>) = dom
+        .elements(paragraph, None)
+        .into_iter()
+        .filter(|&child| !dom.name_is(child, &W::p_pr()))
+        .partition(|&child| dom.name_is(child, &W::ins()));
+    inserted.iter().any(|&ins| keeps_words(dom, ins, "del"))
+        && !other.iter().any(|&child| keeps_words(dom, child, "del"))
+}
+
+/// Whether `node` keeps words once its `kind` revisions resolve: a run in
+/// it (`node` itself included; an equation's `m:r` too) with content,
+/// under no revision that resolution removes, up to `node`. Accept All
+/// (`"del"`) removes what is deleted or moved away, Reject All (`"ins"`)
+/// what is inserted or moved in.
+pub(crate) fn keeps_words(dom: &Dom, node: NodeId, kind: &str) -> bool {
+    let gone = if kind == "del" {
+        [W::del(), W::move_from()]
+    } else {
+        [W::ins(), W::move_to()]
+    };
+    let (math_run, math_r_pr) = (M::r(), M::r_pr());
+    let stop = dom.parent(node);
+    std::iter::once(node)
+        .chain(dom.descendants(node, None))
+        .filter(|&n| dom.name_is(n, &W::r()) || dom.name_is(n, &math_run))
+        .any(|run| {
+            dom.elements(run, None)
+                .into_iter()
+                .any(|child| !dom.name_is(child, &W::r_pr()) && !dom.name_is(child, &math_r_pr))
+                && !dom
+                    .ancestors(run, None)
+                    .into_iter()
+                    .take_while(|&a| Some(a) != stop)
+                    .any(|a| gone.iter().any(|name| dom.name_is(a, name)))
+        })
+}
+
+/// Whether every row of `table` (its own, not a nested table's) is
+/// inserted or deleted as `kind` says.
+pub(crate) fn table_revised(dom: &Dom, table: NodeId, kind: &str) -> bool {
+    let rows: Vec<NodeId> = dom
+        .descendants(table, Some(&W::tr()))
+        .into_iter()
+        .filter(|&row| dom.ancestors(row, Some(&W::tbl())).first() == Some(&table))
+        .collect();
+    !rows.is_empty()
+        && rows.iter().all(|&row| {
+            dom.element(row, &W::tr_pr())
+                .is_some_and(|pr| dom.element(pr, &revision_name(kind)).is_some())
+        })
+}
+
+/// A story's closing paragraph: its last block when that is a paragraph of
+/// its own, not one in a content control, a custom XML element or a table.
+pub(crate) fn closing_paragraph(dom: &Dom, story: NodeId) -> Option<NodeId> {
+    let blocks = [W::p(), W::tbl(), W::sdt(), W::custom_xml()];
+    dom.elements(story, None)
+        .into_iter()
+        .rev()
+        .find(|&child| blocks.iter().any(|name| dom.name_is(child, name)))
+        .filter(|&last| dom.name_is(last, &W::p()))
+}
+
+/// Whether paragraph `p` holds a PAGE or NUMPAGES field: a field code whose
+/// first word is one of them. A complex field's code is every
+/// `w:instrText` or `w:delInstrText` between its `begin` and its
+/// `separate` (or `end`), split across runs as Word often writes it; a
+/// `w:fldSimple`'s is its `w:instr`. Code outside any field in `p` (its
+/// `begin` in an earlier paragraph) counts piece by piece.
+pub(crate) fn holds_page_field(dom: &Dom, p: NodeId) -> bool {
+    let page = |code: &str| {
+        code.split_whitespace().next().is_some_and(|word| {
+            word.eq_ignore_ascii_case("PAGE") || word.eq_ignore_ascii_case("NUMPAGES")
+        })
+    };
+    let (instr_text, del_instr_text) = (W::instr_text(), W::del_instr_text());
+    let (fld_char, fld_char_type) = (W::fld_char(), W::fld_char_type());
+    let (fld_simple, instr) = (W::fld_simple(), W::instr());
+    // The open complex fields' codes, innermost last; `None` once read.
+    let mut codes: Vec<Option<String>> = Vec::new();
+    for n in dom.descendants(p, None) {
+        if dom.name_is(n, &instr_text) || dom.name_is(n, &del_instr_text) {
+            match codes.last_mut() {
+                Some(Some(code)) => code.push_str(&dom.value(n)),
+                Some(None) => {}
+                None if page(&dom.value(n)) => return true,
+                None => {}
+            }
+        } else if dom.name_is(n, &fld_char) {
+            match dom.attribute(n, &fld_char_type) {
+                Some("begin") => codes.push(Some(String::new())),
+                Some(kind @ ("separate" | "end")) => {
+                    if codes
+                        .last_mut()
+                        .and_then(Option::take)
+                        .is_some_and(|code| page(&code))
+                    {
+                        return true;
+                    }
+                    if kind == "end" {
+                        codes.pop();
+                    }
+                }
+                _ => {}
+            }
+        } else if dom.name_is(n, &fld_simple) && dom.attribute(n, &instr).is_some_and(page) {
+            return true;
+        }
+    }
+    // A field whose `separate` and `end` lie past the paragraph.
+    codes.into_iter().flatten().any(|code| page(&code))
 }
 
 /// A table cell's final paragraph mark inserted or deleted while its row
@@ -1463,8 +1755,8 @@ fn check_nested_ppr(pkg: &PartFs, out: &mut Vec<Finding>) {
         let Some((dom, root)) = parse_part(pkg, &part) else {
             continue;
         };
-        for ppr in dom.descendants(root, Some(&W::name("pPr"))) {
-            for inner in dom.elements(ppr, Some(&W::name("pPr"))) {
+        for ppr in dom.descendants(root, Some(&W::p_pr())) {
+            for inner in dom.elements(ppr, Some(&W::p_pr())) {
                 out.push(Finding::new(
                     "NESTED_PPR",
                     &part,
@@ -1505,7 +1797,7 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
             if let Some(&outer) = ancestors
                 .iter()
-                .find(|&&a| dom.name(a).is_some_and(|n| n == W::name("txbxContent")))
+                .find(|&&a| dom.name(a).is_some_and(|n| n == W::txbx_content()))
             {
                 out.push(Finding::new(
                     "NESTED_TEXT_BOX",
@@ -1525,16 +1817,16 @@ fn check_nested_text_boxes(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Prefer the shape's own name, with its stable element path as a fallback.
 fn text_box_name(dom: &Dom, node: NodeId) -> String {
     for ancestor in dom.ancestors(node, None) {
-        if dom.name(ancestor).is_some_and(|n| n == W::name("drawing")) {
+        if dom.name(ancestor).is_some_and(|n| n == W::drawing()) {
             if let Some(name) = dom
-                .descendants(ancestor, Some(&WP::name("docPr")))
+                .descendants(ancestor, Some(&WP::doc_pr()))
                 .into_iter()
                 .find_map(|id| dom.attribute(id, &XName::get("name", "")))
                 .filter(|name| !name.is_empty())
             {
                 return name.to_string();
             }
-        } else if dom.name(ancestor).is_some_and(|n| n == VML::name("shape"))
+        } else if dom.name(ancestor).is_some_and(|n| n == VML::shape())
             && let Some(name) = dom.attribute(ancestor, &XName::get("id", ""))
             && !name.is_empty()
         {
@@ -2096,7 +2388,10 @@ fn collect_ids(
             }
             out.push(finding);
         }
-        if local == "docPr" {
+        // Word reads one branch of a dual-saved shape: a picture repeated in
+        // its `mc:Fallback` copy keeps the choice's docPr id, and Word opens
+        // that twin clean (w12's header, 2026-10-27).
+        if local == "docPr" && dom.ancestors(e, Some(&MC::name("Fallback"))).is_empty() {
             let wp_id = XName::get(
                 "id",
                 "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
@@ -2203,9 +2498,9 @@ fn check_del_text_under_del(pkg: &PartFs, out: &mut Vec<Finding>) {
                 }
             }
         }
-        let move_from = W::name("moveFrom");
+        let move_from = W::move_from();
         for mf in dom.descendants(root, Some(&move_from)) {
-            for dt in dom.descendants(mf, Some(&W::name("delText"))) {
+            for dt in dom.descendants(mf, Some(&W::del_text())) {
                 if ancestor_has(&dom, dt, mf, "del") {
                     continue;
                 }
@@ -2291,9 +2586,9 @@ fn bookmarks_in_single_value_controls(
     let mut found = Vec::new();
     for kind in ["bookmarkStart", "bookmarkEnd"] {
         for m in dom.descendants(root, Some(&W::name(kind))) {
-            for sdt in dom.ancestors(m, Some(&W::name("sdt"))) {
+            for sdt in dom.ancestors(m, Some(&W::sdt())) {
                 let control = dom
-                    .element(sdt, &W::name("sdtPr"))
+                    .element(sdt, &W::sdt_pr())
                     .into_iter()
                     .flat_map(|pr| dom.elements(pr, None))
                     .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
@@ -3100,8 +3395,8 @@ fn fix_deleted_text(dom: &mut Dom, root: NodeId) {
             }
         }
     }
-    for mf in dom.descendants(root, Some(&W::name("moveFrom"))) {
-        for dt in dom.descendants(mf, Some(&W::name("delText"))) {
+    for mf in dom.descendants(root, Some(&W::move_from())) {
+        for dt in dom.descendants(mf, Some(&W::del_text())) {
             if !ancestor_has(dom, dt, mf, "del") {
                 renames.push((dt, W::t()));
             }
@@ -3319,7 +3614,7 @@ fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
 /// gets an empty one.
 fn end_cells_with_a_paragraph(dom: &mut Dom, root: NodeId) {
     let cells: Vec<NodeId> = dom
-        .descendants(root, Some(&W::name("tc")))
+        .descendants(root, Some(&W::tc()))
         .into_iter()
         .filter(|&tc| !crate::debug::cell_ends_in_paragraph(dom, tc))
         .collect();
@@ -3345,20 +3640,18 @@ fn drop_orphan_comment_anchors(dom: &mut Dom, root: NodeId, defined: &HashSet<St
         dom.remove(m);
     }
     let references: Vec<NodeId> = dom
-        .descendants(root, Some(&W::name("commentReference")))
+        .descendants(root, Some(&W::comment_reference()))
         .into_iter()
         .filter(|&r| orphan(dom, r))
         .collect();
     for reference in references {
-        let run = dom
-            .parent(reference)
-            .filter(|&p| dom.name_is(p, &W::name("r")));
+        let run = dom.parent(reference).filter(|&p| dom.name_is(p, &W::r()));
         dom.remove(reference);
         if let Some(run) = run
             && dom
                 .elements(run, None)
                 .iter()
-                .all(|&c| dom.name_is(c, &W::name("rPr")))
+                .all(|&c| dom.name_is(c, &W::r_pr()))
         {
             dom.remove(run);
         }
@@ -3405,6 +3698,9 @@ fn story_part(id: &str) -> String {
 /// explained solely by a missing separator revision is not another change.
 /// Missing original permission endpoints are reported as
 /// `PERMISSION_RANGE_DROPPED`, including in headers, footers and notes.
+/// Another author's comment that is gone, reworded, resolved or reopened,
+/// and a new comment or reply not signed `author`, is a `FOREIGN_COMMENT`
+/// finding (`check_foreign_comments`).
 ///
 /// # Errors
 ///
@@ -3422,6 +3718,7 @@ pub fn audit_tracked(
     };
     let reverted = reject_changes(edited, &filter)?;
     check_foreign_revisions(original, &reverted, author, &mut out)?;
+    check_foreign_comments(original, edited, author, &mut out)?;
     // Paragraph-by-paragraph text: the same projection `jubarte text` prints,
     // body first, then every header, footer and notes story.
     let before = all_paragraphs(original)?;
@@ -4142,6 +4439,153 @@ fn check_dropped_permissions(original: &PartFs, edited: &PartFs, out: &mut Vec<F
 }
 
 /// [`audit_tracked`]'s findings belong to the `edits` set and fail a run.
+/// Comments `author` may not have changed (#1846). `original`'s comments
+/// are paired with `edited`'s, first by id (with the same author and
+/// date), then in order by author, date and text, then by author and date:
+/// another tool may renumber them. Another author's comment (one that names
+/// no author included) that has no pair is gone; a pair whose text differs
+/// was reworded; a thread root whose resolved state differs was resolved
+/// or reopened (a reply's state follows its root, so resolving one's own
+/// thread changes no one else's). An `edited` comment with no pair that is
+/// not signed `author` is new. Each finding's message starts with the
+/// comment's id, `edited`'s where it has one.
+fn check_foreign_comments(
+    original: &[u8],
+    edited: &[u8],
+    author: &str,
+    out: &mut Vec<Finding>,
+) -> Result<(), ValidateError> {
+    use crate::comments::{CommentError, CommentRecord, list_comments};
+    let listed = |docx: &[u8]| {
+        list_comments(docx).map_err(|e| match e {
+            CommentError::Admission(e) => ValidateError::Refused(e),
+            CommentError::Package(m) => ValidateError::Package(m),
+        })
+    };
+    let before = listed(original)?;
+    let after = listed(edited)?;
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut paired_after = vec![false; after.len()];
+    let mut paired_before = vec![false; before.len()];
+    /// One pass: each unpaired comment of `before`, in order, takes the
+    /// first unpaired comment of `after` with its key. Each key's
+    /// candidates queue in document order and leave the queue once taken,
+    /// so comments sharing an author and a date (or no date) cost no
+    /// rescan: the pass is linear (Sourcery #4374424613).
+    fn pair_by<'a, K: Eq + std::hash::Hash>(
+        before: &'a [CommentRecord],
+        after: &'a [CommentRecord],
+        paired_before: &mut [bool],
+        paired_after: &mut [bool],
+        pairs: &mut Vec<(usize, usize)>,
+        key: impl Fn(&'a CommentRecord) -> K,
+    ) {
+        let mut queues: std::collections::HashMap<K, std::collections::VecDeque<usize>> =
+            std::collections::HashMap::with_capacity(after.len());
+        for (j, a) in after.iter().enumerate() {
+            if !paired_after[j] {
+                queues.entry(key(a)).or_default().push_back(j);
+            }
+        }
+        for (i, b) in before.iter().enumerate() {
+            if paired_before[i] {
+                continue;
+            }
+            if let Some(j) = queues
+                .get_mut(&key(b))
+                .and_then(std::collections::VecDeque::pop_front)
+            {
+                paired_before[i] = true;
+                paired_after[j] = true;
+                pairs.push((i, j));
+            }
+        }
+    }
+    // Every pass needs the same author and date; the first also the same
+    // id, the second the same text.
+    let (pb, pa) = (&mut paired_before, &mut paired_after);
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref(), c.id)
+    });
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref(), c.text.as_str())
+    });
+    pair_by(&before, &after, pb, pa, &mut pairs, |c| {
+        (c.author.as_str(), c.date.as_deref())
+    });
+    let whose = |c: &CommentRecord| {
+        if c.author.is_empty() {
+            format!("c{}, which names no author,", c.id)
+        } else {
+            format!("c{} by {:?}", c.id, c.author)
+        }
+    };
+    let instead = |c: &CommentRecord, doing: &str| {
+        let them = if c.author.is_empty() {
+            "it"
+        } else {
+            "their comment"
+        };
+        format!("reply to {them} instead of {doing}")
+    };
+    let mut findings: Vec<(usize, String)> = Vec::new();
+    for (i, b) in before.iter().enumerate() {
+        if !paired_before[i] && b.author != author {
+            findings.push((
+                i,
+                format!("{} is gone: {}", whose(b), instead(b, "deleting it")),
+            ));
+        }
+    }
+    pairs.sort_unstable();
+    for &(i, j) in &pairs {
+        let (b, a) = (&before[i], &after[j]);
+        if b.author == author {
+            continue;
+        }
+        if b.text != a.text {
+            findings.push((
+                i,
+                format!(
+                    "{} was reworded: {}",
+                    whose(a),
+                    instead(a, "changing its words")
+                ),
+            ));
+        }
+        if b.parent.is_none() && b.done != a.done {
+            let (done, doing) = if a.done {
+                ("resolved", "resolving it")
+            } else {
+                ("reopened", "reopening it")
+            };
+            findings.push((i, format!("{} was {done}: {}", whose(a), instead(a, doing))));
+        }
+    }
+    findings.sort_by_key(|(i, _)| *i);
+    out.extend(
+        findings
+            .into_iter()
+            .map(|(_, message)| Finding::new("FOREIGN_COMMENT", "word/comments.xml", "", message)),
+    );
+    for (j, a) in after.iter().enumerate() {
+        if !paired_after[j] && a.author != author {
+            let signed = if a.author.is_empty() {
+                "names no author".to_string()
+            } else {
+                format!("signed {:?}", a.author)
+            };
+            out.push(Finding::new(
+                "FOREIGN_COMMENT",
+                "word/comments.xml",
+                "",
+                format!("c{} is new and {signed}, not {author:?}", a.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn as_edits(mut findings: Vec<Finding>) -> Vec<Finding> {
     for f in &mut findings {
         f.set = "edits".to_string();
@@ -4229,7 +4673,7 @@ mod validation_boundary_tests {
             &mut dom,
             "<w:p><w:del><w:r><w:t>deleted</w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins><w:r><w:txbxContent><w:p><w:r><w:delText>uncovered</w:delText></w:r></w:p></w:txbxContent></w:r></w:del></w:p><w:p><w:moveFrom><w:r><w:delText>moved</w:delText></w:r></w:moveFrom><w:r><w:delText>stranded</w:delText></w:r></w:p>",
         );
-        let texts = dom.descendants(root, Some(&W::name("delText")));
+        let texts = dom.descendants(root, Some(&W::del_text()));
         assert!(!covered_by_deletion(&dom, texts[0]));
         assert!(covered_by_deletion(&dom, texts[1]));
         assert!(!covered_by_deletion(&dom, texts[2]));
@@ -4241,7 +4685,7 @@ mod validation_boundary_tests {
             .collect::<Vec<_>>();
         assert_eq!(live, ["uncovered", "moved", "stranded"]);
         let deleted = dom
-            .descendants(root, Some(&W::name("delText")))
+            .descendants(root, Some(&W::del_text()))
             .into_iter()
             .map(|n| dom.value(n))
             .collect::<Vec<_>>();
@@ -4262,7 +4706,7 @@ mod validation_boundary_tests {
             assert_eq!(forbidden.len(), if control == "richText" { 0 } else { 2 });
             drop_bookmarks_in_single_value_controls(&mut dom, root);
             assert_eq!(
-                dom.descendants(root, Some(&W::name("bookmarkStart"))).len(),
+                dom.descendants(root, Some(&W::bookmark_start())).len(),
                 if control == "richText" { 2 } else { 1 }
             );
             assert_eq!(dom.value(root), "value");
@@ -4440,14 +4884,14 @@ mod validation_owner_boundary_tests {
             let root = dom.root(doc).unwrap();
             drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
             assert!(
-                dom.descendants(root, Some(&W::name("commentRangeStart")))
+                dom.descendants(root, Some(&W::comment_range_start()))
                     .is_empty()
             );
             assert!(
-                dom.descendants(root, Some(&W::name("commentRangeEnd")))
+                dom.descendants(root, Some(&W::comment_range_end()))
                     .is_empty()
             );
-            let refs = dom.descendants(root, Some(&W::name("commentReference")));
+            let refs = dom.descendants(root, Some(&W::comment_reference()));
             assert_eq!(refs.len(), 1);
             assert_eq!(dom.attribute(refs[0], &W::id()), Some("4"));
             assert_eq!(
@@ -5094,6 +5538,48 @@ mod duplicate_drawing_owned_repair_contract_tests {
         assert!(again.remaining.is_empty());
         assert_eq!(again.docx, repaired.docx);
     }
+
+    #[test]
+    fn a_fallback_twin_of_a_picture_is_no_second_drawing() {
+        // Word saves a text box twice (DrawingML choice, VML fallback) and a
+        // picture inside it twice with one docPr id; w12's header and Word's
+        // own redline of it carry such a twin and open clean (2026-10-27).
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let picture = |id| {
+            format!(
+                "<w:p><w:r><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='Picture {id}'/></wp:inline></w:drawing></w:r></w:p>"
+            )
+        };
+        let header = |fallback_id| {
+            format!(
+                "<w:hdr xmlns:w='{}' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:wps='http://schemas.microsoft.com/office/word/2010/wordprocessingShape' xmlns:v='urn:schemas-microsoft-com:vml' mc:Ignorable='wps'><w:p><w:r><mc:AlternateContent><mc:Choice Requires='wps'><w:drawing><wp:anchor><wp:docPr id='3' name='Text Box 3'/><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>{}</w:hdr>",
+                W::URI,
+                picture(4),
+                picture(4),
+                picture(fallback_id)
+            )
+        };
+        let docpr = |pkg: &PartFs| -> Vec<String> {
+            ring1(pkg)
+                .into_iter()
+                .filter(|f| f.code == "DUPLICATE_DOCPR_ID")
+                .map(|f| f.location)
+                .collect()
+        };
+        pkg.set_part("word/header1.xml", header(5).into_bytes());
+        assert_eq!(
+            docpr(&pkg),
+            Vec::<String>::new(),
+            "the fallback copy is a twin"
+        );
+        pkg.set_part("word/header1.xml", header(4).into_bytes());
+        assert_eq!(
+            docpr(&pkg),
+            ["w:p[1]/w:r[0]/w:drawing[0]/wp:inline[0]/wp:docPr[0]"],
+            "a picture outside the fallback repeating its id is a duplicate"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -5406,5 +5892,68 @@ mod baseline_tests {
             "input has 1 validity error and 2 warnings; \
              jubarte validate 'my file.docx' lists them"
         );
+    }
+}
+
+#[cfg(test)]
+mod page_field_tests {
+    use super::*;
+
+    /// Whether the one paragraph of `runs` holds a PAGE or NUMPAGES field.
+    fn holds(runs: &str) -> bool {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}">{runs}</w:p>"#, W::URI));
+        let p = dom.root(doc).unwrap();
+        holds_page_field(&dom, p)
+    }
+
+    fn field(pieces: &[&str]) -> String {
+        let code: String = pieces
+            .iter()
+            .map(|piece| {
+                format!(r#"<w:r><w:instrText xml:space="preserve">{piece}</w:instrText></w:r>"#)
+            })
+            .collect();
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>{code}<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    }
+
+    /// Word splits a field code across runs: `PA` + `GE` is a PAGE field.
+    #[test]
+    fn a_page_code_split_across_runs_is_a_page_field() {
+        assert!(holds(&field(&[" PA", "GE "])));
+        assert!(holds(&field(&[" NUM", "PAGES \\* Arabic "])));
+        assert!(holds(&field(&[" PAGE "])));
+    }
+
+    /// The code's first word decides, read whole: `PAGE` + `REF` is a
+    /// PAGEREF, and a PAGE inside another field's result is still found.
+    #[test]
+    fn only_the_whole_first_word_counts() {
+        assert!(!holds(&field(&[" PAGE", "REF _Ref1 \\h "])));
+        assert!(!holds(&field(&[" REF ", "PAGE "])));
+        let nested = format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> IF 1 = 1 </w:instrText></w:r>{}<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            field(&[" PA", "GE "])
+        );
+        assert!(holds(&nested));
+    }
+
+    /// A simple field, a deleted code, and code whose field began in an
+    /// earlier paragraph.
+    #[test]
+    fn simple_deleted_and_continued_codes_count() {
+        assert!(holds(
+            r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#
+        ));
+        assert!(holds(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText>PA</w:delInstrText></w:r><w:r><w:delInstrText>GE</w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        ));
+        assert!(holds(r#"<w:r><w:instrText> PAGE </w:instrText></w:r>"#));
+        assert!(holds(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PA</w:instrText></w:r><w:r><w:instrText>GE </w:instrText></w:r>"#
+        ));
+        assert!(!holds(r#"<w:r><w:t>PAGE</w:t></w:r>"#));
     }
 }

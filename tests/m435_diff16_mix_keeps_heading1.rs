@@ -8,6 +8,10 @@
 //! Word MIX keeps live `pStyle=Heading1` and a del mark with ins next text plus
 //! del title. Sole-del fold used to drop del pPr (empty pPr, LO ~53.9). Adopting
 //! the pure-D Heading pPr on that fold restores LO 100.
+//!
+//! A deleted table follows the title, so jubarte then moves the inserted
+//! words past it, to the paragraph Accept All joins them to (#1851): the
+//! title paragraph keeps the live Heading1 and the deleted mark.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -44,7 +48,11 @@ fn diff_before16_x_19_mix_keeps_heading1() {
         s
     };
 
-    // Find MIX with delText "Diffing feature" (base title).
+    // The inserted image line starts the paragraph after the deleted table.
+    let words = xml.find("image will be added").expect("the image line");
+    assert!(xml.rfind("</w:tbl>").is_some_and(|table| table < words));
+
+    // Find the title paragraph with delText "Diffing feature" (base title).
     let mut found = false;
     let mut rest = xml.as_str();
     while let Some(start) = rest.find("<w:p") {
@@ -56,12 +64,7 @@ fn diff_before16_x_19_mix_keeps_heading1() {
         let Some(end_rel) = end_rel else { break };
         let p = &after[..end_rel];
         rest = &after[end_rel..];
-        let has_ins = p.contains("<w:ins");
-        let has_del = p.contains("<w:del") || p.contains("<w:delText");
-        if !(has_ins && has_del) {
-            continue;
-        }
-        if !p.contains("Diffing feature") && !p.contains("image will be added") {
+        if !p.contains("Diffing feature") {
             continue;
         }
         found = true;
@@ -88,8 +91,5 @@ fn diff_before16_x_19_mix_keeps_heading1() {
         }
         break;
     }
-    assert!(
-        found,
-        "expected MIX free-mesh of image line × Diffing feature title"
-    );
+    assert!(found, "expected the deleted Diffing feature title");
 }

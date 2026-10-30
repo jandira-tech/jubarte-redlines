@@ -201,7 +201,7 @@ impl Transaction<'_> {
         let marked = self.watermark.is_some()
             || self.stories[1..]
                 .iter()
-                .filter(|s| self.opened.dom.name_is(s.root, &W::name("hdr")))
+                .filter(|s| self.opened.dom.name_is(s.root, &W::hdr()))
                 .any(|s| holds_watermark(&self.opened.dom, s.root));
         if marked {
             return Err(fail(
@@ -236,7 +236,7 @@ impl Transaction<'_> {
         let reference = dom
             .elements(sect_pr, Some(&W::name("headerReference")))
             .into_iter()
-            .find(|&r| dom.attribute(r, &W::name("type")) == Some("default"))?;
+            .find(|&r| dom.attribute(r, &W::type_()) == Some("default"))?;
         let rid = dom.attribute(reference, &R::name("id"))?;
         let main = &self.opened.main;
         let part = self
@@ -324,7 +324,7 @@ impl Transaction<'_> {
         let rid = pkg.add_document_relationship(&self.opened.main, HEADER_REL, &name);
         let dom = &mut self.opened.dom;
         let reference = dom.new_element(W::name("headerReference"));
-        dom.set_attribute_value(reference, &W::name("type"), Some("default"));
+        dom.set_attribute_value(reference, &W::type_(), Some("default"));
         dom.set_attribute_value(reference, &R::name("id"), Some(&rid));
         dom.add_first(sect_pr, reference);
     }

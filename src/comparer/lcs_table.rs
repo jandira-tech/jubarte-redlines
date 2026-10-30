@@ -6,8 +6,8 @@
 //!
 //! Port of `ApplyLcsToTableRows` (:8241), `DoLcsAlgorithmForTable` (:8348),
 //! `MarkRowsAsDeletedOrInserted` (:4216), and the
-//! `rows_preserving_horizontal_partitions` family that fixes Word's
-//! horizontal-partition / cell-mesh shape. The classic DP LCS over rows
+//! `rows_preserving_horizontal_partitions` gate that keeps whole rows for
+//! a horizontal repartition outside Word mode. The classic DP LCS over rows
 //! keyed on `sha1()` produces Deleted/Inserted/Unknown sequences; the row
 //! marker pass turns those into `w:ins`/`w:del` children of each affected
 //! row's `w:trPr`, keeping `w:trPrChange` last in `CT_TrPr` order so the
@@ -15,7 +15,7 @@
 
 use super::atoms::{ComparisonUnit, ComparisonUnitGroup, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerSettings};
-use crate::namespaces::{PT, W};
+use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId};
 
 fn as_group(u: &ComparisonUnit) -> Option<&ComparisonUnitGroup> {
@@ -233,7 +233,7 @@ fn row_word_tokens(dom: &Dom, row: &ComparisonUnit) -> std::collections::HashSet
 }
 
 fn table_has_merges(dom: &Dom, rows: &[ComparisonUnit]) -> bool {
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     rows.iter()
         .filter_map(as_group)
         .find_map(|g| ancestor_named(dom, g, &tbl_name))
@@ -285,8 +285,8 @@ pub(crate) fn shared_word_row_sequences(
 }
 
 fn contains_merged(dom: &Dom, tbl: NodeId) -> bool {
-    !dom.descendants(tbl, Some(&W::name("vMerge"))).is_empty()
-        || !dom.descendants(tbl, Some(&W::name("gridSpan"))).is_empty()
+    !dom.descendants(tbl, Some(&W::v_merge())).is_empty()
+        || !dom.descendants(tbl, Some(&W::grid_span())).is_empty()
 }
 
 fn positional_rows(rows1: &[ComparisonUnit], rows2: &[ComparisonUnit]) -> Vec<CorrelatedSequence> {
@@ -344,249 +344,132 @@ pub(crate) fn row_container(dom: &Dom, row: &ComparisonUnit) -> Option<NodeId> {
 }
 
 fn horizontal_cell_partition(dom: &Dom, row: &ComparisonUnit) -> Option<Vec<u64>> {
-    let ancestor = row_container(dom, row)?;
+    Some(row_partition(dom, row_container(dom, row)?))
+}
+
+/// A `w:tr`'s cell boundaries: the grid column each of its cells ends at.
+pub(crate) fn row_partition(dom: &Dom, tr: NodeId) -> Vec<u64> {
     let mut edge = 0u64;
-    Some(
-        dom.elements(ancestor, Some(&W::tc()))
-            .into_iter()
-            .map(|tc| {
-                let span = dom
-                    .element(tc, &W::tc_pr())
-                    .and_then(|pr| dom.element(pr, &W::grid_span()))
-                    .and_then(|span| dom.attribute(span, &W::val()))
-                    .and_then(|val| val.parse::<u32>().ok())
-                    .unwrap_or(1)
-                    .max(1);
-                edge += u64::from(span);
-                edge
-            })
-            .collect(),
-    )
-}
-
-// These observed Word table-mesh families retain a phantom cell on one
-// projection. Only their existing specialized routes and exact table geometry
-// authorize that shape; ordinary row pairing must conserve source geometry.
-const WORD_TABLE_CONTEXT: &str = "WordTableMeshContext";
-
-#[derive(Clone, Copy)]
-pub(crate) enum WordTableMeshContext {
-    M42,
-    M333,
-    M337,
-    M348,
-    M350,
-}
-
-pub(crate) fn mark_word_table_mesh_context(
-    dom: &mut Dom,
-    original: &[ComparisonUnit],
-    revised: &[ComparisonUnit],
-    family: WordTableMeshContext,
-) {
-    let tables = |units: &[ComparisonUnit]| -> Vec<NodeId> {
-        units
-            .iter()
-            .filter_map(|unit| {
-                let group = as_group(unit)?;
-                (group.group_type == ComparisonUnitGroupType::Table)
-                    .then(|| ancestor_named(dom, group, &W::tbl()))
-                    .flatten()
-            })
-            .collect()
-    };
-    let left = tables(original);
-    let right = tables(revised);
-    let geometry = |table: NodeId, rows: usize, cells: usize| {
-        let row_nodes = dom.elements(table, Some(&W::tr()));
-        row_nodes.len() == rows
-            && dom.descendants(table, Some(&W::tbl())).is_empty()
-            && row_nodes.iter().all(|&row| {
-                let cell_nodes = dom.elements(row, Some(&W::tc()));
-                cell_nodes.len() == cells
-                    && cell_nodes.iter().all(|&cell| {
-                        let Some(props) = dom.element(cell, &W::tc_pr()) else {
-                            return true;
-                        };
-                        dom.element(props, &W::grid_span()).is_none()
-                            && dom.element(props, &W::name("vMerge")).is_none()
-                    })
-            })
-    };
-    // M42's authored next uses spans and vertical merges. Word keeps the
-    // three original physical cells in the first three rows, including empty
-    // phantom cells on acceptance; only its two extra rows are inserted.
-    // This exception belongs to the existing package route, not to arbitrary
-    // horizontal repartitioning or the faithful source-preserving preset.
-    let merged_geometry = |table: NodeId, expected: &[&[(u32, &str)]]| {
-        let rows = dom.elements(table, Some(&W::tr()));
-        rows.len() == expected.len()
-            && dom.descendants(table, Some(&W::tbl())).is_empty()
-            && rows.iter().zip(expected).all(|(&row, expected)| {
-                let cells = dom.elements(row, Some(&W::tc()));
-                cells.len() == expected.len()
-                    && cells.iter().zip(*expected).all(|(&cell, &(span, merge))| {
-                        let properties = dom.element(cell, &W::tc_pr());
-                        let actual_span = properties
-                            .and_then(|properties| dom.element(properties, &W::grid_span()))
-                            .and_then(|span| dom.attribute(span, &W::val()))
-                            .and_then(|value| value.parse::<u32>().ok())
-                            .unwrap_or(1);
-                        let actual_merge = properties
-                            .and_then(|properties| dom.element(properties, &W::name("vMerge")))
-                            .map(|merge| dom.attribute(merge, &W::val()).unwrap_or("continue"))
-                            .unwrap_or("");
-                        actual_span == span && actual_merge == merge
-                    })
-            })
-    };
-    type TableShape = &'static [(usize, usize)];
-    let (left_shape, right_shape): (TableShape, TableShape) = match family {
-        WordTableMeshContext::M42 => (
-            &[
-                (3, 3),
-                (3, 4),
-                (2, 2),
-                (2, 3),
-                (3, 5),
-                (3, 3),
-                (3, 3),
-                (3, 3),
-            ],
-            &[],
-        ),
-        WordTableMeshContext::M333 => (
-            &[(5, 4)],
-            &[(1, 2), (1, 2), (1, 2), (2, 2), (1, 2), (1, 2), (1, 2)],
-        ),
-        WordTableMeshContext::M337 => (&[(5, 4)], &[(2, 3), (2, 3)]),
-        WordTableMeshContext::M348 => {
-            (&[(1, 2), (1, 1), (8, 4), (1, 1), (1, 1), (1, 2)], &[(4, 3)])
-        }
-        WordTableMeshContext::M350 => (&[(3, 2)], &[(2, 3)]),
-    };
-    let matches = |tables: &[NodeId], shape: &[(usize, usize)]| {
-        tables.len() == shape.len()
-            && tables
-                .iter()
-                .zip(shape)
-                .all(|(&table, &(rows, cells))| geometry(table, rows, cells))
-    };
-    let right_matches = if matches!(family, WordTableMeshContext::M42) {
-        right.len() == 2
-            && merged_geometry(
-                right[0],
-                &[
-                    &[(2, "")],
-                    &[(1, "restart"), (1, "")],
-                    &[(1, "continue"), (1, "")],
-                    &[(1, ""), (1, "restart")],
-                    &[(1, ""), (1, "continue")],
-                ],
-            )
-            && merged_geometry(
-                right[1],
-                &[
-                    &[(1, ""), (1, ""), (1, ""), (1, "")],
-                    &[(1, ""), (2, "restart"), (1, "")],
-                    &[(1, ""), (2, "continue"), (1, "")],
-                    &[(1, ""), (1, ""), (1, ""), (1, "")],
-                ],
-            )
-    } else {
-        matches(&right, right_shape)
-    };
-    if !matches(&left, left_shape) || !right_matches {
-        return;
-    }
-    // Property-only blank paragraphs have no owned payload to relocate.
-    let blank = dom.elements(right[0], Some(&W::tr())).iter().all(|&row| {
-        dom.elements(row, Some(&W::tc())).iter().all(|&cell| {
-            dom.elements(cell, None).iter().all(|&child| {
-                dom.name_is(child, &W::tc_pr())
-                    || (dom.name_is(child, &W::p())
-                        && dom
-                            .elements(child, None)
-                            .iter()
-                            .all(|&item| dom.name_is(item, &W::p_pr())))
-            })
+    dom.elements(tr, Some(&W::tc()))
+        .into_iter()
+        .map(|tc| {
+            let span = dom
+                .element(tc, &W::tc_pr())
+                .and_then(|pr| dom.element(pr, &W::grid_span()))
+                .and_then(|span| dom.attribute(span, &W::val()))
+                .and_then(|val| val.parse::<u32>().ok())
+                .unwrap_or(1)
+                .max(1);
+            edge += u64::from(span);
+            edge
         })
-    });
-    if matches!(family, WordTableMeshContext::M337) && !blank {
-        return;
-    }
-    let (Some(a), Some(b)) = (
-        dom.attribute(left[0], &PT::unid()),
-        dom.attribute(right[0], &PT::unid()),
-    ) else {
-        return;
-    };
-    let context = format!("{a}:{b}");
-    let attribute = PT::name(WORD_TABLE_CONTEXT);
-    dom.set_attribute_value(left[0], &attribute, Some(&context));
-    dom.set_attribute_value(right[0], &attribute, Some(&context));
+        .collect()
 }
 
-fn row_pair_uses_word_table_mesh_context(
-    dom: &Dom,
-    original: &ComparisonUnit,
-    revised: &ComparisonUnit,
-) -> bool {
-    let attribute = PT::name(WORD_TABLE_CONTEXT);
-    let context = |unit: &ComparisonUnit| -> Option<&str> {
-        let row = row_container(dom, unit)?;
-        dom.ancestors(row, Some(&W::tbl()))
-            .into_iter()
-            .find_map(|table| dom.attribute(table, &attribute))
-    };
-    context(original).is_some_and(|old| context(revised) == Some(old))
-}
-
-pub(crate) fn rows_preserving_horizontal_partitions_with_word_context(
+/// Word pairs an original table with one revised table (#1817: in w23 the
+/// original's table pairs with the first of two adjacent revised tables, and
+/// the second stays a table of its own). In Word mode, rows that H4 flattened
+/// out of several tables therefore pair table by table: in order, each table
+/// with the one sharing the most rows, the earlier one when they share none.
+/// The tables left over are deleted or inserted whole. `None` when each side's
+/// rows come from one table, or outside Word mode.
+pub(crate) fn rows_by_table(
     dom: &Dom,
     original: &[ComparisonUnit],
     revised: &[ComparisonUnit],
     settings: &WmlComparerSettings,
 ) -> Option<Vec<CorrelatedSequence>> {
-    rows_preserving_horizontal_partitions_inner(
-        dom,
-        original,
-        revised,
-        settings.merge_replaced_paragraphs,
-    )
+    if !settings.merge_replaced_paragraphs {
+        return None;
+    }
+    let tables = |rows: &[ComparisonUnit]| -> Vec<Vec<ComparisonUnit>> {
+        crate::util::group_adjacent(rows.iter().cloned(), |row| {
+            row_container(dom, row)
+                .and_then(|tr| dom.ancestors(tr, Some(&W::tbl())).first().copied())
+        })
+        .into_iter()
+        .map(|(_, rows)| rows)
+        .collect()
+    };
+    let (old, new) = (tables(original), tables(revised));
+    if old.len() < 2 && new.len() < 2 {
+        return None;
+    }
+    let shared = |a: &[ComparisonUnit], b: &[ComparisonUnit]| {
+        shared_rows(
+            a.iter().map(ComparisonUnit::sha1),
+            b.iter().map(ComparisonUnit::sha1),
+        )
+    };
+    // best[i][j]: (rows shared, tables paired) over old[i..] and new[j..].
+    let (m, n) = (old.len(), new.len());
+    let mut best = vec![vec![(0usize, 0usize); n + 1]; m + 1];
+    for i in (0..m).rev() {
+        for j in (0..n).rev() {
+            let (s, p) = best[i + 1][j + 1];
+            best[i][j] = (s + shared(&old[i], &new[j]), p + 1)
+                .max(best[i][j + 1])
+                .max(best[i + 1][j]);
+        }
+    }
+    let mut out = Vec::new();
+    let (mut old, mut new) = (old.into_iter(), new.into_iter());
+    let (mut i, mut j) = (0, 0);
+    while i < m || j < n {
+        let pairs = i < m && j < n && {
+            let (s, p) = best[i + 1][j + 1];
+            best[i][j] == (s + shared(&old.as_slice()[0], &new.as_slice()[0]), p + 1)
+        };
+        if pairs {
+            let (a, b) = (old.next()?, new.next()?);
+            out.push(CorrelatedSequence::paired(CorrelationStatus::Unknown, a, b));
+            (i, j) = (i + 1, j + 1);
+        } else if j < n && (i == m || best[i][j] == best[i][j + 1]) {
+            out.push(CorrelatedSequence::inserted(new.next()?));
+            j += 1;
+        } else {
+            out.push(CorrelatedSequence::deleted(old.next()?));
+            i += 1;
+        }
+    }
+    Some(out)
 }
 
-/// Horizontal repartitioning currently cannot track individual cell lifetimes
-/// safely: an unmatched cell's atoms lose their cell group, and closing marks
-/// can give it another cell's revised properties. Keep complete revised/original
-/// rows under ordinary row revisions instead. This conserves both source shapes;
-/// Word may present these horizontal merges as finer cell revisions.
-#[cfg(test)]
+/// A horizontal repartition — a paired row whose cell boundaries moved — in
+/// Word mode is meshed the way Word 16 meshes it (#1817; 21 Word Compare
+/// redlines in jubarte-loop/fix23/ab1817): the rows pair and the cells keep
+/// their own revisions, so `None` here. The other modes keep complete
+/// rows under row revisions ([`rows_preserving_horizontal_partitions`]),
+/// which conserves both source shapes: Word's mesh gives up the round trip
+/// (its Reject All keeps B's extra cell, its Accept All A's), and a
+/// row-level revision cannot carry a changed cell count.
+pub(crate) fn rows_preserving_horizontal_partitions_for(
+    dom: &Dom,
+    original: &[ComparisonUnit],
+    revised: &[ComparisonUnit],
+    settings: &WmlComparerSettings,
+) -> Option<Vec<CorrelatedSequence>> {
+    if settings.merge_replaced_paragraphs {
+        return None;
+    }
+    rows_preserving_horizontal_partitions(dom, original, revised)
+}
+
+/// Complete revised/original rows under ordinary row revisions for every
+/// paired row whose horizontal partition differs. An unmatched cell's atoms
+/// would otherwise lose their cell group, and closing marks could give it
+/// another cell's revised properties; this conserves both source shapes.
 pub(crate) fn rows_preserving_horizontal_partitions(
     dom: &Dom,
     rows1: &[ComparisonUnit],
     rows2: &[ComparisonUnit],
 ) -> Option<Vec<CorrelatedSequence>> {
-    rows_preserving_horizontal_partitions_inner(dom, rows1, rows2, false)
-}
-
-fn rows_preserving_horizontal_partitions_inner(
-    dom: &Dom,
-    rows1: &[ComparisonUnit],
-    rows2: &[ComparisonUnit],
-    word_context: bool,
-) -> Option<Vec<CorrelatedSequence>> {
-    let differs = |a: &ComparisonUnit, b: &ComparisonUnit| {
-        if word_context && row_pair_uses_word_table_mesh_context(dom, a, b) {
-            return false;
-        }
-        match (
-            horizontal_cell_partition(dom, a),
-            horizontal_cell_partition(dom, b),
-        ) {
-            (Some(a), Some(b)) => a != b,
-            _ => false,
-        }
+    let differs = |a: &ComparisonUnit, b: &ComparisonUnit| match (
+        horizontal_cell_partition(dom, a),
+        horizontal_cell_partition(dom, b),
+    ) {
+        (Some(a), Some(b)) => a != b,
+        _ => false,
     };
     if !rows1.iter().zip(rows2).any(|(a, b)| differs(a, b)) {
         return None;
@@ -640,9 +523,7 @@ pub fn do_lcs_algorithm_for_table(
     {
         return Some(rows);
     }
-    if let Some(rows) =
-        rows_preserving_horizontal_partitions_with_word_context(dom, rows1, rows2, settings)
-    {
+    if let Some(rows) = rows_preserving_horizontal_partitions_for(dom, rows1, rows2, settings) {
         return Some(rows);
     }
 
@@ -675,7 +556,7 @@ pub fn do_lcs_algorithm_for_table(
     }
 
     // merged-cell / structure-hash fallback
-    let tbl_name = W::name("tbl");
+    let tbl_name = W::tbl();
     let left_merged = ancestor_named(dom, g1, &tbl_name).is_some_and(|t| contains_merged(dom, t));
     let right_merged = ancestor_named(dom, g2, &tbl_name).is_some_and(|t| contains_merged(dom, t));
     if left_merged || right_merged {
@@ -708,7 +589,7 @@ pub fn mark_rows_as_deleted_or_inserted(
     sequences: &[CorrelatedSequence],
     next_id: &mut u32,
 ) {
-    let tr_name = W::name("tr");
+    let tr_name = W::tr();
     let mut marked = std::collections::HashSet::new();
     for cs in sequences {
         let (units, rev_name) = match cs.correlation_status {
@@ -761,11 +642,11 @@ pub fn mark_rows_as_deleted_or_inserted(
 /// The row's `w:trPr`, created when absent after a `w:tblPrEx` (CT_Row
 /// order), else as the row's first child.
 pub(crate) fn row_properties(dom: &mut Dom, tr: NodeId) -> NodeId {
-    if let Some(p) = dom.element(tr, &W::name("trPr")) {
+    if let Some(p) = dom.element(tr, &W::tr_pr()) {
         return p;
     }
-    let p = dom.new_element(W::name("trPr"));
-    match dom.element(tr, &W::name("tblPrEx")) {
+    let p = dom.new_element(W::tr_pr());
+    match dom.element(tr, &W::tbl_pr_ex()) {
         Some(ex) => dom.add_after_self(ex, p),
         None => dom.add_first(tr, p),
     }
@@ -925,7 +806,7 @@ mod horizontal_partition_tests {
             .map(|tbl| {
                 dom.element(tbl, &W::name("tblGrid"))
                     .map(|grid| {
-                        dom.elements(grid, Some(&W::name("gridCol")))
+                        dom.elements(grid, Some(&W::grid_col()))
                             .into_iter()
                             .map(|column| prop(&dom, column))
                             .collect()
@@ -965,10 +846,10 @@ mod horizontal_partition_tests {
         ] {
             let a = package(a);
             let b = package(b);
-            for settings in [
-                WmlComparerSettings::default(),
-                WmlComparerSettings::powertools_faithful(),
-            ] {
+            // Outside Word mode only: Word's mesh gives up this round trip
+            // (word_mode_meshes_horizontal_repartitions_like_word).
+            {
+                let settings = WmlComparerSettings::powertools_faithful();
                 let compared =
                     crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
                         .unwrap();
@@ -1030,10 +911,10 @@ mod horizontal_partition_tests {
         ] {
             let a = package(original);
             let b = package(revised);
-            for settings in [
-                WmlComparerSettings::default(),
-                WmlComparerSettings::powertools_faithful(),
-            ] {
+            // Outside Word mode only: Word's mesh gives up this round trip
+            // (word_mode_meshes_horizontal_repartitions_like_word).
+            {
+                let settings = WmlComparerSettings::powertools_faithful();
                 let compared =
                     crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
                         .unwrap();
@@ -1079,10 +960,9 @@ mod horizontal_partition_tests {
         for (original, revised) in [(&two, &spanning), (&spanning, &two)] {
             let a = package(original);
             let b = package(revised);
-            for mut settings in [
-                WmlComparerSettings::default(),
-                WmlComparerSettings::powertools_faithful(),
-            ] {
+            // Outside Word mode only, as in the round trips above.
+            {
+                let mut settings = WmlComparerSettings::powertools_faithful();
                 settings.detect_format_changes = false;
                 let compared =
                     crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
@@ -1139,6 +1019,133 @@ mod horizontal_partition_tests {
             })
             .collect()
     }
+
+    /// Per cell: its cell marks, whether it has a `tcPrChange`, its old span
+    /// and its text.
+    type MeshCell = (Vec<String>, bool, u32, String);
+    /// A row's `trPr` revision marks and its cells.
+    type MeshRow = (Vec<String>, Vec<MeshCell>);
+    /// Each row of the first table, and the old grid's column count.
+    fn mesh_rows(dom: &Dom, root: NodeId) -> (Vec<MeshRow>, usize) {
+        let tbl = dom.descendants(root, Some(&W::tbl()))[0];
+        let grid = dom.element(tbl, &W::name("tblGrid")).unwrap();
+        let old_grid = dom
+            .element(grid, &W::name("tblGridChange"))
+            .and_then(|c| dom.element(c, &W::name("tblGrid")))
+            .unwrap_or(grid);
+        let old_columns = dom.elements(old_grid, Some(&W::grid_col())).len();
+        let span = |pr: Option<NodeId>| {
+            pr.and_then(|pr| dom.element(pr, &W::grid_span()))
+                .and_then(|s| dom.attribute(s, &W::val()))
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(1)
+        };
+        let marks = |pr: Option<NodeId>, names: &[&str]| -> Vec<String> {
+            pr.map(|pr| dom.elements(pr, None))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|c| dom.name(c).map(|n| n.local_name().to_string()))
+                .filter(|n| names.contains(&n.as_str()))
+                .collect()
+        };
+        let rows = dom
+            .elements(tbl, Some(&W::tr()))
+            .into_iter()
+            .map(|tr| {
+                let cells = dom
+                    .elements(tr, Some(&W::tc()))
+                    .into_iter()
+                    .map(|tc| {
+                        let pr = dom.element(tc, &W::tc_pr());
+                        let change = pr.and_then(|pr| dom.element(pr, &W::name("tcPrChange")));
+                        let old = change.and_then(|c| dom.element(c, &W::tc_pr())).or(pr);
+                        let text = dom
+                            .descendants(tc, None)
+                            .into_iter()
+                            .filter(|&t| dom.name_is(t, &W::t()) || dom.name_is(t, &W::del_text()))
+                            .map(|t| dom.value(t))
+                            .collect();
+                        (
+                            marks(pr, &["cellIns", "cellDel", "cellMerge"]),
+                            change.is_some(),
+                            span(old),
+                            text,
+                        )
+                    })
+                    .collect();
+                (marks(dom.element(tr, &W::tr_pr()), &["ins", "del"]), cells)
+            })
+            .collect();
+        (rows, old_columns)
+    }
+
+    /// The texts of the first table's cells, empty cells left out.
+    fn cell_texts(bytes: &[u8]) -> Vec<String> {
+        geometry(bytes)
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|(_, cells)| cells.into_iter().map(|(_, text)| text))
+            .filter(|text| !text.is_empty())
+            .collect()
+    }
+
+    /// #1817 — Word mode meshes a horizontal repartition the way Word 16
+    /// does (21 Word Compare redlines, jubarte-loop/fix23/ab1817): the rows
+    /// pair; the row keeps its larger cell count with no `cellIns`/`cellDel`
+    /// (B's extra cell holds inserted text, A's extra cell deleted text);
+    /// every cell of the row records its old properties, since Word's Reject
+    /// All gives a cell without a `tcPrChange` in such a row width 0 auto;
+    /// and no span overflows its side's grid, since Word's Reject All of an
+    /// overflowing row re-spans the table's other rows. Accept keeps A's
+    /// extra cell empty after a merge, and reject keeps B's after a split, as
+    /// Word's own do.
+    #[test]
+    fn word_mode_meshes_horizontal_repartitions_like_word() {
+        let long = "The first party shall deliver the complete report within thirty days after receiving the written request from the other party.";
+        let two = table(&(cell(1, 2500, "AAAAAA", long) + &cell(1, 2500, "BBBBBB", "Right")));
+        let spanning = table(&cell(2, 5000, "CCCCCC", long));
+        for (original, revised) in [(&spanning, &two), (&two, &spanning)] {
+            let a = package(original);
+            let b = package(revised);
+            let settings = WmlComparerSettings::default();
+            let compared =
+                crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
+                    .unwrap();
+            let pkg = crate::opc::PartFs::open(&compared).unwrap();
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+            let root = dom.root(doc).unwrap();
+            let (rows, old_columns) = mesh_rows(&dom, root);
+            assert_eq!(rows.len(), 1, "one paired row: {rows:?}");
+            let (row_marks, cells) = &rows[0];
+            assert!(row_marks.is_empty(), "no row ins/del: {rows:?}");
+            assert_eq!(cells.len(), 2, "the larger cell count: {rows:?}");
+            assert!(
+                cells.iter().all(|(marks, _, _, _)| marks.is_empty()),
+                "no cellIns/cellDel: {rows:?}"
+            );
+            assert!(
+                cells.iter().all(|&(_, change, _, _)| change),
+                "a tcPrChange on every cell: {rows:?}"
+            );
+            let old_spans: u32 = cells.iter().map(|&(_, _, span, _)| span).sum();
+            assert!(
+                old_spans as usize <= old_columns,
+                "old spans {old_spans} within the old grid's {old_columns} columns: {rows:?}"
+            );
+            let accepted = crate::document_comparer::accept_revisions(&compared).unwrap();
+            let rejected = crate::document_comparer::reject_revisions(&compared).unwrap();
+            assert_eq!(cell_texts(&accepted), cell_texts(&b), "accepted cell texts");
+            assert_eq!(cell_texts(&rejected), cell_texts(&a), "rejected cell texts");
+            // The live row fits the live grid too: an overflowing one had the
+            // grid rebuilt, and neither side's grid came back.
+            assert_eq!(grids(&accepted), grids(&b), "accepted grid");
+            assert_eq!(grids(&rejected), grids(&a), "rejected grid");
+        }
+    }
+
     #[test]
     fn split_changed_prose_keeps_original_literal_space_and_tracks_its_new_boundary() {
         let original = "The second party shall deliver the updated report within sixty days after receiving the signed request from the first party.";
@@ -1465,7 +1472,7 @@ mod nested_lifecycle_owner_regressions {
             assert_eq!(next_id, if table_unit { 102 } else { 101 });
             for row in std::iter::once(outer_row).chain(inner_rows) {
                 let insertion = dom
-                    .element(row, &W::name("trPr"))
+                    .element(row, &W::tr_pr())
                     .and_then(|pr| dom.element(pr, &W::ins()));
                 assert_eq!(
                     insertion.is_some(),
@@ -1492,8 +1499,9 @@ mod nested_lifecycle_owner_regressions {
 
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
-mod m42_word_context_boundaries {
+mod horizontal_gate_by_mode {
     use super::*;
+    use crate::namespaces::PT;
 
     fn table(rows: &[Vec<(u32, &str)>]) -> String {
         let mut xml = String::from(
@@ -1536,7 +1544,9 @@ mod m42_word_context_boundaries {
     }
 
     #[test]
-    fn merged_package_context_requires_every_observed_partition_and_merge_direction() {
+    /// Every repartition, M42's package geometry or not: whole rows outside
+    /// Word mode, Word's mesh in it (#1817).
+    fn word_mode_meshes_every_horizontal_repartition_and_the_others_keep_rows() {
         for mutation in 0..4 {
             let mut dom = Dom::new();
             let original: String = [
@@ -1577,37 +1587,139 @@ mod m42_word_context_boundaries {
             }
             let a = units(&mut dom, &original, "a");
             let b = units(&mut dom, &revised, "b");
-            mark_word_table_mesh_context(&mut dom, &a, &b, WordTableMeshContext::M42);
-            let left = ancestor_named(&dom, as_group(&a[0]).unwrap(), &W::tbl()).unwrap();
-            let right = ancestor_named(&dom, as_group(&b[0]).unwrap(), &W::tbl()).unwrap();
-            let attribute = PT::name(WORD_TABLE_CONTEXT);
-            assert_eq!(dom.attribute(left, &attribute).is_some(), mutation == 0);
-            assert_eq!(
-                dom.attribute(right, &attribute),
-                dom.attribute(left, &attribute)
-            );
             let rows_a = &as_group(&a[0]).unwrap().contents;
             let rows_b = &as_group(&b[0]).unwrap().contents;
             assert!(
-                rows_preserving_horizontal_partitions_with_word_context(
+                rows_preserving_horizontal_partitions_for(
                     &dom,
                     rows_a,
                     rows_b,
                     &WmlComparerSettings::powertools_faithful()
                 )
-                .is_some()
+                .is_some(),
+                "powertools keeps whole rows (mutation {mutation})"
             );
-            assert_eq!(
-                rows_preserving_horizontal_partitions_with_word_context(
+            assert!(
+                rows_preserving_horizontal_partitions_for(
                     &dom,
                     rows_a,
                     rows_b,
                     &WmlComparerSettings::default()
                 )
                 .is_none(),
-                mutation == 0
+                "Word mode meshes (mutation {mutation})"
             );
         }
+    }
+
+    /// A table of text rows, one cell per string.
+    fn text_table(rows: &[&[&str]]) -> String {
+        let mut xml = String::from(
+            "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2500\"/><w:gridCol w:w=\"2500\"/></w:tblGrid>",
+        );
+        for row in rows {
+            xml.push_str("<w:tr>");
+            for text in *row {
+                xml.push_str(&format!(
+                    "<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+                ));
+            }
+            xml.push_str("</w:tr>");
+        }
+        xml.push_str("</w:tbl>");
+        xml
+    }
+
+    /// The rows of every table in `body`, hashed as the comparer hashes them,
+    /// then flattened as H4 flattens them.
+    fn flat_rows(dom: &mut Dom, body: &str) -> Vec<ComparisonUnit> {
+        use crate::comparer::{atomize, preprocess, units};
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w=\"{}\"><w:body>{body}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let settings = WmlComparerSettings::default();
+        crate::unid::assign_to_all_elements(dom, body);
+        preprocess::hash_block_level_content(
+            dom,
+            body,
+            body,
+            &settings,
+            &preprocess::null_rel_resolver,
+        )
+        .unwrap();
+        preprocess::add_sha1_hash_to_block_level_content(
+            dom,
+            body,
+            &settings,
+            &preprocess::null_rel_resolver,
+        );
+        let atoms = atomize::create_comparison_unit_atom_list(dom, body, &settings);
+        units::get_comparison_unit_list(dom, &atoms, &settings)
+            .iter()
+            .filter_map(as_group)
+            .filter(|g| g.group_type == ComparisonUnitGroupType::Table)
+            .flat_map(|g| g.contents.clone())
+            .collect()
+    }
+
+    /// Each sequence's status and its original and revised row counts.
+    fn shape(sequences: &[CorrelatedSequence]) -> Vec<(CorrelationStatus, usize, usize)> {
+        sequences
+            .iter()
+            .map(|s| {
+                (
+                    s.correlation_status,
+                    s.com_units_1.as_ref().map_or(0, Vec::len),
+                    s.com_units_2.as_ref().map_or(0, Vec::len),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    /// #1817 — rows flattened out of several tables pair table by table in
+    /// Word mode: a table with the revised table that shares its rows (a new
+    /// table inserted right above an edited one), with the first one when
+    /// none shares a row (w23), and the others are inserted whole.
+    fn word_mode_pairs_flattened_rows_table_by_table() {
+        use CorrelationStatus::{Inserted, Unknown};
+        let parties: &[&[&str]] = &[
+            &["Party", "Role"],
+            &["Alice Example", "Seller"],
+            &["Bob Example", "Buyer"],
+        ];
+        let edited: &[&[&str]] = &[
+            &["Party", "Role"],
+            &["Alice Example", "Seller"],
+            &["Bob Example", "Purchaser"],
+        ];
+        let schedule: &[&[&str]] = &[&["Schedule", "Date"], &["Closing", "Friday"]];
+        let summary: &[&[&str]] = &[&["Summary of the transaction"]];
+        let mut dom = Dom::new();
+        let original = flat_rows(&mut dom, &text_table(parties));
+        let above = flat_rows(&mut dom, &(text_table(schedule) + &text_table(edited)));
+        let unrelated = flat_rows(&mut dom, &(text_table(summary) + &text_table(schedule)));
+        let one = flat_rows(&mut dom, &text_table(edited));
+        let word = WmlComparerSettings::default();
+        assert_eq!(
+            shape(&rows_by_table(&dom, &original, &above, &word).unwrap()),
+            [(Inserted, 0, 2), (Unknown, 3, 3)],
+            "the table sharing rows pairs"
+        );
+        assert_eq!(
+            shape(&rows_by_table(&dom, &original, &unrelated, &word).unwrap()),
+            [(Unknown, 3, 1), (Inserted, 0, 2)],
+            "the first table pairs when none shares a row"
+        );
+        assert!(
+            rows_by_table(&dom, &original, &one, &word).is_none(),
+            "one table a side"
+        );
+        let powertools = WmlComparerSettings::powertools_faithful();
+        assert!(rows_by_table(&dom, &original, &above, &powertools).is_none());
     }
 }
 
@@ -1985,5 +2097,37 @@ mod shared_word_alignment_tests {
             row_word_tokens(&dom, &table.contents[0]),
             toks(&["alpha", "beta", "gamma", "delta"])
         );
+    }
+}
+
+/// How many rows of `a` pair one to one with a row of `b` of the same hash:
+/// a row on either side pairs at most once.
+fn shared_rows<'a>(a: impl Iterator<Item = &'a str>, b: impl Iterator<Item = &'a str>) -> usize {
+    let mut left: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for row in b {
+        *left.entry(row).or_default() += 1;
+    }
+    a.filter(|row| {
+        left.get_mut(row)
+            .filter(|n| **n > 0)
+            .map(|n| *n -= 1)
+            .is_some()
+    })
+    .count()
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod shared_rows_tests {
+    use super::shared_rows;
+
+    /// Each row on either side pairs once: `[X, X, X]` shares one row with
+    /// `[X, Y]`, fewer than `[X, Y]` itself (Codex on #1921).
+    #[test]
+    fn a_duplicate_row_is_shared_once() {
+        let score = |a: &[&str], b: &[&str]| shared_rows(a.iter().copied(), b.iter().copied());
+        assert_eq!(score(&["X", "X", "X"], &["X", "Y"]), 1);
+        assert_eq!(score(&["X", "Y"], &["X", "Y"]), 2);
+        assert_eq!(score(&["X", "Y", "X"], &["X", "X", "Z"]), 2);
     }
 }

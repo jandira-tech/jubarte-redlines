@@ -34,6 +34,7 @@ pub mod comments;
 pub mod cross_para;
 // Word-parity passes, public for the tests that run one at a time; outside
 // the version promise (docs/VERSIONING.md).
+pub(crate) mod deleted_tables;
 pub(crate) mod final_marks;
 #[doc(hidden)]
 pub mod finalize;
@@ -48,7 +49,10 @@ pub mod order_tables;
 pub mod parts;
 pub mod preprocess;
 pub mod produce;
+pub(crate) mod replaced_tables;
 pub mod revisions;
+// Word-parity pass on the finished body; outside the version promise.
+pub(crate) mod table_split;
 // Constant tables ported from the C# `WmlComparer`; outside the version
 // promise (docs/VERSIONING.md).
 #[doc(hidden)]
@@ -287,8 +291,8 @@ pub fn try_compare_bodies_faithful_with_notes(
             // breaks first, final last) and take the LAST-seen ref per
             // (kind, w:type).
             let chain: Vec<NodeId> = dom.descendants(body1, Some(&W::sect_pr()));
-            let type_attr = W::name("type");
-            for kind in [W::name("headerReference"), W::name("footerReference")] {
+            let type_attr = W::type_();
+            for kind in [W::header_reference(), W::footer_reference()] {
                 for ty in ["even", "default", "first"] {
                     let found = chain.iter().rev().find_map(|&sect| {
                         dom.elements(sect, Some(&kind))
@@ -307,13 +311,19 @@ pub fn try_compare_bodies_faithful_with_notes(
                     // Word omits default section type `nextPage` on single-section
                     // redlines (format demos score ~87 with type kept vs Word
                     // without). Equal-width cols default is likewise omitted.
+                    // An edit keeps the section as the edited document
+                    // states it.
                     if child == "type"
                         && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
                         && dom.attribute(cc, &W::val()).unwrap_or("") == "nextPage"
                     {
                         continue;
                     }
-                    if child == "cols" && settings.merge_replaced_paragraphs {
+                    if child == "cols"
+                        && settings.merge_replaced_paragraphs
+                        && !settings.preserve_untouched
+                    {
                         let eq = W::name("equalWidth");
                         if matches!(
                             dom.attribute(cc, &eq),
@@ -358,6 +368,37 @@ pub fn try_compare_bodies_faithful_with_notes(
                     None => dom.add(clean, cc),
                 }
             }
+            // An edit keeps the rest of the edited document's section too:
+            // vertical alignment, page borders, line numbers, notes
+            // properties, text direction. Each goes to its schema position.
+            if settings.preserve_untouched {
+                for c in dom.elements(sp, None) {
+                    let Some(name) = dom.name(c) else {
+                        continue;
+                    };
+                    let local = name.local_name();
+                    if name.namespace_name() != W::URI
+                        || dom.element(clean, &name).is_some()
+                        || matches!(
+                            local,
+                            "headerReference" | "footerReference" | "sectPrChange"
+                        )
+                    {
+                        continue;
+                    }
+                    let rank = crate::edit::sections::sect_rank(local);
+                    let later = dom.elements(clean, None).into_iter().find(|&n| {
+                        dom.name(n).is_some_and(|nm| {
+                            crate::edit::sections::sect_rank(nm.local_name()) > rank
+                        })
+                    });
+                    let cc = dom.clone_subtree(c);
+                    match later {
+                        Some(l) => dom.add_before_self(l, cc),
+                        None => dom.add(clean, cc),
+                    }
+                }
+            }
             // Word-mode change record: when the base's final-section geometry
             // differs from the revised one now live, nest it in sectPrChange.
             // CT_SectPrBase — the nested sectPr never carries header/footer
@@ -388,7 +429,7 @@ pub fn try_compare_bodies_faithful_with_notes(
                     // equalWidth=1 that A leaves implicit — Word emits NO
                     // sectPrChange; ours wrongly did, adding a spurious record).
                     // type=nextPage is the default → drop it entirely.
-                    if let Some(ty) = dom.element(scratch, &W::name("type"))
+                    if let Some(ty) = dom.element(scratch, &W::type_())
                         && dom.attribute(ty, &W::val()).unwrap_or("nextPage") == "nextPage"
                     {
                         dom.remove(ty);
@@ -422,12 +463,12 @@ pub fn try_compare_bodies_faithful_with_notes(
                     let change = dom.new_element(W::name("sectPrChange"));
                     dom.set_attribute_value(
                         change,
-                        &W::name("author"),
+                        &W::author(),
                         Some(&settings.author_for_revisions),
                     );
                     dom.set_attribute_value(
                         change,
-                        &W::name("date"),
+                        &W::date(),
                         Some(&settings.date_time_for_revisions),
                     );
                     let old_clean = dom.new_element(W::sect_pr());
@@ -464,7 +505,7 @@ pub fn try_compare_bodies_faithful_with_notes(
                     if dom.element(clean, &grid).is_none() && dom.element(old_sp, &grid).is_some() {
                         let g = dom.new_element(grid);
                         dom.set_attribute_value(g, &W::name("linePitch"), Some("0"));
-                        dom.set_attribute_value(g, &W::name("type"), Some("default"));
+                        dom.set_attribute_value(g, &W::type_(), Some("default"));
                         dom.add_before_self(change, g);
                     }
                 }
@@ -711,6 +752,11 @@ pub fn try_compare_bodies_faithful_with_notes(
         lcs::detect_unrelated_sources(&cus1, &cus2)
             .unwrap_or_else(|| lcs::lcs(dom, cus1, cus2, settings))
     };
+    // Word pairs the k-th table of a replaced body region with the
+    // revision's k-th table (#1817).
+    if settings.merge_replaced_paragraphs && dom.name_is(body1, &W::body()) {
+        replaced_tables::pair_replaced_tables(dom, &mut seqs, settings);
+    }
     // Word pairs the two final marks behind a trailing deletion.
     if settings.merge_replaced_paragraphs {
         lcs::pair_story_final_marks(dom, &mut seqs);
@@ -789,6 +835,14 @@ pub fn try_compare_bodies_faithful_with_notes(
     if !ignorable.is_empty() {
         let merged: Vec<String> = ignorable.into_iter().collect();
         dom.set_attribute_value(document, &mc_ignorable, Some(&merged.join(" ")));
+    }
+    // An edit keeps the edited document's page background; the rebuilt
+    // document is otherwise its body alone.
+    if settings.preserve_untouched
+        && let Some(background) = dom.element(source_root2, &W::background())
+    {
+        let background = dom.clone_subtree(background);
+        dom.add(document, background);
     }
     let body = dom.new_element(W::body());
     for c in body_children {
@@ -891,9 +945,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // group. `fixups::fix_up_group_ids` is intentionally omitted here: the oracle
     // only calls FixUpGroupIds in the consolidate path (:1524), never in
     // compare/produce, so wiring it in would diverge from upstream.
-    fixups::fix_up_doc_pr_ids(dom, root);
-    fixups::fix_up_shape_ids(dom, root);
-    fixups::fix_up_shape_type_ids(dom, root);
+    fixups::fix_up_drawing_ids(dom, root, settings.preserve_untouched);
     // B's stamped pre-deletions → pending w:del (must run BEFORE the pt
     // scratch strip removes the stamps).
     if settings.merge_replaced_paragraphs {
@@ -913,36 +965,41 @@ pub fn try_compare_bodies_faithful_with_notes(
     } else {
         std::collections::HashMap::new()
     };
-    // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
-        let default_line = |dom: &Dom, r: NodeId| {
-            dom.attribute(r, &crate::namespaces::PT::default_line())
-                .map(str::to_string)
-        };
-        let lines = (
-            default_line(dom, source_root1),
-            default_line(dom, source_root2),
-        );
-        finalize::strip_redundant_demo_default_spacing(
-            dom,
-            root,
-            (lines.0.as_deref(), lines.1.as_deref()),
-        );
-        // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
-        // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
-        finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
-        // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
-        finalize::normalize_incomplete_spacing(dom, root);
-        // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
-        finalize::ensure_pure_i_list_snug_spacing(dom, root);
-        // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
-        // (file_14/file_69) need source before/after for LO page parity.
-        // file_33 residual pure-D spacing: M67 strips Heading residual only.
-        // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
-        finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
-        // M390: flatten content controls inside pure-I/D/MIX residual only
-        // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
-        finalize::unwrap_content_controls_in_pure_revisions(dom, root);
+        // An edit's redline keeps the source's properties and the plan's
+        // content as written: these passes restyle what neither side changed.
+        if !settings.preserve_untouched {
+            // Word-mode: drop body spacing that only restates demo pPrDefault
+            // (line=276).
+            let default_line = |dom: &Dom, r: NodeId| {
+                dom.attribute(r, &crate::namespaces::PT::default_line())
+                    .map(str::to_string)
+            };
+            let lines = (
+                default_line(dom, source_root1),
+                default_line(dom, source_root2),
+            );
+            finalize::strip_redundant_demo_default_spacing(
+                dom,
+                root,
+                (lines.0.as_deref(), lines.1.as_deref()),
+            );
+            // M367: pure-I pStyle=Normal + bidi=0 restates defaults (shape_group);
+            // Word omits them on pure-I mark pPr (sdts×shape −4.3 LO thrash).
+            finalize::strip_redundant_normal_pstyle_and_bidi(dom, root);
+            // C3/C5: incomplete lineRule=auto spacing → Word single-line or strip.
+            finalize::normalize_incomplete_spacing(dom, root);
+            // M439: pure-I numPr list items get Word snug spacing 0/0/240 when bare.
+            finalize::ensure_pure_i_list_snug_spacing(dom, root);
+            // NOTE: do not blanket-strip pure-del spacing — delete-heavy winners
+            // (file_14/file_69) need source before/after for LO page parity.
+            // file_33 residual pure-D spacing: M67 strips Heading residual only.
+            // TOC/body hyperlinks → Hyperlink-styled runs (file_21 Word parity).
+            finalize::unwrap_hyperlinks_to_styled_runs(dom, root);
+            // M390: flatten content controls inside pure-I/D/MIX residual only
+            // (fields_test pure-I SDTs → plain runs; keep EQ form-field SDTs).
+            finalize::unwrap_content_controls_in_pure_revisions(dom, root);
+        }
         // file_69: final empty pure-del → bare trailing empty (Word).
         finalize::strip_trailing_empty_pure_del_mark(dom, root);
         // M92: trailing empty live spacing → pPrChange (file_30).
@@ -1039,8 +1096,12 @@ pub fn try_compare_bodies_faithful_with_notes(
             has_default_table_style(dom, source_root1),
             has_default_table_style(dom, source_root2),
         );
-        finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
-        finalize::ensure_default_page_size(dom, root);
+        // Word Compare's own table margins and page size are not the
+        // source's: an edit keeps the source's.
+        if !settings.preserve_untouched {
+            finalize::synthesize_table_cell_margins(dom, root, default_table_styles);
+            finalize::ensure_default_page_size(dom, root);
+        }
         // pPr-only multi-pass peels: warm pure-del/mixed once (no body structure
         // mutation inside — structure folds re-classify after this block).
         finalize::begin_para_classification_cache();
@@ -1051,8 +1112,12 @@ pub fn try_compare_bodies_faithful_with_notes(
             finalize::last_pure_del_spacing_to_pprchange(dom, root, settings, &mut id);
         }
         // M228+M226+M231: one body walk — mid pure-D spacing promote, no-op
-        // equal-spacing pPrChange strip, default jc=left strip.
-        finalize::cleanup_spacing_and_default_jc(dom, root);
+        // equal-spacing pPrChange strip, default jc=left strip. The strip
+        // reaches untouched paragraphs, and `left` overrides a style that
+        // aligns otherwise: an edit keeps it.
+        if !settings.preserve_untouched {
+            finalize::cleanup_spacing_and_default_jc(dom, root);
+        }
         // M92 after M69 strip path may leave empty with live spacing.
         finalize::trailing_empty_spacing_to_pprchange(
             dom,
@@ -1236,10 +1301,13 @@ pub fn try_compare_bodies_faithful_with_notes(
         // Default nextPage, false cantSplit, rtl 0, table jc left, line=276
         // on a deleted mark, and an inserted pilcrow on a mixed paragraph
         // are absent from Word's redline once the text matches.
-        finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
         // Table look and comment-reference size are present on Word's
         // redline whenever this corpus has the underlying table or mark.
-        finalize::align_word_table_and_comment_chrome(dom, root);
+        // Both reach untouched content: an edit keeps the source's.
+        if !settings.preserve_untouched {
+            finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
+            finalize::align_word_table_and_comment_chrome(dom, root);
+        }
     }
     // Word marks a changed text box's words inside the one box; the diff
     // sees the box as one opaque run and deletes and inserts it whole.
@@ -1264,9 +1332,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // clone drawings (S-dup-docpr-id on strict01_sdt_controls×strict01: mid-path
     // FixUpDocPrIds left a collision introduced later). Same sequential 1..n
     // contract as the mid-path call.
-    fixups::fix_up_doc_pr_ids(dom, root);
-    fixups::fix_up_shape_ids(dom, root);
-    fixups::fix_up_shape_type_ids(dom, root);
+    fixups::fix_up_drawing_ids(dom, root, settings.preserve_untouched);
     Ok(root)
 }
 
@@ -1422,6 +1488,13 @@ pub struct WmlComparerSettings {
     /// do not tune.
     #[doc(hidden)]
     pub in_word_level_paragraph: bool,
+    /// Internal — true while `edit` builds its redline (#1868). The revised
+    /// document is the source with the plan applied, so what the plan did
+    /// not touch must come out as the source has it: the Word-visual passes
+    /// that restyle, respace or unwrap untouched content, or rename and merge
+    /// the stylesheet, stay off. Do not tune.
+    #[doc(hidden)]
+    pub preserve_untouched: bool,
 }
 
 /// Word-visual default for [`WmlComparerSettings::detail_threshold`] —
@@ -1530,6 +1603,7 @@ impl Default for WmlComparerSettings {
             input_limits: InputLimits::compare(),
             in_stamp_residual: false,
             in_word_level_paragraph: false,
+            preserve_untouched: false,
         }
     }
 }
@@ -1540,22 +1614,9 @@ impl Default for WmlComparerSettings {
 fn canonicalize_attr_order(dom: &mut Dom, root: NodeId) {
     let nodes: Vec<NodeId> = dom.descendants_and_self(root, None);
     for node in nodes {
-        let mut attrs = dom.attributes(node);
-        if attrs.len() < 2 {
-            continue;
-        }
-        attrs.sort_by(|a, b| {
-            a.0.local_name()
-                .cmp(b.0.local_name())
-                .then_with(|| a.0.namespace_name().cmp(b.0.namespace_name()))
-        });
-        let names: Vec<_> = attrs.iter().map(|(name, _)| name.clone()).collect();
-        for name in &names {
-            dom.set_attribute_value(node, name, None);
-        }
-        for (name, value) in &attrs {
-            dom.set_attribute_value(node, name, Some(value));
-        }
+        // ⚡ Bolt: Use in-place sorting for attributes to avoid heavy String/XName cloning
+        // and multiple hash map lookups/insertions when re-adding attributes.
+        dom.sort_attributes(node);
     }
 }
 
@@ -1779,7 +1840,7 @@ mod body_section_source_ownership_tests {
             assert_eq!(dom.elements(body, Some(&W::sect_pr())).len(), 1);
             let section = dom.element(body, &W::sect_pr()).unwrap();
             let size = dom.element(section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+            assert_eq!(dom.attribute(size, &W::w()), Some("12240"));
             assert_eq!(dom.attribute(size, &W::name("h")), Some("15840"));
             for node in dom.descendants_and_self(compared, None) {
                 assert!(
@@ -1800,7 +1861,7 @@ mod body_section_source_ownership_tests {
             let revised_body = dom.element(revised, &W::body()).unwrap();
             let revised_section = dom.element(revised_body, &W::sect_pr()).unwrap();
             let revised_size = dom.element(revised_section, &W::name("pgSz")).unwrap();
-            dom.set_attribute_value(revised_size, &W::name("w"), Some("14400"));
+            dom.set_attribute_value(revised_size, &W::w(), Some("14400"));
             let mut expected_original = source_view(&mut dom, original, false);
             if genuine {
                 // The closing carrier `a` takes the break as a pPr change,
@@ -1845,7 +1906,7 @@ mod body_section_source_ownership_tests {
                 let sections = dom.elements(projected_body, Some(&W::sect_pr()));
                 assert_eq!(sections.len(), 1);
                 let size = dom.element(sections[0], &W::name("pgSz")).unwrap();
-                assert_eq!(dom.attribute(size, &W::name("w")), Some(width));
+                assert_eq!(dom.attribute(size, &W::w()), Some(width));
                 assert!(
                     dom.descendants(sections[0], Some(&W::name("sectPrChange")))
                         .is_empty()
@@ -1854,7 +1915,7 @@ mod body_section_source_ownership_tests {
             let body = dom.element(compared, &W::body()).unwrap();
             let final_section = dom.element(body, &W::sect_pr()).unwrap();
             let live_size = dom.element(final_section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(live_size, &W::name("w")), Some("14400"));
+            assert_eq!(dom.attribute(live_size, &W::w()), Some("14400"));
             let history = dom
                 .element(final_section, &W::name("sectPrChange"))
                 .unwrap();
@@ -1871,7 +1932,7 @@ mod body_section_source_ownership_tests {
             );
             let old_section = dom.element(history, &W::sect_pr()).unwrap();
             let old_size = dom.element(old_section, &W::name("pgSz")).unwrap();
-            assert_eq!(dom.attribute(old_size, &W::name("w")), Some("12240"));
+            assert_eq!(dom.attribute(old_size, &W::w()), Some("12240"));
             let embedded = dom
                 .descendants(compared, Some(&W::p_pr()))
                 .into_iter()
@@ -1885,7 +1946,7 @@ mod body_section_source_ownership_tests {
             assert_eq!(embedded.len(), 2 * usize::from(genuine));
             for section in embedded {
                 let size = dom.element(section, &W::name("pgSz")).unwrap();
-                assert_eq!(dom.attribute(size, &W::name("w")), Some("12240"));
+                assert_eq!(dom.attribute(size, &W::w()), Some("12240"));
                 assert!(dom.element(section, &W::name("sectPrChange")).is_none());
             }
             let paragraph_histories = dom.descendants(compared, Some(&W::p_pr_change()));
@@ -1905,7 +1966,7 @@ mod body_section_source_ownership_tests {
                 );
                 let properties = dom.elements(old_properties, None);
                 assert_eq!(properties.len(), 1);
-                assert!(dom.name_is(properties[0], &W::name("spacing")));
+                assert!(dom.name_is(properties[0], &W::spacing_el()));
                 assert_eq!(
                     dom.attribute(properties[0], &W::name("before")),
                     Some("120")

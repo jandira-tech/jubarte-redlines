@@ -431,7 +431,9 @@ class Document:
         Rejecting that author's changes must give ``original``'s text back;
         a paragraph that still differs is an ``UNTRACKED_EDIT`` finding.
         A foreign revision added, changed or removed against ``original`` is a
-        ``FOREIGN_AUTHOR`` finding. Existing foreign revisions may remain;
+        ``FOREIGN_AUTHOR`` finding, and another author's comment gone, reworded,
+        resolved or reopened, or a new comment not signed ``author``, a
+        ``FOREIGN_COMMENT`` one. Existing foreign revisions may remain;
         paragraphs align by full text, including deleted text, within each story.
         An untracked paragraph merge or split around another author's revisions
         reports those revisions as new and gone alongside ``UNTRACKED_EDIT``.

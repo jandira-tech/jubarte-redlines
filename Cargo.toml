@@ -154,7 +154,7 @@ self-update = ["cli", "dep:self_update", "dep:ed25519-dalek"]
 [dependencies]
 # Upstream OPC types on zip 9 and patched quick-xml 0.41. The adapter keeps
 # its duplicate-repair and canonical-writing policy; optional crypto stays off.
-oxml-opc = { version = "0.14.2", default-features = false } # OPC types; encryption/signatures stay disabled
+oxml-opc = { version = "0.14.4", default-features = false } # OPC types; encryption/signatures stay disabled
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] } # deterministic package writer and direct ZIP access; pure-Rust Deflate; >= 9.0.5 closes GHSA-m665-v7pm-7grj (zip cloaking, SECURITY.md)
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
@@ -163,7 +163,7 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
-# `OpcError::Xml`/`XmlAttr` (oxml-opc 0.14.2) carry quick-xml 0.41's error types,
+# `OpcError::Xml`/`XmlAttr` (oxml-opc 0.14.4) carry quick-xml 0.41's error types,
 # and 0.42's (`QName` now wraps `&str`, new error paths) do not convert to them.
 # The OPC record scanner reads with the same 0.41 the payload uses, so a syntax
 # error surfaces as `OpcError::Xml` instead of an I/O refusal (#524, #1069).
@@ -228,7 +228,7 @@ required-features = ["cli"]
 # lockfiles do not pull this crate in at runtime. The tests load the
 # bundled schema from disk and use this validator only to confirm
 # parse_expectations and the bundled schema agree on accept/reject.
-jsonschema = { version = "0.59", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.

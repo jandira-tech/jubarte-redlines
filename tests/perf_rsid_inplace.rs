@@ -86,3 +86,27 @@ fn inplace_serialize_matches_clean_oracle() {
 
     assert_eq!(ser_stripped, ser_clean);
 }
+
+/// A table row keeps its own marks; its cells' paragraphs and runs lose
+/// theirs (#1873).
+#[test]
+fn a_row_keeps_its_own_rsids() {
+    let mut d = Dom::new();
+    let tr = d.new_element(w("tr"));
+    d.set_attribute_value(tr, &w("rsidR"), Some("00AA11"));
+    d.set_attribute_value(tr, &w("rsidTr"), Some("00BB22"));
+    let tc = d.new_element(w("tc"));
+    let p = d.new_element(w("p"));
+    d.set_attribute_value(p, &w("rsidR"), Some("00AA11"));
+    let r = d.new_element(w("r"));
+    d.set_attribute_value(r, &w("rsidRPr"), Some("00CC33"));
+    d.add(p, r);
+    d.add(tc, p);
+    d.add(tr, tc);
+
+    let out = remove_rsid_transform(&mut d, tr).unwrap();
+    assert_eq!(d.attribute(out, &w("rsidR")), Some("00AA11"));
+    assert_eq!(d.attribute(out, &w("rsidTr")), Some("00BB22"));
+    assert_eq!(d.attribute(p, &w("rsidR")), None);
+    assert_eq!(d.attribute(r, &w("rsidRPr")), None);
+}

@@ -329,6 +329,157 @@ for `fill_control`, the clean edit output also retains the control.
   spot, and writing one keeps a redline of a redline from growing a pair on
   every compare.
 
+### 14. New text that replaces a body of tables (Compare, #1826)
+
+- **What happens.** The original's body is `table, paragraph, table` and
+  the revision replaces it with new text. Word writes the new text first,
+  in a paragraph of its own with an inserted mark. The deleted tables
+  follow, with the original's middle paragraph between them, its mark
+  deleted (w06 `45c1c5abec_table_vmerge_colspan` → `a94f4c516b_text_box`,
+  Word 16's redline in the corpus).
+- **What we do.** The middle paragraph keeps its place between the tables,
+  its mark deleted. The new text starts the paragraph after the second
+  table, the one Accept All joins it to (#1851, difference 16), instead of
+  opening the body ahead of the first table. Before #1826, Word mode moved
+  the paragraph ahead of the first table, and rejecting fused the two
+  tables into one.
+- **Which is better.** Word's, for page flow: the new text opens the page.
+  Both resolve correctly: rejecting gives the original's tables and the
+  paragraph between them, and accepting gives the revision. Word's own
+  redline of w06 crashes Word 16.115; ours opens (difference 16). Matching
+  Word would mean splitting the paragraph into a new inserted paragraph and
+  the deleted mark; that is open.
+
+### 15. A header or footer only deleted section breaks reference (Compare, #1833)
+
+- **What happens.** The revision drops a header or footer, and the only
+  section breaks that reference it are breaks the redline deletes. Word
+  deletes every run of the story but keeps its closing paragraph mark
+  live, reset to a blank paragraph whose `pPrChange` holds the old
+  properties. When that footer holds a PAGE or NUMPAGES field, Word 16.115
+  crashes opening the redline, its own included (the `file_N` family, 9 of
+  the 23 release-sample redlines of #1814; s548 is `df9ffe9a8c_file_16` →
+  `ec900bd182_file_17`).
+- **What we do.** In Word mode, such a story is deleted whole: every
+  paragraph mark goes, the closing one included, and each paragraph keeps
+  its own properties (no `pPrChange`). A content control's last paragraph
+  keeps its mark, as before. A story a live section also references keeps
+  Word's shape (s016).
+
+  Deleting the marks alone opened 7 of the 9. s176 (`file_9` → `file_10`)
+  and s472 (`file_27` → `file_28`) still crashed. A deleted break that
+  references a footer with a PAGE or NUMPAGES field crashed Word whatever
+  the story's text and marks were: live, deleted, or deleted with every
+  mark. It also crashed when a live section referenced the footer too. The
+  layout decides (round 18, 2026-10-25).
+
+  So the page-number story the final section inherits through deleted
+  breaks moves to the final section: the final section references it, and
+  no deleted break does. A header without a page field stays on its
+  break. Word opens all 9 that way.
+
+  Six of the full corpus's 16 such crashers crash with every mark deleted
+  (s176, s472, 703530e684, 6bd2deb635, 8568ca15a1, aed2c1780a), and Word's
+  own redline of each of the six crashes Word too (round 23). Word's log
+  names its table cache: `TchtCorruption_MissingTtp` at the end of a
+  deleted row whose next paragraph's mark is deleted. Where that happens
+  depends on the layout. No shape that keeps the reference on the break
+  opened them. We tried ghost paragraphs (mark inserted and deleted) after
+  or between the deleted tables, the field in a page-number content
+  control, `w:fldSimple`, PAGE alone, NUMPAGES alone, and a transplant of
+  Word's own body.
+- **When it moves.** Two conditions hold the move back, so it never costs
+  more than a blank:
+  - The redline must delete a table row. Word's crash is in its table
+    cache, and none of the 10 corpus redlines with the shape and no
+    deleted row crashed.
+  - No section before the story's first break may set the slot. Otherwise
+    Reject All would show that section's footer on the moved break's pages:
+    four 21-section trusts (e.g. 2fe0dc77f9, `24b9811b05_file_22` →
+    `7226967373_file_23`) labelled exhibit G-2's pages "G-1". Word opens
+    all four with the reference left on its break.
+
+  Of the full corpus's 53 redlines with the shape, the move applies to 18:
+  the 16 that crashed in 0.14.0, and two that delete rows.
+- **Accept and reject.** Word's Accept All gives the revision: nothing
+  shows the emptied story. Word's Reject All gives the original's text,
+  and its header on every page. Where the footer moved, the page-number
+  footer shows on the last section only: s548's pages 7–11, where the
+  original shows it on all 11. The pages before carry no footer, never
+  another section's. A `sectPrChange` cannot record header or footer
+  references, so no redline can give them back to the deleted breaks.
+  `jubarte accept` and `reject` give the same result.
+- **Which is better.** Ours. Word crashes on its own shape, and a redline
+  Word cannot open shows nothing. The cost is the blank rejected footer on
+  the earlier sections of the redlines that moved. Stories the final
+  section does not inherit, and stories held back, stay on their breaks.
+  s356 has 19 deleted breaks, each with its own page-number footer, and
+  Word opens it. `jubarte validate` reports those breaks as the
+  `DELETED_SECTION_PAGE_FIELD` lead, a warning: Word crashed on 9 of the 11
+  release-sample redlines with that shape.
+
+### 16. Inserted words before whole-deleted tables (Compare, #1851)
+
+- **What happens.** A body paragraph whose mark the revision deletes
+  keeps, in its own `w:ins` runs, every word Accept All keeps of it. A
+  whole-deleted table follows it right away (more may follow, with
+  word-less paragraphs Accept All removes whole between them), then the
+  paragraph whose mark survives, the one Accept All joins those words to.
+  Word's own Compare writes this shape too: 15 of its 600 release-sample
+  redlines have it. Word 16.115 crashed opening 6 of jubarte's 16 such
+  redlines in the 0.14.0 release sample (w03, w06, w09, w10, w14, w17),
+  its log naming its table cache (`TchtCorruption_*`) or `ErrorEid` 78
+  (#1814).
+- **What we do.** The `w:ins` runs move, in order, to the start of the
+  paragraph they join, after its properties. The paragraph they leave
+  keeps its deleted text and its deleted mark. The move is body-only. It
+  never crosses a section break, a live block, a table with a live row,
+  or a deleted paragraph that keeps words. `jubarte validate` reports the
+  shape as the `INSERTED_TEXT_BEFORE_DELETED_TABLE` lead, a warning.
+- **Not moved: deleted paragraphs before the table.** When word-less
+  deleted paragraphs sit between the words and the first deleted table,
+  the words keep Word's place. Word crashed on 2 of those 42 sample
+  redlines, near the sample's 23 in 600. Moving them opened one more
+  (s375, w13), but cost the others Word's placement: 14.8 bench points
+  each on average against Word's own redlines (29 scored).
+- **Accept and reject.** The documents do not change. Word 16.115's own
+  Accept All and Reject All of the moved files give the revision's and
+  the original's body text (fix23 rt30), and `jubarte reject` is
+  byte-identical to before. `jubarte accept` of w09 is now right: before,
+  the revision's last paragraph took the original's mark properties (bold,
+  16 pt) and an empty paragraph followed it.
+- **Selective accept and reject.** A selection can bring the words to the
+  table. Resolving the deleted mark of an empty paragraph between them
+  joins the two paragraphs, so the gapped shape becomes the adjacent one.
+  Word's own redline of `4640e71ddd` → `1424386e9b` opens. With every
+  other mark accepted, as `tests/m_selective_revisions.rs` does, Word
+  16.115 crashed opening the result. A selective `accept` or `reject`
+  (by id, author or kind, and an edit plan's) moves the words too,
+  whenever its result holds the shape. Word opened the three such
+  half-way documents of the bench's `rejected_tracking` set alone, all
+  CLEAN, the crasher included (fix23 half1851).
+- **What it costs.** The redline shows the new words after the deleted
+  tables instead of before them, where Word's own redline shows them. In
+  a long deleted region that is far down: s487's words move past 84
+  blocks.
+- **Which is better.** Ours, for opening; Word's order, for reading. On
+  the release sample, the move changes 15 redlines, `word/document.xml`
+  only. Each was opened alone in Word 16.115:
+  - 13 are CLEAN, including 4 of the 6 among them that crashed before
+    (s187, s278, s462, s487).
+  - s116 and s257 still crash, as they did before.
+
+  Against Word's own redlines, the 4 that open now score 180.5 bench
+  points in all, where a crash scores 0. The 8 others scored lose 112.0
+  (14.0 each on average; s040 loses 50.8, its words now under the table
+  Word puts them above). Net, +68.5 points on the 600-pair sample.
+
+  Putting the deleted blocks first instead also opened w02, w07, w08 and
+  w16. It is not done: Word's own order is inserted-first in 78 of its 600
+  sample redlines, and the swap would change 76 of ours to fix 3 or 4.
+  Nothing structural tells the crashers apart either: s115 and s118 share
+  one block pattern, and only one of them crashes.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
@@ -390,41 +541,62 @@ python3 tools/parity_ladder.py sweep      # compare against tools/parity_baselin
 uv run --project ../neurotic_docx_bench python tools/redline40/redline40.py run --label NAME --against baseline-0.9.3
 ```
 
-### M337: Word retains an extra empty cell after horizontal table replacement
+### Word keeps one cell count when a row's cells are repartitioned (#1817)
 
-For `sd_2766_pirates_tracked_changes_3285d875` →
-`sd_1494_table_left_indent_11bb24c7`, the Word reference
-`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`
-retains four physical cells in each of the first revised table's two rows.
-The revised source authored three cells per row. Word records cell-property
-changes and deletes the old text, but records no cell deletion for the fourth
-cell. Accepting its redline therefore produces table cell counts
-`[[4, 4], [3, 3]]` rather than the source's `[[3, 3], [3, 3]]`.
+When a paired row's cell boundaries move (a cell split or merged, a column
+added or deleted, a boundary shifted), Word 16's Compare meshes the row. The
+two rows pair, the row keeps one cell count, and Word records no cell
+insertion or deletion: the revision's extra cell holds inserted text, the
+original's deleted text. Every cell of the row records its properties in a
+`tcPrChange`, an unchanged cell its own, and no recorded span overflows its
+side's grid. In 21 Word Compare redlines of such rows
+(`jubarte-loop/fix23/ab1817`), Word wrote no `cellIns` or `cellDel`. Its own
+Reject All of a split, and its Accept All of a merge, keep the extra cell,
+empty; a shifted boundary comes back wrong both ways.
 
-Word mode preserves that observed paragraph and table shape only within the
-M337 unrelated-source route: one original five-row, four-cell table facing two
-revised two-row, three-cell tables, with the first revised table empty. This
-can be worse than preserving the revised source: acceptance keeps an extra
-empty column. `--mode powertools` uses separate inserted/deleted row lifetimes
-and restores the authored cell counts on both acceptance and rejection. Use
-that mode when exact source table reconstruction matters. Other horizontal
-partition changes retain the conservative row lifecycle fallback in both modes.
+Word mode copies that mesh, and it is worse than the sources: accepting a
+merge keeps an empty extra cell, and rejecting a split keeps one.
+`--mode powertools` keeps complete inserted and deleted rows instead and
+restores the authored cell counts, spans and text on both acceptance and
+rejection; use it when exact table reconstruction matters. Word mode used
+those row lifetimes too before #1817, outside five observed free-mesh routes,
+and Word 16.115 would not open the deleted rows they wrote for the w04 and
+w23 fixtures.
 
-The public M337 regression checks both projections and the Word paragraph
-shape; the reference is indexed by `corpus/word/notices/RENAMED.csv` in
-`neurotic_docx_bench`.
+Word's mesh differs from jubarte's in four ways:
 
-The same bounded Word free-mesh exception covers three further observed
-references. `pirates × table_border_widths` (`28d97cb1f1`) accepts the first
-revised table with four cells instead of its authored two.
+- Word derives new grid columns so the recorded spans fit (`i02a`: an
+  authored `3120,6240` recorded as `3118,1667,4565`); jubarte keeps both
+  authored grids and trims the spans that would overflow them, from the last
+  cell back.
+- Word lays the live grid out again whenever a cell of the original joins a
+  row of the revision. A fixed table that declares a width in twips gets
+  that width split evenly, even where the revision's grid already has the
+  columns: `4000,5809` became `4905,4904`. An autofit table gets it split by
+  its content (`4544,5265`). A fixed table without a width takes its cells'
+  widths (`9809,9809`, wider than the page). A percentage also counts the
+  cells' side margins. jubarte rebuilds only a grid with fewer columns than
+  the row, and splits the declared width evenly whatever the layout, or the
+  text width when there is none, without the margins (#1914, Word 16.115
+  probes in `jubarte-loop/fix23/r55/syn`). Both sides now keep the declared
+  width and give the original's cell the revision's cell properties.
+- Word records `tblPrChange` and `tblGridChange` on 20 of the 21 tables, even
+  when neither changed; jubarte records them only when they changed.
+- Word pairs the cells of a row by their text when a column is added in the
+  middle (`i09`) or one cell's text is divided between two (`i11`); jubarte
+  pairs them in order. Open.
+
+The observed references that first showed the mesh remain its regressions:
+`sd_2766_pirates_tracked_changes_3285d875` →
+`sd_1494_table_left_indent_11bb24c7`
+(`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`, accepted
+cell counts `[[4, 4], [3, 3]]` for the source's `[[3, 3], [3, 3]]`),
+`pirates × table_border_widths` (`28d97cb1f1`),
 `eigenpal_docx_editor_suggesting_mixed_edits × employee_directory_table_2`
-(`b351836b34`) rejects the first original table with three cells instead of
-its authored two. `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`)
-rejects the original's first two rows with three cells instead of two. Each
-exception is authorized only inside that family's existing Word free-mesh
-route and requires its observed complete source table geometry. The original
-Word mixed-cell assertions remain in place. Faithful mode keeps exact authored
-cell partitions, spans and text on both projections for all four families.
+(`b351836b34`) and `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`).
+They are indexed by `corpus/word/notices/RENAMED.csv` in
+`neurotic_docx_bench`. Faithful mode keeps exact authored cell partitions,
+spans and text on both projections for all of them.
 
 ### Folded demo title paragraph history (M465)
 

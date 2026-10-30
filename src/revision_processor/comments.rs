@@ -72,8 +72,8 @@ pub(super) fn drop_wholly_deleted_comments(dom: &mut Dom, root: NodeId) {
     let dropped = super::bookmarks::wholly_deleted_ranges(
         dom,
         root,
-        &W::name("commentRangeStart"),
-        &W::name("commentRangeEnd"),
+        &W::comment_range_start(),
+        &W::comment_range_end(),
     );
     if dropped.is_empty() {
         return;
@@ -97,13 +97,13 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
     let dropped = super::bookmarks::wholly_deleted_ranges(
         dom,
         root,
-        &W::name("commentRangeStart"),
-        &W::name("commentRangeEnd"),
+        &W::comment_range_start(),
+        &W::comment_range_end(),
     );
     let order = dom.descendants(root, None);
     let mut groups: Vec<(NodeId, Vec<String>)> = Vec::new();
     let mut destinations = Vec::new();
-    for start in dom.descendants(root, Some(&W::name("commentRangeStart"))) {
+    for start in dom.descendants(root, Some(&W::comment_range_start())) {
         let Some(id) = dom
             .attribute(start, &W::id())
             .filter(|id| dropped.contains(*id))
@@ -121,7 +121,7 @@ pub(super) fn keep_wholly_deleted_comments(dom: &mut Dom, root: NodeId) -> Vec<S
             .iter()
             .copied()
             .take_while(|&n| {
-                !(dom.name(n) == Some(W::name("commentRangeEnd"))
+                !(dom.name(n) == Some(W::comment_range_end())
                     && dom.attribute(n, &W::id()) == Some(id.as_str()))
             })
             .find(|&n| {
@@ -453,7 +453,7 @@ pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) ->
         let cid = comments.dom.attribute(c, &id).unwrap_or("").to_string();
         if referenced.contains(&cid) {
             kept.insert(cid);
-            if let Some(a) = comments.dom.attribute(c, &W::name("author")) {
+            if let Some(a) = comments.dom.attribute(c, &W::author()) {
                 authors.insert(a.to_string());
             }
         } else {

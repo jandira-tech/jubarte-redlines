@@ -179,7 +179,7 @@ fn adjacent_changes(source: &[u8]) -> Result<HashSet<(String, String)>, ChangeEr
                     flatten(dom, child, out);
                 }
                 Some("sdt") => {
-                    if let Some(content) = dom.element(child, &W::name("sdtContent")) {
+                    if let Some(content) = dom.element(child, &W::sdt_content()) {
                         flatten(dom, content, out);
                     }
                 }

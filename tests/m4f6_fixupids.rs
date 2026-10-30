@@ -5,7 +5,8 @@
 //! M4.F.6 — FixUp*Ids tests.
 
 use jubarte::comparer::fixups::{
-    fix_up_doc_pr_ids, fix_up_group_ids, fix_up_shape_ids, fix_up_shape_type_ids,
+    fix_up_doc_pr_ids, fix_up_drawing_ids, fix_up_group_ids, fix_up_shape_ids,
+    fix_up_shape_type_ids,
 };
 use jubarte::namespaces::{O, VML, W, WP};
 use jubarte::xmllinq::{Dom, XName};
@@ -68,6 +69,103 @@ fn m4_f6_shapetype_relink() {
         d.attribute(shape, &XName::get("type", "")).unwrap(),
         "#1",
         "shape type relinked"
+    );
+}
+
+/// A `w:pict` holding `children`, added to `parent`.
+fn pict_of(d: &mut Dom, parent: jubarte::xmllinq::NodeId, children: &[jubarte::xmllinq::NodeId]) {
+    let pict = d.new_element(W::name("pict"));
+    for &c in children {
+        d.add(pict, c);
+    }
+    d.add(parent, pict);
+}
+
+fn vml(d: &mut Dom, local: &str, attrs: &[(&str, &str)]) -> jubarte::xmllinq::NodeId {
+    let e = d.new_element(VML::name(local));
+    for &(name, value) in attrs {
+        d.set_attribute_value(e, &XName::get(name, ""), Some(value));
+    }
+    e
+}
+
+/// #1872: a shape in a later `w:pict` names the shapetype written beside
+/// the first shape; after a second shapetype with the same id, shapes name
+/// that one.
+#[test]
+fn m4_f6_shapetype_relink_reaches_later_shapes() {
+    let mut d = Dom::new();
+    let body = d.new_element(W::body());
+    let st1 = vml(&mut d, "shapetype", &[("id", "_x0000_t3")]);
+    let a = vml(&mut d, "shape", &[("type", "#_x0000_t3")]);
+    let b = vml(&mut d, "shape", &[("type", "#_x0000_t3")]);
+    let st2 = vml(&mut d, "shapetype", &[("id", "_x0000_t3")]);
+    let c = vml(&mut d, "shape", &[("type", "_x0000_t3")]);
+    pict_of(&mut d, body, &[st1, a]);
+    pict_of(&mut d, body, &[b]);
+    pict_of(&mut d, body, &[st2, c]);
+    fix_up_shape_type_ids(&mut d, body);
+    let ty = XName::get("type", "");
+    assert_eq!(d.attribute(st1, &id()), Some("1"));
+    assert_eq!(d.attribute(st2, &id()), Some("2"));
+    assert_eq!(d.attribute(a, &ty), Some("#1"));
+    assert_eq!(
+        d.attribute(b, &ty),
+        Some("#1"),
+        "a later pict's shape relinked"
+    );
+    assert_eq!(
+        d.attribute(c, &ty),
+        Some("2"),
+        "the bare form, after the second shapetype"
+    );
+}
+
+/// #1872: an edit's redline renames only ids that repeat, and relinks what
+/// named the renamed one.
+#[test]
+fn m4_f6_preserve_renames_only_repeated_ids() {
+    let mut d = Dom::new();
+    let body = d.new_element(W::body());
+    for old in ["7", "7", "99"] {
+        let dp = d.new_element(WP::name("docPr"));
+        d.set_attribute_value(dp, &id(), Some(old));
+        d.add(body, dp);
+    }
+    let st1 = vml(&mut d, "shapetype", &[("id", "_x0000_t75")]);
+    let s1 = vml(
+        &mut d,
+        "shape",
+        &[("id", "_x0000_i1025"), ("type", "#_x0000_t75")],
+    );
+    let st2 = vml(&mut d, "shapetype", &[("id", "_x0000_t75")]);
+    let s2 = vml(
+        &mut d,
+        "shape",
+        &[("id", "_x0000_i1025"), ("type", "#_x0000_t75")],
+    );
+    let ole = d.new_element(O::name("OLEObject"));
+    d.set_attribute_value(ole, &XName::get("ShapeID", ""), Some("_x0000_i1025"));
+    pict_of(&mut d, body, &[st1, s1]);
+    pict_of(&mut d, body, &[st2, s2, ole]);
+    fix_up_drawing_ids(&mut d, body, true);
+    let ids: Vec<_> = d
+        .descendants(body, Some(&WP::name("docPr")))
+        .iter()
+        .map(|&e| d.attribute(e, &id()).unwrap().to_string())
+        .collect();
+    assert_eq!(ids, ["7", "100", "99"]);
+    let ty = XName::get("type", "");
+    assert_eq!(d.attribute(st1, &id()), Some("_x0000_t75"));
+    assert_eq!(d.attribute(st2, &id()), Some("_x0000_t75_1"));
+    assert_eq!(d.attribute(s1, &id()), Some("_x0000_i1025"));
+    assert_eq!(d.attribute(s2, &id()), Some("_x0000_i1025_1"));
+    assert_eq!(d.attribute(s1, &ty), Some("#_x0000_t75"));
+    assert_eq!(d.attribute(s2, &ty), Some("#_x0000_t75_1"));
+    assert_eq!(
+        d.attribute(ole, &XName::get("ShapeID", "")),
+        Some("_x0000_i1025_1"),
+        "the renamed shape's OLE object follows it"
     );
 }
 

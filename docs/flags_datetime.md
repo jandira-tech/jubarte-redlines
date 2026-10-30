@@ -485,11 +485,11 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--delete` |  |  |  |  | append | Delete the anchor, or the whole paragraph (or comment) without one |
 | `--resolve` |  |  |  |  | append | Resolve comment c5 (with -p c5) |
 | `--reply` |  | <TEXT> |  |  | append | Reply to comment c5 (with -p c5), as `add -p c5 --content` |
-| `--rewrite-others-comments` |  |  | false |  |  | Let `-p c5 --content` change a comment another author wrote; it keeps their name. Without it that is refused (COMMENT_NOT_YOURS): one author answers another with --reply |
+| `--rewrite-others-comments` |  |  | false |  |  | Let `-p c5 --content`, `--delete` and `--resolve` change a comment another author wrote (a reworded one keeps their name), and `--delete` take their reply with your thread. Without it that is refused (COMMENT_NOT_YOURS): one author answers another with --reply |
 | `--accept` |  |  |  |  | append | Accept revision r12 (with -p r12; r1+2 for several); prints the resolved change (`accepted r1+2 in p3: "from" > "to"`) |
 | `--reject` |  |  |  |  | append | Reject revision r12 (with -p r12; r1+2 for several); prints the resolved change (`rejected r0 in p3: "from" > "to"`) |
-| `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12): our tracked deletion inside it, so the decision shows. --content is a comment on the struck words |
-| `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12): their deletion stays and our tracked insertion of its words follows it. --content is a comment on the restored words |
+| `--strike` |  |  |  |  | append | Strike another author's insertion r12 (with -p r12; r10+11 for a change of several marks, a replacement's insertion only): our tracked deletion inside it, so the decision shows. --content is one comment on the struck words |
+| `--restore` |  |  |  |  | append | Restore another author's deletion r12 (with -p r12; r10+11 for a change of several marks, a replacement's deletion only): their deletion stays and our tracked insertion of its words follows it. --content is one comment on the restored words |
 | `--visible` |  |  |  |  | append | With --reject: strike each insertion and restore each deletion instead of removing the change without a trace |
 | `--style` |  | <SPEC> |  |  | append | Formatting for the anchored text: bold, italic, underline, strike, caps, highlight=yellow, font=Calibri, size=11, color=FF0000; any other value is a paragraph style (Heading2) |
 | `-a, --author` |  | <NAME> | Jubarte |  |  | Author of the changes and comments (operation flags; a plan names its own) |
@@ -566,9 +566,9 @@ Diagnose a Word package, or compare package structures
 |-|-|-|-|-|-|-|
 | `<FILES>` |  | <FILE>... |  |  | required; append | One package, or two to compare (A then B) |
 | `-l, --list` |  |  | false |  |  | List the package's entries (sizes); with two files, the entries that differ |
-| `-c, --check` |  | <CHECKS> |  | orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, styledefs, numbering, render | append | Reports to run [default: orphans, fields, bookmarks, package, structure] |
+| `-c, --check` |  | <CHECKS> |  | orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, tables, styledefs, numbering, render | append | Reports to run [default: orphans, fields, bookmarks, package, structure] |
 | `-p, --part` |  | <NAME> |  |  |  | Only parts whose name contains this (e.g. document.xml) |
-| `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
+| `-g, --grep` |  | <TEXT> |  |  |  | Only what contains this: textbox stories; text/runs/xml/changes/tables/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole) |
 | `-n, --limit` |  | <N> | 5 |  |  | Examples per finding kind |
 | `-C, --context` |  | <N> | 0 |  |  | text/xml/runs of two files: common lines shown around each change |
 | `--full-lines` |  |  | false |  |  | text/xml/runs/changes/styledefs/numbering/render: show complete lines instead of clipping them at 200 characters |
@@ -712,7 +712,7 @@ A long name whose short, value, default or possible values differ between tasks 
 | `--changed` | (shorthand), __edit-template template, compare, read | `default=false values=` |
 | `--changed-only` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values= alias of --changed-pages` |
 | `--changed-pages` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values=` |
-| `--check` | self-update, debug | **differs**: `default=false values=` on self-update; `-c <CHECKS> default= values=orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, styledefs, numbering, render` on debug |
+| `--check` | self-update, debug | **differs**: `default=false values=` on self-update; `-c <CHECKS> default= values=orphans, fields, bookmarks, package, structure, ids, styles, chains, elements, textbox, text, xml, runs, changes, tables, styledefs, numbering, render` on debug |
 | `--columns` | diff | `<N> default=72 values=` |
 | `--comment` | __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert, add | **differs**: `default= values=` on add; `<COMMENT> default= values=` on __edit-v2 replace, __edit-v2 rewrite, __edit-v2 insert |
 | `--comment-notes` | (shorthand), compare, accept, reject, convert, append, scrub | `default=false values=` |

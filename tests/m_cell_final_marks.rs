@@ -198,12 +198,15 @@ fn a_cells_tail_replaced_over_a_nested_table_keeps_the_final_mark() {
     check_valid(&table(&nested), &table("<w:p/>"), "nested tail");
 }
 
-/// A row gaining a cell. Here the comparer rewrites the row (the old one
-/// deleted, the new one inserted, every mark with its row); where it keeps
-/// the row and adds the cell, the new cell's mark stays unrevised and only
-/// its words are inserted (Word 16, ff42b4a7a3's "Role" cell:
-/// `observed_m348_rewritten_cells_keep_revised_properties_and_complete_original_history`).
-/// Either way no cell's final mark carries a revision its row does not.
+/// A row gaining a cell. Word mode keeps the row and adds the cell, as Word
+/// 16 does (#1817; ff42b4a7a3's "Role" cell:
+/// `observed_m348_rewritten_cells_keep_revised_properties_and_complete_original_history`):
+/// the new cell's mark stays unrevised, only its words are inserted, and
+/// Reject All keeps the cell, empty, as Word's own Reject All does
+/// (docs/WORD_DIFFERENCES.md). A removed cell is the mirror, kept empty by
+/// Accept All. Powertools mode rewrites the row (the old one deleted, the new
+/// one inserted, every mark with its row) and restores both sides. Either way
+/// no cell's final mark carries a revision its row does not.
 #[test]
 fn a_row_gaining_a_cell_resolves_both_ways() {
     let row = |cells: &[&str]| {
@@ -223,8 +226,42 @@ fn a_row_gaining_a_cell_resolves_both_ways() {
     };
     let a = row(&["Name", "Department"]);
     let b = row(&["Name", "Department", "Role"]);
-    check_valid(&a, &b, "added cell");
-    check_valid(&b, &a, "removed cell");
+    let kept: Vec<String> = ["Before.", "Name", "Department", "", "After."]
+        .map(String::from)
+        .to_vec();
+    for (original, revised, accepted, rejected, what) in [
+        (&a, &b, texts(&b), kept.clone(), "added cell"),
+        (&b, &a, kept.clone(), texts(&b), "removed cell"),
+    ] {
+        let out = compare_documents(original, revised, "Redline").expect("compare");
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{what}: {:?}", report.errors);
+        let projected = |bytes: Vec<u8>| texts(&bytes);
+        assert_eq!(
+            projected(accept_revisions(&out).unwrap()),
+            accepted,
+            "{what}: Accept All"
+        );
+        assert_eq!(
+            projected(reject_revisions(&out).unwrap()),
+            rejected,
+            "{what}: Reject All"
+        );
+        let settings = WmlComparerSettings::powertools_faithful();
+        let out = compare_documents_with_settings(original, revised, &settings).expect("compare");
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{what}: {:?}", report.errors);
+        assert_eq!(
+            projected(accept_revisions(&out).unwrap()),
+            texts(revised),
+            "{what}"
+        );
+        assert_eq!(
+            projected(reject_revisions(&out).unwrap()),
+            texts(original),
+            "{what}"
+        );
+    }
 }
 
 /// A row added or removed whole keeps every final mark's revision, a

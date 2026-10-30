@@ -168,7 +168,7 @@ fn unit_is_single_atom_ppr(dom: &Dom, u: &ComparisonUnit) -> bool {
 
 /// True when this unit's enclosing `w:p` carries live `w:numPr` (list item).
 fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
-    let p_name = W::name("p");
+    let p_name = W::p();
     let num_pr = W::num_pr();
     let mut found = false;
     u.try_for_each_atom(&mut |atom| {
@@ -188,7 +188,7 @@ fn unit_para_has_numpr(dom: &Dom, u: &ComparisonUnit) -> bool {
 
 /// `w:ilvl` of this unit's enclosing paragraph, if any.
 fn unit_para_ilvl(dom: &Dom, u: &ComparisonUnit) -> Option<u32> {
-    let p_name = W::name("p");
+    let p_name = W::p();
     let num_pr = W::num_pr();
     let ilvl_name = W::name("ilvl");
     let mut out: Option<u32> = None;
@@ -258,7 +258,7 @@ fn legal_mid_splice_cut(dom: &Dom, cu: &[ComparisonUnit]) -> Option<usize> {
         let mut heading_level: Option<u32> = None;
         for a in u.descendant_atoms() {
             for &ae in a.ancestor_elements.iter() {
-                if !dom.name_is(ae, &W::name("p")) {
+                if !dom.name_is(ae, &W::p()) {
                     continue;
                 }
                 if let Some(ppr) = dom.element(ae, &W::p_pr())
@@ -2653,8 +2653,8 @@ pub fn do_lcs_algorithm(
                 // 100.00 -> 51.50; sd_1919 and the 99-seam class all start
                 // at both body heads).
                 let starts_at_body_head = |cul: &[ComparisonUnit]| -> bool {
-                    let body_name = W::name("body");
-                    let p_name = W::name("p");
+                    let body_name = W::body();
+                    let p_name = W::p();
                     let tbl_name = W::tbl();
                     let Some(first_cu) = cul.first() else {
                         return false;
@@ -2690,8 +2690,8 @@ pub fn do_lcs_algorithm(
                 // with two content tables — Word keeps A's deleted paragraph
                 // whole after them instead of merging into a mid-body seam.
                 let ends_at_body_tail = |cul: &[ComparisonUnit]| -> bool {
-                    let body_name = W::name("body");
-                    let p_name = W::name("p");
+                    let body_name = W::body();
+                    let p_name = W::p();
                     let t_name = W::t();
                     let Some(last_cu) = cul.last() else {
                         return false;
@@ -3399,12 +3399,7 @@ fn unit_is_textless(dom: &Dom, u: &ComparisonUnit) -> bool {
             return dom.value_str(e).trim().is_empty();
         }
         // Visible non-text content is words to Word's chain rule.
-        let visible = [
-            W::name("drawing"),
-            W::pict(),
-            W::name("object"),
-            W::name("sym"),
-        ];
+        let visible = [W::drawing(), W::pict(), W::object(), W::name("sym")];
         !visible.iter().any(|n| dom.name_is(e, n))
             && dom.name(e).is_none_or(|n| n.namespace_name() != MATH_URI)
     })
@@ -3513,7 +3508,7 @@ pub(super) fn story_closing_paragraph(dom: &Dom, u: &ComparisonUnit) -> Option<N
         .rev()
         .find(|&&e| dom.name_is(e, &p))?;
     let parent = dom.parent(para)?;
-    let story = [W::body(), W::name("tc"), W::name("txbxContent")];
+    let story = [W::body(), W::tc(), W::txbx_content()];
     let last_in_story = story.iter().any(|n| dom.name_is(parent, n))
         && dom
             .elements(parent, None)
@@ -5666,7 +5661,7 @@ fn group_has_drawing_or_pict(dom: &Dom, u: &ComparisonUnit) -> bool {
         };
         n == W::drawing()
             || n == W::pict()
-            || n == W::name("object")
+            || n == W::object()
             || n.local_name() == "AlternateContent"
             || n.local_name() == "drawing"
             || n.local_name() == "pict"
@@ -6225,16 +6220,6 @@ fn detect_unrelated_sources_word_mode_inner(
         std::cell::OnceCell::new();
     let full_tokens_2: std::cell::OnceCell<std::collections::HashSet<String>> =
         std::cell::OnceCell::new();
-    // The existing M42 merged-table route follows Word's physical-cell mesh.
-    // Tag its observed package geometry before row windows lose table context.
-    if settings.merge_replaced_paragraphs {
-        lcs_table::mark_word_table_mesh_context(
-            dom,
-            cu1,
-            cu2,
-            lcs_table::WordTableMeshContext::M42,
-        );
-    }
     let groups1 = contentful_group_sha1s(dom, cu1);
     let groups2 = contentful_group_sha1s(dom, cu2);
     // C# used >3 groups on BOTH sides. Word also collapses short-vs-long
@@ -7182,12 +7167,6 @@ fn detect_unrelated_sources_word_mode_inner(
                 })
                 .count();
             if n_tbl_next >= 2 {
-                lcs_table::mark_word_table_mesh_context(
-                    dom,
-                    cu1,
-                    cu2,
-                    lcs_table::WordTableMeshContext::M337,
-                );
                 return None;
             }
         }
@@ -7581,12 +7560,6 @@ fn detect_unrelated_sources_word_mode_inner(
             let peel_r = peel_leading_nontbl(cu2);
             // Only peel when next has leading non-table prose (border titles).
             if peel_r >= 2 {
-                lcs_table::mark_word_table_mesh_context(
-                    dom,
-                    cu1,
-                    cu2,
-                    lcs_table::WordTableMeshContext::M333,
-                );
                 let mut residual_settings = settings.clone();
                 residual_settings.detail_threshold = 0.0;
                 let mut out = Vec::new();
@@ -7676,21 +7649,6 @@ fn detect_unrelated_sources_word_mode_inner(
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
                 let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
-                if long_mt {
-                    lcs_table::mark_word_table_mesh_context(
-                        dom,
-                        cu1,
-                        cu2,
-                        lcs_table::WordTableMeshContext::M348,
-                    );
-                } else if ooxml_tbl {
-                    lcs_table::mark_word_table_mesh_context(
-                        dom,
-                        cu1,
-                        cu2,
-                        lcs_table::WordTableMeshContext::M350,
-                    );
-                }
                 residual_settings.detail_threshold =
                     if short_prop || ooxml_tbl || both_tbl || cell_tbl || long_mt {
                         0.0
@@ -8783,9 +8741,9 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
     let take_thru = match g1.group_type {
         ComparisonUnitGroupType::Paragraph => W::p(),
         ComparisonUnitGroupType::Table => W::tbl(),
-        ComparisonUnitGroupType::Row => W::name("tr"),
-        ComparisonUnitGroupType::Cell => W::name("tc"),
-        ComparisonUnitGroupType::Textbox => W::name("txbxContent"),
+        ComparisonUnitGroupType::Row => W::tr(),
+        ComparisonUnitGroupType::Cell => W::tc(),
+        ComparisonUnitGroupType::Textbox => W::txbx_content(),
     };
     let da1 = a1[0].descendant_atoms();
     let da2 = a2[0].descendant_atoms();
@@ -9786,7 +9744,7 @@ fn resolve_paragraph_window(
     // result's words (STYLEREF "Name Of Act/Reg": "Contaminated Sites Act
     // 2003" → "Firearms Act 1973"). A side's characters in all.
     let mut keys: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let instr = W::name("instrText");
+    let instr = W::instr_text();
     type Side = (Vec<u32>, Vec<u32>, Vec<bool>, Vec<bool>, Vec<u32>, usize);
     let mut side = |cul: &[ComparisonUnit]| -> Side {
         let mut ks = Vec::with_capacity(cul.len());
@@ -10026,21 +9984,31 @@ pub fn resolve_correlated_sequences(
             return cs_list;
         };
         let unknown = cs_list.remove(idx);
-        // H4 can deliver bare Row groups without passing table dispatch. Keep
-        // distinct row lifetimes before positional Unid correlation collapses
-        // differing horizontal partitions; correlate their table ancestors only.
-        let horizontal_rows = match (&unknown.com_units_1, &unknown.com_units_2) {
+        let bare_rows = match (&unknown.com_units_1, &unknown.com_units_2) {
             (Some(a), Some(b))
                 if a.iter().chain(b).all(|u| {
                     as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Row)
                 }) =>
             {
-                lcs_table::rows_preserving_horizontal_partitions_with_word_context(
-                    dom, a, b, settings,
-                )
+                Some((a, b))
             }
             _ => None,
         };
+        // Word pairs an original table with one revised table: rows that H4
+        // flattened out of several tables pair table by table, before their
+        // Unids correlate across tables and fuse them (#1817, w23).
+        if let Some(by_table) =
+            bare_rows.and_then(|(a, b)| lcs_table::rows_by_table(dom, a, b, settings))
+        {
+            cs_list.splice(idx..idx, by_table);
+            continue;
+        }
+        // H4 can deliver bare Row groups without passing table dispatch. Keep
+        // distinct row lifetimes before positional Unid correlation collapses
+        // differing horizontal partitions; correlate their table ancestors only.
+        let horizontal_rows = bare_rows.and_then(|(a, b)| {
+            lcs_table::rows_preserving_horizontal_partitions_for(dom, a, b, settings)
+        });
         if let Some(rows) = horizontal_rows {
             let revised_row_ids: Vec<_> = unknown
                 .com_units_2
@@ -10628,7 +10596,7 @@ mod deterministic_gap_tests {
         }
         let mut contents = Vec::new();
         if !text.is_empty() {
-            let run = dom.new_element(W::name("r"));
+            let run = dom.new_element(W::r());
             dom.add(p, run);
             let w = word(dom, text, &[p, run]);
             dom.add(run, w.first_atom().unwrap().content_element);
@@ -11231,7 +11199,7 @@ mod deterministic_gap_tests {
     #[test]
     fn story_closure_requires_a_story_parent_and_only_section_properties_after() {
         let mut dom = Dom::new();
-        for story in [W::body(), W::name("tc"), W::name("txbxContent")] {
+        for story in [W::body(), W::tc(), W::txbx_content()] {
             let parent = dom.new_element(story);
             let first = paragraph_in(&mut dom, parent, "first", None, None);
             let last = paragraph_in(&mut dom, parent, "last", None, None);
@@ -11240,11 +11208,11 @@ mod deterministic_gap_tests {
             let section = dom.new_element(W::sect_pr());
             dom.add(parent, section);
             assert!(unit_closes_story(&dom, &last));
-            let table = dom.new_element(W::name("tbl"));
+            let table = dom.new_element(W::tbl());
             dom.add(parent, table);
             assert!(!unit_closes_story(&dom, &last));
         }
-        let parent = dom.new_element(W::name("sdtContent"));
+        let parent = dom.new_element(W::sdt_content());
         let p = paragraph_in(&mut dom, parent, "nested control", None, None);
         assert!(!unit_closes_story(&dom, &p));
         let orphan = word(&mut dom, "orphan", &[]);
@@ -11293,7 +11261,7 @@ mod deterministic_gap_tests {
         for name in [
             W::drawing(),
             W::pict(),
-            W::name("object"),
+            W::object(),
             W::name("sym"),
             M::name("oMath"),
             M::name("oMathPara"),
@@ -11689,11 +11657,11 @@ mod deterministic_gap_tests {
         for (kind, boundary) in [
             (ComparisonUnitGroupType::Paragraph, W::p()),
             (ComparisonUnitGroupType::Table, W::tbl()),
-            (ComparisonUnitGroupType::Row, W::name("tr")),
-            (ComparisonUnitGroupType::Cell, W::name("tc")),
-            (ComparisonUnitGroupType::Textbox, W::name("txbxContent")),
+            (ComparisonUnitGroupType::Row, W::tr()),
+            (ComparisonUnitGroupType::Cell, W::tc()),
+            (ComparisonUnitGroupType::Textbox, W::txbx_content()),
         ] {
-            let outer_a = dom.new_element(W::name("sdt"));
+            let outer_a = dom.new_element(W::sdt());
             let a = dom.new_element(boundary.clone());
             let b = dom.new_element(boundary);
             dom.set_attribute_value(outer_a, &PT::unid(), Some("outer"));
@@ -11845,7 +11813,7 @@ mod coverage_round_three_tests {
         dom.add(p, ppr);
         let mut contents = Vec::new();
         for token in tokens {
-            let run = dom.new_element(W::name("r"));
+            let run = dom.new_element(W::r());
             dom.add(p, run);
             let node = dom.new_element(W::t());
             dom.add_text(node, token);
@@ -12846,7 +12814,7 @@ mod coverage_round_four_tests {
         dom.add(p, ppr);
         let mut contents = Vec::new();
         for token in tokens {
-            let run = dom.new_element(W::name("r"));
+            let run = dom.new_element(W::r());
             dom.add(p, run);
             let node = dom.new_element(W::t());
             dom.add_text(node, token);
@@ -12969,8 +12937,8 @@ mod coverage_round_four_tests {
 
     fn table(dom: &mut Dom, text: &str) -> ComparisonUnit {
         let tbl = dom.new_element(W::tbl());
-        let tr = dom.new_element(W::name("tr"));
-        let tc = dom.new_element(W::name("tc"));
+        let tr = dom.new_element(W::tr());
+        let tc = dom.new_element(W::tc());
         dom.add(tbl, tr);
         dom.add(tr, tc);
         let p = paragraph(dom, tc, &[text]);
@@ -14046,7 +14014,7 @@ mod coverage_round_four_tests {
         let mut dom = Dom::new();
         let left = paragraphs(&mut dom, &["alpha"]);
         let right = paragraphs(&mut dom, &["omega"]);
-        let wrapper = dom.new_element(W::name("sdt"));
+        let wrapper = dom.new_element(W::sdt());
         dom.set_attribute_value(wrapper, &PT::unid(), Some("wrapper"));
         let mut left = left;
         let source_p = left[0].first_atom().unwrap().ancestor_elements[0];
@@ -14202,12 +14170,12 @@ mod coverage_round_next_tests {
                 let ppr = dom.new_element(W::p_pr());
                 dom.add(p, ppr);
                 // Properties remain attached to the original nodes.
-                let spacing = dom.new_element(W::name("spacing"));
+                let spacing = dom.new_element(W::spacing_el());
                 dom.set_attribute_value(spacing, &W::name("before"), Some("120"));
                 dom.add(ppr, spacing);
                 let mut contents = Vec::new();
                 if !text.is_empty() {
-                    let run = dom.new_element(W::name("r"));
+                    let run = dom.new_element(W::r());
                     dom.add(p, run);
                     let node = dom.new_element(W::t());
                     dom.add_text(node, text);
@@ -15011,7 +14979,7 @@ mod coverage_round_next_tests {
         let left = inline(&mut dom, &[""]);
         let right = inline(&mut dom, &[""]);
         let revised_mark = right[0].first_atom().unwrap().content_element;
-        let revised_spacing = dom.elements(revised_mark, Some(&W::name("spacing")))[0];
+        let revised_spacing = dom.elements(revised_mark, Some(&W::spacing_el()))[0];
         dom.set_attribute_value(revised_spacing, &W::name("before"), Some("240"));
         let mut out = vec![
             CorrelatedSequence::inserted(right.clone()),
@@ -15021,7 +14989,7 @@ mod coverage_round_next_tests {
         check(&dom, &out, &left, &right, &[(Equal, "¶", "¶")]);
         for (u, before) in [(&left[0], "120"), (&right[0], "240")] {
             let mark = u.first_atom().unwrap().content_element;
-            let spacing = dom.elements(mark, Some(&W::name("spacing")))[0];
+            let spacing = dom.elements(mark, Some(&W::spacing_el()))[0];
             assert_eq!(dom.attribute(spacing, &W::name("before")), Some(before));
         }
     }
@@ -15362,12 +15330,12 @@ mod deep_lcs_source_conservation_tests {
         dom.add(parent, p);
         let ppr = dom.new_element(W::p_pr());
         dom.add(p, ppr);
-        let spacing = dom.new_element(W::name("spacing"));
+        let spacing = dom.new_element(W::spacing_el());
         dom.set_attribute_value(spacing, &W::name("before"), Some("180"));
         dom.add(ppr, spacing);
         let mut contents = Vec::new();
         for text in parts {
-            let r = dom.new_element(W::name("r"));
+            let r = dom.new_element(W::r());
             dom.add(p, r);
             let t = dom.new_element(W::t());
             dom.add(r, t);
@@ -15419,11 +15387,11 @@ mod deep_lcs_source_conservation_tests {
         dom.add(body, tbl);
         let mut row_units = Vec::new();
         for row in rows {
-            let tr = dom.new_element(W::name("tr"));
+            let tr = dom.new_element(W::tr());
             dom.add(tbl, tr);
             let mut cells = Vec::new();
             for text in *row {
-                let tc = dom.new_element(W::name("tc"));
+                let tc = dom.new_element(W::tc());
                 dom.add(tr, tc);
                 let para = p(dom, tc, &[tbl, tr, tc], text);
                 cells.push(group(Cell, vec![para], &format!("cell:{text}")));
@@ -15709,7 +15677,7 @@ mod deep_lcs_source_conservation_tests {
                     &mut dom,
                     &[&["cell red", "cell blue"]],
                 )));
-                let box_node = dom.new_element(W::name("txbxContent"));
+                let box_node = dom.new_element(W::txbx_content());
                 let box_para = p(&mut dom, box_node, &[box_node], "floating explanation");
                 right.push(group(Textbox, vec![box_para], "floating-box"));
                 if trailing_word {
@@ -15832,7 +15800,7 @@ mod deep_lcs_source_conservation_tests {
                     assert!(u.descendant_atoms().iter().all(|a| {
                         a.ancestor_elements
                             .iter()
-                            .any(|&n| dom.name_is(n, &W::name("tc")))
+                            .any(|&n| dom.name_is(n, &W::tc()))
                     }));
                 }
             }
@@ -17147,7 +17115,7 @@ mod deep_lcs_source_conservation_tests {
         const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
         let mut pkg = crate::opc::PartFs::open(FIXTURE).unwrap();
         let mut dom = Dom::new();
-        let root = dom.new_element(W::name("document"));
+        let root = dom.new_element(W::document());
         let body = dom.new_element(W::body());
         dom.add(root, body);
         for &text in paragraphs {
@@ -17158,12 +17126,12 @@ mod deep_lcs_source_conservation_tests {
             dom.add(body, tbl);
             let grid = dom.new_element(W::name("tblGrid"));
             dom.add(tbl, grid);
-            let column = dom.new_element(W::name("gridCol"));
-            dom.set_attribute_value(column, &W::name("w"), Some("3600"));
+            let column = dom.new_element(W::grid_col());
+            dom.set_attribute_value(column, &W::w(), Some("3600"));
             dom.add(grid, column);
-            let tr = dom.new_element(W::name("tr"));
+            let tr = dom.new_element(W::tr());
             dom.add(tbl, tr);
-            let tc = dom.new_element(W::name("tc"));
+            let tc = dom.new_element(W::tc());
             dom.add(tr, tc);
             p(&mut dom, tc, &[tbl, tr, tc], text);
             // Word requires a closing body paragraph after its final table.
@@ -17316,7 +17284,7 @@ mod deep_lcs_source_conservation_tests {
     #[test]
     fn opaque_object_and_foreign_namespace_payloads_are_contentful_without_text() {
         for (name, drawing, math) in [
-            (W::name("object"), true, false),
+            (W::object(), true, false),
             (W::drawing(), true, false),
             (W::pict(), true, false),
             (crate::namespaces::MC::name("AlternateContent"), true, false),
@@ -17332,7 +17300,7 @@ mod deep_lcs_source_conservation_tests {
             ),
             (M::name("oMath"), false, true),
             (M::name("oMathPara"), false, true),
-            (W::name("bookmarkStart"), false, false),
+            (W::bookmark_start(), false, false),
         ] {
             let mut dom = Dom::new();
             let leaf = dom.new_element(name);
@@ -18368,7 +18336,7 @@ mod coverage_real_source_route_matrix_tests {
                     for (parent, child) in [
                         (W::tbl(), W::name("tblGrid")),
                         (W::tbl(), W::tbl_pr()),
-                        (W::name("tc"), W::tc_pr()),
+                        (W::tc(), W::tc_pr()),
                         (W::sdt(), W::sdt_pr()),
                         (W::sdt(), W::name("sdtEndPr")),
                     ] {

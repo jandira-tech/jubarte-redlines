@@ -497,7 +497,8 @@ fn a_comment_thread_is_added_replied_to_and_resolved() {
     write_plan(
         &dir,
         "two.json",
-        r#"{"schema_version":1,"author":"Bob","operations":[
+        // Bob resolves Ann's thread on purpose (#1846).
+        r#"{"schema_version":1,"author":"Bob","rewrite_others_comments":true,"operations":[
             {"kind":"reply_comment","comment_id":0,"text":"Twelve matches the budget."},
             {"kind":"resolve_comment","comment_id":0}]}"#,
     );

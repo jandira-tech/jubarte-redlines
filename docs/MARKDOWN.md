@@ -1184,21 +1184,54 @@ change beside theirs:
 - `-p r12 --reject --visible`, and `"resolve_revisions":{"reject":{"ids":[…],"visible":true}}`
   in a plan, strike each insertion and restore each deletion they name.
 
-`--content` (a plan's `comment`) adds a comment on the struck or restored
-words. Accept All reads as their change rejected, Reject All as the
+Both take a paragraph mark as well.
+
+- **Strike an inserted mark** (another author split a paragraph). Your
+  tracked deletion joins their insertion in the mark, as Word writes it.
+  Accept All joins the two paragraphs, and the joined paragraph takes the
+  second one's properties.
+- **Restore a deleted mark** (another author joined two paragraphs). An
+  empty paragraph whose mark is your insertion goes right after theirs,
+  with their paragraph's properties and mark formatting. Accept All gives
+  the words before the break their own paragraph again.
+
+Both take a change as `jubarte changes` lists it, several marks under one
+id included (`r10+11`, Word's two typing sessions; `r8+9`, words and their
+paragraph's mark). A strike strikes every insertion mark of it and a
+restore restores every deletion mark. A replacement's other half stays as
+it is, with the note `struck r12; r11 is its deletion: restore it too to
+reject the whole change`. A change with no mark of the kind is refused
+(`r12+13 holds no insertion: restore it instead`), and so is a change
+holding one of your own marks, naming that mark. `-p r11+12 --reject
+--visible` gives a replacement its restore and its strike, in reading
+order.
+
+`--content` (a plan's `comment`) adds a comment. On words, it covers the
+struck or restored words. On a paragraph mark, it covers the last word
+before the break. A change of several marks takes one comment, from its
+first struck or restored word to its last; a visible reject puts it on the
+first of the restore and the strike. One comment covers one paragraph's
+marks, so a hand-made id naming marks in two paragraphs takes none. Accept All reads as their change rejected, Reject All as the
 document before both, and rejecting only your changes gives theirs back
 intact. Both need the file's revisions kept (`--existing-revisions keep`,
-the default for a file with tracked changes). Striking an insertion you
-already struck is `ok`, with the note `already struck`. Refused, each with
-the route that takes it instead: your own revision of any kind, named
-first (`OWN_REVISION`), a revision with no text (`EMPTY_REVISION`, naming
-the comment marks it holds), a revision the same command also accepts or
-rejects (`REVISION_CONFLICT`), the source of a move to restore or its
-destination to strike, a paragraph mark, a formatting change (no visible
-reject of formatting yet: `--reject` undoes it without a trace), an
-insertion holding anything but plain text (a field among them) to strike,
-and a deletion split over several places, holding anything but plain
-text, or sitting in a hyperlink, content control or field, to restore. A
+the default for a file with tracked changes). Striking an insertion or a
+mark that is already struck is `ok`, with the note `already struck`.
+
+Your own revision of any kind is refused first (`OWN_REVISION`), with the
+way to undo it. A revision with no text is refused as `EMPTY_REVISION`,
+naming the comment marks it holds: there is nothing to restore. A
+revision the same command also accepts or rejects is refused as
+`REVISION_CONFLICT`. Each of the following is refused with a comment on
+it offered instead, never a silent reject or a paragraph deletion:
+
+- the source of a move, to restore, or its destination, to strike;
+- a formatting change (there is no visible reject of formatting yet);
+- a paragraph mark that ends a section, or that no paragraph follows
+  directly in its container;
+- to strike, an insertion holding anything but plain text, a field among
+  them;
+- to restore, a deletion split over several places, holding anything but
+  plain text, or sitting in a hyperlink, content control or field. A
 plan's `"reject":{"visible":true}` with no `ids`, `authors` or `kinds`
 takes every revision, as a silent reject does. A `--reject` recorded into
 a `--plan` whose reject is visible is refused: record it as `--reject
@@ -1335,7 +1368,11 @@ Every write prints the primary output's `sha256:` (the `summary`
 event's `output_sha256`), the digest a follow-up plan's `source_sha256`
 names. A `--dry-run` that passes whole ends with `next:`, the same
 command without `--dry-run`, quoted for a POSIX shell (`-q` drops it); a
-dry run that would skip operations prints none. When the output is
+dry run that would skip operations prints none. A dry run that named no
+output gets the default one spelled out (`-o <stem>_modified.docx`) and a
+note that the input stays as it is, so the command run as printed writes
+only that file. An `X_modified.docx` input is updated in place: its
+`next:` names no output, and the note says so. When the output is
 already there, a note says the next command replaces it, and `next:`
 ends with `--force`.
 
