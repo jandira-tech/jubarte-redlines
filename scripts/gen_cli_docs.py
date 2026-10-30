@@ -61,7 +61,14 @@ def run_help(runner: list[str], args: list[str]) -> str:
             f"error: `{joined} --help` exited {proc.returncode}: "
             f"{proc.stderr.strip()[:400]}"
         )
-    return "\n".join(line.rstrip() for line in proc.stdout.splitlines()).rstrip("\n")
+    text = "\n".join(line.rstrip() for line in proc.stdout.splitlines()).rstrip("\n")
+    # Published references name the package version, not the generating
+    # checkout: a commit/dirty suffix would make docs drift on every commit.
+    return re.sub(
+        r"\A(jubarte(?:-redlines)? \d+\.\d+\.\d+(?:-[\w.-]+)?)\+[0-9a-f]+(?:\.dirty)?(?=\n|$)",
+        r"\1",
+        text,
+    )
 
 
 def discover_sections(text: str) -> list[str]:
@@ -182,7 +189,8 @@ def command_summaries(text: str) -> list[tuple[str, str]]:
 def build_summary(runner: list[str], display: str) -> str:
     """A markdown table of every top-level command, from ``--help`` alone."""
     top = run_help(runner, [])
-    about = top.splitlines()[0].strip() if top else ""
+    description = re.sub(r"\Ajubarte(?:-redlines)? \d[^\n]*\n", "", top)
+    about = description.splitlines()[0].strip() if description else ""
     lines = ["| Command | What it does |", "|---|---|"]
     if about:
         lines.append(f"| `{display} ORIGINAL MODIFIED` | {about} |")

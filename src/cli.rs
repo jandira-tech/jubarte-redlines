@@ -18,7 +18,8 @@ pub(crate) use crate::util::datetime::parse_datetime;
 /// Read, edit, compare and render Word documents.
 #[derive(Parser, Debug, Serialize)]
 #[command(
-    name = "jubarte", version,
+    name = "jubarte", version = env!("JUBARTE_BUILD_VERSION"),
+    help_template = "{name} {version}\n{about-with-newline}\n{usage-heading} {usage}\n\n{all-args}{after-help}",
     about = "Read, edit, compare and render Word documents",
     long_about = None,
     styles = styles(),
@@ -4136,7 +4137,8 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
     // Rebuild only the outer presentation, cloning every argument/group/task
     // from the derive model. Clap itself parses both native and facade inputs.
     let mut command = clap::Command::new(program.to_string())
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(env!("JUBARTE_BUILD_VERSION"))
+        .help_template("{name} {version}\n{about-with-newline}\n{usage-heading} {usage}\n\n{all-args}{after-help}")
         .about("Read, edit, compare and render Word documents")
         .color(clap::ColorChoice::Never)
         .styles(styles())

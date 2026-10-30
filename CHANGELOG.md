@@ -15,6 +15,10 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI `--version` and the `--help` header identify the build with the short Git commit as SemVer build metadata, plus `.dirty` for a changed tree. Builds without Git or a checkout keep the Cargo version alone; Python and npm package versions stay unchanged (#1924).
+
 ### Changed
 
 - `changes --json` and `comments --json` now emit records only on stdout: the `input_validity` status moved from stdout to one JSON line on stderr, suppressed by `-q` (#1925). The Python CLI and npm CLI's `changes --json` follow the same rule.
