@@ -25,6 +25,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use oxml_opc::{ContentTypes, OpcPackage};
 pub use oxml_opc::{OpcError, Relationship};
@@ -502,7 +503,7 @@ fn read_package(bytes: &[u8], limits: crate::admission::InputLimits) -> Result<P
         } else {
             let key = norm(&name);
             package.part_index.insert(identity(&key), key.clone());
-            package.pkg.parts.insert(key, data);
+            package.pkg.parts.insert(key, Arc::new(data));
         }
     }
     Ok(package)
@@ -693,7 +694,7 @@ impl PartFs {
         self.pkg
             .parts
             .get(self.part_index.get(&identity(name))?)
-            .map(Vec::as_slice)
+            .map(|data| data.as_slice())
     }
 
     /// Read a part as a UTF-8 string.
@@ -763,7 +764,7 @@ impl PartFs {
             .cloned()
             .unwrap_or_else(|| norm(name));
         self.part_index.insert(identity(&key), key.clone());
-        self.pkg.parts.insert(key, data);
+        self.pkg.parts.insert(key, Arc::new(data));
     }
 
     /// Remove a part (no-op when absent), resolved under OPC identity:
@@ -2122,9 +2123,10 @@ mod tests {
     #[test]
     fn to_zip_refuses_an_identity_collision() {
         let mut fs = package_with_header_rels();
-        fs.pkg
-            .parts
-            .insert("word/_rels/header1.xml.rels".to_string(), b"raw".to_vec());
+        fs.pkg.parts.insert(
+            "word/_rels/header1.xml.rels".to_string(),
+            Arc::new(b"raw".to_vec()),
+        );
         let err = fs
             .to_zip()
             .expect_err("the raw copy collides with the parsed one");
@@ -2133,7 +2135,7 @@ mod tests {
         let mut fs = package_with_header_rels();
         fs.pkg
             .parts
-            .insert("[CONTENT_TYPES].XML".to_string(), b"raw".to_vec());
+            .insert("[CONTENT_TYPES].XML".to_string(), Arc::new(b"raw".to_vec()));
         let err = fs
             .to_zip()
             .expect_err("the raw copy collides with the reserved part");
