@@ -658,16 +658,11 @@ fn changes_json_lines_preserve_each_owned_revision_without_a_text_summary() {
     std::fs::write(dir.path().join("revisions.docx"), &original).unwrap();
     let expected = jubarte::changes::list_changes(&original).unwrap();
     assert_eq!(expected.len(), 2);
-    let mut rows: Vec<serde_json::Value> =
+    let rows: Vec<serde_json::Value> =
         success(&run(dir.path(), &["changes", "revisions.docx", "--json"]))
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-    // The last line is the input's validity, never a change (#1309).
-    assert_eq!(
-        rows.pop(),
-        Some(serde_json::json!({"input_validity": {"errors": 0, "warnings": 0}}))
-    );
     assert_eq!(rows[0]["author"], "Original owner");
     assert_eq!(rows[0]["text"], "original");
     assert_eq!(rows[1]["author"], "Revised owner");

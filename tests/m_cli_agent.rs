@@ -125,15 +125,13 @@ fn read_json_prints_the_snapshot_with_changes_and_comments() {
     );
     // Each record `changes`/`comments` lists is one of the snapshot's.
     for (task, key) in [("changes", "changes"), ("comments", "comments")] {
-        let (code, stdout, _) = run(&[task, RECEIVED, "--json"]);
+        let (code, stdout, stderr) = run(&[task, RECEIVED, "--json"]);
         assert_eq!(code, 0);
-        let mut listed: Vec<serde_json::Value> = stdout
+        let listed: Vec<serde_json::Value> = stdout
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        // The last line is the input's validity, the snapshot's summary's
-        // (#1309), never a record.
-        let validity = listed.pop().unwrap();
+        let validity: serde_json::Value = serde_json::from_str(&stderr).unwrap();
         assert_eq!(
             validity["input_validity"], snapshot["summary"]["input_validity"],
             "{task}"

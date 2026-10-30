@@ -527,7 +527,7 @@ fn run_changes(file: &Path, json: bool, authors: &[String], quiet: bool) -> Resu
         for c in &changes {
             outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
         }
-        return validity_line(&validity);
+        return validity_line(&validity, quiet);
     }
     let bytes = read_input(file, quiet)?;
     let changes = listed(&bytes)?;
@@ -563,16 +563,17 @@ fn run_comments(
     for c in &comments {
         outln!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
     }
-    validity_line(&validity)
+    validity_line(&validity, quiet)
 }
 
-/// The input's validity, the last line of `changes --json` and
-/// `comments --json` (#1309).
-fn validity_line(validity: &jubarte::validate::InputValidity) -> Result<(), String> {
-    outln!(
-        "{}",
-        jubarte::validate::input_validity_line(validity).map_err(|e| e.to_string())?
-    );
+/// The quietable stderr status for `changes --json` and `comments --json` (#1925).
+fn validity_line(validity: &jubarte::validate::InputValidity, quiet: bool) -> Result<(), String> {
+    if !quiet {
+        eprintln!(
+            "{}",
+            jubarte::validate::input_validity_line(validity).map_err(|e| e.to_string())?
+        );
+    }
     Ok(())
 }
 

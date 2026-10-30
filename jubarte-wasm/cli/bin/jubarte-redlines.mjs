@@ -77,9 +77,8 @@ function read(file, forceKind) {
   return bytes;
 }
 
-/** The JSON reads report the input's validity findings in their output,
- * not on stderr (#1309). (A binding older than that has no
- * inputValidityLine; its JSON reads keep the stderr line.) */
+/** JSON snapshots embed validity (#1309); JSON Lines send a quietable
+ * JSON status to stderr (#1925). Older bindings keep the text notice. */
 const jsonValidity = typeof wasm.inputValidityLine === "function";
 
 /** `read`'s bytes for `read` and `changes`; unless `-q`, one stderr line
@@ -328,7 +327,7 @@ const COMMANDS = {
       for (const change of JSON.parse(wasm.listChanges(docx, authors))) {
         console.log(JSON.stringify(Object.fromEntries(Object.entries(change).filter(([, v]) => v !== null))));
       }
-      if (jsonValidity) console.log(wasm.inputValidityLine(docx, file));
+      if (jsonValidity && !o.quiet) console.error(wasm.inputValidityLine(docx, file));
     },
   },
   accept: resolution(true),

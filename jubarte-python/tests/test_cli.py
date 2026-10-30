@@ -25,10 +25,9 @@ from docx_fixture import docx, para
 
 
 def _listed(out: str) -> list[dict]:
-    """The records `changes --json` and `comments --json` print: the last
-    line is the input's validity (#1309), never a record."""
+    """Every stdout line is a change or comment record (#1925)."""
     rows = [json.loads(line) for line in out.splitlines()]
-    assert list(rows.pop()) == ["input_validity"], out
+    assert all("input_validity" not in row for row in rows), out
     return rows
 
 
