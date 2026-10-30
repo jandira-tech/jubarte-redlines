@@ -686,6 +686,13 @@ fn text_selection(
         } else {
             pattern.to_string()
         };
+        if pattern.len() > 1024 {
+            return Err(super::err(
+                "USAGE",
+                None,
+                "regex pattern too long".to_string(),
+            ));
+        }
         let compiled = regex::Regex::new(&pattern)
             .map_err(|e| super::err("USAGE", None, format!("--regex does not compile: {e}")))?;
         Box::new(move |text: &str| compiled.is_match(text))
