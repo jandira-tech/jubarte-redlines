@@ -110,6 +110,32 @@ class Discover76Tests(unittest.TestCase):
         self.assertIn("case70", reason)
         self.assertNotIn("case58", reason)
 
+    def test_members_keep_the_set_when_upstream_grows(self) -> None:
+        # Upstream docxide-pdf grew from 76 cases to hundreds; the 76 set is
+        # the baseline's stems, not every case directory.
+        self._case("case1")
+        self._case("case13")
+        self._case("case900")
+        members = frozenset({"case1", "case13"})
+        jobs = cs.discover_76(self.root / "docxide-pdf", members=members)
+        self.assertEqual([j.stem for j in jobs], ["case1", "case13"])
+        jobs, reason = cs.discover_76_or_skip(self.root / "docxide-pdf", members=members)
+        self.assertEqual([j.stem for j in jobs], ["case1", "case13"])
+        self.assertEqual(reason, "")
+
+    def test_a_member_gone_upstream_is_incomplete(self) -> None:
+        self._case("case1")
+        members = frozenset({"case1", "case70"})
+        jobs, reason = cs.discover_76_or_skip(self.root / "docxide-pdf", members=members)
+        self.assertEqual([j.stem for j in jobs], ["case1"])
+        self.assertIn("case70", reason)
+
+    def test_the_tracked_baseline_names_seventy_six_members(self) -> None:
+        members = cs.members_76()
+        self.assertEqual(len(members), 76)
+        self.assertIn("case1", members)
+        self.assertNotIn("stem", members)
+
 
 class Discover398Tests(unittest.TestCase):
     def setUp(self) -> None:
@@ -338,7 +364,7 @@ class LiveTreeTests(unittest.TestCase):
         root = cs.DEFAULT_DOCXIDE
         if not (root / "tests" / "fixtures" / "cases").is_dir():
             self.skipTest("docxide-pdf sibling missing")
-        jobs = cs.discover_76(root)
+        jobs = cs.discover_76(root, members=cs.members_76())
         self.assertEqual(len(jobs), 76)
         self.assertTrue(all(j.docx.is_file() and j.ref.is_file() for j in jobs))
 

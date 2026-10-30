@@ -60,6 +60,7 @@ DEFAULT_SCORER = (
 )
 DEFAULT_JUBARTE_BIN = JUBARTE / "target" / "release" / "jubarte"
 FAST_SKIP = frozenset({"case13"})
+BASELINE_76 = JUBARTE / "tools" / "convert_baseline_76.tsv"
 FIXTURE_LIST = "docx_to_pdf_no_redline_fixtures.txt"
 
 
@@ -88,13 +89,26 @@ class Ratchet:
     failed: list[str] = field(default_factory=list)
 
 
-def discover_76(docxide_root: Path, *, fast: bool = False) -> list[Job]:
+def members_76() -> frozenset[str]:
+    """The 76 set: the stems of the tracked baseline.
+
+    Upstream docxide-pdf keeps adding cases, so the set is not every case
+    directory but the 76 this baseline scores.
+    """
+    return frozenset(row.stem for row in read_tsv(BASELINE_76))
+
+
+def discover_76(
+    docxide_root: Path, *, fast: bool = False, members: frozenset[str] | None = None
+) -> list[Job]:
     cases = docxide_root / "tests" / "fixtures" / "cases"
     if not cases.is_dir():
         return []
     jobs: list[Job] = []
     for case_dir in sorted(cases.iterdir()):
         if not case_dir.is_dir():
+            continue
+        if members is not None and case_dir.name not in members:
             continue
         if fast and case_dir.name in FAST_SKIP:
             continue
@@ -106,22 +120,26 @@ def discover_76(docxide_root: Path, *, fast: bool = False) -> list[Job]:
 
 
 def discover_76_or_skip(
-    docxide_root: Path, *, fast: bool = False
+    docxide_root: Path, *, fast: bool = False, members: frozenset[str] | None = None
 ) -> tuple[list[Job], str]:
     cases = docxide_root / "tests" / "fixtures" / "cases"
     if not cases.is_dir():
         return [], f"missing {cases} (clone docxide-pdf next to jubarte-redlines)"
-    jobs = discover_76(docxide_root, fast=fast)
+    jobs = discover_76(docxide_root, fast=fast, members=members)
     found = {job.stem for job in jobs}
-    # A case is a member when it carries a Word reference.pdf (upstream
-    # case58/case65 are generator-only and have none).
-    incomplete = [
-        case.name
-        for case in sorted(cases.iterdir())
-        if (case / "reference.pdf").is_file()
-        and case.name not in found
-        and not (fast and case.name in FAST_SKIP)
-    ]
+    if members is None:
+        # Without a member list, a case is a member when it carries a Word
+        # reference.pdf (upstream case58/case65 are generator-only).
+        expected = [
+            case.name for case in cases.iterdir() if (case / "reference.pdf").is_file()
+        ]
+    else:
+        expected = list(members)
+    incomplete = sorted(
+        stem
+        for stem in expected
+        if stem not in found and not (fast and stem in FAST_SKIP)
+    )
     return jobs, _incomplete_reason(incomplete)
 
 
@@ -344,7 +362,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     jobs: list[Job] = []
     if args.set in ("76", "both"):
-        found, reason = discover_76_or_skip(args.docxide, fast=args.fast)
+        found, reason = discover_76_or_skip(
+            args.docxide, fast=args.fast, members=members_76()
+        )
         if reason:
             print(reason, file=sys.stderr)
             return 2
