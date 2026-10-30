@@ -15,7 +15,7 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-10-29
+## [0.15.0] - 2026-10-30
 
 ### Breaking
 
