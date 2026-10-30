@@ -391,7 +391,7 @@ fn redline(
         ids: RevisionCounter::new(used),
         insertions,
     };
-    let tables = emit(&mut t, &comment_ids, &mut stamp, array_order);
+    let tables = emit(&mut t, &comment_ids, &mut stamp, array_order)?;
     thread_markers(&mut t, &comment_ids);
     // 7. A paragraph after each new table, and between it and a table
     // before it: inserted paragraphs here.
@@ -514,7 +514,7 @@ fn emit(
     comment_ids: &BTreeMap<usize, u32>,
     stamp: &mut Stamp<'_>,
     array_order: bool,
-) -> Vec<NodeId> {
+) -> Result<Vec<NodeId>, EditError> {
     // Read off the source's structure, before any step changes it: the
     // container-final paragraphs whose mark stays (Word never deletes it).
     let emptied = t.emptied_paragraphs();
@@ -607,13 +607,12 @@ fn emit(
         .collect();
     for para in touched {
         let node = t.paragraph_nodes[para];
-        let dom = &mut t.opened.dom;
         let mut edits = by_para.remove(&para).unwrap_or_default();
-        let mut empty = project_paragraph(dom, node)
-            .text
-            .is_empty()
-            .then(super::EmptyPlacement::default);
-        super::sort_edits(&mut edits, empty.is_some());
+        let empty_text = project_paragraph(&t.opened.dom, node).text.is_empty();
+        super::sort_edits(&mut edits, empty_text);
+        let substitutions = super::boundary_substitutions(t, &edits, para)?;
+        let dom = &mut t.opened.dom;
+        let mut empty = empty_text.then(super::EmptyPlacement::default);
         // In reverse, so earlier source offsets stay valid: a deletion
         // leaves the projection and an insertion joins it, exactly as the
         // plain edit changes the clean copy.
@@ -623,9 +622,9 @@ fn emit(
         // point from the next replay (notably at paragraph start). Keep the
         // original edits below for each comment's separate resulting range.
         let emission = if array_order {
-            coalesce_insertions(&edits)
+            coalesce_insertions(&substitutions)
         } else {
-            edits.clone()
+            substitutions
         };
         // A strike's comment, on the words before they are struck: their
         // text leaves the projection with the deletion.
@@ -957,7 +956,7 @@ fn emit(
             mark(dom, carrier, W::del(), stamp);
         }
     }
-    tables
+    Ok(tables)
 }
 
 fn coalesce_insertions(edits: &[ScheduledEdit]) -> Vec<ScheduledEdit> {

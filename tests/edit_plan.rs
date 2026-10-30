@@ -146,6 +146,372 @@ fn insert_at_paragraph_end_and_start_and_delete_text() {
     assert_eq!(texts(&accepted), texts(&result.clean));
 }
 
+// A boundary insertion and a touching removal form one substitution (#1922).
+fn assert_boundary_substitution(find: &str, replacement: Option<&str>, edge: &str, first: bool) {
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        run("Alpha ", true, false, None),
+        run("middle ", false, true, None),
+        run("omega", false, false, None),
+    ));
+    let mut removal = serde_json::json!({
+        "id": "removal", "kind": "delete", "paragraph": {"index": 0}, "find": find
+    });
+    if let Some(text) = replacement {
+        removal["kind"] = "replace".into();
+        removal["replacement"] = text.into();
+    }
+    let insertion = serde_json::json!({
+        "id": "insertion", "kind": "insert", "paragraph": {"index": 0},
+        "position": edge, "text": "Reserved. "
+    });
+    let ops = if first {
+        vec![insertion, removal]
+    } else {
+        vec![removal, insertion]
+    };
+    let expected = if edge == "start" {
+        format!(
+            "Reserved. {}{}",
+            replacement.unwrap_or_default(),
+            &"Alpha middle omega"[find.len()..]
+        )
+    } else {
+        format!(
+            "{}{}Reserved. ",
+            &"Alpha middle omega"[.."Alpha middle omega".len() - find.len()],
+            replacement.unwrap_or_default()
+        )
+    };
+    for keep in [false, true] {
+        let mut request = plan(&source, &serde_json::to_string(&ops).unwrap());
+        if keep {
+            request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+        }
+        let prepared = std::panic::catch_unwind(|| {
+            jubarte::edit::prepare(&source, &request, &Default::default())
+        })
+        .expect("a boundary pair must never panic")
+        .unwrap();
+        let result = prepared.result;
+        assert_eq!(texts(&result.clean), std::slice::from_ref(&expected));
+        assert_eq!(
+            texts(&accept_revisions(&result.redline).unwrap()),
+            std::slice::from_ref(&expected)
+        );
+        assert_eq!(
+            texts(&reject_revisions(&result.redline).unwrap()),
+            ["Alpha middle omega"]
+        );
+        let changes = jubarte::changes::list_changes(&result.redline).unwrap();
+        for kind in [
+            jubarte::changes::ChangeKind::Deletion,
+            jubarte::changes::ChangeKind::Insertion,
+        ] {
+            assert!(
+                changes
+                    .iter()
+                    .any(|c| c.kind == kind && c.author.as_deref() == Some("Claude")),
+                "{changes:?}"
+            );
+        }
+        let marked = marked_paragraphs(&result.redline);
+        assert!(
+            marked[0].find("[-").unwrap() < marked[0].find("{+").unwrap(),
+            "{marked:?}"
+        );
+        assert_word_valid_package(&result.redline);
+    }
+}
+
+#[test]
+fn edit_boundary_delete_start() {
+    assert_boundary_substitution("Alpha ", None, "start", false);
+}
+
+#[test]
+fn edit_boundary_replace_start() {
+    assert_boundary_substitution("Alpha ", Some("New "), "start", false);
+}
+
+#[test]
+fn edit_boundary_whole_multirun_delete_start() {
+    assert_boundary_substitution("Alpha middle omega", None, "start", false);
+}
+
+#[test]
+fn edit_boundary_insert_first() {
+    assert_boundary_substitution("Alpha ", None, "start", true);
+    assert_boundary_substitution("Alpha ", Some("New "), "start", true);
+    assert_boundary_substitution("Alpha middle omega", None, "start", true);
+}
+
+#[test]
+fn edit_boundary_end() {
+    for first in [false, true] {
+        assert_boundary_substitution("omega", None, "end", first);
+        assert_boundary_substitution("omega", Some("New "), "end", first);
+    }
+}
+
+#[test]
+fn edit_boundary_substitution_keeps_shared_words_deleted_then_inserted() {
+    let source = docx(&para("Alpha middle omega"));
+    for keep in [false, true] {
+        let mut request = plan(
+            &source,
+            r#"[
+            {"id":"removal","kind":"delete","paragraph":{"index":0},"find":"Alpha middle omega"},
+            {"id":"prefix","kind":"insert","paragraph":{"index":0},"position":"start","text":"Alpha "},
+            {"id":"suffix","kind":"insert","paragraph":{"index":0},"position":"end","text":"omega"}
+        ]"#,
+        );
+        if keep {
+            request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+        }
+        let result = apply_plan(&source, &request).unwrap();
+        assert_eq!(
+            marked_paragraphs(&result.redline),
+            ["[-Alpha middle omega-]{+Alpha omega+}"]
+        );
+        assert_eq!(
+            texts(&accept_revisions(&result.redline).unwrap()),
+            ["Alpha omega"]
+        );
+        assert_eq!(
+            texts(&reject_revisions(&result.redline).unwrap()),
+            ["Alpha middle omega"]
+        );
+    }
+}
+
+/// The body's text by formatting: adjacent runs of one `(bold, italic)`
+/// merged, empty runs dropped.
+fn formatted_runs(bytes: &[u8]) -> Vec<(String, bool, bool)> {
+    let xml = part_string(bytes, "word/document.xml").unwrap();
+    let mut out: Vec<(String, bool, bool)> = Vec::new();
+    let mut rest = xml.as_str();
+    while let Some(at) = rest
+        .find("<w:r>")
+        .into_iter()
+        .chain(rest.find("<w:r "))
+        .min()
+    {
+        let run = &rest[at..];
+        let end = run.find("</w:r>").map_or(run.len(), |e| e + "</w:r>".len());
+        let (run, tail) = run.split_at(end);
+        rest = tail;
+        let mut text = String::new();
+        let mut t = run;
+        while let Some(open) = t.find("<w:t") {
+            let after = &t[open..];
+            if !(after.starts_with("<w:t>") || after.starts_with("<w:t ")) {
+                t = &after[4..];
+                continue;
+            }
+            let body = &after[after.find('>').unwrap() + 1..];
+            let close = body.find("</w:t>").unwrap_or(body.len());
+            text.push_str(&body[..close]);
+            t = &body[close..];
+        }
+        if text.is_empty() {
+            continue;
+        }
+        let key = (run.contains("<w:b/>"), run.contains("<w:i/>"));
+        match out.last_mut() {
+            Some(last) if (last.1, last.2) == key => last.0.push_str(&text),
+            _ => out.push((text, key.0, key.1)),
+        }
+    }
+    out
+}
+
+#[test]
+fn edit_boundary_replace_keeps_its_pieces_beside_an_edge_insert() {
+    // A replace writes only the words that changed, so an insert at its
+    // edge stays a separate mark: no word it kept is re-marked (#1922).
+    let source = docx(&para("Alpha middle omega"));
+    for (find, replacement, edge, expected, text) in [
+        (
+            "Alpha middle",
+            "Alpha new",
+            "start",
+            Some("{+Reserved. +}Alpha [-middle-]{+new+} omega"),
+            "Reserved. Alpha new omega",
+        ),
+        (
+            "middle omega",
+            "new omega",
+            "end",
+            // Whether " omega" stays outside the piece depends on the route
+            // (existing behaviour); the text checks below hold on both.
+            None,
+            "Alpha new omegaReserved. ",
+        ),
+    ] {
+        for keep in [false, true] {
+            let ops = serde_json::json!([
+                {"kind":"replace","paragraph":{"index":0},"find":find,"replacement":replacement},
+                {"kind":"insert","paragraph":{"index":0},"position":edge,"text":"Reserved. "}
+            ]);
+            let mut request = plan(&source, &ops.to_string());
+            if keep {
+                request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+            }
+            let result = apply_plan(&source, &request).unwrap();
+            if let Some(expected) = expected {
+                assert_eq!(marked_paragraphs(&result.redline), [expected]);
+            }
+            assert_eq!(texts(&result.clean), [text]);
+            assert_eq!(texts(&accept_revisions(&result.redline).unwrap()), [text]);
+            assert_eq!(
+                texts(&reject_revisions(&result.redline).unwrap()),
+                ["Alpha middle omega"]
+            );
+        }
+    }
+}
+
+#[test]
+fn edit_boundary_replace_keeps_the_runs_of_its_kept_words() {
+    // Review of #1922: rebuilding the replace as one inserted run took the
+    // first run's bold for every kept word in the redline only.
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        run("Alpha ", true, false, None),
+        run("middle", false, true, None),
+        run(" omega", false, false, None)
+    ));
+    let request = plan(
+        &source,
+        r#"[
+            {"kind":"replace","paragraph":{"index":0},"find":"Alpha middle omega","replacement":"Alpha XXX omega"},
+            {"kind":"insert","paragraph":{"index":0},"position":"start","text":"Reserved. "}
+        ]"#,
+    );
+    let result = apply_plan(&source, &request).unwrap();
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&accepted), ["Reserved. Alpha XXX omega"]);
+    assert_eq!(formatted_runs(&accepted), formatted_runs(&result.clean));
+    let runs = formatted_runs(&accepted);
+    let last = runs.last().unwrap();
+    assert!(last.0.ends_with(" omega") && !last.1, "{runs:?}");
+}
+
+#[test]
+fn edit_boundary_unchanged_replace_marks_only_the_insert() {
+    // Review of #1922: a replace that changes nothing beside an insert at
+    // its edge marks the insert alone, formatted or not, and is not refused.
+    let source = docx(&para("Alpha middle omega"));
+    for format in ["", r#","format":{"bold":true}"#] {
+        let request = plan(
+            &source,
+            &format!(
+                r#"[
+                {{"kind":"replace","paragraph":{{"index":0}},"find":"Alpha ","replacement":"Alpha "}},
+                {{"kind":"insert","paragraph":{{"index":0}},"position":"start","text":"X. "{format}}}
+            ]"#
+            ),
+        );
+        let result = apply_plan(&source, &request).unwrap();
+        assert_eq!(
+            marked_paragraphs(&result.redline),
+            ["{+X. +}Alpha middle omega"]
+        );
+        assert_eq!(texts(&result.clean), ["X. Alpha middle omega"]);
+    }
+}
+
+#[test]
+fn edit_boundary_formatted_replace_beside_a_plain_insert_is_applied() {
+    // Review of #1922: only insertions merged into one delete must share a
+    // format; a formatted replace beside a plain edge insert is not refused.
+    let source = docx(&para("Alpha middle omega"));
+    let request = plan(
+        &source,
+        r#"[
+            {"id":"removal","kind":"replace","paragraph":{"index":0},"find":"Alpha","replacement":"Beta","format":{"bold":true}},
+            {"id":"insertion","kind":"insert","paragraph":{"index":0},"position":"start","text":"New "}
+        ]"#,
+    );
+    let result = apply_plan(&source, &request).unwrap();
+    assert_eq!(texts(&result.clean), ["New Beta middle omega"]);
+    assert_eq!(
+        texts(&accept_revisions(&result.redline).unwrap()),
+        ["New Beta middle omega"]
+    );
+}
+
+#[test]
+fn edit_boundary_differently_formatted_inserts_around_one_delete_are_refused() {
+    // One delete of the whole text takes both edge inserts into one inserted
+    // run, which cannot carry two formats: refused, naming both inserts.
+    let source = docx(&para("Alpha middle omega"));
+    let request = plan(
+        &source,
+        r#"[
+            {"id":"removal","kind":"delete","paragraph":{"index":0},"find":"Alpha middle omega"},
+            {"id":"prefix","kind":"insert","paragraph":{"index":0},"position":"start","text":"New ","format":{"bold":true}},
+            {"id":"insertion","kind":"insert","paragraph":{"index":0},"position":"end","text":"End"}
+        ]"#,
+    );
+    let error = jubarte::edit::prepare(&source, &request, &Default::default()).unwrap_err();
+    assert_eq!(error.code, "OVERLAPPING_EDITS");
+    assert!(
+        error.message.contains("prefix") && error.message.contains("insertion"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn edit_operation_pairs_never_unwind() {
+    // Non-ASCII text also exercises byte/character boundary handling.
+    let text = "αbcdef";
+    let source = docx(&para(text));
+    let mut operations = Vec::new();
+    for (start, end) in [(0, 3), (3, 7), (0, 7)] {
+        for kind in ["delete", "replace"] {
+            let mut op = serde_json::json!({"kind": kind, "paragraph": {"index": 0}, "find": &text[start..end]});
+            if kind == "replace" {
+                op["replacement"] = "X".into();
+            }
+            operations.push(op);
+        }
+    }
+    for anchor in [
+        serde_json::json!({"position": "start"}),
+        serde_json::json!({"before": "cdef"}),
+        serde_json::json!({"position": "end"}),
+    ] {
+        let mut op = serde_json::json!({"kind": "insert", "paragraph": {"index": 0}, "text": "Y"});
+        op.as_object_mut()
+            .unwrap()
+            .extend(anchor.as_object().unwrap().clone());
+        operations.push(op);
+    }
+    let mut panics = Vec::new();
+    for a in &operations {
+        for b in &operations {
+            for keep in [false, true] {
+                let mut request = plan(&source, &serde_json::to_string(&[a, b]).unwrap());
+                if keep {
+                    request.existing_revisions = jubarte::edit::ExistingRevisions::Keep;
+                }
+                let options = jubarte::edit::PrepareOptions {
+                    exact_text: true,
+                    ..Default::default()
+                };
+                if std::panic::catch_unwind(|| jubarte::edit::prepare(&source, &request, &options))
+                    .is_err()
+                {
+                    panics.push(format!("{a}, {b}, keep={keep}"));
+                }
+            }
+        }
+    }
+    assert!(panics.is_empty(), "prepare panicked for: {panics:#?}");
+}
+
 #[test]
 fn ambiguous_anchor_fails_the_whole_plan_and_reports_every_operation() {
     let source = docx(&para("aaa and retained experts and retained experts"));
