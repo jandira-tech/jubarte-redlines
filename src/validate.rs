@@ -1527,7 +1527,7 @@ fn text_box_name(dom: &Dom, node: NodeId) -> String {
     for ancestor in dom.ancestors(node, None) {
         if dom.name(ancestor).is_some_and(|n| n == W::name("drawing")) {
             if let Some(name) = dom
-                .descendants(ancestor, Some(&WP::name("docPr")))
+                .descendants(ancestor, Some(&WP::doc_pr()))
                 .into_iter()
                 .find_map(|id| dom.attribute(id, &XName::get("name", "")))
                 .filter(|name| !name.is_empty())

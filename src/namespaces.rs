@@ -304,3 +304,13 @@ impl M {
     cached_xname!(M::URI, r_pr, "rPr");
     cached_xname!(M::URI, o_math, "oMath");
 }
+
+impl WP {
+    cached_xname!(WP::URI, inline, "inline");
+    cached_xname!(WP::URI, anchor, "anchor");
+    cached_xname!(WP::URI, doc_pr, "docPr");
+}
+
+impl O {
+    cached_xname!(O::URI, ole_object, "OLEObject");
+}

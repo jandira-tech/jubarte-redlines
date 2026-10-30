@@ -264,7 +264,7 @@ pub static S_ELEMENTS_WITH_RELATIONSHIP_IDS: LazyLock<HashSet<XName>> = LazyLock
         C::name("externalData"),
         C::name("userShapes"),
         DGM::name("relIds"),
-        O::name("OLEObject"),
+        O::ole_object(),
         VML::name("fill"),
         VML::name("imagedata"),
         VML::name("stroke"),

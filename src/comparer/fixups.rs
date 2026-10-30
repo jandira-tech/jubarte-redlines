@@ -36,7 +36,7 @@ pub fn fix_up_doc_pr_ids(dom: &mut Dom, root: NodeId) {
         .into_iter()
         .filter(|&e| {
             dom.name(e).is_some_and(|n| n.local_name() == "docPr")
-                || dom.name(e).as_ref() == Some(&WP::name("docPr"))
+                || dom.name(e).as_ref() == Some(&WP::doc_pr())
         })
         .collect();
     // Dedup while preserving document order (filter may match twice if WP==local).
@@ -60,7 +60,7 @@ pub fn fix_up_shape_ids(dom: &mut Dom, root: NodeId) {
         dom.set_attribute_value(shape, &id, Some(&new));
         // rewrite any sibling o:OLEObject whose ShapeID referenced the old id
         if let (Some(old), Some(parent)) = (old, dom.parent(shape)) {
-            for ole in dom.elements(parent, Some(&O::name("OLEObject"))) {
+            for ole in dom.elements(parent, Some(&O::ole_object())) {
                 if dom.attribute(ole, &shape_id).map(|s| s.to_string()) == Some(old.clone()) {
                     dom.set_attribute_value(ole, &shape_id, Some(&new));
                 }

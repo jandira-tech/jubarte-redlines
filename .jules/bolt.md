@@ -1,0 +1,3 @@
+## 2025-02-18 - Hoist statically known XName constants in loops
+**Learning:** `xmllinq` DOM processing uses dynamically evaluated `name("...")` extensively inside `for` loops and `.filter()` closures (e.g. `WP::name("inline")`, `O::name("OLEObject")`), leading to repeated string allocations and interning overhead in extremely hot paths across `audit.rs`, `comparer.rs`, and `convert/mod.rs`.
+**Action:** Always identify statically known tag names used in loop closures and hoist them using the `cached_xname!` macro in `src/namespaces.rs` to generate zero-cost `OnceLock` equivalents like `WP::inline()` or `O::ole_object()`.
