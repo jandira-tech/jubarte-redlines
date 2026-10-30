@@ -310,17 +310,21 @@ fn docx_error(what: &str) -> LegacyDocError {
 /// the Markdown writer: letters and digits only (nothing to escape, and the
 /// writer drops private-use characters), and in none of the document's text.
 fn empty_placeholder(document: &LegacyDocument) -> String {
-    let texts: Vec<String> = document
-        .blocks
-        .iter()
-        .map(|block| match block {
-            Block::Paragraph(paragraph) => paragraph.text(),
-            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
-        })
-        .collect();
+    // ⚡ Bolt: Use lazy evaluation for empty_placeholder to avoid allocating
+    // a giant Vec of all texts in the document. This significantly reduces memory usage
+    // and improves performance for large documents.
     (0u32..)
         .map(|n| format!("jubarteemptyparagraph{n}"))
-        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
+        .find(|candidate| {
+            !document.blocks.iter().any(|block| match block {
+                Block::Paragraph(paragraph) => paragraph.text().contains(candidate.as_str()),
+                Block::Table(table) => table
+                    .rows
+                    .iter()
+                    .flatten()
+                    .any(|cell| cell.contains(candidate.as_str())),
+            })
+        })
         .unwrap_or_default()
 }
 
