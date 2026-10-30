@@ -55,7 +55,7 @@ mod replacement_order;
 pub mod resolution;
 mod rewrite;
 mod runs;
-mod sections;
+pub(crate) mod sections;
 mod skip;
 mod structural;
 mod tracked;
@@ -139,10 +139,11 @@ pub struct EditPlan {
     /// before the redline is compared.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub update_fields: bool,
-    /// Let `edit_comment` change a comment another author wrote; the
-    /// comment keeps its author, and the report notes each one. Without
-    /// it such an edit is refused (`COMMENT_NOT_YOURS`): a reply is how
-    /// one author answers another.
+    /// Let `edit_comment`, `delete_comment` and `resolve_comment` change a
+    /// comment another author wrote (a reworded one keeps its author), and
+    /// a delete take another author's reply with its thread; the report
+    /// notes each one. Without it such an operation is refused
+    /// (`COMMENT_NOT_YOURS`): a reply is how one author answers another.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rewrite_others_comments: bool,
 }
@@ -553,7 +554,9 @@ pub enum OperationKind {
     /// `keep`.
     #[schemars(extend("x-jubarte-keep-only" = true))]
     Strike {
-        /// The insertion, as `changes` lists it (`r366`, `header1.r3`).
+        /// The insertion, as `changes` lists it (`r366`, `header1.r3`): every
+        /// insertion mark of a change of several (`r10+11`), a replacement's
+        /// insertion only.
         revision: String,
         #[serde(
             default,
@@ -568,7 +571,9 @@ pub enum OperationKind {
     /// formatting included. Needs `existing_revisions` `keep`.
     #[schemars(extend("x-jubarte-keep-only" = true))]
     Restore {
-        /// The deletion, as `changes` lists it (`r12`, `header1.r3`).
+        /// The deletion, as `changes` lists it (`r12`, `header1.r3`): every
+        /// deletion mark of a change of several (`r12+13`), a replacement's
+        /// deletion only.
         revision: String,
         #[serde(
             default,
@@ -1562,6 +1567,10 @@ fn resolve_selected(
     Ok((Some(bytes), resolved, comments))
 }
 
+/// The prefix of a style's change id (`styles.r0`, as `changes` lists it):
+/// a style's recorded formatting does not make the text tracked (#1885).
+const STYLES_STORY: &str = "styles.";
+
 /// Whether `source` still carries a tracked change of its text (body,
 /// headers, footers, notes; a style's recorded formatting is not one) once
 /// `plan`'s `resolve_revisions` has accepted and rejected what it selects.
@@ -1576,7 +1585,7 @@ pub(crate) fn revisions_left(source: &[u8], plan: &EditPlan) -> bool {
     .ok()
     .and_then(|(bytes, _, _)| bytes);
     crate::changes::list_changes(resolved.as_deref().unwrap_or(source))
-        .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with("styles:")))
+        .is_ok_and(|changes| changes.iter().any(|c| !c.id.starts_with(STYLES_STORY)))
 }
 
 /// The replies `plan` makes to a comment on a paragraph it deletes, each
@@ -1627,7 +1636,7 @@ fn settle(source: &[u8], plan: &EditPlan, probe: Opened) -> Result<Settled, Edit
     // recorded formatting does not make the text tracked.
     let has_revisions = crate::changes::changes_in(&probe.pkg)
         .iter()
-        .any(|c| !c.id.starts_with("styles:"));
+        .any(|c| !c.id.starts_with(STYLES_STORY));
     let (base, opened, flattened) = match (has_revisions, plan.existing_revisions) {
         (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe, false),
         (true, ExistingRevisions::Refuse) => {
@@ -2446,6 +2455,9 @@ enum Resolved {
         para: usize,
         next: usize,
         separator: String,
+        /// A `strike` of another author's inserted mark: under keep, our
+        /// deletion joins their insertion in the mark.
+        strike: bool,
     },
     InsertParagraph {
         anchor: usize,
@@ -2461,6 +2473,9 @@ enum Resolved {
         /// `insert_toc`: the paragraphs are the TOC field (and its title),
         /// not `runs`.
         toc: Option<TocSpec>,
+        /// A `restore` of another author's deleted mark: the new paragraph
+        /// keeps `like`'s mark formatting too, as the break it gives back.
+        keep_mark: bool,
     },
     InsertTable {
         anchor: usize,
@@ -2573,6 +2588,91 @@ impl ThreadOp {
     }
 }
 
+/// A comment of another author a thread operation changes: refused
+/// without `rewrite_others_comments` (`COMMENT_NOT_YOURS`), noted with it
+/// (#1264, #1846).
+#[derive(Clone, Debug)]
+struct OthersComment {
+    /// The comment changed.
+    comment: u32,
+    /// Its author; `""` when it names none.
+    author: String,
+    change: OthersChange,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OthersChange {
+    Reword,
+    Delete,
+    Resolve,
+    Reopen,
+    /// A reply deleted with the plan author's own comment, the root given.
+    DeletedWith(u32),
+}
+
+impl OthersComment {
+    /// The refusal: what to do instead (`reply` / `resolve` spelled for
+    /// the plan's syntax), or the opt-in `rewrite` that allows it.
+    fn refusal(&self, reply: &str, resolve: &str, rewrite: &str) -> String {
+        let (comment, author) = (self.comment, &self.author);
+        let named = !author.is_empty();
+        let (verb, theirs) = match self.change {
+            OthersChange::DeletedWith(root) => {
+                let (whose, that) = if named {
+                    (format!("a reply by {author:?}"), "their")
+                } else {
+                    ("a reply that names no author".to_string(), "that")
+                };
+                return format!(
+                    "deleting c{root} deletes c{comment}, {whose}; resolve c{root} instead ({resolve}), or pass {rewrite} to delete {that} reply with it"
+                );
+            }
+            OthersChange::Reword => ("change", "their words under their name"),
+            OthersChange::Delete => ("delete", "their comment"),
+            OthersChange::Resolve => ("resolve", "their comment"),
+            OthersChange::Reopen => ("reopen", "their comment"),
+        };
+        let what = match (self.change, named) {
+            (_, true) => format!("{verb} {theirs}"),
+            (OthersChange::Reword, false) => "change its words".to_string(),
+            (_, false) => format!("{verb} it"),
+        };
+        format!(
+            "{}; reply instead ({reply}), or pass {rewrite} to {what}",
+            self.whose()
+        )
+    }
+
+    /// The report's note when `rewrite_others_comments` let it through.
+    fn note(&self) -> String {
+        let named = !self.author.is_empty();
+        let what = match (self.change, named) {
+            (OthersChange::Reword, true) => "their words were changed under their name".into(),
+            (OthersChange::Reword, false) => "its words were changed".into(),
+            (OthersChange::Delete, true) => "their comment was deleted".into(),
+            (OthersChange::Resolve, true) => "their comment was resolved".into(),
+            (OthersChange::Reopen, true) => "their comment was reopened".into(),
+            (OthersChange::Delete, false) => "it was deleted".into(),
+            (OthersChange::Resolve, false) => "it was resolved".into(),
+            (OthersChange::Reopen, false) => "it was reopened".into(),
+            (OthersChange::DeletedWith(root), true) => {
+                format!("their reply was deleted with c{root}")
+            }
+            (OthersChange::DeletedWith(root), false) => format!("it was deleted with c{root}"),
+        };
+        format!("{}; {what}", self.whose())
+    }
+
+    /// `c5 is by "Bob"`, or `c5 names no author`.
+    fn whose(&self) -> String {
+        if self.author.is_empty() {
+            format!("c{} names no author", self.comment)
+        } else {
+            format!("c{} is by {:?}", self.comment, self.author)
+        }
+    }
+}
+
 /// A resolved `insert_toc`.
 #[derive(Clone, Debug)]
 struct TocSpec {
@@ -2647,9 +2747,9 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
-    /// Another author's comments `edit_comment` rewrites under
-    /// `rewrite_others_comments`: (outcome index, comment id, author).
-    rewritten: Vec<(usize, u32, String)>,
+    /// Another author's comments a thread operation changes under
+    /// `rewrite_others_comments`, by outcome index.
+    rewritten: Vec<(usize, OthersComment)>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
     /// The body's content controls, in document order.
@@ -2840,6 +2940,10 @@ impl<'p> Transaction<'p> {
     /// Under `update_fields` it is compared, as before: a heading the TOC
     /// lists holds its `_Toc` bookmark around its text, and renaming it is
     /// what a plan refreshing the TOC does.
+    ///
+    /// A plan that only writes comment threads
+    /// ([`Self::edits_only_comments`]) is emitted as well: it edits no text,
+    /// and the comparer's own normalizations would come back as changes.
     fn emits_directly(&self) -> Result<bool, EditError> {
         if !tracked::emits_all(self) {
             return Ok(false);
@@ -2873,7 +2977,28 @@ impl<'p> Transaction<'p> {
             }
             return Ok(true);
         }
-        Ok(!self.plan.update_fields && self.edits_beside_a_range_marker())
+        Ok(!self.plan.update_fields
+            && (self.edits_beside_a_range_marker() || self.edits_only_comments()))
+    }
+
+    /// Whether every operation of the plan writes a comment thread and
+    /// nothing else: a comment, a reply, a resolution, a reworded or a
+    /// deleted comment. Through the comparer, such a plan on a clean file
+    /// listed the comparer's normalizations as changes: a spacing's
+    /// `lineRule` written out, the stylesheet merged, a paragraph written
+    /// again (#1861).
+    pub(crate) fn edits_only_comments(&self) -> bool {
+        !self.plan.operations.is_empty()
+            && self.plan.operations.iter().all(|op| {
+                matches!(
+                    op.kind,
+                    OperationKind::Comment { .. }
+                        | OperationKind::ReplyComment { .. }
+                        | OperationKind::ResolveComment { .. }
+                        | OperationKind::EditComment { .. }
+                        | OperationKind::DeleteComment { .. }
+                )
+            })
     }
 
     /// Whether a text edit writes new words beside a range marker: one in
@@ -3169,6 +3294,7 @@ impl<'p> Transaction<'p> {
             para: first,
             next: last,
             separator: String::new(),
+            strike: false,
         });
         Ok(resolved)
     }
@@ -3233,40 +3359,41 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
-    /// One note per comment of another author an `edit_comment` rewrote
-    /// under `rewrite_others_comments`: their name now carries our words.
+    /// One note per comment of another author a thread operation changed
+    /// under `rewrite_others_comments`: rewording keeps their name on our
+    /// words; deleting, resolving or reopening speaks for them.
     fn rewrite_notes(&self) -> Vec<String> {
         self.rewritten
             .iter()
-            .filter_map(|(i, comment, author)| {
+            .filter_map(|(i, others)| {
                 let outcome = self.outcomes.get(*i).filter(|o| o.status == "ok")?;
-                let what = if author.is_empty() {
-                    format!("c{comment} names no author; its words were changed")
-                } else {
-                    format!(
-                        "c{comment} is by {author:?}; their words were changed under their name"
-                    )
-                };
-                Some(format!("{} (edit_comment): {what}", outcome.id))
+                Some(format!(
+                    "{} ({}): {}",
+                    outcome.id,
+                    outcome.kind,
+                    others.note()
+                ))
             })
             .collect()
     }
 
-    /// Record each `edit_comment` among `resolved` (the operation whose
+    /// Record each thread operation among `resolved` (the operation whose
     /// outcome will be `outcomes[outcome]`) that changes a comment not the
     /// plan author's, for [`Self::rewrite_notes`]: v1 and v2 alike.
     pub(crate) fn note_rewrites(&mut self, outcome: usize, resolved: &[Resolved]) {
-        for r in resolved {
-            if let Resolved::Thread {
-                op: ThreadOp::Edit { id: comment, .. },
-                ..
-            } = r
-                && let Some(family) = &self.family
-                && let Some(author) = self.not_own_comment(family, *comment)
-            {
-                self.rewritten.push((outcome, *comment, author));
-            }
-        }
+        let Some(family) = &self.family else {
+            return;
+        };
+        let changed: Vec<OthersComment> = resolved
+            .iter()
+            .filter_map(|r| match r {
+                Resolved::Thread { op, .. } => Some(self.others_comments(family, op)),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        self.rewritten
+            .extend(changed.into_iter().map(|others| (outcome, others)));
     }
 
     /// The author of comment `id` when it is not the plan author's, `""`
@@ -3275,6 +3402,48 @@ impl<'p> Transaction<'p> {
     fn not_own_comment(&self, family: &crate::comments::CommentFamily, id: u32) -> Option<String> {
         let author = family.author(id).unwrap_or_default();
         (author != self.plan.author).then(|| author.to_string())
+    }
+
+    /// The comments of other authors `op` changes: the one it rewords,
+    /// deletes, resolves or reopens, or the replies by others that deleting
+    /// the plan author's own comment takes with it (#1846). A reply
+    /// changes no one's comment.
+    fn others_comments(
+        &self,
+        family: &crate::comments::CommentFamily,
+        op: &ThreadOp,
+    ) -> Vec<OthersComment> {
+        let change = match op {
+            ThreadOp::Reply { .. } => return Vec::new(),
+            ThreadOp::Edit { .. } => OthersChange::Reword,
+            ThreadOp::Delete { .. } => OthersChange::Delete,
+            ThreadOp::Resolve { done: true, .. } => OthersChange::Resolve,
+            ThreadOp::Resolve { done: false, .. } => OthersChange::Reopen,
+        };
+        let target = op.target();
+        if let Some(author) = self.not_own_comment(family, target) {
+            return vec![OthersComment {
+                comment: target,
+                author,
+                change,
+            }];
+        }
+        if !matches!(op, ThreadOp::Delete { .. }) {
+            return Vec::new();
+        }
+        family
+            .with_replies(target)
+            .into_iter()
+            .filter(|&reply| reply != target)
+            .filter_map(|reply| {
+                self.not_own_comment(family, reply)
+                    .map(|author| OthersComment {
+                        comment: reply,
+                        author,
+                        change: OthersChange::DeletedWith(target),
+                    })
+            })
+            .collect()
     }
 
     /// Resolve every operation against the untouched source; the first
@@ -4162,6 +4331,7 @@ impl<'p> Transaction<'p> {
                         style,
                         comment: comment.clone(),
                         toc: None,
+                        keep_mark: false,
                     },
                     outcome,
                 ))
@@ -4246,6 +4416,7 @@ impl<'p> Transaction<'p> {
                         para,
                         next,
                         separator,
+                        strike: false,
                     },
                     outcome,
                 ))
@@ -4360,6 +4531,7 @@ impl<'p> Transaction<'p> {
                             levels: *levels,
                             title: title.clone(),
                         }),
+                        keep_mark: false,
                     },
                     outcome,
                 ))
@@ -4372,9 +4544,10 @@ impl<'p> Transaction<'p> {
     /// properties are discarded, so it may not carry a section break.
     /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
     /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
-    /// comment's reference to anchor on; `edit_comment` on another
-    /// author's comment needs `rewrite_others_comments`
-    /// (`COMMENT_NOT_YOURS`).
+    /// comment's reference to anchor on; `edit_comment`, `delete_comment`
+    /// and `resolve_comment` on another author's comment, or a delete
+    /// whose thread holds another author's reply, need
+    /// `rewrite_others_comments` (`COMMENT_NOT_YOURS`).
     fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
         let mut outcome = EditOutcome {
             id: id.to_string(),
@@ -4444,30 +4617,25 @@ impl<'p> Transaction<'p> {
         if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
             check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
         }
-        // A comment speaks for its author: another author answers it.
-        if let ThreadOp::Edit { id, .. } = op
-            && !self.plan.rewrite_others_comments
-            && let Some(author) = self.not_own_comment(family, id)
+        // A comment speaks for its author: another author answers it, and
+        // only its author rewords, deletes, resolves or reopens it. Deleting
+        // one's own comment deletes the replies in its thread too.
+        if !self.plan.rewrite_others_comments
+            && let Some(others) = self.others_comments(family, &op).first()
         {
-            let (reply, rewrite) = match self.syntax {
+            let (reply, resolve, rewrite) = match self.syntax {
                 PlanSyntax::Flags | PlanSyntax::Typed => (
-                    format!("-p c{id} --reply TEXT"),
+                    format!("-p c{target} --reply TEXT"),
+                    format!("-p c{target} --resolve"),
                     "--rewrite-others-comments",
                 ),
                 PlanSyntax::V1 | PlanSyntax::V2 => (
                     "reply_comment".to_string(),
+                    "resolve_comment".to_string(),
                     r#""rewrite_others_comments": true"#,
                 ),
             };
-            let message = if author.is_empty() {
-                format!(
-                    "c{id} names no author; reply instead ({reply}), or pass {rewrite} to change its words"
-                )
-            } else {
-                format!(
-                    "c{id} is by {author:?}; reply instead ({reply}), or pass {rewrite} to change their words under their name"
-                )
-            };
+            let message = others.refusal(&reply, &resolve, rewrite);
             return Err(fail("COMMENT_NOT_YOURS", message, outcome));
         }
         let ids = match &op {
@@ -4933,7 +5101,7 @@ impl<'p> Transaction<'p> {
         };
         dom.elements(root, Some(&W::name("style")))
             .into_iter()
-            .filter(|&s| dom.attribute(s, &W::name("type")).unwrap_or("paragraph") == "paragraph")
+            .filter(|&s| dom.attribute(s, &W::type_()).unwrap_or("paragraph") == "paragraph")
             .filter_map(|s| {
                 let id = dom.attribute(s, &W::name("styleId"))?.to_string();
                 let name = dom
@@ -5239,11 +5407,11 @@ impl<'p> Transaction<'p> {
                 continue;
             }
             let attr = |local: &str| dom.attribute(node, &W::name(local)).unwrap_or_default();
-            if dom.name_is(node, &W::name("hyperlink")) {
+            if dom.name_is(node, &W::hyperlink()) {
                 inner = Some(
                     "a hyperlink; edit the text on either side of it, or comment on it".into(),
                 );
-            } else if dom.name_is(node, &W::name("fldSimple")) {
+            } else if dom.name_is(node, &W::fld_simple()) {
                 inner = Some(format!(
                     "the result of the field{}; edit the text on either side of it, or comment on it",
                     match attr("instr").trim() {
@@ -5251,9 +5419,9 @@ impl<'p> Transaction<'p> {
                         instr => format!(" {instr:?}"),
                     }
                 ));
-            } else if dom.name_is(node, &W::name("sdt")) {
+            } else if dom.name_is(node, &W::sdt()) {
                 let property = |local: &str| {
-                    dom.element(node, &W::name("sdtPr"))
+                    dom.element(node, &W::sdt_pr())
                         .and_then(|pr| dom.element(pr, &W::name(local)))
                         .and_then(|e| dom.attribute(e, &W::val()))
                         .map(|v| format!(" ({local} {v:?})"))
@@ -5324,7 +5492,7 @@ impl<'p> Transaction<'p> {
             && author != self.plan.author
             && story.is_some_and(|s| {
                 let stretches = dom
-                    .descendants(s.root, Some(&W::name("del")))
+                    .descendants(s.root, Some(&W::del()))
                     .into_iter()
                     .filter(|&n| {
                         dom.attribute(n, &W::id()) == Some(wid)
@@ -5740,7 +5908,7 @@ impl<'p> Transaction<'p> {
                 .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                 .is_some_and(|rpr| {
                     dom.element(rpr, &W::del()).is_some()
-                        || dom.element(rpr, &W::name("moveFrom")).is_some()
+                        || dom.element(rpr, &W::move_from()).is_some()
                 })
         };
         let placed = |anchor: usize, wanted: Side| {
@@ -6342,13 +6510,19 @@ impl<'p> Transaction<'p> {
         }
         // 1a. Restores: plain copies of the deletion's runs after it, which
         // stays; found by `w:id`, so the text edits before do not move them.
+        // An operation's comment runs from its first copy to its last.
+        let mut spans: BTreeMap<usize, (NodeId, NodeId)> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let Resolved::Restore { para, wid, .. } = r else {
                 continue;
             };
             let node = self.paragraph_nodes[*para];
-            let placed = visible::restore_plain(&mut self.opened.dom, node, wid);
-            if let (Some((first, last)), Some(&id)) = (placed, ids.get(i)) {
+            if let Some((first, last)) = visible::restore_plain(&mut self.opened.dom, node, wid) {
+                spans.entry(*i).or_insert((first, last)).1 = last;
+            }
+        }
+        for (i, (first, last)) in spans {
+            if let Some(&id) = ids.get(&i) {
                 visible::comment_around(&mut self.opened.dom, first, last, id);
             }
         }
@@ -6402,17 +6576,17 @@ impl<'p> Transaction<'p> {
                     style,
                     comment,
                     toc,
+                    keep_mark,
                 } => {
                     let like_node = self.paragraph_nodes[like];
+                    let dom = &mut self.opened.dom;
                     let news = match &toc {
-                        Some(toc) => toc_paragraphs(&mut self.opened.dom, toc),
-                        None => vec![build_paragraph(
-                            &mut self.opened.dom,
-                            like_node,
-                            &runs,
-                            style.as_deref(),
-                        )],
+                        Some(toc) => toc_paragraphs(dom, toc),
+                        None => vec![build_paragraph(dom, like_node, &runs, style.as_deref())],
                     };
+                    if keep_mark {
+                        copy_mark_formatting(dom, like_node, news[0]);
+                    }
                     (anchor, side, news, comment.is_some())
                 }
                 Resolved::InsertTable {
@@ -6548,6 +6722,7 @@ impl<'p> Transaction<'p> {
                     para,
                     next,
                     separator,
+                    ..
                 } => Some((*para, *next, separator.clone())),
                 _ => None,
             })
@@ -6668,12 +6843,18 @@ impl<'p> Transaction<'p> {
     }
 
     /// The comment of operation `op` when it deletes text or a paragraph,
-    /// or strikes an insertion: on deleted text, so in the redline only.
+    /// or strikes inserted text: on deleted text, so in the redline only.
+    /// A struck paragraph mark's comment sits on a word that stays.
     fn deletion_comment(&self, op: usize) -> Option<&str> {
         match &self.plan.operations[op].kind {
             OperationKind::Delete { comment, .. }
-            | OperationKind::DeleteParagraph { comment, .. }
-            | OperationKind::Strike { comment, .. } => comment.as_deref(),
+            | OperationKind::DeleteParagraph { comment, .. } => comment.as_deref(),
+            OperationKind::Strike { comment, .. } => comment.as_deref().filter(|_| {
+                !self
+                    .resolved
+                    .iter()
+                    .any(|(i, r)| *i == op && matches!(r, Resolved::CommentRange { .. }))
+            }),
             _ => None,
         }
     }
@@ -6934,7 +7115,7 @@ impl<'p> Transaction<'p> {
         if self.opened.pkg.part_bytes("word/comments.xml").is_none() {
             return false;
         }
-        let name = W::name("commentReference");
+        let name = W::comment_reference();
         let ids = |dom: &Dom, root: NodeId| -> std::collections::HashSet<String> {
             dom.descendants(root, Some(&name))
                 .into_iter()
@@ -7049,7 +7230,7 @@ fn lift_out_of_deletion(dom: &mut Dom, scope: NodeId, id: u32, next_id: &mut u64
         return;
     };
     let reference = dom.next_element(end).filter(|&run| {
-        dom.element(run, &W::name("commentReference"))
+        dom.element(run, &W::comment_reference())
             .is_some_and(|r| dom.attribute(r, &W::id()) == Some(id.as_str()))
     });
     let last = reference.unwrap_or(end);
@@ -7581,7 +7762,7 @@ fn editable_insertion(dom: &Dom, piece: &Piece) -> Option<NodeId> {
         }
         // Markers in removed text count too: Word's Accept All takes the
         // words between a deleted `begin` and `end` with the field.
-        if dom.name_is(node, &W::name("fldChar")) {
+        if dom.name_is(node, &W::fld_char()) {
             match dom.attribute(node, &W::name("fldCharType")) {
                 Some("begin") => fields += 1,
                 Some("end") => fields = fields.saturating_sub(1),
@@ -7833,7 +8014,7 @@ fn inner_comment_references(
     let (Some(from), Some(to)) = (at(first), at(last)) else {
         return Vec::new();
     };
-    dom.descendants(paragraph, Some(&W::name("commentReference")))
+    dom.descendants(paragraph, Some(&W::comment_reference()))
         .into_iter()
         .filter(|&r| at(r).is_some_and(|i| from < i && i < to))
         .collect()
@@ -7890,7 +8071,7 @@ fn closing_comment_references(
     };
     let opened: Vec<&str> = order[from + 1..to]
         .iter()
-        .filter(|&&n| dom.name_is(n, &W::name("commentRangeStart")))
+        .filter(|&&n| dom.name_is(n, &W::comment_range_start()))
         .filter_map(|&n| dom.attribute(n, &W::id()))
         .filter(|id| marker("commentRangeEnd", id, to + 1..next))
         .collect();
@@ -7898,7 +8079,7 @@ fn closing_comment_references(
         .iter()
         .copied()
         .filter(|&n| {
-            dom.name_is(n, &W::name("commentReference"))
+            dom.name_is(n, &W::comment_reference())
                 && dom
                     .attribute(n, &W::id())
                     .is_some_and(|id| opened.contains(&id))
@@ -8353,12 +8534,12 @@ fn anchor_comment(
     ids: &mut RevisionCounter,
 ) {
     let id_str = id.to_string();
-    let range_start = dom.new_element(W::name("commentRangeStart"));
+    let range_start = dom.new_element(W::comment_range_start());
     dom.set_attribute_value(range_start, &W::id(), Some(&id_str));
-    let range_end = dom.new_element(W::name("commentRangeEnd"));
+    let range_end = dom.new_element(W::comment_range_end());
     dom.set_attribute_value(range_end, &W::id(), Some(&id_str));
     let reference_run = dom.new_element(W::r());
-    let reference = dom.new_element(W::name("commentReference"));
+    let reference = dom.new_element(W::comment_reference());
     dom.set_attribute_value(reference, &W::id(), Some(&id_str));
     dom.add(reference_run, reference);
     if wrap_range(dom, paragraph, start, end, range_start, range_end, ids) {
@@ -8382,7 +8563,7 @@ fn place_reference(dom: &mut Dom, range_start: NodeId, range_end: NodeId, refere
         if dom.name_is(ancestor, &W::p()) {
             break;
         }
-        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::name("moveTo")))
+        if (dom.name_is(ancestor, &W::ins()) || dom.name_is(ancestor, &W::move_to()))
             && !dom.ancestors(range_start, None).contains(&ancestor)
         {
             after = ancestor;
@@ -8413,7 +8594,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, ids: &mut Re
     let range_end = comment_marker(dom, "commentRangeEnd", &id);
     let reference_run = comment_reference_run(dom, &id);
     let len = project_paragraph(dom, first).text.len();
-    let scratch = dom.new_element(W::name("commentRangeEnd"));
+    let scratch = dom.new_element(W::comment_range_end());
     if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch, ids) {
         dom.remove(scratch);
     } else {
@@ -8423,7 +8604,7 @@ fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32, ids: &mut Re
         }
     }
     let len = project_paragraph(dom, last).text.len();
-    let scratch = dom.new_element(W::name("commentRangeStart"));
+    let scratch = dom.new_element(W::comment_range_start());
     if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end, ids) {
         dom.remove(scratch);
         place_reference(dom, range_start, range_end, reference_run);
@@ -8652,19 +8833,19 @@ fn format_paragraph(
         }
     }
     if let Some(alignment) = alignment {
-        if let Some(existing) = dom.element(ppr, &W::name("jc")) {
+        if let Some(existing) = dom.element(ppr, &W::jc_el()) {
             dom.set_attribute_value(existing, &W::val(), Some(alignment.jc()));
         } else {
-            let el = dom.new_element(W::name("jc"));
+            let el = dom.new_element(W::jc_el());
             dom.set_attribute_value(el, &W::val(), Some(alignment.jc()));
             insert_ppr_child(dom, ppr, el);
         }
     }
     if spacing != Spacing::default() {
-        let el = match dom.element(ppr, &W::name("spacing")) {
+        let el = match dom.element(ppr, &W::spacing_el()) {
             Some(el) => el,
             None => {
-                let el = dom.new_element(W::name("spacing"));
+                let el = dom.new_element(W::spacing_el());
                 insert_ppr_child(dom, ppr, el);
                 el
             }
@@ -8724,6 +8905,30 @@ const PPR_ORDER: &[&str] = &[
     "sectPr",
     "pPrChange",
 ];
+
+/// Give `paragraph` the mark formatting of `like` (its `w:pPr/w:rPr`),
+/// without revision records.
+fn copy_mark_formatting(dom: &mut Dom, like: NodeId, paragraph: NodeId) {
+    let Some(rpr) = dom
+        .element(like, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+    else {
+        return;
+    };
+    let copy = tracked::clean_rpr(dom, rpr);
+    if dom.elements(copy, None).is_empty() {
+        return;
+    }
+    let ppr = match dom.element(paragraph, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, ppr);
+            ppr
+        }
+    };
+    insert_ppr_child(dom, ppr, copy);
+}
 
 /// Insert `child` into `ppr` at its schema position.
 fn insert_ppr_child(dom: &mut Dom, ppr: NodeId, child: NodeId) {
@@ -8819,14 +9024,14 @@ fn toc_paragraphs(dom: &mut Dom, toc: &TocSpec) -> Vec<NodeId> {
     let p = dom.new_element(W::p());
     let mark = |dom: &mut Dom, p: NodeId, kind: &str| {
         let run = dom.new_element(W::r());
-        let fld = dom.new_element(W::name("fldChar"));
+        let fld = dom.new_element(W::fld_char());
         dom.set_attribute_value(fld, &W::name("fldCharType"), Some(kind));
         dom.add(run, fld);
         dom.add(p, run);
     };
     mark(dom, p, "begin");
     let run = dom.new_element(W::r());
-    let instr = dom.new_element(W::name("instrText"));
+    let instr = dom.new_element(W::instr_text());
     dom.set_attribute_value(instr, &XNamespace::xml().name("space"), Some("preserve"));
     dom.add_text(
         instr,
@@ -9117,6 +9322,82 @@ fn toggle(dom: &mut Dom, rpr: NodeId, local: &str, value: Option<bool>) {
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 mod tests {
     use super::*;
+
+    /// Every change to another author's comment, named or not, refuses
+    /// and notes in its own words (#1846).
+    #[test]
+    fn others_comment_wording_covers_every_change() {
+        let others = |change, author: &str| OthersComment {
+            comment: 1,
+            author: author.to_string(),
+            change,
+        };
+        let cases = [
+            (
+                OthersChange::Reword,
+                "change their words under their name",
+                "change its words",
+                "their words were changed under their name",
+                "its words were changed",
+            ),
+            (
+                OthersChange::Delete,
+                "delete their comment",
+                "delete it",
+                "their comment was deleted",
+                "it was deleted",
+            ),
+            (
+                OthersChange::Resolve,
+                "resolve their comment",
+                "resolve it",
+                "their comment was resolved",
+                "it was resolved",
+            ),
+            (
+                OthersChange::Reopen,
+                "reopen their comment",
+                "reopen it",
+                "their comment was reopened",
+                "it was reopened",
+            ),
+        ];
+        for (change, named_to, unnamed_to, named_note, unnamed_note) in cases {
+            assert_eq!(
+                others(change, "Bob").refusal("R", "S", "O"),
+                format!(r#"c1 is by "Bob"; reply instead (R), or pass O to {named_to}"#)
+            );
+            assert_eq!(
+                others(change, "").refusal("R", "S", "O"),
+                format!("c1 names no author; reply instead (R), or pass O to {unnamed_to}")
+            );
+            assert_eq!(
+                others(change, "Bob").note(),
+                format!(r#"c1 is by "Bob"; {named_note}"#)
+            );
+            assert_eq!(
+                others(change, "").note(),
+                format!("c1 names no author; {unnamed_note}")
+            );
+        }
+        let with = OthersChange::DeletedWith(0);
+        assert_eq!(
+            others(with, "Bob").refusal("R", "S", "O"),
+            r#"deleting c0 deletes c1, a reply by "Bob"; resolve c0 instead (S), or pass O to delete their reply with it"#
+        );
+        assert_eq!(
+            others(with, "").refusal("R", "S", "O"),
+            "deleting c0 deletes c1, a reply that names no author; resolve c0 instead (S), or pass O to delete that reply with it"
+        );
+        assert_eq!(
+            others(with, "Bob").note(),
+            r#"c1 is by "Bob"; their reply was deleted with c0"#
+        );
+        assert_eq!(
+            others(with, "").note(),
+            "c1 names no author; it was deleted with c0"
+        );
+    }
 
     #[test]
     fn a_copy_is_the_edits_own_only_when_it_copies_the_edits_own_record() {
@@ -9839,6 +10120,7 @@ mod deeper_boundary_tests {
                             style,
                             comment,
                             toc: None,
+                            keep_mark: false,
                         } => OperationKind::InsertParagraph {
                             paragraph: selector(*anchor),
                             position: *side,
@@ -10064,6 +10346,7 @@ mod deeper_boundary_tests {
                     para: 0,
                     next: 1,
                     separator: "".into(),
+                    strike: false,
                 },
                 "merges a deleted paragraph",
             ),
@@ -10100,6 +10383,7 @@ mod deeper_boundary_tests {
                 style: None,
                 comment: None,
                 toc: None,
+                keep_mark: false,
             };
             conflicts(&source, vec![Resolved::DeleteParagraph { para: 0 }, insert]).unwrap();
         }
@@ -10133,6 +10417,7 @@ mod deeper_boundary_tests {
                         para: 0,
                         next: 1,
                         separator: "".into(),
+                        strike: false,
                     },
                     Resolved::InsertTable {
                         anchor,
@@ -10179,7 +10464,7 @@ mod deeper_boundary_tests {
         let references = tx
             .opened
             .dom
-            .descendants(tx.opened.body, Some(&W::name("commentReference")));
+            .descendants(tx.opened.body, Some(&W::comment_reference()));
         assert_eq!(reference, Some(references[0]));
         for r in references {
             tx.opened.dom.remove(r);
@@ -10460,10 +10745,10 @@ mod deeper_boundary_tests {
                 Some("New")
             );
             assert_eq!(
-                d.attribute(d.element(ppr, &W::name("jc")).unwrap(), &W::val()),
+                d.attribute(d.element(ppr, &W::jc_el()).unwrap(), &W::val()),
                 Some("both")
             );
-            let s = d.element(ppr, &W::name("spacing")).unwrap();
+            let s = d.element(ppr, &W::spacing_el()).unwrap();
             for (local, value) in [
                 "line",
                 "before",
@@ -10538,10 +10823,7 @@ mod deeper_boundary_tests {
                 project_paragraph(&d, ps[1]).text,
                 format!("head{separator}tail")
             );
-            assert_eq!(
-                d.descendants(ps[1], Some(&W::name("bookmarkStart"))).len(),
-                1
-            );
+            assert_eq!(d.descendants(ps[1], Some(&W::bookmark_start())).len(), 1);
             let runs = d.elements(ps[1], Some(&W::r()));
             assert_eq!(runs.len(), if separator.is_empty() { 2 } else { 3 });
             if !separator.is_empty() {
@@ -10551,7 +10833,7 @@ mod deeper_boundary_tests {
             }
             let ppr = d.element(ps[1], &W::p_pr()).unwrap();
             assert_eq!(
-                d.attribute(d.element(ppr, &W::name("jc")).unwrap(), &W::val()),
+                d.attribute(d.element(ppr, &W::jc_el()).unwrap(), &W::val()),
                 Some("right")
             );
         }

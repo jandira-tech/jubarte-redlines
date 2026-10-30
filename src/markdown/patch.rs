@@ -264,7 +264,7 @@ fn paragraph_styles(docx: &[u8]) -> HashSet<String> {
         .into_iter()
         // No `w:type` is a paragraph style (ECMA-376 `w:style`).
         .filter(|&style| {
-            dom.attribute(style, &W::name("type"))
+            dom.attribute(style, &W::type_())
                 .is_none_or(|t| t == "paragraph")
         })
         .filter_map(|style| {

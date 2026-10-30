@@ -422,10 +422,7 @@ impl Package {
             let Some(id) = dom.attribute(style, &W::name("styleId")) else {
                 continue;
             };
-            let paragraph = dom
-                .attribute(style, &W::name("type"))
-                .unwrap_or("paragraph")
-                == "paragraph";
+            let paragraph = dom.attribute(style, &W::type_()).unwrap_or("paragraph") == "paragraph";
             if !paragraph {
                 continue;
             }
@@ -786,7 +783,7 @@ impl Package {
                         }
                         _ => {}
                     }
-                } else if dom.name_is(node, &W::name("instrText")) {
+                } else if dom.name_is(node, &W::instr_text()) {
                     if let Some(field) = open.last_mut().filter(|field| !field.separated) {
                         field.instruction.push_str(&dom.value_str(node));
                     }

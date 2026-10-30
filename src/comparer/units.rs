@@ -156,7 +156,7 @@ pub fn get_comparison_unit_list(
     // whose code stayed and whose result changed ("Contaminated Sites Act
     // 2003" → "Firearms Act 1973", db433183×9377099d) matched only " Act ":
     // a deleted and an inserted field with crossed ends, which Word refuses.
-    let fld_char = W::name("fldChar");
+    let fld_char = W::fld_char();
     // Word mode: a shape wrapped in `mc:AlternateContent` is a word of its own,
     // as a bare `w:drawing` or `w:pict` already is. Glued to the text beside
     // it, a changed text box took its unchanged neighbours ("NOS", a group

@@ -100,7 +100,7 @@ impl Transaction<'_> {
 
 /// One past the highest `w:footnote` id under `root`, at least 1.
 pub(super) fn next_footnote_id(dom: &Dom, root: NodeId) -> u32 {
-    dom.elements(root, Some(&W::name("footnote")))
+    dom.elements(root, Some(&W::footnote()))
         .into_iter()
         .filter_map(|note| dom.attribute(note, &W::id())?.parse::<i64>().ok())
         .max()
@@ -136,12 +136,12 @@ pub(super) fn append_footnote(
     text: &str,
     (text_style, reference_style): (Option<&str>, Option<&str>),
 ) {
-    let note = dom.new_element(W::name("footnote"));
+    let note = dom.new_element(W::footnote());
     dom.set_attribute_value(note, &W::id(), Some(&id.to_string()));
     let p = dom.new_element(W::p());
     if let Some(style) = text_style {
         let ppr = dom.new_element(W::p_pr());
-        let pstyle = dom.new_element(W::name("pStyle"));
+        let pstyle = dom.new_element(W::p_style());
         dom.set_attribute_value(pstyle, &W::val(), Some(style));
         dom.add(ppr, pstyle);
         dom.add(p, ppr);

@@ -1394,9 +1394,11 @@ fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
 
 /// Every text change from `original` to `edited` must be a revision by
 /// `author`: the residue after rejecting that author's changes is an
-/// `UNTRACKED_EDIT` finding per paragraph, and another author's change a
-/// `FOREIGN_AUTHOR` one, and a permission endpoint of `original` that
-/// `edited` lost a `PERMISSION_RANGE_DROPPED` one, as a JSON array. Mirrors
+/// `UNTRACKED_EDIT` finding per paragraph, another author's change a
+/// `FOREIGN_AUTHOR` one, another author's comment gone, reworded, resolved
+/// or reopened (or a new comment not signed `author`) a `FOREIGN_COMMENT`
+/// one, and a permission endpoint of `original` that `edited` lost a
+/// `PERMISSION_RANGE_DROPPED` one, as a JSON array. Mirrors
 /// `jubarte::validate::audit_tracked`.
 #[pyfunction]
 fn audit_tracked_json(

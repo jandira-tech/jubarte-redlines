@@ -32,7 +32,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::comments::{Seg, collect_segments, place_after_offset, place_before_offset};
+use super::comments::{
+    Seg, collect_segments, mark_on_side, place_after_offset, place_before_offset,
+};
 use crate::namespaces::W;
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -70,6 +72,24 @@ struct Marker {
     cols: Option<(String, String)>,
     /// The start sits in a content control in its source.
     in_sdt: bool,
+    /// The start leads a paragraph with no text, this many paragraphs from
+    /// the one its text offset lands in. Its offset is its next text's, so
+    /// placement by offset alone lands in that later paragraph (#1880); with
+    /// no text after it, the offset is the end of the text before it.
+    textless: Option<Textless>,
+    /// The paragraph without text a leading start sits in, and its place in
+    /// document order (1-based), until `textless` is worked out.
+    leading: Option<(NodeId, usize)>,
+}
+
+/// Where a start's paragraph without text lies from the paragraph its text
+/// offset lands in, in paragraphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Textless {
+    /// Before the paragraph its next text is in.
+    Back(usize),
+    /// After the paragraph the last text is in: no text follows the start.
+    Forward(usize),
 }
 
 /// The nearest enclosing paragraph of `node`, if any.
@@ -100,12 +120,12 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
         return (Vec::new(), Vec::new());
     };
     let (start, end) = if permission {
-        (W::name("permStart"), W::name("permEnd"))
+        (W::perm_start(), W::perm_end())
     } else {
-        (W::name("bookmarkStart"), W::name("bookmarkEnd"))
+        (W::bookmark_start(), W::bookmark_end())
     };
     let t = W::t();
-    let (id_attr, name_attr) = (W::name("id"), W::name("name"));
+    let (id_attr, name_attr) = (W::id(), W::name("name"));
     let (col_first, col_last) = (W::name("colFirst"), W::name("colLast"));
     let mut text: Vec<char> = Vec::new();
     let mut with_text: HashSet<NodeId> = HashSet::new();
@@ -113,14 +133,30 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
     let mut occurrences: HashMap<String, usize> = HashMap::new();
     let mut open: HashMap<String, Marker> = HashMap::new();
     let mut markers = Vec::new();
+    // Paragraphs opened so far and each one's place in that order; where
+    // each text node starts and how many paragraphs had opened by then. A
+    // paragraph's place is its own: a text box's paragraphs open after the
+    // paragraph drawing it, never before it.
+    let mut paragraphs = 0usize;
+    let mut opened_at: HashMap<NodeId, usize> = HashMap::new();
+    let mut text_paragraphs: Vec<(usize, usize)> = Vec::new();
     for n in dom.descendant_nodes(body) {
         if dom.is_text(n) {
             if dom.parent(n).is_some_and(|leaf| dom.name_is(leaf, &t)) {
-                text.extend(dom.text_value(n).unwrap_or("").chars());
+                let value = dom.text_value(n).unwrap_or("");
+                if !value.is_empty() {
+                    text_paragraphs.push((text.len(), paragraphs));
+                }
+                text.extend(value.chars());
                 if let Some(p) = paragraph_of(&dom, n) {
                     with_text.insert(p);
                 }
             }
+            continue;
+        }
+        if dom.name_is(n, &W::p()) {
+            paragraphs += 1;
+            opened_at.insert(n, paragraphs);
             continue;
         }
         let Some(name) = dom.name(n) else { continue };
@@ -154,6 +190,9 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                         .all(|node| !dom.name_is(node, &t) || dom.value(node).is_empty())
                 });
             let ordinal = occurrences.entry(bm.to_string()).or_default();
+            let leading = paragraph
+                .filter(|_| leads)
+                .and_then(|p| Some((p, *opened_at.get(&p)?)));
             let marker = Marker {
                 ordinal: *ordinal,
                 name: bm.to_string(),
@@ -167,7 +206,9 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
                 start_in_body: dom.parent(n) == Some(body) && dom.name_is(body, &W::body()),
                 end_in_body: false,
                 cols,
-                in_sdt: !dom.ancestors(n, Some(&W::name("sdt"))).is_empty(),
+                in_sdt: !dom.ancestors(n, Some(&W::sdt())).is_empty(),
+                textless: None,
+                leading,
             };
             *ordinal += 1;
             open.insert(id.to_string(), marker);
@@ -185,6 +226,27 @@ fn extract(pkg: &PartFs, main: &str, permission: bool) -> (Vec<char>, Vec<Marker
         }
     }
     markers.extend(open.into_values());
+    for m in &mut markers {
+        let Some((p, opened)) = m.leading.take() else {
+            continue;
+        };
+        if with_text.contains(&p) {
+            continue;
+        }
+        let next = text_paragraphs.partition_point(|&(at, _)| at < m.start);
+        m.textless = match text_paragraphs.get(next) {
+            Some(&(_, holder)) => (holder > opened).then(|| Textless::Back(holder - opened)),
+            // No text follows: the offset lands in the last text's paragraph,
+            // before the start's (forward) or in a text box it draws (back).
+            None => text_paragraphs.last().and_then(|&(_, holder)| {
+                if opened > holder {
+                    Some(Textless::Forward(opened - holder))
+                } else {
+                    (holder > opened).then(|| Textless::Back(holder - opened))
+                }
+            }),
+        };
+    }
     markers.sort_by_key(|m| m.start);
     (text, markers)
 }
@@ -224,9 +286,62 @@ fn map_point(src: &[char], merged: &[char], o: usize, hint: usize, after: bool) 
     None
 }
 
+/// Move a start placed by its text offset to the paragraph without text it
+/// leads in its source, `gap` paragraphs from the one it was put in.
+/// Paragraphs count on this side's view of the redline. A paragraph whose
+/// mark belongs to the other side is in the redline but not in that view,
+/// so it is neither a step nor where the start lands. `paragraphs` lists
+/// the redline's paragraphs in document order. An empty range's `end`
+/// follows its start.
+fn to_textless_paragraph(
+    dom: &mut Dom,
+    paragraphs: &[NodeId],
+    (start, end): (NodeId, Option<NodeId>),
+    gap: Textless,
+    b_side: bool,
+) {
+    let Some(here) = paragraph_of(dom, start) else {
+        return;
+    };
+    let Some(at) = paragraphs.iter().position(|&p| p == here) else {
+        return;
+    };
+    let on_side = |&i: &usize| mark_on_side(dom, paragraphs[i], b_side);
+    // `gap` paragraphs of this side from the one the offset landed in.
+    let target = match gap {
+        Textless::Back(gap) => {
+            let Some(idx) = gap
+                .checked_sub(1)
+                .and_then(|k| (0..at).rev().filter(on_side).nth(k))
+            else {
+                return;
+            };
+            paragraphs[idx]
+        }
+        Textless::Forward(gap) => {
+            let Some(idx) = gap
+                .checked_sub(1)
+                .and_then(|k| (at + 1..paragraphs.len()).filter(on_side).nth(k))
+            else {
+                return;
+            };
+            paragraphs[idx]
+        }
+    };
+    dom.remove(start);
+    match dom.element(target, &W::p_pr()) {
+        Some(ppr) => dom.add_after_self(ppr, start),
+        None => dom.add_first(target, start),
+    }
+    if let Some(end) = end {
+        dom.remove(end);
+        dom.add_after_self(start, end);
+    }
+}
+
 /// The outermost content control around `node`.
 fn outermost_sdt(dom: &Dom, node: NodeId) -> Option<NodeId> {
-    dom.ancestors(node, Some(&W::name("sdt"))).last().copied()
+    dom.ancestors(node, Some(&W::sdt())).last().copied()
 }
 
 /// Move a placed pair out of the content controls its source bookmark was
@@ -263,9 +378,9 @@ fn leave_foreign_controls(dom: &mut Dom, m: &Marker, start: NodeId, end: NodeId,
 /// The `w:bookmarkStart`/`w:bookmarkEnd` pair for `m` under `id`.
 fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
     if let Some((start_attrs, end_attrs)) = &m.permission {
-        let start = dom.new_element(W::name("permStart"));
+        let start = dom.new_element(W::perm_start());
         dom.set_attributes(start, start_attrs.clone());
-        let end = dom.new_element(W::name("permEnd"));
+        let end = dom.new_element(W::perm_end());
         dom.set_attributes(end, end_attrs.clone());
         if end_attrs.is_empty() {
             dom.set_attribute_value(end, &W::id(), Some(&m.name));
@@ -273,22 +388,22 @@ fn new_markers(dom: &mut Dom, m: &Marker, id: u32) -> (NodeId, NodeId) {
         return (start, end);
     }
     let id = id.to_string();
-    let start = dom.new_element(W::name("bookmarkStart"));
-    dom.set_attribute_value(start, &W::name("id"), Some(&id));
+    let start = dom.new_element(W::bookmark_start());
+    dom.set_attribute_value(start, &W::id(), Some(&id));
     dom.set_attribute_value(start, &W::name("name"), Some(&m.name));
     if let Some((first, last)) = &m.cols {
         dom.set_attribute_value(start, &W::name("colFirst"), Some(first));
         dom.set_attribute_value(start, &W::name("colLast"), Some(last));
     }
-    let end = dom.new_element(W::name("bookmarkEnd"));
-    dom.set_attribute_value(end, &W::name("id"), Some(&id));
+    let end = dom.new_element(W::bookmark_end());
+    dom.set_attribute_value(end, &W::id(), Some(&id));
     (start, end)
 }
 
 /// Keep a boundary endpoint beside the outermost inline revision containing
 /// its adjacent run, on the same side. Never climb past its paragraph.
 fn leave_inline_revision(dom: &mut Dom, endpoint: NodeId, after: bool) {
-    let revisions = [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")];
+    let revisions = [W::ins(), W::del(), W::move_from(), W::move_to()];
     let outermost = dom
         .ancestors(endpoint, None)
         .into_iter()
@@ -326,6 +441,9 @@ fn inject_side(
     let merged: Vec<char> = merged_text.chars().collect();
     let identical = merged == src;
     let mut hint = 0usize;
+    // Placing endpoints adds no paragraph: list them once, when a start
+    // without text first needs them.
+    let mut paragraphs: Option<Vec<NodeId>> = None;
     for (index, m) in markers.iter().enumerate() {
         let empty = m.end == m.start;
         let (s, e) = if identical {
@@ -376,6 +494,12 @@ fn inject_side(
             place_after_offset(dom, &mut segs, s, end);
             dom.add_before_self(end, start);
         }
+        if let Some(gap) = m.textless {
+            let end = (s >= e).then_some(end);
+            let paragraphs =
+                paragraphs.get_or_insert_with(|| dom.descendants(result_root, Some(&W::p())));
+            to_textless_paragraph(dom, paragraphs, (start, end), gap, b_side);
+        }
         leave_foreign_controls(dom, m, start, end, s >= e);
         // A body endpoint belongs beside the paragraph, even when its
         // adjacent text now sits in an inline insertion. Offset placement
@@ -405,8 +529,8 @@ fn inject_side(
 /// and renumber the others above every `w:id` in the body. Returns the names
 /// still present and the next free id.
 fn settle_present_bookmarks(dom: &mut Dom, result_root: NodeId) -> (HashSet<String>, u32) {
-    let id_attr = W::name("id");
-    let (start, end) = (W::name("bookmarkStart"), W::name("bookmarkEnd"));
+    let id_attr = W::id();
+    let (start, end) = (W::bookmark_start(), W::bookmark_end());
     let mut present: HashSet<String> = HashSet::new();
     let mut markers: Vec<NodeId> = Vec::new();
     let mut go_back: HashSet<String> = HashSet::new();
@@ -554,7 +678,7 @@ fn leave_permission_revision_boundary(dom: &mut Dom, endpoint: NodeId, after: bo
         .into_iter()
         .take_while(|&n| !dom.name_is(n, &W::p()))
         .filter(|&n| {
-            [W::ins(), W::del(), W::name("moveFrom"), W::name("moveTo")]
+            [W::ins(), W::del(), W::move_from(), W::move_to()]
                 .iter()
                 .any(|name| dom.name_is(n, name))
         })
@@ -626,7 +750,7 @@ pub(crate) fn carry_permission_union(
         }
         // Opaque content may already carry endpoints: rebuild exactly once
         // from both source projections, rather than duplicating those copies.
-        if [W::name("permStart"), W::name("permEnd")]
+        if [W::perm_start(), W::perm_end()]
             .iter()
             .any(|name| dom.name_is(n, name))
         {
@@ -767,7 +891,7 @@ pub(crate) fn carry_permissions(
     let mut existing = HashSet::new();
     for node in dom.descendants(root, None) {
         if let Some(name) = dom.name(node)
-            && [W::name("permStart"), W::name("permEnd")].contains(&name)
+            && [W::perm_start(), W::perm_end()].contains(&name)
             && let Some(id) = dom.attribute(node, &W::id())
         {
             *present.entry((name, id.to_string())).or_insert(0usize) += 1;
@@ -857,6 +981,8 @@ mod tests {
                 end_in_body: false,
                 cols: None,
                 in_sdt: false,
+                textless: None,
+                leading: None,
             };
             inject_side(
                 &mut dom,

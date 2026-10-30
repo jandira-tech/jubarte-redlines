@@ -102,24 +102,28 @@ pub fn plan_from_flags(
             Group::Settle { accept: true, ids } => accept.extend(ids),
             Group::Settle { accept: false, ids } => reject.extend(ids),
             Group::Answer { how, ids, comment } => {
-                for revision in ids {
-                    let comment = comment.clone();
-                    let kind = match how {
-                        Answer::Strike => OperationKind::Strike { revision, comment },
-                        Answer::Restore => OperationKind::Restore { revision, comment },
-                        Answer::ByKind => {
-                            let listed = listed.get_or_insert_with(|| {
-                                crate::changes::list_changes(source).unwrap_or_default()
-                            });
-                            super::visible::reject_kind(listed, revision, comment)
-                        }
-                    };
-                    operations.push(Operation {
-                        id: None,
-                        group: None,
-                        kind,
-                    });
-                }
+                let revision = || crate::changes::composite_id(&ids);
+                let kinds = match how {
+                    Answer::Strike => vec![OperationKind::Strike {
+                        revision: revision(),
+                        comment,
+                    }],
+                    Answer::Restore => vec![OperationKind::Restore {
+                        revision: revision(),
+                        comment,
+                    }],
+                    Answer::ByKind => {
+                        let listed = listed.get_or_insert_with(|| {
+                            crate::changes::list_changes(source).unwrap_or_default()
+                        });
+                        super::visible::reject_kinds(listed, &ids, comment)
+                    }
+                };
+                operations.extend(kinds.into_iter().map(|kind| Operation {
+                    id: None,
+                    group: None,
+                    kind,
+                }));
             }
             Group::Operation => {
                 let (kind, note) = flag_operation(verb, op)?;
@@ -256,7 +260,8 @@ enum Group {
     /// `--accept` or `--reject`: the long ids join `resolve_revisions`.
     Settle { accept: bool, ids: Vec<String> },
     /// `--strike`, `--restore` or `--reject --visible`: one operation by
-    /// our author per revision, with `--content` as its comment.
+    /// our author on the change the marks `ids` make (a visible reject:
+    /// one per kind), with `--content` as its comment.
     Answer {
         how: Answer,
         ids: Vec<String>,
@@ -345,9 +350,6 @@ fn revision_group(verb: Verb, op: &FlagOp) -> Result<Group, String> {
         return bad(
             "--content on a revision is the comment of --strike, --restore or --reject --visible",
         );
-    }
-    if op.content.is_some() && ids.len() > 1 {
-        return bad("--content comments one revision; give each its own -p");
     }
     let ids = ids.iter().map(crate::ids::ChangeId::short).collect();
     Ok(match how {
@@ -1620,15 +1622,6 @@ mod tests {
                     o.content = Some("No.".into());
                 }),
                 "-p r4: --content on a revision is the comment of --strike, --restore or --reject --visible",
-            ),
-            (
-                Verb::Edit,
-                with("r4+5", |o| {
-                    o.reject = true;
-                    o.visible = true;
-                    o.content = Some("No.".into());
-                }),
-                "-p r4+5: --content comments one revision; give each its own -p",
             ),
             (
                 Verb::Add,

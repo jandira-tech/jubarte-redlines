@@ -70,9 +70,10 @@ fn comment_ids_of(pkg: &PartFs) -> HashSet<String> {
     let Some(root) = dom.root(d) else {
         return HashSet::new();
     };
+    let id = W::id();
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
-        .filter_map(|c| dom.attribute(c, &W::name("id")).map(str::to_string))
+        .filter_map(|c| dom.attribute(c, &id).map(str::to_string))
         .collect()
 }
 
@@ -102,10 +103,11 @@ fn comment_id_fingerprint_of(pkg: &PartFs) -> HashMap<String, String> {
     let Some(root) = dom.root(d) else {
         return HashMap::new();
     };
+    let id = W::id();
     dom.elements(root, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
-            dom.attribute(c, &W::name("id"))
+            dom.attribute(c, &id)
                 .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect()
@@ -134,7 +136,7 @@ fn normalized_text(text: &str) -> String {
 /// logical locations while still matching Word-renumbered copies.
 fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String> {
     let definitions = comment_id_fingerprint_of(pkg);
-    let Some((text, ranges)) = extract_events(pkg, main) else {
+    let Some((text, ranges)) = extract_events(pkg, main, None) else {
         return definitions
             .into_iter()
             .map(|(id, definition)| {
@@ -171,7 +173,9 @@ fn comment_anchor_identities(pkg: &PartFs, main: &str) -> HashMap<String, String
             let unanchored = raw_start == usize::MAX;
             let start = raw_start.min(chars.len());
             let end = raw_end.min(chars.len()).max(start);
-            if has_nonempty && start == end {
+            // A comment with no anchor at all gives way to an anchored one
+            // that says the same; a point comment is a comment (#1898).
+            if has_nonempty && unanchored {
                 continue;
             }
             let anchor = if unanchored {
@@ -230,6 +234,18 @@ enum Kind {
     /// An empty range: start, end and reference together, at the end's place
     /// (a start placed on its own would land in the next paragraph).
     Point,
+    /// A reference its source writes apart from its range's end (#1897).
+    Reference,
+}
+
+/// A comment's reference run.
+#[derive(Clone, Copy)]
+enum RefRun {
+    /// The source has no reference: a bare `rStyle CommentReference` run.
+    Generated,
+    /// The source's reference, with its run's `w:rPr` (imported into the
+    /// merged arena) or none.
+    Carried(Option<NodeId>),
 }
 
 struct Event {
@@ -238,6 +254,18 @@ struct Event {
     id: String,
     /// Document order of the range's start in its source.
     seq: usize,
+    /// The reference run placed with this event: none for a start, nor for
+    /// an end whose reference has its own [`Kind::Reference`] event.
+    reference: Option<RefRun>,
+}
+
+/// A comment's reference as its source writes it.
+struct Reference {
+    /// Its offset in the source projection.
+    offset: usize,
+    /// Its run's `w:rPr`, imported into the arena the body is rebuilt in;
+    /// `None` when the run has none, or when nothing was imported.
+    rpr: Option<NodeId>,
 }
 
 /// A comment's [start, end) character interval in its source projection.
@@ -247,6 +275,8 @@ struct Range {
     end: usize,
     /// Document order of the start among the source's starts.
     seq: usize,
+    /// The comment's first reference, when its source has one.
+    reference: Option<Reference>,
 }
 
 /// The paragraph mark in a projection: a marker after it sits in a later
@@ -256,17 +286,23 @@ const MARK: char = '\n';
 /// Extract anchor ranges + the projection text from a source document's main
 /// part. Counted text = every `w:t` character in body order, each paragraph
 /// closed by a [`MARK`] (the inputs are post-PreProcessMarkup, i.e.
-/// revisions accepted — no live `w:delText`).
-fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
+/// revisions accepted — no live `w:delText`). With `into`, each reference
+/// run's `w:rPr` is imported into that arena.
+fn extract_events(
+    pkg: &PartFs,
+    main: &str,
+    mut into: Option<&mut Dom>,
+) -> Option<(String, Vec<Range>)> {
     let xml = pkg.part_string(main)?;
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(&xml);
     let root = dom.root(d)?;
     let body = dom.element(root, &W::body())?;
-    let start = W::name("commentRangeStart");
-    let end = W::name("commentRangeEnd");
-    let reference = W::name("commentReference");
-    let mut references: Vec<(String, usize)> = Vec::new();
+    let start = W::comment_range_start();
+    let end = W::comment_range_end();
+    let reference = W::comment_reference();
+    let id_attr = W::id();
+    let mut references: Vec<(String, Reference)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
     let mut starts: HashMap<String, (usize, usize)> = HashMap::new();
@@ -287,12 +323,12 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
         if dom.is_element(n) {
             let name = dom.name(n).unwrap();
             if name == start {
-                if let Some(id) = dom.attribute(n, &W::name("id")) {
+                if let Some(id) = dom.attribute(n, &id_attr) {
                     let seq = starts.len();
                     starts.entry(id.to_string()).or_insert((offset, seq));
                 }
             } else if name == end
-                && let Some(id) = dom.attribute(n, &W::name("id"))
+                && let Some(id) = dom.attribute(n, &id_attr)
                 && let Some(&(s, seq)) = starts.get(id)
             {
                 ranges.push(Range {
@@ -300,11 +336,17 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
                     start: s,
                     end: offset,
                     seq,
+                    reference: None,
                 });
             } else if name == reference
-                && let Some(id) = dom.attribute(n, &W::name("id"))
+                && let Some(id) = dom.attribute(n, &id_attr)
             {
-                references.push((id.to_string(), offset));
+                let rpr = into.as_deref_mut().and_then(|into| {
+                    let run = dom.parent(n).filter(|&r| dom.name_is(r, &W::r()))?;
+                    let rpr = dom.element(run, &W::r_pr())?;
+                    Some(into.import_subtree(&dom, rpr))
+                });
+                references.push((id.to_string(), Reference { offset, rpr }));
             }
         } else if dom.is_text(n)
             && dom
@@ -319,14 +361,24 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     }
     text.extend(open.iter().map(|_| MARK));
     // A reference with no range markers is a point comment: an empty range
-    // where the reference sits, which is how Word's redline writes it.
-    for (id, at) in references {
-        if !starts.contains_key(&id) && !ranges.iter().any(|r| r.id == id) {
+    // where the reference sits, which is how Word's redline writes it. A
+    // comment's first reference is its own.
+    // Each id's first range, by index: a lookup per reference, not a scan.
+    let mut first: HashMap<String, usize> = HashMap::new();
+    for (i, range) in ranges.iter().enumerate() {
+        first.entry(range.id.clone()).or_insert(i);
+    }
+    for (id, reference) in references {
+        if let Some(&i) = first.get(&id) {
+            ranges[i].reference.get_or_insert(reference);
+        } else if !starts.contains_key(&id) {
+            first.insert(id.clone(), ranges.len());
             ranges.push(Range {
                 id,
-                start: at,
-                end: at,
+                start: reference.offset,
+                end: reference.offset,
                 seq: usize::MAX, // no start marker
+                reference: Some(reference),
             });
         }
     }
@@ -453,7 +505,7 @@ impl Seg {
 
 /// Whether a paragraph's mark is on this side: not inserted on A's, not
 /// deleted on B's (a moved mark counts at its own end).
-fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
+pub(super) fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
     let changes: &[&str] = if b_side {
         &["del", "moveFrom"]
     } else {
@@ -483,8 +535,8 @@ pub(super) fn collect_segments(
 ) -> (String, Vec<Seg>) {
     // The document's body, or a header, footer or notes part's root.
     let body = dom.element(result_root, &W::body()).unwrap_or(result_root);
-    let del_text = W::name("delText");
-    let (move_from, move_to) = (W::name("moveFrom"), W::name("moveTo"));
+    let del_text = W::del_text();
+    let (move_from, move_to) = (W::move_from(), W::move_to());
     let mut text = String::new();
     let mut segs = Vec::new();
     let mut offset = 0usize;
@@ -753,25 +805,55 @@ fn add_at_paragraph_start(dom: &mut Dom, p: NodeId, ends_deleted: bool, node: No
 
 fn new_anchor(dom: &mut Dom, start: bool, id: &str) -> NodeId {
     let name = if start {
-        W::name("commentRangeStart")
+        W::comment_range_start()
     } else {
-        W::name("commentRangeEnd")
+        W::comment_range_end()
     };
     let e = dom.new_element(name);
-    dom.set_attribute_value(e, &W::name("id"), Some(id));
+    dom.set_attribute_value(e, &W::id(), Some(id));
     e
+}
+
+/// Where a reference its source writes apart from range `r`'s end goes in
+/// `merged`: past the source's text between the end and the reference (a
+/// paragraph mark, the next paragraph's words), when that text follows the
+/// mapped end `e` unchanged (`r5_01`, `r5_06`, `71c67c168f`).
+fn apart_reference(src: &[char], merged: &[char], r: &Range, e: usize) -> Option<usize> {
+    let at = r.reference.as_ref()?.offset;
+    if at <= r.end {
+        return None;
+    }
+    let gap = src.get(r.end..at)?;
+    (merged.get(e..e + gap.len()) == Some(gap)).then_some(e + gap.len())
+}
+
+/// The run that holds comment `id`'s reference, as `how` says.
+fn reference_run(dom: &mut Dom, id: &str, how: RefRun) -> NodeId {
+    match how {
+        RefRun::Generated => new_reference_run(dom, id),
+        RefRun::Carried(rpr) => {
+            let r = dom.new_element(W::r());
+            if let Some(rpr) = rpr {
+                dom.add(r, rpr);
+            }
+            let cref = dom.new_element(W::comment_reference());
+            dom.set_attribute_value(cref, &W::id(), Some(id));
+            dom.add(r, cref);
+            r
+        }
+    }
 }
 
 /// The GT reference-run shape: `w:rStyle CommentReference` + `w:commentReference`.
 fn new_reference_run(dom: &mut Dom, id: &str) -> NodeId {
     let r = dom.new_element(W::r());
     let rpr = dom.new_element(W::r_pr());
-    let style = dom.new_element(W::name("rStyle"));
+    let style = dom.new_element(W::r_style());
     dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
     dom.add(rpr, style);
     dom.add(r, rpr);
-    let cref = dom.new_element(W::name("commentReference"));
-    dom.set_attribute_value(cref, &W::name("id"), Some(id));
+    let cref = dom.new_element(W::comment_reference());
+    dom.set_attribute_value(cref, &W::id(), Some(id));
     dom.add(r, cref);
     r
 }
@@ -793,7 +875,7 @@ fn inject_side(
     id_map: &HashMap<String, String>,
     only_ids: Option<&HashSet<String>>,
 ) -> AnchoredRanges {
-    let Some((src_text, ranges)) = extract_events(src_pkg, src_main) else {
+    let Some((src_text, ranges)) = extract_events(src_pkg, src_main, Some(dom)) else {
         return HashMap::new();
     };
     if ranges.is_empty() {
@@ -817,27 +899,29 @@ fn inject_side(
         };
         let out_id = id_map.get(&r.id).cloned().unwrap_or_else(|| r.id.clone());
         anchored_ranges.insert(out_id, (s, e));
+        // The source's reference run, its properties with it (#1897).
+        let carried = r.reference.as_ref().map_or(RefRun::Generated, |reference| {
+            RefRun::Carried(reference.rpr)
+        });
+        let event = |offset, kind, reference| Event {
+            offset,
+            kind,
+            id: r.id.clone(),
+            seq: r.seq,
+            reference,
+        };
         if s == e {
-            events.push(Event {
-                offset: e,
-                kind: Kind::Point,
-                id: r.id.clone(),
-                seq: r.seq,
-            });
+            events.push(event(e, Kind::Point, Some(carried)));
             continue;
         }
-        events.push(Event {
-            offset: s,
-            kind: Kind::Start,
-            id: r.id.clone(),
-            seq: r.seq,
-        });
-        events.push(Event {
-            offset: e,
-            kind: Kind::End,
-            id: r.id.clone(),
-            seq: r.seq,
-        });
+        events.push(event(s, Kind::Start, None));
+        match apart_reference(&src_chars, &merged_chars, r, e) {
+            Some(at) => {
+                events.push(event(e, Kind::End, None));
+                events.push(event(at, Kind::Reference, Some(carried)));
+            }
+            None => events.push(event(e, Kind::End, Some(carried))),
+        }
     }
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
@@ -850,8 +934,9 @@ fn inject_side(
         run.sort_by_key(|&i| events[i].seq);
     }
 
-    // The reference run of the last end placed, by offset: a second end at
-    // the same place follows it, so the source order holds.
+    // The last node placed after an offset (an end, or the reference run that
+    // follows it): a second one at the same place follows it, so the source
+    // order holds.
     let mut last_end: Option<(usize, NodeId)> = None;
     for idx in order {
         let ev = &events[idx];
@@ -872,10 +957,23 @@ fn inject_side(
                     let start = new_anchor(dom, true, &out_id);
                     dom.add_before_self(anchor, start);
                 }
-                let refrun = new_reference_run(dom, &out_id);
-                dom.add_after_self(anchor, refrun);
+                let mut last = anchor;
+                if let Some(how) = ev.reference {
+                    let refrun = reference_run(dom, &out_id, how);
+                    dom.add_after_self(anchor, refrun);
+                    last = refrun;
+                }
                 if ev.kind == Kind::Point {
                     step_out_of_deletion_end(dom, anchor);
+                }
+                last_end = Some((o, last));
+            }
+            Kind::Reference => {
+                let how = ev.reference.unwrap_or(RefRun::Generated);
+                let refrun = reference_run(dom, &out_id, how);
+                match last_end {
+                    Some((at, prev)) if at == o => dom.add_after_self(prev, refrun),
+                    _ => place_after_offset(dom, &mut segs, o, refrun),
                 }
                 last_end = Some((o, refrun));
             }
@@ -899,14 +997,16 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     let Some(del) = dom.parent(end).filter(|&d| dom.name(d) == Some(W::del())) else {
         return;
     };
+    let (range_start, range_end) = (W::comment_range_start(), W::comment_range_end());
+    let (run, run_pr, reference) = (W::r(), W::r_pr(), W::comment_reference());
     let marker = |dom: &Dom, n: NodeId| {
         dom.name(n).is_some_and(|nm| {
-            nm == W::name("commentRangeStart")
-                || nm == W::name("commentRangeEnd")
-                || (nm == W::r()
+            nm == range_start
+                || nm == range_end
+                || (nm == run
                     && dom.elements(n, None).into_iter().all(|c| {
                         dom.name(c)
-                            .is_some_and(|cn| cn == W::r_pr() || cn == W::name("commentReference"))
+                            .is_some_and(|cn| cn == run_pr || cn == reference)
                     }))
         })
     };
@@ -921,7 +1021,7 @@ fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
     // there on, in order, after the deletion.
     let from = kids[..at]
         .iter()
-        .rposition(|&k| dom.name(k) != Some(W::name("commentRangeStart")))
+        .rposition(|&k| !dom.name_is(k, &range_start))
         .map_or(0, |i| i + 1);
     let moving: Vec<NodeId> = kids[from..].to_vec();
     let mut after = del;
@@ -1201,7 +1301,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     let (Some(br), Some(ar)) = (dom.root(bd), dom.root(ad)) else {
         return id_map;
     };
-    let id_name = W::name("id");
+    let id_name = W::id();
     let b_ids: HashSet<String> = dom
         .elements(br, Some(&W::name("comment")))
         .into_iter()
@@ -1210,7 +1310,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
     let mut used_para_ids: HashSet<String> = dom
         .descendants(br, Some(&W::p()))
         .into_iter()
-        .filter_map(|p| dom.attribute(p, &W14::name("paraId")).map(str::to_string))
+        .filter_map(|p| dom.attribute(p, &W14::para_id()).map(str::to_string))
         .map(|value| value.to_ascii_uppercase())
         .collect();
     let mut next_para_id = used_para_ids
@@ -1260,7 +1360,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         preserve_cloned_namespace_context(&mut dom, ar, br, clone);
         for paragraph in dom.descendants(clone, Some(&W::p())) {
             let Some(para_id) = dom
-                .attribute(paragraph, &W14::name("paraId"))
+                .attribute(paragraph, &W14::para_id())
                 .map(str::to_string)
             else {
                 continue;
@@ -1270,7 +1370,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
                 let replacement = para_id_map
                     .entry(para_id_key)
                     .or_insert_with(|| allocate_para_id(&mut used_para_ids, &mut next_para_id));
-                dom.set_attribute_value(paragraph, &W14::name("paraId"), Some(replacement));
+                dom.set_attribute_value(paragraph, &W14::para_id(), Some(replacement));
             } else {
                 used_para_ids.insert(para_id_key);
             }
@@ -1425,7 +1525,7 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
         .iter()
         .copied()
         .filter(|&c| {
-            dom.attribute(c, &W::name("id"))
+            dom.attribute(c, &W::id())
                 .is_none_or(|id| !anchored.contains(id))
         })
         .collect();
@@ -1501,11 +1601,13 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
 }
 
 /// Select comments using both their definition fingerprint and mapped anchor.
-/// Equal bodies on distinct non-empty ranges are independent comments, and so
-/// are equal bodies one document stacks on one range (Word keeps each). An
-/// A-side comment (`a_side`, the union's appended ids) whose body and range
-/// equal a B-side one is B's copy and collapses into it; a live non-empty
-/// anchor supersedes a stale zero-length revision copy of the same comment.
+/// Comments that say the same thing are independent comments: on distinct
+/// ranges, stacked on one range (Word keeps each), or one on a range and one
+/// on a point (#1898: `1672057675`'s c0 and c4). Only an A-side comment
+/// (`a_side`, the union's appended ids) is a copy, of a B-side one of the same
+/// body on the same range, and collapses into it. A point says nothing of
+/// copying: an A-side point beside a B-side range of the same body is a
+/// comment the revision removed, kept as any removed comment is.
 fn select_anchor_aware_comments(
     out: &PartFs,
     anchored: &AnchoredRanges,
@@ -1521,7 +1623,7 @@ fn select_anchor_aware_comments(
     };
     let mut groups = FingerprintGroups::new();
     for c in d.elements(root, Some(&W::name("comment"))) {
-        let Some(id) = d.attribute(c, &W::name("id")).map(str::to_string) else {
+        let Some(id) = d.attribute(c, &W::id()).map(str::to_string) else {
             continue;
         };
         let Some(&range) = anchored.get(&id) else {
@@ -1533,16 +1635,12 @@ fn select_anchor_aware_comments(
 
     let mut keep = HashSet::new();
     for candidates in groups.values() {
-        let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
         let b_ranges: HashSet<_> = candidates
             .iter()
             .filter(|(id, _)| !a_side.contains(id))
             .map(|(_, range)| *range)
             .collect();
         for (id, range) in candidates {
-            if has_nonempty && range.0 == range.1 {
-                continue;
-            }
             if a_side.contains(id) && b_ranges.contains(range) {
                 continue;
             }
@@ -1671,17 +1769,15 @@ pub fn carry_comments(
 /// Remove commentRangeStart/End/commentReference whose id is not in `keep`.
 fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &HashSet<String>) {
     let names = [
-        W::name("commentRangeStart"),
-        W::name("commentRangeEnd"),
-        W::name("commentReference"),
+        W::comment_range_start(),
+        W::comment_range_end(),
+        W::comment_reference(),
     ];
+    let id = W::id();
     let mut dead: Vec<NodeId> = Vec::new();
     for name in names {
         for e in dom.descendants(result_root, Some(&name)) {
-            if dom
-                .attribute(e, &W::name("id"))
-                .is_none_or(|id| !keep.contains(id))
-            {
+            if dom.attribute(e, &id).is_none_or(|id| !keep.contains(id)) {
                 dead.push(e);
             }
         }
@@ -1703,8 +1799,8 @@ mod tests {
                 let name = dom.name(e)?;
                 if name == W::t() {
                     Some(dom.value(e))
-                } else if name == W::name("commentRangeStart") {
-                    Some(format!("[{}", dom.attribute(e, &W::name("id"))?))
+                } else if name == W::comment_range_start() {
+                    Some(format!("[{}", dom.attribute(e, &W::id())?))
                 } else {
                     None
                 }
@@ -1736,6 +1832,7 @@ mod tests {
             start,
             end,
             seq: 0,
+            reference: None,
         };
         assert_eq!(map_range(&src, &merged, &r), Some((start, end)));
         // The tail must follow the head: a merged text holding only the tail
@@ -1763,6 +1860,7 @@ mod tests {
             start: second,
             end: second + len,
             seq: 0,
+            reference: None,
         };
         let merged_second = format!("Intro. {section} Middle part added. ")
             .chars()
@@ -1874,6 +1972,7 @@ mod deeper_boundary_tests {
             start,
             end,
             seq: 0,
+            reference: None,
         }
     }
 
@@ -1901,7 +2000,7 @@ mod deeper_boundary_tests {
             }
             assert!(comment_ids_of(&pkg).is_empty());
             assert!(comment_id_fingerprint_of(&pkg).is_empty());
-            assert!(extract_events(&pkg, MAIN).is_none());
+            assert!(extract_events(&pkg, MAIN, None).is_none());
             assert!(b_carries_same_comments_as_a(&pkg, &package(None, None)));
             assert!(b_covers_comment_identities_of_a(
                 &pkg,
@@ -1963,7 +2062,7 @@ mod deeper_boundary_tests {
     }
 
     #[test]
-    fn unanchored_identity_includes_id_and_live_ranges_supersede_points() {
+    fn unanchored_identity_includes_id_and_live_ranges_supersede_only_unanchored() {
         let defs = format!(
             "{}{}{}",
             comment("7", "same"),
@@ -1980,9 +2079,13 @@ mod deeper_boundary_tests {
         }
         let body = "<w:p><w:commentRangeStart w:id=\"7\"/><w:r><w:t>abc</w:t></w:r><w:commentRangeEnd w:id=\"7\"/><w:r><w:commentReference w:id=\"8\"/></w:r></w:p>";
         let pkg = package(Some(&defs), Some(body));
+        // 8 is a point comment after "abc": a comment of its own (#1898).
         assert_eq!(
             comment_anchor_identities(&pkg, MAIN),
-            HashMap::from([("7".into(), "same\0\0\0\0\0abc\0".into())])
+            HashMap::from([
+                ("7".into(), "same\0\0\0\0\0abc\0".into()),
+                ("8".into(), "same\0\0\0\0abc\0\0".into()),
+            ])
         );
         assert!(!b_covers_comment_identities_of_a(
             &package(Some(&comment("7", "same")), None),
@@ -1995,7 +2098,7 @@ mod deeper_boundary_tests {
     #[test]
     fn extraction_ignores_idless_markers_and_deduplicates_reference_points() {
         let body = "<!-- non-text node --><w:p><w:commentRangeStart/><w:commentRangeEnd/><w:commentRangeEnd w:id=\"missing\"/><w:r><w:commentReference/><w:commentReference w:id=\"p\"/><w:commentReference w:id=\"p\"/><w:t>é🐋</w:t></w:r><w:commentRangeStart w:id=\"r\"/><w:commentRangeStart w:id=\"r\"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id=\"r\"/><w:r><w:commentReference w:id=\"r\"/></w:r></w:p><w:p/>";
-        let (text, ranges) = extract_events(&package(None, Some(body)), MAIN).unwrap();
+        let (text, ranges) = extract_events(&package(None, Some(body)), MAIN, None).unwrap();
         assert_eq!(text, "é🐋x\n\n");
         assert_eq!(
             ranges
@@ -2004,6 +2107,27 @@ mod deeper_boundary_tests {
                 .collect::<Vec<_>>(),
             [("r", 2, 3, 0), ("p", 0, 0, usize::MAX)]
         );
+    }
+
+    /// A comment keeps its first reference, its offset and (into an arena)
+    /// its run's properties; a reference to a range that never ends is
+    /// neither a range nor a point.
+    #[test]
+    fn extraction_keeps_each_comments_first_reference_and_its_properties() {
+        let body = "<w:p><w:commentRangeStart w:id=\"open\"/><w:commentRangeStart w:id=\"r\"/><w:r><w:t>ab</w:t></w:r><w:commentRangeEnd w:id=\"r\"/></w:p><w:p><w:r><w:rPr><w:sz w:val=\"21\"/></w:rPr><w:commentReference w:id=\"r\"/></w:r><w:r><w:commentReference w:id=\"r\"/></w:r><w:r><w:commentReference w:id=\"open\"/></w:r><w:r><w:t>c</w:t></w:r></w:p>";
+        let pkg = package(None, Some(body));
+        let mut into = Dom::new();
+        let (text, ranges) = extract_events(&pkg, MAIN, Some(&mut into)).unwrap();
+        assert_eq!(text, "ab\nc\n");
+        assert_eq!(ranges.len(), 1);
+        let reference = ranges[0].reference.as_ref().unwrap();
+        assert_eq!(reference.offset, 3);
+        let sz = into
+            .element(reference.rpr.unwrap(), &W::name("sz"))
+            .and_then(|sz| into.attribute(sz, &W::val()));
+        assert_eq!(sz, Some("21"));
+        let (_, ranges) = extract_events(&pkg, MAIN, None).unwrap();
+        assert!(ranges[0].reference.as_ref().unwrap().rpr.is_none());
     }
 
     #[test]
@@ -2218,8 +2342,7 @@ mod deeper_boundary_tests {
             assert_eq!(anchored.get("42").copied(), want);
             assert_eq!(anchored.len(), usize::from(want.is_some()));
             assert_eq!(
-                dom.descendants(root, Some(&W::name("commentReference")))
-                    .len(),
+                dom.descendants(root, Some(&W::comment_reference())).len(),
                 usize::from(want.is_some())
             );
             assert_eq!(collect_segments(&dom, root, true, "R", false).0, text);
@@ -2237,7 +2360,7 @@ mod deeper_boundary_tests {
             let (mut dom, root) = parse(&format!(
                 "<w:p><w:del><w:r><w:delText>x</w:delText></w:r><w:commentRangeStart w:id=\"7\"/><w:commentRangeEnd w:id=\"7\"/>{tail}</w:del></w:p>"
             ));
-            let end = dom.descendants(root, Some(&W::name("commentRangeEnd")))[0];
+            let end = dom.descendants(root, Some(&W::comment_range_end()))[0];
             let old_parent = dom.parent(end).unwrap();
             step_out_of_deletion_end(&mut dom, end);
             assert_eq!(dom.parent(end) != Some(old_parent), moves, "{tail}");
@@ -2509,7 +2632,17 @@ mod deeper_boundary_tests {
         let pkg = package(Some(&defs), None);
         for (ranges, a_side, want) in [
             ([(0, 0), (0, 0), (0, 0)], set(&[]), set(&["7", "8", "9"])),
-            ([(0, 1), (0, 0), (2, 3)], set(&[]), set(&["7", "9"])),
+            // A point and a range that say the same are two comments (#1898).
+            ([(0, 1), (0, 0), (2, 3)], set(&[]), set(&["7", "8", "9"])),
+            (
+                [(0, 1), (0, 0), (2, 3)],
+                set(&["7", "8", "9"]),
+                set(&["7", "8", "9"]),
+            ),
+            // An A-side point beside a B-side range is the revision's removal.
+            ([(0, 1), (0, 0), (2, 3)], set(&["8"]), set(&["7", "8", "9"])),
+            // An A-side point on a B-side point of the same body is its copy.
+            ([(0, 0), (0, 0), (2, 3)], set(&["8"]), set(&["7", "9"])),
             ([(0, 1), (0, 1), (2, 3)], set(&["8", "9"]), set(&["7", "9"])),
             ([(0, 1), (0, 1), (0, 1)], set(&[]), set(&["7", "8", "9"])),
         ] {
@@ -2531,7 +2664,7 @@ mod deeper_boundary_tests {
         for name in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
             let markers = dom.descendants(root, Some(&W::name(name)));
             assert_eq!(markers.len(), 1, "{name}");
-            assert_eq!(dom.attribute(markers[0], &W::name("id")), Some("7"));
+            assert_eq!(dom.attribute(markers[0], &W::id()), Some("7"));
         }
         assert_eq!(collect_segments(&dom, root, true, "R", false).0, "kept");
     }
@@ -2664,7 +2797,7 @@ mod deeper_boundary_tests {
             let ids: Vec<_> = dom
                 .descendants(root, Some(&W::name(marker)))
                 .into_iter()
-                .map(|node| dom.attribute(node, &W::name("id")).unwrap().to_string())
+                .map(|node| dom.attribute(node, &W::id()).unwrap().to_string())
                 .collect();
             assert_eq!(ids.len(), 2, "{marker}");
             assert_eq!(

@@ -215,10 +215,10 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
 /// end and result all carry the whole chain of codes, outermost first: a
 /// field's shell matches only when every enclosing code is the same.
 fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
-    let fld_char = W::name("fldChar");
+    let fld_char = W::fld_char();
     let fld_char_type = W::name("fldCharType");
-    let instr = W::name("instrText");
-    let del_instr = W::name("delInstrText");
+    let instr = W::instr_text();
+    let del_instr = W::del_instr_text();
     let kind = |el: NodeId| -> Option<&str> {
         if dom.name(el)? == fld_char {
             dom.attribute(el, &fld_char_type)
@@ -427,7 +427,7 @@ fn recurse(
     // `w:footnote` / `w:endnote` definitions are NOT stop nodes — they must
     // remain on the path so ProcessFootnoteEndnote → produce can rebuild the
     // note wrapper (parity CRASH regression when path stayed empty here).
-    if name == W::body() || name == W::name("hdr") || name == W::name("ftr") {
+    if name == W::body() || name == W::hdr() || name == W::ftr() {
         // True path-stop containers: path stays empty underneath.
         recurse_children(dom, element, None, list, settings, path);
         return;
@@ -520,7 +520,7 @@ fn recurse(
     // fldSimple 3 → 0 while GT keeps every field; every rendered page showed
     // "Pg  Left aligned" with empty numbers). Non-empty fldSimple still
     // recurses (its result runs diff normally).
-    if name == W::name("fldSimple") && dom.elements(element, None).is_empty() {
+    if name == W::fld_simple() && dom.elements(element, None).is_empty() {
         let chain = chain_with(path, element);
         push_atom(dom, element, &chain, list, settings);
         return;
@@ -1163,7 +1163,7 @@ mod coverage_atomizer_field_chain_boundaries {
                     );
                     let breaks = dom.descendants(body, Some(&W::name("br")));
                     assert_eq!(breaks.len(), 1);
-                    assert_eq!(dom.attribute(breaks[0], &W::name("type")), Some("page"));
+                    assert_eq!(dom.attribute(breaks[0], &W::type_()), Some("page"));
                     let runs = dom.descendants(body, Some(&W::r()));
                     assert_eq!(runs.len(), 2);
                     for &run in &runs {

@@ -144,14 +144,27 @@ fn is_rsid_attr(name: &XName) -> bool {
 }
 
 /// Port of `RemoveRsidTransform(node)` — drops every `w:rsid*` element and
-/// every `w:rsid*` attribute across the subtree. Returns `None` when the
-/// node itself is dropped (a `w:rsid` element).
+/// every `w:rsid*` attribute across the subtree, but a table row's own:
+/// Word keeps them, and the renderer keeps the saved grid of a table whose
+/// rows carry them (#1716), so a redline or Accept All of a Word-saved
+/// document lays its tables out as the source does (#1873). Returns `None`
+/// when the node itself is dropped (a `w:rsid` element).
 ///
 /// RSID-INPLACE-01: mutates the existing subtree in place (same root
 /// `NodeId`) instead of rebuilding every node. Observable XML after the
 /// transform is unchanged; only intermediate allocation / drop work is
 /// removed.
 pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
+    strip_rsids(dom, node, true)
+}
+
+/// [`remove_rsid_transform`] without its exception: a table row's
+/// `w:rsid*` go too, as scrub promises every edit-session id is gone.
+pub fn remove_all_rsids(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
+    strip_rsids(dom, node, false)
+}
+
+fn strip_rsids(dom: &mut Dom, node: NodeId, keep_rows: bool) -> Option<NodeId> {
     if !dom.is_element(node) {
         return Some(node);
     }
@@ -160,12 +173,14 @@ pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
         return None;
     }
     // Strip rsid* attributes without rebuilding the element.
-    let rsid_attrs: Vec<_> = dom
-        .attributes(node)
-        .into_iter()
-        .filter(|(an, _)| is_rsid_attr(an))
-        .map(|(an, _)| an)
-        .collect();
+    let rsid_attrs: Vec<_> = if keep_rows && name == W::tr() {
+        Vec::new()
+    } else {
+        dom.attributes_iter(node)
+            .filter(|(an, _)| is_rsid_attr(an))
+            .map(|(an, _)| an.clone())
+            .collect()
+    };
     for an in &rsid_attrs {
         dom.set_attribute_value(node, an, None);
     }
@@ -174,7 +189,7 @@ pub fn remove_rsid_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
         .map(|i| dom.child_at(node, i))
         .collect();
     for k in kids {
-        if remove_rsid_transform(dom, k).is_none() {
+        if strip_rsids(dom, k, keep_rows).is_none() {
             dom.remove(k);
         }
     }

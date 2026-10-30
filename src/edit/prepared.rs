@@ -759,17 +759,15 @@ fn range_markers(docx: &[u8]) -> RangeMarkers {
         let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
             continue;
         };
-        for start in dom.descendants(root, Some(&W::name("bookmarkStart"))) {
+        for start in dom.descendants(root, Some(&W::bookmark_start())) {
             if let Some(name) = dom.attribute(start, &W::name("name"))
                 && name != "_GoBack"
             {
                 markers.bookmarks.insert(name.to_string());
             }
         }
-        markers.comments += dom
-            .descendants(root, Some(&W::name("commentRangeStart")))
-            .len();
-        markers.permissions += dom.descendants(root, Some(&W::name("permStart"))).len();
+        markers.comments += dom.descendants(root, Some(&W::comment_range_start())).len();
+        markers.permissions += dom.descendants(root, Some(&W::perm_start())).len();
     }
     markers
 }
@@ -1012,6 +1010,7 @@ fn expected_texts(tx: &Transaction<'_>, exact: bool) -> Vec<(usize, ExpectedText
                 para,
                 next,
                 separator,
+                ..
             } => {
                 merges.push((*para, *next, separator.clone(), tx.outcomes[*op].id.clone()));
             }
@@ -1424,8 +1423,12 @@ fn produce(
     let plan = tx.plan;
     let (mut clean, mut marked) = tx.finish()?;
     check_serialized_stories(tx, &clean)?;
+    // A reworded or deleted comment makes the comparer's base a copy; the
+    // emitter writes those threads itself, as under keep.
     if plan.existing_revisions == ExistingRevisions::Keep
-        || (emit && matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_)))
+        || (emit
+            && (tx.edits_only_comments()
+                || matches!(tx.commented_base()?, std::borrow::Cow::Borrowed(_))))
     {
         let result = tracked::result(tx, clean)?;
         tx.check_redactions(&[&result.clean, &result.redline])?;
@@ -1447,9 +1450,12 @@ fn produce(
             marked = Some(refresh(bytes)?.docx);
         }
     }
+    // Accept All gives back `clean`: the comparer leaves what the plan did
+    // not touch as the source has it (#1868).
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
         date_time_for_revisions: tx.date.clone(),
+        preserve_untouched: true,
         ..WmlComparerSettings::default()
     };
     let revised = marked.as_deref().unwrap_or(&clean);

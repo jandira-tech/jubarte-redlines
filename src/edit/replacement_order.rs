@@ -45,7 +45,7 @@ fn reorder(dom: &mut Dom, root: NodeId) -> bool {
                 if a != author
                     || d != date
                     || dom.descendants(child, Some(&W::r())).is_empty()
-                    || !fields_complete(dom, child, &W::name("fldChar"))
+                    || !fields_complete(dom, child, &W::fld_char())
                 {
                     break;
                 }

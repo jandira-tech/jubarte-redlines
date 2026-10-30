@@ -952,7 +952,7 @@ impl SourceModel {
                 let mut node = *tables.get(*n)?;
                 for step in rest {
                     let (name, n) = match step {
-                        Step::Row(n) => (W::name("tr"), n),
+                        Step::Row(n) => (W::tr(), n),
                         Step::Cell(n) => (W::tc(), n),
                         _ => return None,
                     };
@@ -2526,7 +2526,7 @@ fn rewrite(
     let inside = |at: usize| ranges.iter().any(|&(start, end)| start <= at && at < end);
     let mut out = Rewrite::default();
     for node in dom.descendants(run, None) {
-        if !dom.name_is(node, &W::t()) && !dom.name_is(node, &W::name("delText")) {
+        if !dom.name_is(node, &W::t()) && !dom.name_is(node, &W::del_text()) {
             continue;
         }
         let value = dom.value(node);

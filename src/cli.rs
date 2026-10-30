@@ -1293,9 +1293,11 @@ pub enum Command {
         /// Reply to comment c5 (with -p c5), as `add -p c5 --content`.
         #[arg(long, value_name = "TEXT", action = clap::ArgAction::Append)]
         reply: Vec<String>,
-        /// Let `-p c5 --content` change a comment another author wrote; it
-        /// keeps their name. Without it that is refused
-        /// (COMMENT_NOT_YOURS): one author answers another with --reply.
+        /// Let `-p c5 --content`, `--delete` and `--resolve` change a comment
+        /// another author wrote (a reworded one keeps their name), and
+        /// `--delete` take their reply with your thread. Without it that is
+        /// refused (COMMENT_NOT_YOURS): one author answers another with
+        /// --reply.
         #[arg(long)]
         rewrite_others_comments: bool,
         /// Accept revision r12 (with -p r12; r1+2 for several); prints the
@@ -1306,14 +1308,16 @@ pub enum Command {
         /// resolved change (`rejected r0 in p3: "from" > "to"`).
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         reject: Vec<bool>,
-        /// Strike another author's insertion r12 (with -p r12): our tracked
-        /// deletion inside it, so the decision shows. --content is a comment
-        /// on the struck words.
+        /// Strike another author's insertion r12 (with -p r12; r10+11 for a
+        /// change of several marks, a replacement's insertion only): our
+        /// tracked deletion inside it, so the decision shows. --content is
+        /// one comment on the struck words.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         strike: Vec<bool>,
-        /// Restore another author's deletion r12 (with -p r12): their deletion
-        /// stays and our tracked insertion of its words follows it. --content
-        /// is a comment on the restored words.
+        /// Restore another author's deletion r12 (with -p r12; r10+11 for a
+        /// change of several marks, a replacement's deletion only): their
+        /// deletion stays and our tracked insertion of its words follows it.
+        /// --content is one comment on the restored words.
         #[arg(long, action = clap::ArgAction::Append, num_args = 0, default_missing_value = "true", value_parser = clap::value_parser!(bool))]
         restore: Vec<bool>,
         /// With --reject: strike each insertion and restore each deletion
@@ -1500,7 +1504,7 @@ pub enum Command {
         /// Only parts whose name contains this (e.g. document.xml).
         #[arg(short = 'p', long, value_name = "NAME")]
         part: Option<String>,
-        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
+        /// Only what contains this: textbox stories; text/runs/xml/changes/tables/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
         #[arg(short = 'g', long, value_name = "TEXT")]
         grep: Option<String>,
         /// Examples per finding kind.
@@ -1825,6 +1829,12 @@ pub enum DebugCheck {
     /// where each sits and what the live properties add (+) and drop (-)
     /// against the recorded ones; with two files, the lines that differ.
     Changes,
+    /// Tables per story part: the grid (and a tblGridChange's old grid),
+    /// each row's mark, gridBefore/gridAfter and trPrChange, each cell's
+    /// mark (cellIns +, cellDel -, cellMerge ~), span, width and vMerge with
+    /// a tcPrChange's old ones, and its paragraphs as `text` shows them;
+    /// with two files, the lines that differ.
+    Tables,
     /// Style definitions by type and name (localized ids pair): docDefaults,
     /// then each style's default flag and basedOn/link by name, and a line
     /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
@@ -1859,6 +1869,7 @@ impl From<DebugCheck> for crate::debug::Check {
             DebugCheck::Xml => Check::Xml,
             DebugCheck::Runs => Check::Runs,
             DebugCheck::Changes => Check::Changes,
+            DebugCheck::Tables => Check::Tables,
             DebugCheck::Styledefs => Check::StyleDefs,
             DebugCheck::Numbering => Check::Numbering,
             DebugCheck::Render => Check::Render,
@@ -3564,6 +3575,13 @@ pub fn typed_edit_protocol(
 /// `--` when `force`. A `--dry-run` that is no flag stays: a FILE after
 /// `--`, or an option's value (`--text --dry-run`). Pure: no I/O.
 pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
+    next_command_to(argv, force, None)
+}
+
+/// [`next_command`], naming `output` as `-o OUTPUT` when the dry run named
+/// no output (#1847): the default it writes, so the command run as printed
+/// cannot write elsewhere. It goes ahead of `--force`, before any `--`.
+pub fn next_command_to(argv: &[String], force: bool, output: Option<&str>) -> Vec<String> {
     let model = top_level_command();
     let arguments: Vec<std::ffi::OsString> = std::iter::once("jubarte".into())
         .chain(argv.iter().map(Into::into))
@@ -3605,15 +3623,21 @@ pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
         .filter(|(_, (at, _))| flags.contains(at))
         .map(|(nth, _)| nth)
         .collect();
-    let mut next = Vec::with_capacity(argv.len() + 1);
+    let tail = |next: &mut Vec<String>| {
+        if let Some(output) = output {
+            next.extend(["-o".to_string(), output.to_string()]);
+        }
+        if force {
+            next.push("--force".to_string());
+        }
+    };
+    let mut next = Vec::with_capacity(argv.len() + 3);
     let mut spelled = 0;
     let mut delimited = false;
     for arg in argv {
         if !delimited && arg == "--" {
             delimited = true;
-            if force {
-                next.push("--force".to_string());
-            }
+            tail(&mut next);
         }
         if !delimited && arg == "--dry-run" {
             spelled += 1;
@@ -3623,8 +3647,8 @@ pub fn next_command(argv: &[String], force: bool) -> Vec<String> {
         }
         next.push(arg.clone());
     }
-    if force && !delimited {
-        next.push("--force".to_string());
+    if !delimited {
+        tail(&mut next);
     }
     next
 }

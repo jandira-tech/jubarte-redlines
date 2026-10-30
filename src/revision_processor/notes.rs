@@ -56,7 +56,7 @@ pub(super) fn prune_orphan_notes(pkg: &mut PartFs, story_parts: &[String]) {
             .collect();
         let mut changed = false;
         for n in notes.w(note) {
-            let separator = notes.dom.attribute(n, &W::name("type")).is_some();
+            let separator = notes.dom.attribute(n, &W::type_()).is_some();
             if !separator
                 && !notes
                     .dom

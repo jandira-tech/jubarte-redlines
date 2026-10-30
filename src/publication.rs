@@ -384,8 +384,8 @@ impl StagedFile {
     }
 }
 
-/// Windows directory handles are read-only, but FlushFileBuffers needs
-/// GENERIC_WRITE. NTFS journals metadata; directory sync is a no-op there.
+/// Windows directory handles are read-only, but `FlushFileBuffers` needs
+/// `GENERIC_WRITE`. NTFS journals metadata; directory sync is a no-op there.
 /// Reopening the parent for writing by path would break root confinement (D35).
 fn sync_directory_for_platform(
     windows: bool,

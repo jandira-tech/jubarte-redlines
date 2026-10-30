@@ -115,7 +115,7 @@ fn table_grid(
     by_cell: &HashMap<NodeId, Vec<(usize, NodeId)>>,
 ) -> Grid {
     let tc = W::tc();
-    let tr = W::name("tr");
+    let tr = W::tr();
     let tbl = W::tbl();
     let rows: Vec<NodeId> = dom
         .descendants(table, Some(&tr))
@@ -135,10 +135,10 @@ fn table_grid(
     let widths_dxa = dom
         .element(table, &W::name("tblGrid"))
         .map(|grid| {
-            dom.elements(grid, Some(&W::name("gridCol")))
+            dom.elements(grid, Some(&W::grid_col()))
                 .into_iter()
                 .map(|col| {
-                    dom.attribute(col, &W::name("w"))
+                    dom.attribute(col, &W::w())
                         .and_then(|w| w.parse::<u32>().ok())
                         .unwrap_or(0)
                 })

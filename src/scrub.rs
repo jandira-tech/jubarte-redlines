@@ -31,7 +31,7 @@ use std::io::Read;
 
 use serde::{Deserialize, Serialize};
 
-use crate::markup_simplifier::remove_rsid_transform;
+use crate::markup_simplifier::remove_all_rsids;
 use crate::namespaces::{W, W15};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -230,7 +230,7 @@ fn remove_comments(pkg: &mut PartFs) {
         };
         let references = part
             .dom
-            .descendants(part.root, Some(&W::name("commentReference")));
+            .descendants(part.root, Some(&W::comment_reference()));
         if references.is_empty() {
             continue;
         }
@@ -336,7 +336,7 @@ fn remove_rsids(pkg: &mut PartFs) {
         for list in part.dom.descendants(part.root, Some(&rsids)) {
             part.dom.remove(list);
         }
-        remove_rsid_transform(&mut part.dom, part.root);
+        remove_all_rsids(&mut part.dom, part.root);
         part.store(pkg);
     }
 }
@@ -557,7 +557,7 @@ fn xml_holds(xml: &str, needle: &str) -> bool {
         }
     }
     // A text split across runs shows only in the paragraph's joined text.
-    let texts = [W::t(), W::del_text(), W::name("instrText")];
+    let texts = [W::t(), W::del_text(), W::instr_text()];
     for p in dom.descendants_and_self(root, Some(&W::p())) {
         let joined: String = dom
             .descendants(p, None)

@@ -1386,18 +1386,44 @@ fn run_edit(
         write_stdout(report.to_jsonl()).map_err(fail)?;
         // A clean dry run says how to apply it: the same command, with the
         // --force an output already there needs. An output --force cannot
-        // replace gets no command, only what to do.
+        // replace gets no command, only what to do. The default output is
+        // spelled as `-o`, so the command run as printed writes the file
+        // the note names (#1847); an X_modified.docx input is updated in
+        // place, which `-o` naming the input would refuse (V2-05).
         if report.ok && !job.quiet {
+            let in_place = matches!(job.target, EditTarget::Single(path) if !job.explicit_output && path == job.file);
+            let default_output = match job.target {
+                EditTarget::Single(path) if !job.explicit_output && !in_place => {
+                    Some(slash_path(path))
+                }
+                _ => None,
+            };
+            let output = default_output.as_deref();
             match taken_edit_output(job) {
                 Some(Taken::Blocked(why)) => edit_status(format_args!("note: {why}")),
+                Some(Taken::Replaceable(_)) if in_place && !job.force => {
+                    edit_status(format_args!(
+                        "note: the next command updates {} in place (--force)",
+                        slash_path(job.file)
+                    ));
+                    edit_status(format_args!("next: {}", next_command(true, output)));
+                }
                 Some(Taken::Replaceable(taken)) if !job.force => {
                     edit_status(format_args!(
                         "note: {} exists; the next command replaces it (--force)",
                         slash_path(&taken)
                     ));
-                    edit_status(format_args!("next: {}", next_command(true)));
+                    edit_status(format_args!("next: {}", next_command(true, output)));
                 }
-                _ => edit_status(format_args!("next: {}", next_command(false))),
+                _ => {
+                    if let Some(output) = output {
+                        edit_status(format_args!(
+                            "note: the next command writes {output}; {} stays as it is",
+                            slash_path(job.file)
+                        ));
+                    }
+                    edit_status(format_args!("next: {}", next_command(false, output)));
+                }
             }
         }
         return Ok(0);
@@ -2195,8 +2221,9 @@ fn settlement_notes(
 
 /// The `note:` lines of an applied edit: the flags' notes, the plan's (a
 /// field read as another), then each anchor that matched as the paragraph
-/// reads rather than as typed. A kept comment names its paragraph in
-/// `published`, the copy the mode writes.
+/// reads rather than as typed, and what a strike or a restore left (a
+/// mark already struck, a replacement's other half). A kept comment names
+/// its paragraph in `published`, the copy the mode writes.
 fn edit_notes(
     notes: &[String],
     result: &jubarte::edit::EditResult,
@@ -2231,6 +2258,9 @@ fn edit_notes(
                 "note: {}: anchor {given:?} read as {read_as:?} ({why})",
                 outcome.id
             ));
+        }
+        if let ("strike" | "restore", Some(message)) = (outcome.kind.as_str(), &outcome.message) {
+            lines.push(format!("note: {}: {message}", outcome.id));
         }
     }
     lines
@@ -2500,15 +2530,15 @@ fn failed_plan_path(plan: Option<&Path>, file: &Path) -> PathBuf {
     }
 }
 
-/// This invocation without its `--dry-run` flag (`--force` added when
-/// `force`), quoted for a POSIX shell: what a clean dry run prints as its
-/// `next:` command.
-fn next_command(force: bool) -> String {
+/// This invocation without its `--dry-run` flag (`-o OUTPUT` added when
+/// `output` names the default it writes, `--force` when `force`), quoted
+/// for a POSIX shell: what a clean dry run prints as its `next:` command.
+fn next_command(force: bool, output: Option<&str>) -> String {
     let mut args = std::env::args_os().map(|arg| arg.to_string_lossy().into_owned());
     let program = args.next().unwrap_or_default();
     let rest: Vec<String> = args.collect();
     std::iter::once(program)
-        .chain(jubarte::cli::next_command(&rest, force))
+        .chain(jubarte::cli::next_command_to(&rest, force, output))
         .map(|arg| jubarte::cli::shell_word(&arg))
         .collect::<Vec<_>>()
         .join(" ")

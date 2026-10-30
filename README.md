@@ -24,7 +24,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.14.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.14.0)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.15.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.15.0)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.
@@ -645,7 +645,9 @@ XSD sees: one line per finding (`code`, `part#path`, message, a `*` when
 it is Word-fatal), or one JSON object each with `--json`. `--repair` writes
 a copy with every repairable finding fixed and lists what remains;
 `--original` with `--author` audits that every text change against the
-original is a revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
+original is a revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`),
+and that no other author's comment is gone, reworded, resolved or reopened
+and every new comment is signed by that author (`FOREIGN_COMMENT`).
 The `edits` rules also report permission endpoints lost from any part
 (`PERMISSION_RANGE_DROPPED`); losing an editable region is not Word-invalid.
 `--rules a11y,style,structure` adds accessibility, style and structure

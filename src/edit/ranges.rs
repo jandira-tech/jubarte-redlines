@@ -321,7 +321,7 @@ fn needs_restore(xml: &str) -> bool {
 /// recursively, ignoring paragraph properties (which may have pPrChange).
 /// A revised path's index is never an output index after paragraph deletion.
 fn restore_textless_permissions(dom: &mut Dom, revised: NodeId, output: NodeId) {
-    for name in [W::name("permStart"), W::name("permEnd")] {
+    for name in [W::perm_start(), W::perm_end()] {
         for node in dom.descendants(output, Some(&name)) {
             dom.remove(node);
         }
@@ -344,7 +344,7 @@ fn restore_textless_permissions(dom: &mut Dom, revised: NodeId, output: NodeId) 
             stack.push((source, destination));
         }
         for (at, child) in children.iter().copied().enumerate() {
-            if ![W::name("permStart"), W::name("permEnd")]
+            if ![W::perm_start(), W::perm_end()]
                 .iter()
                 .any(|name| dom.name_is(child, name))
             {
@@ -396,7 +396,7 @@ pub(super) fn normalize_permission_ids(bytes: &[u8]) -> Result<Option<Vec<u8>>, 
             let Some(id) = dom.attribute(node, &W::id()).map(str::to_string) else {
                 continue;
             };
-            let new = if dom.name_is(node, &W::name("permStart")) {
+            let new = if dom.name_is(node, &W::perm_start()) {
                 let new = if seen.insert(id.clone()) {
                     id.clone()
                 } else {
@@ -404,7 +404,7 @@ pub(super) fn normalize_permission_ids(bytes: &[u8]) -> Result<Option<Vec<u8>>, 
                 };
                 open.entry(id.clone()).or_default().push(new.clone());
                 Some(new)
-            } else if dom.name_is(node, &W::name("permEnd")) {
+            } else if dom.name_is(node, &W::perm_end()) {
                 open.get_mut(&id).and_then(Vec::pop)
             } else {
                 None
