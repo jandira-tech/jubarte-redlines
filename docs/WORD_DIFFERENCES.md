@@ -506,8 +506,17 @@ for `fill_control`, the clean edit output also retains the control.
     column as over several, then fits all of them to its `tblW` (f2-f8, s1,
     s2). Word's own redline of 6926d6b8fd (a 14-column grid under 18-cell
     rows) goes from 16 pages to 14 on Word's 13;
-  - a column that only rows' `gridBefore` holds takes no width, whatever
-    their `wBefore` says, as in Word (b1-b3).
+  - a cell's `tcW` holds its column over a grid Word did not save or over
+    grid columns without a width, as in an autofit table (r1, r2);
+  - a `tblW` too narrow for the cells' `tcW`s and their longest words gives
+    each column without a `tcW` its longest word, and the `tcW` columns share
+    the rest (r6). A `tblW` narrower than every longest word gives each
+    column its longest word, and the table outgrows its `tblW`; past the
+    page, words break (r5);
+  - in a table whose rows reach past its grid, a column that only rows'
+    `gridBefore` holds takes no width, whatever their `wBefore` says, autofit
+    or fixed (b1-b3, r3, r7), and so does a column only `gridAfter` holds
+    (r4).
 - **What still differs.**
   - A fixed table narrower than its columns: Word takes from each column
     what it has past its cell margins (q11 and f9: 132.75, 132.72, 17.22 and
