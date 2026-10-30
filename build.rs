@@ -37,12 +37,14 @@ fn main() {
         "cargo:rustc-env=JUBARTE_BUILD_VERSION={}",
         build_version(root, env!("CARGO_PKG_VERSION"))
     );
-    // Retain Cargo's package-wide change detection for the dirty marker.
-    println!("cargo:rerun-if-changed=.");
-    println!("cargo:rerun-if-changed=.git");
+    // Rerun only when the commit moves. Watching the tree or the index would
+    // rerun this script, and so recompile the crate, after every edit or
+    // `git status`; `.dirty` therefore reflects the tree as of the last
+    // commit change, which is what a release build from a tag needs.
+    println!("cargo:rerun-if-changed=build.rs");
     if root.join(".git").exists() {
         // --git-path resolves worktree .git files and shared ref storage.
-        for name in ["HEAD", "index", "packed-refs"] {
+        for name in ["HEAD", "packed-refs"] {
             if let Some(path) = git(root, &["rev-parse", "--git-path", name]) {
                 println!("cargo:rerun-if-changed={path}");
             }
