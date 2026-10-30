@@ -349,6 +349,16 @@ for `fill_control`, the clean edit output also retains the control.
   redline of w06 crashes Word 16.115; ours opens (difference 16). Matching
   Word would mean splitting the paragraph into a new inserted paragraph and
   the deleted mark; that is open.
+- **One deleted table too.** The rule that keeps the middle paragraph in
+  place keeps any paragraph whose mark carries the other revision where it
+  stands, also when the replaced region holds a single deleted table and
+  nothing can fuse. Word writes every inserted paragraph first and the
+  deleted table after them; we leave the last inserted paragraph after the
+  deleted table (the 0.15.0 parity
+  ladder: `employee_directory_table` → `employee_review_john_smith_suggesting_insertions`
+  and `meeting_agenda_table` → `meeting_minutes_id_paraid_overflow`). Both
+  resolve correctly. Narrowing the rule to a paragraph between two deleted
+  tables is open (#1926).
 
 ### 15. A header or footer only deleted section breaks reference (Compare, #1833)
 
