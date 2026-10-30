@@ -360,9 +360,7 @@ fn quiet_drops_it() {
     }
 }
 
-/// What `read --json` and the JSON Lines of `changes` and `comments` say
-/// of the input's findings: the data, never a stderr line, so
-/// `--json 2>&1 | jq` parses (#1309).
+/// Snapshot validity remains data; JSON Lines validity is a quietable stderr status.
 fn json_validity(dir: &Path, file: &str, quiet: bool) -> [serde_json::Value; 3] {
     let parse = |line: &str| -> serde_json::Value {
         serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}"))
@@ -375,19 +373,35 @@ fn json_validity(dir: &Path, file: &str, quiet: bool) -> [serde_json::Value; 3] 
         }
         let (code, out, err) = run(dir, &args);
         assert_eq!(code, 0, "{args:?}: {err}");
-        assert_eq!(err, "", "{args:?}");
         let lines: Vec<&str> = out.lines().collect();
         reads.push(if task == "read" {
+            assert_eq!(err, "", "{args:?}");
             assert_eq!(lines.len(), 1, "{out}");
             parse(lines[0])["summary"]["input_validity"].clone()
         } else {
-            // The last line is the input's validity, every other a record.
-            let last = parse(lines.last().unwrap());
-            assert_eq!(last.as_object().unwrap().len(), 1, "{last}");
-            for line in &lines[..lines.len() - 1] {
-                assert!(parse(line).get("input_validity").is_none(), "{line}");
+            let fields = if task == "changes" {
+                ["kind", "id", "paragraph"]
+            } else {
+                ["text", "ref", "author"]
+            };
+            for line in lines {
+                let record = parse(line);
+                for field in fields {
+                    assert!(
+                        record.get(field).is_some(),
+                        "{task}: missing {field}: {record}"
+                    );
+                }
             }
-            last["input_validity"].clone()
+            if quiet {
+                assert_eq!(err, "", "{args:?}");
+                serde_json::Value::Null
+            } else {
+                assert_eq!(err.lines().count(), 1, "{args:?}: {err}");
+                let status = parse(err.trim_end());
+                assert_eq!(status.as_object().unwrap().len(), 1, "{status}");
+                status["input_validity"].clone()
+            }
         });
     }
     reads.try_into().unwrap()
@@ -401,13 +415,21 @@ fn json_reads_carry_the_input_validity() {
     for quiet in [false, true] {
         assert_eq!(
             json_validity(dir.path(), "in.docx", quiet),
-            [wanted.clone(), wanted.clone(), wanted.clone()],
+            if quiet {
+                [
+                    wanted.clone(),
+                    serde_json::Value::Null,
+                    serde_json::Value::Null,
+                ]
+            } else {
+                [wanted.clone(), wanted.clone(), wanted.clone()]
+            },
             "quiet {quiet}"
         );
     }
-    // The records are still all there before the last line.
+    // The comment is still present on stdout; status is on stderr.
     let (_, out, _) = run(dir.path(), &["comments", "in.docx", "--json"]);
-    assert_eq!(out.lines().count(), 2, "{out}");
+    assert_eq!(out.lines().count(), 1, "{out}");
     // A path is spelled for a shell, as the stderr line spells it.
     std::fs::write(dir.path().join("my file.docx"), comment_graph("20000002")).unwrap();
     let [read, ..] = json_validity(dir.path(), "my file.docx", false);
@@ -462,9 +484,9 @@ fn a_clean_input_reads_zero_findings() {
         json_validity(dir.path(), "clean.docx", false),
         [zero.clone(), zero.clone(), zero]
     );
-    // No changes and no comments: the validity is the only line.
+    // No changes means no stdout records.
     let (_, out, _) = run(dir.path(), &["changes", "clean.docx", "--json"]);
-    assert_eq!(out, "{\"input_validity\":{\"errors\":0,\"warnings\":0}}\n");
+    assert_eq!(out, "");
 }
 
 /// `read --for-edit` prints JSON, so it is a JSON read too: its result
@@ -937,4 +959,26 @@ fn an_inherited_finding_keys_by_the_change_it_sits_in() {
     assert!(out.starts_with("new: none\n"), "{out}");
     assert!(out.contains("already in the input: 1 (not yours)"), "{out}");
     assert!(!out.contains("resolved:"), "{out}");
+}
+
+/// A clean document with both kinds of records never ends stdout with a status (#1925).
+#[test]
+fn quiet_json_listings_end_with_a_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = comment_graph("10000001");
+    let revision = r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#;
+    let xml = common::docx::part_string(&source, "word/document.xml").unwrap();
+    let xml = xml.replace(COMMENTED, &format!("{COMMENTED}{revision}"));
+    let source = common::docx::replace_entry(&source, "word/document.xml", xml.as_bytes());
+    let validity = jubarte::validate::input_validity_of(&source, "clean.docx");
+    assert_eq!((validity.errors, validity.warnings), (0, 0));
+    std::fs::write(dir.path().join("clean.docx"), source).unwrap();
+    for task in ["changes", "comments"] {
+        let (code, out, err) = run(dir.path(), &[task, "clean.docx", "--json", "-q"]);
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(err, "");
+        let record: serde_json::Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
+        let field = if task == "changes" { "kind" } else { "text" };
+        assert!(record.get(field).is_some(), "{record}");
+    }
 }

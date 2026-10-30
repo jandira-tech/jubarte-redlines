@@ -421,13 +421,7 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
         String::from_utf8_lossy(&json.stderr)
     );
     let json_out = String::from_utf8_lossy(&json.stdout).into_owned();
-    let mut json_lines: Vec<&str> = json_out.lines().collect();
-    // The rows end with one line counting the input's validity findings (#1309).
-    let validity = json_lines.pop().expect("validity line present");
-    assert!(
-        validity.starts_with("{\"input_validity\":{\"errors\":"),
-        "{validity:?}"
-    );
+    let json_lines: Vec<&str> = json_out.lines().collect();
     assert_eq!(
         json_lines.len(),
         count,
@@ -438,7 +432,10 @@ fn changes_subcommand_lists_tracked_changes_in_both_output_modes() {
             line.starts_with('{') && line.ends_with('}'),
             "JSON-lines row: {line:?}"
         );
-        assert!(line.contains("\"kind\":"));
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        for field in ["kind", "id", "paragraph"] {
+            assert!(record.get(field).is_some(), "missing {field}: {record}");
+        }
         assert!(line.contains("\"author\":\"Tester\""));
         assert!(line.contains("\"id\":\"r"));
     }

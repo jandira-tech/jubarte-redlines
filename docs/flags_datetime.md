@@ -14,7 +14,7 @@ Read, edit, compare and render Word documents
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 | `<ORIGINAL_POS>` |  | <ORIGINAL> |  |  | hidden | The original / base document (.docx or Markdown) |
 | `<MODIFIED_POS>` |  | <MODIFIED> |  |  | hidden | The modified document (.docx or Markdown) |
 | `-b, --original` |  | <FILE> |  |  | hidden | Original/base document (overrides the positional ORIGINAL) |
@@ -68,7 +68,7 @@ Internal dispatch for the typed `edit ACTION` grammar
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-v2 replace
 
@@ -104,7 +104,7 @@ Replace exact literal text; without --at, search one declared story
 | `--text` |  | <TEXT> |  |  | conflicts --text-file | Exact plain text (not Markdown); empty text is meaningful |
 | `--text-file` |  | <FILE> |  |  | conflicts --text | Exact UTF-8 file; all trailing newlines are preserved |
 | `--comment` |  | <COMMENT> |  |  |  | Attach a comment to the nonempty resulting text |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-v2 rewrite
 
@@ -135,7 +135,7 @@ Set exact desired paragraph text; an empty value retains the paragraph
 | `--text` |  | <TEXT> |  |  | conflicts --text-file | Exact plain text (not Markdown); empty text is meaningful |
 | `--text-file` |  | <FILE> |  |  | conflicts --text | Exact UTF-8 file; all trailing newlines are preserved |
 | `--comment` |  | <COMMENT> |  |  |  | Attach a comment to the nonempty resulting text |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-v2 insert
 
@@ -172,7 +172,7 @@ Insert an explicitly typed text or paragraph payload
 | `--text` |  | <TEXT> |  |  | conflicts --text-file | Exact plain text (not Markdown); empty text is meaningful |
 | `--text-file` |  | <FILE> |  |  | conflicts --text | Exact UTF-8 file; all trailing newlines are preserved |
 | `--comment` |  | <COMMENT> |  |  |  | Attach a comment to the nonempty resulting text |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-v2 delete
 
@@ -203,7 +203,7 @@ Delete one exact range, or explicitly delete a whole paragraph
 | `--find` |  | <FIND> |  |  | conflicts --whole-block | Exact nonempty literal range to remove |
 | `--whole-block` |  |  | false |  | conflicts --find --occurrence | Explicit structural deletion (PlanV2 delete_paragraph) |
 | `--occurrence` |  | <OCCURRENCE> |  |  | conflicts --whole-block | 1-based literal candidate |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-v2 apply
 
@@ -225,7 +225,7 @@ Apply only: never record into, consume, or rewrite the plan
 | `--json` |  |  | false |  | conflicts --jsonl | One result envelope, including empty results and refusals |
 | `--jsonl` |  |  | false |  | conflicts --json | Header and exactly one terminal result |
 | `-o, --output` |  | <FILE> |  |  | conflicts --dry-run --out-dir | Primary edited DOCX; required unless bundling or dry-running |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-template (hidden task)
 
@@ -233,7 +233,7 @@ Generate a complete source-bound PlanV2 without applying edits
 
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte __edit-template template
 
@@ -263,7 +263,7 @@ Generate a source-bound JSON plan without applying edits
 | `--force` |  |  | false |  |  | Replace only an explicitly named existing output; never an input alias |
 | `--json` |  |  | false |  | conflicts --jsonl | One compact result envelope; conflicts with -o - |
 | `--jsonl` |  |  | false |  | conflicts --json | Result records ending in a terminal result; never a plan encoding |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte compare (aliases: redline)
 
@@ -317,7 +317,7 @@ Compare documents: print the redline as the agent view, or write it with -o
 | `--max-chars` |  | <N> |  |  | under "Read options" | --for-edit: the text budget a page shares (default 24000); a truncated row's preview is never complete text |
 | `--cursor` |  | <TOKEN> |  |  | under "Read options" | --for-edit: continue an earlier bounded query (bound to its source, selection, filters and working basis) |
 | `--all` |  |  | false |  | under "Read options" | --for-edit: no presentation limits (admission limits still hold) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte changes
 
@@ -326,9 +326,9 @@ List tracked changes with IDs for accept, reject and edit plans
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
-| `--json` |  |  | false |  |  | Emit one JSON object per line |
+| `--json` |  |  | false |  |  | Emit one record per line on stdout (records only). The input_validity status is one JSON line on stderr; -q silences it |
 | `--author` |  | <NAME> |  |  | append | Only listed changes by this author (exact match); repeat for several. Comment-body revisions are not listed, even without this filter |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte accept
 
@@ -350,7 +350,7 @@ Accept all tracked changes, or select by ID, author or kind
 | `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte reject
 
@@ -372,7 +372,7 @@ Reject all tracked changes, or select by ID, author or kind
 | `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte convert
 
@@ -412,7 +412,7 @@ Convert Word or Markdown to DOCX, PDF, PNG or Markdown
 | `--fail-on-substitution` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted |
 | `--update-fields` |  |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's layout (TOCs rebuilt from the headings) in the .docx written, after --track-changes. Field codes stay, so Word can update them again; page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md). Prints one line per field; --report writes `{page_count, fields}` |
 | `--timeout` |  | <SECONDS> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more written. An output being written at that moment may be left partial |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte diff
 
@@ -433,7 +433,7 @@ Review differences as GitHub, word, normal, context or side-by-side text
 | `--force` |  |  | false |  | under "Review" | Overwrite the output file if it already exists |
 | `-a, --author` |  | <NAME> | Jubarte |  | under "Paragraph patch" | Who made the changes: the patch's owner |
 | `-d, --datetime` |  | <ISO8601> |  |  | under "Paragraph patch" | Revision timestamp (ISO 8601) [default: now, UTC]; pin it for reproducible output |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte read (aliases: text (hidden), inspect (hidden))
 
@@ -468,7 +468,7 @@ Read the agent view: YAML header, `<!-- pN -->` id lines, changes and comments w
 | `--max-chars` |  | <N> |  |  | under "Read options" | --for-edit: the text budget a page shares (default 24000); a truncated row's preview is never complete text |
 | `--cursor` |  | <TOKEN> |  |  | under "Read options" | --for-edit: continue an earlier bounded query (bound to its source, selection, filters and working basis) |
 | `--all` |  |  | false |  | under "Read options" | --for-edit: no presentation limits (admission limits still hold) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte edit
 
@@ -508,7 +508,7 @@ Edit a document: -p WHERE with --anchor, --content, --delete, --resolve, --reply
 | `--dpi` |  | <DPI> | 96 |  | under "Rendering" | PNG resolution in dots per inch (1-1200) |
 | `--revisions` |  | <REVISIONS> | conventional | conventional, word, custom | under "Revision marks" | How tracked changes are painted in the redline PDF/PNG |
 | `--revision-palette` |  | <SPEC> |  |  | under "Revision marks" | Marks for --revisions custom (see `convert --help`) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte add
 
@@ -534,7 +534,7 @@ Add a paragraph, a comment or a reply: -p WHERE --content TEXT (several -p per c
 | `-o, --output` |  | <FILE.docx> |  |  | conflicts --out-dir | The edited document, a .docx (default: `<FILE's directory>/<stem>_modified.docx`). Any other extension is written as a .docx too; .md, .json, .pdf and .png name the task that writes them |
 | `--out-dir` |  | [<DIR>] |  |  | conflicts --output | Write the bundle instead: clean.docx, redline.docx, patch.diff and report.jsonl (clean.docx and report.jsonl in editing mode) in DIR (default: `<FILE's directory>/<stem>.edit`) |
 | `--force` |  |  | false |  |  | Replace an existing output (the bundle directory's files) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte capabilities
 
@@ -546,7 +546,7 @@ What this binary can do, for agents choosing an operation
 | `--operation` |  | <OPERATION> |  |  | conflicts --matrix | Discover one edit kind, including its fields and execution conditions |
 | `--field` |  | <FIELD> |  |  | conflicts --matrix | Discover one field, optionally within --operation |
 | `--matrix` |  |  | false |  | conflicts --field --operation | Publish operation × target × policy edit support |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte self-update
 
@@ -556,7 +556,7 @@ Check or install a release from GitHub
 |-|-|-|-|-|-|-|
 | `--check` |  |  | false |  |  | Print the installed and latest versions; install nothing |
 | `-y, --yes` |  |  | false |  |  | Install without asking (needed without a terminal) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte debug (hidden task)
 
@@ -572,7 +572,7 @@ Diagnose a Word package, or compare package structures
 | `-n, --limit` |  | <N> | 5 |  |  | Examples per finding kind |
 | `-C, --context` |  | <N> | 0 |  |  | text/xml/runs of two files: common lines shown around each change |
 | `--full-lines` |  |  | false |  |  | text/xml/runs/changes/styledefs/numbering/render: show complete lines instead of clipping them at 200 characters |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte debug diff
 
@@ -587,7 +587,7 @@ What differs between two or more packages, element by element: styles paired by 
 | `--raw` |  |  | false |  |  | Keep rsids, ids, authors, dates, on/off values and empty blocks |
 | `--full` |  |  | false |  |  | Print each shown element's common lines too |
 | `-n, --limit` |  | <N> | 60 |  |  | Hunks per part (0: all) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte visual-diff (aliases: diff-render (hidden))
 
@@ -602,7 +602,7 @@ Compare rendered pages pixel by pixel (different pages: exit 5)
 | `--json` |  |  | false |  |  | Print diff.json to stdout instead of one line per changed page |
 | `--no-overlay` |  |  | false |  |  | Skip the diff-page-NN.png overlays |
 | `--force` |  |  | false |  |  | Overwrite files already in --out-dir |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte comments
 
@@ -611,10 +611,10 @@ List comments, threads and the text they annotate
 | Flag | Aliases | Value | Default | Possible values | Notes | Help |
 |-|-|-|-|-|-|-|
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) |
-| `--json` |  |  | false |  |  | Emit one JSON object per line |
+| `--json` |  |  | false |  |  | Emit one record per line on stdout (records only). The input_validity status is one JSON line on stderr; -q silences it |
 | `--author` |  | <NAME> |  |  |  | Only this author's comments (exact match) |
 | `--latest` |  |  | false |  |  | One comment per thread: the newest |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte append
 
@@ -635,7 +635,7 @@ Join documents in order, preserving images, styles, lists and notes
 | `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte validate (aliases: audit (hidden))
 
@@ -652,7 +652,7 @@ Check Word validity, tracked edits, accessibility, style and structure; or repai
 | `--original` |  | <FILE> |  |  |  | Check tracked edits: every text change against ORIGINAL must be a revision by --author |
 | `--author` |  | <NAME> |  |  |  | The author every change must carry (with --original or --baseline) |
 | `--force` |  |  | false |  |  | Replace an existing --repair output |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte check
 
@@ -663,7 +663,7 @@ Check a document against a source-bound expectation contract
 | `<FILE>` |  | <FILE> |  |  | required | The document (.docx) whose own digest the expectations must name |
 | `--expect` |  | <FILE> |  |  |  | Expectation contract (the only supported profile in this build) |
 | `--json` |  |  | false |  |  | One result envelope, including refusals |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## jubarte scrub
 
@@ -685,7 +685,7 @@ Remove authors, editing IDs, metadata and comments before sharing
 | `--comment-notes` |  |  | false |  | hidden; under "Rendering (-o FILE.pdf or FILE.png)" | Also attach each comment as a PDF note at its anchor. Viewers paint a note as an icon over the text, so none is written by default and the flag stays out of --help: it is for the exceptional case |
 | `--changed-pages` | --changed-only (hidden) |  | false |  | under "Rendering (-o FILE.pdf or FILE.png)" | Keep only the pages a change touches: a body or note revision, a comment anchor, or the first page on which a revised header or footer paints (the first page when none does). Page numbers stay the document's |
 | `--pages` |  | <SPEC> |  |  | under "Rendering (-o FILE.pdf or FILE.png)" | Only these pages, by the document's page numbers: `3`, `1-3,7`. Layout still covers the whole document; the PDF carries these pages and PNGs are named by them (`STEM-page-03.png`) |
-| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their one stderr line naming the input's validity findings; under --json and read --for-edit the output counts them, -q or not |
+| `-q, --quiet` |  |  | false |  | global | No status on success: no `wrote` lines, SUCCESS block or edit summary. Files are still written; a reading task (`read`, `changes`, `compare` without -o, `diff`, `capabilities`) still prints what it read, and warnings and errors still print. `read`, `changes` and `comments` drop their stderr validity status (JSON under `changes --json` and `comments --json`). `read --json` and `read --for-edit` keep validity counts in their output, -q or not |
 
 ## Flags by long name
 

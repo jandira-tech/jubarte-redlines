@@ -38,9 +38,9 @@ pub struct Cli {
     /// Files are still written; a reading task
     /// (`read`, `changes`, `compare` without -o, `diff`, `capabilities`)
     /// still prints what it read, and warnings and errors still print.
-    /// `read`, `changes` and `comments` drop their one stderr line naming
-    /// the input's validity findings; under --json and read --for-edit the
-    /// output counts them, -q or not.
+    /// `read`, `changes` and `comments` drop their stderr validity status
+    /// (JSON under `changes --json` and `comments --json`). `read --json`
+    /// and `read --for-edit` keep validity counts in their output, -q or not.
     #[arg(
         short = 'q',
         long,
@@ -974,7 +974,8 @@ pub enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Emit one JSON object per line.
+        /// Emit one record per line on stdout (records only). The input_validity
+        /// status is one JSON line on stderr; -q silences it.
         #[arg(long)]
         json: bool,
         /// Only listed changes by this author (exact match); repeat for several.
@@ -1560,7 +1561,8 @@ pub enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// Emit one JSON object per line.
+        /// Emit one record per line on stdout (records only). The input_validity
+        /// status is one JSON line on stderr; -q silences it.
         #[arg(long)]
         json: bool,
         /// Only this author's comments (exact match).

@@ -125,13 +125,10 @@ fn revision_dates_changes_json_uses_utc_and_the_listing_keeps_its_columns() {
         assert!(!text.contains(date), "{text}");
     }
     let json = cli(&["changes", "dates.docx", "--json"], directory.path());
-    let mut changes: Vec<serde_json::Value> = json
+    let changes: Vec<serde_json::Value> = json
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    // The last line is the input's validity, never a change (#1309).
-    let validity = changes.pop().unwrap();
-    assert!(validity.get("input_validity").is_some(), "{validity}");
     assert_eq!(changes.len(), 4);
     for change in changes {
         assert_eq!(

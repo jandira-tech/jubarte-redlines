@@ -409,17 +409,18 @@ clap's, which names the flags given. The code is the message's leading
 code (`STALE_SOURCE`), else `USAGE` for an exit 2 and `ERROR` for any
 other.
 
-A JSON read names the input's own validity findings in its output, not
-on stderr (#1309), `-q` or not: `read --json` in the snapshot's
-`summary.input_validity`, `{"errors":0,"warnings":2,"next":"jubarte
-validate FILE"}` (a clean input reads `{"errors":0,"warnings":0}`),
-`read --for-edit` in its result's `input_validity` (#1340), and `changes
---json` and `comments --json` on their last line,
-`{"input_validity":{…}}`, always there, after the records. `read -o
-FILE.json` writes what `read --json` prints, and `read --for-edit -o
-FILE.json` what `--for-edit` prints; with stdout free, the Markdown view
-and `-o` keep the one stderr line (`input has 2 validity warnings;
-jubarte validate FILE lists them`, which `-q` drops).
+A JSON snapshot names the input's own validity findings in its output
+(#1309), `-q` or not: `read --json` in `summary.input_validity`,
+`{"errors":0,"warnings":2,"next":"jubarte validate FILE"}` (a clean
+input reads `{"errors":0,"warnings":0}`), and `read --for-edit` in its
+result's `input_validity` (#1340). `changes --json` and `comments --json`
+emit records only on stdout; their `{"input_validity":{…}}` status is
+one JSON line on stderr, suppressed by `-q` (#1925). The status includes
+`next` only when there are findings. `read -o FILE.json` writes what
+`read --json` prints, and `read --for-edit -o FILE.json` what `--for-edit`
+prints; with stdout free, the Markdown view and `-o` keep the one text
+stderr line (`input has 2 validity warnings; jubarte validate FILE lists
+them`, which `-q` drops).
 
 ### Id lines
 

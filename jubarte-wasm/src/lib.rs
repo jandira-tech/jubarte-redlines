@@ -1348,8 +1348,8 @@ pub fn input_notice(docx: &[u8], file: &str) -> Option<String> {
         .and_then(|findings| jubarte::validate::input_notice(&findings, file))
 }
 
-/// The last line `changes --json` and `comments --json` print, the input's
-/// validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
+/// The JSON status `changes --json` and `comments --json` print on stderr
+/// unless quiet, with the input's validity findings counted (`{"input_validity":{"errors":0,"warnings":2,
 /// "next":"jubarte validate FILE"}}`); `file` is the path as the command
 /// line spells it. A package that cannot be validated counts none.
 ///

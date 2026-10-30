@@ -59,13 +59,15 @@ fn comments_lists_json_lines_and_filters() {
 
     let (code, stdout, stderr) = run(&["comments", file, "--json"]);
     assert_eq!(code, 0, "{stderr}");
-    let mut rows: Vec<serde_json::Value> = stdout
+    let rows: Vec<serde_json::Value> = stdout
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    // The last line is the input's validity, never a comment (#1309).
-    let validity = rows.pop().unwrap();
-    assert!(validity.get("input_validity").is_some(), "{validity}");
+    for row in &rows {
+        for field in ["text", "ref", "author"] {
+            assert!(row.get(field).is_some(), "missing {field}: {row}");
+        }
+    }
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0]["text"], "Too low");
     assert_eq!(rows[0]["anchor_text"], "cap");
@@ -76,8 +78,8 @@ fn comments_lists_json_lines_and_filters() {
 
     let (code, stdout, _) = run(&["comments", file, "--json", "--author", "Bob"]);
     assert_eq!(code, 0);
-    // One comment, then the input's validity.
-    assert_eq!(stdout.lines().count(), 2);
+    // One comment on stdout.
+    assert_eq!(stdout.lines().count(), 1);
     assert!(
         stdout.lines().next().unwrap().contains("Agreed"),
         "{stdout}"
@@ -89,7 +91,7 @@ fn comments_lists_json_lines_and_filters() {
         .lines()
         .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["text"].to_string())
         .collect();
-    assert_eq!(texts, ["\"Agreed\"", "\"Fine\"", "null"]);
+    assert_eq!(texts, ["\"Agreed\"", "\"Fine\""]);
 
     let (code, stdout, _) = run(&["comments", file]);
     assert_eq!(code, 0);

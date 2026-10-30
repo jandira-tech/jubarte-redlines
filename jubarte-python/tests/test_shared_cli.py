@@ -399,8 +399,7 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     for arguments in (["-q", "changes", str(broken)], ["changes", str(clean)]):
         assert _main(arguments) == 0
         assert capsys.readouterr().err == "", arguments
-    # #1309: a JSON read carries the counts instead, -q or not; stderr stays
-    # empty for `--json 2>&1 | jq`.
+    # Snapshot validity stays in the data; listing status goes to stderr (#1925).
     wanted = {"errors": 1, "warnings": 0, "next": notice.removeprefix("input has 1 validity error; ").removesuffix(" lists it")}
     for quiet in ([], ["-q"]):
         assert _main(["read", str(broken), "--json", *quiet]) == 0
@@ -410,10 +409,10 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
         for task in ("changes", "comments"):
             assert _main([task, str(broken), "--json", *quiet]) == 0
             captured = capsys.readouterr()
-            assert captured.err == "", task
+            assert captured.err == ("" if quiet else json.dumps({"input_validity": wanted}, separators=(",", ":")) + "\n"), task
             rows = [json.loads(row) for row in captured.out.splitlines()]
-            assert rows[-1] == {"input_validity": wanted}, task
-            assert all("input_validity" not in row for row in rows[:-1]), task
+            fields = ("kind", "id", "paragraph") if task == "changes" else ("text", "ref", "author")
+            assert all(all(field in row for field in fields) for row in rows), task
     # -o FILE.json writes what --json prints; its stdout is free, so the
     # stderr line stays.
     assert _main(["read", str(broken), "--json"]) == 0
@@ -424,7 +423,9 @@ def test_validate_baseline_and_the_input_notice(tmp_path, capsys):
     assert written.read_text(encoding="utf-8") == printed
     # A clean input counts none, with nothing to run next.
     assert _main(["changes", str(clean), "--json"]) == 0
-    assert capsys.readouterr().out == '{"input_validity":{"errors":0,"warnings":0}}\n'
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == '{"input_validity":{"errors":0,"warnings":0}}\n'
     assert _native.input_validity_line(broken.read_bytes(), "my file.docx") == (
         '{"input_validity":{"errors":1,"warnings":0,"next":"jubarte validate \'my file.docx\'"}}')
     assert _native.input_notice(clean.read_bytes(), "clean.docx") is None

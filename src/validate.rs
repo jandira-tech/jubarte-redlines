@@ -1122,8 +1122,8 @@ pub fn input_notice_of(validity: &InputValidity) -> Option<String> {
 
 /// The input's own validity findings as the JSON reads report them
 /// (#1309): `read --json` in its snapshot's `summary`, `changes --json` and
-/// `comments --json` on their last line ([`input_validity_line`]), where
-/// [`input_notice`]'s stderr line would break `--json 2>&1 | jq`.
+/// `comments --json` in a JSON stderr status ([`input_validity_line`]),
+/// suppressed by `--quiet` (#1925).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputValidity {
     /// Findings of severity `error`.
@@ -1158,7 +1158,7 @@ pub fn input_validity_of(docx: &[u8], file: &str) -> InputValidity {
     input_validity(&validate(docx).unwrap_or_default(), file)
 }
 
-/// The last line `changes --json` and `comments --json` print:
+/// The status `changes --json` and `comments --json` print on stderr unless quiet:
 /// `{"input_validity":{"errors":0,"warnings":2,"next":"jubarte validate FILE"}}`,
 /// its keys in that order.
 ///

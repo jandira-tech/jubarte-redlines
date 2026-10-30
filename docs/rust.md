@@ -261,8 +261,9 @@ Options:
                  Files are still written; a reading task (`read`, `changes`, `compare`
                  without -o, `diff`, `capabilities`) still prints what it read, and
                  warnings and errors still print. `read`, `changes` and `comments` drop
-                 their one stderr line naming the input's validity findings; under
-                 --json and read --for-edit the output counts them, -q or not
+                 their stderr validity status (JSON under `changes --json` and `comments
+                 --json`). `read --json` and `read --for-edit` keep validity counts in
+                 their output, -q or not
   -h, --help     Print help
   -V, --version  Print version
 
@@ -336,9 +337,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -563,7 +564,8 @@ Arguments:
 
 Options:
       --json
-          Emit one JSON object per line
+          Emit one record per line on stdout (records only). The input_validity status
+          is one JSON line on stderr; -q silences it
 
       --author <NAME>
           Only listed changes by this author (exact match); repeat for several.
@@ -573,9 +575,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -629,9 +631,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -724,9 +726,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -886,9 +888,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1003,9 +1005,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1114,9 +1116,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1383,9 +1385,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
       --out-dir [<DIR>]
           Write the bundle instead: clean.docx, redline.docx, patch.diff and
@@ -1577,9 +1579,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1615,9 +1617,10 @@ Options:
                                (`read`, `changes`, `compare` without -o, `diff`,
                                `capabilities`) still prints what it read, and warnings
                                and errors still print. `read`, `changes` and `comments`
-                               drop their one stderr line naming the input's validity
-                               findings; under --json and read --for-edit the output
-                               counts them, -q or not
+                               drop their stderr validity status (JSON under `changes
+                               --json` and `comments --json`). `read --json` and `read
+                               --for-edit` keep validity counts in their output, -q or
+                               not
   -h, --help                   Print help
 ```
 
@@ -1643,9 +1646,9 @@ Options:
                        summary. Files are still written; a reading task (`read`,
                        `changes`, `compare` without -o, `diff`, `capabilities`) still
                        prints what it read, and warnings and errors still print. `read`,
-                       `changes` and `comments` drop their one stderr line naming the
-                       input's validity findings; under --json and read --for-edit the
-                       output counts them, -q or not
+                       `changes` and `comments` drop their stderr validity status (JSON
+                       under `changes --json` and `comments --json`). `read --json` and
+                       `read --for-edit` keep validity counts in their output, -q or not
   -h, --help           Print help
 
 Rendering:
@@ -1677,16 +1680,17 @@ Arguments:
   <FILE>  The document (.docx)
 
 Options:
-      --json           Emit one JSON object per line
+      --json           Emit one record per line on stdout (records only). The
+                       input_validity status is one JSON line on stderr; -q silences it
       --author <NAME>  Only this author's comments (exact match)
       --latest         One comment per thread: the newest
   -q, --quiet          No status on success: no `wrote` lines, SUCCESS block or edit
                        summary. Files are still written; a reading task (`read`,
                        `changes`, `compare` without -o, `diff`, `capabilities`) still
                        prints what it read, and warnings and errors still print. `read`,
-                       `changes` and `comments` drop their one stderr line naming the
-                       input's validity findings; under --json and read --for-edit the
-                       output counts them, -q or not
+                       `changes` and `comments` drop their stderr validity status (JSON
+                       under `changes --json` and `comments --json`). `read --json` and
+                       `read --for-edit` keep validity counts in their output, -q or not
   -h, --help           Print help
 ```
 
@@ -1734,9 +1738,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1842,9 +1846,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1897,9 +1901,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1951,9 +1955,9 @@ Options:
           No status on success: no `wrote` lines, SUCCESS block or edit summary. Files
           are still written; a reading task (`read`, `changes`, `compare` without -o,
           `diff`, `capabilities`) still prints what it read, and warnings and errors
-          still print. `read`, `changes` and `comments` drop their one stderr line
-          naming the input's validity findings; under --json and read --for-edit the
-          output counts them, -q or not
+          still print. `read`, `changes` and `comments` drop their stderr validity
+          status (JSON under `changes --json` and `comments --json`). `read --json` and
+          `read --for-edit` keep validity counts in their output, -q or not
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2020,9 +2024,10 @@ Options:
                            summary. Files are still written; a reading task (`read`,
                            `changes`, `compare` without -o, `diff`, `capabilities`)
                            still prints what it read, and warnings and errors still
-                           print. `read`, `changes` and `comments` drop their one stderr
-                           line naming the input's validity findings; under --json and
-                           read --for-edit the output counts them, -q or not
+                           print. `read`, `changes` and `comments` drop their stderr
+                           validity status (JSON under `changes --json` and `comments
+                           --json`). `read --json` and `read --for-edit` keep validity
+                           counts in their output, -q or not
   -h, --help               Print help
 
 Examples:
