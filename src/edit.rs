@@ -6458,18 +6458,25 @@ impl<'p> Transaction<'p> {
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
             let plan = self.plan;
-            for edit in &edits {
-                let OperationKind::Replace { whole: true, .. } = &plan.operations[edit.op].kind
-                else {
+            let substitutions = boundary_substitutions(self, &edits, para)?;
+            for edit in &substitutions {
+                let paired = edit.start != edit.end
+                    && matches!(plan.operations[edit.op].kind, OperationKind::Insert { .. });
+                if !paired
+                    && !matches!(
+                        plan.operations[edit.op].kind,
+                        OperationKind::Replace { whole: true, .. }
+                    )
+                {
                     continue;
-                };
+                }
                 if edit.replacement.is_empty() {
                     continue;
                 }
                 // The text the anchor matched, as the document has it: an
                 // anchor typed with look-alikes or Markdown marks reads as it.
                 let find = self.projections[para].text[edit.start..edit.end].to_string();
-                let s = new_position(&edits, edit.start, true, Some(edit.op));
+                let s = new_position(&substitutions, edit.start, true, Some(edit.op));
                 let end = s + edit.replacement.len();
                 let story = self.paragraph_story[para].0;
                 let part = (story != 0).then(|| self.stories[story].part.clone());
@@ -8174,6 +8181,104 @@ impl EmptyPlacement {
 /// start edge's text comes before the end edge's (#1303).
 fn sort_edits(edits: &mut [ScheduledEdit], empty: bool) {
     edits.sort_by_key(|e| (e.start, e.end, empty && e.attach_before, e.op));
+}
+
+/// Emit a paragraph-edge insertion and the `delete` it touches as one whole
+/// substitution (#1922): a delete that starts at the paragraph's first
+/// character takes the `position: "start"` insertions, one that ends at its
+/// last character the `position: "end"` ones. Deleting every visible run
+/// must not leave such an insertion without a run to attach to. A `replace`
+/// is never merged: it writes its own pieces, so the clean copy and the
+/// redline keep the same runs. Insertions of different formatting cannot
+/// share one inserted run, so that pair is refused. Original edits remain
+/// available for each operation's comment and formatting coordinates.
+fn boundary_substitutions(
+    tx: &Transaction<'_>,
+    edits: &[ScheduledEdit],
+    para: usize,
+) -> Result<Vec<ScheduledEdit>, EditError> {
+    let text_len = tx.projections[para].text.len();
+    let is = |e: &ScheduledEdit, delete: bool| match tx.plan.operations[e.op].kind {
+        OperationKind::Delete { .. } => delete && e.start != e.end,
+        OperationKind::Insert { .. } => !delete && e.start == e.end,
+        _ => false,
+    };
+    let mut consumed = HashSet::new();
+    let mut substitutions = BTreeMap::new();
+    for (index, removal) in edits.iter().enumerate() {
+        if !is(removal, true) {
+            continue;
+        }
+        let mut combined = removal.clone();
+        let mut prefix = String::new();
+        let mut suffix = String::new();
+        for (i, insertion) in edits.iter().enumerate() {
+            if !is(insertion, false) || consumed.contains(&i) {
+                continue;
+            }
+            let before = removal.start == 0 && insertion.start == 0;
+            let after = removal.end == text_len && insertion.start == text_len;
+            if !before && !after {
+                continue;
+            }
+            if combined.op != removal.op && combined.format != insertion.format {
+                return Err(edge_conflict(tx, combined.op, insertion.op));
+            }
+            if before {
+                prefix.push_str(&insertion.replacement);
+            } else {
+                suffix.push_str(&insertion.replacement);
+            }
+            // The insertion's kind and formatting make this a whole
+            // substitution; a delete carries neither.
+            combined.op = insertion.op;
+            combined.format = insertion.format.clone();
+            consumed.insert(i);
+        }
+        if combined.op != removal.op {
+            combined.replacement = format!("{prefix}{suffix}");
+            substitutions.insert(index, combined);
+        }
+    }
+    Ok(edits
+        .iter()
+        .enumerate()
+        .filter_map(|(i, edit)| {
+            if consumed.contains(&i) {
+                None
+            } else {
+                Some(substitutions.remove(&i).unwrap_or_else(|| edit.clone()))
+            }
+        })
+        .collect())
+}
+
+/// `OVERLAPPING_EDITS` for two edge insertions of different formatting that
+/// meet one delete (#1922). The redline replay has no outcomes, so the ids
+/// fall back to the plan's own numbering instead of indexing them.
+fn edge_conflict(tx: &Transaction<'_>, first: usize, second: usize) -> EditError {
+    let id = |op: usize| {
+        tx.outcomes.get(op).map_or_else(
+            || {
+                tx.plan.operations[op]
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("op-{}", op + 1))
+            },
+            |o| o.id.clone(),
+        )
+    };
+    let message = format!(
+        "{} and {} insert differently formatted text where one delete removes \
+         the paragraph's edge; insert it as one text, or use one replace",
+        id(first),
+        id(second)
+    );
+    if tx.outcomes.get(second).is_some() {
+        tx.conflict(second, &message)
+    } else {
+        err("OVERLAPPING_EDITS", Some(&id(second)), &message)
+    }
 }
 
 /// Set the text of `t`, a `w:t` in a run, writing each `\t` as a `w:tab`
