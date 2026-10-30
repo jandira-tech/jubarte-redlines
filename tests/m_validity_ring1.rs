@@ -2068,6 +2068,110 @@ fn split_move_ranges_are_a_ring1_warning_once() {
     }
 }
 
+/// The #1939 base: a package both tools validate clean. The probe splices
+/// markers over the first `</w:t></w:r></w:p>`, the audit builder's replace.
+const NAMELESS_MOVE_BASE: &[u8] = include_bytes!(
+    "corpus/neurotic_docx_bench/corpus/word_based/docx_source/blue_centered_title_demo_style_default_missing.docx"
+);
+
+fn splice_first_paragraph_end(markers: &str) -> Vec<u8> {
+    let doc = common::docx::part_string(NAMELESS_MOVE_BASE, "word/document.xml")
+        .expect("base document.xml");
+    let needle = "</w:t></w:r></w:p>";
+    assert!(
+        doc.contains(needle),
+        "the #1939 probe anchors on the first run's end"
+    );
+    let doc = doc.replacen(needle, &format!("</w:t></w:r>{markers}</w:p>"), 1);
+    common::docx::replace_entry(NAMELESS_MOVE_BASE, "word/document.xml", doc.as_bytes())
+}
+
+/// #1939: a `moveFromRangeStart` / `moveToRangeStart` whose `w:name` is
+/// missing or empty never entered the per-name counts, so the audit's
+/// DANGLING-MOVE passed `validate`. `w:name` is schema-required.
+/// Word's reaction is unverified, so the finding is a warning lead.
+#[test]
+fn probe_nameless_move_range_start_is_a_lead() {
+    for markers in [
+        r#"<w:moveFromRangeStart w:id="501"/><w:moveFromRangeEnd w:id="501"/>"#,
+        r#"<w:moveFromRangeStart w:id="501" w:name=""/><w:moveFromRangeEnd w:id="501"/>"#,
+        r#"<w:moveToRangeStart w:id="501"/><w:moveToRangeEnd w:id="501"/>"#,
+        r#"<w:moveToRangeStart w:id="501" w:name=""/><w:moveToRangeEnd w:id="501"/>"#,
+    ] {
+        let bytes = splice_first_paragraph_end(markers);
+        let report = check_word_valid_package(&bytes);
+        let findings: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == "MOVE_RANGE_NAME_MISSING")
+            .collect();
+        assert_eq!(findings.len(), 1, "{markers}: {:?}", report.findings);
+        let finding = findings[0];
+        assert_eq!(finding.severity, "warning");
+        assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+        assert_eq!(finding.part, "word/document.xml");
+        assert_eq!(finding.r#ref, finding.location);
+        let side = if markers.contains("moveFrom") {
+            "moveFromRangeStart"
+        } else {
+            "moveToRangeStart"
+        };
+        assert!(finding.location.contains(side), "{finding:?}");
+        assert!(finding.message.contains("w:name"), "{finding:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|f| f.code != "MOVE_RANGE_COUNT_MISMATCH"),
+            "a nameless start is not a named count: {markers} {:?}",
+            report.findings
+        );
+        let public: Vec<_> = jubarte::validate::validate(&bytes)
+            .unwrap()
+            .into_iter()
+            .filter(|f| f.code == "MOVE_RANGE_NAME_MISSING")
+            .collect();
+        assert_eq!(
+            public,
+            vec![finding.clone()],
+            "triage must not duplicate Ring-1 findings"
+        );
+    }
+}
+
+/// The same probe with `w:name="m1"` is the count mismatch the check
+/// already reports: one source range and no destination.
+#[test]
+fn probe_named_dangling_move_still_counts_as_a_mismatch() {
+    let bytes = splice_first_paragraph_end(
+        r#"<w:moveFromRangeStart w:id="501" w:name="m1"/><w:moveFromRangeEnd w:id="501"/>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "MOVE_RANGE_COUNT_MISMATCH")
+        .collect();
+    assert_eq!(findings.len(), 1, "{:?}", report.findings);
+    let finding = findings[0];
+    assert_eq!(finding.severity, "warning");
+    assert!(!finding.word_fatal && !finding.repairable, "{finding:?}");
+    assert!(
+        finding
+            .message
+            .contains("m1: 1 source ranges, 0 destination ranges"),
+        "{finding:?}"
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != "MOVE_RANGE_NAME_MISSING"),
+        "{:?}",
+        report.findings
+    );
+}
+
 #[test]
 fn issue650_aliased_duplicate_attribute_is_word_fatal() {
     for (part, element, shape) in [
