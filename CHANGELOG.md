@@ -47,6 +47,9 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 ### Fixed
 
 - The wasm32 build no longer warns that `edit::record::plan_target` is never used: only the native publish path compiles it. CI's wasm32 clippy now also denies the engine's own warnings (#1700).
+
+- **Reject All joins a paragraph whose inserted mark also changed formatting** (#1722). Restoring an `rPrChange` on a paragraph mark (`w:pPr/w:rPr`) keeps the live `w:ins`, `w:del`, `w:moveFrom` and `w:moveTo`, in that order, and drops a saved copy of the same mark. Word 16 joins `ga1`, `ga3` and `h1` into one paragraph, and `n0` into one paragraph and one section. A deleted mark (`ga2`) still leaves the two paragraphs apart. A run's `rPrChange` is unchanged.
+
 - Header and footer comparisons neutralize unresolved relationship attributes on both inputs before diffing, preserving content deletions and accept/reject round trips in Word and PowerTools modes (#1709). A story that cannot be read, carried or redlined now returns a typed `StoryDiffError` naming the part, instead of silently retaining the original without revision marks.
 
 - **A pure accept or reject no longer hides an error from its resolved lines** (#1702). The Python CLI computes that text before printing and catches only `JubarteError`, the engine refusing the text. That refusal still prints the changed view once and exits 0. Any other error reaches the CLI's handler: `error: …` on stderr and exit 1, with nothing from the resolved view on stdout.

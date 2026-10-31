@@ -646,6 +646,13 @@ fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) 
     ne
 }
 
+/// `ins` / `del` / `moveFrom` / `moveTo`, the paragraph-mark revisions
+/// `CT_ParaRPr` puts first.
+fn paragraph_mark_revision(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(name.local_name(), "ins" | "del" | "moveFrom" | "moveTo")
+}
+
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
@@ -748,11 +755,36 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
     if name == W::r_pr()
         && let Some(chg) = dom.element(node, &W::r_pr_change())
     {
+        // Identify a paragraph mark (`w:pPr/w:rPr`) while `node` is still
+        // parented. A run's `w:rPr` is not one.
+        let paragraph_mark = dom.parent(node).is_some_and(|p| dom.name_is(p, &W::p_pr()));
         let saved = dom.element(chg, &W::r_pr());
         let new_rpr = match saved {
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::r_pr()),
         };
+        // #1722: the reversal below joins on the live ins/del/moveFrom/moveTo.
+        // `CT_ParaRPrOriginal` can hold the same four, so a saved copy of one
+        // is removed and the live mark is put back, first, in that order. Two
+        // of one kind is invalid, and a saved insertion would join after a
+        // selective freeze had already kept the live mark. A run's `rPr` is
+        // left as the snapshot wrote it.
+        if paragraph_mark {
+            for e in dom.elements(new_rpr, None) {
+                if dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)) {
+                    dom.remove(e);
+                }
+            }
+            let live: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| dom.name(e).is_some_and(|n| paragraph_mark_revision(&n)))
+                .collect();
+            for mark in live.into_iter().rev() {
+                let cloned = dom.clone_subtree(mark);
+                dom.add_first(new_rpr, cloned);
+            }
+        }
         carry_kept_revisions(dom, node, new_rpr, true);
         return reject_revisions_for_part_transform(dom, new_rpr);
     }

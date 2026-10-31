@@ -2061,3 +2061,125 @@ fn reject_of_an_inserted_table_with_row_property_changes_drops_it() {
     let xml = part_string(&rejected, "word/document.xml").unwrap();
     assert!(!xml.contains("<w:tbl"), "{xml}");
 }
+
+// =========================================================================
+// #1722: a paragraph mark's ins/del/moveFrom/moveTo survives an rPrChange.
+// Word 16 (2026-10-24) joins on an inserted mark and keeps a deleted one.
+// =========================================================================
+
+/// Two paragraphs, `A` then `B`. Paragraph 1's `w:pPr` is `ppr`.
+fn ab_paragraphs(ppr: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>A</w:t></w:r></w:p><w:p><w:r><w:t>B</w:t></w:r></w:p>"#
+    )
+}
+
+fn ab_header(ppr: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{}</w:hdr>"#,
+        ab_paragraphs(ppr)
+    )
+}
+
+/// #1722 `ga0`, `h0`: the mark is only `w:ins`. Word's Reject All joins `A`
+/// and `B` in the body and in a header.
+#[test]
+fn reject_1722_ga0_h0_joins_a_paragraph_whose_mark_is_only_an_insertion() {
+    let ppr = format!(r#"<w:rPr><w:ins w:id="1" {REV}/></w:rPr>"#);
+    let rejected = reject_revisions(&docx_with_sect(
+        &ab_paragraphs(&ppr),
+        &[header_part(&ab_header(&ppr))],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    assert_eq!(paragraphs(&rejected), ["AB"]);
+    assert_eq!(part_paragraphs(&rejected, "word/header1.xml"), ["AB"]);
+}
+
+/// #1722 `ga1`, `h1`: `w:ins` plus bold plus an `rPrChange` whose saved
+/// `w:rPr` is empty. Word joins the paragraphs and drops the bold.
+#[test]
+fn reject_1722_ga1_h1_joins_an_inserted_mark_whose_formatting_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:ins w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr>"#
+    );
+    let rejected = reject_revisions(&docx_with_sect(
+        &ab_paragraphs(&ppr),
+        &[header_part(&ab_header(&ppr))],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["AB"], "{xml}");
+    assert!(
+        !xml.contains("<w:b/>")
+            && !xml.contains("<w:b ")
+            && !xml.contains("rPrChange")
+            && !xml.contains("<w:ins"),
+        "{xml}"
+    );
+    let header = part_string(&rejected, "word/header1.xml").unwrap();
+    assert_eq!(
+        part_paragraphs(&rejected, "word/header1.xml"),
+        ["AB"],
+        "{header}"
+    );
+}
+
+/// #1722 `ga3`: the `ga1` mark, plus a `w:pPrChange`. Word still joins.
+#[test]
+fn reject_1722_ga3_joins_an_inserted_mark_with_a_paragraph_property_change() {
+    let ppr = format!(
+        r#"<w:jc w:val="center"/><w:rPr><w:ins w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr><w:pPrChange w:id="3" {REV}><w:pPr/></w:pPrChange>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["AB"], "{xml}");
+    assert!(
+        !xml.contains("pPrChange") && !xml.contains("<w:jc"),
+        "{xml}"
+    );
+}
+
+/// #1722 `n0`: an inserted mark with an `rPrChange`, and a section break
+/// with a `pPrChange`. Word's Reject All is one paragraph and one section.
+#[test]
+fn reject_1722_n0_joins_an_inserted_section_break_whose_properties_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:ins w:id="1" {REV}/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr><w:sectPr><w:pgSz w:w="9000" w:h="14000"/></w:sectPr><w:pPrChange w:id="3" {REV}><w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    let sections = xml.matches("<w:sectPr").count();
+    assert!(
+        paragraphs(&rejected) == ["AB"] && sections == 1,
+        "paragraphs {:?}, sections {sections}: {xml}",
+        paragraphs(&rejected)
+    );
+    assert!(!xml.contains(r#"w:w="9000""#), "{xml}");
+}
+
+/// #1722 `ga2`: `w:del` plus an `rPrChange` (saved `w:rPr` empty). Word
+/// keeps the two paragraphs and drops the bold the change added.
+#[test]
+fn reject_1722_ga2_keeps_paragraphs_whose_deleted_mark_also_changed() {
+    let ppr = format!(
+        r#"<w:rPr><w:del w:id="1" {REV}/><w:b/><w:rPrChange w:id="2" {REV}><w:rPr/></w:rPrChange></w:rPr>"#
+    );
+    let rejected = reject_revisions(&docx(&ab_paragraphs(&ppr))).unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert_eq!(paragraphs(&rejected), ["A", "B"], "{xml}");
+    assert!(
+        !xml.contains("<w:b/>")
+            && !xml.contains("<w:b ")
+            && !xml.contains("<w:del")
+            && !xml.contains("rPrChange"),
+        "{xml}"
+    );
+}
