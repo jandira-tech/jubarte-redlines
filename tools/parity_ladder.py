@@ -29,8 +29,14 @@ Ratchet: findings are compared against tools/parity_baseline.tsv.
   bless  -> rewrite baseline from current findings.
   mine   -> corpus-wide qname histogram diff ours-vs-Word (hypothesis feed).
 
+sweep --against BIN: the release gate (#1797). BIN is the previous
+  release's binary, measured now on the same pairs; NEW is then a finding
+  the candidate has that the previous release does not — not a finding
+  absent from the stale blessed TSV.
+
 stdlib only. Usage:
   python3 tools/parity_ladder.py sweep  [--corpus DIR] [--limit N] [--only STEM]
+                                      [--bin CANDIDATE] [--against PREVIOUS]
   python3 tools/parity_ladder.py bless  [...]
   python3 tools/parity_ladder.py mine   [...]
 """
@@ -265,10 +271,10 @@ def load_pairs(corpus: str) -> Iterator[tuple[str, str, str, str | None]]:
                 yield row["pair_stem"], a, b, gt
 
 
-def run_ours(binary: str, a: str, b: str, stem: str) -> tuple[str | None, str]:
+def run_ours(binary: str, a: str, b: str, stem: str, label: str = "") -> tuple[str | None, str]:
     """(output path, "") on success; (None, reason) when the CLI fails."""
     os.makedirs(OUT_DIR, exist_ok=True)
-    out = os.path.join(OUT_DIR, stem + ".ours.docx")
+    out = os.path.join(OUT_DIR, stem + ".ours" + label + ".docx")
     r = subprocess.run([binary, a, b, "-o", out, "--force"], capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
         return None, f"exit {r.returncode}: {(r.stderr or r.stdout)[:200].strip()}"
@@ -286,11 +292,11 @@ def opseq_delta(ours: list[tuple[str, str]], word: list[tuple[str, str]]) -> str
 
 
 def ladder(
-    stem: str, a: str, b: str, gt: str | None, binary: str
+    stem: str, a: str, b: str, gt: str | None, binary: str, label: str = ""
 ) -> list[tuple[str, str]]:
     """Return list of (finding_key, detail). finding_key is stable for ratchet."""
     findings: list[tuple[str, str]] = []
-    out, err = run_ours(binary, a, b, stem)
+    out, err = run_ours(binary, a, b, stem, label)
     if out is None:
         return [("CRASH", err)]
     try:
@@ -339,24 +345,37 @@ def ladder(
     return findings
 
 
-def cmd_sweep(args: argparse.Namespace, bless: bool = False) -> int:
+def collect_findings(
+    pairs: list[tuple[str, str, str, str | None]], binary: str, label: str = ""
+) -> set[str]:
+    """Every (stem, key, detail) row one binary produces over the pairs."""
     rows: set[str] = set()
+    for i, (stem, a, b, gt) in enumerate(pairs):
+        for key, detail in ladder(stem, a, b, gt, binary, label):
+            rows.add(f"{stem}\t{key}\t{detail}")
+        if (i + 1) % 20 == 0:
+            print(f"  …{i + 1}/{len(pairs)}", file=sys.stderr)
+    return rows
+
+
+def cmd_sweep(args: argparse.Namespace, bless: bool = False) -> int:
     pairs = list(load_pairs(args.corpus))
     if args.only:
         pairs = [p for p in pairs if args.only in p[0]]
     if args.limit:
         pairs = pairs[: args.limit]
-    for i, (stem, a, b, gt) in enumerate(pairs):
-        for key, detail in ladder(stem, a, b, gt, args.bin):
-            rows.add(f"{stem}\t{key}\t{detail}")
-        if (i + 1) % 20 == 0:
-            print(f"  …{i + 1}/{len(pairs)}", file=sys.stderr)
-    sorted_rows: list[str] = sorted(rows)
+    sorted_rows: list[str] = sorted(collect_findings(pairs, args.bin))
     swept = {p[0] for p in pairs}
     scoped = bool(args.only or args.limit)
-    base: set[str] = set()
-    if os.path.isfile(BASELINE):
-        base = {l.rstrip("\n") for l in open(BASELINE) if l.strip()}
+    if args.against:
+        # #1797: the baseline is the PREVIOUS RELEASE's binary, measured now
+        # on the same pairs — never the stale blessed TSV.
+        base = collect_findings(pairs, args.against, label=".prev")
+    else:
+        base = set()
+        if os.path.isfile(BASELINE):
+            with open(BASELINE) as f:
+                base = {l.rstrip("\n") for l in f if l.strip()}
     if bless:
         if scoped:  # merge: replace only swept pairs' rows, keep the rest
             sorted_rows = sorted({r for r in base if r.split("\t")[0] not in swept} | set(sorted_rows))
@@ -378,7 +397,10 @@ def cmd_sweep(args: argparse.Namespace, bless: bool = False) -> int:
     for k in new:
         print(f"NEW   {detail_of.get(k, k)}")
     for k in fixed:
-        print(f"FIXED {k}   (run bless to shrink baseline)")
+        if args.against:
+            print(f"FIXED {k}   (fixed vs the previous release)")
+        else:
+            print(f"FIXED {k}   (run bless to shrink baseline)")
     return 1 if new else 0
 
 
@@ -410,9 +432,14 @@ def main() -> None:
     p.add_argument("mode", choices=["sweep", "bless", "mine"])
     p.add_argument("--corpus", default=DEFAULT_CORPUS)
     p.add_argument("--bin", default=DEFAULT_BIN)
+    p.add_argument("--against", default="",
+                   help="sweep only: the previous release's binary; NEW means "
+                        "a finding it does not have (#1797)")
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--only", default="")
     args = p.parse_args()
+    if args.against and args.mode != "sweep":
+        p.error("--against belongs to sweep")
     if args.mode == "sweep":
         sys.exit(cmd_sweep(args))
     if args.mode == "bless":

@@ -1382,6 +1382,44 @@ class ChecklistPerStep(unittest.TestCase):
         self.assertIn("after|you|", block)
 
 
+class QualityGate1797(unittest.TestCase):
+    """#1797: the release is measured against the previous release, run on the
+    same corpus and machine — never a stored <baseline> file. The quality-gate
+    row names the previous release's tag command and the +10% noise floor,
+    derived from the +9.7% self-noise 0.14.0 measured against itself."""
+
+    def row(self) -> str:
+        return next(line for line in checklist_block().splitlines()
+                    if "quality gate" in line)
+
+    def test_the_gate_row_names_the_previous_release_not_a_literal_baseline(self) -> None:
+        row = self.row()
+        self.assertNotIn("<baseline>", row)
+        self.assertIn("--exclude v@V@", row)  # the previous release's tag
+        self.assertIn("previous release", row)
+
+    def test_the_gate_row_names_the_noise_floor_and_where_it_came_from(self) -> None:
+        row = self.row()
+        self.assertIn("10%", row)
+        self.assertIn("9.7", row)
+        self.assertIn("0.14.0", row)
+
+    def test_the_gate_row_runs_against_the_previous_binary_and_load_baseline(self) -> None:
+        row = self.row()
+        self.assertIn("--against", row)
+        self.assertIn("scripts/criterion_abab.sh", row)
+        self.assertIn("--load-baseline", row)
+        self.assertIn("CRITERION_HOME", row)
+        proof = row.split("|", 3)[3]
+        self.assertNotIn("/tmp", proof)
+        self.assertNotIn("mktemp", proof)
+
+    def test_the_gates_run_the_ladder_and_abab_tests(self) -> None:
+        text = RELEASE_SH.read_text()
+        self.assertIn('"${py312[@]}" tools/test_parity_ladder.py', text)
+        self.assertIn('"${py312[@]}" scripts/test_criterion_abab.py', text)
+
+
 # stub gh for the CI-publish wait: the release.yml run and its publish job's
 # conclusion ("" while the job runs), driven by the environment.
 GH_PUBLISH_STUB = "#!/bin/bash\n" + GH_BOUND + r"""case "$*" in

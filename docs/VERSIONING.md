@@ -65,7 +65,7 @@ shell needs a store build that embeds the new engine.
 1. **Quality gate (do not skip)**  
    - `cargo test --all-features` (only known pre-existing failures allowed)
    - `cargo clippy --all-targets --all-features -- -D warnings`
-   - `tools/parity_ladder.py sweep --bin target/release/jubarte` → 0 NEW  
+   - `tools/parity_ladder.py sweep --bin target/release/jubarte --against <previous release's binary>` → 0 NEW vs the previous release, measured now on the same pairs (#1797; the blessed TSV stays the day-to-day ratchet, but it predates the previous release and cannot speak for it)  
    - Optional: permanent ABBA matrix if the change claimed a wall win  
    - **Ring 2 (OpenXmlValidator):** `scripts/redline-sweep.sh … --validate` → no NEW keys vs `tools/validity_baseline.tsv` (local; requires `dotnet`)
    - **Ring 3 (real Word open probe, macOS release gate):** before any crates.io publish or bench-pin promotion, run
@@ -73,6 +73,7 @@ shell needs a store build that embeds the new engine.
      (Word only through the bench's `scripts/word_pdf.py` and `word_watchdog.sh`; `NEUROTIC_DOCX_BENCH` names the bench).
      Required: `probe_fail=0`. A failure that Word's own redline of the pair shares (`probe.log` says so) is still a failure, and only the owner waives it.
      Never use `/tmp` for Word probe paths (sandbox); use `parity/_scratch`.
+   - **Criterion release gate:** `scripts/criterion_abab.sh <previous tag> ../jubarte-loop/release_<ver>/gates` benches the previous release's tag and the candidate interleaved A B A B into one `CRITERION_HOME` under the release's state dir (never `/tmp`, never a saved baseline) and compares the saved runs offline with `--load-baseline` — a case is a regression only when its **mean B-vs-A change clears the +10% noise floor** (0.14.0 measured +9.7% same-binary self-noise, #1797); the a2-vs-a1/b2-vs-b1 self-comparisons print this machine's noise beside it
    - **Criterion local gate (perf-affecting PRs):** `cargo bench --bench redline -- --baseline m233_head` — a **>5%** regression on any case blocks merge.
    - **Speed vs quality (B-fixes):** median generate time > **+10%** vs the M233 baseline (see `docs/SPEED_REVIEW.md`) triggers a perf review before merge.
 
