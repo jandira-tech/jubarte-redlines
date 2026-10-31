@@ -17,9 +17,11 @@ import ast
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -451,6 +453,185 @@ class AppStep(unittest.TestCase):
                                  capture_output=True, text=True, check=True).stdout
         self.assertEqual(tracked, "")
         self.assertIn("/jubarte-app/", (HERE.parent / ".gitignore").read_text().splitlines())
+
+
+# stub cargo for the app gate: records the call, the directory it ran in
+# and what its `../..` (the engine beside the app) holds; $CARGO_RC is its
+# exit status. Its one output line is what a failed gate's log tail shows.
+CARGO_APP_STUB = r"""#!/bin/bash
+echo "cargo $*" >> "$CALLS"
+pwd > "$CALLS.cwd"
+ls ../.. > "$CALLS.layout"
+echo "cargo stub: $*"
+exit "${CARGO_RC:-0}"
+"""
+
+
+class AppGate(unittest.TestCase):
+    """#1816: 0.14.0 was tagged and published before anything compiled the
+    app against the released engine — the checklist row was a [you] reminder
+    and the app's own CI was red. Before step 4 the release now runs the
+    app's own `cargo test` in the layout the app consumes the engine in —
+    the engine at HEAD with the app at jubarte-app/ inside it, so
+    src-tauri's `path = "../.."` resolves to it — and a compile error or a
+    failing test stops the release before the tag."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="appgate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "cargo").write_text(CARGO_APP_STUB)
+        (self.tmp / "bin" / "cargo").chmod(0o755)
+        # the gate's mktemp -d lands under the test's own root, so its
+        # cleanup — not the ambient TMPDIR — decides what a run leaves
+        (self.tmp / "tmp").mkdir()
+        self.calls = self.tmp / "calls"
+        self.engine = self.repo("engine", {
+            "Cargo.toml": '[package]\nname = "jubarte-redlines"\nversion = "0.14.0"\n',
+        })
+        # the bump is uncommitted from step 1 to step 8: not in HEAD
+        (self.engine / "uncommitted").write_text("the bump is not in HEAD\n")
+        self.app = self.repo("app", {
+            "src-tauri/Cargo.toml":
+                '[dependencies]\njubarte = { package = "jubarte-redlines", path = "../.." }\n',
+            # the app's lock on main still names the previous engine — its
+            # own release pull request is what re-records it (the real lock
+            # held app and engine 0.14.0 while both manifests said 0.16.0)
+            "src-tauri/Cargo.lock":
+                '# the app lock\n[[package]]\nname = "jubarte-redlines"\nversion = "0.13.0"\n',
+        })
+        self.script = (
+            "set -euo pipefail\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"APP_REPO={self.app}\n"
+            f'{shell_functions("app_test_gate")}\napp_test_gate\n'
+        )
+
+    def repo(self, name: str, files: dict[str, str]) -> Path:
+        repo = self.tmp / name
+        repo.mkdir()
+        git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+        for rel, text in files.items():
+            path = repo / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", name], check=True)
+        return repo
+
+    def gate_env(self, **env: str) -> dict[str, str]:
+        return dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}",
+                    CALLS=str(self.calls), TMPDIR=str(self.tmp / "tmp"), **env)
+
+    def gate(self, **env: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["bash", "-c", self.script], cwd=self.engine,
+                              env=self.gate_env(**env), capture_output=True,
+                              text=True, timeout=60)
+
+    def test_a_failing_cargo_test_stops_the_release_before_step_4(self) -> None:
+        r = self.gate(CARGO_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("cargo test", r.stderr)
+        # and its call site sits between steps 3 and 4, before the tag (8)
+        text = RELEASE_SH.read_text()
+        call = re.search(r"^\s+app_test_gate$", text, re.M)
+        self.assertIsNotNone(call, "release.sh never calls app_test_gate")
+        self.assertLess(text.index('say "3. '), call.start())
+        self.assertLess(call.start(), text.index('say "4. '))
+
+    def test_a_passing_cargo_test_continues_the_release(self) -> None:
+        r = self.gate()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("cargo test", self.calls.read_text())
+        cwd = Path(str(self.calls) + ".cwd").read_text().strip()
+        self.assertTrue(cwd.endswith("jubarte-app/src-tauri"), cwd)
+        # `../..` is the fresh engine at HEAD — its manifest, and the app
+        # inside it — never the release worktree's uncommitted bump
+        layout = Path(str(self.calls) + ".layout").read_text().split()
+        self.assertIn("Cargo.toml", layout)
+        self.assertIn("jubarte-app", layout)
+        self.assertNotIn("uncommitted", layout)
+
+    def test_the_gate_is_skipped_only_like_the_other_gates(self) -> None:
+        text = RELEASE_SH.read_text()
+        call = re.search(r"^\s+app_test_gate$", text, re.M).start()
+        gate = text[call - 400:call]
+        self.assertIn('[ "$SKIP_GATES" = 0 ]', gate)
+        self.assertNotIn("--skip-app", text)
+        self.assertNotIn("SKIP_APP", text)
+
+    def test_a_lock_naming_an_older_engine_does_not_stop_the_gate(self) -> None:
+        # the app's lock on main records the previous release's versions and
+        # the engine's version moves every release, so a stale lock is the
+        # normal case: cargo runs without --locked/--frozen in the throwaway
+        # layout (the app's real checkout is an archive copy, untouched)
+        lock = (self.app / "src-tauri" / "Cargo.lock").read_text()
+        self.assertIn('version = "0.13.0"', lock)
+        r = self.gate()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual("cargo test\n", self.calls.read_text())
+
+    def test_a_failing_gate_removes_its_layout_and_prints_the_cargo_tail(self) -> None:
+        r = self.gate(CARGO_RC="1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        # the failed run's own cargo output is the clue, not a kept layout
+        self.assertIn("cargo stub: test", r.stderr)
+        self.assertNotIn("kept at", r.stderr)
+        self.assertEqual(list((self.tmp / "tmp").iterdir()), [])
+
+    def test_keeping_the_layout_on_a_failure_is_an_explicit_ask(self) -> None:
+        r = self.gate(CARGO_RC="1", JUBARTE_APP_GATE_KEEP="1")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        gates = list((self.tmp / "tmp").glob("jubarte-app-gate.*"))
+        self.assertEqual(len(gates), 1)
+        self.assertIn(str(gates[0]), r.stderr)
+
+    def test_an_interrupt_removes_the_gate_dir(self) -> None:
+        cargo = self.tmp / "bin" / "cargo"
+        cargo.write_text("#!/bin/bash\nexec sleep 60\n")
+        cargo.chmod(0o755)
+        proc = subprocess.Popen(
+            ["bash", "-c", self.script], cwd=self.engine, env=self.gate_env(),
+            start_new_session=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            gates = []
+            for _ in range(100):
+                gates = list((self.tmp / "tmp").glob("jubarte-app-gate.*"))
+                if gates:
+                    break
+                time.sleep(0.1)
+            self.assertEqual(len(gates), 1, "the gate layout never appeared")
+            os.killpg(proc.pid, signal.SIGINT)
+            proc.communicate(timeout=15)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(list((self.tmp / "tmp").iterdir()), [])
+
+    def test_an_existing_tag_does_not_skip_the_gate(self) -> None:
+        # the tag skip existed only because --locked made a resume refuse the
+        # app's stale lock; a tag proves no app-gate pass, so the gate runs
+        # unless --skip-gates
+        text = RELEASE_SH.read_text()
+        block = text[text.index('say "App gate'):text.index('say "4. ')]
+        self.assertNotIn("refs/tags/$TAG", block)
+        call = re.search(r"^\s+app_test_gate$", block, re.M)
+        self.assertIsNotNone(call)
+        self.assertIn('[ "$SKIP_GATES" = 0 ]', block[:call.start()])
+
+    def test_the_checklist_row_is_a_gate_not_a_reminder(self) -> None:
+        rows = [line.split("|") for line in checklist_block().splitlines()
+                if line.count("|") == 3 and "cargo test" in line]
+        self.assertEqual(len(rows), 1, rows)
+        phase, mark, item, _proof = rows[0]
+        self.assertEqual(mark, "auto")
+        self.assertIn("app-at-main", item)
+        self.assertIn("src-tauri", item)
 
 
 class PushMain(unittest.TestCase):
