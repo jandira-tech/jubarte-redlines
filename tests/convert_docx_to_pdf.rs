@@ -7340,6 +7340,152 @@ fn a_merged_cells_content_grows_the_last_row_it_spans() {
     );
 }
 
+/// The issue #1993 probes (jubarte-loop orphan-vmerge): a 1-column table, `rows` giving each cell's `w:tcPr` extras and text.
+/// `nested` wraps the probe inside an outer table cell, as the
+/// span-absent probe of #1729 held it.
+fn orphan_vmerge_docx(rows: &[(&str, &str)], nested: bool) -> Vec<u8> {
+    let tr = rows
+        .iter()
+        .map(|(tcpr, text)| {
+            format!(
+                "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/>{tcpr}</w:tcPr>\
+                   <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect::<String>();
+    let tbl = "<w:tbl><w:tblPr><w:tblW w:w=\"3000\" w:type=\"dxa\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/>\
+           <w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/>\
+           <w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/>\
+         </w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>"
+        .to_string()
+        + &tr
+        + "</w:tbl>";
+    let body = if nested {
+        format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+               <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:r><w:t>Outer</w:t></w:r></w:p>{tbl}</w:tc></w:tr></w:tbl>"
+        )
+    } else {
+        tbl
+    };
+    minimal_docx_body(&format!("{body}<w:p/>"))
+}
+
+#[test]
+fn an_orphan_vmerge_continuation_opens_a_merge_the_next_continuation_joins() {
+    // Word 16 (2026-10-31, probes orphan_then_cont, plain_orphan_cont): an
+    // orphan continuation paints like a restart, and a continuation below it
+    // joins that merge, so its own text stays hidden.
+    for nested in [false, true] {
+        for (rows, shown, hidden) in [
+            (
+                &[
+                    ("<w:vMerge/>", "ORPHAN"),
+                    ("<w:vMerge/>", "FOLLOWCONT"),
+                    ("", "PLAIN"),
+                ][..],
+                &["ORPHAN", "PLAIN"][..],
+                "FOLLOWCONT",
+            ),
+            (
+                &[
+                    ("", "TOP"),
+                    ("<w:vMerge/>", "ORPHANTWO"),
+                    ("<w:vMerge/>", "FOLLOWTWO"),
+                ][..],
+                &["TOP", "ORPHANTWO"][..],
+                "FOLLOWTWO",
+            ),
+        ] {
+            let pdf = docx_to_pdf(&orphan_vmerge_docx(rows, nested)).expect("convert");
+            let painted = pdf_winansi_text(&pdf);
+            for word in shown {
+                assert!(
+                    painted.contains(word),
+                    "{word} (nested={nested}); painted={painted}"
+                );
+            }
+            assert!(
+                !painted.contains(hidden),
+                "{hidden} (nested={nested}); painted={painted}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_orphan_vmerge_continuation_below_a_plain_row_keeps_its_text() {
+    // Word 16 (issue #1993, probe orphan_second_row): row 1 is a plain
+    // TOPROW cell, row 2 a bare <w:vMerge/> CONTTEXT cell with no restart
+    // above it. Word paints both rows; we hid the continuation's text.
+    for nested in [false, true] {
+        let pdf = docx_to_pdf(&orphan_vmerge_docx(
+            &[("", "TOPROW"), ("<w:vMerge/>", "CONTTEXT")],
+            nested,
+        ))
+        .expect("convert orphan vMerge below a plain row");
+        let painted = pdf_winansi_text(&pdf);
+        assert!(
+            painted.contains("CONTTEXT"),
+            "an orphan continuation is a plain cell; Word paints its text \
+             (nested={nested}); painted={painted}"
+        );
+    }
+}
+
+#[test]
+fn an_orphan_vmerge_continuation_above_a_plain_row_keeps_its_text() {
+    // Word 16 (issue #1993, probe orphan_first_row): row 1 is a bare
+    // <w:vMerge/> FIRSTCONT cell, row 2 a plain SECONDROW cell. Word
+    // paints both; we dropped the first row's cell entirely.
+    for nested in [false, true] {
+        let pdf = docx_to_pdf(&orphan_vmerge_docx(
+            &[("<w:vMerge/>", "FIRSTCONT"), ("", "SECONDROW")],
+            nested,
+        ))
+        .expect("convert orphan vMerge above a plain row");
+        let painted = pdf_winansi_text(&pdf);
+        assert!(
+            painted.contains("FIRSTCONT"),
+            "an orphan continuation is a plain cell; Word paints its text \
+             (nested={nested}); painted={painted}"
+        );
+        assert!(
+            painted.contains("SECONDROW"),
+            "the plain row below keeps its text (nested={nested}); painted={painted}"
+        );
+    }
+}
+
+#[test]
+fn a_real_vmerge_continuation_still_hides_its_text() {
+    // Word 16 (issue #1993, probe proper_merge): a vMerge restart START
+    // followed by a continuation MERGED. Word hides the continuation's
+    // text too, unlike the orphans above; a merge must stay a merge.
+    for nested in [false, true] {
+        let pdf = docx_to_pdf(&orphan_vmerge_docx(
+            &[
+                ("<w:vMerge w:val=\"restart\"/>", "START"),
+                ("<w:vMerge/>", "MERGED"),
+            ],
+            nested,
+        ))
+        .expect("convert proper vMerge");
+        let painted = pdf_winansi_text(&pdf);
+        assert!(
+            painted.contains("START"),
+            "the restart cell keeps its text (nested={nested}); painted={painted}"
+        );
+        assert!(
+            !painted.contains("MERGED"),
+            "a continuation under an open restart hides its text \
+             (nested={nested}); painted={painted}"
+        );
+    }
+}
+
 #[test]
 fn a_row_opening_on_a_heading_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2

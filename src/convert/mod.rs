@@ -15166,12 +15166,17 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
         let mut col = 0usize;
         for raw in row {
             let span = raw.colspan.max(1);
-            if raw.vmerge == VMerge::Continue {
-                if let Some(&(_, or, oi)) = open.get(col).and_then(|s| s.as_ref())
-                    && let Some(origin) = origins.get_mut(or).and_then(|r| r.get_mut(oi))
-                {
-                    origin.rowspan += 1;
-                }
+            // A continuation under an open restart joins its origin and
+            // its own text stays hidden. One with no open restart in its
+            // grid column (python-docx, PHPWord, HTML converters write
+            // these) falls through and lays out as a cell of its own:
+            // Word 16 paints its text (issue #1993), and later
+            // continuations merge into it as if it were the restart.
+            if raw.vmerge == VMerge::Continue
+                && let Some(&(_, or, oi)) = open.get(col).and_then(|s| s.as_ref())
+                && let Some(origin) = origins.get_mut(or).and_then(|r| r.get_mut(oi))
+            {
+                origin.rowspan += 1;
                 col += span;
                 continue;
             }
@@ -15202,7 +15207,7 @@ fn resolve_table_merges(raw_rows: Vec<Vec<RawCell>>) -> Vec<Vec<TableCell>> {
             if open.len() < col + span {
                 open.resize(col + span, None);
             }
-            let mark = (raw.vmerge == VMerge::Restart).then_some((col, ri, idx));
+            let mark = (raw.vmerge != VMerge::None).then_some((col, ri, idx));
             for slot in open.iter_mut().skip(col).take(span) {
                 *slot = mark;
             }
@@ -50380,7 +50385,10 @@ mod coverage_round_two_tests {
     }
 
     #[test]
-    fn orphan_continuations_consume_columns_and_replacements_close_merges() {
+    fn a_replacement_closes_a_merge_and_an_orphan_continuation_opens_its_own() {
+        // Issue #1993: Word paints an orphan continuation (no open restart
+        // in its grid column) as an ordinary cell, and later continuations
+        // merge into it; a plain replacement cell still closes the merge.
         let mut orphan = raw("orphan", 20.0, 0);
         orphan.vmerge = VMerge::Continue;
         let mut origin = raw("old", 20.0, 1);
@@ -50393,8 +50401,13 @@ mod coverage_round_two_tests {
             vec![cont],
             vec![orphan, raw("survivor", 20.0, 1)],
         ]);
+        // The plain replacement closed the first merge: one row only.
         assert_eq!(rows[0][0].rowspan, 1);
-        assert!(rows[2].is_empty());
+        // The orphan continuation became a restart of its own: its cell
+        // stays (text painted) and row three's continuation merges in.
+        assert_eq!(rows[2].len(), 1);
+        assert_eq!(text(&rows[2][0].paras[0].runs), "ignored");
+        assert_eq!(rows[2][0].rowspan, 2);
         assert_eq!(rows[3][0].col, 1);
         assert_eq!(text(&rows[3][0].paras[0].runs), "survivor");
     }
