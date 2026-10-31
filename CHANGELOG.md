@@ -17,6 +17,8 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 
 ### Fixed
 
+- One-shot `edit` and `add` accept `--occurrence N` after `--anchor` in each `-p` group. Ambiguous anchors show numbered context windows and flag-based guidance; plans retain their released wording. `edit replace --find` lists matching paragraphs with their match counts and suggests `--at` or `--occurrence` (#1894).
+
 - `scripts/release.sh` step 12 accepts a `--version` that carries the build commit (`jubarte 0.16.0+00b32d2`, #1924), and still refuses a `.dirty` build (#1954).
 
 ## [0.16.0] - 2026-10-31
@@ -30,8 +32,6 @@ See [docs/VERSIONING.md](docs/VERSIONING.md) for the release codemod and cross-r
 - `changes --json` and `comments --json` now emit records only on stdout: the `input_validity` status moved from stdout to one JSON line on stderr, suppressed by `-q` (#1925). The Python CLI and npm CLI's `changes --json` follow the same rule.
 
 ### Fixed
-
-- One-shot `edit` and `add` accept `--occurrence N` after `--anchor` in each `-p` group. Ambiguous anchors show numbered context windows and flag-based guidance; plans retain their released wording. `edit replace --find` lists matching paragraphs with their match counts and suggests `--at` or `--occurrence` (#1894).
 
 - `validate` checks every relationships part, including `_rels/.rels`, for missing internal targets (`MISSING_REL_TARGET`, #1938). An unused relationship produces a non-fatal warning, which `--repair` does not fix: Word has not been probed for this case. A relationship used by markup retains its Word-fatal error and is reported once even when used repeatedly.
 
