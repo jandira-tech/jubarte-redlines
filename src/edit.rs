@@ -4866,7 +4866,20 @@ impl<'p> Transaction<'p> {
                 outcome,
             ));
         }
-        let edits = rewrite::rewrite_ranges(text, new_text);
+        let mut edits = rewrite::rewrite_ranges(text, new_text);
+        // Keep emits the comparer's hunks when this paragraph has no tracked
+        // change of its own, so a rewrite marks the same phrase the clean
+        // path marks. A change already in the paragraph stays on the word
+        // diff: comparing the document again would re-mark it (#1923).
+        if !edits.is_empty()
+            && self.plan.existing_revisions == ExistingRevisions::Keep
+            && !Self::paragraph_has_own_revision(&self.opened.dom, self.paragraph_nodes[para])
+        {
+            let target = rewrite::apply_ranges(text, &edits);
+            if let Some(compared) = rewrite::comparer_ranges(text, &target) {
+                edits = compared;
+            }
+        }
         if edits.is_empty() {
             outcome.message = Some(
                 "nothing changed: the paragraph already reads as the text (a tab or a break written as a space stays)"
@@ -4910,6 +4923,18 @@ impl<'p> Transaction<'p> {
         outcome.matches = 1;
         outcome.context = Some(format!("{{≡ {}}}", excerpt(new_text, 60)));
         Ok((resolved, outcome))
+    }
+
+    /// `paragraph` already holds an insertion, a deletion or a move. A
+    /// keep-path rewrite of it must not ask the comparer to mark the
+    /// paragraph again.
+    fn paragraph_has_own_revision(dom: &Dom, paragraph: NodeId) -> bool {
+        dom.descendants(paragraph, None).into_iter().any(|n| {
+            dom.name_is(n, &W::ins())
+                || dom.name_is(n, &W::del())
+                || dom.name_is(n, &W::move_from())
+                || dom.name_is(n, &W::move_to())
+        })
     }
 
     /// `list`: every selector matches one body paragraph, once; `restart:

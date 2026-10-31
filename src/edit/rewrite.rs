@@ -6,12 +6,18 @@
 //! `rewrite` operation, and that make a `replace`'s matched text read as its
 //! replacement.
 
+use std::io::{Cursor, Write};
 use std::ops::Range;
 
 use similar::{Algorithm, DiffTag, capture_diff_slices};
+use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use super::anchor::reads_as;
+use crate::comparer::WmlComparerSettings;
+use crate::namespaces::W;
 use crate::util::word_tokens;
+use crate::xmllinq::Dom;
 
 /// A character that holds a place in the projection but is no run text: a
 /// symbol (`w:sym`, U+FFFC). It never takes part in an edit.
@@ -67,13 +73,15 @@ fn breaks(whitespace: &str) -> impl Iterator<Item = char> + '_ {
 }
 
 /// Byte ranges of `old` and their replacements that make it read as `new`,
-/// in order and without overlaps, word by word. A tab or a line break of
-/// `old` may be written as a space in `new` and stays; a `\t` or `\n` that
-/// `new` writes where `old` has none is written. Symbols (U+FFFC) may be
-/// left out of `new`: they stay where they are, and no edit covers one.
-/// Words an edit replaces take the tabs and breaks between them along.
-/// Text of `old` that reads as `new`'s (a curly quote, a non-breaking
-/// space) stays as it is.
+/// in order and without overlaps. A tab or a line break of `old` may be
+/// written as a space in `new` and stays; a `\t` or `\n` that `new` writes
+/// where `old` has none is written. Symbols (U+FFFC) may be left out of
+/// `new`: they stay where they are, and no edit covers one. Words an edit
+/// replaces take the tabs and breaks between them along. Text of `old`
+/// that reads as `new`'s (a curly quote, a non-breaking space) stays as it
+/// is. Changes that only whitespace separates are one range: every deleted
+/// word, then every inserted word, never one substitution per word (#1923).
+/// A kept word still starts a new range.
 pub(super) fn rewrite_ranges(old: &str, new: &str) -> Vec<(usize, usize, String)> {
     ranges(old, new, true)
 }
@@ -95,9 +103,12 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
     let mut ops: Vec<(DiffTag, Range<usize>, Range<usize>, Gaps)> = Vec::new();
     for op in capture_diff_slices(Algorithm::Myers, &old_keys, &new_keys) {
         let (tag, old_range, new_range) = op.as_tag_tuple();
-        if !collapse && tag != DiffTag::Equal {
-            // A `replace` writes changes that only whitespace keeps apart
-            // as one, as Word Compare shows them.
+        // A hunk is every deleted word and then every inserted word. The
+        // space tokens between them would otherwise become one substitution
+        // per deleted word, paired by position (#1923). A kept word still
+        // splits the hunks. `replace` joined this way already; a `rewrite`
+        // joins the same way.
+        if tag != DiffTag::Equal {
             let len = ops.len();
             let joins = match ops.as_slice() {
                 [.., (a, ..), (DiffTag::Equal, gap, ..)] if *a != DiffTag::Equal => {
@@ -169,6 +180,177 @@ fn ranges(old: &str, new: &str, collapse: bool) -> Vec<(usize, usize, String)> {
         edits.extend(split_around_kept(old, start, end, &replacement));
     }
     edits
+}
+
+/// `old` after `edits`, applied from the end so earlier offsets stay put.
+pub(super) fn apply_ranges(old: &str, edits: &[(usize, usize, String)]) -> String {
+    let mut out = old.to_string();
+    for (start, end, text) in edits.iter().rev() {
+        out.replace_range(*start..*end, text);
+    }
+    out
+}
+
+/// The comparer's hunks of `old` against `new`, in `old`'s byte offsets.
+///
+/// A keep-path rewrite emits these so its marks are the ones the clean path
+/// writes. The word diff joins a whitespace-separated hunk, but its longest
+/// common subsequence still anchors on a different word than the comparer
+/// (`that` against `provided`, #1923). `None` when the compare does not tile
+/// `old` or does not read back as `new`: the caller keeps the word diff.
+pub(super) fn comparer_ranges(old: &str, new: &str) -> Option<Vec<(usize, usize, String)>> {
+    let settings = WmlComparerSettings {
+        preserve_untouched: true,
+        ..WmlComparerSettings::default()
+    };
+    let compared = crate::document_comparer::compare_documents_for_edit(
+        &plain_docx(old)?,
+        &plain_docx(new)?,
+        &settings,
+    )
+    .ok()?;
+    let compared = super::replacement_order::typing_order(&compared).unwrap_or(compared);
+    let xml = crate::opc::PartFs::open(&compared)
+        .ok()?
+        .part_string("word/document.xml")?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    let paras = dom.descendants(root, Some(&W::p()));
+    if paras.len() != 1 {
+        return None;
+    }
+    let mut segs: Vec<(char, String)> = Vec::new();
+    for node in dom.descendants(paras[0], None) {
+        let kind = if dom.name_is(node, &W::del_text()) {
+            '-'
+        } else if dom.name_is(node, &W::t()) {
+            let inserted = dom
+                .ancestors(node, None)
+                .into_iter()
+                .take_while(|&a| a != paras[0])
+                .any(|a| dom.name_is(a, &W::ins()));
+            if inserted { '+' } else { '=' }
+        } else {
+            continue;
+        };
+        let text = dom.value(node);
+        match segs.last_mut() {
+            Some((k, s)) if *k == kind => s.push_str(&text),
+            _ => segs.push((kind, text)),
+        }
+    }
+    let edits = ranges_from_marks(old, &segs)?;
+    (apply_ranges(old, &edits) == new).then_some(edits)
+}
+
+/// Kept text must be the next bytes of `old`. A deletion consumes `old`;
+/// an insertion that follows it is that deletion's replacement. An
+/// insertion with nothing deleted lands at the cursor.
+fn ranges_from_marks(old: &str, segs: &[(char, String)]) -> Option<Vec<(usize, usize, String)>> {
+    let mut cursor = 0;
+    let mut i = 0;
+    let mut edits = Vec::new();
+    while i < segs.len() {
+        let (kind, text) = &segs[i];
+        match *kind {
+            '=' => {
+                let end = cursor + text.len();
+                if old.get(cursor..end) != Some(text.as_str()) {
+                    return None;
+                }
+                cursor = end;
+                i += 1;
+            }
+            '-' => {
+                let start = cursor;
+                let end = cursor + text.len();
+                if old.get(start..end) != Some(text.as_str()) {
+                    return None;
+                }
+                cursor = end;
+                i += 1;
+                let mut replacement = String::new();
+                while i < segs.len() && segs[i].0 == '+' {
+                    replacement.push_str(&segs[i].1);
+                    i += 1;
+                }
+                edits.push((start, end, replacement));
+            }
+            '+' => {
+                let mut replacement = String::new();
+                while i < segs.len() && segs[i].0 == '+' {
+                    replacement.push_str(&segs[i].1);
+                    i += 1;
+                }
+                if !replacement.is_empty() {
+                    edits.push((cursor, cursor, replacement));
+                }
+            }
+            _ => return None,
+        }
+    }
+    (cursor == old.len()).then_some(edits)
+}
+
+/// One paragraph, the smallest package the comparer will read.
+fn plain_docx(text: &str) -> Option<Vec<u8>> {
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">{}</w:t></w:r></w:p>",
+        xml_text(text)?
+    );
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+<w:body>{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+<w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr></w:body></w:document>"
+    );
+    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+<Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Override PartName=\"/word/document.xml\" \
+ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+</Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+<Relationship Id=\"rId1\" \
+Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+Target=\"word/document.xml\"/></Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for (name, data) in [
+        ("[Content_Types].xml", types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document.as_str()),
+        (
+            "word/_rels/document.xml.rels",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>",
+        ),
+    ] {
+        zip.start_file(name, opts).ok()?;
+        zip.write_all(data.as_bytes()).ok()?;
+    }
+    Some(zip.finish().ok()?.into_inner())
+}
+
+/// Escape `text` for a `w:t`. A control character other than tab or a
+/// line break cannot sit in XML text; the caller falls back.
+fn xml_text(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            c if c.is_control() && c != '\t' && c != '\n' && c != '\r' => return None,
+            c => out.push(c),
+        }
+    }
+    Some(out)
 }
 
 /// `[start, end)` of `old` with `replacement`, split so that no piece covers
@@ -341,6 +523,31 @@ mod tests {
             assert_eq!(apply(old, &edits), want, "{edits:?}");
             assert_eq!(edits.len(), 1, "{edits:?}");
         }
+    }
+
+    /// A rewrite's hunk is one edit, as a `replace` already joins one.
+    /// Pairing the deleted words with the inserted words by index is the
+    /// keep-path mark the plan rewrite used to write (#1923).
+    #[test]
+    fn rewrite_ranges_join_a_hunk_only_whitespace_separates() {
+        assert_eq!(
+            rewrite_ranges("alpha bravo charlie", "one two three four five"),
+            [(0, 19, "one two three four five".to_string())]
+        );
+        assert_eq!(
+            rewrite_ranges("alpha bravo charlie", "one two three"),
+            [(0, 19, "one two three".to_string())]
+        );
+        let old = "alpha bravo charlie delta echo";
+        assert_eq!(
+            rewrite_ranges(old, "one two"),
+            [(0, old.len(), "one two".to_string())]
+        );
+        // A kept word between two changes still splits them.
+        assert_eq!(
+            rewrite_ranges("pay ten big dollars", "pay twelve big euros"),
+            [(4, 7, "twelve".to_string()), (12, 19, "euros".to_string())]
+        );
     }
 
     #[test]
