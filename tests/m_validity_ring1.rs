@@ -278,6 +278,150 @@ fn probe_dangling_rid_fails() {
     );
 }
 
+fn assert_dangling_relationship_probe(markup: &str, count: usize) {
+    let bytes = splice_first_paragraph_end(&format!("<w:r>{markup}</w:r>"));
+    let report = check_word_valid_package(&bytes);
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "DANGLING_RELATIONSHIP")
+        .collect();
+    assert_eq!(findings.len(), count, "{markup}: {:?}", report.findings);
+    for finding in findings {
+        assert_eq!(finding.part, "word/document.xml");
+        assert_eq!(finding.severity, "warning");
+        assert!(!finding.word_fatal && finding.repairable, "{finding:?}");
+        assert_eq!(
+            finding.message,
+            "dangling relationship id 'rId99' referenced from 'word/document.xml'"
+        );
+    }
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert_eq!(
+        repaired
+            .repaired
+            .iter()
+            .filter(|f| f.code == "DANGLING_RELATIONSHIP")
+            .count(),
+        count
+    );
+    assert!(repaired.remaining.is_empty(), "{:?}", repaired.remaining);
+    let xml = common::docx::part_string(&repaired.docx, "word/document.xml").unwrap();
+    assert!(
+        !xml.contains("rId99"),
+        "dangling attribute survived repair: {xml}"
+    );
+    assert_word_valid_package(&repaired.docx);
+}
+
+#[test]
+fn relationship_probe_diagram_attributes() {
+    assert_dangling_relationship_probe(
+        r#"<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId99" r:lo="rId99" r:qs="rId99" r:cs="rId99"/>"#,
+        4,
+    );
+}
+
+#[test]
+fn relationship_probe_rebound_prefix() {
+    assert_dangling_relationship_probe(
+        r#"<w:drawing xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:embed="rId99"/>"#,
+        1,
+    );
+}
+
+#[test]
+fn relationship_probe_single_quotes() {
+    assert_dangling_relationship_probe("<w:pict r:link='rId99'/>", 1);
+}
+
+#[test]
+fn relationship_probe_every_attribute_local_name() {
+    for local in [
+        "pict",
+        "href",
+        "target",
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "origin",
+        "align",
+        "futureAttribute",
+    ] {
+        assert_dangling_relationship_probe(&format!("<w:pict r:{local} = 'rId99'/>"), 1);
+    }
+}
+
+#[test]
+fn relationship_probe_ignores_nonattributes_and_other_namespaces() {
+    let bytes = splice_first_paragraph_end(
+        r#"<!-- r:id="rId99" r:embed="rId99" r:link="rId99" -->
+<w:r><w:t><![CDATA[r:id="rId99"]]></w:t></w:r>
+<w:r><w:pict xmlns:r="urn:application" r:id="rId99" embed="rId99" data='r:embed="rId99"'/></w:r>"#,
+    );
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != "DANGLING_RELATIONSHIP" && f.code != "MISSING_REL_TARGET"),
+        "{:?}",
+        report.findings
+    );
+}
+
+#[test]
+fn relationship_probe_known_and_empty_ids_pass() {
+    let bytes = splice_first_paragraph_end(
+        r#"<w:r><w:pict xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:dm='rId1' r:lo="" r:qs='rId&#49;'/></w:r>"#,
+    );
+    assert_word_valid_package(&bytes);
+}
+
+#[test]
+fn relationship_probe_leftover_header_uses_its_own_rels() {
+    let header = r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:p><w:r><w:pict rel:pict='rId1'/></w:r></w:p></w:hdr>"#;
+    let mut pkg = PartFs::open(NAMELESS_MOVE_BASE).unwrap();
+    pkg.set_part("word/header9.xml", header.as_bytes().to_vec());
+    assert!(pkg.read_rels_for("word/header9.xml").is_none());
+    let bytes = pkg.to_zip().unwrap();
+    assert_eq!(
+        common::docx::part_string(&bytes, "word/header9.xml").as_deref(),
+        Some(header)
+    );
+    let report = check_word_valid_package(&bytes);
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "DANGLING_RELATIONSHIP")
+        .collect();
+    assert_eq!(findings.len(), 1, "{:?}", report.findings);
+    assert_eq!(findings[0].part, "word/header9.xml");
+    assert!(findings[0].message.contains("rId1"));
+}
+
+#[test]
+fn relationship_probe_missing_target_keeps_existing_code() {
+    let bytes = splice_first_paragraph_end(
+        r#"<w:r><w:pict xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:dm='rId1'/></w:r>"#,
+    );
+    let mut pkg = PartFs::open(&bytes).unwrap();
+    let target = pkg.read_rels_for("word/document.xml").unwrap().items[0]
+        .target
+        .clone();
+    let resolved = pkg.resolve_rel_target("word/document.xml", &target);
+    pkg.remove_part(&resolved);
+    let report = check_word_valid_package(&pkg.to_zip().unwrap());
+    let findings: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.code == "MISSING_REL_TARGET")
+        .collect();
+    assert_eq!(findings.len(), 1, "{:?}", report.findings);
+    assert!(findings[0].message.contains(&target));
+}
+
 /// Word refuses a package that repeats a relationship Id (docxide case8's
 /// fontTable rels: "unreadable content" in Word 16). Opening keeps one copy
 /// of an identical repeat, but the finding stays, so `validate` still says
