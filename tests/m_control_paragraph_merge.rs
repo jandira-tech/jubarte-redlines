@@ -186,7 +186,7 @@ fn the_paragraph_after_a_control_that_brings_nothing_goes() {
             "hn18",
             sdt(&p(&mark("del", 1), &tracked("del", "One.", 2))) + &p("", ""),
             "accept",
-            "[sdt[p]]",
+            "[sdt[p     ]]",
         ),
         // hn22: proofing marks are nothing either.
         (
@@ -207,7 +207,7 @@ fn the_paragraph_after_a_control_that_brings_nothing_goes() {
                 + &p(&mark("del", 3), &tracked("del", "Two.", 4))))
                 + &p("", ""),
             "accept",
-            "[sdt[p]]",
+            "[sdt[p     ]]",
         ),
         // hn23: the last paragraph of a two-paragraph control joins a
         // paragraph that brings nothing, and takes its properties.
@@ -244,7 +244,7 @@ fn the_paragraph_before_a_control_that_brings_nothing_goes() {
             "j04",
             cell(&(p(&mark("ins", 1), "") + &sdt(&p("", &tracked("ins", "Sdt.", 2))))),
             "reject",
-            "[tbl[tr[tc[sdt[p]]]]]",
+            "[tbl[tr[tc[sdt[p     ]]]]]",
         ),
         // j03, the other way: the empty final paragraph after the control
         // goes, the paragraph before it stays.
@@ -296,7 +296,7 @@ fn an_emptied_control_stays_inline_where_both_paragraphs_bring_something() {
                     + &sdt(&p("", &tracked("del", "Sdt.", 4)))),
             ),
             "reject",
-            "[tbl[tr[tc[p[sdt]One.][sdt[pSdt.]]]]]",
+            "[tbl[tr[tc[p[sdt     ]One.][sdt[pSdt.]]]]]",
         ),
         // j09: two controls, both emptied, their paragraphs joined.
         (
@@ -307,7 +307,7 @@ fn an_emptied_control_stays_inline_where_both_paragraphs_bring_something() {
                     + &sdt(&p("", &tracked("del", "Sdt.", 6)))),
             ),
             "accept",
-            "[tbl[tr[tc[pOne.][p[sdt][sdt]]]]]",
+            "[tbl[tr[tc[pOne.][p[sdt     ][sdt     ]]]]]",
         ),
         // j23: the first control emptied, the second keeping its words.
         (
@@ -317,14 +317,14 @@ fn an_emptied_control_stays_inline_where_both_paragraphs_bring_something() {
                     + &sdt(&p("", &run("Sdt.")))),
             ),
             "accept",
-            "[tbl[tr[tc[p[sdt][sdtSdt.]]]]]",
+            "[tbl[tr[tc[p[sdt     ][sdtSdt.]]]]]",
         ),
         // hn12: in the body.
         (
             "hn12",
             sdt(&p(&mark("del", 1), &tracked("del", "One.", 2))) + &p("", &run("Two.")),
             "accept",
-            "[p[sdt]Two.]",
+            "[p[sdt     ]Two.]",
         ),
     ];
     for (word, body, mode, expected) in cases {
@@ -340,18 +340,18 @@ fn an_emptied_control_stays_before_an_equation_it_joins() {
     let eq = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
     let emptied = || sdt(&p(&mark("del", 3), &tracked("del", "Sdt.", 4)));
     let cases = [
-        ("m1", emptied() + &p("", eq), "[p[sdt]{eq}]"),
+        ("m1", emptied() + &p("", eq), "[p[sdt     ]{eq}]"),
         (
             "m2",
             p(&mark("del", 1), &run("One.")) + &emptied() + &p("", eq),
-            "[pOne.[sdt]{eq}]",
+            "[pOne.[sdt     ]{eq}]",
         ),
         (
             "m3",
             emptied() + &p("", &format!("{eq}{}", run("Two."))),
-            "[p[sdt]{eq}Two.]",
+            "[p[sdt     ]{eq}Two.]",
         ),
-        ("m4", emptied() + &p("", &run("Two.")), "[p[sdt]Two.]"),
+        ("m4", emptied() + &p("", &run("Two.")), "[p[sdt     ]Two.]"),
     ];
     let mut failures = Vec::new();
     for (word, body, expected) in cases {
@@ -461,7 +461,7 @@ fn a_join_that_would_split_a_multi_paragraph_control_keeps_the_mark() {
             "hn35",
             two("del") + &sdt(&p("", &tracked("del", "Z.", 2))),
             "accept",
-            "[sdt[pX.][pY.]][sdt[p]]",
+            "[sdt[pX.][pY.]][sdt[p     ]]",
         ),
         // hn36: in a cell.
         (
@@ -506,6 +506,102 @@ fn a_join_that_would_split_a_multi_paragraph_control_keeps_the_mark() {
     ];
     for (word, body, mode, expected) in cases {
         assert_eq!(shape(&resolve(&body, mode)), expected, "{word} {mode}");
+    }
+}
+
+/// #1703: an Accept All / Reject All that empties a content control is
+/// where Word 16 writes `w:showingPlcHdr` into the control's `w:sdtPr`
+/// and a bare run of five spaces —
+/// `<w:r><w:t xml:space="preserve">     </w:t></w:r>` — inside the
+/// control's paragraph when the control is a block, directly in
+/// `w:sdtContent` when it is inline. Only the innermost of nested
+/// emptied controls gets it (hn30). Every case is a redline of the
+/// #1694 A/B; the expected shape is Word's.
+#[test]
+fn an_emptied_control_shows_words_placeholder() {
+    const FIVE: &str = r#"<w:t xml:space="preserve">     </w:t>"#;
+    let ins_p = |id: u32, text: &str| {
+        format!(
+            "<w:p>{}</w:p>",
+            mark("ins", id) + &tracked("ins", text, id + 100)
+        )
+    };
+    let cases = [
+        // hn18: a block control emptied on Accept, in the body.
+        (
+            "hn18",
+            sdt(&p(&mark("del", 1), &tracked("del", "One.", 2))) + &p("", ""),
+            "accept",
+            "[sdt[p     ]]",
+            1,
+        ),
+        // hn12: the same before a paragraph with words — the emptied
+        // control becomes inline, the run straight in `sdtContent`.
+        (
+            "hn12",
+            sdt(&p(&mark("del", 1), &tracked("del", "One.", 2))) + &p("", &run("Two.")),
+            "accept",
+            "[p[sdt     ]Two.]",
+            1,
+        ),
+        // hn31: every paragraph of a two-paragraph control deleted.
+        (
+            "hn31",
+            sdt(&(p(&mark("del", 1), &tracked("del", "One.", 2))
+                + &p(&mark("del", 3), &tracked("del", "Two.", 4))))
+                + &p("", ""),
+            "accept",
+            "[sdt[p     ]]",
+            1,
+        ),
+        // hn35: a one-paragraph control whose words alone are deleted.
+        (
+            "hn35",
+            sdt(&p("", &tracked("del", "Sdt.", 2))),
+            "accept",
+            "[sdt[p     ]]",
+            1,
+        ),
+        // hn30: nested controls whose paragraphs were all inserted —
+        // only the inner emptied control is marked.
+        (
+            "hn30",
+            sdt(&sdt(&(ins_p(1, "one") + &ins_p(2, "two")))) + &p("", ""),
+            "reject",
+            "[sdt[sdt[p     ]]]",
+            1,
+        ),
+        // j04: a block control in a cell whose words were inserted.
+        (
+            "j04",
+            cell(&(p(&mark("ins", 1), "") + &sdt(&p("", &tracked("ins", "Sdt.", 2))))),
+            "reject",
+            "[tbl[tr[tc[sdt[p     ]]]]]",
+            1,
+        ),
+        // j16: an inline control in a cell whose words were inserted.
+        (
+            "j16",
+            cell(
+                &(sdt(&p(&mark("ins", 1), &tracked("ins", "Sdt.", 2)))
+                    + &p(&mark("del", 3), &run("One."))
+                    + &sdt(&p("", &tracked("del", "Sdt.", 4)))),
+            ),
+            "reject",
+            "[tbl[tr[tc[p[sdt     ]One.][sdt[pSdt.]]]]]",
+            1,
+        ),
+    ];
+    for (word, body, mode, expected, count) in cases {
+        let out = resolve(&body, mode);
+        let xml = common::docx::part_string(&out, "word/document.xml").unwrap();
+        assert_eq!(shape(&out), expected, "{word} {mode}");
+        assert_eq!(
+            xml.matches("<w:showingPlcHdr").count(),
+            count,
+            "{word} {mode}: w:showingPlcHdr"
+        );
+        assert_eq!(xml.matches(FIVE).count(), count, "{word} {mode}: runs");
     }
 }
 
@@ -561,21 +657,25 @@ fn a_control_whose_marks_all_go_joins_the_paragraph_after_it() {
     // after it join (k01, k06, k04), and a block where nothing does (k07).
     // A mark left in the control still holds the join (k08).
     let cases = [
-        ("k01", emptied() + &p("", &run("Three.")), "[p[sdt]Three.]"),
+        (
+            "k01",
+            emptied() + &p("", &run("Three.")),
+            "[p[sdt     ]Three.]",
+        ),
         (
             "k06",
             emptied() + &p("", &tracked("ins", "Three.", 5)),
-            "[p[sdt]Three.]",
+            "[p[sdt     ]Three.]",
         ),
         (
             "k04",
             cell(&(emptied() + &p("", &run("Three.")))),
-            "[tbl[tr[tc[p[sdt]Three.]]]]",
+            "[tbl[tr[tc[p[sdt     ]Three.]]]]",
         ),
         (
             "k07",
             emptied() + &p("", &tracked("del", "Three.", 5)),
-            "[sdt[p]]",
+            "[sdt[p     ]]",
         ),
         (
             "k08",
@@ -627,4 +727,46 @@ fn a_kept_mark_loses_its_section_break_on_accept() {
         "[sdt[pX.][p{jc=right}Y.]][p{jc=right}Z.]",
         "c04 accept"
     );
+}
+
+#[test]
+fn reject_keeps_the_joined_paragraph_and_the_blank_inside_the_control() {
+    // #2006: the shape a Word-mode compare writes when a block control's
+    // paragraphs change. Word 16's Reject All (2026-10-31,
+    // jubarte-loop/agents/issues/2006) keeps both paragraphs in the control.
+    let eq = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+    let wrapped = |kind: &str, inner: &str, id: u32| {
+        format!(r#"<w:{kind} w:id="{id}" {REV}>{inner}</w:{kind}>"#)
+    };
+    let cases = [
+        (
+            "t2006",
+            p(&mark("ins", 1), &tracked("ins", "New.", 2))
+                + &p(
+                    "",
+                    &(tracked("ins", "New2.", 3) + &tracked("del", "Old.", 4)),
+                )
+                + "<w:p/>",
+            "[sdt[pOld.][p]]",
+        ),
+        (
+            "m2006",
+            p(&mark("ins", 1), &wrapped("ins", eq, 2))
+                + &p("", &(wrapped("ins", eq, 3) + &wrapped("del", eq, 4)))
+                + "<w:p/>",
+            "[sdt[p{eq}][p]]",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (word, blocks, expected) in cases {
+        let redline = docx_with(&sdt(&blocks), &[]);
+        let out = reject_revisions(&redline).unwrap();
+        let report = check_word_valid_package(&out);
+        assert!(report.ok(), "{word}: {:?}", report.errors);
+        let got = shape(&out);
+        if got != expected {
+            failures.push(format!("{word}: {got}, Word {expected}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -76,13 +76,18 @@ fn typing_order(bytes: &[u8], part: &str) {
     assert_eq!(revs[1].2, "45");
 }
 
-fn resolved(source: &[u8], edited: &[u8], part: &str) {
-    assert_eq!(text(&accept_revisions(edited).unwrap(), part), NEW);
+fn resolved_text(source: &[u8], edited: &[u8], part: &str, accepted: &str, rejected: Option<&str>) {
+    assert_eq!(text(&accept_revisions(edited).unwrap(), part), accepted);
+    let expected_reject = rejected.map_or_else(|| text(source, part), String::from);
     assert_eq!(
         text(&reject_revisions(edited).unwrap(), part),
-        text(source, part)
+        expected_reject
     );
     assert_word_valid_package(edited);
+}
+
+fn resolved(source: &[u8], edited: &[u8], part: &str) {
+    resolved_text(source, edited, part, NEW, None);
 }
 
 fn anchored(source: &[u8], at: &str) -> (Vec<u8>, String) {
@@ -361,6 +366,10 @@ fn filling_a_control_uses_typing_order() {
     );
     let plan = EditPlan::from_json(&json!({"schema_version":1,"author":"Carol Diaz","date":"2026-10-18T10:00:00Z","operations":[{"kind":"fill_control","control":{"tag":"days"},"text":"45"}]}).to_string()).unwrap();
     let out = apply_plan(&source, &plan).unwrap().redline;
+    // #2004: the deletion and the insertion share the one control, so
+    // neither resolution leaves an emptied duplicate behind.
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:sdt>").count(), 1, "{xml}");
     resolved(&source, &out, "word/document.xml");
     typing_order(&out, "word/document.xml");
 }

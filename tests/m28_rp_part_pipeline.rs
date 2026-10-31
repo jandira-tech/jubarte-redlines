@@ -1598,12 +1598,14 @@ fn a5b_nested_controls_of_inserted_paragraphs_reject_without_panic() {
 
     let out = reject_revisions_document(&mut d, body);
 
+    // #1703: the only text left is the five-space placeholder Word puts in
+    // the innermost emptied control; the outer is not marked.
     let texts: Vec<String> = d
         .descendants(out, Some(&W::t()))
         .iter()
         .map(|&t| d.value(t))
         .collect();
-    assert!(texts.is_empty(), "{texts:?}");
+    assert_eq!(texts, ["     "], "{texts:?}");
     // Both inserted paragraphs go; the paragraph their marks merged into
     // stays, with its old properties, inside both controls.
     let blocks = d.elements(out, None);
@@ -1661,7 +1663,8 @@ fn a5b_control_whose_text_alone_is_deleted_stays_beside_a_deleted_mark() {
         .iter()
         .map(|&t| d.value(t))
         .collect();
-    assert_eq!(texts.concat(), "onetwo");
+    // #1703: the emptied control shows Word's five-space placeholder.
+    assert_eq!(texts.concat(), "     onetwo");
 }
 
 /// A control with no run at all (an empty paragraph) stands on its

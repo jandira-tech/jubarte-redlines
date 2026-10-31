@@ -448,6 +448,96 @@ fn align_content_control_ancestry(dom: &Dom, atoms: &mut [ComparisonUnitAtom]) {
     }
 }
 
+/// Join a control whose whole content changed (#2004). With no Equal atom
+/// inside it, the deletions keep A's `w:sdt` and the insertions B's, and
+/// coalescing writes two controls with one id: inline, or block-level
+/// around whole paragraphs. An A control whose atoms are all deleted takes
+/// the one B control whose atoms are all inserted when the two name the same
+/// authored control at the same ancestry (every enclosing control too) and
+/// their atoms form one contiguous run. One `w:sdt` (B's properties) then
+/// holds both sides, as when Word types into it, and no content moves.
+fn join_rewritten_controls(dom: &Dom, atoms: &mut [ComparisonUnitAtom]) {
+    let sdt = W::sdt();
+    let control_id = |node: NodeId| {
+        dom.element(node, &W::sdt_pr())
+            .and_then(|pr| dom.element(pr, &W::id()))
+            .and_then(|id| dom.attribute(id, &W::val()))
+            .filter(|id| !id.is_empty())
+    };
+    // The same control on both sides: the exact `w:id` when both carry
+    // one; the tag or alias only when one side has no id.
+    let same = |a: NodeId, b: NodeId| match (control_id(a), control_id(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => same_authored_control(dom, a, b),
+    };
+    // Each control's atoms and its path down to its `w:sdtContent`.
+    let mut atoms_of: Vec<(NodeId, Vec<usize>, Vec<NodeId>)> = Vec::new();
+    for (index, atom) in atoms.iter().enumerate() {
+        let path = &atom.ancestor_elements;
+        for (i, &node) in path.iter().enumerate() {
+            if !dom.name_is(node, &sdt) || i + 1 >= path.len() {
+                continue;
+            }
+            match atoms_of.iter_mut().find(|(c, ..)| *c == node) {
+                Some((_, list, _)) => list.push(index),
+                None => atoms_of.push((node, vec![index], path[..=i + 1].to_vec())),
+            }
+        }
+    }
+    let all = |list: &[usize], status: CorrelationStatus| {
+        list.iter().all(|&i| atoms[i].correlation_status == status)
+    };
+    let names = |path: &[NodeId]| path.iter().map(|&n| dom.name(n)).collect::<Vec<_>>();
+    let mut joined: Vec<(NodeId, Vec<NodeId>)> = Vec::new();
+    for (a, a_atoms, a_path) in &atoms_of {
+        if !all(a_atoms, CorrelationStatus::Deleted) {
+            continue;
+        }
+        let candidates: Vec<&(NodeId, Vec<usize>, Vec<NodeId>)> = atoms_of
+            .iter()
+            .filter(|(b, b_atoms, b_path)| {
+                b != a
+                    && all(b_atoms, CorrelationStatus::Inserted)
+                    && names(a_path) == names(b_path)
+                    && a_path
+                        .iter()
+                        .zip(b_path)
+                        .filter(|&(&x, _)| dom.name_is(x, &sdt))
+                        .all(|(&x, &y)| same(x, y))
+            })
+            .collect();
+        let [(b, b_atoms, b_path)] = candidates.as_slice() else {
+            continue;
+        };
+        let mut run: Vec<usize> = a_atoms.iter().chain(b_atoms).copied().collect();
+        run.sort_unstable();
+        run.dedup();
+        if run
+            .last()
+            .is_some_and(|&last| last - run[0] + 1 != run.len())
+            || joined.iter().any(|(_, p)| p.contains(b))
+        {
+            continue;
+        }
+        joined.push((*a, b_path.clone()));
+    }
+    for atom in atoms.iter_mut() {
+        if atom.correlation_status != CorrelationStatus::Deleted {
+            continue;
+        }
+        for (a, b_path) in &joined {
+            let path = &atom.ancestor_elements;
+            let Some(i) = path.iter().position(|n| n == a) else {
+                continue;
+            };
+            let mut rewritten = b_path.clone();
+            rewritten.extend_from_slice(&path[(i + 2).min(path.len())..]);
+            atom.ancestor_elements = rewritten.into();
+            atom.ancestor_unids = None;
+        }
+    }
+}
+
 fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     dom.name_is(atom.content_element, &W::p_pr())
 }
@@ -469,6 +559,7 @@ type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)
 /// doesn't match stays out of every atom's ancestor chain.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
     align_content_control_ancestry(dom, atoms);
+    join_rewritten_controls(dom, atoms);
     let unid = PT::unid();
     let footnote = W::footnote();
     let endnote = W::endnote();
@@ -966,7 +1057,13 @@ pub fn coalesce_recurse(
             } else {
                 String::new()
             };
-            let st = if is_txbx_from_level(dom, gc, level) {
+            // One content control holds every status its atoms carry: its
+            // deletions and insertions sit in the one `w:sdtContent` (#2004).
+            let control = gc
+                .ancestor_elements
+                .get(level + 1)
+                .is_some_and(|&node| dom.name_is(node, &W::sdt()));
+            let st = if is_txbx_from_level(dom, gc, level) || control {
                 "Equal"
             } else {
                 status_str(gc.correlation_status)
