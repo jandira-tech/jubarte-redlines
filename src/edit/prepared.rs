@@ -2033,6 +2033,7 @@ pub(crate) mod tests {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
             code: None,
             message: None,
         };

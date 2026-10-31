@@ -189,6 +189,7 @@ impl Transaction<'_> {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
         };
         let fail = |code: &str, msg: String, outcome: EditOutcome| {
             Box::new((err(code, Some(id), msg), outcome))

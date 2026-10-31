@@ -258,6 +258,7 @@ fn outcome_of(e: &EditError, plan: &EditPlan, i: usize) -> EditOutcome {
             anchor_given: None,
             anchor_read_as: None,
             near: None,
+            candidates: Vec::new(),
             code: None,
             message: None,
         })

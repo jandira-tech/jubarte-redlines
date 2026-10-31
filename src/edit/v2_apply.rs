@@ -1669,6 +1669,7 @@ fn outcome(i: usize, kind: &OperationKind) -> EditOutcome {
         anchor_given: None,
         anchor_read_as: None,
         near: None,
+        candidates: Vec::new(),
     }
 }
 fn mapped_paragraph(tx: &Transaction<'_>, source: usize) -> Result<usize, EditError> {
