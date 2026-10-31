@@ -22616,8 +22616,11 @@ fn collect_hf_runs(
         // Text/field paragraphs instead wrap their pictures with the ink.
         let flow_pics = media.is_some()
             && (!para_shown_text(dom, para).trim().is_empty()
-                || !dom.descendants(para, Some(&W::fld_simple())).is_empty()
-                || !dom.descendants(para, Some(&W::fld_char())).is_empty());
+                || [W::fld_simple(), W::fld_char()].iter().any(|name| {
+                    dom.descendants(para, Some(name))
+                        .into_iter()
+                        .any(|field| dom.ancestors(field, Some(&W::txbx_content())).is_empty())
+                }));
         let mut scan = FieldScan {
             flow_pics,
             ..FieldScan::default()
@@ -22715,7 +22718,16 @@ fn collect_hf_runs(
         // Text under a line-filling picture is a line of its own; one after
         // the text wraps to a line of its own under it (PR #247 review).
         let trails = !spliced && hf_pic_trails_line(dom, para, sheet, text_w);
-        let pic_h = if spliced || trails || hf_pic_owns_line(dom, para, sheet, text_w) {
+        let pic_h = if spliced {
+            // Bound pictures size their own wrapped lines. Other drawings
+            // (e.g. deleted runs and numeric-field caches) still paint on
+            // the chrome image path and must keep their reservation.
+            let bound: HashSet<_> = line
+                .iter()
+                .filter_map(|r| r.pic.as_ref().map(|p| p.src))
+                .collect();
+            hf_unbound_inline_pic_h(dom, para, &bound)
+        } else if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
             0.0
         } else {
             hf_inline_pic_h(dom, para)
@@ -22821,9 +22833,17 @@ fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
 /// The tallest inline picture directly in a chrome paragraph (text-box
 /// pictures excluded), from its `wp:extent`.
 fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
+    hf_unbound_inline_pic_h(dom, para, &HashSet::new())
+}
+
+fn hf_unbound_inline_pic_h(dom: &Dom, para: NodeId, bound: &HashSet<u32>) -> f32 {
     dom.descendants(para, Some(&WP::name("inline")))
         .into_iter()
         .filter(|inl| dom.ancestors(*inl, Some(&W::txbx_content())).is_empty())
+        .filter(|inl| {
+            let blips = dom.descendants(*inl, Some(&A::name("blip")));
+            blips.is_empty() || blips.iter().any(|b| !bound.contains(&b.0))
+        })
         .filter_map(|inl| first_named_any(dom, inl, "extent"))
         .filter_map(|ext| attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok()))
         .map(|cy| cy / 12700.0)
@@ -23403,7 +23423,12 @@ fn collect_hf_rev_runs(
     }
     if dom.name_is(node, &W::fld_char()) {
         match attr_any(dom, node, "fldCharType").unwrap_or("") {
-            "begin" => *scan = FieldScan::default(),
+            "begin" => {
+                *scan = FieldScan {
+                    flow_pics: scan.flow_pics,
+                    ..FieldScan::default()
+                };
+            }
             "separate" => {
                 scan.result = true;
                 scan.styleref =
@@ -23516,7 +23541,7 @@ fn collect_hf_rev_runs(
         // Use the same atomic pieces as body flow without changing chrome fields.
         if scan.flow_pics
             && !matches!(mark, RevMark::Del | RevMark::MoveFrom)
-            && let Some(pieces) = flow_run_pieces(dom, node, BreakText::Drop)
+            && let Some(pieces) = flow_run_pieces(dom, node, BreakText::Line)
         {
             for piece in pieces {
                 let mut run = match piece {
@@ -23532,6 +23557,12 @@ fn collect_hf_rev_runs(
                 };
                 if run.text.is_empty() {
                     continue;
+                }
+                if run.text == "\n" && !line_has_content(runs) {
+                    let mut blank = TextRun::new("", style.clone());
+                    blank.ends_line = true;
+                    blank.rev = mark != RevMark::None;
+                    runs.push(blank);
                 }
                 run.rev = mark != RevMark::None;
                 runs.push(run);
@@ -23708,6 +23739,8 @@ struct Layout<'a> {
     /// github underline ran ~46pt past the table when xml:space
     /// padding on an underlined hyperlink was kept).
     clip_right: Option<f32>,
+    /// Text-box overflow hides a whole line, including its picture and marks.
+    textbox_floor: Option<f32>,
     /// Last emitted paragraph style. Empty `w:br type=page` after
     /// TextHeading* with leftover under ~23pt skips a blank (sd_2517
     /// 1-4). Table leftover must not (file_78 / file_196).
@@ -24230,6 +24263,7 @@ impl<'a> Layout<'a> {
             margin_r0: page.margin_r,
             placed_comments: HashSet::new(),
             clip_right: None,
+            textbox_floor: None,
             last_style_id: String::new(),
             nested_depth: 0,
             side_float: None,
@@ -26372,6 +26406,8 @@ impl<'a> Layout<'a> {
                 box_page = self.pages.len();
                 box_top = self.y;
             }
+            let line_ops_start = self.current().ops.len();
+            let line_pagerefs = self.pageref_ops.len();
             if let Some(fill) = style.fill {
                 let mut fx = self.flow_left() + style.indent_left;
                 let mut fx2 =
@@ -26555,6 +26591,11 @@ impl<'a> Layout<'a> {
             }
             self.paint_line_number(baseline);
             self.close_line_frame(frame);
+            if self.textbox_floor.is_some_and(|floor| baseline < floor) {
+                self.current().ops.truncate(line_ops_start);
+                self.styleref_ops.truncate(frame);
+                self.pageref_ops.truncate(line_pagerefs);
+            }
             self.last_line_end = Some((x + line_w, baseline));
             self.last_line = Some(LastLine {
                 page: self.pages.len(),
@@ -28658,12 +28699,34 @@ impl<'a> Layout<'a> {
                 if line.iter().all(|r| r.text.trim().is_empty()) {
                     return mark_h();
                 }
-                let (natural, _) = self.line_face_metrics(line, None);
+                let (natural, ascent) = self.line_face_metrics(line, None);
                 let grid = para_grid_pitch(style, self.page.grid_pitch);
-                if grid > 0.5 {
+                let text_box = if grid > 0.5 {
                     grid_line_box(natural, style, grid)
                 } else {
                     self.lifted_line_box(line, None, natural, style)
+                };
+                // Match emit_runs: apply picture height after text spacing,
+                // without multiplying the picture by the line multiplier.
+                let pic = self.pic_line(line, style);
+                if pic.h == 0.0 {
+                    text_box
+                } else if pic.only {
+                    pic.h + pic.under + pic.extra
+                } else if style.line_exact.is_some() {
+                    text_box.max(pic.h)
+                } else {
+                    let rise = if style.line_at_least.is_some() && grid <= 0.5 {
+                        (text_box - natural).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    let shrink = if style.line_at_least.is_none() && grid <= 0.5 {
+                        (natural - text_box).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    text_box + (pic.h - (ascent + rise - shrink)).max(0.0)
                 }
             };
             h += style.before + style.after;
@@ -30643,7 +30706,10 @@ impl<'a> Layout<'a> {
             self.pbdr_joins,
             self.last_line_end,
             self.para_space_above,
+            self.pic_row.take(),
+            self.textbox_floor,
         );
+        self.textbox_floor = Some(self.textbox_floor.map_or(y + bi, |outer| outer.max(y + bi)));
         self.page.margin_l = x + li;
         self.page.margin_r = self.page.width - (x + dw - ri);
         self.page.col_count = 1;
@@ -30696,6 +30762,8 @@ impl<'a> Layout<'a> {
             self.pbdr_joins,
             self.last_line_end,
             self.para_space_above,
+            self.pic_row,
+            self.textbox_floor,
         ) = para_state;
         (
             self.y,
@@ -31986,6 +32054,9 @@ impl<'a> Layout<'a> {
                                 .iter()
                                 .enumerate()
                                 .map(|(ri, run)| {
+                                    if let Some(pic) = &run.pic {
+                                        return pic.w.max(1.0);
+                                    }
                                     let text = match ri.cmp(&ink_end) {
                                         std::cmp::Ordering::Less => run.text.as_str(),
                                         std::cmp::Ordering::Equal => run.text.trim_end(),
@@ -55324,6 +55395,310 @@ mod coverage_round_three_tests {
                     })
                     .collect();
                 assert_eq!(visible, "one");
+            }
+        }
+
+        // In-memory fixtures share the existing OPC/PNG fixture; no filesystem,
+        // network, clock, or installed font is used by these regressions.
+        fn review_picture_xml(height: u32) -> String {
+            format!(
+                r#"<w:drawing xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><wp:inline><wp:extent cx="889000" cy="{}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+                height * 12700
+            )
+        }
+
+        fn review_hf(content: &str) -> Vec<TextRun> {
+            let pkg = PartFs::open(include_bytes!(
+                "../../tests/fixtures/inline-pictures/1975-header.docx"
+            ))
+            .unwrap();
+            let (dom, root) = xml(&format!("<w:p>{content}</w:p>"));
+            collect_hf_runs(
+                &dom,
+                root,
+                &sheet(),
+                300.0,
+                Some((&pkg, "word/header1.xml")),
+            )
+        }
+
+        fn review_picture_run() -> TextRun {
+            let mut img = picture();
+            img.w = 70.0;
+            img.h = 50.0;
+            img.kind = ImageKind::Rgb {
+                width: 1,
+                height: 1,
+                bytes: vec![255, 0, 0],
+                alpha: None,
+            };
+            let mut run = TextRun::new(INLINE_PIC, Defaults::word().run);
+            run.pic = Some(Rc::new(img));
+            run
+        }
+
+        #[test]
+        fn issue_1975_review_1_header_page_column_breaks() {
+            for kind in ["page", "column", "oddPage", "evenPage"] {
+                let runs = review_hf(&format!(
+                    r#"<w:r><w:t>A</w:t><w:br w:type="{kind}"/><w:t>B</w:t>{}</w:r>"#,
+                    review_picture_xml(15)
+                ));
+                assert_eq!(
+                    text(&runs),
+                    format!("A\nB{INLINE_PIC}"),
+                    "header {kind} break survives picture splice"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_1_header_leading_break_style() {
+            let runs = review_hf(&format!(
+                r#"<w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/>{}</w:r><w:r><w:t>Tail</w:t></w:r>"#,
+                review_picture_xml(15)
+            ));
+            assert!(
+                runs[0].ends_line && runs[0].text.is_empty() && runs[0].style.size == 20.0,
+                "leading break needs its own 20pt blank carrier: {:?}",
+                runs.iter()
+                    .map(|r| (&r.text, r.ends_line, r.style.size))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn issue_1975_review_2_header_complex_field_preserves_picture_flow() {
+            for instruction in ["PAGE", "INCLUDEPICTURE image"] {
+                let pic = review_picture_xml(15);
+                let runs = review_hf(&format!(
+                    r#"<w:r><w:t>Page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>{instruction}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r>{pic}</w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r>{pic}</w:r>"#
+                ));
+                // Numeric cached results are replaced by the computed number;
+                // non-numeric results keep the picture inside the field too.
+                let expected = if instruction == "PAGE" { 1 } else { 2 };
+                assert_eq!(
+                    runs.iter().filter(|r| r.pic.is_some()).count(),
+                    expected,
+                    "{instruction}: preserve paragraph flow across begin/end"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_3_cell_picture_alignment() {
+            let fonts = fonts();
+            for (jc, expected) in [("center", 75.0), ("right", 130.0), ("both", 130.0)] {
+                let mut block = table(
+                    &format!(
+                        r#"<w:tbl><w:tblPr><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0"/><w:right w:w="0"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="3600"/></w:tblGrid><w:tr><w:tc><w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:t>placeholder</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+                    ),
+                    &sheet(),
+                );
+                let Block::Table { rows, .. } = &mut block else {
+                    unreachable!()
+                };
+                let para = &mut rows[0][0].paras[0];
+                para.runs = if jc == "both" {
+                    para.continued = true;
+                    vec![
+                        TextRun::new("A B ", Defaults::word().run),
+                        review_picture_run(),
+                    ]
+                } else {
+                    vec![review_picture_run()]
+                };
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.emit_nested_table(&block, 20.0, 200.0, 180.0);
+                let x = lay.pages[0]
+                    .ops
+                    .iter()
+                    .find_map(|op| match op {
+                        Op::Rgb { x, .. } => Some(*x),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(
+                    (x - expected).abs() < 0.25,
+                    "{jc}: picture x={x}, expected {expected}; real 70pt width must fit the 180pt cell"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_4_header_unbound_picture_height() {
+            for height in [15, 100] {
+                let bound = format!("<w:r><w:t>A</w:t>{}</w:r>", review_picture_xml(height));
+                assert!(review_hf(&bound).iter().all(|r| r.hf_pic_h == 0.0));
+                for unbound in [
+                    format!("<w:del><w:r>{}</w:r></w:del>", review_picture_xml(80)),
+                    format!(
+                        r#"<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t>{}</w:r></w:fldSimple>"#,
+                        review_picture_xml(80)
+                    ),
+                ] {
+                    let runs = review_hf(&format!("{bound}{unbound}"));
+                    assert_eq!(runs.iter().filter(|r| r.pic.is_some()).count(), 1);
+                    assert_eq!(
+                        runs[0].hf_pic_h, 80.0,
+                        "unbound deleted/cached picture must retain its height reservation"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_5_header_box_fields_do_not_enable_flow() {
+            for field in [
+                r#"<w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple>"#,
+                r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+            ] {
+                let runs = review_hf(&format!(
+                    "<w:r>{}</w:r><w:r><w:drawing><w:txbxContent><w:p>{field}</w:p></w:txbxContent></w:drawing></w:r>",
+                    review_picture_xml(15)
+                ));
+                assert!(
+                    !runs.iter().any(|r| r.pic.is_some()),
+                    "nested box field must not splice a picture-only chrome paragraph"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_6_textbox_clips_whole_picture_line() {
+            let fonts = fonts();
+            for jpeg in [false, true] {
+                let mut pic = review_picture_run();
+                let image = Rc::make_mut(pic.pic.as_mut().unwrap());
+                image.outline = Some(([0.0, 0.0, 1.0], 1.0));
+                if jpeg {
+                    image.kind = ImageKind::Jpeg {
+                        width: 1,
+                        height: 1,
+                        bytes: vec![],
+                        components: 3,
+                    };
+                }
+                pic.style.underline = true;
+                pic.style.strike = true;
+                pic.style.highlight = Some([0.0, 1.0, 0.0]);
+                let mut box_ = shape();
+                box_.insets = [0.0; 4];
+                let mut hidden = TextRun::new("Hidden", Defaults::word().run);
+                hidden.styleref = Some(Rc::new(StyleRef {
+                    id: "Heading".into(),
+                    last: false,
+                }));
+                hidden.hf_para = Some(Rc::new(exact_style()));
+                let mut page_ref = TextRun::new("9", Defaults::word().run);
+                page_ref.pageref = Some("destination".into());
+                box_.paras = vec![
+                    (
+                        vec![TextRun::new("Visible", Defaults::word().run)],
+                        exact_style(),
+                    ),
+                    (vec![pic, hidden, page_ref], exact_style()),
+                ];
+                let mut visible = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                visible.known_bookmarks.insert("destination".into());
+                visible.emit_textbox_paras(&box_, 20.0, 100.0, 180.0, 100.0);
+                assert_eq!(visible.styleref_ops.len(), 1);
+                assert_eq!(visible.pageref_ops.len(), 1);
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::Rgb { .. } | Op::Jpeg { .. }))
+                );
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::StrokeRect { .. }))
+                );
+                assert!(
+                    visible.pages[0]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, Op::FillRect { .. } | Op::Line { .. }))
+                );
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.known_bookmarks.insert("destination".into());
+                lay.emit_textbox_paras(&box_, 20.0, 100.0, 180.0, 30.0);
+                assert_eq!(lay.textbox_floor, None);
+                assert!(lay.pageref_ops.is_empty());
+                assert!(
+                    lay.styleref_ops.is_empty(),
+                    "clipped line must not retain field indices into removed paint ops"
+                );
+                assert!(
+                    !lay.pages[0].ops.iter().any(|op| matches!(
+                        op,
+                        Op::Rgb { .. }
+                            | Op::Jpeg { .. }
+                            | Op::StrokeRect { .. }
+                            | Op::FillRect { .. }
+                            | Op::Line { .. }
+                    )),
+                    "clipped line leaked image, outline, or revision decoration"
+                );
+                assert_eq!(
+                    ink(&lay.pages)
+                        .iter()
+                        .map(|r| r.0.as_str())
+                        .collect::<String>(),
+                    "Visible"
+                );
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_7_textbox_autofit_counts_picture_height() {
+            let fonts = fonts();
+            for text in [false, true] {
+                for spacing in ["multiple", "exact", "minimum", "grid", "tight"] {
+                    let mut style = exact_style();
+                    style.line_exact = (spacing == "exact").then_some(20.0);
+                    style.line_at_least = (spacing == "minimum").then_some(30.0);
+                    style.line_mult = if spacing == "tight" { 0.8 } else { 1.5 };
+                    let mut runs = vec![review_picture_run()];
+                    if text {
+                        runs.push(TextRun::new("Text", Defaults::word().run));
+                    }
+                    let mut box_ = shape();
+                    box_.fit_height = true;
+                    box_.slot = floating();
+                    box_.insets = [0.0, 3.0, 0.0, 5.0];
+                    box_.paras = vec![(runs.clone(), style.clone())];
+                    let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                    if spacing == "grid" {
+                        lay.page.grid_pitch = 18.0;
+                    }
+                    let top = lay.y;
+                    lay.emit_runs(&runs, &style, false, FloatWrap::default());
+                    let expected = top - lay.y + 8.0;
+                    assert!(
+                        (lay.box_h(&box_) - expected).abs() < 0.01,
+                        "text={text}, spacing={spacing}: fitted height {} must equal painted height {expected}",
+                        lay.box_h(&box_)
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn issue_1975_review_8_textbox_restores_picture_row() {
+            let fonts = fonts();
+            for host in [None, Some((1, 100.0, 150.0, 40.0))] {
+                let mut lay = Layout::new(&fonts, page(), HfChrome::default(), 15);
+                lay.pic_row = host;
+                let mut box_ = shape();
+                box_.paras = vec![(vec![review_picture_run()], exact_style())];
+                lay.emit_textbox_paras(&box_, 10.0, 20.0, 120.0, 80.0);
+                assert_eq!(
+                    lay.pic_row, host,
+                    "textbox picture row must not leak into its host"
+                );
             }
         }
 
