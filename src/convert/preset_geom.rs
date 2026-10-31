@@ -170,7 +170,7 @@ pub(crate) struct TextRect {
 pub(crate) fn text_rect(name: &str, w: f32, h: f32, adj: &[(String, f64)]) -> Option<[f32; 4]> {
     let (_, def) = TEXT_RECTS.iter().find(|(n, _)| *n == name)?;
     let g = guides(def.av, def.gd, f64::from(w), f64::from(h), adj);
-    let at = |k: &str| operand(k, &g) as f32;
+    let at = |k: &str| crate::util::narrow_finite_f32(operand(k, &g)).unwrap_or(0.0);
     Some(def.rect.map(at))
 }
 
@@ -238,8 +238,8 @@ fn guides(
 }
 
 fn operand(tok: &str, g: &HashMap<String, f64>) -> f64 {
-    tok.parse::<f64>()
-        .ok()
+    // `NaN` and `inf` are not numbers, so a guide of that name still wins.
+    crate::util::parse_finite_f64(tok)
         .or_else(|| g.get(tok).copied())
         .unwrap_or(0.0)
 }
@@ -252,7 +252,7 @@ fn formula(fmla: &str, g: &HashMap<String, f64>) -> f64 {
     let x = a.first().copied().unwrap_or(0.0);
     let y = a.get(1).copied().unwrap_or(0.0);
     let z = a.get(2).copied().unwrap_or(0.0);
-    match op {
+    let v = match op {
         "*/" => {
             if z == 0.0 {
                 0.0
@@ -296,7 +296,10 @@ fn formula(fmla: &str, g: &HashMap<String, f64>) -> f64 {
         }
         "sqrt" => x.max(0.0).sqrt(),
         _ => x,
-    }
+    };
+    // A product of finite operands can still overflow. That result is 0,
+    // the same stand-in an unknown operand uses.
+    if v.is_finite() { v } else { 0.0 }
 }
 
 /// The parametric angle of the point at ray angle `a` on an ellipse with
@@ -378,7 +381,12 @@ fn evaluate_views(
         } else {
             1.0 / units
         };
-        let pt = |x: f64, y: f64| ((x * sx) as f32, (y * sy) as f32);
+        let pt = |x: f64, y: f64| {
+            (
+                crate::util::narrow_finite_f32(x * sx).unwrap_or(0.0),
+                crate::util::narrow_finite_f32(y * sy).unwrap_or(0.0),
+            )
+        };
         let mut subpaths: Vec<Subpath> = Vec::new();
         let mut cur = (0.0_f64, 0.0_f64);
         let mut start = (0.0_f64, 0.0_f64);

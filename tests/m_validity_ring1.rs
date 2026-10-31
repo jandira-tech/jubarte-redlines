@@ -3631,3 +3631,160 @@ fn issue1711_ruby_directly_under_paragraph_is_schema_invalid_not_word_fatal() {
         }
     }
 }
+
+/// A two-column table. `grid`, `tc` and `tbl` are the first `gridCol`,
+/// the first `tcW` and the `tblW` `w:w` values. The other column is 2400 dxa.
+fn table_measure_doc(grid: &str, tc: &str, tbl: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tblPr><w:tblW w:w="{tbl}" w:type="dxa"/></w:tblPr>
+      <w:tblGrid><w:gridCol w:w="{grid}"/><w:gridCol w:w="2400"/></w:tblGrid>
+      <w:tr>
+        <w:tc><w:tcPr><w:tcW w:w="{tc}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>LABEL</w:t></w:r></w:p></w:tc>
+        <w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>VALUE</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>
+  </w:body>
+</w:document>"#
+    )
+}
+
+fn non_finite_measure_findings(doc: &str) -> Vec<jubarte::validate::Finding> {
+    let bytes = zip_with_parts(&[("word/document.xml", doc)]);
+    jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "NON_FINITE_MEASURE")
+        .collect()
+}
+
+fn assert_non_finite_measure(
+    finding: &jubarte::validate::Finding,
+    token: &str,
+    element: &str,
+    word_fatal: bool,
+) {
+    assert_eq!(finding.code, "NON_FINITE_MEASURE");
+    assert_eq!(finding.set, "word");
+    assert_eq!(finding.part, "word/document.xml");
+    assert_eq!(
+        finding.word_fatal, word_fatal,
+        "{token} {element}: {finding:?}"
+    );
+    assert!(
+        !finding.repairable,
+        "{token} {element} stays unrepaired: {finding:?}"
+    );
+    assert_eq!(
+        finding.severity,
+        if word_fatal { "error" } else { "warning" },
+        "{finding:?}"
+    );
+    assert_eq!(finding.r#ref, finding.location);
+    assert!(
+        finding.location.contains(element),
+        "{token} location {}: {finding:?}",
+        finding.location
+    );
+    assert!(
+        finding.message.contains(token) && finding.message.contains(element),
+        "{finding:?}"
+    );
+    // The code default is the gridCol refusal. tcW and tblW clear the flag.
+    assert_eq!(
+        jubarte::validate::traits("NON_FINITE_MEASURE"),
+        (true, false)
+    );
+}
+
+/// `w:w` on `gridCol`, `tcW` and `tblW` that `f32` accepts and that is
+/// not finite. Word 16.115 (2026-10-31) refused `gridcol-NaN`,
+/// `gridcol-inf` and `gridcol-1e40`, and opened `tcw-*`, `tblw-*` and
+/// `valid-control` cleanly. `repairable` stays false.
+#[test]
+fn probe_non_finite_gridcol_is_word_fatal_and_other_measures_are_leads() {
+    let tokens = [
+        "NaN",
+        "inf",
+        "infinity",
+        "+inf",
+        "-inf",
+        "-infinity",
+        "1e40",
+    ];
+    for token in tokens {
+        let grid = non_finite_measure_findings(&table_measure_doc(token, "2400", "4800"));
+        assert_eq!(grid.len(), 1, "{token} gridCol: {grid:?}");
+        assert_non_finite_measure(&grid[0], token, "w:gridCol", true);
+
+        let tc = non_finite_measure_findings(&table_measure_doc("2400", token, "4800"));
+        assert_eq!(tc.len(), 1, "{token} tcW: {tc:?}");
+        assert_non_finite_measure(&tc[0], token, "w:tcW", false);
+
+        let tbl = non_finite_measure_findings(&table_measure_doc("2400", "2400", token));
+        assert_eq!(tbl.len(), 1, "{token} tblW: {tbl:?}");
+        assert_non_finite_measure(&tbl[0], token, "w:tblW", false);
+    }
+}
+
+/// The same token on `gridCol` and `tcW` is two findings. Only `gridCol`
+/// is Word-fatal.
+#[test]
+fn probe_non_finite_gridcol_and_tcw_are_both_reported() {
+    let findings = non_finite_measure_findings(&table_measure_doc("NaN", "NaN", "4800"));
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.location.contains("w:gridCol") && f.word_fatal && !f.repairable)
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.location.contains("w:tcW") && !f.word_fatal && !f.repairable)
+    );
+}
+
+/// A header table's `gridCol` is the same element Word refused.
+#[test]
+fn probe_non_finite_header_gridcol_is_word_fatal() {
+    let hdr = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:tbl><w:tblGrid><w:gridCol w:w="NaN"/><w:gridCol w:w="2400"/></w:tblGrid>
+  <w:tr><w:tc><w:p><w:r><w:t>H</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+</w:hdr>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", MINIMAL_DOC),
+        ("word/header1.xml", hdr),
+    ]);
+    let findings: Vec<_> = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "NON_FINITE_MEASURE")
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding.part, "word/header1.xml");
+    assert!(finding.location.contains("w:gridCol"), "{finding:?}");
+    assert!(finding.message.contains("NaN"), "{finding:?}");
+    assert!(finding.word_fatal && !finding.repairable, "{finding:?}");
+    assert_eq!(finding.severity, "error");
+}
+
+/// A finite number stays quiet, including a finite exponent. A token
+/// `f32` rejects stays quiet too: `12pt` is a legal universal measure,
+/// and `abc` is schema garbage this code does not own.
+#[test]
+fn probe_finite_and_unparsed_table_measures_are_not_non_finite() {
+    for value in ["2400", "1e2", "-1.5", "0", "1e38", "12pt", "abc", "auto"] {
+        let doc = table_measure_doc(value, value, value);
+        let bytes = zip_with_parts(&[("word/document.xml", doc.as_str())]);
+        let findings = jubarte::validate::ring1(&PartFs::open(&bytes).unwrap());
+        assert!(
+            findings.is_empty(),
+            "{value} must not be NON_FINITE_MEASURE: {findings:?}"
+        );
+    }
+}

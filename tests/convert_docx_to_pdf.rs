@@ -26828,6 +26828,126 @@ fn a_section_inherits_each_header_type_it_omits_from_the_one_before() {
     );
 }
 
+/// `NaN`, `inf` and an f32 overflow (`1e40`) on `tcW`, `tblW` and a header
+/// table's `gridCol` read as absent: the words stay on the page where an
+/// unparsable `w:w` puts them (#1737).
+#[test]
+fn non_finite_tcw_tblw_and_header_grid_match_an_unparsable_measure() {
+    fn cell(text: &str, tc_w: &str) -> String {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{tc_w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    }
+    fn body_table(tbl_w: &str, left_tc: &str) -> Vec<u8> {
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"{tbl_w}\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2400\"/><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+             <w:tr>{}{}</w:tr></w:tbl>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+               w:header=\"720\" w:footer=\"720\"/></w:sectPr>",
+            cell("LABEL", left_tc),
+            cell("VALUE", "2400"),
+        );
+        minimal_docx_body(&body)
+    }
+    fn header_table(grid: &str) -> Vec<u8> {
+        let hdr = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:tbl><w:tblGrid><w:gridCol w:w=\"{grid}\"/><w:gridCol w:w=\"2400\"/></w:tblGrid>\
+             <w:tr><w:tc><w:p><w:r><w:t>HLABEL</w:t></w:r></w:p></w:tc>\
+             <w:tc><w:p><w:r><w:t>HVALUE</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:hdr>"
+        );
+        let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+             <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+               w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        hf_docx(
+            body,
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", hdr)],
+        )
+    }
+    /// Page count, then each word's origin. `None` means the word is not painted.
+    fn layout(docx: &[u8], words: &[&str]) -> (usize, Vec<Option<(f32, f32)>>) {
+        let pdf = docx_to_pdf(docx).expect("convert");
+        (
+            pdf_page_count(&pdf),
+            words
+                .iter()
+                .map(|word| pdf_glyph_text_xy(&pdf, word))
+                .collect(),
+        )
+    }
+    fn note(
+        kind: &str,
+        value: &str,
+        words: &[&str],
+        got: &(usize, Vec<Option<(f32, f32)>>),
+        want: &(usize, Vec<Option<(f32, f32)>>),
+    ) -> Option<String> {
+        let mut parts = Vec::new();
+        if got.0 != want.0 {
+            parts.push(format!("pages {} != {}", got.0, want.0));
+        }
+        for (word, (g, w)) in words.iter().zip(got.1.iter().zip(&want.1)) {
+            match (g, w) {
+                (Some((gx, gy)), Some((wx, wy))) => {
+                    let on_page = (0.0..612.0).contains(gx) && (0.0..792.0).contains(gy);
+                    let same = (gx - wx).abs() < 0.05 && (gy - wy).abs() < 0.05;
+                    if !on_page || !same {
+                        parts.push(format!(
+                            "{word} at ({gx}, {gy}); unparsable at ({wx}, {wy}); on_page={on_page}"
+                        ));
+                    }
+                }
+                _ => parts.push(format!("{word} got {g:?}, unparsable {w:?}")),
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(format!("{kind} {value}: {}", parts.join("; ")))
+        }
+    }
+    let mut misses = Vec::new();
+    let absent_tbl = layout(&body_table("bad", "2400"), &["LABEL", "VALUE"]);
+    for value in ["NaN", "inf", "1e40"] {
+        let got = layout(&body_table(value, "2400"), &["LABEL", "VALUE"]);
+        if let Some(msg) = note("tblW", value, &["LABEL", "VALUE"], &got, &absent_tbl) {
+            misses.push(msg);
+        }
+    }
+    let absent_tc = layout(&body_table("4800", "bad"), &["LABEL", "VALUE"]);
+    for value in ["NaN", "inf", "1e40"] {
+        let got = layout(&body_table("4800", value), &["LABEL", "VALUE"]);
+        if let Some(msg) = note("tcW", value, &["LABEL", "VALUE"], &got, &absent_tc) {
+            misses.push(msg);
+        }
+    }
+    let absent_grid = layout(&header_table("bad"), &["HLABEL", "HVALUE"]);
+    for value in ["NaN", "inf", "1e40"] {
+        let got = layout(&header_table(value), &["HLABEL", "HVALUE"]);
+        if let Some(msg) = note(
+            "header gridCol",
+            value,
+            &["HLABEL", "HVALUE"],
+            &got,
+            &absent_grid,
+        ) {
+            misses.push(msg);
+        }
+    }
+    assert!(
+        misses.is_empty(),
+        "non-finite measures differ from an unparsable one:\n{}",
+        misses.join("\n")
+    );
+}
+
 fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) -> Vec<u8> {
     // A leading `<w:background .../>` is the document's, before the body.
     let (background, body) = match body.find("/>") {

@@ -56,6 +56,7 @@
 //! | `CELL_FINAL_MARK_REVISION` | no: Word opens it, but Accept All or Reject All never returns (#1669, Word 16, 2026-10-23); error diagnostic | no |
 //! | `DELETED_SECTION_PAGE_FIELD` | no: Word 16.115 crashed opening 9 of 11 such redlines (#1833, 2026-10-25); warning | no |
 //! | `INSERTED_TEXT_BEFORE_DELETED_TABLE` | no: Word 16.115 crashed opening 6 of the 16 release-sample redlines with the paragraph right before the table (#1851, 2026-10-25); warning | no |
+//! | `NON_FINITE_MEASURE` | yes for `gridCol` (Word 16.115, 2026-10-31: `gridcol-NaN`, `gridcol-inf`, `gridcol-1e40` unreadable); `tcW` and `tblW` open (`tcw-*`, `tblw-*`, `valid-control` clean, #1737) | no |
 //! | `UNTRACKED_EDIT`, `FOREIGN_AUTHOR`, `FOREIGN_COMMENT` | n/a | no |
 //!
 //! Revision ids are unique per OOXML record type within a part, as
@@ -203,7 +204,9 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "ROW_WITHOUT_CELL"
         | "SECTPR_NOT_LAST"
         | "NESTED_TEXT_BOX"
-        | "NOTE_REFERENCE_DANGLING" => (true, false),
+        | "NOTE_REFERENCE_DANGLING"
+        // `gridCol` only. `tcW` and `tblW` clear `word_fatal` on the finding.
+        | "NON_FINITE_MEASURE" => (true, false),
         "DUPLICATE_REVISION_ID"
         | "DUPLICATE_DOCPR_ID"
         | "INSTR_TEXT_INSIDE_DELETION"
@@ -215,7 +218,7 @@ pub fn traits(code: &str) -> (bool, bool) {
 
 /// Codes the Ring-1 checks own; the triage checks' findings under these
 /// codes are the same problems seen twice and are left out of [`validate`].
-const RING1_CODES: [&str; 35] = [
+const RING1_CODES: [&str; 36] = [
     "DATA_BINDING_WITHOUT_STORE",
     "MOVE_RANGE_COUNT_MISMATCH",
     "MOVE_RANGE_NAME_MISSING",
@@ -251,6 +254,7 @@ const RING1_CODES: [&str; 35] = [
     "CELL_FINAL_MARK_REVISION",
     "DELETED_SECTION_PAGE_FIELD",
     "INSERTED_TEXT_BEFORE_DELETED_TABLE",
+    "NON_FINITE_MEASURE",
 ];
 
 /// Why a package could not be validated at all (a finding is never an
@@ -1523,6 +1527,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_cell_final_marks(pkg, &mut out);
     check_deleted_section_page_fields(pkg, &mut out);
     check_inserted_text_before_deleted_tables(pkg, &mut out);
+    check_non_finite_measures(pkg, &mut out);
     out
 }
 
@@ -2322,6 +2327,63 @@ fn wordml_parts(pkg: &PartFs) -> Vec<String> {
         .into_iter()
         .filter(|name| !data.iter().any(|item| item.eq_ignore_ascii_case(name)))
         .collect()
+}
+
+/// `w:w` on `w:gridCol`, `w:tcW` and `w:tblW` when `f32`'s parser accepts
+/// the value and the value is not finite. That is `NaN`, `inf`,
+/// `infinity` (any sign and case) and a magnitude that overflows `f32`
+/// (`1e40` is `Ok(inf)`). A token the parser rejects is not this
+/// finding: `12pt` is a legal universal measure on `tblW` and `tcW`,
+/// and plain garbage such as `abc` is not already a Ring-1 code, but
+/// folding it in would report that legal measure too.
+///
+/// `word_fatal` follows the element. Word 16.115, 2026-10-31 (#1737):
+/// `gridcol-NaN`, `gridcol-inf` and `gridcol-1e40` were unreadable
+/// content. `tcw-NaN`, `tcw-inf`, `tcw-1e40`, `tblw-NaN`, `tblw-inf`,
+/// `tblw-1e40` and `valid-control` opened cleanly. No repair was
+/// verified, so `repairable` stays false.
+fn check_non_finite_measures(pkg: &PartFs, out: &mut Vec<Finding>) {
+    for part in wordml_parts(pkg) {
+        let Some((dom, root)) = parse_part(pkg, &part) else {
+            continue;
+        };
+        dom.for_each_descendant_element(root, None, |node| {
+            let local = if dom.name_is(node, &W::grid_col()) {
+                "gridCol"
+            } else if dom.name_is(node, &W::tc_w()) {
+                "tcW"
+            } else if dom.name_is(node, &W::tbl_w()) {
+                "tblW"
+            } else {
+                return;
+            };
+            let Some(value) = dom.attribute(node, &W::w()) else {
+                return;
+            };
+            if !f32_parses_non_finite(value) {
+                return;
+            }
+            let mut finding = Finding::new(
+                "NON_FINITE_MEASURE",
+                &part,
+                element_path(&dom, node),
+                format!("w:{local}/@w:w value '{value}' parses as f32 and is not finite"),
+            );
+            // Word 16.115, 2026-10-31 (#1737): gridcol-NaN, gridcol-inf and
+            // gridcol-1e40 were unreadable content. tcw-* and tblw-* of
+            // those tokens, and valid-control, opened cleanly.
+            if local != "gridCol" {
+                finding.word_fatal = false;
+                finding.severity = "warning".to_string();
+            }
+            out.push(finding);
+        });
+    }
+}
+
+/// A measure token `str::parse::<f32>` accepts that is not finite.
+fn f32_parses_non_finite(value: &str) -> bool {
+    matches!(value.parse::<f32>(), Ok(number) if !number.is_finite())
 }
 
 // ── Ring-1 checks ─────────────────────────────────────────────────────────
