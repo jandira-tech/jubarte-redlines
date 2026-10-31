@@ -366,16 +366,11 @@ fn filling_a_control_uses_typing_order() {
     );
     let plan = EditPlan::from_json(&json!({"schema_version":1,"author":"Carol Diaz","date":"2026-10-18T10:00:00Z","operations":[{"kind":"fill_control","control":{"tag":"days"},"text":"45"}]}).to_string()).unwrap();
     let out = apply_plan(&source, &plan).unwrap().redline;
-    // #1703: the fill's insertion lands beside the control it emptied,
-    // and either way around the emptied control shows Word's five-space
-    // placeholder.
-    resolved_text(
-        &source,
-        &out,
-        "word/document.xml",
-        "Pay within      45 days.",
-        Some("Pay within 30      days."),
-    );
+    // #2004: the deletion and the insertion share the one control, so
+    // neither resolution leaves an emptied duplicate behind.
+    let xml = part_string(&out, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:sdt>").count(), 1, "{xml}");
+    resolved(&source, &out, "word/document.xml");
     typing_order(&out, "word/document.xml");
 }
 
